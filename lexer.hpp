@@ -235,12 +235,24 @@ namespace k::lex {
         return std::holds_alternative<keyword>(lex) && std::get<keyword>(lex).type==type;
     }
 
+    inline bool operator!=(const any_lexeme& lex, keyword::type_t type) {
+        return !std::holds_alternative<keyword>(lex) || std::get<keyword>(lex).type!=type;
+    }
+
     inline bool operator==(const any_lexeme& lex, punctuator::type_t type) {
         return std::holds_alternative<punctuator>(lex) && std::get<punctuator>(lex).type==type;
     }
 
+    inline bool operator!=(const any_lexeme& lex, punctuator::type_t type) {
+        return !std::holds_alternative<punctuator>(lex) || std::get<punctuator>(lex).type!=type;
+    }
+
     inline bool operator==(const any_lexeme& lex, operator_::type_t type) {
         return std::holds_alternative<operator_>(lex) && std::get<operator_>(lex).type==type;
+    }
+
+    inline bool operator!=(const any_lexeme& lex, operator_::type_t type) {
+        return !std::holds_alternative<operator_>(lex) || std::get<operator_>(lex).type!=type;
     }
 
     template<class Type>
