@@ -31,8 +31,12 @@ void ast::namespace_decl::visit(ast_visitor &visitor) {
     visitor.visit_namespace_decl(*this);
 }
 
-void ast::type_specifier::visit(ast_visitor &visitor) {
-    visitor.visit_type_specifier(*this);
+void ast::identified_type_specifier::visit(ast_visitor &visitor) {
+    visitor.visit_identified_type_specifier(*this);
+}
+
+void ast::keyword_type_specifier::visit(ast_visitor &visitor) {
+    visitor.visit_keyword_type_specifier(*this);
 }
 
 void ast::parameter_spec::visit(ast_visitor &visitor) {
@@ -125,7 +129,11 @@ void default_ast_visitor::visit_import(ast::import &) {
 }
 
 
-void default_ast_visitor::visit_type_specifier(ast::type_specifier &) {
+void default_ast_visitor::visit_identified_type_specifier(ast::identified_type_specifier &) {
+
+}
+
+void default_ast_visitor::visit_keyword_type_specifier(ast::keyword_type_specifier &) {
 
 }
 

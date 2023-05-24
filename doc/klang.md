@@ -155,7 +155,7 @@ Keywords are reserved word of the language and cannot be used as identifier.
 <pre dfn-type_t=grammar link-type_t=grammar class=grammar highlight=abnf>
     <dfn>Keyword</dfn>: (one of)
         byte        char        short       int         long
-        unsigned    float       double
+        float       double
 </pre>
 
 Note: This section is **work in progress** and may be adjusted in the future.

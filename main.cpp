@@ -21,17 +21,17 @@ int main() {
     import net;
     /* Hello */
 
-    test(titi: int32, toto: int32) : int32 {
+    test(titi: int, toto: int) : int {
         titi + toto;
         return titi + toto;
     }
 
     namespace titi {
         protected:
-        static const plic : int = 0;
+        static const plic : long = 0;
         public :
-        sum(a : int32, b : int32) : int32 {
-            res : int32;
+        sum(a : int, b : int) : int {
+            res : int;
             {
                 res = a + b * 2;
             }

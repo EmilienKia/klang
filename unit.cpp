@@ -23,7 +23,12 @@ static name to_name(const parse::ast::qualified_identifier& ident) {
 
 std::shared_ptr<type> unresolved_type::from_string(const std::string& type_name)
 {
-    return std::shared_ptr<type>{new unresolved_type(name(type_name))};
+    auto prim = primitive_type::from_string(type_name);
+    if(prim) {
+        return prim;
+    } else {
+        return std::shared_ptr<type>{new unresolved_type(name(type_name))};
+    }
 }
 
 std::shared_ptr<type> unresolved_type::from_identifier(const name& type_id)
@@ -33,7 +38,64 @@ std::shared_ptr<type> unresolved_type::from_identifier(const name& type_id)
 
 std::shared_ptr<type> unresolved_type::from_type_specifier(const k::parse::ast::type_specifier& type_spec)
 {
-    return std::shared_ptr<type>{new unresolved_type(to_name(type_spec.name))};
+    if(auto ident = dynamic_cast<const k::parse::ast::identified_type_specifier*>(&type_spec)) {
+        return std::shared_ptr<type>{new unresolved_type(to_name(ident->name))};
+    } else if(auto kw = dynamic_cast<const k::parse::ast::keyword_type_specifier*>(&type_spec)) {
+        return primitive_type::from_keyword(kw->keyword);
+    } else {
+        return {};
+    }
+}
+
+//
+// Primitive type
+//
+
+std::shared_ptr<primitive_type> primitive_type::make_shared(PRIMITIVE_TYPE type){
+    return std::shared_ptr<primitive_type>{new primitive_type(type)};
+}
+
+std::shared_ptr<type> primitive_type::from_string(const std::string& type_name) {
+    static std::map<std::string, primitive_type::PRIMITIVE_TYPE> type_map {
+            {"byte", BYTE},
+            {"char", CHAR},
+            {"short", SHORT},
+            {"int", INT},
+            {"long", LONG},
+            {"float", FLOAT},
+            {"double", DOUBLE}
+    };
+    static std::map<primitive_type::PRIMITIVE_TYPE, std::shared_ptr<primitive_type> > predef_types {
+            {BYTE, make_shared(BYTE)},
+            {CHAR, make_shared(CHAR)},
+            {SHORT, make_shared(SHORT)},
+            {INT, make_shared(INT)},
+            {LONG, make_shared(LONG)},
+            {FLOAT, make_shared(FLOAT)},
+            {DOUBLE, make_shared(DOUBLE)}
+    };
+    auto it = type_map.find(type_name);
+    if(it!=type_map.end()) {
+        return predef_types[it->second];
+    }
+    return {};
+}
+
+std::shared_ptr<type> primitive_type::from_keyword(const lex::keyword& kw) {
+    return from_string(kw.content);
+}
+
+const std::string& primitive_type::to_string()const {
+    static std::map<primitive_type::PRIMITIVE_TYPE, std::string> type_names {
+            {BYTE, "byte"},
+            {CHAR,"char"},
+            {SHORT, "short"},
+            {INT, "int"},
+            {LONG, "long"},
+            {FLOAT, "float"},
+            {DOUBLE, "double"}
+    };
+    return type_names[_type];
 }
 
 //

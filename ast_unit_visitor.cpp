@@ -33,7 +33,7 @@ namespace k::parse {
     void ast_unit_visitor::visit_import(ast::import &) {
     }
 
-    void ast_unit_visitor::visit_type_specifier(ast::type_specifier &) {
+    void ast_unit_visitor::visit_identified_type_specifier(ast::identified_type_specifier &) {
 
     }
 
@@ -42,6 +42,10 @@ namespace k::parse {
     }
 
     void ast_unit_visitor::visit_qualified_identifier(ast::qualified_identifier &) {
+
+    }
+
+    void ast_unit_visitor::visit_keyword_type_specifier(ast::keyword_type_specifier &) {
 
     }
 
@@ -98,7 +102,7 @@ namespace k::parse {
         }
 
         std::shared_ptr<unit::variable_definition> var = parent_scope->append_variable(decl.name.content);
-        var->set_type(unit::unresolved_type::from_type_specifier(decl.type));
+        var->set_type(unit::unresolved_type::from_type_specifier(*decl.type));
 
         if(decl.init) {
             _expr.reset();
@@ -127,7 +131,7 @@ namespace k::parse {
         std::shared_ptr<unit::block> block = function->get_block();
 
         for(auto param : func.params) {
-            std::shared_ptr<unit::parameter> parameter = function->append_parameter(param.name->content, unit::unresolved_type::from_type_specifier(param.type));
+            std::shared_ptr<unit::parameter> parameter = function->append_parameter(param.name->content, unit::unresolved_type::from_type_specifier(*param.type));
             // TODO add param specs
 
             std::shared_ptr<unit::variable_statement> var = std::dynamic_pointer_cast<unit::variable_statement>(block->append_variable(parameter->get_name()));

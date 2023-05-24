@@ -76,7 +76,9 @@ protected:
     void visit_unit(ast::unit &) override;
     void visit_import(ast::import &) override;
 
-    void visit_type_specifier(ast::type_specifier &) override;
+    void visit_identified_type_specifier(ast::identified_type_specifier &) override;
+    void visit_keyword_type_specifier(ast::keyword_type_specifier &) override;
+
     void visit_parameter_specifier(ast::parameter_spec &) override;
 
     void visit_qualified_identifier(ast::qualified_identifier &) override;

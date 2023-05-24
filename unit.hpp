@@ -197,7 +197,7 @@ public:
 /**
  * Base type class
  */
-class type {
+class type : public std::enable_shared_from_this<type>{
 public:
     virtual ~type() = default;
 };
@@ -231,7 +231,32 @@ public:
  * Primitive type
  */
 class primitive_type : public resolved_type {
+protected:
+    enum PRIMITIVE_TYPE {
+        BYTE,
+        CHAR,
+        SHORT,
+        INT,
+        LONG,
+        FLOAT,
+        DOUBLE
+    }_type;
+
+    primitive_type(const primitive_type&) = default;
+    primitive_type(primitive_type&&) = default;
+
+    primitive_type(PRIMITIVE_TYPE type):_type(type){}
+
+private:
+    static std::shared_ptr<primitive_type> make_shared(PRIMITIVE_TYPE type);
+
 public:
+
+    const std::string& to_string()const;
+
+    static std::shared_ptr<type> from_string(const std::string& type_name);
+    static std::shared_ptr<type> from_keyword(const lex::keyword& kw);
+
 };
 
 

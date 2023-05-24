@@ -127,11 +127,19 @@ public:
     }
 
     void dump_type(k::unit::type& type) {
-        if(auto t = dynamic_cast<unresolved_type*>(&type)) {
+        if(auto t = dynamic_cast<primitive_type*>(&type)) {
+            dump_primitive_type(*t);
+        } else if(auto t = dynamic_cast<unresolved_type*>(&type)) {
             dump_unresolved_type(*t);
+        //} else if(auto t = dynamic_cast<unresolved_type*>(&type)) {
+        //    dump_unresolved_type(*t);
         } else {
             _stm << "<<unknown-type>>";
         }
+    }
+
+    void dump_primitive_type(primitive_type& type) {
+        _stm << "<<prim-type:" << type.to_string() << ">>";
     }
 
     void dump_unresolved_type(unresolved_type& type) {

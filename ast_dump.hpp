@@ -115,6 +115,10 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             }
         }
 
+        void visit_keyword_type_specifier(ast::keyword_type_specifier &identifier) override  {
+            _stm  <<  "<<kwtype:" << identifier.keyword.content << ">>";
+        }
+
         void visit_visibility_decl(ast::visibility_decl& decl) override {
             prefix() << "visibility " << decl.scope.content << std::endl;
         }
@@ -127,7 +131,7 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             }
         }
 
-        void visit_type_specifier(ast::type_specifier& type) override {
+        void visit_identified_type_specifier(ast::identified_type_specifier& type) override {
             type.name.visit(*this);
         }
 
@@ -136,7 +140,7 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             if(param.name) {
                 _stm << param.name.value().content << " : ";
             }
-            param.type.visit(*this);
+            param.type->visit(*this);
         }
 
         void visit_specifiers(const std::vector<lex::keyword>& specifiers) {
@@ -156,7 +160,7 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             prefix() << "variable ";
             visit_specifiers(var.specifiers);
             _stm << var.name.content << " : ";
-            var.type.visit(*this);
+            var.type->visit(*this);
 
             if(var.init) {
                 _stm << " = ";
@@ -182,7 +186,7 @@ class ast_dump_visitor : public k::parse::ast_visitor {
 
             if(function.type) {
                 _stm << " : ";
-                visit_type_specifier(function.type.value());
+                function.type->visit(*this);
             }
 
             if(function.content) {

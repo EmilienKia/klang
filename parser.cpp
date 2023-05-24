@@ -341,7 +341,7 @@ std::optional<ast::function_decl> parser::parse_function_decl() {
     }
 
     // Look for return type
-    std::optional<ast::type_specifier> restype;
+    std::shared_ptr<ast::type_specifier> restype;
     holder.sync();
     if(auto lcolon = _lexer.get(); lcolon && lcolon==lex::operator_::COLON) {
         restype = parse_type_spec();
@@ -390,7 +390,7 @@ std::optional<ast::parameter_spec> parser::parse_parameter_spec()
         return {};
     }
 
-    return {{specifiers, name, type.value()}};
+    return {{specifiers, name, type}};
 }
 
 std::optional<ast::block_statement> parser::parse_statement_block()
@@ -492,7 +492,7 @@ std::optional<ast::variable_decl> parser::parse_variable_decl()
         holder.rollback();
         return {};
     }
-    std::optional<ast::type_specifier> type = parse_type_spec();
+    std::shared_ptr<ast::type_specifier> type = parse_type_spec();
     if(!type) {
         // Err: variable declaration requires a type specifier prefixed by colon.
         throw parsing_error("Colon for variable type declaration is missing" /*, *lcolon */);
@@ -516,12 +516,23 @@ std::optional<ast::variable_decl> parser::parse_variable_decl()
         throw parsing_error("Semicolon for variable declaration is missing" /*, *lsemicolon */);
     }
 
-    return {{specifiers, lex::as<lex::identifier>(lname), type.value(), expr}};
+    return {{specifiers, lex::as<lex::identifier>(lname), type, expr}};
 }
 
-std::optional<ast::type_specifier> parser::parse_type_spec()
+std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
 {
     lex::lex_holder holder(_lexer);
+
+    // Expect a type keyword
+    auto ltype = _lexer.get();
+    if( ltype && (ltype==lex::keyword::BYTE || ltype==lex::keyword::CHAR ||
+                    ltype==lex::keyword::SHORT || ltype==lex::keyword::INT ||
+                    ltype==lex::keyword::LONG ||
+                    ltype==lex::keyword::FLOAT || ltype==lex::keyword::DOUBLE
+                    )) {
+        return std::make_shared<ast::keyword_type_specifier>( std::get<lex::keyword>(ltype.value().get()) );
+    }
+    holder.rollback();
 
     // Expect a type qualified identifier:
     std::optional<ast::qualified_identifier> qid = parse_qualified_identifier();
@@ -530,7 +541,7 @@ std::optional<ast::type_specifier> parser::parse_type_spec()
         return {};
     }
 
-    return {{*qid}};
+    return std::make_shared<ast::identified_type_specifier>(*qid);
 }
 
 std::optional<ast::expression_statement> parser::parse_expression_statement()
@@ -953,7 +964,7 @@ ast::expr_ptr parser::parse_cast_expr()
         return parse_unary_expr();
     }
 
-    std::optional<ast::type_specifier> type = parse_type_spec();
+    std::shared_ptr<ast::type_specifier> type = parse_type_spec();
     if(!type) {
         holder.rollback();
         return parse_unary_expr();
@@ -970,7 +981,7 @@ ast::expr_ptr parser::parse_cast_expr()
         throw parsing_error("Sub expression after a casting operator for expression is missing" /*, *lclosepar */);
     }
 
-    return std::make_shared<ast::cast_expr>(type.value(), expr);
+    return std::make_shared<ast::cast_expr>(type, expr);
 }
 
 ast::expr_ptr parser::parse_unary_expr()

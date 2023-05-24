@@ -117,10 +117,11 @@ public:
     std::optional<ast::variable_decl> parse_variable_decl();
 
     /**
-     * Current support : TYPE_SPEC := QUALIFIED_IDENTIFIER
-     * TODO support : TYPE := ???
+     * Current support : TYPE_SPEC := ('byte'|'char'|'short'|'int'|'long'|'float'|'double')
+     *                                  | QUALIFIED_IDENTIFIER
+     * TODO support : support unsigned prefix correctly
      */
-     std::optional<ast::type_specifier> parse_type_spec();
+     std::shared_ptr<ast::type_specifier> parse_type_spec();
 
     /**
      * SPECIFIERS := *('public'|'protected'|'private'|'static'|'const'|'abstract'|'final')

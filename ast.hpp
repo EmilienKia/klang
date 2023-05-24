@@ -66,14 +66,27 @@ namespace k::parse {
         };
 
         struct type_specifier : public ast_node {
+
+        };
+
+        struct identified_type_specifier : public type_specifier {
             qualified_identifier name;
 
-            type_specifier(const qualified_identifier &name) : name(name) {}
+            identified_type_specifier(const qualified_identifier &name) : name(name) {}
 
-            type_specifier(qualified_identifier &&name) : name(name) {}
+            identified_type_specifier(qualified_identifier &&name) : name(name) {}
 
             virtual void visit(ast_visitor &visitor) override;
 
+        };
+
+        struct keyword_type_specifier : public type_specifier {
+            lex::keyword keyword;
+
+            keyword_type_specifier(const lex::keyword & keyword) : keyword(keyword) {}
+            keyword_type_specifier(lex::keyword && keyword) : keyword(keyword) {}
+
+            virtual void visit(ast_visitor &visitor) override;
         };
 
         struct expression;
@@ -273,15 +286,15 @@ namespace k::parse {
 
 
         struct cast_expr : public unary_expression {
-            ast::type_specifier type;
+            std::shared_ptr<ast::type_specifier> type;
 
             cast_expr(const cast_expr&) = default;
             cast_expr(cast_expr&&) = default;
 
             virtual ~cast_expr() = default;
 
-            cast_expr(const ast::type_specifier& type, const expr_ptr &expr) : unary_expression(expr), type(type) {}
-            cast_expr(ast::type_specifier&& type, expr_ptr &&expr) : unary_expression(expr), type(type) {}
+            cast_expr(const std::shared_ptr<ast::type_specifier>& type, const expr_ptr &expr) : unary_expression(expr), type(type) {}
+            cast_expr(std::shared_ptr<ast::type_specifier>&& type, expr_ptr &&expr) : unary_expression(expr), type(type) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -393,14 +406,14 @@ namespace k::parse {
         struct variable_decl : public declaration, public statement {
             std::vector <lex::keyword> specifiers;
             lex::identifier name;
-            type_specifier type;
+            std::shared_ptr<ast::type_specifier> type;
             expr_ptr init;
 
             variable_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
-                          const type_specifier &type, expr_ptr init = nullptr) :
+                          const std::shared_ptr<ast::type_specifier> &type, expr_ptr init = nullptr) :
                     specifiers(specifiers), name(name), type(type), init(init) {}
 
-            variable_decl(std::vector <lex::keyword> &&specifiers, lex::identifier &&name, type_specifier &&type, expr_ptr init) :
+            variable_decl(std::vector <lex::keyword> &&specifiers, lex::identifier &&name, std::shared_ptr<ast::type_specifier> &&type, expr_ptr init) :
                     specifiers(specifiers), name(name), type(type), init(init) {}
 
             virtual void visit(ast_visitor &visitor) override;
@@ -409,14 +422,14 @@ namespace k::parse {
         struct parameter_spec : public ast_node {
             std::vector <lex::keyword> specifiers;
             std::optional <lex::identifier> name;
-            type_specifier type;
+            std::shared_ptr<ast::type_specifier> type;
 
             parameter_spec(const std::vector <lex::keyword> &specifiers, const std::optional <lex::identifier> &name,
-                           const type_specifier &type) :
+                           const std::shared_ptr<ast::type_specifier> &type) :
                     specifiers(specifiers), name(name), type(type) {}
 
             parameter_spec(std::vector <lex::keyword> &&specifiers, std::optional <lex::identifier> &&name,
-                           type_specifier &&type) :
+                           std::shared_ptr<ast::type_specifier> &&type) :
                     specifiers(specifiers), name(name), type(type) {}
 
             virtual void visit(ast_visitor &visitor) override;
@@ -425,17 +438,17 @@ namespace k::parse {
         struct function_decl : public declaration {
             std::vector <lex::keyword> specifiers;
             lex::identifier name;
-            std::optional <type_specifier> type;
+            std::shared_ptr<ast::type_specifier> type;
             std::vector <parameter_spec> params;
             std::optional <block_statement> content;
 
             function_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
-                          const std::optional <type_specifier> &type, const std::vector <parameter_spec> &params,
+                          const std::shared_ptr<ast::type_specifier> &type, const std::vector <parameter_spec> &params,
                           const std::optional <block_statement> &content) :
                     specifiers(specifiers), name(name), type(type), params(params), content(content) {}
 
             function_decl(std::vector <lex::keyword> &&specifiers, lex::identifier &&name,
-                          std::optional <type_specifier> &&type, std::vector <parameter_spec> &&params,
+                          std::shared_ptr<ast::type_specifier> &&type, std::vector <parameter_spec> &&params,
                           std::optional <block_statement> &&content) :
                     specifiers(specifiers), name(name), type(type), params(params), content(content) {}
 
@@ -468,7 +481,9 @@ namespace k::parse {
         virtual void visit_unit(ast::unit &) = 0;
         virtual void visit_import(ast::import &) = 0;
 
-        virtual void visit_type_specifier(ast::type_specifier &) = 0;
+        virtual void visit_identified_type_specifier(ast::identified_type_specifier &) = 0;
+        virtual void visit_keyword_type_specifier(ast::keyword_type_specifier &) = 0;
+
         virtual void visit_parameter_specifier(ast::parameter_spec &) = 0;
 
         virtual void visit_qualified_identifier(ast::qualified_identifier &) = 0;
@@ -505,7 +520,9 @@ namespace k::parse {
         void visit_unit(ast::unit &) override;
         void visit_import(ast::import &) override;
 
-        void visit_type_specifier(ast::type_specifier &) override;
+        void visit_identified_type_specifier(ast::identified_type_specifier &) override;
+        void visit_keyword_type_specifier(ast::keyword_type_specifier &) override;
+
         void visit_parameter_specifier(ast::parameter_spec &) override;
         void visit_qualified_identifier(ast::qualified_identifier &) override;
 

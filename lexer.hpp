@@ -79,7 +79,14 @@ namespace k::lex {
             ABSTRACT,
             FINAL,
             THIS,
-            RETURN
+            RETURN,
+            BYTE,
+            CHAR,
+            SHORT,
+            INT,
+            LONG,
+            FLOAT,
+            DOUBLE
             /* TODO add new lexeme definition here. */
         };
 
