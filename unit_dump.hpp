@@ -189,9 +189,7 @@ public:
     }
 
     void dump_expression(expression& expr) {
-        if(auto e = dynamic_cast<unresolved_variable_expression*>(&expr)) {
-            dump_unresolved_variable_expression(*e);
-        } else if(auto e = dynamic_cast<variable_expression*>(&expr)) {
+        if(auto e = dynamic_cast<variable_expression*>(&expr)) {
             dump_variable_expression(*e);
         } else if(auto e = dynamic_cast<addition_expression*>(&expr)) {
             dump_addition(*e);
@@ -220,12 +218,12 @@ public:
         }
     }
 
-    void dump_unresolved_variable_expression(unresolved_variable_expression& expr) {
-        _stm << "<<unresolved-var-expr:" << expr.type_id().to_string() << ">>";
-    }
-
-    void dump_variable_expression(variable_expression& ) {
-        _stm << "<<var-expr:>>";
+    void dump_variable_expression(variable_expression& expr) {
+        if(expr.is_resolved()) {
+            _stm << "<<var-expr:" << expr.get_variable_def()->get_name() << ">>";
+        } else {
+            _stm << "<<unresolved-var-expr:" << expr.get_var_name().to_string() << ">>";
+        }
     }
 
     void dump_addition(addition_expression& expr) {

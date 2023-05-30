@@ -294,7 +294,7 @@ namespace k::parse {
         for(auto ident : expr.qident.names){
             idents.push_back(ident.content);
         }
-        _expr = unit::unresolved_variable_expression::from_identifier(unit::name(has_prefix, std::move(idents)));
+        _expr = unit::variable_expression::from_identifier(unit::name(has_prefix, std::move(idents)));
     }
 
     void ast_unit_visitor::visit_comma_expr(ast::expr_list_expr &) {

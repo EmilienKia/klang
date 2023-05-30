@@ -115,6 +115,26 @@ public:
 };
 
 
+/**
+ * Base class for all language construction.
+ */
+class element : public std::enable_shared_from_this<element>
+{
+protected:
+    virtual ~element() = default;
+
+public:
+    template<typename T>
+    std::shared_ptr<T> shared_as() {
+        return std::dynamic_pointer_cast<T>(shared_from_this());
+    }
+
+    template<typename T>
+    std::shared_ptr<const T> shared_as() const {
+        return std::dynamic_pointer_cast<T>(shared_from_this());
+    }
+
+};
 
 
 /**
@@ -124,7 +144,6 @@ class variable_declaration
 {
 public:
     virtual const std::string& get_name() const = 0;
-
     virtual std::shared_ptr<type> get_type() const = 0;
 
     virtual std::shared_ptr<expression> get_init_expr() const = 0;
@@ -161,11 +180,6 @@ public:
         return _expression;
     }
 
-    virtual variable_definition& set_name(const std::string& name) {
-        _name = name;
-        return *this;
-    }
-
     virtual variable_definition& set_type(std::shared_ptr<type> type) {
         _type = type;
         return *this;
@@ -175,6 +189,7 @@ public:
         _expression = init_expr;
         return *this;
     }
+
 };
 
 
@@ -187,9 +202,9 @@ class variable_holder
 public:
     virtual std::shared_ptr<variable_definition> append_variable(const std::string& name) =0;
 
-    // virtual std::shared_ptr<variable_declaration> get_variable(const std::string& name) =0;
+    virtual std::shared_ptr<variable_definition> get_variable(const std::string& name) =0;
 
-    // virtual std::shared_ptr<variable_declaration> lookup_variable(const std::string& name) =0;
+    virtual std::shared_ptr<variable_definition> lookup_variable(const std::string& name) =0;
 };
 
 
@@ -264,7 +279,7 @@ public:
 /**
  * Base class for all expressions.
  */
-class expression : public std::enable_shared_from_this<expression>
+class expression : public element
 {
 protected:
     /** Statement owning the expression. */
@@ -274,20 +289,24 @@ protected:
 
     virtual ~expression() = default;
 
+
+    friend class expression_statement;
+    friend class return_statement;
     void set_statement(const std::shared_ptr<statement> &statement) {
         _statement = statement;
     }
 
     friend class binary_expression;
-
     void set_parent_expression(const std::shared_ptr<expression> &expression) {
         _parent_expression = expression;
     }
 
-
 public:
     std::shared_ptr<statement> get_statement() { return _statement; };
     std::shared_ptr<const statement> get_statement() const { return _statement; };
+
+    std::shared_ptr<statement> find_statement() { return _statement ? _statement : _parent_expression ? _parent_expression->find_statement() : nullptr; };
+    std::shared_ptr<const statement> find_statement() const { return _statement ? _statement : _parent_expression ? _parent_expression->find_statement() : nullptr; };
 
     std::shared_ptr<expression> get_parent_expression() { return _parent_expression; };
     std::shared_ptr<const expression> get_parent_expression() const { return _parent_expression; };
@@ -344,23 +363,30 @@ public:
 class variable_expression : public expression
 {
 protected:
-public:
-};
+    // Name of the variable when not resolved.
+    name _name;
 
-class unresolved_variable_expression : public variable_expression
-{
-protected:
-    name _type_id;
+    std::shared_ptr<variable_definition> _var;
 
-    unresolved_variable_expression(const name& type_id): _type_id(type_id) {}
+    variable_expression(const name& name): _name(name) {}
+    variable_expression(const std::shared_ptr<variable_definition>& var): _var(var) {}
 
 public:
     static std::shared_ptr<variable_expression> from_string(const std::string& type_name);
     static std::shared_ptr<variable_expression> from_identifier(const name& type_id);
 
-    const name& type_id() const {return _type_id;}
-};
+    const name& get_var_name() const {return _name;}
 
+    std::shared_ptr<variable_definition> get_variable_def() const {
+        return _var;
+    }
+
+    bool is_resolved() const {return (bool)_var;}
+
+    void resolve(std::shared_ptr<variable_definition> var) {
+        _var = var;
+    }
+};
 
 
 
@@ -378,15 +404,15 @@ protected:
     binary_expression(const std::shared_ptr<expression> &leftExpr, const std::shared_ptr<expression> &rightExpr)
             : _left_expr(leftExpr), _right_expr(rightExpr)
     {
-        _left_expr->set_parent_expression(shared_from_this());
-        _right_expr->set_parent_expression(shared_from_this());
+        _left_expr->set_parent_expression(shared_as<expression>());
+        _right_expr->set_parent_expression(shared_as<expression>());
     }
 
     void assign(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         _left_expr = left_expr;
         _right_expr = right_expr;
-        _left_expr->set_parent_expression(shared_from_this());
-        _right_expr->set_parent_expression(shared_from_this());
+        _left_expr->set_parent_expression(shared_as<expression>());
+        _right_expr->set_parent_expression(shared_as<expression>());
     }
 
 public:
@@ -540,10 +566,10 @@ public:
     }
 };
 
-    /**
+/**
  * Base statement class
  */
-class statement : public std::enable_shared_from_this<statement>
+class statement : public element
 {
 protected:
     /** Block owning the statement. */
@@ -577,6 +603,7 @@ public:
 
     return_statement& set_expression(std::shared_ptr<expression> expr) {
         _expression = expr;
+        _expression->set_statement(shared_as<statement>());
         return *this;
     }
 };
@@ -587,16 +614,27 @@ public:
  */
 class expression_statement : public statement
 {
-protected:
-    friend class block;
-
-    std::shared_ptr<expression> _expression;
+private:
+    expression_statement(const std::shared_ptr<block>& block, const std::shared_ptr<expression>& expr) :
+            statement(block), _expression(expr) {}
 
     explicit expression_statement(const std::shared_ptr<block>& block) :
             statement(block) {}
 
-    expression_statement(const std::shared_ptr<block>& block, const std::shared_ptr<expression>& expr) :
-            statement(block), _expression(expr) {}
+    std::shared_ptr<expression> _expression;
+
+protected:
+
+    friend class block;
+    static std::shared_ptr<expression_statement> make_shared(const std::shared_ptr<block>& block) {
+        return std::shared_ptr<expression_statement>(new expression_statement(block));
+    }
+
+    static std::shared_ptr<expression_statement> make_shared(const std::shared_ptr<block>& block, const std::shared_ptr<expression>& expr) {
+        std::shared_ptr<expression_statement> res(new expression_statement(block, expr));
+        expr->set_statement(res);
+        return res;
+    }
 
 public:
     std::shared_ptr<expression> get_expression() { return _expression; };
@@ -604,6 +642,7 @@ public:
 
     expression_statement& set_expression(std::shared_ptr<expression> expr) {
         _expression = std::move(expr);
+        _expression->set_statement(shared_as<statement>());
         return *this;
     }
 };
@@ -687,6 +726,10 @@ public:
         return _statements;
     }
 
+    std::vector<std::shared_ptr<statement>>& get_statements() {
+        return _statements;
+    }
+
     std::shared_ptr<return_statement> append_return_statement();
 
     std::shared_ptr<expression_statement> append_expression_statement();
@@ -697,6 +740,9 @@ public:
 
     std::shared_ptr<variable_definition> append_variable(const std::string& name) override;
 
+    std::shared_ptr<variable_definition> get_variable(const std::string& name) override;
+
+    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) override;
 };
 
 
@@ -704,7 +750,7 @@ public:
 /**
  * Element part of a namespace.
  */
-class ns_element {
+class ns_element : public element {
 protected:
     /** Unit this element is declared in. */
     unit& _unit;
@@ -765,7 +811,7 @@ public:
     }
 };
 
-class function : public ns_element, public std::enable_shared_from_this<function> {
+class function : public ns_element {
 protected:
 
     friend class ns;
@@ -801,7 +847,7 @@ public:
 };
 
 
-class global_variable_definition : public ns_element, public variable_definition, public std::enable_shared_from_this<global_variable_definition> {
+class global_variable_definition : public ns_element, public variable_definition {
 protected:
 
     friend class ns;
@@ -815,7 +861,7 @@ public:
 };
 
 
-class ns : public ns_element, public variable_holder, public std::enable_shared_from_this<ns> {
+class ns : public ns_element, public variable_holder {
 private:
     ns(unit& unit, std::shared_ptr<ns> parent, const std::string& name);
 
@@ -834,7 +880,6 @@ protected:
 
     /** Map of all vars defined in this namespace. */
     std::map<std::string, std::shared_ptr<global_variable_definition>> _vars;
-
 
     static std::shared_ptr<ns> create(unit& unit, std::shared_ptr<ns> parent, const std::string& name);
 
@@ -888,11 +933,15 @@ public:
     std::shared_ptr<function> define_function(const std::string& name);
 
     std::shared_ptr<variable_definition> append_variable(const std::string &name) override;
+
+    std::shared_ptr<variable_definition> get_variable(const std::string& name) override;
+
+    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) override;
 };
 
 
 
-class unit {
+class unit : public element {
 protected:
 
     /** Unit name */
@@ -957,7 +1006,6 @@ public:
      * @return Namespace, null if not found
      */
     std::shared_ptr<const ns> find_namespace(std::string_view name) const;
-
 
 };
 

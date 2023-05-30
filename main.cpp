@@ -8,6 +8,7 @@
 #include "unit.hpp"
 #include "ast_unit_visitor.hpp"
 #include "unit_dump.hpp"
+#include "unit_var_resolver.hpp"
 
 using namespace k;
 
@@ -45,11 +46,19 @@ int main() {
     k::parse::ast::unit ast_unit = parser.parse_unit();
 
     k::parse::dump::ast_dump_visitor visit(std::cout);
+    std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
     visit.visit_unit(ast_unit);
+
+    k::unit::dump::unit_dump unit_dump(std::cout);
 
     k::unit::unit unit;
     parse::ast_unit_visitor::visit(ast_unit, unit);
-    k::unit::dump::unit_dump unit_dump(std::cout);
+    std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
+    unit_dump.dump(unit);
+
+    k::unit::resolvers::variable_resolver var_resolver(unit);
+    var_resolver.resolve();
+    std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
     unit_dump.dump(unit);
 
     return 0;

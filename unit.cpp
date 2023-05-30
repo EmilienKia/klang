@@ -108,16 +108,16 @@ std::shared_ptr<value_expression> value_expression::from_literal(const k::lex::a
 }
 
 //
-// Unresolved variable expression
+// Variable expression
 //
-std::shared_ptr<variable_expression> unresolved_variable_expression::from_string(const std::string& type_name)
+std::shared_ptr<variable_expression> variable_expression::from_string(const std::string& name)
 {
-    return std::shared_ptr<variable_expression>(new unresolved_variable_expression(name(type_name)));
+    return std::shared_ptr<variable_expression>(new variable_expression(name));
 }
 
-std::shared_ptr<variable_expression> unresolved_variable_expression::from_identifier(const name& type_id)
+std::shared_ptr<variable_expression> variable_expression::from_identifier(const name& name)
 {
-    return std::shared_ptr<variable_expression>(new unresolved_variable_expression(type_id));
+    return std::shared_ptr<variable_expression>(new variable_expression(name));
 }
 
 //
@@ -143,7 +143,7 @@ std::shared_ptr<return_statement> block::append_return_statement()
 
 std::shared_ptr<expression_statement> block::append_expression_statement()
 {
-    std::shared_ptr<expression_statement> stmt{ new expression_statement(std::dynamic_pointer_cast<block>(shared_from_this())) };
+    auto stmt = expression_statement::make_shared(std::dynamic_pointer_cast<block>(shared_from_this()));
     _statements.push_back(stmt);
     return stmt;
 }
@@ -155,7 +155,7 @@ std::shared_ptr<expression_statement> block::append_expression_statement(const s
         // TODO add throwing expression.
     }
 
-    std::shared_ptr<expression_statement> stmt{ new expression_statement(std::dynamic_pointer_cast<block>(shared_from_this()), expr) };
+    auto stmt = expression_statement::make_shared(std::dynamic_pointer_cast<block>(shared_from_this()), expr);
     _statements.push_back(stmt);
     return stmt;
 }
@@ -180,6 +180,32 @@ std::shared_ptr<variable_definition> block::append_variable(const std::string& n
     return var;
 }
 
+std::shared_ptr<variable_definition> block::get_variable(const std::string& name)
+{
+    auto it = _vars.find(name);
+    if(it != _vars.end()) {
+        return it->second;
+    } else {
+        return {};
+    }
+}
+
+std::shared_ptr<variable_definition> block::lookup_variable(const std::string& name) {
+    // TODO add qualified name lookup
+    if(auto var = get_variable(name)) {
+        return var;
+    }
+
+    if(auto block = get_block()) {
+        // Has a parent block, look at it
+        return block->lookup_variable(name);
+    } else if(auto ns = _function->parent_ns()) {
+        // Else base block of a function, look at the enclosing scope (ns)
+        return ns->lookup_variable(name);
+    }
+
+    return {};
+}
 
 //
 // Parameter
@@ -209,7 +235,7 @@ function::function(std::shared_ptr<ns> ns, const std::string& name) :
 
 std::shared_ptr<block> function::get_block() {
     if(!_block) {
-        _block = block::for_function(shared_from_this());
+        _block = block::for_function(shared_as<function>());
     }
     return _block;
 }
@@ -292,7 +318,7 @@ std::shared_ptr<ns> ns::get_child_namespace(const std::string& child_name)
     auto it = _ns.find(child_name);
     std::shared_ptr<ns> namesp;
     if(it==_ns.end()) {
-        namesp = std::shared_ptr<ns>(new ns(_unit, shared_from_this(), child_name));
+        namesp = std::shared_ptr<ns>(new ns(_unit, shared_as<ns>(), child_name));
         _ns.insert({child_name, namesp});
         _children.push_back(namesp);
     } else {
@@ -313,7 +339,7 @@ std::shared_ptr<const ns> ns::get_child_namespace(const std::string& child_name)
 
 std::shared_ptr<function> ns::define_function(const std::string& name)
 {
-    std::shared_ptr<ns> this_ns = this->shared_from_this();
+    std::shared_ptr<ns> this_ns = shared_as<ns>();
     std::shared_ptr<function> func {new function(this_ns, name)};
     _children.push_back(func);
     return func;
@@ -328,6 +354,29 @@ std::shared_ptr<variable_definition> ns::append_variable(const std::string &name
     _vars[name] = var;
     _children.push_back(var);
     return var;
+}
+
+std::shared_ptr<variable_definition> ns::get_variable(const std::string& name) {
+    auto it = _vars.find(name);
+    if(it!=_vars.end()) {
+        return it->second;
+    } else {
+        return {};
+    }
+}
+
+std::shared_ptr<variable_definition> ns::lookup_variable(const std::string& name) {
+    // TODO add qualified name lookup
+    if(auto var = get_variable(name)) {
+        return var;
+    }
+
+    if(auto ns = parent_ns() ) {
+        // If has a parent namespace, look at it
+        return ns->lookup_variable(name);
+    }
+
+    return {};
 }
 
 //
