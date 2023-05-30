@@ -345,6 +345,14 @@ public:
     explicit value_expression(const std::string& str) : _value(str) {}
     explicit value_expression(std::string&& str) : _value(std::move(str)) {}
 
+    bool is_litteral() const {
+        return _literal.has_value();
+    }
+
+    const lex::literal& get_litteral()const {
+        return _literal.value();
+    }
+
     static std::shared_ptr<value_expression> from_literal(const k::lex::any_literal& literal);
 
     template<typename T>

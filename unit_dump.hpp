@@ -191,6 +191,8 @@ public:
     void dump_expression(expression& expr) {
         if(auto e = dynamic_cast<variable_expression*>(&expr)) {
             dump_variable_expression(*e);
+        } else if(auto e = dynamic_cast<value_expression*>(&expr)) {
+            dump_value_expression(*e);
         } else if(auto e = dynamic_cast<addition_expression*>(&expr)) {
             dump_addition(*e);
         } else if(auto e = dynamic_cast<substraction_expression*>(&expr)) {
@@ -223,6 +225,15 @@ public:
             _stm << "<<var-expr:" << expr.get_variable_def()->get_name() << ">>";
         } else {
             _stm << "<<unresolved-var-expr:" << expr.get_var_name().to_string() << ">>";
+        }
+    }
+
+    void dump_value_expression(value_expression& expr) {
+        if(expr.is_litteral()) {
+            _stm << "<<lit-value-expr:" << expr.get_litteral().content << ">>";
+        } else {
+            _stm << "<<val-value-expr:TODO" << ">>";
+            // TODO
         }
     }
 
