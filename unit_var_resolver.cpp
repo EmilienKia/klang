@@ -4,8 +4,6 @@
 
 #include "unit_var_resolver.hpp"
 
-#include <ranges>
-
 namespace k::unit::resolvers {
 
 void variable_resolver::resolve()
