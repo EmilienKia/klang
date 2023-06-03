@@ -459,7 +459,7 @@ namespace ANY_OF_NS {
          * Construct an empty any_of_opt by explicitly pass a nullptr.
          * @param A nullptr.
         */
-        constexpr any_of_opt(nullptr_t) noexcept: any_of_opt() {}
+        any_of_opt(std::nullptr_t) noexcept: any_of_opt() {}
 
         /**
          * @brief Conversion constructor.
@@ -534,7 +534,7 @@ namespace ANY_OF_NS {
          * @param A nullptr.
          * @return *this
         */
-        constexpr self_t& operator=(nullptr_t) noexcept {
+        constexpr self_t& operator=(std::nullptr_t) noexcept {
             _variant = {};
             return *this;
         }

@@ -24,7 +24,7 @@ It compute_if_absent(Map& map, const K& key, F func) {
 
 
 
-template<typename Map, typename K = std::function<typename Map::mapped_type()> , typename T = Map::mapped_type, typename It = Map::iterator>
+template<typename Map, typename K = std::function<typename Map::mapped_type()> , typename T = typename Map::mapped_type, typename It = typename Map::iterator>
 It find_put_if_absent(Map& map, const K& key, T&& val) {
     It it = map.find(key);
     if ( it == map.end() ) {

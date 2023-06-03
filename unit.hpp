@@ -323,7 +323,7 @@ class value_expression : public expression
 {
 public:
     typedef std::variant<std::monostate,
-        nullptr_t, bool,
+        std::nullptr_t, bool,
         short, unsigned short,
         int, unsigned int,
         long, unsigned long,
