@@ -10,15 +10,10 @@
 namespace k::unit::dump {
 
 template<typename OSTM>
-class unit_dump {
+class unit_dump  : public default_element_visitor {
     OSTM& _stm;
     size_t off = 0;
 public:
-
-    static void dump(OSTM& stm, const k::unit::unit& unit) {
-        k::parse::dump::ast_dump_visitor visit(stm);
-        dump(unit);
-    }
 
     unit_dump(OSTM& stm) : _stm(stm) {}
 
@@ -64,43 +59,34 @@ protected:
     }
 
 public:
-    void dump(k::unit::unit& unit) {
-        dump_unit(unit);
+    void dump(unit& unit) {
+        visit_unit(unit);
     }
 
-    void dump_unit(k::unit::unit& unit) {
+    void visit_unit(unit& unit) override {
         // Module name:
         prefix() << "unit: " << unit.get_unit_name().to_string() << std::endl;
 
         // TODO Imports
-
-        dump_namespace(*unit.get_root_namespace());
+        unit.get_root_namespace()->accept(*this);
     }
 
-    void dump_ns_element(std::shared_ptr<ns_element> elem) {
-        if(auto ns = std::dynamic_pointer_cast<k::unit::ns>(elem)) {
-            dump_namespace(*ns);
-        } else if(auto func = std::dynamic_pointer_cast<k::unit::function>(elem)) {
-            dump_function(*func);
-        } else if(auto var = std::dynamic_pointer_cast<k::unit::variable_definition>(elem)) {
-            dump_variable_definition(*var);
-        } else {
-            // Unsupported ns element
-        }
+    void visit_ns_element(ns_element& elem) override {
+        prefix() << "<<unknown ns element>>" << std::endl;
     }
 
-    void dump_namespace(k::unit::ns& ns) {
+    void visit_namespace(ns& ns) override {
         prefix() << "namespace '" << ns.get_name() << "' {" << std::endl;
         {
             auto pf = prefix_inc();
             for(auto& child : ns.get_children()) {
-                dump_ns_element(child);
+                child->accept(*this);
             }
         }
         prefix() << "} // " << ns.get_name() << std::endl;
     }
 
-    void dump_function(k::unit::function& func) {
+    void visit_function(function& func) override {
         prefix() << "function '" << func.name() << "' (";
         for(size_t idx = 0; idx<func.parameters().size(); idx++) {
             if(idx!=0) {
@@ -113,15 +99,20 @@ public:
         _stm << ") : ";
         dump_type(*func.return_type());
         _stm << std::endl;
-        dump_block(*func.get_block());
+        func.get_block()->accept(*this);
     }
 
-    void  dump_variable_definition(k::unit::variable_definition& var) {
+    void visit_global_variable_definition(global_variable_definition& var) override {
+        visit_variable_definition(var);
+    }
+
+    void visit_variable_definition(k::unit::variable_definition& var) {
         prefix() << "variable '" << var.get_name() << "' : ";
         dump_type(*var.get_type());
         if(auto init = var.get_init_expr()) {
             _stm << " = ";
             // TODO dump init expression
+            init->accept(*this);
         }
         _stm << std::endl;
     }
@@ -146,81 +137,42 @@ public:
         _stm << "<<unresolved:" << type.type_id().to_string() << ">>";
     }
 
-    void dump_statement(statement& stmt) {
-        if(auto blk = dynamic_cast<block*>(&stmt)) {
-            dump_block(*blk);
-        } else if(auto var = dynamic_cast<variable_definition*>(&stmt)) {
-            dump_variable_definition(*var);
-        } else if(auto ret = dynamic_cast<return_statement*>(&stmt)) {
-            dump_return_statement(*ret);
-        } else if(auto expr = dynamic_cast<expression_statement*>(&stmt)) {
-            dump_expression_statement(*expr);
-        } else {
-            prefix() << "<<unsupported statement type>>" << std::endl;
-            // Unsupported statement
-        }
+    void visit_statement(statement& stmt) override {
+        prefix() << "<<unsupported statement type>>" << std::endl;
     }
 
-    void dump_return_statement(return_statement& stmt) {
+    void visit_return_statement(return_statement& stmt) override {
         prefix() << "return ";
         if(auto expr = stmt.get_expression()) {
-            dump_expression(*expr);
+            expr->accept(*this);
         }
         _stm << ";" << std::endl;
     }
 
-    void dump_block(block& blk) {
+    void visit_block(block& blk) override {
         prefix() << "{" << std::endl;
         {
             auto pf = prefix_inc();
             for (auto &child: blk.get_statements()) {
-                dump_statement(*child);
+                child->accept(*this);
             }
         }
         prefix() << "}" << std::endl;
     }
 
-    void dump_expression_statement(expression_statement& stmt) {
+    void visit_expression_statement(expression_statement& stmt) override {
         prefix();
         if(auto expr = stmt.get_expression()) {
-            dump_expression(*expr);
+            expr->accept(*this);
         }
         _stm << ";" << std::endl;
     }
 
-    void dump_expression(expression& expr) {
-        if(auto e = dynamic_cast<variable_expression*>(&expr)) {
-            dump_variable_expression(*e);
-        } else if(auto e = dynamic_cast<value_expression*>(&expr)) {
-            dump_value_expression(*e);
-        } else if(auto e = dynamic_cast<addition_expression*>(&expr)) {
-            dump_addition(*e);
-        } else if(auto e = dynamic_cast<substraction_expression*>(&expr)) {
-            dump_substraction(*e);
-        } else if(auto e = dynamic_cast<multiplication_expression*>(&expr)) {
-            dump_multiplication(*e);
-        } else if(auto e = dynamic_cast<division_expression*>(&expr)) {
-            dump_division(*e);
-        } else if(auto e = dynamic_cast<modulo_expression*>(&expr)) {
-            dump_modulo(*e);
-        } else if(auto e = dynamic_cast<assignation_expression*>(&expr)) {
-            dump_assignation(*e);
-        } else if(auto e = dynamic_cast<additition_assignation_expression*>(&expr)) {
-            dump_addition_assignation(*e);
-        } else if(auto e = dynamic_cast<substraction_assignation_expression*>(&expr)) {
-            dump_substraction_assignation(*e);
-        } else if(auto e = dynamic_cast<multiplication_assignation_expression*>(&expr)) {
-            dump_multiplication_assignation(*e);
-        } else if(auto e = dynamic_cast<division_assignation_expression*>(&expr)) {
-            dump_division_assignation(*e);
-        } else if(auto e = dynamic_cast<modulo_assignation_expression*>(&expr)) {
-            dump_modulo_assignation(*e);
-        } else {
-            _stm << "<<unknown-expr>>";
-        }
+    void visit_expression(expression& expr) {
+        _stm << "<<unknown-expr>>";
     }
 
-    void dump_variable_expression(variable_expression& expr) {
+    void visit_variable_expression(variable_expression& expr) override {
         if(expr.is_resolved()) {
             _stm << "<<var-expr:" << expr.get_variable_def()->get_name() << ">>";
         } else {
@@ -228,7 +180,7 @@ public:
         }
     }
 
-    void dump_value_expression(value_expression& expr) {
+    void visit_value_expression(value_expression& expr) override {
         if(expr.is_litteral()) {
             _stm << "<<lit-value-expr:" << expr.get_litteral().content << ">>";
         } else {
@@ -237,70 +189,70 @@ public:
         }
     }
 
-    void dump_addition(addition_expression& expr) {
-        dump_expression(*expr.left());
+    void visit_addition_expression(addition_expression& expr) override {
+        expr.left()->accept(*this);
         _stm << " + ";
-        dump_expression(*expr.right());
+        expr.right()->accept(*this);
     }
 
-    void dump_substraction(substraction_expression& expr) {
-        dump_expression(*expr.left());
+    void visit_substraction_expression(substraction_expression& expr) override {
+        expr.left()->accept(*this);
         _stm << " - ";
-        dump_expression(*expr.right());
+        expr.right()->accept(*this);
     }
 
-    void dump_multiplication(multiplication_expression& expr) {
-        dump_expression(*expr.left());
+    void visit_multiplication_expression(multiplication_expression& expr) override {
+        expr.left()->accept(*this);
         _stm << " * ";
-        dump_expression(*expr.right());
+        expr.right()->accept(*this);
     }
 
-    void dump_division(division_expression& expr) {
-        dump_expression(*expr.left());
+    void visit_division_expression(division_expression& expr) override {
+        expr.left()->accept(*this);
         _stm << " / ";
-        dump_expression(*expr.right());
+        expr.right()->accept(*this);
     }
 
-    void dump_modulo(modulo_expression& expr) {
-        dump_expression(*expr.left());
+    void visit_modulo_expression(modulo_expression& expr) override {
+        expr.left()->accept(*this);
         _stm << " % ";
-        dump_expression(*expr.right());
+        expr.right()->accept(*this);
     }
 
-    void dump_assignation(assignation_expression& expr) {
-        dump_expression(*expr.left());
+    void visit_assignation_expression(assignation_expression& expr) override {
+        expr.left()->accept(*this);
         _stm << " = ";
-        dump_expression(*expr.right());
+        expr.right()->accept(*this);
     }
 
-    void dump_addition_assignation(additition_assignation_expression& expr) {
-        dump_expression(*expr.left());
+    void visit_addition_assignation_expression(additition_assignation_expression& expr) override {
+        expr.left()->accept(*this);
         _stm << " += ";
-        dump_expression(*expr.right());
+        expr.right()->accept(*this);
     }
 
-    void dump_substraction_assignation(substraction_assignation_expression& expr) {
-        dump_expression(*expr.left());
+    void visit_substraction_assignation_expression(substraction_assignation_expression& expr) override {
+        expr.left()->accept(*this);
         _stm << " -= ";
-        dump_expression(*expr.right());
+        expr.right()->accept(*this);
     }
 
-    void dump_multiplication_assignation(multiplication_assignation_expression& expr) {
-        dump_expression(*expr.left());
+    void visit_multiplication_assignation_expression(multiplication_assignation_expression& expr) override {
+        expr.left()->accept(*this);
         _stm << " *= ";
-        dump_expression(*expr.right());
+        expr.right()->accept(*this);
     }
 
-    void dump_division_assignation(division_assignation_expression& expr) {
-        dump_expression(*expr.left());
+    void visit_division_assignation_expression(division_assignation_expression& expr) override {
+        expr.left()->accept(*this);
         _stm << " /= ";
-        dump_expression(*expr.right());
+        expr.right()->accept(*this);
     }
 
-    void dump_modulo_assignation(modulo_assignation_expression& expr) {
-        dump_expression(*expr.left());
+    void visit_modulo_assignation_expression(modulo_assignation_expression& expr) override {
+        expr.left()->accept(*this);
         _stm << " %= ";
-        dump_expression(*expr.right());
+        expr.right()->accept(*this);
     }
 };
 

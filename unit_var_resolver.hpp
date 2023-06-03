@@ -13,7 +13,7 @@ namespace k::unit::resolvers {
  * Unit variable resolver
  * This helper class will resolve variable usage to their definitions.
  */
-class variable_resolver {
+class variable_resolver : public default_element_visitor {
 protected:
     unit& _unit;
 
@@ -27,24 +27,23 @@ public:
     void resolve();
 
 protected:
-    void visit_unit(unit&);
+    void visit_unit(unit&) override;
 
-    void visit_ns_element(ns_element&);
-    void visit_namespace(ns&);
-    void visit_global_variable_definition(global_variable_definition&);
-    void visit_function(function&);
+    void visit_ns_element(ns_element&) override;
+    void visit_namespace(ns&) override;
+    void visit_global_variable_definition(global_variable_definition&) override;
+    void visit_function(function&) override;
 
-    void visit_statement(statement&);
-    void visit_block(block&);
-    void visit_return_statement(return_statement&);
-    void visit_expression_statement(expression_statement&);
-    void visit_variable_statement(variable_statement&);
+    void visit_statement(statement&) override;
+    void visit_block(block&) override;
+    void visit_return_statement(return_statement&) override;
+    void visit_expression_statement(expression_statement&) override;
+    void visit_variable_statement(variable_statement&) override;
 
-    void visit_expression(expression&);
-    void visit_value_expression(value_expression&);
-    void visit_variable_expression(variable_expression&);
-    void visit_binary_expression(binary_expression&);
-
+    void visit_expression(expression&) override;
+    void visit_value_expression(value_expression&) override;
+    void visit_variable_expression(variable_expression&) override;
+    void visit_binary_expression(binary_expression&) override;
 
 };
 

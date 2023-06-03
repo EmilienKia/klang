@@ -99,8 +99,19 @@ const std::string& primitive_type::to_string()const {
 }
 
 //
+// Expression
+//
+void expression::accept(element_visitor& visitor) {
+    visitor.visit_expression(*this);
+}
+
+//
 // Value expression
 //
+
+void value_expression::accept(element_visitor& visitor) {
+    visitor.visit_value_expression(*this);
+}
 
 std::shared_ptr<value_expression> value_expression::from_literal(const k::lex::any_literal& literal)
 {
@@ -110,6 +121,10 @@ std::shared_ptr<value_expression> value_expression::from_literal(const k::lex::a
 //
 // Variable expression
 //
+void variable_expression::accept(element_visitor& visitor) {
+    visitor.visit_variable_expression(*this);
+}
+
 std::shared_ptr<variable_expression> variable_expression::from_string(const std::string& name)
 {
     return std::shared_ptr<variable_expression>(new variable_expression(name));
@@ -121,8 +136,126 @@ std::shared_ptr<variable_expression> variable_expression::from_identifier(const 
 }
 
 //
+// Binary expression
+//
+void binary_expression::accept(element_visitor& visitor) {
+    visitor.visit_binary_expression(*this);
+}
+
+//
+// Addition expression
+//
+void addition_expression::accept(element_visitor& visitor) {
+    visitor.visit_addition_expression(*this);
+}
+
+//
+// Substraction expression
+//
+void substraction_expression::accept(element_visitor& visitor) {
+    visitor.visit_substraction_expression(*this);
+}
+
+//
+// Multiplication expression
+//
+void multiplication_expression::accept(element_visitor& visitor) {
+    visitor.visit_multiplication_expression(*this);
+}
+
+//
+// Division expression
+//
+void division_expression::accept(element_visitor& visitor) {
+    visitor.visit_division_expression(*this);
+}
+
+//
+// Modulo expression
+//
+void modulo_expression::accept(element_visitor& visitor) {
+    visitor.visit_modulo_expression(*this);
+}
+
+//
+// Assignation expression
+//
+void assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_assignation_expression(*this);
+}
+
+
+//
+// Addition assignation expression
+//
+void additition_assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_addition_assignation_expression(*this);
+}
+
+//
+// Substraction assignation expression
+//
+void substraction_assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_substraction_assignation_expression(*this);
+}
+
+//
+// Multiplication assignation expression
+//
+void multiplication_assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_multiplication_assignation_expression(*this);
+}
+
+//
+// Division assignation expression
+//
+void division_assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_division_assignation_expression(*this);
+}
+
+//
+// Modulo assignation expression
+//
+void modulo_assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_modulo_assignation_expression(*this);
+}
+
+//
+// Statement
+//
+
+void statement::accept(element_visitor& visitor) {
+    visitor.visit_statement(*this);
+}
+
+//
+// Return statement
+//
+void return_statement::accept(element_visitor& visitor) {
+    visitor.visit_return_statement(*this);
+}
+
+//
+// Expression statement
+//
+void expression_statement::accept(element_visitor& visitor) {
+    visitor.visit_expression_statement(*this);
+}
+
+//
+// Variable statement
+//
+void variable_statement::accept(element_visitor& visitor) {
+    visitor.visit_variable_statement(*this);
+}
+
+//
 // Block
 //
+
+void block::accept(element_visitor& visitor) {
+    visitor.visit_block(*this);
+}
 
 std::shared_ptr<block> block::for_function(std::shared_ptr<function> func)
 {
@@ -208,6 +341,13 @@ std::shared_ptr<variable_definition> block::lookup_variable(const std::string& n
 }
 
 //
+// NS element
+//
+void ns_element::accept(element_visitor& visitor) {
+    visitor.visit_ns_element(*this);
+}
+
+//
 // Parameter
 //
 
@@ -231,6 +371,10 @@ function::function(std::shared_ptr<ns> ns, const std::string& name) :
         ns_element(ns->get_unit(), ns),
         _name(name)
 {
+}
+
+void function::accept(element_visitor& visitor) {
+    visitor.visit_function(*this);
 }
 
 std::shared_ptr<block> function::get_block() {
@@ -299,6 +443,9 @@ global_variable_definition::global_variable_definition(std::shared_ptr<ns> ns) :
 global_variable_definition::global_variable_definition(std::shared_ptr<ns> ns, const std::string &name) :
         ns_element(ns->get_unit(), ns), variable_definition(name) {}
 
+void global_variable_definition::accept(element_visitor& visitor) {
+    visitor.visit_global_variable_definition(*this);
+}
 
 //
 // Namespace
@@ -307,6 +454,10 @@ ns::ns(unit& unit, std::shared_ptr<ns> parent, const std::string& name) :
         ns_element(unit, std::move(parent)),
         _name(name)
 {
+}
+
+void ns::accept(element_visitor& visitor) {
+    visitor.visit_namespace(*this);
 }
 
 std::shared_ptr<ns> ns::create(unit& unit, std::shared_ptr<ns> parent, const std::string& name) {
@@ -388,6 +539,10 @@ unit::unit() :
 {
 }
 
+void unit::accept(element_visitor& visitor) {
+    visitor.visit_unit(*this);
+}
+
 std::shared_ptr<ns> unit::find_namespace(std::string_view name) {
 
     // TODO
@@ -405,6 +560,116 @@ std::shared_ptr<const ns> unit::find_namespace(std::string_view name) const
 
 //void unit::add_import(const std::string &import_name) {
 //}
+
+
+//
+// Default element visitor
+//
+
+void default_element_visitor::visit_element(element&) {
+
+}
+
+void default_element_visitor::visit_unit(unit&) {
+
+}
+
+void default_element_visitor::visit_ns_element(ns_element&) {
+
+}
+
+void default_element_visitor::visit_namespace(ns&) {
+
+}
+
+void default_element_visitor::visit_function(function&) {
+
+}
+
+void default_element_visitor::visit_global_variable_definition(global_variable_definition&) {
+
+}
+
+void default_element_visitor::visit_statement(statement&) {
+
+}
+
+void default_element_visitor::visit_block(block&) {
+
+}
+
+void default_element_visitor::visit_return_statement(return_statement&) {
+
+}
+
+void default_element_visitor::visit_expression_statement(expression_statement&) {
+
+}
+
+void default_element_visitor::visit_variable_statement(variable_statement&) {
+
+}
+
+void default_element_visitor::visit_expression(expression&) {
+
+}
+
+void default_element_visitor::visit_value_expression(value_expression&) {
+
+}
+
+void default_element_visitor::visit_variable_expression(variable_expression&) {
+
+}
+
+void default_element_visitor::visit_binary_expression(binary_expression&) {
+
+}
+
+void default_element_visitor::visit_addition_expression(addition_expression&) {
+
+}
+
+void default_element_visitor::visit_substraction_expression(substraction_expression&) {
+
+}
+
+void default_element_visitor::visit_multiplication_expression(multiplication_expression&) {
+
+}
+
+void default_element_visitor::visit_division_expression(division_expression&) {
+
+}
+
+void default_element_visitor::visit_modulo_expression(modulo_expression&) {
+
+}
+
+void default_element_visitor::visit_assignation_expression(assignation_expression&) {
+
+}
+
+void default_element_visitor::visit_addition_assignation_expression(additition_assignation_expression&) {
+
+}
+
+void default_element_visitor::visit_substraction_assignation_expression(substraction_assignation_expression&) {
+
+}
+
+void default_element_visitor::visit_multiplication_assignation_expression(multiplication_assignation_expression&) {
+
+}
+
+void
+default_element_visitor::visit_division_assignation_expression(division_assignation_expression&) {
+
+}
+
+void default_element_visitor::visit_modulo_assignation_expression(modulo_assignation_expression&) {
+
+}
 
 
 } // k::unit

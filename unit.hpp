@@ -114,6 +114,7 @@ public:
     }
 };
 
+class element_visitor;
 
 /**
  * Base class for all language construction.
@@ -133,6 +134,8 @@ public:
     std::shared_ptr<const T> shared_as() const {
         return std::dynamic_pointer_cast<T>(shared_from_this());
     }
+
+    virtual void accept(element_visitor& visitor) =0;
 
 };
 
@@ -302,6 +305,8 @@ protected:
     }
 
 public:
+    void accept(element_visitor& visitor) override;
+
     std::shared_ptr<statement> get_statement() { return _statement; };
     std::shared_ptr<const statement> get_statement() const { return _statement; };
 
@@ -338,6 +343,7 @@ protected:
     value_expression(const k::lex::any_literal& literal) : _literal(literal) {}
 
 public:
+    void accept(element_visitor& visitor) override;
 
     template<typename T>
     explicit value_expression(T val) : _value(val) {}
@@ -380,6 +386,8 @@ protected:
     variable_expression(const std::shared_ptr<variable_definition>& var): _var(var) {}
 
 public:
+    void accept(element_visitor& visitor) override;
+
     static std::shared_ptr<variable_expression> from_string(const std::string& type_name);
     static std::shared_ptr<variable_expression> from_identifier(const name& type_id);
 
@@ -424,6 +432,8 @@ protected:
     }
 
 public:
+    void accept(element_visitor& visitor) override;
+
     const std::shared_ptr<expression>& left() const {
         return _left_expr;
     }
@@ -447,6 +457,8 @@ protected:
     addition_expression() = default;
 
 public:
+    void accept(element_visitor& visitor) override;
+
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<addition_expression> expr{ new addition_expression()};
         expr->assign(left_expr, right_expr);
@@ -459,6 +471,9 @@ class substraction_expression : public binary_expression
 protected:
     substraction_expression() = default;
 public:
+    void accept(element_visitor& visitor) override;
+
+
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<substraction_expression> expr{ new substraction_expression()};
         expr->assign(left_expr, right_expr);
@@ -471,6 +486,8 @@ class multiplication_expression : public binary_expression
 protected:
     multiplication_expression() = default;
 public:
+    void accept(element_visitor& visitor) override;
+
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<multiplication_expression> expr{ new multiplication_expression()};
         expr->assign(left_expr, right_expr);
@@ -483,6 +500,8 @@ class division_expression : public binary_expression
 protected:
     division_expression() = default;
 public:
+    void accept(element_visitor& visitor) override;
+
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<division_expression> expr{ new division_expression()};
         expr->assign(left_expr, right_expr);
@@ -495,6 +514,8 @@ class modulo_expression : public binary_expression
 protected:
     modulo_expression() = default;
 public:
+    void accept(element_visitor& visitor) override;
+
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<modulo_expression> expr{ new modulo_expression()};
         expr->assign(left_expr, right_expr);
@@ -507,6 +528,8 @@ class assignation_expression : public binary_expression
 protected:
     assignation_expression() = default;
 public:
+    void accept(element_visitor& visitor) override;
+
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<assignation_expression> expr{ new assignation_expression()};
         expr->assign(left_expr, right_expr);
@@ -519,6 +542,8 @@ class additition_assignation_expression : public binary_expression
 protected:
     additition_assignation_expression() = default;
 public:
+    void accept(element_visitor& visitor) override;
+
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<additition_assignation_expression> expr{ new additition_assignation_expression()};
         expr->assign(left_expr, right_expr);
@@ -531,6 +556,8 @@ class substraction_assignation_expression : public binary_expression
 protected:
     substraction_assignation_expression() = default;
 public:
+    void accept(element_visitor& visitor) override;
+
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<substraction_assignation_expression> expr{ new substraction_assignation_expression()};
         expr->assign(left_expr, right_expr);
@@ -543,6 +570,8 @@ class multiplication_assignation_expression : public binary_expression
 protected:
     multiplication_assignation_expression() = default;
 public:
+    void accept(element_visitor& visitor) override;
+
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<multiplication_assignation_expression> expr{ new multiplication_assignation_expression()};
         expr->assign(left_expr, right_expr);
@@ -555,6 +584,8 @@ class division_assignation_expression : public binary_expression
 protected:
     division_assignation_expression() = default;
 public:
+    void accept(element_visitor& visitor) override;
+
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<division_assignation_expression> expr{ new division_assignation_expression()};
         expr->assign(left_expr, right_expr);
@@ -567,6 +598,8 @@ class modulo_assignation_expression : public binary_expression
 protected:
     modulo_assignation_expression() = default;
 public:
+    void accept(element_visitor& visitor) override;
+
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<modulo_assignation_expression> expr{ new modulo_assignation_expression()};
         expr->assign(left_expr, right_expr);
@@ -587,6 +620,8 @@ protected:
     virtual ~statement() = default;
 
 public:
+    void accept(element_visitor& visitor) override;
+
     std::shared_ptr<block> get_block() { return _block; };
     std::shared_ptr<const block> get_block() const { return _block; };
 
@@ -606,6 +641,8 @@ protected:
             statement(block) {}
 
 public:
+    void accept(element_visitor& visitor) override;
+
     std::shared_ptr<expression> get_expression() { return _expression; };
     std::shared_ptr<const expression> get_expression() const { return _expression; };
 
@@ -645,6 +682,8 @@ protected:
     }
 
 public:
+    void accept(element_visitor& visitor) override;
+
     std::shared_ptr<expression> get_expression() { return _expression; };
     std::shared_ptr<const expression> get_expression() const { return _expression; };
 
@@ -674,6 +713,7 @@ protected:
             statement(block), variable_definition(name) {}
 
 public:
+    void accept(element_visitor& visitor) override;
 
     void set_as_parameter(std::shared_ptr<parameter> func_param) {
         _func_param = func_param;
@@ -730,6 +770,8 @@ protected:
 
 public:
 
+    void accept(element_visitor& visitor) override;
+
     const std::vector<std::shared_ptr<statement>>& get_statements() const {
         return _statements;
     }
@@ -774,6 +816,9 @@ protected:
     ns_element(unit& unit, std::shared_ptr<ns> parent) : _unit(unit), _parent_ns(std::move(parent)) {}
 
 public:
+
+    void accept(element_visitor& visitor) override;
+
     /**
      * Retrieve the unit this element is declared in.
      * @return Unit reference
@@ -835,6 +880,7 @@ protected:
 
 
 public:
+    void accept(element_visitor& visitor) override;
 
     const std::string& name() const {return _name;}
 
@@ -865,6 +911,7 @@ protected:
     global_variable_definition(std::shared_ptr<ns> ns, const std::string& name);
 
 public:
+    void accept(element_visitor& visitor) override;
 
 };
 
@@ -892,6 +939,8 @@ protected:
     static std::shared_ptr<ns> create(unit& unit, std::shared_ptr<ns> parent, const std::string& name);
 
 public:
+
+    void accept(element_visitor& visitor) override;
 
     const std::string& get_name() const {
         return _name;
@@ -962,6 +1011,7 @@ public:
 
     unit();
 
+    void accept(element_visitor& visitor) override;
 
     /**
      * Get the unit name.
@@ -1015,6 +1065,79 @@ public:
      */
     std::shared_ptr<const ns> find_namespace(std::string_view name) const;
 
+};
+
+
+
+class element_visitor {
+public:
+    virtual void visit_element(element&) =0;
+
+    virtual void visit_unit(unit&) =0;
+
+    virtual void visit_ns_element(ns_element&) =0;
+    virtual void visit_namespace(ns&) =0;
+    virtual void visit_function(function&) =0;
+    virtual void visit_global_variable_definition(global_variable_definition&) =0;
+
+    virtual void visit_statement(statement&) =0;
+    virtual void visit_block(block&) =0;
+    virtual void visit_return_statement(return_statement&) =0;
+    virtual void visit_expression_statement(expression_statement&) =0;
+    virtual void visit_variable_statement(variable_statement&) =0;
+
+    virtual void visit_expression(expression&) =0;
+    virtual void visit_value_expression(value_expression&) =0;
+    virtual void visit_variable_expression(variable_expression&) =0;
+
+    virtual void visit_binary_expression(binary_expression&) =0;
+    virtual void visit_addition_expression(addition_expression&) =0;
+    virtual void visit_substraction_expression(substraction_expression&) =0;
+    virtual void visit_multiplication_expression(multiplication_expression&) =0;
+    virtual void visit_division_expression(division_expression&) =0;
+    virtual void visit_modulo_expression(modulo_expression&) =0;
+    virtual void visit_assignation_expression(assignation_expression&) =0;
+    virtual void visit_addition_assignation_expression(additition_assignation_expression&) =0;
+    virtual void visit_substraction_assignation_expression(substraction_assignation_expression&) =0;
+    virtual void visit_multiplication_assignation_expression(multiplication_assignation_expression&) =0;
+    virtual void visit_division_assignation_expression(division_assignation_expression&) =0;
+    virtual void visit_modulo_assignation_expression(modulo_assignation_expression&) =0;
+};
+
+
+class default_element_visitor : public element_visitor {
+public:
+    virtual void visit_element(element&) override;
+
+    virtual void visit_unit(unit&) override;
+
+    virtual void visit_ns_element(ns_element&) override;
+    virtual void visit_namespace(ns&) override;
+    virtual void visit_function(function&) override;
+    virtual void visit_global_variable_definition(global_variable_definition&) override;
+
+    virtual void visit_statement(statement&) override;
+    virtual void visit_block(block&) override;
+    virtual void visit_return_statement(return_statement&) override;
+    virtual void visit_expression_statement(expression_statement&) override;
+    virtual void visit_variable_statement(variable_statement&) override;
+
+    virtual void visit_expression(expression&) override;
+    virtual void visit_value_expression(value_expression&) override;
+    virtual void visit_variable_expression(variable_expression&) override;
+
+    virtual void visit_binary_expression(binary_expression&) override;
+    virtual void visit_addition_expression(addition_expression&) override;
+    virtual void visit_substraction_expression(substraction_expression&) override;
+    virtual void visit_multiplication_expression(multiplication_expression&) override;
+    virtual void visit_division_expression(division_expression&) override;
+    virtual void visit_modulo_expression(modulo_expression&) override;
+    virtual void visit_assignation_expression(assignation_expression&) override;
+    virtual void visit_addition_assignation_expression(additition_assignation_expression&) override;
+    virtual void visit_substraction_assignation_expression(substraction_assignation_expression&) override;
+    virtual void visit_multiplication_assignation_expression(multiplication_assignation_expression&) override;
+    virtual void visit_division_assignation_expression(division_assignation_expression&) override;
+    virtual void visit_modulo_assignation_expression(modulo_assignation_expression&) override;
 };
 
 
