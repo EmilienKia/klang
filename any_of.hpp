@@ -60,10 +60,14 @@ namespace ANY_OF_NS {
 
         using any_of_opt_t = any_of_opt<Base, Types...>;
 
+        inline static constexpr size_t npos = -1;
 
     protected:
         template<class T, class HABase, class... HATypes>
         friend constexpr bool std::holds_alternative(const ::ANY_OF_NS::any_of<HABase, HATypes...>& v) noexcept;
+
+//        template <class R, class Visitor, class VBase,  class... VTypes>
+//        friend constexpr R std::visit(Visitor&& vis, ::ANY_OF_NS::any_of<VBase, VTypes...>& v );
 
         template<typename, typename ...>
         friend
@@ -369,6 +373,12 @@ namespace ANY_OF_NS {
             return std::get_if<const Type, Types...>(&_variant);
         }
 
+
+        template <class R, class Visitor>
+        constexpr R visit( Visitor&& vis) {
+            return std::visit<R, Visitor>(vis, _variant);
+        }
+
     };
 
     /**
@@ -399,6 +409,9 @@ namespace ANY_OF_NS {
     protected:
         template<class T, class HABase, class... HATypes>
         friend constexpr bool std::holds_alternative(const ::ANY_OF_NS::any_of_opt<HABase, HATypes...>& v) noexcept;
+
+//        template <class R, class Visitor, class VBase,  class... VTypes>
+//        friend constexpr R visit( Visitor&& vis, ::ANY_OF_NS::any_of_opt<VBase, VTypes...>& v );
 
         template<typename, typename ...>
         friend
@@ -785,6 +798,11 @@ namespace ANY_OF_NS {
         }
 
 
+        template <class R, class Visitor>
+        constexpr R visit(Visitor&& vis) {
+            return std::visit<R, Visitor>(vis, _variant);
+        }
+
     };
 
 
@@ -809,12 +827,21 @@ namespace std {
         return std::holds_alternative<T, Types...>(v._variant);
     }
 
-
     template< class T, class Base, class... Types >
     constexpr bool holds_alternative(const ::ANY_OF_NS::any_of_opt<Base, Types...>& v) noexcept {
         return std::holds_alternative<T/*, std::monostate, Types...*/>(v._variant);
     }
+/*
+    template <class R, class Visitor, class Base,  class... Types>
+    constexpr R visit( Visitor&& vis, ::ANY_OF_NS::any_of<Base, Types...>& v ) {
+        return std::visit<R, Visitor>(vis, v._variant);
+    }
 
+    template <class R, class Visitor, class Base,  class... Types>
+    constexpr R visit( Visitor&& vis, ::ANY_OF_NS::any_of_opt<Base, Types...>& v ) {
+        return std::visit<R, Visitor>(vis, v._variant);
+    }
+*/
 } // namespace std
 
 

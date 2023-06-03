@@ -181,8 +181,8 @@ public:
     }
 
     void visit_value_expression(value_expression& expr) override {
-        if(expr.is_litteral()) {
-            _stm << "<<lit-value-expr:" << expr.get_litteral().content << ">>";
+        if(expr.is_literal()) {
+            _stm << "<<lit-value-expr:" << expr.get_literal().content << ">>";
         } else {
             _stm << "<<val-value-expr:TODO" << ">>";
             // TODO

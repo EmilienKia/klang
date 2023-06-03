@@ -351,11 +351,15 @@ public:
     explicit value_expression(const std::string& str) : _value(str) {}
     explicit value_expression(std::string&& str) : _value(std::move(str)) {}
 
-    bool is_litteral() const {
+    bool is_literal() const {
         return _literal.has_value();
     }
 
-    const lex::literal& get_litteral()const {
+    const lex::any_literal::any_of_opt_t&  any_literal() const {
+        return _literal;
+    }
+
+    const lex::literal& get_literal()const {
         return _literal.value();
     }
 

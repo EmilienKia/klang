@@ -231,6 +231,15 @@ namespace k::lex {
 
     typedef anyof::any_of<literal, integer, character, string, boolean, null> any_literal;
 
+    enum any_literal_type_index {
+        INTEGER = 0,
+        CHARACTER = 1,
+        STRING = 2,
+        BOOLEAN = 3,
+        NUL = 4,
+        NOT_DEFINED = any_literal::npos
+    };
+
     typedef std::optional<lex::any_lexeme> opt_any_lexeme;
 
     typedef std::reference_wrapper<lex::any_lexeme> ref_any_lexeme;

@@ -9,6 +9,7 @@
 #include "ast_unit_visitor.hpp"
 #include "unit_dump.hpp"
 #include "unit_var_resolver.hpp"
+#include  "unit_llvm_ir_gen.hpp"
 
 using namespace k;
 
@@ -60,6 +61,8 @@ int main() {
     var_resolver.resolve();
     std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
     unit_dump.dump(unit);
+
+    k::unit::gen::unit_llvm_ir_gen gen(unit);
 
     return 0;
 }
