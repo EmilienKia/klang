@@ -24,8 +24,8 @@ int main() {
     /* Hello */
 
     test(titi: int, toto: int) : int {
-        titi + toto;
-        return titi + toto;
+//        titi + toto;
+        return titi + toto + 4;
     }
 
     namespace titi {
@@ -36,10 +36,11 @@ int main() {
             res : int;
             {
                 res = a + b * 2;
+                plic = res / 2;
+                res += 3;
             }
             return res;
         }
-
     }
     )SRC";
 
@@ -63,6 +64,31 @@ int main() {
     unit_dump.dump(unit);
 
     k::unit::gen::unit_llvm_ir_gen gen(unit);
+    std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
+    unit.accept(gen);
+    gen.verify();
+    gen.dump();
+
+    std::cout << "#" << std::endl << "# LLVM Optimize Module" << std::endl << "#" << std::endl;
+    gen.optimize_functions();
+    gen.verify();
+    gen.dump();
+
+    auto jit = gen.to_jit();
+    if(!jit){
+        std::cerr << "JIT error : " << toString(jit.takeError()) << std::endl;
+        return -1;
+    }
+
+    int (*test)(int, int) = (int(*)(int, int)) jit.get()->lookup_symbol<int(*)(int, int)>("test");
+
+    std::cout << "Test : test(0,0) = " << (test(0, 0)) << std::endl;
+    std::cout << "Test : test(1,2) = " << (test(1, 2)) << std::endl;
+
+    int (*sum)(int, int) = (int(*)(int, int)) jit.get()->lookup_symbol<int(*)(int, int)>("sum");
+
+    std::cout << "Test : sum(0,0) = " << (sum(0, 0)) << std::endl;
+    std::cout << "Test : sum(1,2) = " << (sum(1, 2)) << std::endl;
 
     return 0;
 }

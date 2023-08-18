@@ -199,7 +199,6 @@ void default_ast_visitor::visit_binary_operator_expr(ast::binary_operator_expr &
 
 }
 
-
 void default_ast_visitor::visit_cast_expr(ast::cast_expr &) {
 
 }

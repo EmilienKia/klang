@@ -16,7 +16,6 @@
 #include "common.hpp"
 
 
-
 namespace k::unit {
 
 class type;
@@ -29,6 +28,10 @@ class function;
 class ns;
 class unit;
 
+
+namespace gen {
+    class unit_llvm_ir_gen;
+}
 
 enum visibility {
     DEFAULT,
@@ -169,6 +172,7 @@ protected:
     variable_definition(const variable_definition&) = default;
     variable_definition(variable_definition&&) = default;
     variable_definition(const std::string& name) : _name(name) {}
+    variable_definition(const std::string& name, const std::shared_ptr<type> &type) : _name(name) {}
 
 public:
     virtual const std::string& get_name() const override {
@@ -707,6 +711,7 @@ class variable_statement : public statement, public variable_definition
 {
 protected:
     friend class block;
+    friend class gen::unit_llvm_ir_gen;
 
     std::shared_ptr<parameter> _func_param;
 
@@ -784,6 +789,15 @@ public:
         return _statements;
     }
 
+    std::shared_ptr<function> get_function() {
+        return _function;
+    }
+
+    std::shared_ptr<const function> get_function() const {
+        return _function;
+    }
+
+
     std::shared_ptr<return_statement> append_return_statement();
 
     std::shared_ptr<expression_statement> append_expression_statement();
@@ -840,38 +854,33 @@ public:
 };
 
 
-class parameter {
+class parameter : public variable_definition {
 protected:
 
     friend class function;
+    friend class gen::unit_llvm_ir_gen;
 
-    std::string _name;
-
-    std::shared_ptr<type> _type;
+    std::shared_ptr<function> _function;
 
     size_t _pos;
 
-    parameter(size_t pos);
-    parameter(const std::string &name, const std::shared_ptr<type> &type, size_t pos);
-
+    parameter(std::shared_ptr<function> func, size_t pos);
+    parameter(std::shared_ptr<function> func, const std::string &name, const std::shared_ptr<type> &type, size_t pos);
 public:
-    const std::string &get_name() const {
-        return _name;
-    }
-
-    const std::shared_ptr<type> &get_type() const {
-        return _type;
-    }
 
     size_t get_pos() const {
         return _pos;
     }
+
+    std::shared_ptr<function> get_function() {return _function;}
+    std::shared_ptr<const function> get_function() const {return _function;}
 };
 
 class function : public ns_element {
 protected:
 
     friend class ns;
+    friend class gen::unit_llvm_ir_gen;
 
     std::string _name;
 
@@ -881,7 +890,6 @@ protected:
     std::shared_ptr<block> _block;
 
     function(std::shared_ptr<ns> ns, const std::string& name);
-
 
 public:
     void accept(element_visitor& visitor) override;
@@ -898,8 +906,12 @@ public:
 
     std::shared_ptr<parameter> append_parameter(const std::string& name, std::shared_ptr<type> type);
     std::shared_ptr<parameter> insert_parameter(const std::string& name, std::shared_ptr<type> type, size_t pos);
+
     std::shared_ptr<parameter> get_parameter(size_t index);
     std::shared_ptr<const parameter> get_parameter(size_t index)const;
+
+    std::shared_ptr<parameter> get_parameter(const std::string& name);
+    std::shared_ptr<const parameter> get_parameter(const std::string& name)const;
 
     std::shared_ptr<block> get_block();
 };
@@ -909,6 +921,7 @@ class global_variable_definition : public ns_element, public variable_definition
 protected:
 
     friend class ns;
+    friend class gen::unit_llvm_ir_gen;
 
     global_variable_definition(std::shared_ptr<ns> ns);
 

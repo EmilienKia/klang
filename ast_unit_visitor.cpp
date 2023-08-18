@@ -134,9 +134,6 @@ namespace k::parse {
             std::shared_ptr<unit::parameter> parameter = function->append_parameter(param.name->content, unit::unresolved_type::from_type_specifier(*param.type));
             // TODO add param specs
 
-            std::shared_ptr<unit::variable_statement> var = std::dynamic_pointer_cast<unit::variable_statement>(block->append_variable(parameter->get_name()));
-            var->set_type(parameter->get_type());
-            var->set_as_parameter(parameter);
         }
 
         if(func.content) {

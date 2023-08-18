@@ -332,6 +332,9 @@ std::shared_ptr<variable_definition> block::lookup_variable(const std::string& n
     if(auto block = get_block()) {
         // Has a parent block, look at it
         return block->lookup_variable(name);
+    } else if(auto param = _function->get_parameter(name)){
+        // Has a parameter of same name
+        return param;
     } else if(auto ns = _function->parent_ns()) {
         // Else base block of a function, look at the enclosing scope (ns)
         return ns->lookup_variable(name);
@@ -351,17 +354,15 @@ void ns_element::accept(element_visitor& visitor) {
 // Parameter
 //
 
-parameter::parameter(size_t pos) :
-    _pos(pos)
+parameter::parameter(std::shared_ptr<function> func, size_t pos) :
+    _function(std::move(func)), _pos(pos)
 {
 }
 
-parameter::parameter(const std::string &name, const std::shared_ptr<type> &type, size_t pos) :
-    _name(name), _type(type), _pos(pos)
+parameter::parameter(std::shared_ptr<function> func, const std::string &name, const std::shared_ptr<type> &type, size_t pos) :
+    variable_definition(name, type), _function(std::move(func)), _pos(pos)
 {
 }
-
-
 
 //
 // Function
@@ -391,7 +392,7 @@ void function::return_type(std::shared_ptr<type> return_type)
 
 std::shared_ptr<parameter> function::append_parameter(const std::string& name, std::shared_ptr<type> type)
 {
-    return _parameters.emplace_back(new parameter(name, type, _parameters.size()));
+    return _parameters.emplace_back(new parameter(shared_as<function>(), name, type, _parameters.size()));
 }
 
 std::shared_ptr<parameter> function::insert_parameter(const std::string& name, std::shared_ptr<type> type, size_t pos)
@@ -399,11 +400,11 @@ std::shared_ptr<parameter> function::insert_parameter(const std::string& name, s
     if(pos >= _parameters.size()) {
         size_t idx = _parameters.size();
         while(idx<pos) {
-            _parameters.emplace_back(new parameter(idx));
+            _parameters.emplace_back(new parameter(shared_as<function>(), idx));
         }
-        return _parameters.emplace_back(new parameter(name, type, idx));
+        return _parameters.emplace_back(new parameter(shared_as<function>(), name, type, idx));
     } else {
-        auto res = _parameters.emplace(_parameters.begin()+pos, new parameter(name, type, pos));
+        auto res = _parameters.emplace(_parameters.begin()+pos, new parameter(shared_as<function>(), name, type, pos));
         auto it = res;
         while(++it != _parameters.end()) {
             it->get()->_pos++;
@@ -419,7 +420,7 @@ std::shared_ptr<parameter> function::get_parameter(size_t index)
     } else {
         size_t idx = _parameters.size();
         while(idx<=index) {
-            _parameters.emplace_back(new parameter(idx));
+            _parameters.emplace_back(new parameter(shared_as<function>(), idx));
         }
         return _parameters.back();
     }
@@ -432,6 +433,26 @@ std::shared_ptr<const parameter> function::get_parameter(size_t index)const
     } else {
         return nullptr;
     }
+}
+
+std::shared_ptr<parameter> function::get_parameter(const std::string& name)
+{
+    for(auto param : _parameters) {
+        if(param->get_name()==name) {
+            return param;
+        }
+    }
+    return {};
+}
+
+std::shared_ptr<const parameter> function::get_parameter(const std::string& name) const
+{
+    for(auto param : _parameters) {
+        if (param->get_name() == name) {
+            return param;
+        }
+    }
+    return {};
 }
 
 //
