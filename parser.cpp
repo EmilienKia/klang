@@ -1032,7 +1032,7 @@ ast::expr_ptr parser::parse_postfix_expr()
                 throw parsing_error("Sub expression of bracket index postfix for expression is missing" /*, *lop */);
             }
             auto lclose = _lexer.get();
-            if(!(lclose && lop == lex::punctuator::BRAKET_CLOSE)) {
+            if(!(lclose && lclose == lex::punctuator::BRAKET_CLOSE)) {
                 // Err:  Expression with postfix bracket index requires to have a closing bracket.
                 throw parsing_error("Closing bracket of bracket index suffix for expression is missing" /*, *lop */);
             }
@@ -1041,7 +1041,7 @@ ast::expr_ptr parser::parse_postfix_expr()
             ast::expr_ptr expr = parse_expression_list();
             // expr might be null if expression list is empty
             auto lclose = _lexer.get();
-            if(!(lclose && lop == lex::punctuator::PARENTHESIS_CLOSE)) {
+            if(!(lclose && lclose == lex::punctuator::PARENTHESIS_CLOSE)) {
                 // Err:  Expression with postfix parenthesis expression list requires to have a closing bracket.
                 throw parsing_error("Closing bracket of parenthesis expression list suffix for expression is missing" /*, *lop */);
             }

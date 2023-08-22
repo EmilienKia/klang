@@ -231,6 +231,10 @@ namespace k::parse {
             const expr_ptr operator[](size_t n) const { return _exprs[n]; }
             expr_ptr operator[](size_t n) { return _exprs[n]; }
 
+            const std::vector<expr_ptr>& exprs() {
+                return _exprs;
+            }
+
         };
 
         struct literal_expr : public expression {

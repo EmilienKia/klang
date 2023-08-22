@@ -2,18 +2,18 @@
 // Created by Emilien Kia <emilien.kia+dev@gmail.com>.// Created by Emilien Kia <emilien.kia+dev@gmail.com>.
 //
 
-#ifndef KLANG_UNIT_VAR_RESOLVER_HPP
-#define KLANG_UNIT_VAR_RESOLVER_HPP
+#ifndef KLANG_SYMBOL_RESOLVER_HPP
+#define KLANG_SYMBOL_RESOLVER_HPP
 
 #include "unit.hpp"
 
-namespace k::unit::resolvers {
+namespace k::unit {
 
 /**
- * Unit variable resolver
- * This helper class will resolve variable usage to their definitions.
+ * Unit symbol resolver
+ * This helper class will resolve method and variable usages to their definitions.
  */
-class variable_resolver : public default_element_visitor {
+class symbol_resolver : public default_element_visitor {
 protected:
     unit& _unit;
 
@@ -21,7 +21,7 @@ protected:
 
 public:
 
-    variable_resolver(unit& unit) : _unit(unit) {
+    symbol_resolver(unit& unit) : _unit(unit) {
     }
 
     void resolve();
@@ -42,12 +42,14 @@ protected:
 
     void visit_expression(expression&) override;
     void visit_value_expression(value_expression&) override;
-    void visit_variable_expression(variable_expression&) override;
+    void visit_symbol_expression(symbol_expression&) override;
     void visit_binary_expression(binary_expression&) override;
+
+    void visit_function_invocation_expression(function_invocation_expression &) override;
 
 };
 
 
-} // k::unit::resolvers
+} // k::unit
 
-#endif //KLANG_UNIT_VAR_RESOLVER_HPP
+#endif //KLANG_SYMBOL_RESOLVER_HPP

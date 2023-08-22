@@ -8,6 +8,7 @@
 #include "any_of.hpp"
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -26,7 +27,32 @@ namespace k::lex {
         std::size_t pos = 0;
         std::size_t line = 0;
         std::size_t col = 0;
+
     };
+
+    /**
+     * Trivial offset for char coordinate.
+     * Assume this offset doesn't change the column.
+     * @param coord Initial coordinates
+     * @param offset Offset to apply.
+     * @return New coordinates
+     */
+    inline char_coord operator+(const char_coord& coord, size_t offset) {
+        return {.pos = coord.pos + offset, .line = coord.line, .col = coord.line+offset};
+    }
+
+    /**
+     * Trivial offset for char coordinate.
+     * Assume this offset doesn't change the column.
+     * @param coord Initial coordinates
+     * @param offset Offset to apply.
+     * @return Updated this coordinates
+     */
+    inline char_coord& operator+=(char_coord& coord, size_t offset) {
+        coord.pos += offset;
+        coord.col += offset;
+        return coord;
+    }
 
     struct lexeme
     {
@@ -46,6 +72,16 @@ namespace k::lex {
     protected:
         lexeme() = default;
     };
+
+    /**
+     * Trivial lexeme/string comparison test.
+     * @param lex Lexeme to look for
+     * @param val String value to look for.
+     * @return True if lexeme's content is equal to the expected val.
+     */
+    inline bool operator==(const lexeme& lex, const std::string_view& val) {
+        return lex.content == val;
+    }
 
     struct identifier : public lexeme {
         identifier(const identifier& other) = default;
@@ -407,8 +443,30 @@ namespace k::lex {
 
         size_t index = 0;
 
+    private:
+        /// List of all chars used in operators or punctuators
+        static std::set<char> operator_punctuator_chars;
+        /// Test if a char can be part of an operator or a punctuator
+        inline static  bool is_operator_punctuator_char(char c) {
+            return operator_punctuator_chars.contains(c);
+        }
+
+        /// Type of operator or punctuator
+        typedef std::variant<punctuator::type_t, operator_::type_t> punct_or_op_type_t;
+        /// Sorting operator for longer tokens come before their prefix (<<= come before <<, << come before <)
+        struct less_order_op_punct_for_lookup {
+            bool operator()(const std::string &a, const std::string &b) const;
+        };
+        /// Specific map of punctuator or operator type indexed by their token string
+        /// This map is ordered to ensure, when it is iterated, longer tokens come before their prefix (<<= come before <<, << come before <)
+        /// Enable faster chained operator-punctuator parsing
+        static std::map<std::string, punct_or_op_type_t, lexer::less_order_op_punct_for_lookup> puncts_or_ops;
+
+        static void init();
 
     public:
+        lexer();
+
         void parse(std::string_view src);
 
         std::vector<any_lexeme> parse_all(std::string_view src);

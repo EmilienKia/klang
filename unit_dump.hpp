@@ -172,11 +172,14 @@ public:
         _stm << "<<unknown-expr>>";
     }
 
-    void visit_variable_expression(variable_expression& expr) override {
-        if(expr.is_resolved()) {
-            _stm << "<<var-expr:" << expr.get_variable_def()->get_name() << ">>";
+    void visit_symbol_expression(symbol_expression& expr) override {
+        // TODO support other symbol types, not only variables
+        if(expr.is_variable_def()) {
+            _stm << "<<symbol-var-expr:" << expr.get_variable_def()->get_name() << ">>";
+        } else if (expr.is_function()) {
+            _stm << "<<symbol-func-expr:" << expr.get_function()->name() << ">>";
         } else {
-            _stm << "<<unresolved-var-expr:" << expr.get_var_name().to_string() << ">>";
+            _stm << "<<unresolved-symbol-expr:" << expr.get_name().to_string() << ">>";
         }
     }
 
@@ -253,6 +256,18 @@ public:
         expr.left()->accept(*this);
         _stm << " %= ";
         expr.right()->accept(*this);
+    }
+
+    void visit_function_invocation_expression(function_invocation_expression &expr) override {
+        expr.callee_expr()->accept(*this);
+        _stm << "(";
+        for(size_t i=0; i<expr.arguments().size(); ++i) {
+            if(i>0) {
+                _stm << " , ";
+            }
+            expr.arguments().at(i)->accept(*this);
+        }
+        _stm << ")";
     }
 };
 

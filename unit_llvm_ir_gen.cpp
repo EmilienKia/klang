@@ -54,8 +54,9 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
     }
 }
 
-void unit_llvm_ir_gen::visit_variable_expression(variable_expression &var) {
-    auto var_def = var.get_variable_def();
+void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
+    // TODO Support other types of symbols, not only variables
+    auto var_def = symbol.get_variable_def();
 
     if(auto param = std::dynamic_pointer_cast<parameter>(var_def)) {
         // TODO use the right type, only int32 supported for now
@@ -152,7 +153,7 @@ void unit_llvm_ir_gen::visit_modulo_expression(modulo_expression &expr) {
 }
 
 void unit_llvm_ir_gen::create_assignement(std::shared_ptr<expression> expr, llvm::Value* value) {
-    auto var_expr = std::dynamic_pointer_cast<variable_expression>(expr);
+    auto var_expr = std::dynamic_pointer_cast<symbol_expression>(expr);
     if(!var_expr) {
         // TODO throw an exception
         // Only support direct variable expression as left operand
@@ -378,6 +379,48 @@ void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
     build.CreateStore(zero, alloca);
 }
 
+void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_expression &expr) {
+    auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
+    if(!callee || !callee->is_function()) {
+        // Function invocation is supported only for function symbol yet.
+        // TODO throw exception
+        std::cerr << "Function invocation is supported only for symbol yet." << std::endl;
+    }
+
+    std::vector<llvm::Value*> args;
+    for(auto arg : expr.arguments()) {
+        _value = nullptr;
+        arg->accept(*this);
+        if(!_value) {
+            // Problem with argument generation
+            // TODO throw exception
+            std::cerr << "Problem with generation of an argument of a function call." << std::endl;
+        }
+        // TODO use the right type, only int32 supported for now
+        args.push_back(_value);
+    }
+
+    // TODO Check function argument count
+
+    auto function = callee->get_function();
+    auto it = _functions.find(function);
+    if(it==_functions.end()) {
+        // Error: function definition is not found.
+        // TODO throw exception
+        std::cerr << "Error: function definition is not found." << std::endl;
+    }
+    llvm::Function* llvm_func = it->second;
+    if(!llvm_func) {
+        // Error: function definition is not found.
+        // TODO throw exception
+        std::cerr << "Error: llvm function definition is not found." << std::endl;
+    }
+    // TODO look for external functions.
+
+    _value = _builder->CreateCall(llvm_func, args);
+}
+
+
 void unit_llvm_ir_gen::dump() {
     _module->print(llvm::outs(), nullptr);
 }
@@ -417,6 +460,7 @@ llvm::Expected<std::unique_ptr<unit_llvm_jit>> unit_llvm_ir_gen::to_jit() {
     }
     return jit;
 }
+
 
 
 //

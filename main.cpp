@@ -8,7 +8,7 @@
 #include "unit.hpp"
 #include "ast_unit_visitor.hpp"
 #include "unit_dump.hpp"
-#include "unit_var_resolver.hpp"
+#include "symbol_resolver.hpp"
 #include  "unit_llvm_ir_gen.hpp"
 
 using namespace k;
@@ -23,9 +23,12 @@ int main() {
     import net;
     /* Hello */
 
+    ploc(p: int) : int {
+        return p * 2;
+    }
+
     test(titi: int, toto: int) : int {
-//        titi + toto;
-        return titi + toto + 4;
+        return titi + ploc(toto);
     }
 
     namespace titi {
@@ -58,7 +61,7 @@ int main() {
     std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
     unit_dump.dump(unit);
 
-    k::unit::resolvers::variable_resolver var_resolver(unit);
+    k::unit::symbol_resolver var_resolver(unit);
     var_resolver.resolve();
     std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
     unit_dump.dump(unit);

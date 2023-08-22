@@ -331,6 +331,32 @@ TEST_CASE( "Lex one punctuator", "[lexer]" ) {
         REQUIRE( the_lexeme == punctuator::PARENTHESIS_OPEN );
     }
 
+    SECTION("Lex two parenthesis") {
+        auto lexemes = lex.parse_all("( )");
+        REQUIRE( lexemes.size() == 2 );
+
+        any_lexeme lex0 = lexemes[0];
+        REQUIRE( std::holds_alternative<punctuator>(lex0) );
+        REQUIRE( lex0 == punctuator::PARENTHESIS_OPEN );
+
+        any_lexeme lex1 = lexemes[1];
+        REQUIRE( std::holds_alternative<punctuator>(lex1) );
+        REQUIRE( lex1 == punctuator::PARENTHESIS_CLOSE );
+    }
+
+    SECTION("Lex two parenthesis without separator") {
+        auto lexemes = lex.parse_all("()");
+        REQUIRE( lexemes.size() == 2 );
+
+        any_lexeme lex0 = lexemes[0];
+        REQUIRE( std::holds_alternative<punctuator>(lex0) );
+        REQUIRE( lex0 == punctuator::PARENTHESIS_OPEN );
+
+        any_lexeme lex1 = lexemes[1];
+        REQUIRE( std::holds_alternative<punctuator>(lex1) );
+        REQUIRE( lex1 == punctuator::PARENTHESIS_CLOSE );
+    }
+
     SECTION("Lex semicolon") {
         auto lexemes = lex.parse_all(";");
         REQUIRE( lexemes.size() == 1 );
@@ -363,3 +389,29 @@ TEST_CASE( "Lex one operator", "[lexer]" ) {
     }
 }
 
+TEST_CASE("Additional lexer tests", "[lexer]") {
+    lexer lex;
+
+    SECTION("Lex \"ident(0)\"") {
+        auto lexemes = lex.parse_all("ident(0)");
+        REQUIRE( lexemes.size() == 4 );
+
+        any_lexeme lex0 = lexemes[0];
+        REQUIRE( std::holds_alternative<identifier>(lex0) );
+        identifier l0 = std::get<identifier>(lex0);
+        REQUIRE( l0.content == "ident" );
+
+        any_lexeme lex1 = lexemes[1];
+        REQUIRE( std::holds_alternative<punctuator>(lex1) );
+        REQUIRE( lex1 == punctuator::PARENTHESIS_OPEN );
+
+        any_lexeme lex2 = lexemes[2];
+        REQUIRE( std::holds_alternative<integer>(lex2) );
+        integer l2 = std::get<integer>(lex2);
+        REQUIRE( l2.content == "0" );
+
+        any_lexeme lex3 = lexemes[3];
+        REQUIRE( std::holds_alternative<punctuator>(lex3) );
+        REQUIRE( lex3 == punctuator::PARENTHESIS_CLOSE );
+    }
+}

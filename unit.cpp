@@ -119,20 +119,36 @@ std::shared_ptr<value_expression> value_expression::from_literal(const k::lex::a
 }
 
 //
-// Variable expression
+// Symbol expression
 //
-void variable_expression::accept(element_visitor& visitor) {
-    visitor.visit_variable_expression(*this);
+
+symbol_expression::symbol_expression(const name& name):
+    _name(name)
+{}
+
+symbol_expression::symbol_expression(const std::shared_ptr<variable_definition>& var):
+    _name(var->get_name()),
+    _symbol(var)
+{}
+
+symbol_expression::symbol_expression(const std::shared_ptr<function>& func):
+    _name(func->name()),
+    _symbol(func)
+{}
+
+
+void symbol_expression::accept(element_visitor& visitor) {
+        visitor.visit_symbol_expression(*this);
 }
 
-std::shared_ptr<variable_expression> variable_expression::from_string(const std::string& name)
+std::shared_ptr<symbol_expression> symbol_expression::from_string(const std::string& name)
 {
-    return std::shared_ptr<variable_expression>(new variable_expression(name));
+    return std::shared_ptr<symbol_expression>(new symbol_expression(name));
 }
 
-std::shared_ptr<variable_expression> variable_expression::from_identifier(const name& name)
+std::shared_ptr<symbol_expression> symbol_expression::from_identifier(const name& name)
 {
-    return std::shared_ptr<variable_expression>(new variable_expression(name));
+    return std::shared_ptr<symbol_expression>(new symbol_expression(name));
 }
 
 //
@@ -218,6 +234,13 @@ void division_assignation_expression::accept(element_visitor& visitor) {
 //
 void modulo_assignation_expression::accept(element_visitor& visitor) {
     visitor.visit_modulo_assignation_expression(*this);
+}
+
+//
+// Function invocation expression
+//
+void function_invocation_expression::accept(element_visitor& visitor) {
+    visitor.visit_function_invocation_expression(*this);
 }
 
 //
@@ -517,6 +540,35 @@ std::shared_ptr<function> ns::define_function(const std::string& name)
     return func;
 }
 
+std::shared_ptr<function> ns::get_function(const std::string& name)
+{
+    // TODO add prototype checking
+    for(auto child : _children) {
+        if(auto func = std::dynamic_pointer_cast<function>(child)) {
+            if(func->name()==name) {
+                return func;
+            }
+        }
+    }
+    return nullptr;
+}
+
+std::shared_ptr<function> ns::lookup_function(const std::string& name)
+{
+    // TODO add prototype checking
+    if(auto func = get_function(name)) {
+        return func;
+    }
+
+    if(auto ns = parent_ns() ) {
+        // If has a parent namespace, look at it
+        return ns->lookup_function(name);
+    }
+
+    return nullptr;
+}
+
+
 std::shared_ptr<variable_definition> ns::append_variable(const std::string &name)
 {
     if(_vars.contains(name)) {
@@ -529,6 +581,7 @@ std::shared_ptr<variable_definition> ns::append_variable(const std::string &name
 }
 
 std::shared_ptr<variable_definition> ns::get_variable(const std::string& name) {
+    // TODO add type checking
     auto it = _vars.find(name);
     if(it!=_vars.end()) {
         return it->second;
@@ -538,6 +591,7 @@ std::shared_ptr<variable_definition> ns::get_variable(const std::string& name) {
 }
 
 std::shared_ptr<variable_definition> ns::lookup_variable(const std::string& name) {
+    // TODO add type checking
     // TODO add qualified name lookup
     if(auto var = get_variable(name)) {
         return var;
@@ -639,7 +693,7 @@ void default_element_visitor::visit_value_expression(value_expression&) {
 
 }
 
-void default_element_visitor::visit_variable_expression(variable_expression&) {
+void default_element_visitor::visit_symbol_expression(symbol_expression&) {
 
 }
 
@@ -683,12 +737,15 @@ void default_element_visitor::visit_multiplication_assignation_expression(multip
 
 }
 
-void
-default_element_visitor::visit_division_assignation_expression(division_assignation_expression&) {
+void default_element_visitor::visit_division_assignation_expression(division_assignation_expression&) {
 
 }
 
 void default_element_visitor::visit_modulo_assignation_expression(modulo_assignation_expression&) {
+
+}
+
+void default_element_visitor::visit_function_invocation_expression(function_invocation_expression&) {
 
 }
 

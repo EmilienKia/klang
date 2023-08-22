@@ -304,6 +304,7 @@ protected:
     }
 
     friend class binary_expression;
+    friend class function_invocation_expression;
     void set_parent_expression(const std::shared_ptr<expression> &expression) {
         _parent_expression = expression;
     }
@@ -382,33 +383,66 @@ public:
 
 
 
-class variable_expression : public expression
+class symbol_expression : public expression
 {
 protected:
-    // Name of the variable when not resolved.
+    // Name of the symbol when not resolved.
     name _name;
 
-    std::shared_ptr<variable_definition> _var;
+    std::variant<
+            std::monostate, // Not resolved
+            std::shared_ptr<variable_definition>,
+            std::shared_ptr<function>
+                    > _symbol;
 
-    variable_expression(const name& name): _name(name) {}
-    variable_expression(const std::shared_ptr<variable_definition>& var): _var(var) {}
+    symbol_expression(const name& name);
+    symbol_expression(const std::shared_ptr<variable_definition>& var);
+    symbol_expression(const std::shared_ptr<function>& func);
 
 public:
     void accept(element_visitor& visitor) override;
 
-    static std::shared_ptr<variable_expression> from_string(const std::string& type_name);
-    static std::shared_ptr<variable_expression> from_identifier(const name& type_id);
+    static std::shared_ptr<symbol_expression> from_string(const std::string& type_name);
+    static std::shared_ptr<symbol_expression> from_identifier(const name& type_id);
 
-    const name& get_var_name() const {return _name;}
-
-    std::shared_ptr<variable_definition> get_variable_def() const {
-        return _var;
+    const name& get_name() const {
+        return _name;
     }
 
-    bool is_resolved() const {return (bool)_var;}
+    bool is_variable_def() const {
+        return std::holds_alternative<std::shared_ptr<variable_definition>>(_symbol);
+    }
+
+    bool is_function() const {
+        return std::holds_alternative<std::shared_ptr<function>>(_symbol);
+    }
+
+    std::shared_ptr<variable_definition> get_variable_def() const {
+        if(is_variable_def()) {
+            return std::get<std::shared_ptr<variable_definition>>(_symbol);
+        } else {
+            return nullptr;
+        }
+    }
+
+    std::shared_ptr<function> get_function() const {
+        if(is_function()) {
+            return std::get<std::shared_ptr<function>>(_symbol);
+        } else {
+            return nullptr;
+        }
+    }
+
+    bool is_resolved() const {
+        return _symbol.index()!=0;
+    }
 
     void resolve(std::shared_ptr<variable_definition> var) {
-        _var = var;
+        _symbol = var;
+    }
+
+    void resolve(std::shared_ptr<function> func) {
+        _symbol = func;
     }
 };
 
@@ -614,6 +648,84 @@ public:
         return std::shared_ptr<expression>{expr};
     }
 };
+
+
+
+class function_invocation_expression : public expression
+{
+protected:
+    /** Callee function to call. */
+    std::shared_ptr<expression> _callee_expr;
+    /** Right hand sub expression. */
+    std::vector<std::shared_ptr<expression>> _arguments;
+
+
+    function_invocation_expression() = default;
+
+    function_invocation_expression(const std::shared_ptr<expression> &callee_expr)
+            : _callee_expr(callee_expr)
+    {
+        _callee_expr->set_parent_expression(shared_as<expression>());
+    }
+
+    function_invocation_expression(const std::shared_ptr<expression> &callee_expr, const std::shared_ptr<expression> &arg_expr)
+            : _callee_expr(callee_expr)
+    {
+        _callee_expr->set_parent_expression(shared_as<expression>());
+        arg_expr->set_parent_expression(shared_as<expression>());
+        _arguments.push_back(arg_expr);
+    }
+
+    function_invocation_expression(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args)
+            : _callee_expr(callee_expr)
+    {
+        _callee_expr->set_parent_expression(shared_as<expression>());
+        _arguments = args;
+        for(auto& arg : args) {
+            arg->set_parent_expression(shared_as<expression>());
+        }
+    }
+
+public:
+    const std::shared_ptr<expression> &callee_expr() const {
+        return _callee_expr;
+    }
+
+    void callee_expr(const std::shared_ptr<expression> &callee) {
+        _callee_expr = callee;
+    }
+
+    const std::vector<std::shared_ptr<expression>> &arguments() const {
+        return _arguments;
+    }
+
+    void arguments(const std::vector<std::shared_ptr<expression>> &arguments) {
+        _arguments = arguments;
+    }
+
+    void assign(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args) {
+        _callee_expr = callee_expr;
+        _arguments = args;
+        _callee_expr->set_parent_expression(shared_as<expression>());
+        for(auto& arg : _arguments) {
+            arg->set_parent_expression(shared_as<expression>());
+        }
+    }
+
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args) {
+        std::shared_ptr<function_invocation_expression> expr{ new function_invocation_expression()};
+        expr->assign(callee_expr, args);
+        return std::shared_ptr<expression>{expr};
+    }
+
+public:
+    void accept(element_visitor& visitor) override;
+
+};
+
+
+
 
 /**
  * Base statement class
@@ -1001,10 +1113,11 @@ public:
         return _children;
     }
 
-
-
-
     std::shared_ptr<function> define_function(const std::string& name);
+
+    std::shared_ptr<function> get_function(const std::string& name);
+
+    std::shared_ptr<function> lookup_function(const std::string& name);
 
     std::shared_ptr<variable_definition> append_variable(const std::string &name) override;
 
@@ -1105,7 +1218,7 @@ public:
 
     virtual void visit_expression(expression&) =0;
     virtual void visit_value_expression(value_expression&) =0;
-    virtual void visit_variable_expression(variable_expression&) =0;
+    virtual void visit_symbol_expression(symbol_expression&) =0;
 
     virtual void visit_binary_expression(binary_expression&) =0;
     virtual void visit_addition_expression(addition_expression&) =0;
@@ -1119,6 +1232,7 @@ public:
     virtual void visit_multiplication_assignation_expression(multiplication_assignation_expression&) =0;
     virtual void visit_division_assignation_expression(division_assignation_expression&) =0;
     virtual void visit_modulo_assignation_expression(modulo_assignation_expression&) =0;
+    virtual void visit_function_invocation_expression(function_invocation_expression&) =0;
 };
 
 
@@ -1141,7 +1255,7 @@ public:
 
     virtual void visit_expression(expression&) override;
     virtual void visit_value_expression(value_expression&) override;
-    virtual void visit_variable_expression(variable_expression&) override;
+    virtual void visit_symbol_expression(symbol_expression&) override;
 
     virtual void visit_binary_expression(binary_expression&) override;
     virtual void visit_addition_expression(addition_expression&) override;
@@ -1155,6 +1269,7 @@ public:
     virtual void visit_multiplication_assignation_expression(multiplication_assignation_expression&) override;
     virtual void visit_division_assignation_expression(division_assignation_expression&) override;
     virtual void visit_modulo_assignation_expression(modulo_assignation_expression&) override;
+    virtual void visit_function_invocation_expression(function_invocation_expression&) override;
 };
 
 

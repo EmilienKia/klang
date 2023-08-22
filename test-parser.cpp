@@ -216,6 +216,69 @@ TEST_CASE("Parse ++ and -- postfix expression", "[parser][expression][postfix_ex
     REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
 }
 
+TEST_CASE("Parse () postfix expression with no second expr", "[parser][expression][postfix_expr]") {
+    k::parse::parser parser("ident()");
+    auto expr = parser.parse_postfix_expr();
+    REQUIRE( expr );
+
+    auto parenthesis = std::dynamic_pointer_cast<ast::parenthesis_postifx_expr>(expr);
+    REQUIRE( parenthesis );
+
+    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(parenthesis->lexpr());
+    REQUIRE( ident );
+    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+
+    auto zero = std::dynamic_pointer_cast<ast::literal_expr>(parenthesis->rexpr());
+    REQUIRE( !zero );
+}
+
+TEST_CASE("Parse () postfix expression with one second expr", "[parser][expression][postfix_expr]") {
+    k::parse::parser parser("ident(0)");
+    auto expr = parser.parse_postfix_expr();
+    REQUIRE( expr );
+
+    auto parenthesis = std::dynamic_pointer_cast<ast::parenthesis_postifx_expr>(expr);
+    REQUIRE(parenthesis );
+
+    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(parenthesis->lexpr());
+    REQUIRE( ident );
+    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+
+    auto zero = std::dynamic_pointer_cast<ast::literal_expr>(parenthesis->rexpr());
+    REQUIRE( zero );
+    REQUIRE( zero->literal.is<k::lex::integer>() );
+    auto i = zero->literal.get<k::lex::integer>();
+    REQUIRE( i.content == "0");
+}
+
+TEST_CASE("Parse () postfix expression with many second expr", "[parser][expression][postfix_expr]") {
+    k::parse::parser parser("ident ( 0 , a)");
+    auto expr = parser.parse_postfix_expr();
+    REQUIRE( expr );
+
+    auto parenthesis = std::dynamic_pointer_cast<ast::parenthesis_postifx_expr>(expr);
+    REQUIRE(parenthesis );
+
+    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(parenthesis->lexpr());
+    REQUIRE( ident );
+    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+
+    auto list = std::dynamic_pointer_cast<ast::expr_list_expr>(parenthesis->rexpr());
+    REQUIRE( list );
+    REQUIRE( list->size() == 2 );
+
+    auto zero = std::dynamic_pointer_cast<ast::literal_expr>(list->expr(0));
+    REQUIRE( zero );
+    REQUIRE( zero->literal.is<k::lex::integer>() );
+    auto i = zero->literal.get<k::lex::integer>();
+    REQUIRE( i.content == "0");
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(list->expr(1));
+    REQUIRE( a );
+    REQUIRE( is_same(*a, k::unit::name(false, "a") ) );
+}
+
+
 #if TODO
 TEST_CASE("Parse [] postfix expression", "[parser][expression][postfix_expr]") {
     k::parse::parser parser("ident [ 0 ]");
@@ -236,28 +299,6 @@ TEST_CASE("Parse [] postfix expression", "[parser][expression][postfix_expr]") {
     REQUIRE( i.content == "0");
 }
 #endif
-
-#if TODO
-TEST_CASE("Parse () postfix expression", "[parser][expression][postfix_expr]") {
-    k::parse::parser parser("ident ( 0 , 'a' )");
-    auto expr = parser.parse_postfix_expr();
-    REQUIRE( expr );
-
-    auto brackets = std::dynamic_pointer_cast<ast::bracket_postifx_expr>(expr);
-    REQUIRE( brackets );
-
-    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(brackets->lexpr());
-    REQUIRE( ident );
-    REQUIRE( *ident == k::parse::ast::identifier_expr(false, {{"ident"}}) );
-
-    auto zero = std::dynamic_pointer_cast<ast::literal_expr>(brackets->rexpr());
-    REQUIRE( zero );
-    REQUIRE( zero->literal.is<k::lex::integer>() );
-    auto i = zero->literal.get<k::lex::integer>();
-    REQUIRE( i.content == "0");
-}
-#endif
-
 
 //
 // Parse unary expressions
@@ -501,6 +542,10 @@ TEST_CASE("No conditional expression", "[parser][expression][conditional_expr]")
 }
 
 //
+// TODO
+//
+
+//
 // Parse expression
 //
 
@@ -528,6 +573,74 @@ TEST_CASE( "Parse expression", "[parser][expression]") {
 
 }
 
+TEST_CASE( "Parse simple expression with additional token", "[parser][expression]") {
+    k::parse::parser parser("a )");
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(expr);
+    REQUIRE( ident );
+    REQUIRE( is_same(*ident, k::unit::name(false, "a") ) );
+}
+
+
+TEST_CASE( "Parse simple expression list", "[parser][expression]") {
+    k::parse::parser parser("a , 0");
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    auto list = std::dynamic_pointer_cast<ast::expr_list_expr>(expr);
+    REQUIRE( list );
+    REQUIRE( list->size() == 2 );
+
+    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(list->expr(0));
+    REQUIRE( ident );
+    REQUIRE( is_same(*ident, k::unit::name(false, "a") ) );
+
+    auto lit = std::dynamic_pointer_cast<ast::literal_expr>(list->expr(1));
+    REQUIRE( lit );
+    REQUIRE( lit->literal->content == "0" );
+}
+
+TEST_CASE( "Parse simple expression list with additional token", "[parser][expression]") {
+    k::parse::parser parser("a,0)");
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    auto list = std::dynamic_pointer_cast<ast::expr_list_expr>(expr);
+    REQUIRE( list );
+    REQUIRE( list->size() == 2 );
+
+    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(list->expr(0));
+    REQUIRE( ident );
+    REQUIRE( is_same(*ident, k::unit::name(false, "a") ) );
+
+    auto lit = std::dynamic_pointer_cast<ast::literal_expr>(list->expr(1));
+    REQUIRE( lit );
+    REQUIRE( lit->literal->content == "0" );
+}
+
+
+
+//
+// Parse function invocation expression
+//
+TEST_CASE( "Parse expression of simple function invocation", "[parser][expression]") {
+    k::parse::parser parser("a(b)");
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    auto func = std::dynamic_pointer_cast<ast::parenthesis_postifx_expr>(expr);
+    REQUIRE( func );
+
+    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(func->lexpr());
+    REQUIRE( ident );
+    REQUIRE( is_same(*ident, k::unit::name(false, "a") ) );
+
+}
+
+
+
 //
 // Parse variable declaration
 //
@@ -536,8 +649,8 @@ TEST_CASE( "Parse variable declaration", "[parser][variable]") {
     auto var = parser.parse_variable_decl();
     REQUIRE( var );
     REQUIRE( var->name.content == "plic" );
-
 }
+
 
 
 //

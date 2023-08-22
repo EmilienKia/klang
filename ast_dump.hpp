@@ -225,16 +225,20 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         virtual void visit_comma_expr(ast::expr_list_expr& list) override {
-            if(list.size() >0 ) {
-                auto first = list.expr(0);
-                if(first) {
-                    first->visit(*this);
+            if(list.size()==0) {
+                _stm << "<<list-expr:empty>>";
+            } else {
+                if(list.expr(0)) {
+                    list.expr(0)->visit(*this);
+                } else {
+                    _stm << "<<null>>";
                 }
-                for(size_t i = 1; i<list.size(); ++i) {
+                for(size_t n=1; n<list.size(); ++n) {
                     _stm << ", ";
-                    auto next = list.expr(i);
-                    if(next) {
-                        first->visit(*this);
+                    if(list.expr(n)) {
+                        list.expr(n)->visit(*this);
+                    } else {
+                        _stm << "<<null>>";
                     }
                 }
             }
@@ -271,7 +275,23 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_expr_list_expr(ast::expr_list_expr& expr) override {
-
+            if(expr.size()==0) {
+                _stm << "<<list-expr:empty>>";
+            } else {
+                if(expr.expr(0)) {
+                    expr.expr(0)->visit(*this);
+                } else {
+                    _stm << "<<null>>";
+                }
+                for(size_t n=1; n<expr.size(); ++n) {
+                    _stm << ", ";
+                    if(expr.expr(n)) {
+                        expr.expr(n)->visit(*this);
+                    } else {
+                        _stm << "<<null>>";
+                    }
+                }
+            }
         }
 
         void visit_cast_expr(ast::cast_expr& expr) override {
@@ -291,7 +311,12 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr& expr) override {
-
+            expr.lexpr()->visit(*this);
+            _stm << "(";
+            if(expr.rexpr()) {
+                expr.rexpr()->visit(*this);
+            }
+            _stm << ")";
         }
 
         void visit_identifier_expr(ast::identifier_expr& expr) override {

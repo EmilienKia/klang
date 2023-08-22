@@ -281,8 +281,24 @@ namespace k::parse {
 
     }
 
-    void ast_unit_visitor::visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr &) {
+    void ast_unit_visitor::visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr &expr) {
+        expr.lexpr()->visit(*this);
+        std::shared_ptr<unit::expression> callee = _expr;
 
+        _expr = nullptr;
+        std::vector<std::shared_ptr<unit::expression>> args;
+        if(auto list = std::dynamic_pointer_cast<ast::expr_list_expr>(expr.rexpr())) {
+            for(auto arg : list->exprs()) {
+                arg->visit(*this);
+                args.push_back(_expr);
+                _expr = nullptr;
+            }
+        } else if(expr.rexpr()) {
+            expr.rexpr()->visit(*this);
+            args.push_back(_expr);
+        }
+
+        _expr = unit::function_invocation_expression::make_shared(callee, args);
     }
 
     void ast_unit_visitor::visit_identifier_expr(ast::identifier_expr &expr) {
@@ -291,7 +307,7 @@ namespace k::parse {
         for(auto ident : expr.qident.names){
             idents.push_back(ident.content);
         }
-        _expr = unit::variable_expression::from_identifier(unit::name(has_prefix, std::move(idents)));
+        _expr = unit::symbol_expression::from_identifier(unit::name(has_prefix, std::move(idents)));
     }
 
     void ast_unit_visitor::visit_comma_expr(ast::expr_list_expr &) {

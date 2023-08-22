@@ -90,14 +90,50 @@ namespace k::lex {
         {"**", operator_::DOUBLE_STAR}
     };
 
-    const std::set<char> operator_punctuator_chars{
-            '(', ')', '{', '}', '[', ']', ';', ',', '.', '@',
-            '?', ':', '!', '~', '=',
-            '+', '-', '*', '/', '&', '|', '^', '%', '<', '>'
-    };
+    std::set<char> lexer::operator_punctuator_chars;
 
-    inline bool is_operator_punctuator_char(char c) {
-        return operator_punctuator_chars.contains(c);
+    std::map<std::string, lexer::punct_or_op_type_t, lexer::less_order_op_punct_for_lookup> lexer::puncts_or_ops;
+
+    bool lexer::less_order_op_punct_for_lookup::operator()(const std::string &a, const std::string &b) const {
+        // Force bigger tokens to be places before smallers
+        // Else sort them alphabetically
+        // TODO optimize non-prefix placement to optimize lookup.
+        if(a.size() > b.size()) {
+            return true;
+        } else if(a.size() < b.size()) {
+            return false;
+        } else {
+            return a < b;
+        }
+    }
+
+    void lexer::init() {
+        // Register all chars of puctuators and operators in a set to look for them conveniently
+        if(operator_punctuator_chars.empty()) {
+            for(auto& punct : punctuators) {
+                for(char c : punct.first) {
+                    operator_punctuator_chars.insert(c);
+                }
+            }
+            for(auto& op : operators) {
+                for(char c : op.first) {
+                    operator_punctuator_chars.insert(c);
+                }
+            }
+        }
+        // Register all punctuators and operators in lookup map
+        if(puncts_or_ops.empty()) {
+            for(auto& punct : punctuators) {
+                puncts_or_ops.insert(punct);
+            }
+            for(auto& op : operators) {
+                puncts_or_ops.insert(op);
+            }
+        }
+    }
+
+    lexer::lexer() {
+        init();
     }
 
     void lexer::parse(std::string_view src) {
@@ -216,27 +252,31 @@ namespace k::lex {
                     break;
                 case OPERATOR:
                     // TODO Review and expand operator and punctuator parsing
-                    //  - Make operator parsing specific (not accept anything at first pass)
-                    //  - Allow to parse_all many punctuators like two parenthesis (or operators) in a row without separators (like spaces)
                     //  - Make punctuator/operator parsing statefull to able to support >> as shift operator or two closing chevrons
                     if (is_operator_punctuator_char(c)) {
                         content += c;
                     } else {
-                        if (auto it = operators.find(content); it != operators.end()) {
-                            lexemes.push_back(operator_(begin, pos, content, it->second));
-                            content.clear();
-                            begin = {0, 0, 0};
-                            lex_state = START;
-                            continue;
-                        } else if (auto it = punctuators.find(content); it != punctuators.end()) {
-                            lexemes.push_back(punctuator(begin, pos, content, it->second));
-                            content.clear();
-                            begin = {0, 0, 0};
-                            lex_state = START;
-                            continue;
-                        } else {
-                            /* Error, unknown punctuator nor operator. */
+                        while(!content.empty()) {
+                            for(auto& looked : puncts_or_ops) {
+                                if(content.starts_with(looked.first)) {
+                                    size_t sz = looked.first.size();
+                                    if(std::holds_alternative<punctuator::type_t>(looked.second)) {
+                                        lexemes.push_back(punctuator(begin, begin+sz, content.substr(0, sz), std::get<punctuator::type_t>(looked.second)));
+                                    } else {
+                                        lexemes.push_back(operator_(begin, begin+sz, content.substr(0, sz), std::get<operator_::type_t>(looked.second)));
+                                    }
+                                    begin += sz;
+                                    content.erase(content.begin(), content.begin()+sz);
+                                    break;
+                                } else {
+                                    /* Error, unknown punctuator nor operator. */
+                                }
+                            }
                         }
+                        content.clear();
+                        begin = {0, 0, 0};
+                        lex_state = START;
+                        continue;
                     }
                     break;
                 case IDENTIFIER:

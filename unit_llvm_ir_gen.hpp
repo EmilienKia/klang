@@ -68,7 +68,7 @@ public:
     void visit_variable_statement(variable_statement&) override;
 
     void visit_value_expression(value_expression&) override;
-    void visit_variable_expression(variable_expression&) override;
+    void visit_symbol_expression(symbol_expression&) override;
 
     std::pair<llvm::Value*,llvm::Value*> process_binary_expression(binary_expression&);
     void visit_addition_expression(addition_expression&) override;
@@ -84,6 +84,8 @@ public:
     void visit_multiplication_assignation_expression(multiplication_assignation_expression&) override;
     void visit_division_assignation_expression(division_assignation_expression&) override;
     void visit_modulo_assignation_expression(modulo_assignation_expression&) override;
+
+    void visit_function_invocation_expression(function_invocation_expression &expression) override;
 
     void dump();
     void verify();
