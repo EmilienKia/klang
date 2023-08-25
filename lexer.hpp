@@ -315,6 +315,11 @@ namespace k::lex {
         return !lex.has_value() || !std::holds_alternative<keyword>(lex->get()) || std::get<keyword>(lex->get()).type!=type;
     }
 
+    template<keyword::type_t...Keywords>
+    inline bool is_one_of(const opt_ref_any_lexeme& lex) {
+        return lex.has_value() && std::holds_alternative<keyword>(lex->get()) && ( (std::get<keyword>(lex->get()).type==Keywords) ||...);
+    }
+
     inline bool operator==(const opt_ref_any_lexeme& lex, punctuator::type_t type) {
         return lex.has_value() && std::holds_alternative<punctuator>(lex->get()) && std::get<punctuator>(lex->get()).type==type;
     }
@@ -323,12 +328,27 @@ namespace k::lex {
         return !lex.has_value() || !std::holds_alternative<punctuator>(lex->get()) || std::get<punctuator>(lex->get()).type!=type;
     }
 
+    template<punctuator::type_t...Punctuators>
+    inline bool is_one_of(const opt_ref_any_lexeme& lex) {
+        return lex.has_value() && std::holds_alternative<punctuator>(lex->get()) && ( (std::get<punctuator>(lex->get()).type==Punctuators) ||...);
+    }
+
     inline bool operator==(const opt_ref_any_lexeme& lex, operator_::type_t type) {
         return lex.has_value() && std::holds_alternative<operator_>(lex->get()) && std::get<operator_>(lex->get()).type==type;
     }
 
     inline bool operator!=(const opt_ref_any_lexeme& lex, operator_::type_t type) {
         return !lex.has_value() || !std::holds_alternative<operator_>(lex->get()) || std::get<operator_>(lex->get()).type!=type;
+    }
+
+    template<operator_::type_t...Operators>
+    inline bool is_one_of(const opt_ref_any_lexeme& lex) {
+        return lex.has_value() && std::holds_alternative<operator_>(lex->get()) && ( (std::get<operator_>(lex->get()).type==Operators) ||...);
+    }
+
+    template<operator_::type_t...Operators>
+    inline bool is_none_of(const opt_ref_any_lexeme& lex) {
+        return !lex.has_value() || !std::holds_alternative<operator_>(lex->get()) || ( (std::get<operator_>(lex->get()).type!=Operators) && ...);
     }
 
     template<class Type>

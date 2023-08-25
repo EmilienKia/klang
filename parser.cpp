@@ -211,14 +211,14 @@ std::vector<lex::keyword> parser::parse_specifiers()
 
     lex::opt_ref_any_lexeme lkw;
     while(lkw = _lexer.get(), lex::is<lex::keyword>(lkw)) {
-        if( lkw==lex::keyword::PUBLIC
-            || lkw==lex::keyword::PROTECTED
-            || lkw==lex::keyword::PRIVATE
-            || lkw==lex::keyword::STATIC
-            || lkw==lex::keyword::CONST
-            || lkw==lex::keyword::ABSTRACT
-            || lkw==lex::keyword::FINAL
-                ) {
+        if( lex::is_one_of<lex::keyword::PUBLIC,
+                lex::keyword::PROTECTED,
+                lex::keyword::PRIVATE,
+                lex::keyword::STATIC,
+                lex::keyword::CONST,
+                lex::keyword::ABSTRACT,
+                lex::keyword::FINAL>(lkw)
+        ) {
             res.push_back(lex::as<lex::keyword>(lkw));
             holder.sync();
         }
@@ -525,11 +525,13 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
 
     // Expect a type keyword
     auto ltype = _lexer.get();
-    if(ltype==lex::keyword::BYTE || ltype==lex::keyword::CHAR ||
-            ltype==lex::keyword::SHORT || ltype==lex::keyword::INT ||
-            ltype==lex::keyword::LONG ||
-            ltype==lex::keyword::FLOAT || ltype==lex::keyword::DOUBLE
-            ) {
+    if(lex::is_one_of<lex::keyword::BYTE,
+            lex::keyword::CHAR,
+            lex::keyword::SHORT,
+            lex::keyword::INT,
+            lex::keyword::LONG,
+            lex::keyword::FLOAT,
+            lex::keyword::DOUBLE>(ltype)){
         return std::make_shared<ast::keyword_type_specifier>( std::get<lex::keyword>(ltype.value().get()) );
     }
     holder.rollback();
@@ -604,19 +606,17 @@ ast::expr_ptr parser::parse_assignment_expression()
     }
 
     lex::opt_ref_any_lexeme lop = _lexer.get();
-    if(!(lex::is<lex::operator_>(lop) && (
-                   lop==lex::operator_::EQUAL
-                || lop==lex::operator_::STAR_EQUAL
-                || lop==lex::operator_::SLASH_EQUAL
-                || lop==lex::operator_::PERCENT_EQUAL
-                || lop==lex::operator_::PLUS_EQUAL
-                || lop==lex::operator_::MINUS_EQUAL
-                || lop==lex::operator_::DOUBLE_CHEVRON_OPEN_EQUAL
-                || lop==lex::operator_::DOUBLE_CHEVRON_CLOSE_EQUAL
-                || lop==lex::operator_::AMPERSAND_EQUAL
-                || lop==lex::operator_::CARET_EQUAL
-                || lop==lex::operator_::PIPE_EQUAL
-            )))
+    if(lex::is_none_of<lex::operator_::EQUAL,
+          lex::operator_::STAR_EQUAL,
+          lex::operator_::SLASH_EQUAL,
+          lex::operator_::PERCENT_EQUAL,
+          lex::operator_::PLUS_EQUAL,
+          lex::operator_::MINUS_EQUAL,
+          lex::operator_::DOUBLE_CHEVRON_OPEN_EQUAL,
+          lex::operator_::DOUBLE_CHEVRON_CLOSE_EQUAL,
+          lex::operator_::AMPERSAND_EQUAL,
+          lex::operator_::CARET_EQUAL,
+          lex::operator_::PIPE_EQUAL>(lop))
     {
         _lexer.unget();
         return cond;
@@ -834,10 +834,11 @@ ast::expr_ptr parser::parse_relational_expr()
     }
 
     auto op = _lexer.get();
-    if (op != lex::operator_::CHEVRON_CLOSE &&
-        op != lex::operator_::CHEVRON_OPEN &&
-        op != lex::operator_::CHEVRON_CLOSE_EQUAL &&
-        op != lex::operator_::CHEVRON_OPEN_EQUAL ) {
+    if(lex::is_none_of<
+            lex::operator_::CHEVRON_CLOSE,
+            lex::operator_::CHEVRON_OPEN,
+            lex::operator_::CHEVRON_CLOSE_EQUAL,
+            lex::operator_::CHEVRON_OPEN_EQUAL>(op)) {
         _lexer.unget();
         return left_expr;
     }
@@ -917,9 +918,10 @@ ast::expr_ptr parser::parse_multiplicative_expr()
     }
 
     auto op = _lexer.get();
-    if (op != lex::operator_::STAR &&
-        op != lex::operator_::SLASH &&
-        op != lex::operator_::PERCENT) {
+    if(lex::is_none_of<
+            lex::operator_::STAR,
+            lex::operator_::SLASH,
+            lex::operator_::PERCENT>(op)) {
         _lexer.unget();
         return left_expr;
     }
@@ -997,14 +999,15 @@ ast::expr_ptr parser::parse_unary_expr()
     lex::lex_holder holder(_lexer);
 
     if(auto lop = _lexer.get();
-                    lop == lex::operator_::DOUBLE_PLUS
-                ||  lop == lex::operator_::DOUBLE_MINUS
-                ||  lop == lex::operator_::STAR
-                ||  lop == lex::operator_::AMPERSAND
-                ||  lop == lex::operator_::PLUS
-                ||  lop == lex::operator_::MINUS
-                ||  lop == lex::operator_::EXCLAMATION_MARK
-                ||  lop == lex::operator_::TILDE
+            lex::is_one_of<
+                lex::operator_::DOUBLE_PLUS,
+                lex::operator_::DOUBLE_MINUS,
+                lex::operator_::STAR,
+                lex::operator_::AMPERSAND,
+                lex::operator_::PLUS,
+                lex::operator_::MINUS,
+                lex::operator_::EXCLAMATION_MARK,
+                lex::operator_::TILDE>(lop)
             ) {
         ast::expr_ptr expr = parse_cast_expr();
         if(expr) {
