@@ -79,7 +79,7 @@ int main() {
 
     auto jit = gen.to_jit();
     if(!jit){
-        std::cerr << "JIT error : " << toString(jit.takeError()) << std::endl;
+        std::cerr << "JIT instantiation error." << std::endl;
         return -1;
     }
 

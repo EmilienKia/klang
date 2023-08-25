@@ -91,79 +91,38 @@ public:
     void verify();
     void optimize_functions();
 
-    llvm::Expected<std::unique_ptr<unit_llvm_jit>> to_jit();
+    std::unique_ptr<unit_llvm_jit> to_jit();
 };
 
 
 
 class unit_llvm_jit {
 private:
-    std::unique_ptr<llvm::orc::ExecutionSession> _ES;
-    llvm::DataLayout _DL;
-    llvm::orc::MangleAndInterner _Mangle;
-    llvm::orc::RTDyldObjectLinkingLayer _ObjectLayer;
-    llvm::orc::IRCompileLayer _CompileLayer;
-    llvm::orc::JITDylib &_MainJD;
+    std::unique_ptr<llvm::orc::ExecutionSession> _session;
+    llvm::DataLayout _layout;
+    llvm::orc::MangleAndInterner _mangle;
+    llvm::orc::RTDyldObjectLinkingLayer _object_layer;
+    llvm::orc::IRCompileLayer _compile_layer;
+    llvm::orc::JITDylib &_main_dynlib;
 
 public:
 
-    unit_llvm_jit(unit_llvm_jit&&) = default;
+    unit_llvm_jit(std::unique_ptr<llvm::orc::ExecutionSession> session, llvm::orc::JITTargetMachineBuilder jtmb, llvm::DataLayout layout);
+    ~unit_llvm_jit();
 
-    unit_llvm_jit(std::unique_ptr<llvm::orc::ExecutionSession> ES, llvm::orc::JITTargetMachineBuilder JTMB, llvm::DataLayout DL) :
-            _ES(std::move(ES)),
-            _DL(std::move(DL)),
-            _Mangle(*this->_ES, this->_DL),
-            _ObjectLayer(*this->_ES, []() { return std::make_unique<llvm::SectionMemoryManager>(); }),
-            _CompileLayer(*this->_ES, _ObjectLayer, std::make_unique<llvm::orc::ConcurrentIRCompiler>(std::move(JTMB))),
-            _MainJD(this->_ES->createBareJITDylib("<main>")) {
-        _MainJD.addGenerator(llvm::cantFail(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(DL.getGlobalPrefix())));
-        if (JTMB.getTargetTriple().isOSBinFormatCOFF()) {
-            _ObjectLayer.setOverrideObjectFlagsWithResponsibilityFlags(true);
-            _ObjectLayer.setAutoClaimResponsibilityForObjectSymbols(true);
-        }
-    }
+    static std::unique_ptr<unit_llvm_jit> create();
 
-    ~unit_llvm_jit() {
-        if (auto Err = _ES->endSession())
-            _ES->reportError(std::move(Err));
-    }
+//    const llvm::DataLayout &get_data_layout() const { return _layout; }
+//    llvm::orc::JITDylib &get_main_jit_dynlib() { return _main_dynlib; }
 
-    static llvm::Expected<std::unique_ptr<unit_llvm_jit>> Create() {
-        auto EPC = llvm::orc::SelfExecutorProcessControl::Create();
-        if (!EPC)
-            return EPC.takeError();
+    void add_module(llvm::orc::ThreadSafeModule module, llvm::orc::ResourceTrackerSP res_tracker = nullptr);
 
-        auto ES = std::make_unique<llvm::orc::ExecutionSession>(std::move(*EPC));
-
-        llvm::orc::JITTargetMachineBuilder JTMB(ES->getExecutorProcessControl().getTargetTriple());
-
-        auto DL = JTMB.getDefaultDataLayoutForTarget();
-        if (!DL)
-            return DL.takeError();
-
-        return std::make_unique<unit_llvm_jit>(std::move(ES), std::move(JTMB), std::move(*DL));
-    }
-
-    const llvm::DataLayout &getDataLayout() const { return _DL; }
-
-    llvm::orc::JITDylib &getMainJITDylib() { return _MainJD; }
-
-    llvm::Error addModule(llvm::orc::ThreadSafeModule TSM, llvm::orc::ResourceTrackerSP RT = nullptr) {
-        if (!RT)
-            RT = _MainJD.getDefaultResourceTracker();
-        return _CompileLayer.add(RT, std::move(TSM));
-    }
-
-    llvm::Expected<llvm::JITEvaluatedSymbol> lookup(llvm::StringRef Name) {
-        return _ES->lookup({&_MainJD}, _Mangle(Name.str()));
-    }
-
+    llvm::Expected<llvm::JITEvaluatedSymbol> lookup(llvm::StringRef name);
 
     template<typename T>
-    T lookup_symbol(llvm::StringRef Name) {
-        return (T) _ES->lookup({&_MainJD}, _Mangle(Name.str()))->getAddress();
+    T lookup_symbol(llvm::StringRef name) {
+        return (T) _session->lookup({&_main_dynlib}, _mangle(name.str()))->getAddress();
     }
-
 
 };
 

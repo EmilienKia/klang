@@ -875,14 +875,14 @@ protected:
 
 
     /**
-     * Create a block as main block of given function.
+     * create a block as main block of given function.
      * This new block will be attached to the given function but will not have any parent block.
      * @param func Function to which the block will be attached
      * @return New block
      */
     static std::shared_ptr<block> for_function(std::shared_ptr<function> func);
     /**
-     * Create a block as sub block of given block.
+     * create a block as sub block of given block.
      * This new block will be attached to the same function than its parent.
      * @param parent Parent of the new block
      * @return New block

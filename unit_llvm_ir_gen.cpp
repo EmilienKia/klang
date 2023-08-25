@@ -296,13 +296,13 @@ void unit_llvm_ir_gen::visit_function(function &function) {
         ret_type = int32Type;
     }
 
-    // Create the function:
+    // create the function:
     llvm::FunctionType *func_type = llvm::FunctionType::get(ret_type, param_types, false);
     llvm::Function *func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage, function.name(), *_module);
 
     _functions.insert({function.shared_as<k::unit::function>(), func});
 
-    // Create the function content:
+    // create the function content:
     llvm::BasicBlock *block = llvm::BasicBlock::Create(*_context, "entry", func);
     _builder->SetInsertPoint(block);
 
@@ -364,7 +364,7 @@ void unit_llvm_ir_gen::visit_expression_statement(expression_statement& stmt) {
 void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
     // TODO process initialization
 
-    // Create the alloca at begining of the function
+    // create the alloca at begining of the function
     // TODO rework it to do so at right place (or begining of the block ?)
     auto func = _functions[var.get_block()->get_function()];
     llvm::IRBuilder<> build(&func->getEntryBlock(),func->getEntryBlock().begin());
@@ -453,10 +453,10 @@ void unit_llvm_ir_gen::optimize_functions() {
 }
 
 
-llvm::Expected<std::unique_ptr<unit_llvm_jit>> unit_llvm_ir_gen::to_jit() {
-    auto jit = unit_llvm_jit::Create();
+std::unique_ptr<unit_llvm_jit> unit_llvm_ir_gen::to_jit() {
+    auto jit = unit_llvm_jit::create();
     if(jit) {
-        jit.get()->addModule(llvm::orc::ThreadSafeModule(std::move(_module), std::move(_context)));
+        jit.get()->add_module(llvm::orc::ThreadSafeModule(std::move(_module), std::move(_context)));
     }
     return jit;
 }
@@ -467,6 +467,57 @@ llvm::Expected<std::unique_ptr<unit_llvm_jit>> unit_llvm_ir_gen::to_jit() {
 // LLVM JIT
 //
 
+unit_llvm_jit::unit_llvm_jit(std::unique_ptr<llvm::orc::ExecutionSession> session, llvm::orc::JITTargetMachineBuilder jtmb, llvm::DataLayout layout) :
+        _session(std::move(session)),
+        _layout(std::move(layout)),
+        _mangle(*this->_session, this->_layout),
+        _object_layer(*this->_session, []() { return std::make_unique<llvm::SectionMemoryManager>(); }),
+        _compile_layer(*this->_session, _object_layer, std::make_unique<llvm::orc::ConcurrentIRCompiler>(std::move(jtmb))),
+        _main_dynlib(this->_session->createBareJITDylib("<main>")) {
+    _main_dynlib.addGenerator(llvm::cantFail(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(layout.getGlobalPrefix())));
+    if (jtmb.getTargetTriple().isOSBinFormatCOFF()) {
+        _object_layer.setOverrideObjectFlagsWithResponsibilityFlags(true);
+        _object_layer.setAutoClaimResponsibilityForObjectSymbols(true);
+    }
+}
 
+unit_llvm_jit::~unit_llvm_jit() {
+    if (auto Err = _session->endSession())
+        _session->reportError(std::move(Err));
+}
+
+std::unique_ptr<unit_llvm_jit> unit_llvm_jit::create() {
+    auto epc = llvm::orc::SelfExecutorProcessControl::Create();
+    if (!epc) {
+        // TODO throw an exception.
+        std::cerr << "Failed to instantiate ORC SelfExecutorProcessControl" << std::endl;
+        return nullptr;
+    }
+
+    auto session = std::make_unique<llvm::orc::ExecutionSession>(std::move(*epc));
+
+    llvm::orc::JITTargetMachineBuilder jtmb(session->getExecutorProcessControl().getTargetTriple());
+
+    auto layout = jtmb.getDefaultDataLayoutForTarget();
+    if (!layout) {
+        // TODO throw an exception.
+        std::cerr << "Failed to retrieve default data layout for current target." << std::endl;
+        return nullptr;
+    }
+
+    return std::make_unique<unit_llvm_jit>(std::move(session), std::move(jtmb), std::move(*layout));
+}
+
+void unit_llvm_jit::add_module(llvm::orc::ThreadSafeModule module, llvm::orc::ResourceTrackerSP res_tracker) {
+    if (!res_tracker)
+        res_tracker = _main_dynlib.getDefaultResourceTracker();
+    if(llvm::Error err = _compile_layer.add(res_tracker, std::move(module))) {
+        std::cerr << "Failed to register module to jit." << std::endl;
+    }
+}
+
+llvm::Expected<llvm::JITEvaluatedSymbol> unit_llvm_jit::lookup(llvm::StringRef name) {
+    return _session->lookup({&_main_dynlib}, _mangle(name.str()));
+}
 
 } // k::unit::gen
