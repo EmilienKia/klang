@@ -17,4 +17,5 @@ llvm_map_components_to_libnames(llvm_libs core irreader native orcjit support)
 add_executable(klang lexer.cpp parser.cpp ast.cpp main.cpp unit.cpp common.cpp common.hpp ast_unit_visitor.cpp ast_unit_visitor.hpp unit_dump.hpp symbol_resolver.cpp symbol_resolver.hpp unit_llvm_ir_gen.cpp unit_llvm_ir_gen.hpp)
 target_link_libraries(klang ${llvm_libs})
 
-add_executable(tests lexer.cpp parser.cpp ast.cpp unit.cpp test-lexer.cpp test-parser.cpp tests.cpp common.cpp common.hpp ast_unit_visitor.cpp ast_unit_visitor.hpp test-unit-visitor.cpp)
+add_executable(tests lexer.cpp parser.cpp ast.cpp unit.cpp common.cpp ast_unit_visitor.cpp symbol_resolver.cpp unit_llvm_ir_gen.cpp test-lexer.cpp test-parser.cpp tests.cpp test-gen.cpp)
+target_link_libraries(tests ${llvm_libs})
