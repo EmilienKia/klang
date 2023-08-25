@@ -68,7 +68,7 @@ std::optional<ast::qualified_identifier> parser::parse_module_declaration()
     lex::lex_holder holder(_lexer);
 
     // Not a "module" keyword, skip module declaration
-    if(auto lmod = _lexer.get(); !(lmod && lmod==lex::keyword::MODULE)) {
+    if(auto lmod = _lexer.get(); lmod!=lex::keyword::MODULE) {
         holder.rollback();
         return {};
     }
@@ -81,7 +81,7 @@ std::optional<ast::qualified_identifier> parser::parse_module_declaration()
     }
 
     // Expect a semicolon to end module declaration
-    if(auto lsemicolon = _lexer.get(); !(lsemicolon && lsemicolon==lex::punctuator::SEMICOLON)) {
+    if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
         // Err : semicolon is missing
         throw parsing_error("Semicolon is missing at end of module declaration" /*, *lsemicolon */);
     }
@@ -93,7 +93,7 @@ std::optional<ast::import> parser::parse_import()
     lex::lex_holder holder(_lexer);
 
     // Not an "import" keyword, skip import declaration
-    if(auto limport = _lexer.get(); !(limport && limport==lex::keyword::IMPORT)) {
+    if(auto limport = _lexer.get(); limport!=lex::keyword::IMPORT) {
         holder.rollback();
         return {};
     }
@@ -106,7 +106,7 @@ std::optional<ast::import> parser::parse_import()
     }
 
     // Expect a semicolon to end import declaration
-    if(auto lsemicolon = _lexer.get(); !(lsemicolon && lsemicolon==lex::punctuator::SEMICOLON)) {
+    if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
         // Err : semicolon is missing
         throw parsing_error("Semicolon is missing at end of import declaration" /*, *lsemicolon */);
     }
@@ -158,7 +158,7 @@ std::optional<ast::visibility_decl> parser::parse_visibility_decl()
     if(auto lkw = _lexer.get()) {
         if(lkw==lex::keyword::PUBLIC || lkw==lex::keyword::PROTECTED || lkw==lex::keyword::PRIVATE) {
             // Expect a colon
-            if(lex::opt_ref_any_lexeme lcolon = _lexer.get(); lcolon && lcolon==lex::operator_::COLON) {
+            if(lex::opt_ref_any_lexeme lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
                 return ast::visibility_decl{lex::as<lex::keyword>(lkw)};
             }
         }
@@ -172,7 +172,7 @@ std::optional<ast::namespace_decl> parser::parse_namespace_decl()
     lex::lex_holder holder(_lexer);
 
     // Not a "namespace" keyword, skip namespace declaration
-    if(lex::opt_ref_any_lexeme lnamespace = _lexer.get(); !(lnamespace && lnamespace==lex::keyword::NAMESPACE)) {
+    if(lex::opt_ref_any_lexeme lnamespace = _lexer.get(); lnamespace!=lex::keyword::NAMESPACE) {
         holder.rollback();
         return {};
     }
@@ -188,7 +188,7 @@ std::optional<ast::namespace_decl> parser::parse_namespace_decl()
     }
 
     // Expect an open brace
-    if(lex::opt_ref_any_lexeme lopenbrace= _lexer.get(); !(lopenbrace && lopenbrace==lex::punctuator::BRACE_OPEN)) {
+    if(lex::opt_ref_any_lexeme lopenbrace= _lexer.get(); lopenbrace!=lex::punctuator::BRACE_OPEN) {
         // Err: namespace declaration shall have an open brace.
         throw parsing_error("Open brace for namespace is missing" /*, *lopenbrace */);
     }
@@ -196,7 +196,7 @@ std::optional<ast::namespace_decl> parser::parse_namespace_decl()
     std::vector<ast::decl_ptr> declarations = parse_declarations();
 
     // Expect a closing brace
-    if(lex::opt_ref_any_lexeme lclosingbrace= _lexer.get(); !(lclosingbrace && lclosingbrace==lex::punctuator::BRACE_CLOSE)) {
+    if(lex::opt_ref_any_lexeme lclosingbrace= _lexer.get(); lclosingbrace!=lex::punctuator::BRACE_CLOSE) {
         // Err: namespace declaration shall have a closing brace.
         throw parsing_error("Closing brace for namespace is missing" /*, *lclosingbrace */);
     }
@@ -232,7 +232,7 @@ std::optional<ast::qualified_identifier> parser::parse_qualified_identifier()
     lex::lex_holder holder(_lexer);
 
     std::optional<lex::punctuator> initial;
-    if(lex::opt_ref_any_lexeme linitdoublecolon= _lexer.get(); linitdoublecolon && linitdoublecolon==lex::punctuator::DOUBLE_COLON) {
+    if(lex::opt_ref_any_lexeme linitdoublecolon= _lexer.get(); linitdoublecolon==lex::punctuator::DOUBLE_COLON) {
         initial = lex::as<lex::punctuator>(linitdoublecolon);
     } else {
         holder.rollback();
@@ -241,7 +241,7 @@ std::optional<ast::qualified_identifier> parser::parse_qualified_identifier()
     std::vector<lex::identifier> names;
 
     // Expect a first name:
-    if(auto lname= _lexer.get(); lname && lex::is<lex::identifier>(lname)) {
+    if(auto lname= _lexer.get(); lex::is<lex::identifier>(lname)) {
         names.push_back(lex::as<lex::identifier>(lname));
     } else {
         // No identifier:
@@ -262,7 +262,7 @@ std::optional<ast::qualified_identifier> parser::parse_qualified_identifier()
             holder.rollback();
             break;
         }
-        if(auto lname= _lexer.get(); lname && lex::is<lex::identifier>(lname)) {
+        if(auto lname= _lexer.get(); lex::is<lex::identifier>(lname)) {
             names.push_back(lex::as<lex::identifier>(lname));
             holder.sync();
         } else {
@@ -289,7 +289,7 @@ std::optional<ast::function_decl> parser::parse_function_decl() {
     }
 
     // Look for open parenthesis
-    if(auto lopenpar = _lexer.get(); !(lopenpar && lopenpar==lex::punctuator::PARENTHESIS_OPEN)) {
+    if(auto lopenpar = _lexer.get(); lopenpar!=lex::punctuator::PARENTHESIS_OPEN) {
         holder.rollback();
         return {};
         // Err: function declaration requires an open parenthesis.
@@ -303,7 +303,7 @@ std::optional<ast::function_decl> parser::parse_function_decl() {
         // Err: function declaration requires a closing parenthesis.
         throw parsing_error("Closing parenthesis for function declaration is missing" /*, *lex */);
     }
-    if(!(lex==lex::punctuator::PARENTHESIS_CLOSE)) {
+    if(lex!=lex::punctuator::PARENTHESIS_CLOSE) {
         _lexer.unget();
         holder.sync();
         // Look for first parameter_spec
@@ -343,7 +343,7 @@ std::optional<ast::function_decl> parser::parse_function_decl() {
     // Look for return type
     std::shared_ptr<ast::type_specifier> restype;
     holder.sync();
-    if(auto lcolon = _lexer.get(); lcolon && lcolon==lex::operator_::COLON) {
+    if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
         restype = parse_type_spec();
         if(!restype) {
             // Err: function declaration requires a return type declaration.
@@ -358,7 +358,7 @@ std::optional<ast::function_decl> parser::parse_function_decl() {
         return {{specifiers, lex::as<lex::identifier>(lname), restype, params, statements}};
     } else
     // Look for final semicolon
-    if(auto lsemicolon = _lexer.get(); !(lsemicolon && lsemicolon==lex::punctuator::SEMICOLON)) {
+    if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
         // Err: function declaration requires a final semiclon.
         throw parsing_error("Final semicolon for function declaration is missing" /*, *lsemicolon */);
     }
@@ -374,8 +374,8 @@ std::optional<ast::parameter_spec> parser::parse_parameter_spec()
 
     std::optional<lex::identifier> name;
     lex::lex_holder holder_name(_lexer);
-    if(auto lname = _lexer.get(); lname && lex::is<lex::identifier>(lname)) {
-        if(auto lcolon = _lexer.get(); lcolon && lcolon==lex::operator_::COLON) {
+    if(auto lname = _lexer.get(); lex::is<lex::identifier>(lname)) {
+        if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
             name = lex::as<lex::identifier>(lname);
         } else {
             holder_name.rollback();
@@ -398,7 +398,7 @@ std::optional<ast::block_statement> parser::parse_statement_block()
     lex::lex_holder holder(_lexer);
 
     // Look for open brace
-    if(auto lopenbrace = _lexer.get(); !(lopenbrace && lopenbrace==lex::punctuator::BRACE_OPEN)) {
+    if(auto lopenbrace = _lexer.get(); lopenbrace!=lex::punctuator::BRACE_OPEN) {
         holder.rollback();
         return {};
         // Err: statement block requires a opening brace.
@@ -413,7 +413,7 @@ std::optional<ast::block_statement> parser::parse_statement_block()
     }
 
     // Look for closing brace
-    if(auto lclosebrace = _lexer.get(); !(lclosebrace && lclosebrace == lex::punctuator::BRACE_CLOSE)) {
+    if(auto lclosebrace = _lexer.get(); lclosebrace != lex::punctuator::BRACE_CLOSE) {
         // Err: statement block requires a closing brace.
         throw parsing_error("Final closing brace for statement block is missing" /*, *lclosebrace */);
     }
@@ -425,7 +425,7 @@ std::optional<ast::return_statement> parser::parse_return_statement()
 {
     lex::lex_holder holder(_lexer);
 
-    if(auto lreturn = _lexer.get(); !(lreturn && lreturn==lex::keyword::RETURN)) {
+    if(auto lreturn = _lexer.get(); lreturn!=lex::keyword::RETURN) {
         holder.rollback();
         return {};
     }
@@ -433,7 +433,7 @@ std::optional<ast::return_statement> parser::parse_return_statement()
     ast::expr_ptr expr = parse_expression();
 
     auto lsemicolon = _lexer.get();
-    if(!(lsemicolon && lsemicolon==lex::punctuator::SEMICOLON)) {
+    if(lsemicolon!=lex::punctuator::SEMICOLON) {
         // Err: expression statement requires to be finished by a semicolon.
         throw parsing_error("Semicolon for return statement is missing" /*, *lsemicolon */);
     }
@@ -485,7 +485,7 @@ std::optional<ast::variable_decl> parser::parse_variable_decl()
 
     // Look for the type specifier
     auto lcolon = _lexer.get();
-    if(!(lcolon && lcolon==lex::operator_::COLON)) {
+    if(lcolon!=lex::operator_::COLON) {
         // Err: variable declaration requires at least and identifier and a colon.
         // Err: variable declaration requires a type specifier prefixed by colon.
         //throw parsing_error("Colon for variable type declaration is missing" /*, *lcolon */);
@@ -511,7 +511,7 @@ std::optional<ast::variable_decl> parser::parse_variable_decl()
     }
 
     auto lsemicolon = _lexer.get();
-    if(!(lsemicolon && lsemicolon==lex::punctuator::SEMICOLON)) {
+    if(lsemicolon!=lex::punctuator::SEMICOLON) {
         // Err: variable declaration requires to be finished by a semicolon.
         throw parsing_error("Semicolon for variable declaration is missing" /*, *lsemicolon */);
     }
@@ -525,11 +525,11 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
 
     // Expect a type keyword
     auto ltype = _lexer.get();
-    if( ltype && (ltype==lex::keyword::BYTE || ltype==lex::keyword::CHAR ||
-                    ltype==lex::keyword::SHORT || ltype==lex::keyword::INT ||
-                    ltype==lex::keyword::LONG ||
-                    ltype==lex::keyword::FLOAT || ltype==lex::keyword::DOUBLE
-                    )) {
+    if(ltype==lex::keyword::BYTE || ltype==lex::keyword::CHAR ||
+            ltype==lex::keyword::SHORT || ltype==lex::keyword::INT ||
+            ltype==lex::keyword::LONG ||
+            ltype==lex::keyword::FLOAT || ltype==lex::keyword::DOUBLE
+            ) {
         return std::make_shared<ast::keyword_type_specifier>( std::get<lex::keyword>(ltype.value().get()) );
     }
     holder.rollback();
@@ -552,7 +552,7 @@ std::optional<ast::expression_statement> parser::parse_expression_statement()
     }
 
     auto lsemicolon = _lexer.get();
-    if(!(lsemicolon && lsemicolon==lex::punctuator::SEMICOLON)) {
+    if(lsemicolon!=lex::punctuator::SEMICOLON) {
         // Err: expression statement requires to be finished by a semicolon.
         throw parsing_error("Semicolon for expression statement is missing" /*, *lsemicolon */);
     }
@@ -572,7 +572,7 @@ ast::expr_ptr parser::parse_expression()
 
     while(true) {
         auto lcomma = _lexer.get();
-        if (!(lcomma && lcomma == lex::punctuator::COMMA)) {
+        if (lcomma != lex::punctuator::COMMA) {
             _lexer.unget();
             if (exprs.size() == 1) {
                 return {exprs[0]};
@@ -638,7 +638,7 @@ ast::expr_ptr parser::parse_conditional_expr() {
     }
 
     auto lqm = _lexer.get();
-    if (!(lqm && lqm == lex::operator_::QUESTION_MARK)) {
+    if (lqm != lex::operator_::QUESTION_MARK) {
         _lexer.unget();
         return left;
     }
@@ -650,7 +650,7 @@ ast::expr_ptr parser::parse_conditional_expr() {
     }
 
     auto lcolon = _lexer.get();
-    if (!(lqm && lqm == lex::operator_::COLON)) {
+    if (lqm != lex::operator_::COLON) {
         // Err: conditional expression requires a colon after sub expression.
         throw parsing_error("Colon of conditional expression is missing" /*, *lcolon */);
     }
@@ -675,7 +675,7 @@ ast::expr_ptr parser::parse_logical_or_expression()
     }
 
     auto op = _lexer.get();
-    if (!(op && op == lex::operator_::DOUBLE_PIPE)) {
+    if (op != lex::operator_::DOUBLE_PIPE) {
         _lexer.unget();
         return left_expr;
     }
@@ -727,7 +727,7 @@ ast::expr_ptr parser::parse_inclusive_bin_or_expr()
     }
 
     auto op = _lexer.get();
-    if (!(op && op == lex::operator_::PIPE)) {
+    if (op != lex::operator_::PIPE) {
         _lexer.unget();
         return left_expr;
     }
@@ -753,7 +753,7 @@ ast::expr_ptr parser::parse_exclusive_bin_or_expr()
     }
 
     auto op = _lexer.get();
-    if (!(op && op == lex::operator_::CARET)) {
+    if (op != lex::operator_::CARET) {
         _lexer.unget();
         return left_expr;
     }
@@ -779,7 +779,7 @@ ast::expr_ptr parser::parse_bin_and_expr()
     }
 
     auto op = _lexer.get();
-    if (!(op && op == lex::operator_::AMPERSAND)) {
+    if (op != lex::operator_::AMPERSAND) {
         _lexer.unget();
         return left_expr;
     }
@@ -806,7 +806,8 @@ ast::expr_ptr parser::parse_equality_expr()
     }
 
     auto op = _lexer.get();
-    if (!(op && (op == lex::operator_::DOUBLE_EQUAL || op == lex::operator_::EXCLAMATION_MARK_EQUAL))) {
+    if (op != lex::operator_::DOUBLE_EQUAL &&
+        op != lex::operator_::EXCLAMATION_MARK_EQUAL) {
         _lexer.unget();
         return left_expr;
     }
@@ -833,8 +834,10 @@ ast::expr_ptr parser::parse_relational_expr()
     }
 
     auto op = _lexer.get();
-    if (!(op && (op == lex::operator_::CHEVRON_CLOSE || op == lex::operator_::CHEVRON_OPEN
-                  || op == lex::operator_::CHEVRON_CLOSE_EQUAL || op == lex::operator_::CHEVRON_OPEN_EQUAL))) {
+    if (op != lex::operator_::CHEVRON_CLOSE &&
+        op != lex::operator_::CHEVRON_OPEN &&
+        op != lex::operator_::CHEVRON_CLOSE_EQUAL &&
+        op != lex::operator_::CHEVRON_OPEN_EQUAL ) {
         _lexer.unget();
         return left_expr;
     }
@@ -860,7 +863,8 @@ ast::expr_ptr parser::parse_shifting_expr()
     }
 
     auto op = _lexer.get();
-    if (!(op && (op == lex::operator_::DOUBLE_CHEVRON_CLOSE || op == lex::operator_::DOUBLE_CHEVRON_OPEN))) {
+    if (op != lex::operator_::DOUBLE_CHEVRON_CLOSE &&
+        op != lex::operator_::DOUBLE_CHEVRON_OPEN) {
         _lexer.unget();
         return left_expr;
     }
@@ -886,7 +890,8 @@ ast::expr_ptr parser::parse_additive_expr()
     }
 
     auto op = _lexer.get();
-    if (!(op && (op == lex::operator_::PLUS || op == lex::operator_::MINUS))) {
+    if (op != lex::operator_::PLUS &&
+        op != lex::operator_::MINUS) {
         _lexer.unget();
         return left_expr;
     }
@@ -912,7 +917,9 @@ ast::expr_ptr parser::parse_multiplicative_expr()
     }
 
     auto op = _lexer.get();
-    if (!(op && (op == lex::operator_::STAR || op == lex::operator_::SLASH || op == lex::operator_::PERCENT))) {
+    if (op != lex::operator_::STAR &&
+        op != lex::operator_::SLASH &&
+        op != lex::operator_::PERCENT) {
         _lexer.unget();
         return left_expr;
     }
@@ -939,7 +946,8 @@ ast::expr_ptr parser::parse_pm_expr()
     }
 
     auto op = _lexer.get();
-    if (!(op && (op == lex::operator_::DOT_STAR || op == lex::operator_::ARROW_STAR))) {
+    if (op != lex::operator_::DOT_STAR &&
+        op != lex::operator_::ARROW_STAR) {
         _lexer.unget();
         return left_expr;
     }
@@ -959,7 +967,7 @@ ast::expr_ptr parser::parse_cast_expr()
 {
     lex::lex_holder holder(_lexer);
 
-    if(auto lopenpar = _lexer.get(); !(lopenpar && lopenpar == lex::punctuator::PARENTHESIS_OPEN)) {
+    if(auto lopenpar = _lexer.get(); lopenpar != lex::punctuator::PARENTHESIS_OPEN) {
         holder.rollback();
         return parse_unary_expr();
     }
@@ -970,7 +978,7 @@ ast::expr_ptr parser::parse_cast_expr()
         return parse_unary_expr();
     }
 
-    if(auto lclosepar = _lexer.get(); !(lclosepar && lclosepar == lex::punctuator::PARENTHESIS_CLOSE)) {
+    if(auto lclosepar = _lexer.get(); lclosepar != lex::punctuator::PARENTHESIS_CLOSE) {
         // Err: cast expression requires to have a closing parenthesis.
         throw parsing_error("Sub expression after a pointer-member operator for expression is missing" /*, *lclosepar */);
     }
@@ -988,7 +996,7 @@ ast::expr_ptr parser::parse_unary_expr()
 {
     lex::lex_holder holder(_lexer);
 
-    if(auto lop = _lexer.get(); lop && (
+    if(auto lop = _lexer.get();
                     lop == lex::operator_::DOUBLE_PLUS
                 ||  lop == lex::operator_::DOUBLE_MINUS
                 ||  lop == lex::operator_::STAR
@@ -997,7 +1005,7 @@ ast::expr_ptr parser::parse_unary_expr()
                 ||  lop == lex::operator_::MINUS
                 ||  lop == lex::operator_::EXCLAMATION_MARK
                 ||  lop == lex::operator_::TILDE
-            )) {
+            ) {
         ast::expr_ptr expr = parse_cast_expr();
         if(expr) {
             return std::make_shared<ast::unary_prefix_expr>(lex::as<lex::operator_>(lop), expr);
@@ -1032,7 +1040,7 @@ ast::expr_ptr parser::parse_postfix_expr()
                 throw parsing_error("Sub expression of bracket index postfix for expression is missing" /*, *lop */);
             }
             auto lclose = _lexer.get();
-            if(!(lclose && lclose == lex::punctuator::BRAKET_CLOSE)) {
+            if(lclose != lex::punctuator::BRAKET_CLOSE) {
                 // Err:  Expression with postfix bracket index requires to have a closing bracket.
                 throw parsing_error("Closing bracket of bracket index suffix for expression is missing" /*, *lop */);
             }
@@ -1041,7 +1049,7 @@ ast::expr_ptr parser::parse_postfix_expr()
             ast::expr_ptr expr = parse_expression_list();
             // expr might be null if expression list is empty
             auto lclose = _lexer.get();
-            if(!(lclose && lclose == lex::punctuator::PARENTHESIS_CLOSE)) {
+            if(lclose != lex::punctuator::PARENTHESIS_CLOSE) {
                 // Err:  Expression with postfix parenthesis expression list requires to have a closing bracket.
                 throw parsing_error("Closing bracket of parenthesis expression list suffix for expression is missing" /*, *lop */);
             }
@@ -1071,7 +1079,7 @@ ast::expr_ptr parser::parse_primary_expr()
             throw parsing_error("Primary expression with open parenthesis expects an expression" /*, *expr */);
         }
         lex::opt_ref_any_lexeme r = _lexer.get();
-        if(!r || r != lex::punctuator::PARENTHESIS_CLOSE) {
+        if(r != lex::punctuator::PARENTHESIS_CLOSE) {
             // Err: Primary expression with open parenthesis then expression requires a closing parenthesis
             throw parsing_error("Primary expression with open parenthesis then expression requires a closing parenthesis" /*, *expr */);
         }

@@ -307,6 +307,30 @@ namespace k::lex {
         return !std::holds_alternative<operator_>(lex) || std::get<operator_>(lex).type!=type;
     }
 
+    inline bool operator==(const opt_ref_any_lexeme& lex, keyword::type_t type) {
+        return lex.has_value() && std::holds_alternative<keyword>(lex->get()) && std::get<keyword>(lex->get()).type==type;
+    }
+
+    inline bool operator!=(const opt_ref_any_lexeme& lex, keyword::type_t type) {
+        return !lex.has_value() || !std::holds_alternative<keyword>(lex->get()) || std::get<keyword>(lex->get()).type!=type;
+    }
+
+    inline bool operator==(const opt_ref_any_lexeme& lex, punctuator::type_t type) {
+        return lex.has_value() && std::holds_alternative<punctuator>(lex->get()) && std::get<punctuator>(lex->get()).type==type;
+    }
+
+    inline bool operator!=(const opt_ref_any_lexeme& lex, punctuator::type_t type) {
+        return !lex.has_value() || !std::holds_alternative<punctuator>(lex->get()) || std::get<punctuator>(lex->get()).type!=type;
+    }
+
+    inline bool operator==(const opt_ref_any_lexeme& lex, operator_::type_t type) {
+        return lex.has_value() && std::holds_alternative<operator_>(lex->get()) && std::get<operator_>(lex->get()).type==type;
+    }
+
+    inline bool operator!=(const opt_ref_any_lexeme& lex, operator_::type_t type) {
+        return !lex.has_value() || !std::holds_alternative<operator_>(lex->get()) || std::get<operator_>(lex->get()).type!=type;
+    }
+
     template<class Type>
             inline bool is(const any_lexeme& lex) {
         return std::holds_alternative<Type>(lex);
