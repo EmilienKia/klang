@@ -100,7 +100,7 @@ std::optional<ast::import> parser::parse_import()
 
     // Expect an import identifier:
     auto lname= _lexer.get();
-    if(!(lname && lex::is<lex::identifier>(lname))) {
+    if(lex::is_not<lex::identifier>(lname)) {
         // Err : import name as identifier is missing.
         throw parsing_error("Identifier for import name is missing" /*, *lname */);
     }
@@ -281,7 +281,7 @@ std::optional<ast::function_decl> parser::parse_function_decl() {
 
     // Expect a name:
     auto lname= _lexer.get();
-    if(!(lname && lex::is<lex::identifier>(lname))) {
+    if(lex::is_not<lex::identifier>(lname)) {
         holder.rollback();
         return {};
         // Err: function declaration requires at least and identifier.
@@ -324,7 +324,7 @@ std::optional<ast::function_decl> parser::parse_function_decl() {
             if(lex==lex::punctuator::PARENTHESIS_CLOSE) {
                 break;
             }
-            if(!(lex==lex::punctuator::COMMA)){
+            if(lex!=lex::punctuator::COMMA){
                 // Err: function declaration requires a closing parenthesis or a comma.
                 throw parsing_error("Closing parenthesis or comma for function declaration is missing" /*, *lex */);
             }
@@ -476,7 +476,7 @@ std::optional<ast::variable_decl> parser::parse_variable_decl()
 
     // Expect a name:
     auto lname = _lexer.get();
-    if(!(lname && lex::is<lex::identifier>(lname))) {
+    if(lex::is_not<lex::identifier>(lname)) {
         holder.rollback();
         return {};
         // Err: variable declaration requires at least and identifier.
@@ -701,7 +701,7 @@ ast::expr_ptr parser::parse_logical_and_expression()
     }
 
     auto op = _lexer.get();
-    if (!(op && op == lex::operator_::DOUBLE_AMPERSAND)) {
+    if (op != lex::operator_::DOUBLE_AMPERSAND) {
         _lexer.unget();
         return left_expr;
     }

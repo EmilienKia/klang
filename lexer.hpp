@@ -332,46 +332,64 @@ namespace k::lex {
     }
 
     template<class Type>
-            inline bool is(const any_lexeme& lex) {
+    inline bool is(const any_lexeme& lex) {
         return std::holds_alternative<Type>(lex);
     }
 
     template<class Type>
-            inline bool is(const ref_any_lexeme& lexref) {
+    inline bool is_not(const any_lexeme& lex) {
+        return !std::holds_alternative<Type>(lex);
+    }
+
+    template<class Type>
+    inline bool is(const ref_any_lexeme& lexref) {
         return std::holds_alternative<Type>(lexref.get());
     }
 
     template<class Type>
-            inline bool is(const opt_ref_any_lexeme& optlexref) {
+    inline bool is_not(const ref_any_lexeme& lexref) {
+        return !std::holds_alternative<Type>(lexref.get());
+    }
+
+    template<class Type>
+    inline bool is(const opt_ref_any_lexeme& optlexref) {
         return optlexref.has_value() && std::holds_alternative<Type>(optlexref.value().get());
     }
 
     template<class Type>
-            inline bool is(const opt_any_lexeme& optlex) {
+    inline bool is_not(const opt_ref_any_lexeme& optlexref) {
+        return !optlexref.has_value() || !std::holds_alternative<Type>(optlexref.value().get());
+    }
+
+    template<class Type>
+    inline bool is(const opt_any_lexeme& optlex) {
         return optlex.has_value() && std::holds_alternative<Type>(optlex.value());
     }
 
+    template<class Type>
+    inline bool is_not(const opt_any_lexeme& optlex) {
+        return !optlex.has_value() || !std::holds_alternative<Type>(optlex.value());
+    }
 
     template<class Type>
-            inline const Type& as(const any_lexeme& lex) {
+    inline const Type& as(const any_lexeme& lex) {
         return std::get<Type>(lex);
     }
 
     template<class Type>
-            inline const Type& as(const ref_any_lexeme& lexref) {
+    inline const Type& as(const ref_any_lexeme& lexref) {
         return std::get<Type>(lexref.get());
     }
 
     template<class Type>
-            inline const Type& as(const opt_ref_any_lexeme& optlexref) {
+    inline const Type& as(const opt_ref_any_lexeme& optlexref) {
         return std::get<Type>(optlexref.value().get());
     }
 
     template<class Type>
-            inline const Type& as(const opt_any_lexeme& optlex) {
+    inline const Type& as(const opt_any_lexeme& optlex) {
         return std::get<Type>(optlex.value());
     }
-
 
     // Abstract literal-specific
     template<>
