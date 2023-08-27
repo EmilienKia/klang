@@ -18,87 +18,6 @@ static name to_name(const parse::ast::qualified_identifier& ident) {
 }
 
 //
-// Unresolved type
-//
-
-std::shared_ptr<type> unresolved_type::from_string(const std::string& type_name)
-{
-    auto prim = primitive_type::from_string(type_name);
-    if(prim) {
-        return prim;
-    } else {
-        return std::shared_ptr<type>{new unresolved_type(name(type_name))};
-    }
-}
-
-std::shared_ptr<type> unresolved_type::from_identifier(const name& type_id)
-{
-    return std::shared_ptr<type>{new unresolved_type(type_id)};
-}
-
-std::shared_ptr<type> unresolved_type::from_type_specifier(const k::parse::ast::type_specifier& type_spec)
-{
-    if(auto ident = dynamic_cast<const k::parse::ast::identified_type_specifier*>(&type_spec)) {
-        return std::shared_ptr<type>{new unresolved_type(to_name(ident->name))};
-    } else if(auto kw = dynamic_cast<const k::parse::ast::keyword_type_specifier*>(&type_spec)) {
-        return primitive_type::from_keyword(kw->keyword);
-    } else {
-        return {};
-    }
-}
-
-//
-// Primitive type
-//
-
-std::shared_ptr<primitive_type> primitive_type::make_shared(PRIMITIVE_TYPE type){
-    return std::shared_ptr<primitive_type>{new primitive_type(type)};
-}
-
-std::shared_ptr<type> primitive_type::from_string(const std::string& type_name) {
-    static std::map<std::string, primitive_type::PRIMITIVE_TYPE> type_map {
-            {"byte", BYTE},
-            {"char", CHAR},
-            {"short", SHORT},
-            {"int", INT},
-            {"long", LONG},
-            {"float", FLOAT},
-            {"double", DOUBLE}
-    };
-    static std::map<primitive_type::PRIMITIVE_TYPE, std::shared_ptr<primitive_type> > predef_types {
-            {BYTE, make_shared(BYTE)},
-            {CHAR, make_shared(CHAR)},
-            {SHORT, make_shared(SHORT)},
-            {INT, make_shared(INT)},
-            {LONG, make_shared(LONG)},
-            {FLOAT, make_shared(FLOAT)},
-            {DOUBLE, make_shared(DOUBLE)}
-    };
-    auto it = type_map.find(type_name);
-    if(it!=type_map.end()) {
-        return predef_types[it->second];
-    }
-    return {};
-}
-
-std::shared_ptr<type> primitive_type::from_keyword(const lex::keyword& kw) {
-    return from_string(kw.content);
-}
-
-const std::string& primitive_type::to_string()const {
-    static std::map<primitive_type::PRIMITIVE_TYPE, std::string> type_names {
-            {BYTE, "byte"},
-            {CHAR,"char"},
-            {SHORT, "short"},
-            {INT, "int"},
-            {LONG, "long"},
-            {FLOAT, "float"},
-            {DOUBLE, "double"}
-    };
-    return type_names[_type];
-}
-
-//
 // Expression
 //
 void expression::accept(element_visitor& visitor) {
@@ -109,7 +28,25 @@ void expression::accept(element_visitor& visitor) {
 // Value expression
 //
 
-void value_expression::accept(element_visitor& visitor) {
+value_expression::value_expression(const k::lex::any_literal& literal) :
+expression(type_from_literal(literal)),
+_literal(literal)
+{
+}
+
+std::shared_ptr<type> value_expression::type_from_literal(const k::lex::any_literal& literal)
+{
+    if(std::holds_alternative<lex::integer>(literal)) {
+        // TODO handle other integer alternatives
+        return primitive_type::from_type(primitive_type::INT);
+    } else {
+        // TODO handle other literal types
+        return nullptr;
+    }
+}
+
+void value_expression::accept(element_visitor& visitor)
+{
     visitor.visit_value_expression(*this);
 }
 
@@ -149,6 +86,16 @@ std::shared_ptr<symbol_expression> symbol_expression::from_string(const std::str
 std::shared_ptr<symbol_expression> symbol_expression::from_identifier(const name& name)
 {
     return std::shared_ptr<symbol_expression>(new symbol_expression(name));
+}
+
+void symbol_expression::resolve(std::shared_ptr<variable_definition> var) {
+    _symbol = var;
+    _type = var->get_type();
+}
+
+void symbol_expression::resolve(std::shared_ptr<function> func) {
+    _symbol = func;
+    // TODO Add function prototype to type
 }
 
 //
@@ -282,12 +229,12 @@ void block::accept(element_visitor& visitor) {
 
 std::shared_ptr<block> block::for_function(std::shared_ptr<function> func)
 {
-    return std::shared_ptr<block>(new block(func)); //std::make_shared<block>(func);
+    return std::shared_ptr<block>(new block(func)); //std::from_type<block>(func);
 }
 
 std::shared_ptr<block> block::for_block(std::shared_ptr<block> parent)
 {
-    return std::shared_ptr<block>(new block(parent)); //std::make_shared<block>(parent);
+    return std::shared_ptr<block>(new block(parent)); //std::from_type<block>(parent);
 }
 
 std::shared_ptr<return_statement> block::append_return_statement()

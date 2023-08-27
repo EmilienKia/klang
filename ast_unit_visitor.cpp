@@ -4,15 +4,9 @@
 
 #include "ast_unit_visitor.hpp"
 
-namespace k::parse {
+#include "common.hpp"
 
-    static unit::name to_name(const ast::qualified_identifier& ident) {
-        std::vector<std::string> idents;
-        for(const auto& id : ident.names) {
-            idents.push_back(id.content);
-        }
-        return {ident.has_root_prefix(), idents};
-    }
+namespace k::parse {
 
     void ast_unit_visitor::visit(k::parse::ast::unit& src, k::unit::unit& unit) {
         ast_unit_visitor visitor(unit);
@@ -24,7 +18,7 @@ namespace k::parse {
         stack<ns_context> push(_contexts, _unit.get_root_namespace());
 
         if(unit.module_name) {
-            _unit.set_unit_name(to_name(*unit.module_name));
+            _unit.set_unit_name(unit.module_name->to_name());
         }
 
         super::visit_unit(unit);
@@ -133,7 +127,6 @@ namespace k::parse {
         for(auto param : func.params) {
             std::shared_ptr<unit::parameter> parameter = function->append_parameter(param.name->content, unit::unresolved_type::from_type_specifier(*param.type));
             // TODO add param specs
-
         }
 
         if(func.content) {
@@ -307,7 +300,7 @@ namespace k::parse {
         for(auto ident : expr.qident.names){
             idents.push_back(ident.content);
         }
-        _expr = unit::symbol_expression::from_identifier(unit::name(has_prefix, std::move(idents)));
+        _expr = unit::symbol_expression::from_identifier(name(has_prefix, std::move(idents)));
     }
 
     void ast_unit_visitor::visit_comma_expr(ast::expr_list_expr &) {

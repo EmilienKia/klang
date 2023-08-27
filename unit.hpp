@@ -14,11 +14,11 @@
 #include "ast.hpp"
 #include "parser.hpp"
 #include "common.hpp"
+#include "type.hpp"
 
 
 namespace k::unit {
 
-class type;
 class expression;
 class statement;
 class block;
@@ -40,82 +40,6 @@ enum visibility {
     PRIVATE
 };
 
-class name
-{
-protected:
-    bool _root_prefix = false;
-    std::vector<std::string> _identifiers;
-
-public:
-    name() =default;
-
-    name(const std::string& name) :
-            _root_prefix(false), _identifiers({name}) {}
-
-    name(bool root_prefix, const std::string& name) :
-            _root_prefix(root_prefix), _identifiers({name}) {}
-
-    name(bool root_prefix, const std::vector<std::string>& identifiers) :
-            _root_prefix(root_prefix), _identifiers(identifiers) {}
-
-    name(bool root_prefix, std::vector<std::string>&& identifiers) :
-            _root_prefix(root_prefix), _identifiers(identifiers) {}
-
-    name(bool root_prefix, const std::initializer_list<std::string>& identifiers) :
-            _root_prefix(root_prefix), _identifiers(identifiers) {}
-
-    name(const name&) = default;
-    name(name&&) = default;
-
-    name& operator=(const name&) = default;
-    name& operator=(name&&) = default;
-
-    bool has_root_prefix()const {
-        return _root_prefix;
-    }
-
-    size_t size() const {
-        return _identifiers.size();
-    }
-
-    const std::string& at(size_t index) const {
-        return _identifiers.at(index);
-    }
-
-    const std::string& operator[] (size_t index) const {
-        return _identifiers[index];
-    }
-
-    bool operator == (const name& other) const {
-        if( _root_prefix != other._root_prefix )
-            return false;
-        if( _identifiers.size() != other._identifiers.size() )
-            return false;
-        for(size_t i = 0; i < _identifiers.size(); ++i) {
-            if(_identifiers[i] != other._identifiers[i])
-                return false;
-        }
-        return true;
-    }
-
-    std::string to_string()const {
-        std::ostringstream stm;
-        stm << (_root_prefix ? "::" : "");
-        if(_identifiers.empty()) {
-            stm << "<<noidentifier>>";
-        } else {
-            stm << _identifiers.front();
-            for(size_t i = 1; i < _identifiers.size(); ++i) {
-                stm << "::" << _identifiers[i];
-            }
-        }
-        return stm.str();
-    }
-
-     operator std::string () const{
-        return to_string();
-    }
-};
 
 class element_visitor;
 
@@ -172,7 +96,7 @@ protected:
     variable_definition(const variable_definition&) = default;
     variable_definition(variable_definition&&) = default;
     variable_definition(const std::string& name) : _name(name) {}
-    variable_definition(const std::string& name, const std::shared_ptr<type> &type) : _name(name) {}
+    variable_definition(const std::string& name, const std::shared_ptr<type> &type) : _name(name), _type(type) {}
 
 public:
     virtual const std::string& get_name() const override {
@@ -215,74 +139,6 @@ public:
 };
 
 
-
-/**
- * Base type class
- */
-class type : public std::enable_shared_from_this<type>{
-public:
-    virtual ~type() = default;
-};
-
-/**
- * Unresolved type
- */
-class unresolved_type : public type {
-protected:
-    name _type_id;
-
-    unresolved_type(const name& type_id): _type_id(type_id) {}
-    unresolved_type(name&& type_id): _type_id(type_id) {}
-
-public:
-    static std::shared_ptr<type> from_string(const std::string& type_name);
-    static std::shared_ptr<type> from_identifier(const name& type_id);
-    static std::shared_ptr<type> from_type_specifier(const k::parse::ast::type_specifier& type_spec);
-
-    const name& type_id() const {return _type_id;}
-};
-
-/**
- * Base class for resolved types.
- */
-class resolved_type : public type {
-public:
-};
-
-/**
- * Primitive type
- */
-class primitive_type : public resolved_type {
-protected:
-    enum PRIMITIVE_TYPE {
-        BYTE,
-        CHAR,
-        SHORT,
-        INT,
-        LONG,
-        FLOAT,
-        DOUBLE
-    }_type;
-
-    primitive_type(const primitive_type&) = default;
-    primitive_type(primitive_type&&) = default;
-
-    primitive_type(PRIMITIVE_TYPE type):_type(type){}
-
-private:
-    static std::shared_ptr<primitive_type> make_shared(PRIMITIVE_TYPE type);
-
-public:
-
-    const std::string& to_string()const;
-
-    static std::shared_ptr<type> from_string(const std::string& type_name);
-    static std::shared_ptr<type> from_keyword(const lex::keyword& kw);
-
-};
-
-
-
 /**
  * Base class for all expressions.
  */
@@ -293,9 +149,13 @@ protected:
     std::shared_ptr<statement> _statement;
     /** Parent expression */
     std::shared_ptr<expression> _parent_expression;
+    /** Type of the expression. */
+    std::shared_ptr<type> _type;
 
     virtual ~expression() = default;
 
+    expression() = default;
+    expression(std::shared_ptr<type> type) : _type(type) {}
 
     friend class expression_statement;
     friend class return_statement;
@@ -309,8 +169,21 @@ protected:
         _parent_expression = expression;
     }
 
+    friend class symbol_type_resolver;
+    void set_type(std::shared_ptr<type> type) {
+        _type = type;
+    }
+
 public:
     void accept(element_visitor& visitor) override;
+
+    std::shared_ptr<type> get_type() {
+        return _type;
+    }
+
+    std::shared_ptr<const type> get_type() const{
+        return _type;
+    }
 
     std::shared_ptr<statement> get_statement() { return _statement; };
     std::shared_ptr<const statement> get_statement() const { return _statement; };
@@ -345,7 +218,9 @@ protected:
 
     value_expression() = delete;
 
-    value_expression(const k::lex::any_literal& literal) : _literal(literal) {}
+    value_expression(const k::lex::any_literal& literal);
+
+    static std::shared_ptr<type> type_from_literal(const k::lex::any_literal& literal);
 
 public:
     void accept(element_visitor& visitor) override;
@@ -437,13 +312,8 @@ public:
         return _symbol.index()!=0;
     }
 
-    void resolve(std::shared_ptr<variable_definition> var) {
-        _symbol = var;
-    }
-
-    void resolve(std::shared_ptr<function> func) {
-        _symbol = func;
-    }
+    void resolve(std::shared_ptr<variable_definition> var);
+    void resolve(std::shared_ptr<function> func);
 };
 
 
@@ -455,7 +325,6 @@ protected:
     std::shared_ptr<expression> _left_expr;
     /** Right hand sub expression. */
     std::shared_ptr<expression> _right_expr;
-
 
     binary_expression() = default;
 

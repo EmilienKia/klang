@@ -2,8 +2,8 @@
 // Created by Emilien Kia <emilien.kia+dev@gmail.com>.// Created by Emilien Kia <emilien.kia+dev@gmail.com>.
 //
 
-#ifndef KLANG_SYMBOL_RESOLVER_HPP
-#define KLANG_SYMBOL_RESOLVER_HPP
+#ifndef KLANG_SYMBOL_TYPE_RESOLVER_HPP
+#define KLANG_SYMBOL_TYPE_RESOLVER_HPP
 
 #include "unit.hpp"
 
@@ -13,7 +13,7 @@ namespace k::unit {
  * Unit symbol resolver
  * This helper class will resolve method and variable usages to their definitions.
  */
-class symbol_resolver : public default_element_visitor {
+class symbol_type_resolver : public default_element_visitor {
 protected:
     unit& _unit;
 
@@ -21,7 +21,7 @@ protected:
 
 public:
 
-    symbol_resolver(unit& unit) : _unit(unit) {
+    symbol_type_resolver(unit& unit) : _unit(unit) {
     }
 
     void resolve();
@@ -52,4 +52,4 @@ protected:
 
 } // k::unit
 
-#endif //KLANG_SYMBOL_RESOLVER_HPP
+#endif //KLANG_SYMBOL_TYPE_RESOLVER_HPP

@@ -10,7 +10,7 @@ using namespace k::parse;
 // Tooling
 //
 
-bool is_same(const k::parse::ast::qualified_identifier& ident1, const k::unit::name& ident2 ) {
+bool is_same(const k::parse::ast::qualified_identifier& ident1, const k::name& ident2 ) {
     if(ident1.has_root_prefix() != ident2.has_root_prefix()) {
         return false;
     }
@@ -28,7 +28,7 @@ bool is_same(const k::parse::ast::qualified_identifier& ident1, const k::unit::n
     return true;
 }
 
-bool is_same(const k::parse::ast::identifier_expr& ident1, const k::unit::name& ident2 ) {
+bool is_same(const k::parse::ast::identifier_expr& ident1, const k::name& ident2 ) {
     return is_same(ident1.qident, ident2);
 }
 
@@ -168,7 +168,7 @@ TEST_CASE( "Parse identifier primary expression", "[parser][expression][primary_
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(expr);
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
 
 TEST_CASE( "Parse complex identifier primary expression", "[parser][expression][primary_expr]") {
@@ -178,7 +178,7 @@ TEST_CASE( "Parse complex identifier primary expression", "[parser][expression][
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(expr);
     REQUIRE( ident );
-    REQUIRE(  is_same(*ident, k::unit::name(true, {"ident", "ifier"})  ) );
+    REQUIRE(  is_same(*ident, k::name(true, {"ident", "ifier"})  ) );
 }
 
 
@@ -193,7 +193,7 @@ TEST_CASE("Parse no postfix expression", "[parser][expression][postfix_expr]") {
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(expr);
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
 
 TEST_CASE("Parse ++ and -- postfix expression", "[parser][expression][postfix_expr]") {
@@ -213,7 +213,7 @@ TEST_CASE("Parse ++ and -- postfix expression", "[parser][expression][postfix_ex
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(unary_plus->expr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
 
 TEST_CASE("Parse () postfix expression with no second expr", "[parser][expression][postfix_expr]") {
@@ -226,7 +226,7 @@ TEST_CASE("Parse () postfix expression with no second expr", "[parser][expressio
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(parenthesis->lexpr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 
     auto zero = std::dynamic_pointer_cast<ast::literal_expr>(parenthesis->rexpr());
     REQUIRE( !zero );
@@ -242,7 +242,7 @@ TEST_CASE("Parse () postfix expression with one second expr", "[parser][expressi
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(parenthesis->lexpr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 
     auto zero = std::dynamic_pointer_cast<ast::literal_expr>(parenthesis->rexpr());
     REQUIRE( zero );
@@ -261,7 +261,7 @@ TEST_CASE("Parse () postfix expression with many second expr", "[parser][express
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(parenthesis->lexpr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 
     auto list = std::dynamic_pointer_cast<ast::expr_list_expr>(parenthesis->rexpr());
     REQUIRE( list );
@@ -275,7 +275,7 @@ TEST_CASE("Parse () postfix expression with many second expr", "[parser][express
 
     auto a = std::dynamic_pointer_cast<ast::identifier_expr>(list->expr(1));
     REQUIRE( a );
-    REQUIRE( is_same(*a, k::unit::name(false, "a") ) );
+    REQUIRE( is_same(*a, k::name(false, "a") ) );
 }
 
 
@@ -311,7 +311,7 @@ TEST_CASE("Parse no unary expression", "[parser][expression][unary_expr]") {
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(expr);
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
 
 
@@ -328,7 +328,7 @@ TEST_CASE("Parse no unary expression with postfix operator expr", "[parser][expr
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(unary_plus->expr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 
 }
 
@@ -372,7 +372,7 @@ TEST_CASE("Parse prefix operator unary expression", "[parser][expression][unary_
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(tilde->expr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
 
 
@@ -387,7 +387,7 @@ TEST_CASE("Parse no cast expression", "[parser][expression][cast_expr]") {
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(expr);
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
 
 TEST_CASE("Parse no cast expression with prefix and postfix operator", "[parser][expression][cast_expr]") {
@@ -407,7 +407,7 @@ TEST_CASE("Parse no cast expression with prefix and postfix operator", "[parser]
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(postfix_plus->expr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
 
 TEST_CASE("Parse cast expression", "[parser][expression][cast_expr]") {
@@ -422,7 +422,7 @@ TEST_CASE("Parse cast expression", "[parser][expression][cast_expr]") {
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(long_cast->expr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
 
 TEST_CASE("Parse multiple cast expression", "[parser][expression][cast_expr]") {
@@ -443,7 +443,7 @@ TEST_CASE("Parse multiple cast expression", "[parser][expression][cast_expr]") {
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(long_cast->expr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
 
 //
@@ -457,7 +457,7 @@ TEST_CASE("Parse no PM expression", "[parser][expression][pm_expr]") {
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(expr);
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
 
 
@@ -472,11 +472,11 @@ TEST_CASE("Parse dot-star PM expression", "[parser][expression][pm_expr]") {
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(pm->lexpr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 
     auto ifier = std::dynamic_pointer_cast<ast::identifier_expr>(pm->rexpr());
     REQUIRE( ifier );
-    REQUIRE( is_same(*ifier, k::unit::name(false, "ifier") ) );
+    REQUIRE( is_same(*ifier, k::name(false, "ifier") ) );
 }
 
 TEST_CASE("Parse arrow-star PM expression", "[parser][expression][pm_expr]") {
@@ -491,11 +491,11 @@ TEST_CASE("Parse arrow-star PM expression", "[parser][expression][pm_expr]") {
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(pm->lexpr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 
     auto ifier = std::dynamic_pointer_cast<ast::identifier_expr>(pm->rexpr());
     REQUIRE( ifier );
-    REQUIRE( is_same(*ifier, k::unit::name(false, "ifier") ) );
+    REQUIRE( is_same(*ifier, k::name(false, "ifier") ) );
 }
 
 TEST_CASE("Parse PM expression", "[parser][expression][pm_expr]") {
@@ -510,7 +510,7 @@ TEST_CASE("Parse PM expression", "[parser][expression][pm_expr]") {
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(pm1->lexpr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "ident") ) );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 
     auto pm2 = std::dynamic_pointer_cast<ast::binary_operator_expr>(pm1->rexpr());
     REQUIRE( pm2 );
@@ -519,11 +519,11 @@ TEST_CASE("Parse PM expression", "[parser][expression][pm_expr]") {
 
     auto ifier = std::dynamic_pointer_cast<ast::identifier_expr>(pm2->lexpr());
     REQUIRE( ifier );
-    REQUIRE( is_same(*ifier, k::unit::name(false, "ifier") ) );
+    REQUIRE( is_same(*ifier, k::name(false, "ifier") ) );
 
     auto other = std::dynamic_pointer_cast<ast::identifier_expr>(pm2->rexpr());
     REQUIRE( other );
-    REQUIRE( is_same(*other, k::unit::name(false, "other") ) );
+    REQUIRE( is_same(*other, k::name(false, "other") ) );
 }
 
 
@@ -580,7 +580,7 @@ TEST_CASE( "Parse simple expression with additional token", "[parser][expression
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(expr);
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "a") ) );
+    REQUIRE( is_same(*ident, k::name(false, "a") ) );
 }
 
 
@@ -595,7 +595,7 @@ TEST_CASE( "Parse simple expression list", "[parser][expression]") {
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(list->expr(0));
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "a") ) );
+    REQUIRE( is_same(*ident, k::name(false, "a") ) );
 
     auto lit = std::dynamic_pointer_cast<ast::literal_expr>(list->expr(1));
     REQUIRE( lit );
@@ -613,7 +613,7 @@ TEST_CASE( "Parse simple expression list with additional token", "[parser][expre
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(list->expr(0));
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "a") ) );
+    REQUIRE( is_same(*ident, k::name(false, "a") ) );
 
     auto lit = std::dynamic_pointer_cast<ast::literal_expr>(list->expr(1));
     REQUIRE( lit );
@@ -635,7 +635,7 @@ TEST_CASE( "Parse expression of simple function invocation", "[parser][expressio
 
     auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(func->lexpr());
     REQUIRE( ident );
-    REQUIRE( is_same(*ident, k::unit::name(false, "a") ) );
+    REQUIRE( is_same(*ident, k::name(false, "a") ) );
 
 }
 

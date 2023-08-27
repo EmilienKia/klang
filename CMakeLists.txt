@@ -20,8 +20,9 @@ add_library(klangc
         ast.cpp
         unit.cpp
         common.cpp
+        type.cpp
         ast_unit_visitor.cpp
-        symbol_resolver.cpp
+        symbol_type_resolver.cpp
         unit_llvm_ir_gen.cpp
 )
 

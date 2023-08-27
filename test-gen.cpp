@@ -9,7 +9,7 @@
 #include "unit.hpp"
 #include "ast_unit_visitor.hpp"
 #include "unit_dump.hpp"
-#include "symbol_resolver.hpp"
+#include "symbol_type_resolver.hpp"
 #include "unit_llvm_ir_gen.hpp"
 
 
@@ -32,7 +32,7 @@ std::unique_ptr<k::unit::gen::unit_llvm_jit> gen(std::string_view src, bool dump
         unit_dump.dump(unit);
     }
 
-    k::unit::symbol_resolver var_resolver(unit);
+    k::unit::symbol_type_resolver var_resolver(unit);
     var_resolver.resolve();
 
     if(dump) {

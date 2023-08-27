@@ -36,6 +36,7 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
         auto lit = expr.any_literal();
         switch(lit.index()) {
             case lex::any_literal_type_index::INTEGER:
+                // TODO Handle other interger types
                 _value = llvm::ConstantInt::get(*_context, llvm::APInt(32, lit.get<lex::integer>().content, 10));
                 break;
             case lex::any_literal_type_index::CHARACTER:

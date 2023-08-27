@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "any_of.hpp"
+#include "common.hpp"
 #include "lexer.hpp"
 
 namespace k::parse {
@@ -62,6 +63,14 @@ namespace k::parse {
 
             const std::string operator[](size_t index)const {
                 return names[index].content;
+            }
+
+            k::name to_name() const {
+                std::vector<std::string> idents;
+                for(const auto& id : names) {
+                    idents.push_back(id.content);
+                }
+                return {has_root_prefix(), idents};
             }
         };
 
