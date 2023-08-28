@@ -183,6 +183,8 @@ namespace k::lex {
                     } else if (c >= '1' && c <= '9') {
                         begin = pos;
                         content = c;
+                        num_content_size++;
+                        base = numeric_base::DECIMAL;
                         lex_state = DECIMAL;
                     } else if (c == '\'') {
                         begin = pos;
@@ -307,15 +309,24 @@ namespace k::lex {
                 case ZERO:
                     if (c == 'x' || c == 'X') {
                         content += c;
+                        base = numeric_base::HEXADECIMAL;
+                        num_prefix_size += 2;
                         lex_state = HEXA_PREFIX;
                     } else if (c == 'b' || c == 'B') {
                         content += c;
+                        base = numeric_base::BINARY;
+                        num_prefix_size += 2;
                         lex_state = BIN_PREFIX;
                     } else if (c == 'o' || c == 'O') {
                         content += c;
+                        base = numeric_base::OCTAL;
+                        num_prefix_size += 2;
                         lex_state = OCTAL_PREFIX;
                     } else if (c >= '0' && c <= '7') {
                         content += c;
+                        base = numeric_base::OCTAL;
+                        num_prefix_size = 1;
+                        num_content_size = 1;
                         lex_state = OCTAL;
                     } else if (c >= '8' && c <= '9'
                                || c >= 'a' && c <= 'f'
@@ -324,12 +335,31 @@ namespace k::lex {
                     } else if (c == 'u' || c == 'U') {
                         content += c;
                         saved_state = lex_state;
+                        unsigned_num = true;
+                        num_content_size = 1;
                         lex_state = INT_UNSIGNED_SUFFIX;
+                    } else if (c == 'i' || c == 'I') {
+                        content += c;
+                        saved_state = lex_state;
+                        num_content_size = 1;
+                        push_integer_and_reset();
+                        lex_state = START;
+                    } else if (c == 's' || c == 'S') {
+                        content += c;
+                        saved_state = lex_state;
+                        size = SHORT;
+                        num_content_size = 1;
+                        push_integer_and_reset();
+                        lex_state = START;
+                    } else if (c == 'l' || c == 'L') {
+                        content += c;
+                        num_content_size = 1;
+                        lex_state = INT_LONG_SUFFIX;
                     } else {
+                        // TODO also add size suffix handling
                         // Emit "0" number
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        num_content_size = 1;
+                        push_integer_and_reset();
                         lex_state = START;
                         continue;
                     }
@@ -339,29 +369,41 @@ namespace k::lex {
                         || c >= 'a' && c <= 'f'
                         || c >= 'A' && c <= 'F') {
                         content += c;
+                        num_content_size++;
                         lex_state = HEXADECIMAL;
                     } else if (c == 'u' || c == 'U') {
                         // WARN should have at least one digit after prefix
                         content += c;
                         saved_state = lex_state;
+                        unsigned_num = true;
                         lex_state = INT_UNSIGNED_SUFFIX;
                     } else {
+                        // TODO also add size suffix handling
+                        // WARN should have at least one digit after prefix
                         /* Error, hexa number must have at least one digit. */
                     }
                     break;
                 case BIN_PREFIX:
                     if (c == '0' || c == '1') {
                         content += c;
+                        num_content_size++;
                         lex_state = BINARY;
                     } else {
+                        // TODO also add unsigned suffix handling
+                        // TODO also add size suffix handling
+                        // WARN should have at least one digit after prefix
                         /* Error, binary number must have at least one digit. */
                     }
                     break;
                 case OCTAL_PREFIX:
                     if (c >= '0' && c <= '7') {
                         content += c;
+                        num_content_size++;
                         lex_state = OCTAL;
                     } else {
+                        // TODO also add unsigned suffix handling
+                        // TODO also add size suffix handling
+                        // WARN should have at least one digit after prefix
                         /* Error, octal number must have at least one digit. */
                     }
                     break;
@@ -370,16 +412,21 @@ namespace k::lex {
                         || c >= 'a' && c <= 'f'
                         || c >= 'A' && c <= 'F'
                         || c == '_') {
+                        num_content_size++;
                         content += c;
                     } else if (c == 'u' || c == 'U') {
                         content += c;
                         saved_state = lex_state;
+                        unsigned_num = true;
                         lex_state = INT_UNSIGNED_SUFFIX;
+                    } else if (c == 'i' || c == 'I') {
+                        content += c;
+                        push_integer_and_reset();
+                        lex_state = START;
                     } else if (c == 's' || c == 'S') {
                         content += c;
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = SHORT;
+                        push_integer_and_reset();
                         lex_state = START;
                     } else if (c == 'l' || c == 'L') {
                         content += c;
@@ -390,9 +437,7 @@ namespace k::lex {
                     } else {
                         // TODO add suffix handling
                         // Emit "0" number
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        push_integer_and_reset();
                         lex_state = START;
                         continue;
                     }
@@ -400,16 +445,21 @@ namespace k::lex {
                 case DECIMAL:
                     if (c >= '0' && c <= '9'
                         || c == '_') {
+                        num_content_size++;
                         content += c;
                     } else if (c == 'u' || c == 'U') {
                         content += c;
                         saved_state = lex_state;
+                        unsigned_num = true;
                         lex_state = INT_UNSIGNED_SUFFIX;
+                    } else if (c == 'i' || c == 'I') {
+                        content += c;
+                        push_integer_and_reset();
+                        lex_state = START;
                     } else if (c == 's' || c == 'S') {
                         content += c;
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = SHORT;
+                        push_integer_and_reset();
                         lex_state = START;
                     } else if (c == 'l' || c == 'L') {
                         content += c;
@@ -420,9 +470,7 @@ namespace k::lex {
                     } else {
                         // TODO add suffix handling
                         // Emit "0" number
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        push_integer_and_reset();
                         lex_state = START;
                         continue;
                     }
@@ -430,16 +478,21 @@ namespace k::lex {
                 case OCTAL:
                     if (c >= '0' && c <= '7'
                         || c == '_') {
+                        num_content_size++;
                         content += c;
                     } else if (c == 'u' || c == 'U') {
                         content += c;
                         saved_state = lex_state;
+                        unsigned_num = true;
                         lex_state = INT_UNSIGNED_SUFFIX;
+                    } else if (c == 'i' || c == 'I') {
+                        content += c;
+                        push_integer_and_reset();
+                        lex_state = START;
                     } else if (c == 's' || c == 'S') {
                         content += c;
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = SHORT;
+                        push_integer_and_reset();
                         lex_state = START;
                     } else if (c == 'l' || c == 'L') {
                         content += c;
@@ -450,9 +503,7 @@ namespace k::lex {
                     } else {
                         // TODO add suffix handling
                         // Emit "0" number
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        push_integer_and_reset();
                         lex_state = START;
                         continue;
                     }
@@ -460,16 +511,21 @@ namespace k::lex {
                 case BINARY:
                     if (c >= '0' && c <= '1'
                         || c == '_') {
+                        num_content_size++;
                         content += c;
                     } else if (c == 'u' || c == 'U') {
                         content += c;
                         saved_state = lex_state;
+                        unsigned_num = true;
                         lex_state = INT_UNSIGNED_SUFFIX;
+                    } else if (c == 'i' || c == 'I') {
+                        content += c;
+                        push_integer_and_reset();
+                        lex_state = START;
                     } else if (c == 's' || c == 'S') {
                         content += c;
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = SHORT;
+                        push_integer_and_reset();
                         lex_state = START;
                     } else if (c == 'l' || c == 'L') {
                         content += c;
@@ -480,9 +536,7 @@ namespace k::lex {
                     } else {
                         // TODO add suffix handling
                         // Emit "0" number
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        push_integer_and_reset();
                         lex_state = START;
                         continue;
                     }
@@ -625,9 +679,12 @@ namespace k::lex {
                 case INT_UNSIGNED_SUFFIX:
                     if (c == 's' || c == 'S') {
                         content += c;
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = SHORT;
+                        push_integer_and_reset();
+                        lex_state = START;
+                    } else if (c == 'i' || c == 'I') {
+                        content += c;
+                        push_integer_and_reset();
                         lex_state = START;
                     } else if (c == 'l' || c == 'L') {
                         content += c;
@@ -636,9 +693,7 @@ namespace k::lex {
                         content += c;
                         lex_state = INT_BIGINT_SUFFIX;
                     } else {
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        push_integer_and_reset();
                         lex_state = START;
                         continue;
                     }
@@ -646,9 +701,8 @@ namespace k::lex {
                 case INT_LONG_SUFFIX:
                     if (c == 'l' || c == 'L') {
                         content += c;
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = LONGLONG;
+                        push_integer_and_reset();
                         lex_state = START;
                     } else if (c == '6') {
                         content += c;
@@ -657,9 +711,8 @@ namespace k::lex {
                         content += c;
                         lex_state = INT_LONG128A_SUFFIX;
                     } else {
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = LONG;
+                        push_integer_and_reset();
                         lex_state = START;
                         continue;
                     }
@@ -667,15 +720,13 @@ namespace k::lex {
                 case INT_LONG64_SUFFIX:
                     if (c == '4') {
                         content += c;
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = LONG;
+                        push_integer_and_reset();
                         lex_state = START;
                     } else {
                         // TODO/ERROR Bad integer suffix, expect character '4'.
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = LONG;
+                        push_integer_and_reset();
                         lex_state = START;
                         continue;
                     }
@@ -686,9 +737,8 @@ namespace k::lex {
                         lex_state = INT_LONG128B_SUFFIX;
                     } else {
                         // TODO/ERROR Bad integer suffix, expect character '2'.
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = LONGLONG;
+                        push_integer_and_reset();
                         lex_state = START;
                         continue;
                     }
@@ -696,15 +746,28 @@ namespace k::lex {
                 case INT_LONG128B_SUFFIX:
                     if (c == '8') {
                         content += c;
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = LONGLONG;
+                        push_integer_and_reset();
                         lex_state = START;
                     } else {
                         // TODO/ERROR Bad integer suffix, expect character '8'.
-                        lexemes.push_back(integer(begin, pos, content));
-                        content.clear();
-                        begin = {0, 0, 0};
+                        size = LONGLONG;
+                        push_integer_and_reset();
+                        lex_state = START;
+                        continue;
+                    }
+                    break;
+                case INT_BIGINT_SUFFIX:
+                    if (c == 'i' || c == 'I') {
+                        content += c;
+                        size = BIGINT;
+                        push_integer_and_reset();
+                        lex_state = START;
+                    } else {
+                        // TODO handle byte size here
+                        // TODO/ERROR Bad integer suffix, expect character '8'.
+                        size = LONGLONG;
+                        push_integer_and_reset();
                         lex_state = START;
                         continue;
                     }
@@ -715,6 +778,16 @@ namespace k::lex {
             ++pos.pos;
             ++pos.col;
         }
+    }
+
+    void lexer::push_integer_and_reset() {
+        lexemes.push_back(integer(begin, pos, content, num_prefix_size, num_content_size, base, unsigned_num, size));
+        base = numeric_base::DECIMAL;
+        unsigned_num = false;
+        size = INT;
+        num_prefix_size = num_content_size = 0;
+        content.clear();
+        begin = {0, 0, 0};
     }
 
     std::vector<any_lexeme> lexer::parse_all(std::string_view src) {
@@ -753,6 +826,48 @@ namespace k::lex {
 
     bool lexer::eof() const {
         return lexemes.empty() || index>=lexemes.size();
+    }
+
+    //
+    // Integer literal
+    //
+    k::value_type integer::value()const {
+        // TODO
+        return {};
+    }
+
+    //
+    // Character literal
+    //
+    k::value_type character::value()const {
+        // TODO Decode unicode escape
+        return {content[1]};
+    }
+
+    //
+    // String literal
+    //
+    k::value_type string::value()const {
+        // TODO Decode unicode escape
+        return {content.substr(1, content.size()-2)};
+    }
+
+    //
+    // Boolean literal
+    //
+    k::value_type boolean::value()const {
+        if(content=="true") {
+            return {true};
+        } else {
+            return {false};
+        }
+    }
+
+    //
+    // Null literal
+    //
+    k::value_type null::value()const {
+        return {nullptr};
     }
 
 

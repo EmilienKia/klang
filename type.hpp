@@ -6,6 +6,8 @@
 #define KLANG_TYPE_HPP
 
 #include <memory>
+#include <map>
+
 #include "common.hpp"
 
 namespace k {
@@ -68,19 +70,39 @@ public:
         BYTE,
         CHAR,
         SHORT,
+        UNSIGNED_SHORT,
         INT,
+        UNSIGNED_INT,
         LONG,
+        UNSIGNED_LONG,
+        // TODO add (unsigned) long long
         FLOAT,
         DOUBLE
-    }_type;
+    };
 
 protected:
-    primitive_type(PRIMITIVE_TYPE type):_type(type){}
+    PRIMITIVE_TYPE _type;
+    bool _is_unsigned;
+    bool _is_float;
+    size_t _size;
+
+    primitive_type(PRIMITIVE_TYPE type, bool is_unsigned, bool is_float, size_t size):
+        _type(type), _is_unsigned(is_unsigned),_is_float(is_float), _size(size){}
     primitive_type(const primitive_type&) = default;
     primitive_type(primitive_type&&) = default;
 
+    static std::map<PRIMITIVE_TYPE, std::shared_ptr<primitive_type>> _predef_types;
+    static std::shared_ptr<primitive_type> make_shared(PRIMITIVE_TYPE type, bool is_unsigned, bool is_float, size_t size);
+
 public:
     bool is_primitive() const override;
+
+    bool is_unsigned() const {return _is_unsigned;}
+    bool is_signed() const {return !_is_unsigned;}
+    bool is_float() const {return _is_float;}
+    bool is_integer()const {return !_is_float;}
+
+    size_t type_size()const {return _size;}
 
     bool operator == (const primitive_type& other) const {
         return _type == other._type;

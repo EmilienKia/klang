@@ -65,13 +65,30 @@ bool resolved_type::is_resolved() const
 // Primitive type
 //
 
+std::map<primitive_type::PRIMITIVE_TYPE, std::shared_ptr<primitive_type>> primitive_type::_predef_types{
+        {primitive_type::BYTE, primitive_type::make_shared(primitive_type::BYTE, false, false, 1)},
+        {primitive_type::CHAR, primitive_type::make_shared(primitive_type::CHAR, false, false, 1)},
+        {primitive_type::SHORT, primitive_type::make_shared(primitive_type::SHORT, false, false, 2)},
+        {primitive_type::UNSIGNED_SHORT, primitive_type::make_shared(primitive_type::UNSIGNED_SHORT, true, false, 2)},
+        {primitive_type::INT, primitive_type::make_shared(primitive_type::INT, false, false, 4)},
+        {primitive_type::UNSIGNED_INT, primitive_type::make_shared(primitive_type::UNSIGNED_INT, true, false, 4)},
+        {primitive_type::LONG, primitive_type::make_shared(primitive_type::LONG, false, false, 8)},
+        {primitive_type::UNSIGNED_LONG, primitive_type::make_shared(primitive_type::UNSIGNED_LONG, true, false, 8)},
+        {primitive_type::FLOAT, primitive_type::make_shared(primitive_type::FLOAT, false, true, 4)},
+        {primitive_type::DOUBLE, primitive_type::make_shared(primitive_type::DOUBLE, false, true, 8)},
+};
+
+std::shared_ptr<primitive_type> primitive_type::make_shared(primitive_type::PRIMITIVE_TYPE type, bool is_unsigned, bool is_float, size_t size) {
+    return std::shared_ptr<primitive_type>(new primitive_type(type, is_unsigned, is_float, size));
+}
+
 bool primitive_type::is_primitive() const
 {
     return true;
 }
 
 std::shared_ptr<primitive_type> primitive_type::from_type(PRIMITIVE_TYPE type){
-    return std::shared_ptr<primitive_type>{new primitive_type(type)};
+    return _predef_types[type];
 }
 
 std::shared_ptr<type> primitive_type::from_string(const std::string& type_name) {
@@ -79,23 +96,18 @@ std::shared_ptr<type> primitive_type::from_string(const std::string& type_name) 
             {"byte", BYTE},
             {"char", CHAR},
             {"short", SHORT},
+            // TODO Add unsigned short
             {"int", INT},
+            // TODO Add unsigned int
             {"long", LONG},
+            // TODO Add unsigned long
+            // TODO Add (unsigned) long long
             {"float", FLOAT},
             {"double", DOUBLE}
     };
-    static std::map<primitive_type::PRIMITIVE_TYPE, std::shared_ptr<primitive_type> > predef_types {
-            {BYTE, from_type(BYTE)},
-            {CHAR,   from_type(CHAR)},
-            {SHORT,  from_type(SHORT)},
-            {INT,    from_type(INT)},
-            {LONG,   from_type(LONG)},
-            {FLOAT,  from_type(FLOAT)},
-            {DOUBLE, from_type(DOUBLE)}
-    };
     auto it = type_map.find(type_name);
     if(it!=type_map.end()) {
-        return predef_types[it->second];
+        return _predef_types[it->second];
     }
     return {};
 }
@@ -109,8 +121,12 @@ const std::string& primitive_type::to_string()const {
             {BYTE, "byte"},
             {CHAR,"char"},
             {SHORT, "short"},
+            {UNSIGNED_SHORT, "unsigned short"},
             {INT, "int"},
+            {UNSIGNED_INT, "unsigned int"},
             {LONG, "long"},
+            {UNSIGNED_LONG, "unsigned long"},
+            // TODO Add (unsigned) long long
             {FLOAT, "float"},
             {DOUBLE, "double"}
     };

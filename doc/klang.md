@@ -221,7 +221,7 @@ An integer literal may be expressed in decimal (base 10), hexadecimal (base 16),
         'u' 'U'
 
     <dfn>IntegerTypeSuffix</dfn>: (one of)
-        's' 'S' 'l' 'L' 'll' 'LL' 'l64' 'L64' 'l128' 'L128' 'bi' 'BI'
+        's' 'S' 'i' 'I' 'l' 'L' 'll' 'LL' 'l64' 'L64' 'l128' 'L128' 'bi' 'BI'
 
     <dfn>IntegerCustomSuffix</dfn>: (to be defined)
 </pre>
@@ -229,9 +229,10 @@ An integer literal may be expressed in decimal (base 10), hexadecimal (base 16),
 The unsigned suffix specify the integer is not signed. By default, an integer is signed.
 
 The type_t suffix specify the size type_t of the integer.
-'s' or 'S' for short (16-bits). 'l' or 'L' for long (32-bits).
-'ll', 'LL', 'l64', 'L64' for 64-bits long.
-'l128', 'L128' for 128-bits long.
+'s' or 'S' for short (16-bits).
+'i' or 'I' for integer (32-bits).
+'l', 'L', 'l64' or 'L64' for long (64-bits).
+'ll', 'LL', 'l128' or 'L128' for 128-bits long.
 
 Note: 'bi' and 'BI' are reserved suffices for future big integer.
 

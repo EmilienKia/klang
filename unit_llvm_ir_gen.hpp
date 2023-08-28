@@ -53,6 +53,8 @@ protected:
     std::map<std::shared_ptr<parameter>, llvm::AllocaInst*> _parameter_variables;
     std::map<std::shared_ptr<variable_statement>, llvm::AllocaInst*> _variables;
 
+    llvm::Type* get_llvm_type(const std::shared_ptr<type>& type);
+
 public:
     unit_llvm_ir_gen(unit& unit);
 

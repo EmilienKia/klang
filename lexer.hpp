@@ -6,6 +6,7 @@
 #define KLANG_LEXER_HPP
 
 #include "any_of.hpp"
+#include "common.hpp"
 
 #include <functional>
 #include <map>
@@ -22,12 +23,27 @@ namespace k::lex {
         return c == ' ' || c == '\t' || c== '\f';
     }
 
+    enum numeric_base {
+        DECIMAL = 10,
+        HEXADECIMAL = 16,
+        OCTAL = 8,
+        BINARY = 2
+    };
+
+    enum integer_size {
+        BYTE = 1, // 8 bits
+        SHORT = 2, // 16 bits
+        INT = 4, // 32 bits
+        LONG = 8, // 64 bits
+        LONGLONG = 16, // 128 bits
+        BIGINT = 32 // Big integer
+    };
+
     struct char_coord
     {
         std::size_t pos = 0;
         std::size_t line = 0;
         std::size_t col = 0;
-
     };
 
     /**
@@ -143,27 +159,58 @@ namespace k::lex {
 
     struct literal : public lexeme {
         using lexeme::lexeme;
+
+        virtual k::value_type value()const = 0;
     };
 
     struct integer : public literal {
         using literal::literal;
+
+        size_t num_prefix_size = 0;
+        size_t num_content_size = 0;
+
+        numeric_base base = DECIMAL;
+        bool unsigned_num = false;
+        integer_size size = INT;
+
+        integer(char_coord start, char_coord end, const std::string& content,
+                size_t num_prefix_size = 0, size_t num_content_size = 0,
+                numeric_base base = DECIMAL, bool unsigned_num = false, integer_size size = INT):
+                literal(start, end, content),
+                num_prefix_size(num_prefix_size), num_content_size(num_content_size),
+                base(base), unsigned_num(unsigned_num), size(size) {}
+
+        std::string_view int_content() const {
+            return {content.begin()+num_prefix_size, content.begin()+num_prefix_size+num_content_size};
+        }
+
+        k::value_type value()const override;
     };
 
     struct character : public literal {
         using literal::literal;
+
+        k::value_type value()const override;
     };
 
     struct string : public literal {
         using literal::literal;
+
+        k::value_type value()const override;
     };
 
     struct boolean : public literal {
         using literal::literal;
+
+        k::value_type value()const override;
     };
 
     struct null : public literal {
         using literal::literal;
+
+        k::value_type value()const override;
     };
+
 
     struct comment : public lexeme {
         using lexeme::lexeme;
@@ -502,8 +549,14 @@ namespace k::lex {
         char_coord pos {0, 0, 0};
         char_coord begin;
 
-
         size_t index = 0;
+
+        numeric_base base = numeric_base::DECIMAL;
+        bool unsigned_num = false;
+        integer_size size = INT;
+        size_t num_prefix_size = 0;
+        size_t num_content_size = 0;
+
 
     private:
         /// List of all chars used in operators or punctuators
@@ -523,6 +576,8 @@ namespace k::lex {
         /// This map is ordered to ensure, when it is iterated, longer tokens come before their prefix (<<= come before <<, << come before <)
         /// Enable faster chained operator-punctuator parsing
         static std::map<std::string, punct_or_op_type_t, lexer::less_order_op_punct_for_lookup> puncts_or_ops;
+
+        void push_integer_and_reset();
 
         static void init();
 

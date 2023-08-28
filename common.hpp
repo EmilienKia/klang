@@ -7,6 +7,7 @@
 
 #include <string>
 #include <vector>
+#include <variant>
 
 namespace k {
 
@@ -66,7 +67,17 @@ public:
     }
 };
 
-
+/**
+ * Facility for holding some value.
+ */
+typedef std::variant<std::monostate,
+        std::nullptr_t, bool,
+        short, unsigned short,
+        int, unsigned int,
+        long, unsigned long,
+        long long, unsigned long long,
+        float, double,
+        char, std::string> value_type;
 
 
 } // namespace k

@@ -199,19 +199,9 @@ public:
 
 class value_expression : public expression
 {
-public:
-    typedef std::variant<std::monostate,
-        std::nullptr_t, bool,
-        short, unsigned short,
-        int, unsigned int,
-        long, unsigned long,
-        long long, unsigned long long,
-        float, double,
-        char, std::string> value_type;
-
 protected:
     /** Value if constructed directly or already resolved from literal. */
-    value_type _value;
+    k::value_type _value;
 
     /** Source literal, if constructed from. */
     k::lex::any_literal::any_of_opt_t _literal;

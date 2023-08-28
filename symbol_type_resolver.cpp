@@ -126,7 +126,7 @@ void symbol_type_resolver::visit_value_expression(value_expression& expr)
 void symbol_type_resolver::visit_symbol_expression(symbol_expression& symbol)
 {
     // TODO: Have to check the variable definition (for block-variable) is done before the expression;
-    // TODO: Have to sypport all symbol types, not only variables
+    // TODO: Have to support all symbol types, not only variables
     if(!symbol.is_resolved()) {
         if(auto stmt = symbol.find_statement()) {
             if(auto block = stmt->get_block()) {

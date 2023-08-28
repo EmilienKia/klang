@@ -35,17 +35,22 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
     if(expr.is_literal()) {
         auto lit = expr.any_literal();
         switch(lit.index()) {
-            case lex::any_literal_type_index::INTEGER:
-                // TODO Handle other interger types
-                _value = llvm::ConstantInt::get(*_context, llvm::APInt(32, lit.get<lex::integer>().content, 10));
-                break;
+            case lex::any_literal_type_index::INTEGER: {
+                const auto &i = lit.get<lex::integer>();
+                auto val = llvm::APInt(8 * (unsigned) i.size, i.int_content(), (uint8_t) i.base);
+                _value = llvm::ConstantInt::get(*_context, val);
+            } break;
             case lex::any_literal_type_index::CHARACTER:
+                // TODO
                 break;
             case lex::any_literal_type_index::STRING:
+                // TODO
                 break;
             case lex::any_literal_type_index::BOOLEAN:
+                // TODO
                 break;
             case lex::any_literal_type_index::NUL:
+                // TODO
                 break;
             default:
                 break;
@@ -55,23 +60,56 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
     }
 }
 
-void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
-    // TODO Support other types of symbols, not only variables
-    auto var_def = symbol.get_variable_def();
+llvm::Type* unit_llvm_ir_gen::get_llvm_type(const std::shared_ptr<type>& type) {
+    llvm::Type *llvm_type;
+    if(!type->is_resolved()) {
+        // TODO cannot translate unresolved type.
+        return nullptr;
+    }
 
-    if(auto param = std::dynamic_pointer_cast<parameter>(var_def)) {
-        // TODO use the right type, only int32 supported for now
-        llvm::Type *int32Type = llvm::Type::getInt32Ty(*_context);
-        _value = _builder->CreateLoad(int32Type, _parameter_variables[param], param->get_name());
-    } else if(auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_def)) {
-        // TODO use the right type, only int32 supported for now
-        llvm::Type *int32Type = llvm::Type::getInt32Ty(*_context);
-        llvm::GlobalVariable* gv = _global_vars[global_var];
-        _value = _builder->CreateLoad(int32Type, gv, global_var->get_name());
-    } else if (auto local_var = std::dynamic_pointer_cast<variable_statement>(var_def)) {
-        // TODO use the right type, only int32 supported for now
-        llvm::Type *int32Type = llvm::Type::getInt32Ty(*_context);
-        _value = _builder->CreateLoad(int32Type, _variables[local_var], local_var->get_name());
+    auto res_type = std::dynamic_pointer_cast<resolved_type>(type);
+    if(!res_type) {
+        // TODO cannot translate unresolved type.
+        return nullptr;
+    }
+    if(res_type->is_primitive()) {
+        auto prim = std::dynamic_pointer_cast<primitive_type>(res_type);
+        if(prim->is_integer() && prim->is_signed()) {
+            llvm_type = _builder->getIntNTy(8*prim->type_size());
+        } else {
+            // TODO support unsigned integer and float types
+        }
+    }
+    return llvm_type;
+}
+
+void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
+    if(symbol.is_variable_def()) {
+        auto var_def = symbol.get_variable_def();
+        llvm::Value* ptr = nullptr;
+        std::string name;
+
+        // Handle source of symbol
+        if (auto param = std::dynamic_pointer_cast<parameter>(var_def)) {
+            ptr =  _parameter_variables[param];
+            name = param->get_name();
+        } else if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_def)) {
+            ptr = _global_vars[global_var];
+            name = global_var->get_name();
+        } else if (auto local_var = std::dynamic_pointer_cast<variable_statement>(var_def)) {
+            ptr = _variables[local_var];
+            name = local_var->get_name();
+        }
+
+        // Handle type of symbol
+        llvm::Type* type = get_llvm_type(var_def->get_type());
+
+        if(ptr && type) {
+            _value = _builder->CreateLoad(type, ptr, name);
+        }
+
+    } else {
+        // TODO Support other types of symbols, not only variables
     }
 
 }
@@ -164,15 +202,11 @@ void unit_llvm_ir_gen::create_assignement(std::shared_ptr<expression> expr, llvm
     auto var = var_expr->get_variable_def();
 
     if(auto param = std::dynamic_pointer_cast<parameter>(var)) {
-        // TODO seems not working correctly
         _builder->CreateStore(value, _parameter_variables[param]);
     } else if (auto local_var = std::dynamic_pointer_cast<variable_statement>(var)) {
-        // TODO use the right type, only int32 supported for now
         _value = _builder->CreateStore(value, _variables[local_var]);
     } else if(auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var)) {
-        // TODO use the right type, only int32 supported for now
-        llvm::GlobalVariable* gv = _global_vars[global_var];
-        _value = _builder->CreateStore(value, gv);
+        _value = _builder->CreateStore(value, _global_vars[global_var]);
     } else {
         std::cout << "Assign to something not supported" << std::endl;
     }
@@ -267,34 +301,30 @@ void unit_llvm_ir_gen::visit_namespace(ns &ns) {
 }
 
 void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definition &var) {
-    // TODO use the right type, only int32 supported for now
-    // TODO initialize the variable with the expression
+    llvm::Type *type = get_llvm_type(var.get_type());
 
+    // TODO initialize the variable with the expression
+    llvm::Constant *value = llvm::ConstantInt::get(type, 0);
+
+    // TODO use the real mangled name
     //std::string mangledName;
     //Mangler::getNameWithPrefix(mangledName, "test::toto", Mangler::ManglingMode::Default);
-    llvm::Type *int32Type = llvm::Type::getInt32Ty(*_context);
-    llvm::Constant *testValue = llvm::ConstantInt::get(int32Type, 0);
-    llvm::GlobalVariable * variable = new llvm::GlobalVariable(*_module, int32Type, false, llvm::GlobalValue::ExternalLinkage, testValue, var.get_name());
 
+    auto variable = new llvm::GlobalVariable(*_module, type, false, llvm::GlobalValue::ExternalLinkage, value, var.get_name());
     _global_vars.insert({var.shared_as<global_variable_definition>(), variable});
 }
-
 
 void unit_llvm_ir_gen::visit_function(function &function) {
     // Parameter types:
     std::vector<llvm::Type*> param_types;
-    for(auto param : function.parameters()) {
-        // TODO use the right type, only int32 supported for now
-        llvm::Type *int32Type = llvm::Type::getInt32Ty(*_context);
-        param_types.push_back(int32Type);
+    for(const auto& param : function.parameters()) {
+        param_types.push_back(get_llvm_type(param->get_type()));
     }
 
     // Return type, if any:
     llvm::Type* ret_type = nullptr;
-    if(auto ret = function.return_type()) {
-        // TODO use the right type, only int32 supported for now
-        llvm::Type *int32Type = llvm::Type::getInt32Ty(*_context);
-        ret_type = int32Type;
+    if(const auto& ret = function.return_type()) {
+        ret_type = get_llvm_type(ret);
     }
 
     // create the function:
@@ -309,14 +339,12 @@ void unit_llvm_ir_gen::visit_function(function &function) {
 
     // Capture arguments
     auto arg_it = func->arg_begin();
-    for(auto param : function.parameters()) {
+    for(const auto& param : function.parameters()) {
         llvm::Argument *arg = &*(arg_it++);
         arg->setName(param->get_name());
         _parameters.insert({param, arg});
 
-        // TODO use the right type, only int32 supported for now
-        llvm::Type *int32Type = llvm::Type::getInt32Ty(*_context);
-        llvm::AllocaInst* alloca = _builder->CreateAlloca(int32Type, nullptr, param->get_name());
+        llvm::AllocaInst* alloca = _builder->CreateAlloca(get_llvm_type(param->get_type()), nullptr, param->get_name());
         _parameter_variables.insert({param, alloca});
 
         // Read param value and store it in dedicated local var
@@ -371,12 +399,12 @@ void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
     llvm::IRBuilder<> build(&func->getEntryBlock(),func->getEntryBlock().begin());
 
     // TODO use the right type, only int32 supported for now
-    llvm::Type *int32Type = llvm::Type::getInt32Ty(*_context);
-    llvm::AllocaInst* alloca = build.CreateAlloca(int32Type, nullptr, var.get_name());
+    llvm::Type *  type = get_llvm_type(var.get_type());
+    llvm::AllocaInst* alloca = build.CreateAlloca(type, nullptr, var.get_name());
     _variables.insert({var.shared_as<variable_statement>(), alloca});
 
     // TODO replace init by 0 with the real init
-    llvm::Value* zero = llvm::ConstantInt::get(int32Type, 0);
+    llvm::Value* zero = llvm::ConstantInt::get(type, 0);
     build.CreateStore(zero, alloca);
 }
 
@@ -397,7 +425,6 @@ void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_
             // TODO throw exception
             std::cerr << "Problem with generation of an argument of a function call." << std::endl;
         }
-        // TODO use the right type, only int32 supported for now
         args.push_back(_value);
     }
 
