@@ -27,13 +27,13 @@ int main() {
         return p * 2;
     }
 
-    test(titi: int, toto: int) : int {
-        return titi + ploc(toto);
+    test(titi: int, toto: long) : long {
+        return titi + toto + ploc(toto);
     }
 
     namespace titi {
         protected:
-        static const plic : long = 0;
+        static const plic : int = 0;
         public :
         sum(a : int, b : int) : int {
             res : int;
@@ -61,9 +61,9 @@ int main() {
     std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
     unit_dump.dump(unit);
 
-    k::unit::symbol_type_resolver var_resolver(unit);
-    var_resolver.resolve();
-    std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
+    k::unit::symbol_type_resolver resolver(unit);
+    resolver.resolve();
+    std::cout << "#" << std::endl << "# Resolution" << std::endl << "#" << std::endl;
     unit_dump.dump(unit);
 
     k::unit::gen::unit_llvm_ir_gen gen(unit);

@@ -87,7 +87,9 @@ public:
     void visit_division_assignation_expression(division_assignation_expression&) override;
     void visit_modulo_assignation_expression(modulo_assignation_expression&) override;
 
-    void visit_function_invocation_expression(function_invocation_expression &expression) override;
+    void visit_function_invocation_expression(function_invocation_expression&) override;
+
+    void visit_cast_expression(cast_expression&) override;
 
     void dump();
     void verify();

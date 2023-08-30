@@ -107,6 +107,78 @@ TEST_CASE( "Simple method", "[gen]" ) {
     }
 }
 
+
+TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
+
+    auto jit = gen(R"SRC(
+        add(a : short, b : short) : short {
+            return a + b;
+        }
+        sub(a : short, b : short) : short {
+            return a - b;
+        }
+        mul(a : short, b : short) : short {
+            return a * b;
+        }
+        div(a : short, b : short) : short {
+            return a / b;
+        }
+        mod(a : short, b : short) : short {
+            return a % b;
+        }
+        )SRC");
+    REQUIRE( jit );
+
+    SECTION( "int16 addition" ) {
+        auto add = jit->lookup_symbol<short(*)(short, short)>("add");
+        REQUIRE(add != nullptr);
+        REQUIRE( add(0, 0) == 0 );
+        REQUIRE( add(2, 3) == 5 );
+        REQUIRE( add(-2, -3) == -5 );
+        REQUIRE( add(42, -42) == 0 );
+    }
+
+    SECTION( "int16 substraction" ) {
+        auto sub = jit->lookup_symbol<short(*)(short, short)>("sub");
+        REQUIRE(sub != nullptr);
+        REQUIRE( sub(0, 0) == 0 );
+        REQUIRE( sub(3, 2) == 1 );
+        REQUIRE( sub(2, 3) == -1 );
+        REQUIRE( sub(-3, -2) == -1 );
+        REQUIRE( sub(-2, -3) == 1 );
+        REQUIRE( sub(42, -42) == 84 );
+        REQUIRE( sub(-42, 42) == -84 );
+        REQUIRE( sub(-42, -42) == 0 );
+        REQUIRE( sub(42, 42) == 0 );
+    }
+
+    SECTION( "int16 multiplication" ) {
+        auto mul = jit->lookup_symbol<short(*)(short, short)>("mul");
+        REQUIRE(mul != nullptr);
+        REQUIRE( mul(0, 0) == 0 );
+        REQUIRE( mul(2, 3) == 6 );
+        REQUIRE( mul(-2, -3) == 6 );
+        REQUIRE( mul(2, -3) == -6 );
+        REQUIRE( mul(-2, 3) == -6 );
+    }
+
+    SECTION( "int16 division" ) {
+        auto div = jit->lookup_symbol<short(*)(short, short)>("div");
+        REQUIRE(div != nullptr);
+        REQUIRE( div(6, 3) == 2 );
+        REQUIRE( div(-6, -2) == 3 );
+        REQUIRE( div(6, -3) == -2 );
+        REQUIRE( div(-6, 2) == -3 );
+    }
+
+    SECTION( "int16 modulo" ) {
+        auto mod = jit->lookup_symbol<short(*)(short, short)>("mod");
+        REQUIRE(mod != nullptr);
+        REQUIRE( mod(6, 2) == 0 );
+        REQUIRE( mod(7, 3) == 1 );
+    }
+}
+
 TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
 
     auto jit = gen(R"SRC(
@@ -178,4 +250,75 @@ TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
     }
 }
 
+
+TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
+
+    auto jit = gen(R"SRC(
+        add(a : long, b : long) : long {
+            return a + b;
+        }
+        sub(a : long, b : long) : long {
+            return a - b;
+        }
+        mul(a : long, b : long) : long {
+            return a * b;
+        }
+        div(a : long, b : long) : long {
+            return a / b;
+        }
+        mod(a : long, b : long) : long {
+            return a % b;
+        }
+        )SRC");
+    REQUIRE( jit );
+
+    SECTION( "int64 addition" ) {
+        auto add = jit->lookup_symbol<int64_t(*)(int64_t, int64_t)>("add");
+        REQUIRE(add != nullptr);
+        REQUIRE( add(0, 0) == 0 );
+        REQUIRE( add(2, 3) == 5 );
+        REQUIRE( add(-2, -3) == -5 );
+        REQUIRE( add(42, -42) == 0 );
+    }
+
+    SECTION( "int64 substraction" ) {
+        auto sub = jit->lookup_symbol<int64_t(*)(int64_t, int64_t)>("sub");
+        REQUIRE(sub != nullptr);
+        REQUIRE( sub(0, 0) == 0 );
+        REQUIRE( sub(3, 2) == 1 );
+        REQUIRE( sub(2, 3) == -1 );
+        REQUIRE( sub(-3, -2) == -1 );
+        REQUIRE( sub(-2, -3) == 1 );
+        REQUIRE( sub(42, -42) == 84 );
+        REQUIRE( sub(-42, 42) == -84 );
+        REQUIRE( sub(-42, -42) == 0 );
+        REQUIRE( sub(42, 42) == 0 );
+    }
+
+    SECTION( "int64 multiplication" ) {
+        auto mul = jit->lookup_symbol<int64_t(*)(int64_t, int64_t)>("mul");
+        REQUIRE(mul != nullptr);
+        REQUIRE( mul(0, 0) == 0 );
+        REQUIRE( mul(2, 3) == 6 );
+        REQUIRE( mul(-2, -3) == 6 );
+        REQUIRE( mul(2, -3) == -6 );
+        REQUIRE( mul(-2, 3) == -6 );
+    }
+
+    SECTION( "int64 division" ) {
+        auto div = jit->lookup_symbol<int64_t(*)(int64_t, int64_t)>("div");
+        REQUIRE(div != nullptr);
+        REQUIRE( div(6, 3) == 2 );
+        REQUIRE( div(-6, -2) == 3 );
+        REQUIRE( div(6, -3) == -2 );
+        REQUIRE( div(-6, 2) == -3 );
+    }
+
+    SECTION( "int64 modulo" ) {
+        auto mod = jit->lookup_symbol<int64_t(*)(int64_t, int64_t)>("mod");
+        REQUIRE(mod != nullptr);
+        REQUIRE( mod(6, 2) == 0 );
+        REQUIRE( mod(7, 3) == 1 );
+    }
+}
 

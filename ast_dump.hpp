@@ -295,7 +295,19 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_cast_expr(ast::cast_expr& expr) override {
-
+            _stm << "(cast:";
+            if(expr.type) {
+                expr.type->visit(*this);
+            } else {
+                _stm << "<<notype>>";
+            }
+            _stm << ":";
+            if(expr.expr()) {
+                expr.expr()->visit(*this);
+            } else {
+                _stm << "<<noexpr>>";
+            }
+            _stm << ")";
         }
 
         void visit_unary_prefix_expr(ast::unary_prefix_expr& expr) override {

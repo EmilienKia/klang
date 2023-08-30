@@ -258,8 +258,9 @@ namespace k::parse {
         }
     }
 
-    void ast_unit_visitor::visit_cast_expr(ast::cast_expr &) {
-
+    void ast_unit_visitor::visit_cast_expr(ast::cast_expr& expr) {
+        expr.expr()->visit(*this);
+        _expr = unit::cast_expression::make_shared(_expr, unit::unresolved_type::from_type_specifier(*expr.type));
     }
 
     void ast_unit_visitor::visit_unary_prefix_expr(ast::unary_prefix_expr &) {

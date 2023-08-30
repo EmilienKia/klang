@@ -181,6 +181,111 @@ TEST_CASE( "Parse complex identifier primary expression", "[parser][expression][
     REQUIRE(  is_same(*ident, k::name(true, {"ident", "ifier"})  ) );
 }
 
+TEST_CASE( "Parse parenthesis primary expressions", "[parser][expression][primary_expr]") {
+    k::parse::parser parser("( a + b )");
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    auto add = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
+    REQUIRE( add );
+    REQUIRE( add->op == k::lex::operator_::PLUS );
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(add->lexpr());
+    REQUIRE( a );
+    REQUIRE(  is_same(*a, k::name(false, {"a"})  ) );
+
+    auto b = std::dynamic_pointer_cast<ast::identifier_expr>(add->rexpr());
+    REQUIRE( b );
+    REQUIRE(  is_same(*b, k::name(false, {"b"})  ) );
+}
+
+TEST_CASE( "Parse parenthesis primary expressions at right of binary expr", "[parser][expression][primary_expr]") {
+    k::parse::parser parser("( a + b ) * c");
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    auto mul = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
+    REQUIRE( mul );
+    REQUIRE( mul->op == k::lex::operator_::STAR );
+
+    auto add = std::dynamic_pointer_cast<ast::binary_operator_expr>(mul->lexpr());
+    REQUIRE( add );
+    REQUIRE( add->op == k::lex::operator_::PLUS );
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(add->lexpr());
+    REQUIRE( a );
+    REQUIRE(  is_same(*a, k::name(false, {"a"})  ) );
+
+    auto b = std::dynamic_pointer_cast<ast::identifier_expr>(add->rexpr());
+    REQUIRE( b );
+    REQUIRE(  is_same(*b, k::name(false, {"b"})  ) );
+
+    auto c = std::dynamic_pointer_cast<ast::identifier_expr>(mul->rexpr());
+    REQUIRE( c );
+    REQUIRE(  is_same(*c, k::name(false, {"c"})  ) );
+}
+
+TEST_CASE( "Parse parenthesis primary expressions at left of binary expr", "[parser][expression][primary_expr]") {
+    k::parse::parser parser("c * ( a + b )");
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    auto mul = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
+    REQUIRE( mul );
+    REQUIRE( mul->op == k::lex::operator_::STAR );
+
+    auto c = std::dynamic_pointer_cast<ast::identifier_expr>(mul->lexpr());
+    REQUIRE( c );
+    REQUIRE(  is_same(*c, k::name(false, {"c"})  ) );
+
+    auto add = std::dynamic_pointer_cast<ast::binary_operator_expr>(mul->rexpr());
+    REQUIRE( add );
+    REQUIRE( add->op == k::lex::operator_::PLUS );
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(add->lexpr());
+    REQUIRE( a );
+    REQUIRE(  is_same(*a, k::name(false, {"a"})  ) );
+
+    auto b = std::dynamic_pointer_cast<ast::identifier_expr>(add->rexpr());
+    REQUIRE( b );
+    REQUIRE(  is_same(*b, k::name(false, {"b"})  ) );
+}
+
+
+TEST_CASE( "Parse parenthesis primary expressions at left and right of binary expr", "[parser][expression][primary_expr]") {
+    k::parse::parser parser("( a + b ) *(c-d)");
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    auto mul = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
+    REQUIRE( mul );
+    REQUIRE( mul->op == k::lex::operator_::STAR );
+
+    auto add = std::dynamic_pointer_cast<ast::binary_operator_expr>(mul->lexpr());
+    REQUIRE( add );
+    REQUIRE( add->op == k::lex::operator_::PLUS );
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(add->lexpr());
+    REQUIRE( a );
+    REQUIRE(  is_same(*a, k::name(false, {"a"})  ) );
+
+    auto b = std::dynamic_pointer_cast<ast::identifier_expr>(add->rexpr());
+    REQUIRE( b );
+    REQUIRE(  is_same(*b, k::name(false, {"b"})  ) );
+
+    auto sub = std::dynamic_pointer_cast<ast::binary_operator_expr>(mul->rexpr());
+    REQUIRE( sub );
+    REQUIRE( sub->op == k::lex::operator_::MINUS );
+
+    auto c = std::dynamic_pointer_cast<ast::identifier_expr>(sub->lexpr());
+    REQUIRE( c );
+    REQUIRE(  is_same(*c, k::name(false, {"c"})  ) );
+
+    auto d = std::dynamic_pointer_cast<ast::identifier_expr>(sub->rexpr());
+    REQUIRE( d );
+    REQUIRE(  is_same(*d, k::name(false, {"d"})  ) );
+}
+
 
 //
 // Postfix expr
@@ -253,7 +358,14 @@ TEST_CASE("Parse () postfix expression with one second expr", "[parser][expressi
 
 TEST_CASE("Parse () postfix expression with many second expr", "[parser][expression][postfix_expr]") {
     k::parse::parser parser("ident ( 0 , a)");
-    auto expr = parser.parse_postfix_expr();
+
+    std::shared_ptr<ast::expression> expr;
+    SECTION("Parse () postfix expression with many second expr as postfix") {
+        expr = parser.parse_postfix_expr();
+    }
+    SECTION("Parse () postfix expression with many second expr as expression") {
+        expr = parser.parse_expression();
+    }
     REQUIRE( expr );
 
     auto parenthesis = std::dynamic_pointer_cast<ast::parenthesis_postifx_expr>(expr);
@@ -299,6 +411,8 @@ TEST_CASE("Parse [] postfix expression", "[parser][expression][postfix_expr]") {
     REQUIRE( i.content == "0");
 }
 #endif
+
+
 
 //
 // Parse unary expressions
@@ -426,8 +540,7 @@ TEST_CASE("Parse cast expression", "[parser][expression][cast_expr]") {
 }
 
 TEST_CASE("Parse multiple cast expression", "[parser][expression][cast_expr]") {
-    // TODO k::parse::parser parser("(int)(long) ident"); // NOTE: ")(" without space is not supported yet
-    k::parse::parser parser("(int) (long) ident");
+    k::parse::parser parser("(int)(long) ident");
     auto expr = parser.parse_cast_expr();
     REQUIRE( expr );
 
@@ -445,6 +558,63 @@ TEST_CASE("Parse multiple cast expression", "[parser][expression][cast_expr]") {
     REQUIRE( ident );
     REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
+
+TEST_CASE("Parse cast of parenthesis expression", "[parser][expression][cast_expr]") {
+    k::parse::parser parser("(long)(a + 2)");
+    auto expr = parser.parse_cast_expr();
+    REQUIRE( expr );
+
+    auto long_cast = std::dynamic_pointer_cast<ast::cast_expr>(expr);
+    REQUIRE( long_cast );
+    // TODO: REQUIRE( int_cast->type.name );
+    REQUIRE( long_cast->expr() );
+
+    auto add = std::dynamic_pointer_cast<ast::binary_operator_expr>(long_cast->expr());
+    REQUIRE( add );
+    REQUIRE( add->op == k::lex::operator_::PLUS );
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(add->lexpr());
+    REQUIRE( a );
+    REQUIRE(  is_same(*a, k::name(false, {"a"})  ) );
+
+    auto lit = std::dynamic_pointer_cast<ast::literal_expr>(add->rexpr());
+    REQUIRE( lit );
+    REQUIRE( lit->literal.is<k::lex::integer>() );
+    auto i = lit->literal.get<k::lex::integer>();
+    REQUIRE( i.content == "2");
+}
+
+TEST_CASE("Parse cast of function invocation", "[parser][expression][postfix_expr][cast_expr]") {
+    k::parse::parser parser("(int) ident(0, a)");
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    auto cast = std::dynamic_pointer_cast<ast::cast_expr>(expr);
+    REQUIRE( cast );
+
+    auto parenthesis = std::dynamic_pointer_cast<ast::parenthesis_postifx_expr>(cast->expr());
+    REQUIRE(parenthesis );
+
+    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(parenthesis->lexpr());
+    REQUIRE( ident );
+    REQUIRE( is_same(*ident, k::name(false, "ident") ) );
+
+    auto list = std::dynamic_pointer_cast<ast::expr_list_expr>(parenthesis->rexpr());
+    REQUIRE( list );
+    REQUIRE( list->size() == 2 );
+
+    auto zero = std::dynamic_pointer_cast<ast::literal_expr>(list->expr(0));
+    REQUIRE( zero );
+    REQUIRE( zero->literal.is<k::lex::integer>() );
+    auto i = zero->literal.get<k::lex::integer>();
+    REQUIRE( i.content == "0");
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(list->expr(1));
+    REQUIRE( a );
+    REQUIRE( is_same(*a, k::name(false, "a") ) );
+}
+
+
 
 //
 // Parse PM expression
@@ -675,4 +845,53 @@ TEST_CASE( "Parse private visibility declaration", "[parser][visibility]") {
     auto var = parser.parse_visibility_decl();
     REQUIRE( var );
     REQUIRE( var->scope.type == k::lex::keyword::PRIVATE );
+}
+
+
+//
+// Various cases
+//
+TEST_CASE( "Parse expression : titi + (long) toto", "[parser][expression]") {
+    k::parse::parser parser("titi + (long) toto");
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    auto add = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
+    REQUIRE( add );
+    REQUIRE( add->op == k::lex::operator_::PLUS );
+
+    auto titi = std::dynamic_pointer_cast<ast::identifier_expr>(add->lexpr());
+    REQUIRE( titi );
+    REQUIRE( is_same(*titi, k::name(false, {"titi"}) ) );
+
+    auto cast = std::dynamic_pointer_cast<ast::cast_expr>(add->rexpr());
+    REQUIRE( cast );
+
+    auto toto = std::dynamic_pointer_cast<ast::identifier_expr>(cast->expr());
+    REQUIRE( toto );
+    REQUIRE( is_same(*toto, k::name(false, {"toto"}) ) );
+}
+
+TEST_CASE( "Parse return expression : return a + (long)b;", "[parser][expression]") {
+    k::parse::parser parser("return a + (long)b;");
+    auto stmt = parser.parse_return_statement();
+    REQUIRE( stmt );
+
+    auto expr = stmt->expr;
+    REQUIRE( expr );
+
+    auto add = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
+    REQUIRE( add );
+    REQUIRE( add->op == k::lex::operator_::PLUS );
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(add->lexpr());
+    REQUIRE( a );
+    REQUIRE( is_same(*a, k::name(false, {"a"}) ) );
+
+    auto cast = std::dynamic_pointer_cast<ast::cast_expr>(add->rexpr());
+    REQUIRE( cast );
+
+    auto b = std::dynamic_pointer_cast<ast::identifier_expr>(cast->expr());
+    REQUIRE( b );
+    REQUIRE( is_same(*b, k::name(false, {"b"}) ) );
 }

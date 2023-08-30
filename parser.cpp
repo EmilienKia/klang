@@ -981,14 +981,14 @@ ast::expr_ptr parser::parse_cast_expr()
     }
 
     if(auto lclosepar = _lexer.get(); lclosepar != lex::punctuator::PARENTHESIS_CLOSE) {
-        // Err: cast expression requires to have a closing parenthesis.
-        throw parsing_error("Sub expression after a pointer-member operator for expression is missing" /*, *lclosepar */);
+        holder.rollback();
+        return parse_unary_expr();
     }
 
     ast::expr_ptr expr = parse_cast_expr();
     if(!expr) {
-        // Err: cast expression requires to have an expression.
-        throw parsing_error("Sub expression after a casting operator for expression is missing" /*, *lclosepar */);
+        holder.rollback();
+        return parse_unary_expr();
     }
 
     return std::make_shared<ast::cast_expr>(type, expr);

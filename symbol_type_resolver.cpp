@@ -113,6 +113,8 @@ void symbol_type_resolver::visit_expression(expression& expr)
         visit_function_invocation_expression(*func);
     } else if(auto bin = dynamic_cast<k::unit::binary_expression*>(&expr)) {
         visit_binary_expression(*bin);
+    } else if(auto cast = dynamic_cast<k::unit::cast_expression*>(&expr)) {
+        visit_cast_expression(*cast);
     } // else // Must not occur
 }
 
@@ -160,23 +162,17 @@ void symbol_type_resolver::visit_binary_expression(binary_expression& expr)
         std::cerr << "Error: binary expression must have resolved type at left and right sub-expression" << std::endl;
     }
 
-    if(left->get_type()->is_primitive()) {
-        if(right->get_type()->is_primitive()) {
-            if((*std::dynamic_pointer_cast<primitive_type>(left->get_type())) == (*std::dynamic_pointer_cast<primitive_type>(right->get_type()))) {
-                // Same primitive types, result is similar
-                expr.set_type(left->get_type());
-            } else {
-                // TODO inject intermediate casting expr
-                // Warning: binary expression of primitive types must handle same types for left and right operands
-                std::cerr << "Warning: binary expression of primitive types must handle same types for left and right operands" << std::endl;
-            }
-        } else {
-            // TODO look for casting of right operand
-            std::cerr << "Error: binary expression between primitive and not-primitive expression is not supported yet." << std::endl;
-        }
+    expr.set_type(left->get_type());
+    auto cast = adapt_type(right, left->get_type());
+    if(!cast) {
+        // TODO throw an exception
+        // Error: right type is not compatible (cannot be cast).
+        std::cerr << "Error: binary expression must have resolved type at left and right sub-expression" << std::endl;
+    } else if(cast != right ) {
+        // Casted, assign casted expression instead of right source.
+        expr.assign_right(cast);
     } else {
-        // TODO Add support for not primitive binary expressions
-        std::cerr << "Error: binary expression for not-primitive expression is not supported yet." << std::endl;
+        // Compatible type, no need to cast.
     }
 }
 
@@ -207,11 +203,93 @@ void symbol_type_resolver::visit_function_invocation_expression(function_invocat
         }
     }
 
-    if(!callee->is_resolved()) {
+    if(!callee->is_resolved() || !callee->is_function()) {
         // Error: cannot resolve function.
         // TODO throw an exception
         std::cerr << "Cannot resolve function '" << callee->get_name().to_string() << "'" << std::endl;
     }
+
+    auto params = callee->get_function()->parameters();
+    if(expr.arguments().size() != params.size()) {
+        // Error : callee and function have not the same argument count.
+        // TODO throw an exception
+        std::cerr << "Error : callee and function '" << callee->get_name().to_string() << "' have not the same argument count" << std::endl;
+    }
+
+    for(size_t n=0; n<expr.arguments().size(); ++n) {
+        auto arg = expr.arguments().at(n);
+        auto param = callee->get_function()->parameters().at(n);
+
+        if(!param->get_type() || !param->get_type()->is_resolved() ||
+           !arg->get_type() || !arg->get_type()->is_resolved()) {
+            // TODO throw an exception
+            // Error: function argument or function invocation parameter have undefined type
+            std::cerr << "Error: function invocation must have defined types" << std::endl;
+        }
+
+        auto cast = adapt_type(arg, param->get_type());
+        if(!cast) {
+            // TODO throw an exception
+            // Error: function parameter is not compatible (cannot be cast).
+            std::cerr << "Error: function argument must be compatible to parameter" << std::endl;
+        } else if(cast != arg ) {
+            // Casted, assign casted expression instead of right source.
+            expr.assign_argument(n, cast);
+        } else {
+            // Compatible type, no need to cast.
+        }
+    }
+}
+
+void symbol_type_resolver::visit_cast_expression(cast_expression& expr) {
+    visit_expression(*expr.expr());
+
+    // TODO check if cast is possible (expr.expr().get_type() && expr.get_cast_type() compatibility)
+
+    expr.set_type(expr.get_cast_type());
+}
+
+std::shared_ptr<expression> symbol_type_resolver::adapt_type(const std::shared_ptr<expression>& expr, const std::shared_ptr<type>& type) {
+    if(!expr || !type || !type->is_resolved() || !expr->get_type() || !expr->get_type()->is_resolved()) {
+        // Arguments must not be null, expr must have a type and types (expr and target) must be resolved.
+        return nullptr;
+    }
+
+    auto prim_src = std::dynamic_pointer_cast<primitive_type>(expr->get_type());
+    auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type);
+
+    if(!prim_src || !prim_tgt) {
+        // Support only primitive types for now.
+        // TODO support not-primitive type casting
+        return {};
+    }
+
+    if(prim_src==prim_tgt) {
+        // Trivially agree for same types
+        return expr;
+    }
+
+    if(prim_src->is_signed() && prim_tgt->is_signed() && !prim_src->is_float() && !prim_tgt->is_float()) {
+        // NOTE only signed integer types are supported
+        if (prim_src->type_size() != prim_tgt->type_size()) {
+            // TODO inject intermediate casting expr
+            if (prim_src->type_size() > prim_tgt->type_size()) {
+                // Just warn for casting
+                // TODO Replace by a warning log with more context
+                std::cerr << "Warning: integer implicit downcast may loose data." << std::endl;
+            }
+            auto cast = cast_expression::make_shared(expr, prim_tgt);
+            cast->set_type(prim_tgt);
+            return cast;
+        } else {
+            // Types are the same, shall not happen
+            return expr;
+        }
+    } else {
+        // TODO support unsigned integers and float types
+        return nullptr;
+    }
+
 }
 
 

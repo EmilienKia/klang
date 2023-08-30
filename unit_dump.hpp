@@ -269,6 +269,14 @@ public:
         }
         _stm << ")";
     }
+
+    void visit_cast_expression(cast_expression& expr) override {
+        _stm << "(cast:";
+        dump_type(*expr.get_cast_type());
+        _stm << ":";
+        expr.expr()->accept(*this);
+        _stm << ")";
+    }
 };
 
 

@@ -27,6 +27,7 @@ public:
     void resolve();
 
 protected:
+
     void visit_unit(unit&) override;
 
     void visit_ns_element(ns_element&) override;
@@ -47,6 +48,15 @@ protected:
 
     void visit_function_invocation_expression(function_invocation_expression &) override;
 
+    void visit_cast_expression(cast_expression&)override;
+
+    /**
+     * Adapt an expression to ensure iit maps to a given type, by casting it.
+     * @param expr Expression to map.
+     * @param type Type to target
+     * @return The given arg expression if already compatible, the new wrapping casting expr if mapping, nullptr if not possible.
+     */
+    std::shared_ptr<expression> adapt_type(const std::shared_ptr<expression>& expr, const std::shared_ptr<type>& type);
 };
 
 

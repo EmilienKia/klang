@@ -163,6 +163,7 @@ protected:
         _statement = statement;
     }
 
+    friend class unary_expression;
     friend class binary_expression;
     friend class function_invocation_expression;
     void set_parent_expression(const std::shared_ptr<expression> &expression) {
@@ -306,7 +307,33 @@ public:
     void resolve(std::shared_ptr<function> func);
 };
 
+class unary_expression : public expression
+{
+protected:
+    /** Sub expression. */
+    std::shared_ptr<expression> _expr;
 
+    unary_expression() = default;
+
+    unary_expression(const std::shared_ptr<expression> &expr) :
+        _expr(expr) {}
+
+    void assign(const std::shared_ptr<expression> &expr) {
+        _expr = expr;
+        _expr->set_parent_expression(shared_as<expression>());
+    }
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    const std::shared_ptr<expression>& expr() const {
+        return _expr;
+    }
+
+    std::shared_ptr<expression>& expr() {
+        return _expr;
+    }
+};
 
 class binary_expression : public expression
 {
@@ -329,6 +356,17 @@ protected:
         _left_expr = left_expr;
         _right_expr = right_expr;
         _left_expr->set_parent_expression(shared_as<expression>());
+        _right_expr->set_parent_expression(shared_as<expression>());
+    }
+
+    void assign_left(const std::shared_ptr<expression> &left_expr) {
+        _left_expr = left_expr;
+        _left_expr->set_parent_expression(shared_as<expression>());
+    }
+
+    friend class symbol_type_resolver;
+    void assign_right(const std::shared_ptr<expression> &right_expr) {
+        _right_expr = right_expr;
         _right_expr->set_parent_expression(shared_as<expression>());
     }
 
@@ -508,6 +546,31 @@ public:
     }
 };
 
+class cast_expression : public unary_expression
+{
+protected:
+    // Casting type
+    std::shared_ptr<type> _cast_type;
+
+    cast_expression() = default;
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &expr, const std::shared_ptr<type> &type) {
+        std::shared_ptr<cast_expression> rexpr{ new cast_expression()};
+        rexpr->assign(expr);
+        rexpr->_cast_type = type;
+        return std::shared_ptr<expression>{rexpr};
+    }
+
+    std::shared_ptr<type> get_cast_type() {
+        return _cast_type;
+    }
+
+    std::shared_ptr<const type> get_cast_type() const {
+        return _cast_type;
+    }
+};
 
 
 class function_invocation_expression : public expression
@@ -571,6 +634,14 @@ public:
         }
     }
 
+    void assign_argument(size_t index, const std::shared_ptr<expression>& arg) {
+        if(index >= _arguments.size()) {
+            // Cannot assign aan argument out of existing arguments bound.
+        } else {
+            _arguments[index] = arg;
+            arg->set_parent_expression(shared_as<expression>());
+        }
+    }
 
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args) {
         std::shared_ptr<function_invocation_expression> expr{ new function_invocation_expression()};
@@ -871,7 +942,7 @@ public:
     std::shared_ptr<type> return_type() {return _return_type;}
     std::shared_ptr<const type> return_type() const {return _return_type;}
 
-    std::vector<std::shared_ptr<parameter>> parameters() const {
+    const std::vector<std::shared_ptr<parameter>>& parameters() const {
         return _parameters;
     }
 
@@ -1079,6 +1150,9 @@ public:
     virtual void visit_value_expression(value_expression&) =0;
     virtual void visit_symbol_expression(symbol_expression&) =0;
 
+    virtual void visit_unary_expression(unary_expression&) =0;
+    virtual void visit_cast_expression(cast_expression&) =0;
+
     virtual void visit_binary_expression(binary_expression&) =0;
     virtual void visit_addition_expression(addition_expression&) =0;
     virtual void visit_substraction_expression(substraction_expression&) =0;
@@ -1115,6 +1189,9 @@ public:
     virtual void visit_expression(expression&) override;
     virtual void visit_value_expression(value_expression&) override;
     virtual void visit_symbol_expression(symbol_expression&) override;
+
+    virtual void visit_unary_expression(unary_expression&) override;
+    virtual void visit_cast_expression(cast_expression&) override;
 
     virtual void visit_binary_expression(binary_expression&) override;
     virtual void visit_addition_expression(addition_expression&) override;

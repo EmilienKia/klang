@@ -99,6 +99,13 @@ void symbol_expression::resolve(std::shared_ptr<function> func) {
 }
 
 //
+// Unary expression
+//
+void unary_expression::accept(element_visitor& visitor) {
+    visitor.visit_unary_expression(*this);
+}
+
+//
 // Binary expression
 //
 void binary_expression::accept(element_visitor& visitor) {
@@ -182,6 +189,14 @@ void division_assignation_expression::accept(element_visitor& visitor) {
 void modulo_assignation_expression::accept(element_visitor& visitor) {
     visitor.visit_modulo_assignation_expression(*this);
 }
+
+//
+// Modulo assignation expression
+//
+void cast_expression::accept(element_visitor& visitor) {
+    visitor.visit_cast_expression(*this);
+}
+
 
 //
 // Function invocation expression
@@ -641,6 +656,14 @@ void default_element_visitor::visit_value_expression(value_expression&) {
 }
 
 void default_element_visitor::visit_symbol_expression(symbol_expression&) {
+
+}
+
+void default_element_visitor::visit_unary_expression(unary_expression&) {
+
+}
+
+void default_element_visitor::visit_cast_expression(cast_expression&) {
 
 }
 

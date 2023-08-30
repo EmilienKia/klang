@@ -448,6 +448,43 @@ void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_
     _value = _builder->CreateCall(llvm_func, args);
 }
 
+void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
+    auto source_type = expr.expr()->get_type();
+    auto target_type = expr.get_cast_type();
+
+    if(!source_type->is_resolved() || !target_type->is_resolved()) {
+        // Error: source and target types must be both resolved.
+        // TODO throw exception
+        std::cerr << "Error: in casting expression, both source and target types must be resolved." << std::endl;
+    }
+
+    if(!source_type->is_primitive() || !target_type->is_primitive()) {
+        // TODO Support also non primitive type
+        std::cerr << "Error: in casting expression, only primitive types are supported yet." << std::endl;
+    }
+    auto src = std::dynamic_pointer_cast<primitive_type>(source_type);
+    auto tgt = std::dynamic_pointer_cast<primitive_type>(target_type);
+    if(!src || ! tgt){
+        // TODO Support also non primitive type
+        std::cerr << "Error: in casting expression, only primitive types are supported yet." << std::endl;
+    }
+
+    if(src->is_unsigned() || tgt->is_unsigned() || src->is_float() || tgt->is_float()) {
+        // TODO Support also unsigned and float primitive type
+        std::cerr << "Error: in casting expression, only signed integer primitive types are supported yet." << std::endl;
+    }
+
+    _value = nullptr;
+    expr.expr()->accept(*this);
+    if(!_value) {
+        // TODO throw exception
+        // Sub expression is not reporting any value.
+        std::cerr << "Error: in casting expression, expression to cast is not returning any value." << std::endl;
+    }
+
+    // SExt or trunc for signed integers
+    _value = _builder->CreateSExtOrTrunc(_value, get_llvm_type(tgt));
+}
 
 void unit_llvm_ir_gen::dump() {
     _module->print(llvm::outs(), nullptr);
