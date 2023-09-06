@@ -37,7 +37,7 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
         switch(lit.index()) {
             case lex::any_literal_type_index::INTEGER: {
                 const auto &i = lit.get<lex::integer>();
-                auto val = llvm::APInt(8 * (unsigned) i.size, i.int_content(), (uint8_t) i.base);
+                auto val = llvm::APInt((unsigned) i.size, i.int_content(), (uint8_t) i.base);
                 _value = llvm::ConstantInt::get(*_context, val);
             } break;
             case lex::any_literal_type_index::CHARACTER:
@@ -46,9 +46,14 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
             case lex::any_literal_type_index::STRING:
                 // TODO
                 break;
-            case lex::any_literal_type_index::BOOLEAN:
-                // TODO
-                break;
+            case lex::any_literal_type_index::BOOLEAN: {
+                const auto& b = lit.get<lex::boolean>();
+                if(std::get<bool>(b.value())) {
+                    _value = _builder->getTrue();
+                } else {
+                    _value = _builder->getFalse();
+                }
+            } break;
             case lex::any_literal_type_index::NUL:
                 // TODO
                 break;
@@ -62,22 +67,21 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
 
 llvm::Type* unit_llvm_ir_gen::get_llvm_type(const std::shared_ptr<type>& type) {
     llvm::Type *llvm_type;
-    if(!type->is_resolved()) {
+    if(!type::is_resolved(type)) {
         // TODO cannot translate unresolved type.
         return nullptr;
     }
-
     auto res_type = std::dynamic_pointer_cast<resolved_type>(type);
-    if(!res_type) {
-        // TODO cannot translate unresolved type.
-        return nullptr;
-    }
+
     if(res_type->is_primitive()) {
         auto prim = std::dynamic_pointer_cast<primitive_type>(res_type);
-        if(prim->is_integer() && prim->is_signed()) {
-            llvm_type = _builder->getIntNTy(8*prim->type_size());
+        if(prim->is_integer()) {
+            // LLVM looks to use same type descriptor for signed and unsigned integers
+            llvm_type = _builder->getIntNTy(prim->type_size());
+        } else if (prim->is_boolean()) {
+            llvm_type = _builder->getInt1Ty();
         } else {
-            // TODO support unsigned integer and float types
+            // TODO support float types
         }
     }
     return llvm_type;
@@ -134,9 +138,11 @@ void unit_llvm_ir_gen::visit_addition_expression(addition_expression &expr) {
         return;
     }
 
-    // TODO: Check for type alignement
-
-    _value = _builder->CreateAdd(left, right);
+    if(type::is_prim_integer(expr.get_type())) {
+        _value = _builder->CreateAdd(left, right);
+    } else {
+        // TODO: Support other types
+    }
 }
 
 void unit_llvm_ir_gen::visit_substraction_expression(substraction_expression &expr) {
@@ -147,9 +153,11 @@ void unit_llvm_ir_gen::visit_substraction_expression(substraction_expression &ex
         return;
     }
 
-    // TODO: Check for type alignement
-
-    _value = _builder->CreateSub(left, right);
+    if(type::is_prim_integer(expr.get_type())) {
+        _value = _builder->CreateSub(left, right);
+    } else {
+        // TODO: Support other types
+    }
 }
 
 void unit_llvm_ir_gen::visit_multiplication_expression(multiplication_expression &expr) {
@@ -161,8 +169,12 @@ void unit_llvm_ir_gen::visit_multiplication_expression(multiplication_expression
     }
 
     // TODO: Check for type alignement
-
-    _value = _builder->CreateMul(left, right);
+    if(type::is_prim_integer(expr.get_type())) {
+        // TODO Should poison for int/uint multiplication overflow ?
+        _value = _builder->CreateMul(left, right);
+    } else {
+        // TODO: Support other types
+    }
 }
 
 void unit_llvm_ir_gen::visit_division_expression(division_expression &expr) {
@@ -173,9 +185,17 @@ void unit_llvm_ir_gen::visit_division_expression(division_expression &expr) {
         return;
     }
 
-    // TODO: Check for type alignement
-
-    _value = _builder->CreateSDiv(left, right);
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            if(prim->is_unsigned()) {
+                _value = _builder->CreateUDiv(left, right);
+            } else {
+                _value = _builder->CreateSDiv(left, right);
+            }
+        }
+    } else {
+        // TODO: Support other types
+    }
 }
 
 void unit_llvm_ir_gen::visit_modulo_expression(modulo_expression &expr) {
@@ -186,10 +206,112 @@ void unit_llvm_ir_gen::visit_modulo_expression(modulo_expression &expr) {
         return;
     }
 
-    // TODO: Check for type alignment
-
-    _value = _builder->CreateSRem(left, right);
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            if(prim->is_unsigned()) {
+                _value = _builder->CreateURem(left, right);
+            } else {
+                _value = _builder->CreateSRem(left, right);
+            }
+        }
+    } else {
+        // TODO: Support other types
+    }
 }
+
+void unit_llvm_ir_gen::visit_bitwise_and_expression(bitwise_and_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            _value = _builder->CreateAnd(left, right);
+        }
+    } else {
+        // TODO: Support other types
+    }
+}
+
+void unit_llvm_ir_gen::visit_bitwise_or_expression(bitwise_or_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            _value = _builder->CreateOr(left, right);
+        }
+    } else {
+        // TODO: Support other types
+    }
+}
+
+void unit_llvm_ir_gen::visit_bitwise_xor_expression(bitwise_xor_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            _value = _builder->CreateXor(left, right);
+        }
+    } else {
+        // TODO: Support other types
+    }
+}
+
+void unit_llvm_ir_gen::visit_left_shift_expression(left_shift_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            // TODO may it poison when overflow ?
+            _value = _builder->CreateShl(left, right);
+        }
+    } else {
+        // TODO: Support other types
+    }
+}
+
+void unit_llvm_ir_gen::visit_right_shift_expression(right_shift_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            if(prim->is_unsigned()) {
+                // TODO may it poison when overflow ?
+                _value = _builder->CreateLShr(left, right);
+            } else {
+                // TODO may it poison when overflow ?
+                _value = _builder->CreateAShr(left, right);
+            }
+        }
+    } else {
+        // TODO: Support other types
+    }
+}
+
+
 
 void unit_llvm_ir_gen::create_assignement(std::shared_ptr<expression> expr, llvm::Value* value) {
     auto var_expr = std::dynamic_pointer_cast<symbol_expression>(expr);
@@ -212,7 +334,7 @@ void unit_llvm_ir_gen::create_assignement(std::shared_ptr<expression> expr, llvm
     }
 }
 
-void unit_llvm_ir_gen::visit_assignation_expression(assignation_expression& expr) {
+void unit_llvm_ir_gen::visit_simple_assignation_expression(simple_assignation_expression& expr) {
     _value = nullptr;
     expr.right()->accept(*this);
     auto value = _value;
@@ -233,8 +355,11 @@ void unit_llvm_ir_gen::visit_addition_assignation_expression(additition_assignat
         return;
     }
 
-    // TODO: Check for type alignement
-    _value = _builder->CreateAdd(left, right);
+    if(type::is_prim_integer(expr.get_type())) {
+        _value = _builder->CreateAdd(left, right);
+    } else {
+        // TODO: Support other types
+    }
     create_assignement(expr.left(), _value);
 }
 
@@ -246,8 +371,11 @@ void unit_llvm_ir_gen::visit_substraction_assignation_expression(substraction_as
         return;
     }
 
-    // TODO: Check for type alignement
-    _value = _builder->CreateSub(left, right);
+    if(type::is_prim_integer(expr.get_type())) {
+        _value = _builder->CreateSub(left, right);
+    } else {
+        // TODO: Support other types
+    }
     create_assignement(expr.left(), _value);
 }
 
@@ -259,8 +387,12 @@ void unit_llvm_ir_gen::visit_multiplication_assignation_expression(multiplicatio
         return;
     }
 
-    // TODO: Check for type alignement
-    _value = _builder->CreateMul(left, right);
+    if(type::is_prim_integer(expr.get_type())) {
+        // TODO Should poison for int/uint multiplication overflow ?
+        _value = _builder->CreateMul(left, right);
+    } else {
+        // TODO: Support other types
+    }
     create_assignement(expr.left(), _value);
 }
 
@@ -272,8 +404,17 @@ void unit_llvm_ir_gen::visit_division_assignation_expression(division_assignatio
         return;
     }
 
-    // TODO: Check for type alignement
-    _value = _builder->CreateSDiv(left, right);
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            if(prim->is_unsigned()) {
+                _value = _builder->CreateUDiv(left, right);
+            } else {
+                _value = _builder->CreateSDiv(left, right);
+            }
+        }
+    } else {
+        // TODO: Support other types
+    }
     create_assignement(expr.left(), _value);
 }
 
@@ -285,10 +426,116 @@ void unit_llvm_ir_gen::visit_modulo_assignation_expression(modulo_assignation_ex
         return;
     }
 
-    // TODO: Check for type alignement
-    _value = _builder->CreateSRem(left, right);
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            if(prim->is_unsigned()) {
+                _value = _builder->CreateURem(left, right);
+            } else {
+                _value = _builder->CreateSRem(left, right);
+            }
+        }
+    } else {
+        // TODO: Support other types
+    }
     create_assignement(expr.left(), _value);
 }
+
+void unit_llvm_ir_gen::visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            _value = _builder->CreateAnd(left, right);
+        }
+    } else {
+        // TODO: Support other types
+    }
+    create_assignement(expr.left(), _value);
+}
+
+void unit_llvm_ir_gen::visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            _value = _builder->CreateOr(left, right);
+        }
+    } else {
+        // TODO: Support other types
+    }
+    create_assignement(expr.left(), _value);
+}
+
+void unit_llvm_ir_gen::visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            _value = _builder->CreateXor(left, right);
+        }
+    } else {
+        // TODO: Support other types
+    }
+    create_assignement(expr.left(), _value);
+}
+
+void unit_llvm_ir_gen::visit_left_shift_assignation_expression(left_shift_assignation_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            // TODO may it poison when overflow ?
+            _value = _builder->CreateShl(left, right);
+        }
+    } else {
+        // TODO: Support other types
+    }
+    create_assignement(expr.left(), _value);
+}
+void unit_llvm_ir_gen::visit_right_shift_assignation_expression(right_shift_assignation_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        if(prim->is_integer()) {
+            if(prim->is_unsigned()) {
+                // TODO may it poison when overflow ?
+                _value = _builder->CreateLShr(left, right);
+            } else {
+                // TODO may it poison when overflow ?
+                _value = _builder->CreateAShr(left, right);
+            }
+        }
+    } else {
+        // TODO: Support other types
+    }
+    create_assignement(expr.left(), _value);
+}
+
 
 void unit_llvm_ir_gen::visit_unit(unit &unit) {
     visit_namespace(*_unit.get_root_namespace());
@@ -398,7 +645,6 @@ void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
     auto func = _functions[var.get_block()->get_function()];
     llvm::IRBuilder<> build(&func->getEntryBlock(),func->getEntryBlock().begin());
 
-    // TODO use the right type, only int32 supported for now
     llvm::Type *  type = get_llvm_type(var.get_type());
     llvm::AllocaInst* alloca = build.CreateAlloca(type, nullptr, var.get_name());
     _variables.insert({var.shared_as<variable_statement>(), alloca});
@@ -458,16 +704,12 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
         std::cerr << "Error: in casting expression, both source and target types must be resolved." << std::endl;
     }
 
-    if(!source_type->is_primitive() || !target_type->is_primitive()) {
+    if(!type::is_primitive(source_type) || !type::is_primitive(target_type)) {
         // TODO Support also non primitive type
         std::cerr << "Error: in casting expression, only primitive types are supported yet." << std::endl;
     }
     auto src = std::dynamic_pointer_cast<primitive_type>(source_type);
     auto tgt = std::dynamic_pointer_cast<primitive_type>(target_type);
-    if(!src || ! tgt){
-        // TODO Support also non primitive type
-        std::cerr << "Error: in casting expression, only primitive types are supported yet." << std::endl;
-    }
 
     if(src->is_unsigned() || tgt->is_unsigned() || src->is_float() || tgt->is_float()) {
         // TODO Support also unsigned and float primitive type
@@ -482,8 +724,24 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
         std::cerr << "Error: in casting expression, expression to cast is not returning any value." << std::endl;
     }
 
-    // SExt or trunc for signed integers
-    _value = _builder->CreateSExtOrTrunc(_value, get_llvm_type(tgt));
+    //
+    // TODO REVIEW Integer casting procedure to adapt each case (especially unsigned/sign mix-up with truncate or extend)
+    //
+    if(src->is_integer() && tgt->is_signed()) {
+        if(src->is_unsigned()) {
+            // TODO Add "Unsigned to signed" overflow warning
+            std::cerr << "Cast unsigned integer to signed integer may result on overflow" << std::endl;
+        }
+        // SExt or trunc for signed integers
+        _value = _builder->CreateSExtOrTrunc(_value, get_llvm_type(tgt));
+    } else if(tgt->is_unsigned() && src->is_integer()) {
+        if(src->is_unsigned()) {
+            // TODO Add "Signed to unsigned" truncation/misunderstanding warning
+            std::cerr << "Cast signed integer to unsigned integer may result on truncating/misinterpreting of integers" << std::endl;
+        }
+        // SExt or trunc for signed integers
+        _value = _builder->CreateZExtOrTrunc(_value, get_llvm_type(tgt));
+    }
 }
 
 void unit_llvm_ir_gen::dump() {
@@ -503,7 +761,7 @@ void unit_llvm_ir_gen::optimize_functions() {
     passes = std::make_shared<llvm::legacy::FunctionPassManager>(_module.get());
     // Do simple "peephole" optimizations and bit-twiddling optzns.
     passes->add(llvm::createInstructionCombiningPass());
-    // Reassociate expressions.
+    // Re-associate expressions.
     passes->add(llvm::createReassociatePass());
     // Eliminate Common SubExpressions.
     passes->add(llvm::createGVNPass());

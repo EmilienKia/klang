@@ -78,14 +78,24 @@ public:
     void visit_multiplication_expression(multiplication_expression&) override;
     void visit_division_expression(division_expression&) override;
     void visit_modulo_expression(modulo_expression&) override;
+    void visit_bitwise_and_expression(bitwise_and_expression&) override;
+    void visit_bitwise_or_expression(bitwise_or_expression&) override;
+    void visit_bitwise_xor_expression(bitwise_xor_expression&) override;
+    void visit_left_shift_expression(left_shift_expression&) override;
+    void visit_right_shift_expression(right_shift_expression&) override;
 
     void create_assignement(std::shared_ptr<expression> expr, llvm::Value* value);
-    void visit_assignation_expression(assignation_expression&) override;
+    void visit_simple_assignation_expression(simple_assignation_expression&) override;
     void visit_addition_assignation_expression(additition_assignation_expression&) override;
     void visit_substraction_assignation_expression(substraction_assignation_expression&) override;
     void visit_multiplication_assignation_expression(multiplication_assignation_expression&) override;
     void visit_division_assignation_expression(division_assignation_expression&) override;
     void visit_modulo_assignation_expression(modulo_assignation_expression&) override;
+    void visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression&) override;
+    void visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression&) override;
+    void visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression&) override;
+    void visit_left_shift_assignation_expression(left_shift_assignation_expression&) override;
+    void visit_right_shift_assignation_expression(right_shift_assignation_expression&) override;
 
     void visit_function_invocation_expression(function_invocation_expression&) override;
 

@@ -117,7 +117,7 @@ public:
     std::optional<ast::variable_decl> parse_variable_decl();
 
     /**
-     * Current support : TYPE_SPEC := ('byte'|'char'|'short'|'int'|'long'|'float'|'double')
+     * Current support : TYPE_SPEC := ?('unsigned') ('byte'|'char'|'short'|'int'|'long'|'float'|'double')
      *                                  | QUALIFIED_IDENTIFIER
      * TODO support : support unsigned prefix correctly
      */

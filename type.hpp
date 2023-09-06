@@ -33,6 +33,12 @@ public:
 
     virtual bool is_resolved() const;
     virtual bool is_primitive() const;
+
+    inline static bool is_resolved(const std::shared_ptr<type>& type);
+    inline static bool is_primitive(const std::shared_ptr<type>& type);
+    inline static bool is_prim_integer(const std::shared_ptr<type>& type);
+    inline static bool is_prim_integer_or_bool(const std::shared_ptr<type>& type);
+    inline static bool is_prim_bool(const std::shared_ptr<type>& type);
 };
 
 /**
@@ -61,14 +67,22 @@ public:
     bool is_resolved() const override;
 };
 
+
+inline bool type::is_resolved(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<resolved_type>(type) != nullptr;
+}
+
+
 /**
  * Primitive type
  */
 class primitive_type : public resolved_type {
 public:
     enum PRIMITIVE_TYPE {
-        BYTE,
+        BOOL,
         CHAR,
+        BYTE,
+        UNSIGNED_CHAR = BYTE,
         SHORT,
         UNSIGNED_SHORT,
         INT,
@@ -84,7 +98,7 @@ protected:
     PRIMITIVE_TYPE _type;
     bool _is_unsigned;
     bool _is_float;
-    size_t _size;
+    size_t _size; // Size in bits, boolean is 1 (unsigned)
 
     primitive_type(PRIMITIVE_TYPE type, bool is_unsigned, bool is_float, size_t size):
         _type(type), _is_unsigned(is_unsigned),_is_float(is_float), _size(size){}
@@ -97,10 +111,13 @@ protected:
 public:
     bool is_primitive() const override;
 
+    bool is_boolean() const {return _type == BOOL;}
+
     bool is_unsigned() const {return _is_unsigned;}
     bool is_signed() const {return !_is_unsigned;}
     bool is_float() const {return _is_float;}
-    bool is_integer()const {return !_is_float;}
+    bool is_integer()const {return !_is_float && _type!=BOOL;}
+    bool is_integer_or_bool()const {return !_is_float;}
 
     size_t type_size()const {return _size;}
 
@@ -112,10 +129,27 @@ public:
 
     static std::shared_ptr<primitive_type> from_type(PRIMITIVE_TYPE type);
     static std::shared_ptr<type> from_string(const std::string& type_name);
-    static std::shared_ptr<type> from_keyword(const lex::keyword& kw);
+    static std::shared_ptr<type> from_keyword(const lex::keyword& kw, bool is_unsigned = false);
 };
 
+inline bool type::is_primitive(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<primitive_type>(type) != nullptr;
+}
 
+inline bool type::is_prim_integer(const std::shared_ptr<type>& type) {
+    auto prim = std::dynamic_pointer_cast<primitive_type>(type);
+    return prim != nullptr && prim->is_integer();
+}
+
+inline bool type::is_prim_integer_or_bool(const std::shared_ptr<type>& type) {
+    auto prim = std::dynamic_pointer_cast<primitive_type>(type);
+    return prim != nullptr && prim->is_integer_or_bool();
+}
+
+inline bool type::is_prim_bool(const std::shared_ptr<type>& type) {
+    auto prim = std::dynamic_pointer_cast<primitive_type>(type);
+    return prim != nullptr && prim->is_boolean();
+}
 
 } // namespace k::unit
 #endif //KLANG_TYPE_HPP

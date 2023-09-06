@@ -31,12 +31,12 @@ namespace k::lex {
     };
 
     enum integer_size {
-        BYTE = 1, // 8 bits
-        SHORT = 2, // 16 bits
-        INT = 4, // 32 bits
-        LONG = 8, // 64 bits
-        LONGLONG = 16, // 128 bits
-        BIGINT = 32 // Big integer
+        BYTE = 8, // 8 bits
+        SHORT = 16, // 16 bits
+        INT = 32, // 32 bits
+        LONG = 64, // 64 bits
+        LONGLONG = 128, // 128 bits
+        BIGINT = 256 // Big integer
     };
 
     struct char_coord
@@ -132,13 +132,15 @@ namespace k::lex {
             FINAL,
             THIS,
             RETURN,
+            BOOL,
             BYTE,
             CHAR,
             SHORT,
             INT,
             LONG,
             FLOAT,
-            DOUBLE
+            DOUBLE,
+            UNSIGNED
             /* TODO add new lexeme definition here. */
         };
 

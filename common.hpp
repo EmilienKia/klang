@@ -72,12 +72,13 @@ public:
  */
 typedef std::variant<std::monostate,
         std::nullptr_t, bool,
+        char, unsigned char,
         short, unsigned short,
         int, unsigned int,
         long, unsigned long,
         long long, unsigned long long,
         float, double,
-        char, std::string> value_type;
+        std::string> value_type;
 
 
 } // namespace k

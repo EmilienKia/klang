@@ -24,7 +24,9 @@ int main() {
     /* Hello */
 
     ploc(p: int) : int {
-        return p * 2;
+        c : char;
+        c = p + 1;
+        return p * 2 + c;
     }
 
     test(titi: int, toto: long) : long {

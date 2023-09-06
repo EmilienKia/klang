@@ -91,9 +91,10 @@ namespace k::parse {
 
         struct keyword_type_specifier : public type_specifier {
             lex::keyword keyword;
+            bool is_unsigned = false;
 
-            keyword_type_specifier(const lex::keyword & keyword) : keyword(keyword) {}
-            keyword_type_specifier(lex::keyword && keyword) : keyword(keyword) {}
+            keyword_type_specifier(const lex::keyword & keyword, bool is_unsigned = false) : keyword(keyword) {}
+            keyword_type_specifier(lex::keyword && keyword, bool is_unsigned = false) : keyword(keyword) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

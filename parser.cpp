@@ -523,16 +523,27 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
 {
     lex::lex_holder holder(_lexer);
 
+    // Look for type prefix
+    bool is_unsigned = false;
+    auto lprefix = _lexer.get();
+    if(lprefix == lex::keyword::UNSIGNED) {
+        is_unsigned = true;
+    } else {
+        _lexer.unget();
+    }
+
     // Expect a type keyword
     auto ltype = _lexer.get();
-    if(lex::is_one_of<lex::keyword::BYTE,
+    if(lex::is_one_of<
+            lex::keyword::BOOL,
+            lex::keyword::BYTE,
             lex::keyword::CHAR,
             lex::keyword::SHORT,
             lex::keyword::INT,
             lex::keyword::LONG,
             lex::keyword::FLOAT,
             lex::keyword::DOUBLE>(ltype)){
-        return std::make_shared<ast::keyword_type_specifier>( std::get<lex::keyword>(ltype.value().get()) );
+        return std::make_shared<ast::keyword_type_specifier>( std::get<lex::keyword>(ltype.value().get()) , is_unsigned);
     }
     holder.rollback();
 

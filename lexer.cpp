@@ -23,13 +23,16 @@ namespace k::lex {
         {"return", keyword::RETURN},
         {"this", keyword::THIS},
 
+        {"bool", keyword::BOOL},
         {"byte", keyword::BYTE},
         {"char", keyword::CHAR},
         {"short", keyword::SHORT},
         {"int", keyword::INT},
         {"long", keyword::LONG},
         {"float", keyword::FLOAT},
-        {"double", keyword::DOUBLE}
+        {"double", keyword::DOUBLE},
+
+        {"unsigned", keyword::UNSIGNED}
     };
 
     const std::map<std::string, punctuator::type_t> punctuators {
@@ -841,7 +844,7 @@ namespace k::lex {
     //
     k::value_type character::value()const {
         // TODO Decode unicode escape
-        return {content[1]};
+        return content.at(1);
     }
 
     //

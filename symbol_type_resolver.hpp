@@ -30,21 +30,25 @@ protected:
 
     void visit_unit(unit&) override;
 
-    void visit_ns_element(ns_element&) override;
     void visit_namespace(ns&) override;
     void visit_global_variable_definition(global_variable_definition&) override;
     void visit_function(function&) override;
 
-    void visit_statement(statement&) override;
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;
     void visit_expression_statement(expression_statement&) override;
     void visit_variable_statement(variable_statement&) override;
 
-    void visit_expression(expression&) override;
     void visit_value_expression(value_expression&) override;
     void visit_symbol_expression(symbol_expression&) override;
     void visit_binary_expression(binary_expression&) override;
+
+    void process_arithmetic(binary_expression&);
+
+    void visit_arithmetic_binary_expression(arithmetic_binary_expression &expression) override;
+    void visit_assignation_expression(assignation_expression &expression) override;
+
+protected:
 
     void visit_function_invocation_expression(function_invocation_expression &) override;
 

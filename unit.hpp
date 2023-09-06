@@ -390,7 +390,16 @@ public:
     }
 };
 
-class addition_expression : public binary_expression
+class arithmetic_binary_expression : public binary_expression
+{
+protected:
+    arithmetic_binary_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+};
+
+class addition_expression : public arithmetic_binary_expression
 {
 protected:
     addition_expression() = default;
@@ -405,7 +414,7 @@ public:
     }
 };
 
-class substraction_expression : public binary_expression
+class substraction_expression : public arithmetic_binary_expression
 {
 protected:
     substraction_expression() = default;
@@ -420,7 +429,7 @@ public:
     }
 };
 
-class multiplication_expression : public binary_expression
+class multiplication_expression : public arithmetic_binary_expression
 {
 protected:
     multiplication_expression() = default;
@@ -434,7 +443,7 @@ public:
     }
 };
 
-class division_expression : public binary_expression
+class division_expression : public arithmetic_binary_expression
 {
 protected:
     division_expression() = default;
@@ -448,7 +457,7 @@ public:
     }
 };
 
-class modulo_expression : public binary_expression
+class modulo_expression : public arithmetic_binary_expression
 {
 protected:
     modulo_expression() = default;
@@ -462,21 +471,106 @@ public:
     }
 };
 
-class assignation_expression : public binary_expression
+class bitwise_and_expression : public arithmetic_binary_expression
 {
 protected:
-    assignation_expression() = default;
+    bitwise_and_expression() = default;
+
 public:
     void accept(element_visitor& visitor) override;
 
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<assignation_expression> expr{ new assignation_expression()};
+        std::shared_ptr<bitwise_and_expression> expr{ new bitwise_and_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
 };
 
-class additition_assignation_expression : public binary_expression
+class bitwise_or_expression : public arithmetic_binary_expression
+{
+protected:
+    bitwise_or_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<bitwise_or_expression> expr{ new bitwise_or_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class bitwise_xor_expression : public arithmetic_binary_expression
+{
+protected:
+    bitwise_xor_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<bitwise_xor_expression> expr{ new bitwise_xor_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class left_shift_expression : public arithmetic_binary_expression
+{
+protected:
+    left_shift_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<left_shift_expression> expr{ new left_shift_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class right_shift_expression : public arithmetic_binary_expression
+{
+protected:
+    right_shift_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<right_shift_expression> expr{ new right_shift_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+
+class assignation_expression : public binary_expression {
+protected:
+    assignation_expression() = default;
+
+public:
+    void accept(element_visitor &visitor) override;
+};
+
+
+class simple_assignation_expression : public assignation_expression
+{
+protected:
+    simple_assignation_expression() = default;
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<simple_assignation_expression> expr{new simple_assignation_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class additition_assignation_expression : public assignation_expression
 {
 protected:
     additition_assignation_expression() = default;
@@ -490,7 +584,7 @@ public:
     }
 };
 
-class substraction_assignation_expression : public binary_expression
+class substraction_assignation_expression : public assignation_expression
 {
 protected:
     substraction_assignation_expression() = default;
@@ -504,7 +598,7 @@ public:
     }
 };
 
-class multiplication_assignation_expression : public binary_expression
+class multiplication_assignation_expression : public assignation_expression
 {
 protected:
     multiplication_assignation_expression() = default;
@@ -518,7 +612,7 @@ public:
     }
 };
 
-class division_assignation_expression : public binary_expression
+class division_assignation_expression : public assignation_expression
 {
 protected:
     division_assignation_expression() = default;
@@ -532,7 +626,7 @@ public:
     }
 };
 
-class modulo_assignation_expression : public binary_expression
+class modulo_assignation_expression : public assignation_expression
 {
 protected:
     modulo_assignation_expression() = default;
@@ -541,6 +635,76 @@ public:
 
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<modulo_assignation_expression> expr{ new modulo_assignation_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class bitwise_and_assignation_expression : public assignation_expression
+{
+protected:
+    bitwise_and_assignation_expression() = default;
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<bitwise_and_assignation_expression> expr{ new bitwise_and_assignation_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class bitwise_or_assignation_expression : public assignation_expression
+{
+protected:
+    bitwise_or_assignation_expression() = default;
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<bitwise_or_assignation_expression> expr{ new bitwise_or_assignation_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class bitwise_xor_assignation_expression : public assignation_expression
+{
+protected:
+    bitwise_xor_assignation_expression() = default;
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<bitwise_xor_assignation_expression> expr{ new bitwise_xor_assignation_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class left_shift_assignation_expression : public assignation_expression
+{
+protected:
+    left_shift_assignation_expression() = default;
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<left_shift_assignation_expression> expr{ new left_shift_assignation_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class right_shift_assignation_expression : public assignation_expression
+{
+protected:
+    right_shift_assignation_expression() = default;
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<right_shift_assignation_expression> expr{ new right_shift_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -1154,17 +1318,31 @@ public:
     virtual void visit_cast_expression(cast_expression&) =0;
 
     virtual void visit_binary_expression(binary_expression&) =0;
+    virtual void visit_arithmetic_binary_expression(arithmetic_binary_expression&) =0;
     virtual void visit_addition_expression(addition_expression&) =0;
     virtual void visit_substraction_expression(substraction_expression&) =0;
     virtual void visit_multiplication_expression(multiplication_expression&) =0;
     virtual void visit_division_expression(division_expression&) =0;
     virtual void visit_modulo_expression(modulo_expression&) =0;
+    virtual void visit_bitwise_and_expression(bitwise_and_expression&) =0;
+    virtual void visit_bitwise_or_expression(bitwise_or_expression&) =0;
+    virtual void visit_bitwise_xor_expression(bitwise_xor_expression&) =0;
+    virtual void visit_left_shift_expression(left_shift_expression&) =0;
+    virtual void visit_right_shift_expression(right_shift_expression&) =0;
+
     virtual void visit_assignation_expression(assignation_expression&) =0;
+    virtual void visit_simple_assignation_expression(simple_assignation_expression&) =0;
     virtual void visit_addition_assignation_expression(additition_assignation_expression&) =0;
     virtual void visit_substraction_assignation_expression(substraction_assignation_expression&) =0;
     virtual void visit_multiplication_assignation_expression(multiplication_assignation_expression&) =0;
     virtual void visit_division_assignation_expression(division_assignation_expression&) =0;
     virtual void visit_modulo_assignation_expression(modulo_assignation_expression&) =0;
+    virtual void visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression&) =0;
+    virtual void visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression&) =0;
+    virtual void visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression&) =0;
+    virtual void visit_left_shift_assignation_expression(left_shift_assignation_expression&) =0;
+    virtual void visit_right_shift_assignation_expression(right_shift_assignation_expression&) =0;
+
     virtual void visit_function_invocation_expression(function_invocation_expression&) =0;
 };
 
@@ -1194,17 +1372,32 @@ public:
     virtual void visit_cast_expression(cast_expression&) override;
 
     virtual void visit_binary_expression(binary_expression&) override;
+
+    virtual void visit_arithmetic_binary_expression(arithmetic_binary_expression&) override;
     virtual void visit_addition_expression(addition_expression&) override;
     virtual void visit_substraction_expression(substraction_expression&) override;
     virtual void visit_multiplication_expression(multiplication_expression&) override;
     virtual void visit_division_expression(division_expression&) override;
     virtual void visit_modulo_expression(modulo_expression&) override;
+    virtual void visit_bitwise_and_expression(bitwise_and_expression&) override;
+    virtual void visit_bitwise_or_expression(bitwise_or_expression&) override;
+    virtual void visit_bitwise_xor_expression(bitwise_xor_expression&) override;
+    virtual void visit_left_shift_expression(left_shift_expression&) override;
+    virtual void visit_right_shift_expression(right_shift_expression&) override;
+
     virtual void visit_assignation_expression(assignation_expression&) override;
+    virtual void visit_simple_assignation_expression(simple_assignation_expression&) override;
     virtual void visit_addition_assignation_expression(additition_assignation_expression&) override;
     virtual void visit_substraction_assignation_expression(substraction_assignation_expression&) override;
     virtual void visit_multiplication_assignation_expression(multiplication_assignation_expression&) override;
     virtual void visit_division_assignation_expression(division_assignation_expression&) override;
     virtual void visit_modulo_assignation_expression(modulo_assignation_expression&) override;
+    virtual void visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression&) override;
+    virtual void visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression&) override;
+    virtual void visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression&) override;
+    virtual void visit_left_shift_assignation_expression(left_shift_assignation_expression&) override;
+    virtual void visit_right_shift_assignation_expression(right_shift_assignation_expression&) override;
+
     virtual void visit_function_invocation_expression(function_invocation_expression&) override;
 };
 

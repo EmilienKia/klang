@@ -235,8 +235,23 @@ namespace k::parse {
             case lex::operator_::PERCENT:
                 _expr = unit::modulo_expression::make_shared(lexpr, rexpr);
                 break;
+            case lex::operator_::AMPERSAND:
+                _expr = unit::bitwise_and_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::PIPE:
+                _expr = unit::bitwise_or_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::CARET:
+                _expr = unit::bitwise_xor_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::DOUBLE_CHEVRON_OPEN:
+                _expr = unit::left_shift_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::DOUBLE_CHEVRON_CLOSE:
+                _expr = unit::right_shift_expression::make_shared(lexpr, rexpr);
+                break;
             case lex::operator_::EQUAL:
-                _expr = unit::assignation_expression::make_shared(lexpr, rexpr);
+                _expr = unit::simple_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::PLUS_EQUAL:
                 _expr = unit::additition_assignation_expression::make_shared(lexpr, rexpr);
@@ -252,6 +267,21 @@ namespace k::parse {
                 break;
             case lex::operator_::PERCENT_EQUAL:
                 _expr = unit::modulo_assignation_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::AMPERSAND_EQUAL:
+                _expr = unit::bitwise_and_assignation_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::PIPE_EQUAL:
+                _expr = unit::bitwise_or_assignation_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::CARET_EQUAL:
+                _expr = unit::bitwise_xor_assignation_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::DOUBLE_CHEVRON_OPEN_EQUAL:
+                _expr = unit::left_shift_assignation_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::DOUBLE_CHEVRON_CLOSE_EQUAL:
+                _expr = unit::right_shift_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             default: // TODO other operations
                 break;

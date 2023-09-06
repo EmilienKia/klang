@@ -7,6 +7,8 @@
 
 #include "unit.hpp"
 
+#include <typeinfo>
+
 namespace k::unit::dump {
 
 template<typename OSTM>
@@ -138,7 +140,11 @@ public:
     }
 
     void visit_statement(statement& stmt) override {
-        prefix() << "<<unsupported statement type>>" << std::endl;
+        prefix() << "<<unknown-stmt:" << typeid(stmt).name() << ">>" << std::endl;
+    }
+
+    void visit_variable_statement(variable_statement& stmt) override {
+        visit_variable_definition(stmt);
     }
 
     void visit_return_statement(return_statement& stmt) override {
@@ -169,7 +175,7 @@ public:
     }
 
     void visit_expression(expression& expr) {
-        _stm << "<<unknown-expr>>";
+        _stm << "<<unknown-expr:" << typeid(expr).name() << ">>";
     }
 
     void visit_symbol_expression(symbol_expression& expr) override {
@@ -185,9 +191,9 @@ public:
 
     void visit_value_expression(value_expression& expr) override {
         if(expr.is_literal()) {
-            _stm << "<<lit-value-expr:" << expr.get_literal().content << ">>";
+            _stm << "<<value-expr-lit:" << expr.get_literal().content << ">>";
         } else {
-            _stm << "<<val-value-expr:TODO" << ">>";
+            _stm << "<<value-expr-val:TODO" << ">>";
             // TODO
         }
     }
@@ -222,7 +228,7 @@ public:
         expr.right()->accept(*this);
     }
 
-    void visit_assignation_expression(assignation_expression& expr) override {
+    void visit_simple_assignation_expression(simple_assignation_expression& expr) override {
         expr.left()->accept(*this);
         _stm << " = ";
         expr.right()->accept(*this);

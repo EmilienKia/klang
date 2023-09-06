@@ -37,8 +37,24 @@ _literal(literal)
 std::shared_ptr<type> value_expression::type_from_literal(const k::lex::any_literal& literal)
 {
     if(std::holds_alternative<lex::integer>(literal)) {
-        // TODO handle other integer alternatives
-        return primitive_type::from_type(primitive_type::INT);
+        auto lit = literal.get<lex::integer>();
+        switch(lit.size) {
+            case k::lex::BYTE:
+                return primitive_type::from_type(lit.unsigned_num ? primitive_type::BYTE : primitive_type::CHAR);
+            case k::lex::SHORT:
+                return primitive_type::from_type(lit.unsigned_num ? primitive_type::UNSIGNED_SHORT : primitive_type::SHORT);
+            case k::lex::INT:
+                return primitive_type::from_type(lit.unsigned_num ? primitive_type::UNSIGNED_INT : primitive_type::INT);
+            case k::lex::LONG:
+                return primitive_type::from_type(lit.unsigned_num ? primitive_type::UNSIGNED_LONG : primitive_type::LONG);
+            default:
+                // TODO Add (unsigned) long long and bigint
+                return {};
+        }
+    } else if(std::holds_alternative<lex::character>(literal)) {
+        return primitive_type::from_type(primitive_type::CHAR);
+    } else if(std::holds_alternative<lex::boolean>(literal)) {
+        return primitive_type::from_type(primitive_type::BOOL);
     } else {
         // TODO handle other literal types
         return nullptr;
@@ -113,6 +129,13 @@ void binary_expression::accept(element_visitor& visitor) {
 }
 
 //
+// Arithmetic binary expression
+//
+void arithmetic_binary_expression::accept(element_visitor& visitor) {
+    visitor.visit_arithmetic_binary_expression(*this);
+}
+
+//
 // Addition expression
 //
 void addition_expression::accept(element_visitor& visitor) {
@@ -148,10 +171,52 @@ void modulo_expression::accept(element_visitor& visitor) {
 }
 
 //
+// Bitwise AND expression
+//
+void bitwise_and_expression::accept(element_visitor& visitor) {
+    visitor.visit_bitwise_and_expression(*this);
+}
+
+//
+// Bitwise OR expression
+//
+void bitwise_or_expression::accept(element_visitor& visitor) {
+    visitor.visit_bitwise_or_expression(*this);
+}
+
+//
+// Bitwise XOR expression
+//
+void bitwise_xor_expression::accept(element_visitor& visitor) {
+    visitor.visit_bitwise_xor_expression(*this);
+}
+
+//
+// Bitwise left shift expression
+//
+void left_shift_expression::accept(element_visitor& visitor) {
+    visitor.visit_left_shift_expression(*this);
+}
+
+//
+// Bitwise right shift expression
+//
+void right_shift_expression::accept(element_visitor& visitor) {
+    visitor.visit_right_shift_expression(*this);
+}
+
+//
 // Assignation expression
 //
 void assignation_expression::accept(element_visitor& visitor) {
     visitor.visit_assignation_expression(*this);
+}
+
+//
+// Simple assignation expression
+//
+void simple_assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_simple_assignation_expression(*this);
 }
 
 
@@ -191,12 +256,46 @@ void modulo_assignation_expression::accept(element_visitor& visitor) {
 }
 
 //
+// Bitwise AND assignation expression
+//
+void bitwise_and_assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_bitwise_and_assignation_expression(*this);
+}
+
+//
+// Bitwise OR assignation expression
+//
+void bitwise_or_assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_bitwise_or_assignation_expression(*this);
+}
+
+//
+// Bitwise XOR assignation expression
+//
+void bitwise_xor_assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_bitwise_xor_assignation_expression(*this);
+}
+
+//
+// Bitwise left shift assignation expression
+//
+void left_shift_assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_left_shift_assignation_expression(*this);
+}
+
+//
+// Bitwise right shift assignation expression
+//
+void right_shift_assignation_expression::accept(element_visitor& visitor) {
+    visitor.visit_right_shift_assignation_expression(*this);
+}
+
+//
 // Modulo assignation expression
 //
 void cast_expression::accept(element_visitor& visitor) {
     visitor.visit_cast_expression(*this);
 }
-
 
 //
 // Function invocation expression
@@ -604,119 +703,166 @@ std::shared_ptr<const ns> unit::find_namespace(std::string_view name) const
 //
 
 void default_element_visitor::visit_element(element&) {
-
 }
 
-void default_element_visitor::visit_unit(unit&) {
-
+void default_element_visitor::visit_unit(unit& unit) {
+    visit_element(unit);
 }
 
-void default_element_visitor::visit_ns_element(ns_element&) {
-
+void default_element_visitor::visit_ns_element(ns_element& elem) {
+    visit_element(elem);
 }
 
-void default_element_visitor::visit_namespace(ns&) {
-
+void default_element_visitor::visit_namespace(ns& ns) {
+    visit_ns_element(ns);
 }
 
-void default_element_visitor::visit_function(function&) {
-
+void default_element_visitor::visit_function(function& func) {
+    visit_ns_element(func);
 }
 
-void default_element_visitor::visit_global_variable_definition(global_variable_definition&) {
-
+void default_element_visitor::visit_global_variable_definition(global_variable_definition& def) {
+    visit_ns_element(def);
 }
 
-void default_element_visitor::visit_statement(statement&) {
-
+void default_element_visitor::visit_statement(statement& stmt) {
+    visit_element(stmt);
 }
 
-void default_element_visitor::visit_block(block&) {
-
+void default_element_visitor::visit_block(block& stmt) {
+    visit_statement(stmt);
 }
 
-void default_element_visitor::visit_return_statement(return_statement&) {
-
+void default_element_visitor::visit_return_statement(return_statement& stmt) {
+    visit_statement(stmt);
 }
 
-void default_element_visitor::visit_expression_statement(expression_statement&) {
-
+void default_element_visitor::visit_expression_statement(expression_statement& stmt) {
+    visit_statement(stmt);
 }
 
-void default_element_visitor::visit_variable_statement(variable_statement&) {
-
+void default_element_visitor::visit_variable_statement(variable_statement& stmt) {
+    visit_statement(stmt);
 }
 
-void default_element_visitor::visit_expression(expression&) {
-
+void default_element_visitor::visit_expression(expression& expr) {
+    visit_element(expr);
 }
 
-void default_element_visitor::visit_value_expression(value_expression&) {
-
+void default_element_visitor::visit_value_expression(value_expression& expr) {
+    visit_expression(expr);
 }
 
-void default_element_visitor::visit_symbol_expression(symbol_expression&) {
-
+void default_element_visitor::visit_symbol_expression(symbol_expression& expr) {
+    visit_expression(expr);
 }
 
-void default_element_visitor::visit_unary_expression(unary_expression&) {
-
+void default_element_visitor::visit_unary_expression(unary_expression& expr) {
+    visit_expression(expr);
 }
 
-void default_element_visitor::visit_cast_expression(cast_expression&) {
-
+void default_element_visitor::visit_cast_expression(cast_expression& expr) {
+    visit_unary_expression(expr);
 }
 
-void default_element_visitor::visit_binary_expression(binary_expression&) {
-
+void default_element_visitor::visit_binary_expression(binary_expression& expr) {
+    visit_expression(expr);
 }
 
-void default_element_visitor::visit_addition_expression(addition_expression&) {
-
+void default_element_visitor::visit_arithmetic_binary_expression(arithmetic_binary_expression& expr) {
+    visit_binary_expression(expr);
 }
 
-void default_element_visitor::visit_substraction_expression(substraction_expression&) {
-
+void default_element_visitor::visit_addition_expression(addition_expression& expr) {
+    visit_arithmetic_binary_expression(expr);
 }
 
-void default_element_visitor::visit_multiplication_expression(multiplication_expression&) {
-
+void default_element_visitor::visit_substraction_expression(substraction_expression& expr) {
+    visit_arithmetic_binary_expression(expr);
 }
 
-void default_element_visitor::visit_division_expression(division_expression&) {
-
+void default_element_visitor::visit_multiplication_expression(multiplication_expression& expr) {
+    visit_arithmetic_binary_expression(expr);
 }
 
-void default_element_visitor::visit_modulo_expression(modulo_expression&) {
-
+void default_element_visitor::visit_division_expression(division_expression& expr) {
+    visit_arithmetic_binary_expression(expr);
 }
 
-void default_element_visitor::visit_assignation_expression(assignation_expression&) {
-
+void default_element_visitor::visit_modulo_expression(modulo_expression& expr) {
+    visit_arithmetic_binary_expression(expr);
 }
 
-void default_element_visitor::visit_addition_assignation_expression(additition_assignation_expression&) {
-
+void default_element_visitor::visit_bitwise_and_expression(bitwise_and_expression& expr) {
+    visit_arithmetic_binary_expression(expr);
 }
 
-void default_element_visitor::visit_substraction_assignation_expression(substraction_assignation_expression&) {
-
+void default_element_visitor::visit_bitwise_or_expression(bitwise_or_expression& expr) {
+    visit_arithmetic_binary_expression(expr);
 }
 
-void default_element_visitor::visit_multiplication_assignation_expression(multiplication_assignation_expression&) {
-
+void default_element_visitor::visit_bitwise_xor_expression(bitwise_xor_expression& expr) {
+    visit_arithmetic_binary_expression(expr);
 }
 
-void default_element_visitor::visit_division_assignation_expression(division_assignation_expression&) {
-
+void default_element_visitor::visit_left_shift_expression(left_shift_expression& expr) {
+    visit_arithmetic_binary_expression(expr);
 }
 
-void default_element_visitor::visit_modulo_assignation_expression(modulo_assignation_expression&) {
-
+void default_element_visitor::visit_right_shift_expression(right_shift_expression& expr) {
+    visit_arithmetic_binary_expression(expr);
 }
 
-void default_element_visitor::visit_function_invocation_expression(function_invocation_expression&) {
+void default_element_visitor::visit_assignation_expression(assignation_expression& expr) {
+    visit_binary_expression(expr);
+}
 
+void default_element_visitor::visit_simple_assignation_expression(simple_assignation_expression& expr) {
+    visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_addition_assignation_expression(additition_assignation_expression& expr) {
+    visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_substraction_assignation_expression(substraction_assignation_expression& expr) {
+    visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_multiplication_assignation_expression(multiplication_assignation_expression& expr) {
+    visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_division_assignation_expression(division_assignation_expression& expr) {
+    visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_modulo_assignation_expression(modulo_assignation_expression& expr) {
+    visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression& expr) {
+    visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression& expr) {
+    visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression& expr) {
+    visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_left_shift_assignation_expression(left_shift_assignation_expression& expr) {
+    visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_right_shift_assignation_expression(right_shift_assignation_expression& expr) {
+    visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_function_invocation_expression(function_invocation_expression& expr) {
+    visit_expression(expr);
 }
 
 
