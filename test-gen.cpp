@@ -1225,7 +1225,120 @@ TEST_CASE( "uint64 arithmetic", "[gen][uint64][arithmetic]" ) {
     }
 }
 
-TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
+TEST_CASE("Boolean values and casting", "[gen][bool]") {
+    auto jit = gen(R"SRC(
+        module __bool__;
+        ret_true() : bool {
+            return true;
+        }
+        ret_false() : bool {
+            return false;
+        }
+        cast_char_to_bool(c : char) : bool {
+            return (bool)c;
+        }
+        cast_byte_to_bool(b : byte) : bool {
+            return (bool)b;
+        }
+        cast_int32_to_bool(i : int) : bool {
+            return (bool)i;
+        }
+        cast_uint64_to_bool(u : unsigned long) : bool {
+            return (bool)u;
+        }
+        cast_bool_to_char(b : bool) : char {
+            return (char)b;
+        }
+        cast_bool_to_byte(b : bool) : byte {
+            return (byte)b;
+        }
+        cast_bool_to_int32(b : bool) : int {
+            return (int)b;
+        }
+        cast_bool_to_uint64(b : bool) : unsigned long {
+            return (unsigned long)b;
+        }
+        )SRC");
+    REQUIRE( jit );
+
+    typedef bool type_t;
+
+    SECTION( "boolean true basic value" ) {
+        auto ret_true = jit->lookup_symbol<bool(*)()>("ret_true");
+        REQUIRE( ret_true != nullptr );
+        REQUIRE( ret_true() == true );
+    }
+
+    SECTION( "boolean false basic value" ) {
+        auto ret_false = jit->lookup_symbol<bool(*)()>("ret_false");
+        REQUIRE( ret_false != nullptr );
+        REQUIRE( ret_false() == false );
+    }
+
+    SECTION( "cast char to boolean" ) {
+        auto cast_char_to_bool = jit->lookup_symbol<bool(*)(char)>("cast_char_to_bool");
+        REQUIRE( cast_char_to_bool != nullptr );
+        REQUIRE( cast_char_to_bool( 42 ) == true );
+        REQUIRE( cast_char_to_bool( -42 ) == true );
+        REQUIRE( cast_char_to_bool( 0 ) == false );
+    }
+
+    SECTION( "cast byte to boolean" ) {
+        auto cast_byte_to_bool = jit->lookup_symbol<bool(*)(char)>("cast_byte_to_bool");
+        REQUIRE( cast_byte_to_bool != nullptr );
+        REQUIRE( cast_byte_to_bool( 42 ) == true );
+        REQUIRE( cast_byte_to_bool( 0 ) == false );
+    }
+
+
+    SECTION( "cast int32 to boolean" ) {
+        auto cast_int32_to_bool = jit->lookup_symbol<bool(*)(int)>("cast_int32_to_bool");
+        REQUIRE( cast_int32_to_bool != nullptr );
+        REQUIRE( cast_int32_to_bool( 42 ) == true );
+        REQUIRE( cast_int32_to_bool( -42 ) == true );
+        REQUIRE( cast_int32_to_bool( 0 ) == false );
+    }
+
+    SECTION( "cast uint64 to boolean" ) {
+        auto cast_uint64_to_bool = jit->lookup_symbol<bool(*)(uint64_t)>("cast_uint64_to_bool");
+        REQUIRE( cast_uint64_to_bool != nullptr );
+        REQUIRE( cast_uint64_to_bool( 42 ) == true );
+        REQUIRE( cast_uint64_to_bool( 0 ) == false );
+    }
+
+
+    SECTION( "cast boolean to char" ) {
+        auto cast_bool_to_char = jit->lookup_symbol<char(*)(bool)>("cast_bool_to_char");
+        REQUIRE( cast_bool_to_char != nullptr );
+        REQUIRE( cast_bool_to_char( false ) == 0 );
+        REQUIRE( cast_bool_to_char( true ) != 0 );
+    }
+
+    SECTION( "cast boolean to byte" ) {
+        auto cast_bool_to_byte = jit->lookup_symbol<unsigned char(*)(bool)>("cast_bool_to_byte");
+        REQUIRE( cast_bool_to_byte != nullptr );
+        REQUIRE( cast_bool_to_byte( false ) == 0 );
+        REQUIRE( cast_bool_to_byte( true ) != 0 );
+    }
+
+
+    SECTION( "cast boolean to int32" ) {
+        auto cast_bool_to_int32 = jit->lookup_symbol<int(*)(bool)>("cast_bool_to_int32");
+        REQUIRE( cast_bool_to_int32 != nullptr );
+        REQUIRE( cast_bool_to_int32( false ) == 0 );
+        REQUIRE( cast_bool_to_int32( true ) != 0 );
+    }
+
+    SECTION( "cast boolean to uint64" ) {
+        auto cast_bool_to_uint64 = jit->lookup_symbol<uint64_t(*)(bool)>("cast_bool_to_uint64");
+        REQUIRE( cast_bool_to_uint64 != nullptr );
+        REQUIRE( cast_bool_to_uint64( false ) == 0 );
+        REQUIRE( cast_bool_to_uint64( true ) != 0 );
+    }
+}
+
+/*
+TEST_CASE("Boolean values and casting", "[gen][bool][arithmetic]") {
     auto jit = gen(R"SRC(
         module __bool__;
         ret_true() : bool {
@@ -1251,5 +1364,6 @@ TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
         REQUIRE( ret_false() == false );
     }
 }
+*/
 
 

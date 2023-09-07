@@ -778,9 +778,9 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
     auto src = std::dynamic_pointer_cast<primitive_type>(source_type);
     auto tgt = std::dynamic_pointer_cast<primitive_type>(target_type);
 
-    if(src->is_unsigned() || tgt->is_unsigned() || src->is_float() || tgt->is_float()) {
-        // TODO Support also unsigned and float primitive type
-        std::cerr << "Error: in casting expression, only signed integer primitive types are supported yet." << std::endl;
+    if(src->is_float() || tgt->is_float()) {
+        // TODO Support also float primitive type
+        std::cerr << "Error: in casting expression, only integer and boolean primitive types are supported yet." << std::endl;
     }
 
     _value = nullptr;
@@ -794,20 +794,40 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
     //
     // TODO REVIEW Integer casting procedure to adapt each case (especially unsigned/sign mix-up with truncate or extend)
     //
-    if(src->is_integer() && tgt->is_signed()) {
-        if(src->is_unsigned()) {
-            // TODO Add "Unsigned to signed" overflow warning
-            std::cerr << "Cast unsigned integer to signed integer may result on overflow" << std::endl;
+    if(src->is_boolean()) {
+        if(tgt->is_integer()) {
+            if(tgt->is_unsigned()) {
+                _value = _builder->CreateZExt(_value, _builder->getIntNTy(tgt->type_size()));
+            } else {
+                _value = _builder->CreateSExt(_value, _builder->getIntNTy(tgt->type_size()));
+            }
+        } else {
+            // Support other types
         }
-        // SExt or trunc for signed integers
-        _value = _builder->CreateSExtOrTrunc(_value, get_llvm_type(tgt));
-    } else if(tgt->is_unsigned() && src->is_integer()) {
-        if(src->is_unsigned()) {
-            // TODO Add "Signed to unsigned" truncation/misunderstanding warning
-            std::cerr << "Cast signed integer to unsigned integer may result on truncating/misinterpreting of integers" << std::endl;
+    } else if(src->is_integer()) {
+        if(tgt->is_boolean()) {
+            _value = _builder->CreateICmpNE(_value, _builder->getIntN(src->type_size(), 0));
+        } else if (tgt->is_signed()) {
+            if (src->is_unsigned()) {
+                // TODO Add "Unsigned to signed" overflow warning
+                std::cerr << "Cast unsigned integer to signed integer may result on overflow" << std::endl;
+            }
+            // SExt or trunc for signed integers
+            _value = _builder->CreateSExtOrTrunc(_value, get_llvm_type(tgt));
+        } else if (tgt->is_unsigned()) {
+            if (src->is_unsigned()) {
+                // TODO Add "Signed to unsigned" truncation/misunderstanding warning
+                std::cerr
+                        << "Cast signed integer to unsigned integer may result on truncating/misinterpreting of integers"
+                        << std::endl;
+            }
+            // SExt or trunc for signed integers
+            _value = _builder->CreateZExtOrTrunc(_value, get_llvm_type(tgt));
+        } else {
+            // Support other types
         }
-        // SExt or trunc for signed integers
-        _value = _builder->CreateZExtOrTrunc(_value, get_llvm_type(tgt));
+    } else {
+        // Support other types
     }
 }
 
