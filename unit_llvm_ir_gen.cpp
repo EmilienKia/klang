@@ -603,6 +603,61 @@ void unit_llvm_ir_gen::visit_bitwise_not_expression(bitwise_not_expression& expr
     }
 }
 
+void unit_llvm_ir_gen::visit_logical_and_expression(logical_and_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
+        // TODO throw an exception
+        // Logical arithmetic for non-primitive types is not supported.
+        std::cerr << "Error: Logical arithmetic for non-primitive types is not supported yet." << std::endl;
+    }
+
+    _value = _builder->CreateAnd(left, right);
+}
+
+void unit_llvm_ir_gen::visit_logical_or_expression(logical_or_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
+        // TODO throw an exception
+        // Logical arithmetic for non-primitive types is not supported.
+        std::cerr << "Error: Logical arithmetic for non-primitive types is not supported yet." << std::endl;
+    }
+
+    _value = _builder->CreateOr(left, right);
+}
+
+void unit_llvm_ir_gen::visit_logical_not_expression(logical_not_expression& expr) {
+    auto value = process_unary_expression(expr);
+
+    if(!value) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    auto& sub = expr.sub_expr();
+    auto type = sub->get_type();
+
+    if(!type::is_primitive(type)) {
+        // TODO throw an exception
+        // Logical negation for non-primitive types is not supported.
+        std::cerr << "Error: Logical negation for non-primitive types is not supported yet." << std::endl;
+    }
+
+    _value = _builder->CreateNot(value);
+}
+
 
 void unit_llvm_ir_gen::visit_unit(unit &unit) {
     visit_namespace(*_unit.get_root_namespace());
@@ -859,7 +914,6 @@ void unit_llvm_ir_gen::optimize_functions() {
     for(auto& func : *_module) {
         passes->run(func);
     }
-
 }
 
 

@@ -17,7 +17,7 @@ using namespace k;
 int main() {
     std::cout << "Hello, World!" << std::endl;
 
-#if 1
+#if 0
     std::string source = R"SRC(
     module titi;
     import io;
@@ -50,6 +50,15 @@ int main() {
     }
     )SRC";
 #endif
+
+#if 1
+    std::string source = R"SRC(
+    ploc(a:int, b: bool) : bool {
+        return a && b;
+    }
+    )SRC";
+#endif
+
 
     k::parse::parser parser(source);
     k::parse::ast::unit ast_unit = parser.parse_unit();
@@ -87,7 +96,7 @@ int main() {
         return -1;
     }
 
-#if 1
+#if 0
     int (*test)(int, int) = (int(*)(int, int)) jit.get()->lookup_symbol<int(*)(int, int)>("test");
 
     std::cout << "Test : test(0,0) = " << (test(0, 0)) << std::endl;

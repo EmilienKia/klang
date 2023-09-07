@@ -1337,33 +1337,71 @@ TEST_CASE("Boolean values and casting", "[gen][bool]") {
     }
 }
 
-/*
-TEST_CASE("Boolean values and casting", "[gen][bool][arithmetic]") {
+
+TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
     auto jit = gen(R"SRC(
         module __bool__;
-        ret_true() : bool {
-            return true;
+        not(b : bool) : bool {
+            return !b;
         }
-        ret_false() : bool {
-            return false;
+        and(a : bool, b: bool) : bool {
+            return a && b;
+        }
+        and_int(a : bool, b: int) : bool {
+            return a && b;
+        }
+        or(a : bool, b: bool) : bool {
+            return a || b;
+        }
+        or_int(a : bool, b: int) : bool {
+            return a || b;
         }
         )SRC");
     REQUIRE( jit );
 
     typedef bool type_t;
 
-    SECTION( "boolean true basic value" ) {
-        auto ret_true = jit->lookup_symbol<bool(*)()>("ret_true");
-        REQUIRE( ret_true != nullptr );
-        REQUIRE( ret_true() == true );
+    SECTION( "boolean not" ) {
+        auto _not = jit->lookup_symbol<bool(*)(bool)>("not");
+        REQUIRE( _not != nullptr );
+        REQUIRE( _not(false) == true );
+        REQUIRE( _not(true) == false );
     }
 
-    SECTION( "boolean false basic value" ) {
-        auto ret_false = jit->lookup_symbol<bool(*)()>("ret_false");
-        REQUIRE( ret_false != nullptr );
-        REQUIRE( ret_false() == false );
+    SECTION( "boolean and" ) {
+        auto _and = jit->lookup_symbol<bool(*)(bool, bool)>("and");
+        REQUIRE( _and != nullptr );
+        REQUIRE( _and(false, false) == false );
+        REQUIRE( _and(false, true) == false );
+        REQUIRE( _and(true, false) == false );
+        REQUIRE( _and(true, true) == true );
     }
+
+    SECTION( "boolean and with cast" ) {
+        auto _and = jit->lookup_symbol<bool(*)(bool, int)>("and_int");
+        REQUIRE( _and != nullptr );
+        REQUIRE( _and(false, 0) == false );
+        REQUIRE( _and(false, 25) == false );
+        REQUIRE( _and(true, 0) == false );
+        REQUIRE( _and(true, 42) == true );
+    }
+
+    SECTION( "boolean or" ) {
+        auto _or = jit->lookup_symbol<bool(*)(bool, bool)>("or");
+        REQUIRE( _or != nullptr );
+        REQUIRE( _or(false, false) == false );
+        REQUIRE( _or(false, true) == true );
+        REQUIRE( _or(true, false) == true );
+        REQUIRE( _or(true, true) == true );
+    }
+
+    SECTION( "boolean or with cast" ) {
+        auto _or = jit->lookup_symbol<bool(*)(bool, int)>("or_int");
+        REQUIRE( _or != nullptr );
+        REQUIRE( _or(false, 0) == false );
+        REQUIRE( _or(false, 25) == true );
+        REQUIRE( _or(true, 0) == true );
+        REQUIRE( _or(true, 42) == true );
+    }
+
 }
-*/
-
-

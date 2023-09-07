@@ -283,6 +283,12 @@ namespace k::parse {
             case lex::operator_::DOUBLE_CHEVRON_CLOSE_EQUAL:
                 _expr = unit::right_shift_assignation_expression::make_shared(lexpr, rexpr);
                 break;
+            case lex::operator_::DOUBLE_AMPERSAND:
+                _expr = unit::logical_and_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::DOUBLE_PIPE:
+                _expr = unit::logical_or_expression::make_shared(lexpr, rexpr);
+                break;
             default: // TODO other operations
                 break;
         }
@@ -308,6 +314,9 @@ namespace k::parse {
                 break;
             case lex::operator_::TILDE:
                 _expr = unit::bitwise_not_expression::make_shared(sub);
+                break;
+            case lex::operator_::EXCLAMATION_MARK:
+                _expr = unit::logical_not_expression::make_shared(sub);
                 break;
         }
     }

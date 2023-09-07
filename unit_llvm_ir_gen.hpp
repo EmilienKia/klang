@@ -102,6 +102,10 @@ public:
     void visit_unary_minus_expression(unary_minus_expression&) override;
     void visit_bitwise_not_expression(bitwise_not_expression&) override;
 
+    void visit_logical_and_expression(logical_and_expression&) override;
+    void visit_logical_or_expression(logical_or_expression&) override;
+    void visit_logical_not_expression(logical_not_expression&) override;
+
     void visit_function_invocation_expression(function_invocation_expression&) override;
 
     void visit_cast_expression(cast_expression&) override;

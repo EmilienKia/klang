@@ -319,6 +319,34 @@ void bitwise_not_expression::accept(element_visitor& visitor) {
 }
 
 //
+// Logical binary exception
+//
+void logical_binary_expression::accept(element_visitor& visitor) {
+    visitor.visit_logical_binary_expression(*this);
+}
+
+//
+// Logical AND exception
+//
+void logical_and_expression::accept(element_visitor& visitor) {
+    visitor.visit_logical_and_expression(*this);
+}
+
+//
+// Logical OR exception
+//
+void logical_or_expression::accept(element_visitor& visitor) {
+    visitor.visit_logical_or_expression(*this);
+}
+
+//
+// Logical NOT exception
+//
+void logical_not_expression::accept(element_visitor& visitor) {
+    visitor.visit_logical_not_expression(*this);
+}
+
+//
 // Cast expression
 //
 void cast_expression::accept(element_visitor& visitor) {
@@ -903,6 +931,22 @@ void default_element_visitor::visit_unary_minus_expression(unary_minus_expressio
 
 void default_element_visitor::visit_bitwise_not_expression(bitwise_not_expression& expr) {
     visit_arithmetic_unary_expression(expr);
+}
+
+void default_element_visitor::visit_logical_binary_expression(logical_binary_expression& expr) {
+    visit_binary_expression(expr);
+}
+
+void default_element_visitor::visit_logical_and_expression(logical_and_expression& expr) {
+    visit_logical_binary_expression(expr);
+}
+
+void default_element_visitor::visit_logical_or_expression(logical_or_expression& expr) {
+    visit_logical_binary_expression(expr);
+}
+
+void default_element_visitor::visit_logical_not_expression(logical_not_expression& expr) {
+    visit_unary_expression(expr);
 }
 
 void default_element_visitor::visit_function_invocation_expression(function_invocation_expression& expr) {

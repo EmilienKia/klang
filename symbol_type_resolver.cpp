@@ -134,8 +134,7 @@ void symbol_type_resolver::visit_binary_expression(binary_expression& expr)
     left->accept(*this);
     right->accept(*this);
 
-    if(!left->get_type() || !left->get_type()->is_resolved() ||
-            !right->get_type() || !right->get_type()->is_resolved()) {
+    if(!type::is_resolved(left->get_type()) || !type::is_resolved(right->get_type())) {
         // TODO throw an exception
         // Error: binary expression must have resolved type at left and right sub-expression
         std::cerr << "Error: binary expression must have resolved type at left and right sub-expression" << std::endl;
@@ -198,6 +197,78 @@ void symbol_type_resolver::visit_arithmetic_unary_expression(arithmetic_unary_ex
 
     expr.set_type(type);
 }
+
+void symbol_type_resolver::visit_logical_binary_expression(logical_binary_expression& expr) {
+    visit_binary_expression(expr);
+
+    auto& left = expr.left();
+    auto& right = expr.right();
+
+    if(!type::is_primitive( left->get_type()) || !type::is_primitive(right->get_type())) {
+        // TODO throw an exception
+        // Logical for non-primitive types is not supported.
+        std::cerr << "Error: Arithmetic for non-primitive types is not supported yet." << std::endl;
+    }
+
+    auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+
+    auto cast_left = adapt_type(left, bool_type);
+    if(!cast_left) {
+        // TODO throw an exception
+        // Error: left type is not compatible (cannot be cast).
+        std::cerr << "Error: Logical binary operand must be casted to boolean" << std::endl;
+    } else if(cast_left != left ) {
+        // Casted, assign casted expression instead of source.
+        expr.assign_left(cast_left);
+    } else {
+        // Compatible type, no need to cast.
+    }
+
+    auto cast_right = adapt_type(right, bool_type);
+    if(!cast_right) {
+        // TODO throw an exception
+        // Error: right type is not compatible (cannot be cast).
+        std::cerr << "Error: Logical binary operand must be casted to boolean" << std::endl;
+    } else if(cast_right != right ) {
+        // Casted, assign casted expression instead of source.
+        expr.assign_right(cast_right);
+    } else {
+        // Compatible type, no need to cast.
+    }
+
+    // For primitive type, logical is always returning boolean
+    expr.set_type(primitive_type::from_type(primitive_type::BOOL));
+}
+
+void symbol_type_resolver::visit_logical_not_expression(logical_not_expression& expr) {
+    visit_unary_expression(expr);
+
+    auto& sub = expr.sub_expr();
+    auto type = sub->get_type();
+
+    if(!type::is_primitive(type)) {
+        // TODO throw an exception
+        // Logical negation for non-primitive types is not supported.
+        std::cerr << "Error: Logical negation for non-primitive types is not supported yet." << std::endl;
+    }
+
+    auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    auto cast = adapt_type(sub, bool_type);
+    if(!cast) {
+        // TODO throw an exception
+        // Error: right type is not compatible (cannot be cast).
+        std::cerr << "Error: Logical negation operand must be casted to boolean" << std::endl;
+    } else if(cast != sub ) {
+        // Casted, assign casted expression instead of source.
+        expr.assign(cast);
+    } else {
+        // Compatible type, no need to cast.
+    }
+
+    // For primitive type, logical is always returning boolean
+    expr.set_type(bool_type);
+}
+
 
 void symbol_type_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
@@ -292,7 +363,7 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_type(const std::shared_p
         return expr;
     }
 
-    if(prim_src->is_integer() && prim_tgt->is_integer()) {
+    if(prim_src->is_integer() && prim_tgt->is_integer_or_bool()) {
         if (prim_src->type_size() != prim_tgt->type_size() || (prim_src->is_signed()!=prim_tgt->is_signed()) ) {
             // TODO inject intermediate casting expr
             if (prim_src->type_size() > prim_tgt->type_size()) {

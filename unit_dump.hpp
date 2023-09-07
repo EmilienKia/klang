@@ -339,6 +339,24 @@ public:
         expr.sub_expr()->accept(*this);
     }
 
+    void visit_logical_and_expression(logical_and_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " && ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_logical_or_expression(logical_or_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " || ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_logical_not_expression(logical_not_expression& expr) override {
+        _stm << " ! ";
+        expr.sub_expr()->accept(*this);
+    }
+
+
     void visit_function_invocation_expression(function_invocation_expression &expr) override {
         expr.callee_expr()->accept(*this);
         _stm << "(";

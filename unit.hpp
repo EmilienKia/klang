@@ -767,6 +767,63 @@ public:
     }
 };
 
+
+class logical_binary_expression : public binary_expression
+{
+protected:
+    logical_binary_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+};
+
+class logical_and_expression : public logical_binary_expression
+{
+protected:
+    logical_and_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<logical_and_expression> expr{ new logical_and_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class logical_or_expression : public logical_binary_expression
+{
+protected:
+    logical_or_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<logical_or_expression> expr{ new logical_or_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class logical_not_expression : public unary_expression
+{
+protected:
+    logical_not_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<logical_not_expression> expr{ new logical_not_expression()};
+        expr->assign(sub_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+
+
 class cast_expression : public unary_expression
 {
 protected:
@@ -1405,6 +1462,11 @@ public:
     virtual void visit_unary_minus_expression(unary_minus_expression&) =0;
     virtual void visit_bitwise_not_expression(bitwise_not_expression&) =0;
 
+    virtual void visit_logical_binary_expression(logical_binary_expression&) =0;
+    virtual void visit_logical_and_expression(logical_and_expression&) =0;
+    virtual void visit_logical_or_expression(logical_or_expression&) =0;
+    virtual void visit_logical_not_expression(logical_not_expression&) =0;
+
     virtual void visit_function_invocation_expression(function_invocation_expression&) =0;
 };
 
@@ -1464,6 +1526,11 @@ public:
     virtual void visit_unary_plus_expression(unary_plus_expression&) override;
     virtual void visit_unary_minus_expression(unary_minus_expression&) override;
     virtual void visit_bitwise_not_expression(bitwise_not_expression&) override;
+
+    virtual void visit_logical_binary_expression(logical_binary_expression&) override;
+    virtual void visit_logical_and_expression(logical_and_expression&) override;
+    virtual void visit_logical_or_expression(logical_or_expression&) override;
+    virtual void visit_logical_not_expression(logical_not_expression&) override;
 
     virtual void visit_function_invocation_expression(function_invocation_expression&) override;
 };
