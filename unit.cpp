@@ -291,7 +291,35 @@ void right_shift_assignation_expression::accept(element_visitor& visitor) {
 }
 
 //
-// Modulo assignation expression
+// Arithmetic unary expression
+//
+void arithmetic_unary_expression::accept(element_visitor& visitor) {
+    visitor.visit_arithmetic_unary_expression(*this);
+}
+
+//
+// Arithmetic unary plus expression
+//
+void unary_plus_expression::accept(element_visitor& visitor) {
+    visitor.visit_unary_plus_expression(*this);
+}
+
+//
+// Arithmetic unary minus expression
+//
+void unary_minus_expression::accept(element_visitor& visitor) {
+    visitor.visit_unary_minus_expression(*this);
+}
+
+//
+// Bitwise not expression
+//
+void bitwise_not_expression::accept(element_visitor& visitor) {
+    visitor.visit_bitwise_not_expression(*this);
+}
+
+//
+// Cast expression
 //
 void cast_expression::accept(element_visitor& visitor) {
     visitor.visit_cast_expression(*this);
@@ -859,6 +887,22 @@ void default_element_visitor::visit_left_shift_assignation_expression(left_shift
 
 void default_element_visitor::visit_right_shift_assignation_expression(right_shift_assignation_expression& expr) {
     visit_assignation_expression(expr);
+}
+
+void default_element_visitor::visit_arithmetic_unary_expression(arithmetic_unary_expression& expr) {
+    visit_unary_expression(expr);
+}
+
+void default_element_visitor::visit_unary_plus_expression(unary_plus_expression& expr) {
+    visit_arithmetic_unary_expression(expr);
+}
+
+void default_element_visitor::visit_unary_minus_expression(unary_minus_expression& expr) {
+    visit_arithmetic_unary_expression(expr);
+}
+
+void default_element_visitor::visit_bitwise_not_expression(bitwise_not_expression& expr) {
+    visit_arithmetic_unary_expression(expr);
 }
 
 void default_element_visitor::visit_function_invocation_expression(function_invocation_expression& expr) {

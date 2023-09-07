@@ -70,7 +70,7 @@ TEST_CASE( "Simple method", "[gen]" ) {
         test() : int {
             return 42;
         }
-        )SRC", true);
+        )SRC");
         REQUIRE(jit);
 
         auto test = jit->lookup_symbol < int(*)() > ("test");
@@ -141,6 +141,15 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
         }
         rsh(a : char, b : char) : char {
             return a >> b;
+        }
+        plus(a : char) : char {
+            return + a;
+        }
+        minus(a : char) : char {
+            return - a;
+        }
+        not(a : char) : char {
+            return ~ a;
         }
         )SRC");
     REQUIRE( jit );
@@ -225,6 +234,24 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
         REQUIRE(rsh != nullptr);
         REQUIRE( rsh(84, 2) == 21 );
     }
+
+    SECTION( "char plus" ) {
+        auto plus = jit->lookup_symbol<type_t(*)(type_t)>("plus");
+        REQUIRE(plus != nullptr);
+        REQUIRE( plus(42) == 42 );
+    }
+
+    SECTION( "char minus" ) {
+        auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
+        REQUIRE(minus != nullptr);
+        REQUIRE( minus(42) == -42 );
+    }
+
+    SECTION( "char not" ) {
+        auto _not = jit->lookup_symbol<type_t(*)(type_t)>("not");
+        REQUIRE(_not != nullptr);
+        REQUIRE( _not(42) == -43 );
+    }
 }
 
 
@@ -261,6 +288,15 @@ TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
         }
         rsh(a : byte, b : byte) : byte {
             return a >> b;
+        }
+        plus(a : byte) : char {
+            return + a;
+        }
+        minus(a : byte) : char {
+            return - a;
+        }
+        not(a : byte) : char {
+            return ~ a;
         }
         )SRC");
     REQUIRE( jit );
@@ -331,6 +367,24 @@ TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
         REQUIRE(rsh != nullptr);
         REQUIRE( rsh(84, 2) == 21 );
     }
+
+    SECTION( "byte plus" ) {
+        auto plus = jit->lookup_symbol<type_t(*)(type_t)>("plus");
+        REQUIRE(plus != nullptr);
+        REQUIRE( plus(42) == 42 );
+    }
+
+    SECTION( "byte minus" ) {
+        auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
+        REQUIRE(minus != nullptr);
+        REQUIRE( minus(42) == 214 );
+    }
+
+    SECTION( "byte not" ) {
+        auto _not = jit->lookup_symbol<type_t(*)(type_t)>("not");
+        REQUIRE(_not != nullptr);
+        REQUIRE( _not(42) == 213 );
+    }
 }
 
 
@@ -367,6 +421,15 @@ TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
         }
         rsh(a : short, b : short) : short {
             return a >> b;
+        }
+        plus(a : short) : short {
+            return + a;
+        }
+        minus(a : short) : short {
+            return - a;
+        }
+        not(a : short) : short {
+            return ~ a;
         }
         )SRC");
     REQUIRE( jit );
@@ -451,6 +514,24 @@ TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
         REQUIRE(rsh != nullptr);
         REQUIRE( rsh(84, 2) == 21 );
     }
+
+    SECTION( "int16 plus" ) {
+        auto plus = jit->lookup_symbol<type_t(*)(type_t)>("plus");
+        REQUIRE(plus != nullptr);
+        REQUIRE( plus(42) == 42 );
+    }
+
+    SECTION( "int16 minus" ) {
+        auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
+        REQUIRE(minus != nullptr);
+        REQUIRE( minus(42) == -42 );
+    }
+
+    SECTION( "int16 not" ) {
+        auto _not = jit->lookup_symbol<type_t(*)(type_t)>("not");
+        REQUIRE(_not != nullptr);
+        REQUIRE( _not(42) == -43 );
+    }
 }
 
 
@@ -487,6 +568,15 @@ TEST_CASE( "uint16 arithmetic", "[gen][uint16][arithmetic]" ) {
         }
         rsh(a : unsigned short, b : unsigned short) : unsigned short {
             return a >> b;
+        }
+        plus(a : unsigned short) : unsigned short {
+            return + a;
+        }
+        minus(a : unsigned short) : unsigned short {
+            return - a;
+        }
+        not(a : unsigned short) : unsigned short {
+            return ~ a;
         }
         )SRC");
     REQUIRE( jit );
@@ -558,6 +648,24 @@ TEST_CASE( "uint16 arithmetic", "[gen][uint16][arithmetic]" ) {
         REQUIRE(rsh != nullptr);
         REQUIRE( rsh(84, 2) == 21 );
     }
+
+    SECTION( "uint16 plus" ) {
+        auto plus = jit->lookup_symbol<type_t(*)(type_t)>("plus");
+        REQUIRE(plus != nullptr);
+        REQUIRE( plus(42) == 42 );
+    }
+
+    SECTION( "uint16 minus" ) {
+        auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
+        REQUIRE(minus != nullptr);
+        REQUIRE( minus(42) == 65494 );
+    }
+
+    SECTION( "uint16 not" ) {
+        auto _not = jit->lookup_symbol<type_t(*)(type_t)>("not");
+        REQUIRE(_not != nullptr);
+        REQUIRE( _not(42) == 65493 );
+    }
 }
 
 TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
@@ -593,6 +701,15 @@ TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
         }
         rsh(a : int, b : int) : int {
             return a >> b;
+        }
+        plus(a : int) : int {
+            return + a;
+        }
+        minus(a : int) : int {
+            return - a;
+        }
+        not(a : int) : int {
+            return ~ a;
         }
         )SRC");
     REQUIRE( jit );
@@ -677,6 +794,24 @@ TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
         REQUIRE(rsh != nullptr);
         REQUIRE( rsh(84, 2) == 21 );
     }
+
+    SECTION( "int32 plus" ) {
+        auto plus = jit->lookup_symbol<type_t(*)(type_t)>("plus");
+        REQUIRE(plus != nullptr);
+        REQUIRE( plus(42) == 42 );
+    }
+
+    SECTION( "int32 minus" ) {
+        auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
+        REQUIRE(minus != nullptr);
+        REQUIRE( minus(42) == -42 );
+    }
+
+    SECTION( "int32 not" ) {
+        auto _not = jit->lookup_symbol<type_t(*)(type_t)>("not");
+        REQUIRE(_not != nullptr);
+        REQUIRE( _not(42) == -43 );
+    }
 }
 
 TEST_CASE( "uint32 arithmetic", "[gen][uint32][arithmetic]" ) {
@@ -712,6 +847,15 @@ TEST_CASE( "uint32 arithmetic", "[gen][uint32][arithmetic]" ) {
         }
         rsh(a : unsigned int, b : unsigned int) : unsigned int {
             return a >> b;
+        }
+        plus(a : unsigned int) : unsigned int {
+            return + a;
+        }
+        minus(a : unsigned int) : unsigned int {
+            return - a;
+        }
+        not(a : unsigned int) : unsigned int {
+            return ~ a;
         }
         )SRC");
     REQUIRE( jit );
@@ -782,6 +926,24 @@ TEST_CASE( "uint32 arithmetic", "[gen][uint32][arithmetic]" ) {
         REQUIRE(rsh != nullptr);
         REQUIRE( rsh(84, 2) == 21 );
     }
+
+    SECTION( "uint32 plus" ) {
+        auto plus = jit->lookup_symbol<type_t(*)(type_t)>("plus");
+        REQUIRE(plus != nullptr);
+        REQUIRE( plus(42) == 42 );
+    }
+
+    SECTION( "uint32 minus" ) {
+        auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
+        REQUIRE(minus != nullptr);
+        REQUIRE( minus(42) == 4294967254 );
+    }
+
+    SECTION( "uint32 not" ) {
+        auto _not = jit->lookup_symbol<type_t(*)(type_t)>("not");
+        REQUIRE(_not != nullptr);
+        REQUIRE( _not(42) == 4294967253 );
+    }
 }
 
 TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
@@ -817,6 +979,15 @@ TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
         }
         rsh(a : long, b : long) : long {
             return a >> b;
+        }
+        plus(a : long) : long {
+            return + a;
+        }
+        minus(a : long) : long {
+            return - a;
+        }
+        not(a : long) : long {
+            return ~ a;
         }
         )SRC");
     REQUIRE( jit );
@@ -901,6 +1072,24 @@ TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
         REQUIRE(rsh != nullptr);
         REQUIRE( rsh(84, 2) == 21 );
     }
+
+    SECTION( "int64 plus" ) {
+        auto plus = jit->lookup_symbol<type_t(*)(type_t)>("plus");
+        REQUIRE(plus != nullptr);
+        REQUIRE( plus(42) == 42 );
+    }
+
+    SECTION( "int64 minus" ) {
+        auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
+        REQUIRE(minus != nullptr);
+        REQUIRE( minus(42) == -42 );
+    }
+
+    SECTION( "int64 not" ) {
+        auto _not = jit->lookup_symbol<type_t(*)(type_t)>("not");
+        REQUIRE(_not != nullptr);
+        REQUIRE( _not(42) == -43 );
+    }
 }
 
 
@@ -937,6 +1126,15 @@ TEST_CASE( "uint64 arithmetic", "[gen][uint64][arithmetic]" ) {
         }
         rsh(a : unsigned long, b : unsigned long) : unsigned long {
             return a >> b;
+        }
+        plus(a : unsigned long) : unsigned long {
+            return + a;
+        }
+        minus(a : unsigned long) : unsigned long {
+            return - a;
+        }
+        not(a : unsigned long) : unsigned long {
+            return ~ a;
         }
         )SRC");
     REQUIRE( jit );
@@ -1006,6 +1204,24 @@ TEST_CASE( "uint64 arithmetic", "[gen][uint64][arithmetic]" ) {
         auto rsh = jit->lookup_symbol<type_t(*)(type_t, type_t)>("rsh");
         REQUIRE(rsh != nullptr);
         REQUIRE( rsh(84, 2) == 21 );
+    }
+
+    SECTION( "uint64 plus" ) {
+        auto plus = jit->lookup_symbol<type_t(*)(type_t)>("plus");
+        REQUIRE(plus != nullptr);
+        REQUIRE( plus(42) == 42 );
+    }
+
+    SECTION( "uint64 minus" ) {
+        auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
+        REQUIRE(minus != nullptr);
+        REQUIRE( minus(42) == 18446744073709551574ull );
+    }
+
+    SECTION( "uint64 not" ) {
+        auto _not = jit->lookup_symbol<type_t(*)(type_t)>("not");
+        REQUIRE(_not != nullptr);
+        REQUIRE( _not(42) == 18446744073709551573ull );
     }
 }
 

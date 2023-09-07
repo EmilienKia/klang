@@ -311,7 +311,10 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_unary_prefix_expr(ast::unary_prefix_expr& expr) override {
-
+            _stm << expr.op.content << " ";
+            if(expr.expr()) {
+                expr.expr()->visit(*this);
+            }
         }
 
         void visit_unary_postfix_expr(ast::unary_postfix_expr& expr) override {

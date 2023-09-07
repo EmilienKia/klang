@@ -118,6 +118,15 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
 
 }
 
+llvm::Value* unit_llvm_ir_gen::process_unary_expression(unary_expression& expr) {
+    llvm::Value* res = nullptr;
+    _value = nullptr;
+    expr.sub_expr()->accept(*this);
+    res = _value;
+    _value = nullptr;
+    return res;
+}
+
 std::pair<llvm::Value*,llvm::Value*> unit_llvm_ir_gen::process_binary_expression(binary_expression & expr) {
     std::pair<llvm::Value*,llvm::Value*> res;
     _value = nullptr;
@@ -536,6 +545,64 @@ void unit_llvm_ir_gen::visit_right_shift_assignation_expression(right_shift_assi
     create_assignement(expr.left(), _value);
 }
 
+void unit_llvm_ir_gen::visit_unary_plus_expression(unary_plus_expression& expr) {
+    auto val = process_unary_expression(expr);
+    if(!val) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        // When primitive, return the value itself
+        _value = val;
+    } else {
+        // TODO: Support other types
+    }
+}
+
+void unit_llvm_ir_gen::visit_unary_minus_expression(unary_minus_expression& expr) {
+    auto val = process_unary_expression(expr);
+    if(!val) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        // When primitive, return the value itself
+        if(prim->is_integer_or_bool()) {
+            // TODO may it poison when overflow ?
+            //_value = _builder->CreateSub(_builder->getIntN(prim->type_size(), 0), val);
+            _value = _builder->CreateNeg(val);
+        } else {
+            // TODO: Support other types
+        };
+    } else {
+        // TODO: Support other types
+    }
+}
+
+void unit_llvm_ir_gen::visit_bitwise_not_expression(bitwise_not_expression& expr) {
+    auto val = process_unary_expression(expr);
+    if(!val) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+        // When primitive, return the value itself
+        if(prim->is_integer_or_bool()) {
+            _value = _builder->CreateNot(val);
+        } else {
+            // TODO: Support other types
+        };
+    } else {
+        // TODO: Support other types
+    }
+}
+
 
 void unit_llvm_ir_gen::visit_unit(unit &unit) {
     visit_namespace(*_unit.get_root_namespace());
@@ -695,7 +762,7 @@ void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_
 }
 
 void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
-    auto source_type = expr.expr()->get_type();
+    auto source_type = expr.sub_expr()->get_type();
     auto target_type = expr.get_cast_type();
 
     if(!source_type->is_resolved() || !target_type->is_resolved()) {
@@ -717,7 +784,7 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
     }
 
     _value = nullptr;
-    expr.expr()->accept(*this);
+    expr.sub_expr()->accept(*this);
     if(!_value) {
         // TODO throw exception
         // Sub expression is not reporting any value.

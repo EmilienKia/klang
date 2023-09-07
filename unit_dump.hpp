@@ -228,6 +228,36 @@ public:
         expr.right()->accept(*this);
     }
 
+    void visit_bitwise_and_expression(bitwise_and_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " & ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_bitwise_or_expression(bitwise_or_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " | ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_bitwise_xor_expression(bitwise_xor_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " ^ ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_left_shift_expression(left_shift_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " << ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_right_shift_expression(right_shift_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " >> ";
+        expr.right()->accept(*this);
+    }
+
     void visit_simple_assignation_expression(simple_assignation_expression& expr) override {
         expr.left()->accept(*this);
         _stm << " = ";
@@ -264,6 +294,51 @@ public:
         expr.right()->accept(*this);
     }
 
+    void visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " &= ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " |= ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " ^= ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_left_shift_assignation_expression(left_shift_assignation_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " <<= ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_right_shift_assignation_expression(right_shift_assignation_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << " >>= ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_unary_plus_expression(unary_plus_expression& expr) override {
+        _stm << " + ";
+        expr.sub_expr()->accept(*this);
+    }
+
+    void visit_unary_minus_expression(unary_minus_expression& expr) override {
+        _stm << " - ";
+        expr.sub_expr()->accept(*this);
+    }
+
+    void visit_bitwise_not_expression(bitwise_not_expression& expr) override {
+        _stm << " ~ ";
+        expr.sub_expr()->accept(*this);
+    }
+
     void visit_function_invocation_expression(function_invocation_expression &expr) override {
         expr.callee_expr()->accept(*this);
         _stm << "(";
@@ -280,7 +355,7 @@ public:
         _stm << "(cast:";
         dump_type(*expr.get_cast_type());
         _stm << ":";
-        expr.expr()->accept(*this);
+        expr.sub_expr()->accept(*this);
         _stm << ")";
     }
 };

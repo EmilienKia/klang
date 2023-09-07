@@ -41,12 +41,15 @@ protected:
 
     void visit_value_expression(value_expression&) override;
     void visit_symbol_expression(symbol_expression&) override;
+    void visit_unary_expression(unary_expression&) override;
     void visit_binary_expression(binary_expression&) override;
 
     void process_arithmetic(binary_expression&);
 
     void visit_arithmetic_binary_expression(arithmetic_binary_expression &expression) override;
     void visit_assignation_expression(assignation_expression &expression) override;
+
+    void visit_arithmetic_unary_expression(arithmetic_unary_expression&) override;
 
 protected:
 

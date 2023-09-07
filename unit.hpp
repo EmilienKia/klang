@@ -307,31 +307,34 @@ public:
     void resolve(std::shared_ptr<function> func);
 };
 
-class unary_expression : public expression
-{
+class unary_expression  : public expression {
 protected:
     /** Sub expression. */
-    std::shared_ptr<expression> _expr;
+    std::shared_ptr<expression> _sub_expr;
 
     unary_expression() = default;
 
-    unary_expression(const std::shared_ptr<expression> &expr) :
-        _expr(expr) {}
+    unary_expression(const std::shared_ptr<expression> &sub_expr)
+            : _sub_expr(sub_expr)
+    {
+        _sub_expr->set_parent_expression(shared_as<expression>());
+    }
 
-    void assign(const std::shared_ptr<expression> &expr) {
-        _expr = expr;
-        _expr->set_parent_expression(shared_as<expression>());
+    friend class symbol_type_resolver;
+    void assign(const std::shared_ptr<expression> &sub_expr) {
+        _sub_expr = sub_expr;
+        _sub_expr->set_parent_expression(shared_as<expression>());
     }
 
 public:
     void accept(element_visitor& visitor) override;
 
-    const std::shared_ptr<expression>& expr() const {
-        return _expr;
+    const std::shared_ptr<expression>& sub_expr() const {
+        return _sub_expr;
     }
 
-    std::shared_ptr<expression>& expr() {
-        return _expr;
+    std::shared_ptr<expression>& sub_expr() {
+        return _sub_expr;
     }
 };
 
@@ -706,6 +709,60 @@ public:
     static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<right_shift_assignation_expression> expr{ new right_shift_assignation_expression()};
         expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class arithmetic_unary_expression : public unary_expression
+{
+protected:
+    arithmetic_unary_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+};
+
+class unary_plus_expression : public arithmetic_unary_expression
+{
+protected:
+    unary_plus_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<unary_plus_expression> expr{ new unary_plus_expression()};
+        expr->assign(sub_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class unary_minus_expression : public arithmetic_unary_expression
+{
+protected:
+    unary_minus_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<unary_minus_expression> expr{ new unary_minus_expression()};
+        expr->assign(sub_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class bitwise_not_expression : public arithmetic_unary_expression
+{
+protected:
+    bitwise_not_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<bitwise_not_expression> expr{ new bitwise_not_expression()};
+        expr->assign(sub_expr);
         return std::shared_ptr<expression>{expr};
     }
 };
@@ -1343,6 +1400,11 @@ public:
     virtual void visit_left_shift_assignation_expression(left_shift_assignation_expression&) =0;
     virtual void visit_right_shift_assignation_expression(right_shift_assignation_expression&) =0;
 
+    virtual void visit_arithmetic_unary_expression(arithmetic_unary_expression&) =0;
+    virtual void visit_unary_plus_expression(unary_plus_expression&) =0;
+    virtual void visit_unary_minus_expression(unary_minus_expression&) =0;
+    virtual void visit_bitwise_not_expression(bitwise_not_expression&) =0;
+
     virtual void visit_function_invocation_expression(function_invocation_expression&) =0;
 };
 
@@ -1397,6 +1459,11 @@ public:
     virtual void visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression&) override;
     virtual void visit_left_shift_assignation_expression(left_shift_assignation_expression&) override;
     virtual void visit_right_shift_assignation_expression(right_shift_assignation_expression&) override;
+
+    virtual void visit_arithmetic_unary_expression(arithmetic_unary_expression&) override;
+    virtual void visit_unary_plus_expression(unary_plus_expression&) override;
+    virtual void visit_unary_minus_expression(unary_minus_expression&) override;
+    virtual void visit_bitwise_not_expression(bitwise_not_expression&) override;
 
     virtual void visit_function_invocation_expression(function_invocation_expression&) override;
 };

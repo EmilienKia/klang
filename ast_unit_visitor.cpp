@@ -289,12 +289,27 @@ namespace k::parse {
     }
 
     void ast_unit_visitor::visit_cast_expr(ast::cast_expr& expr) {
+        _expr = nullptr;
         expr.expr()->visit(*this);
         _expr = unit::cast_expression::make_shared(_expr, unit::unresolved_type::from_type_specifier(*expr.type));
     }
 
-    void ast_unit_visitor::visit_unary_prefix_expr(ast::unary_prefix_expr &) {
+    void ast_unit_visitor::visit_unary_prefix_expr(ast::unary_prefix_expr& expr) {
+        _expr = nullptr;
+        expr.expr()->visit(*this);
+        auto sub = _expr;
 
+        switch(expr.op.type) {
+            case lex::operator_::PLUS:
+                _expr = unit::unary_plus_expression::make_shared(sub);
+                break;
+            case lex::operator_::MINUS:
+                _expr = unit::unary_minus_expression::make_shared(sub);
+                break;
+            case lex::operator_::TILDE:
+                _expr = unit::bitwise_not_expression::make_shared(sub);
+                break;
+        }
     }
 
     void ast_unit_visitor::visit_unary_postfix_expr(ast::unary_postfix_expr &) {

@@ -101,6 +101,25 @@ void symbol_type_resolver::visit_symbol_expression(symbol_expression& symbol)
     }
 }
 
+void symbol_type_resolver::visit_unary_expression(unary_expression& expr)
+{
+    auto& sub = expr.sub_expr();
+
+    if(!sub) {
+        // TODO throw an exception
+        // Error: unary expression must have non-null sub expresssion
+        std::cerr << "Error: unary expression must have non-null sub expresssion" << std::endl;
+    }
+
+    sub->accept(*this);
+
+    if(!type::is_resolved(sub->get_type())) {
+        // TODO throw an exception
+        // Error: unary expression must have resolved type for its sub-expression
+        std::cerr << "Error: unary expression must have resolved type for its sub-expression" << std::endl;
+    }
+}
+
 void symbol_type_resolver::visit_binary_expression(binary_expression& expr)
 {
     auto& left = expr.left();
@@ -163,6 +182,21 @@ void symbol_type_resolver::visit_arithmetic_binary_expression(arithmetic_binary_
 
 void symbol_type_resolver::visit_assignation_expression(assignation_expression &expr) {
     process_arithmetic(expr);
+}
+
+void symbol_type_resolver::visit_arithmetic_unary_expression(arithmetic_unary_expression& expr) {
+    visit_unary_expression(expr);
+
+    auto& sub = expr.sub_expr();
+    auto type = sub->get_type();
+
+    if(!type::is_primitive(type)) {
+        // TODO throw an exception
+        // Arithmetic for non-primitive types is not supported.
+        std::cerr << "Error: Arithmetic for non-primitive types is not supported yet." << std::endl;
+    }
+
+    expr.set_type(type);
 }
 
 void symbol_type_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
@@ -231,7 +265,7 @@ void symbol_type_resolver::visit_function_invocation_expression(function_invocat
 }
 
 void symbol_type_resolver::visit_cast_expression(cast_expression& expr) {
-    expr.expr()->accept(*this);
+    expr.sub_expr()->accept(*this);
 
     // TODO check if cast is possible (expr.expr().get_type() && expr.get_cast_type() compatibility)
 

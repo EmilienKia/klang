@@ -72,6 +72,7 @@ public:
     void visit_value_expression(value_expression&) override;
     void visit_symbol_expression(symbol_expression&) override;
 
+    llvm::Value* process_unary_expression(unary_expression&);
     std::pair<llvm::Value*,llvm::Value*> process_binary_expression(binary_expression&);
     void visit_addition_expression(addition_expression&) override;
     void visit_substraction_expression(substraction_expression&) override;
@@ -96,6 +97,10 @@ public:
     void visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression&) override;
     void visit_left_shift_assignation_expression(left_shift_assignation_expression&) override;
     void visit_right_shift_assignation_expression(right_shift_assignation_expression&) override;
+
+    void visit_unary_plus_expression(unary_plus_expression&) override;
+    void visit_unary_minus_expression(unary_minus_expression&) override;
+    void visit_bitwise_not_expression(bitwise_not_expression&) override;
 
     void visit_function_invocation_expression(function_invocation_expression&) override;
 
