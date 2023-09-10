@@ -151,6 +151,12 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
         not(a : char) : char {
             return ~ a;
         }
+        eq(a:char, b:char) : bool { return a == b; }
+        ne(a:char, b:char) : bool { return a != b; }
+        lt(a:char, b:char) : bool { return a < b; }
+        le(a:char, b:char) : bool { return a <= b; }
+        gt(a:char, b:char) : bool { return a > b; }
+        ge(a:char, b:char) : bool { return a >= b; }
         )SRC");
     REQUIRE( jit );
 
@@ -252,6 +258,52 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
         REQUIRE(_not != nullptr);
         REQUIRE( _not(42) == -43 );
     }
+
+    SECTION("char equal") {
+        auto eq = jit->lookup_symbol<bool(*)(type_t, type_t)>("eq");
+        REQUIRE(eq != nullptr);
+        REQUIRE( eq(42, 42) == true );
+        REQUIRE( eq(42, 24) == false );
+    }
+
+    SECTION("char not equal") {
+        auto ne = jit->lookup_symbol<bool(*)(type_t, type_t)>("ne");
+        REQUIRE(ne != nullptr);
+        REQUIRE( ne(42, 42) == false );
+        REQUIRE( ne(42, 24) == true );
+    }
+
+    SECTION("char less than") {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        REQUIRE( lt(42, 42) == false );
+        REQUIRE( lt(42, 24) == false );
+        REQUIRE( lt(24, 42) == true );
+    }
+
+    SECTION("char less or equal") {
+        auto le = jit->lookup_symbol<bool(*)(type_t, type_t)>("le");
+        REQUIRE(le != nullptr);
+        REQUIRE( le(42, 42) == true );
+        REQUIRE( le(42, 24) == false );
+        REQUIRE( le(24, 42) == true );
+    }
+
+    SECTION("char greater than") {
+        auto gt = jit->lookup_symbol<bool(*)(type_t, type_t)>("gt");
+        REQUIRE(gt != nullptr);
+        REQUIRE( gt(42, 42) == false );
+        REQUIRE( gt(42, 24) == true );
+        REQUIRE( gt(24, 42) == false );
+    }
+
+    SECTION("char greater or equal") {
+        auto ge = jit->lookup_symbol<bool(*)(type_t, type_t)>("ge");
+        REQUIRE(ge != nullptr);
+        REQUIRE( ge(42, 42) == true );
+        REQUIRE( ge(42, 24) == true );
+        REQUIRE( ge(24, 42) == false );
+    }
 }
 
 
@@ -298,6 +350,12 @@ TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
         not(a : byte) : char {
             return ~ a;
         }
+        eq(a:byte, b:byte) : bool { return a == b; }
+        ne(a:byte, b:byte) : bool { return a != b; }
+        lt(a:byte, b:byte) : bool { return a < b; }
+        le(a:byte, b:byte) : bool { return a <= b; }
+        gt(a:byte, b:byte) : bool { return a > b; }
+        ge(a:byte, b:byte) : bool { return a >= b; }
         )SRC");
     REQUIRE( jit );
 
@@ -385,6 +443,52 @@ TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
         REQUIRE(_not != nullptr);
         REQUIRE( _not(42) == 213 );
     }
+
+    SECTION("byte equal") {
+        auto eq = jit->lookup_symbol<bool(*)(type_t, type_t)>("eq");
+        REQUIRE(eq != nullptr);
+        REQUIRE( eq(42, 42) == true );
+        REQUIRE( eq(42, 24) == false );
+    }
+
+    SECTION("byte not equal") {
+        auto ne = jit->lookup_symbol<bool(*)(type_t, type_t)>("ne");
+        REQUIRE(ne != nullptr);
+        REQUIRE( ne(42, 42) == false );
+        REQUIRE( ne(42, 24) == true );
+    }
+
+    SECTION("byte less than") {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        REQUIRE( lt(42, 42) == false );
+        REQUIRE( lt(42, 24) == false );
+        REQUIRE( lt(24, 42) == true );
+    }
+
+    SECTION("byte less or equal") {
+        auto le = jit->lookup_symbol<bool(*)(type_t, type_t)>("le");
+        REQUIRE(le != nullptr);
+        REQUIRE( le(42, 42) == true );
+        REQUIRE( le(42, 24) == false );
+        REQUIRE( le(24, 42) == true );
+    }
+
+    SECTION("byte greater than") {
+        auto gt = jit->lookup_symbol<bool(*)(type_t, type_t)>("gt");
+        REQUIRE(gt != nullptr);
+        REQUIRE( gt(42, 42) == false );
+        REQUIRE( gt(42, 24) == true );
+        REQUIRE( gt(24, 42) == false );
+    }
+
+    SECTION("byte greater or equal") {
+        auto ge = jit->lookup_symbol<bool(*)(type_t, type_t)>("ge");
+        REQUIRE(ge != nullptr);
+        REQUIRE( ge(42, 42) == true );
+        REQUIRE( ge(42, 24) == true );
+        REQUIRE( ge(24, 42) == false );
+    }
 }
 
 
@@ -431,6 +535,12 @@ TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
         not(a : short) : short {
             return ~ a;
         }
+        eq(a:short, b:short) : bool { return a == b; }
+        ne(a:short, b:short) : bool { return a != b; }
+        lt(a:short, b:short) : bool { return a < b; }
+        le(a:short, b:short) : bool { return a <= b; }
+        gt(a:short, b:short) : bool { return a > b; }
+        ge(a:short, b:short) : bool { return a >= b; }
         )SRC");
     REQUIRE( jit );
 
@@ -532,6 +642,52 @@ TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
         REQUIRE(_not != nullptr);
         REQUIRE( _not(42) == -43 );
     }
+
+    SECTION("int16 equal") {
+        auto eq = jit->lookup_symbol<bool(*)(type_t, type_t)>("eq");
+        REQUIRE(eq != nullptr);
+        REQUIRE( eq(42, 42) == true );
+        REQUIRE( eq(42, 24) == false );
+    }
+
+    SECTION("int16 not equal") {
+        auto ne = jit->lookup_symbol<bool(*)(type_t, type_t)>("ne");
+        REQUIRE(ne != nullptr);
+        REQUIRE( ne(42, 42) == false );
+        REQUIRE( ne(42, 24) == true );
+    }
+
+    SECTION("int16 less than") {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        REQUIRE( lt(42, 42) == false );
+        REQUIRE( lt(42, 24) == false );
+        REQUIRE( lt(24, 42) == true );
+    }
+
+    SECTION("int16 less or equal") {
+        auto le = jit->lookup_symbol<bool(*)(type_t, type_t)>("le");
+        REQUIRE(le != nullptr);
+        REQUIRE( le(42, 42) == true );
+        REQUIRE( le(42, 24) == false );
+        REQUIRE( le(24, 42) == true );
+    }
+
+    SECTION("int16 greater than") {
+        auto gt = jit->lookup_symbol<bool(*)(type_t, type_t)>("gt");
+        REQUIRE(gt != nullptr);
+        REQUIRE( gt(42, 42) == false );
+        REQUIRE( gt(42, 24) == true );
+        REQUIRE( gt(24, 42) == false );
+    }
+
+    SECTION("int16 greater or equal") {
+        auto ge = jit->lookup_symbol<bool(*)(type_t, type_t)>("ge");
+        REQUIRE(ge != nullptr);
+        REQUIRE( ge(42, 42) == true );
+        REQUIRE( ge(42, 24) == true );
+        REQUIRE( ge(24, 42) == false );
+    }
 }
 
 
@@ -578,6 +734,12 @@ TEST_CASE( "uint16 arithmetic", "[gen][uint16][arithmetic]" ) {
         not(a : unsigned short) : unsigned short {
             return ~ a;
         }
+        eq(a:unsigned short, b:unsigned short) : bool { return a == b; }
+        ne(a:unsigned short, b:unsigned short) : bool { return a != b; }
+        lt(a:unsigned short, b:unsigned short) : bool { return a < b; }
+        le(a:unsigned short, b:unsigned short) : bool { return a <= b; }
+        gt(a:unsigned short, b:unsigned short) : bool { return a > b; }
+        ge(a:unsigned short, b:unsigned short) : bool { return a >= b; }
         )SRC");
     REQUIRE( jit );
 
@@ -666,6 +828,52 @@ TEST_CASE( "uint16 arithmetic", "[gen][uint16][arithmetic]" ) {
         REQUIRE(_not != nullptr);
         REQUIRE( _not(42) == 65493 );
     }
+
+    SECTION("uint16 equal") {
+        auto eq = jit->lookup_symbol<bool(*)(type_t, type_t)>("eq");
+        REQUIRE(eq != nullptr);
+        REQUIRE( eq(42, 42) == true );
+        REQUIRE( eq(42, 24) == false );
+    }
+
+    SECTION("uint16 not equal") {
+        auto ne = jit->lookup_symbol<bool(*)(type_t, type_t)>("ne");
+        REQUIRE(ne != nullptr);
+        REQUIRE( ne(42, 42) == false );
+        REQUIRE( ne(42, 24) == true );
+    }
+
+    SECTION("uint16 less than") {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        REQUIRE( lt(42, 42) == false );
+        REQUIRE( lt(42, 24) == false );
+        REQUIRE( lt(24, 42) == true );
+    }
+
+    SECTION("uint16 less or equal") {
+        auto le = jit->lookup_symbol<bool(*)(type_t, type_t)>("le");
+        REQUIRE(le != nullptr);
+        REQUIRE( le(42, 42) == true );
+        REQUIRE( le(42, 24) == false );
+        REQUIRE( le(24, 42) == true );
+    }
+
+    SECTION("uint16 greater than") {
+        auto gt = jit->lookup_symbol<bool(*)(type_t, type_t)>("gt");
+        REQUIRE(gt != nullptr);
+        REQUIRE( gt(42, 42) == false );
+        REQUIRE( gt(42, 24) == true );
+        REQUIRE( gt(24, 42) == false );
+    }
+
+    SECTION("uint16 greater or equal") {
+        auto ge = jit->lookup_symbol<bool(*)(type_t, type_t)>("ge");
+        REQUIRE(ge != nullptr);
+        REQUIRE( ge(42, 42) == true );
+        REQUIRE( ge(42, 24) == true );
+        REQUIRE( ge(24, 42) == false );
+    }
 }
 
 TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
@@ -711,6 +919,12 @@ TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
         not(a : int) : int {
             return ~ a;
         }
+        eq(a:int, b:int) : bool { return a == b; }
+        ne(a:int, b:int) : bool { return a != b; }
+        lt(a:int, b:int) : bool { return a < b; }
+        le(a:int, b:int) : bool { return a <= b; }
+        gt(a:int, b:int) : bool { return a > b; }
+        ge(a:int, b:int) : bool { return a >= b; }
         )SRC");
     REQUIRE( jit );
 
@@ -812,6 +1026,52 @@ TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
         REQUIRE(_not != nullptr);
         REQUIRE( _not(42) == -43 );
     }
+
+    SECTION("int32 equal") {
+        auto eq = jit->lookup_symbol<bool(*)(type_t, type_t)>("eq");
+        REQUIRE(eq != nullptr);
+        REQUIRE( eq(42, 42) == true );
+        REQUIRE( eq(42, 24) == false );
+    }
+
+    SECTION("int32 not equal") {
+        auto ne = jit->lookup_symbol<bool(*)(type_t, type_t)>("ne");
+        REQUIRE(ne != nullptr);
+        REQUIRE( ne(42, 42) == false );
+        REQUIRE( ne(42, 24) == true );
+    }
+
+    SECTION("int32 less than") {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        REQUIRE( lt(42, 42) == false );
+        REQUIRE( lt(42, 24) == false );
+        REQUIRE( lt(24, 42) == true );
+    }
+
+    SECTION("int32 less or equal") {
+        auto le = jit->lookup_symbol<bool(*)(type_t, type_t)>("le");
+        REQUIRE(le != nullptr);
+        REQUIRE( le(42, 42) == true );
+        REQUIRE( le(42, 24) == false );
+        REQUIRE( le(24, 42) == true );
+    }
+
+    SECTION("int32 greater than") {
+        auto gt = jit->lookup_symbol<bool(*)(type_t, type_t)>("gt");
+        REQUIRE(gt != nullptr);
+        REQUIRE( gt(42, 42) == false );
+        REQUIRE( gt(42, 24) == true );
+        REQUIRE( gt(24, 42) == false );
+    }
+
+    SECTION("int32 greater or equal") {
+        auto ge = jit->lookup_symbol<bool(*)(type_t, type_t)>("ge");
+        REQUIRE(ge != nullptr);
+        REQUIRE( ge(42, 42) == true );
+        REQUIRE( ge(42, 24) == true );
+        REQUIRE( ge(24, 42) == false );
+    }
 }
 
 TEST_CASE( "uint32 arithmetic", "[gen][uint32][arithmetic]" ) {
@@ -857,6 +1117,12 @@ TEST_CASE( "uint32 arithmetic", "[gen][uint32][arithmetic]" ) {
         not(a : unsigned int) : unsigned int {
             return ~ a;
         }
+        eq(a:unsigned int, b:unsigned int) : bool { return a == b; }
+        ne(a:unsigned int, b:unsigned int) : bool { return a != b; }
+        lt(a:unsigned int, b:unsigned int) : bool { return a < b; }
+        le(a:unsigned int, b:unsigned int) : bool { return a <= b; }
+        gt(a:unsigned int, b:unsigned int) : bool { return a > b; }
+        ge(a:unsigned int, b:unsigned int) : bool { return a >= b; }
         )SRC");
     REQUIRE( jit );
 
@@ -944,6 +1210,52 @@ TEST_CASE( "uint32 arithmetic", "[gen][uint32][arithmetic]" ) {
         REQUIRE(_not != nullptr);
         REQUIRE( _not(42) == 4294967253 );
     }
+
+    SECTION("uint32 equal") {
+        auto eq = jit->lookup_symbol<bool(*)(type_t, type_t)>("eq");
+        REQUIRE(eq != nullptr);
+        REQUIRE( eq(42, 42) == true );
+        REQUIRE( eq(42, 24) == false );
+    }
+
+    SECTION("uint32 not equal") {
+        auto ne = jit->lookup_symbol<bool(*)(type_t, type_t)>("ne");
+        REQUIRE(ne != nullptr);
+        REQUIRE( ne(42, 42) == false );
+        REQUIRE( ne(42, 24) == true );
+    }
+
+    SECTION("uint32 less than") {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        REQUIRE( lt(42, 42) == false );
+        REQUIRE( lt(42, 24) == false );
+        REQUIRE( lt(24, 42) == true );
+    }
+
+    SECTION("uint32 less or equal") {
+        auto le = jit->lookup_symbol<bool(*)(type_t, type_t)>("le");
+        REQUIRE(le != nullptr);
+        REQUIRE( le(42, 42) == true );
+        REQUIRE( le(42, 24) == false );
+        REQUIRE( le(24, 42) == true );
+    }
+
+    SECTION("uint32 greater than") {
+        auto gt = jit->lookup_symbol<bool(*)(type_t, type_t)>("gt");
+        REQUIRE(gt != nullptr);
+        REQUIRE( gt(42, 42) == false );
+        REQUIRE( gt(42, 24) == true );
+        REQUIRE( gt(24, 42) == false );
+    }
+
+    SECTION("uint32 greater or equal") {
+        auto ge = jit->lookup_symbol<bool(*)(type_t, type_t)>("ge");
+        REQUIRE(ge != nullptr);
+        REQUIRE( ge(42, 42) == true );
+        REQUIRE( ge(42, 24) == true );
+        REQUIRE( ge(24, 42) == false );
+    }
 }
 
 TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
@@ -989,6 +1301,12 @@ TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
         not(a : long) : long {
             return ~ a;
         }
+        eq(a:long, b:long) : bool { return a == b; }
+        ne(a:long, b:long) : bool { return a != b; }
+        lt(a:long, b:long) : bool { return a < b; }
+        le(a:long, b:long) : bool { return a <= b; }
+        gt(a:long, b:long) : bool { return a > b; }
+        ge(a:long, b:long) : bool { return a >= b; }
         )SRC");
     REQUIRE( jit );
 
@@ -1090,6 +1408,52 @@ TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
         REQUIRE(_not != nullptr);
         REQUIRE( _not(42) == -43 );
     }
+
+    SECTION("int64 equal") {
+        auto eq = jit->lookup_symbol<bool(*)(type_t, type_t)>("eq");
+        REQUIRE(eq != nullptr);
+        REQUIRE( eq(42, 42) == true );
+        REQUIRE( eq(42, 24) == false );
+    }
+
+    SECTION("int64 not equal") {
+        auto ne = jit->lookup_symbol<bool(*)(type_t, type_t)>("ne");
+        REQUIRE(ne != nullptr);
+        REQUIRE( ne(42, 42) == false );
+        REQUIRE( ne(42, 24) == true );
+    }
+
+    SECTION("int64 less than") {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        REQUIRE( lt(42, 42) == false );
+        REQUIRE( lt(42, 24) == false );
+        REQUIRE( lt(24, 42) == true );
+    }
+
+    SECTION("int64 less or equal") {
+        auto le = jit->lookup_symbol<bool(*)(type_t, type_t)>("le");
+        REQUIRE(le != nullptr);
+        REQUIRE( le(42, 42) == true );
+        REQUIRE( le(42, 24) == false );
+        REQUIRE( le(24, 42) == true );
+    }
+
+    SECTION("int64 greater than") {
+        auto gt = jit->lookup_symbol<bool(*)(type_t, type_t)>("gt");
+        REQUIRE(gt != nullptr);
+        REQUIRE( gt(42, 42) == false );
+        REQUIRE( gt(42, 24) == true );
+        REQUIRE( gt(24, 42) == false );
+    }
+
+    SECTION("int64 greater or equal") {
+        auto ge = jit->lookup_symbol<bool(*)(type_t, type_t)>("ge");
+        REQUIRE(ge != nullptr);
+        REQUIRE( ge(42, 42) == true );
+        REQUIRE( ge(42, 24) == true );
+        REQUIRE( ge(24, 42) == false );
+    }
 }
 
 
@@ -1136,6 +1500,12 @@ TEST_CASE( "uint64 arithmetic", "[gen][uint64][arithmetic]" ) {
         not(a : unsigned long) : unsigned long {
             return ~ a;
         }
+        eq(a:unsigned long, b:unsigned long) : bool { return a == b; }
+        ne(a:unsigned long, b:unsigned long) : bool { return a != b; }
+        lt(a:unsigned long, b:unsigned long) : bool { return a < b; }
+        le(a:unsigned long, b:unsigned long) : bool { return a <= b; }
+        gt(a:unsigned long, b:unsigned long) : bool { return a > b; }
+        ge(a:unsigned long, b:unsigned long) : bool { return a >= b; }
         )SRC");
     REQUIRE( jit );
 
@@ -1222,6 +1592,52 @@ TEST_CASE( "uint64 arithmetic", "[gen][uint64][arithmetic]" ) {
         auto _not = jit->lookup_symbol<type_t(*)(type_t)>("not");
         REQUIRE(_not != nullptr);
         REQUIRE( _not(42) == 18446744073709551573ull );
+    }
+
+    SECTION("uint64 equal") {
+        auto eq = jit->lookup_symbol<bool(*)(type_t, type_t)>("eq");
+        REQUIRE(eq != nullptr);
+        REQUIRE( eq(42, 42) == true );
+        REQUIRE( eq(42, 24) == false );
+    }
+
+    SECTION("uint64 not equal") {
+        auto ne = jit->lookup_symbol<bool(*)(type_t, type_t)>("ne");
+        REQUIRE(ne != nullptr);
+        REQUIRE( ne(42, 42) == false );
+        REQUIRE( ne(42, 24) == true );
+    }
+
+    SECTION("uint64 less than") {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        REQUIRE( lt(42, 42) == false );
+        REQUIRE( lt(42, 24) == false );
+        REQUIRE( lt(24, 42) == true );
+    }
+
+    SECTION("uint64 less or equal") {
+        auto le = jit->lookup_symbol<bool(*)(type_t, type_t)>("le");
+        REQUIRE(le != nullptr);
+        REQUIRE( le(42, 42) == true );
+        REQUIRE( le(42, 24) == false );
+        REQUIRE( le(24, 42) == true );
+    }
+
+    SECTION("uint64 greater than") {
+        auto gt = jit->lookup_symbol<bool(*)(type_t, type_t)>("gt");
+        REQUIRE(gt != nullptr);
+        REQUIRE( gt(42, 42) == false );
+        REQUIRE( gt(42, 24) == true );
+        REQUIRE( gt(24, 42) == false );
+    }
+
+    SECTION("uint64 greater or equal") {
+        auto ge = jit->lookup_symbol<bool(*)(type_t, type_t)>("ge");
+        REQUIRE(ge != nullptr);
+        REQUIRE( ge(42, 42) == true );
+        REQUIRE( ge(42, 24) == true );
+        REQUIRE( ge(24, 42) == false );
     }
 }
 
@@ -1356,6 +1772,12 @@ TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
         or_int(a : bool, b: int) : bool {
             return a || b;
         }
+        eq(a:bool, b:bool) : bool { return a == b; }
+        ne(a:bool, b:bool) : bool { return a != b; }
+        lt(a:bool, b:bool) : bool { return a < b; }
+        le(a:bool, b:bool) : bool { return a <= b; }
+        gt(a:bool, b:bool) : bool { return a > b; }
+        ge(a:bool, b:bool) : bool { return a >= b; }
         )SRC");
     REQUIRE( jit );
 
@@ -1404,4 +1826,57 @@ TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
         REQUIRE( _or(true, 42) == true );
     }
 
+    SECTION("bool equal") {
+        auto eq = jit->lookup_symbol<bool(*)(type_t, type_t)>("eq");
+        REQUIRE(eq != nullptr);
+        REQUIRE( eq(true, true) == true );
+        REQUIRE( eq(false, false) == true );
+        REQUIRE( eq(true, false) == false );
+        REQUIRE( eq(false, true) == false );
+    }
+
+    SECTION("bool not equal") {
+        auto ne = jit->lookup_symbol<bool(*)(type_t, type_t)>("ne");
+        REQUIRE(ne != nullptr);
+        REQUIRE( ne(true, true) == false );
+        REQUIRE( ne(false, false) == false );
+        REQUIRE( ne(true, false) == true );
+        REQUIRE( ne(false, true) == true );
+    }
+
+    SECTION("bool less than") {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        REQUIRE( lt(true, true) == false );
+        REQUIRE( lt(false, false) == false );
+        REQUIRE( lt(true, false) == false );
+        REQUIRE( lt(false, true) == true );
+    }
+
+    SECTION("bool less or equal") {
+        auto le = jit->lookup_symbol<bool(*)(type_t, type_t)>("le");
+        REQUIRE(le != nullptr);
+        REQUIRE( le(true, true) == true );
+        REQUIRE( le(false, false) == true );
+        REQUIRE( le(true, false) == false );
+        REQUIRE( le(false, true) == true );
+    }
+
+    SECTION("bool greater than") {
+        auto gt = jit->lookup_symbol<bool(*)(type_t, type_t)>("gt");
+        REQUIRE(gt != nullptr);
+        REQUIRE( gt(true, true) == false );
+        REQUIRE( gt(false, false) == false );
+        REQUIRE( gt(true, false) == true );
+        REQUIRE( gt(false, true) == false );
+    }
+
+    SECTION("bool greater or equal") {
+        auto ge = jit->lookup_symbol<bool(*)(type_t, type_t)>("ge");
+        REQUIRE(ge != nullptr);
+        REQUIRE( ge(true, true) == true );
+        REQUIRE( ge(false, false) == true );
+        REQUIRE( ge(true, false) == true );
+        REQUIRE( ge(false, true) == false );
+    }
 }

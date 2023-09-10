@@ -289,6 +289,24 @@ namespace k::parse {
             case lex::operator_::DOUBLE_PIPE:
                 _expr = unit::logical_or_expression::make_shared(lexpr, rexpr);
                 break;
+            case lex::operator_::DOUBLE_EQUAL:
+                _expr = unit::equal_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::EXCLAMATION_MARK_EQUAL:
+                _expr = unit::different_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::CHEVRON_OPEN:
+                _expr = unit::lesser_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::CHEVRON_CLOSE:
+                _expr = unit::greater_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::CHEVRON_OPEN_EQUAL:
+                _expr = unit::lesser_equal_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::CHEVRON_CLOSE_EQUAL:
+                _expr = unit::greater_equal_expression::make_shared(lexpr, rexpr);
+                break;
             default: // TODO other operations
                 break;
         }

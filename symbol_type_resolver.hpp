@@ -54,6 +54,8 @@ protected:
     void visit_logical_binary_expression(logical_binary_expression&) override;
     void visit_logical_not_expression(logical_not_expression&) override;
 
+    void visit_comparison_expression(comparison_expression&) override;
+
 protected:
 
     void visit_function_invocation_expression(function_invocation_expression &) override;

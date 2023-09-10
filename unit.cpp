@@ -347,6 +347,56 @@ void logical_not_expression::accept(element_visitor& visitor) {
 }
 
 //
+// Comparison expression
+//
+void comparison_expression::accept(element_visitor& visitor) {
+    visitor.visit_comparison_expression(*this);
+}
+
+//
+// Comparison equal expression
+//
+void equal_expression::accept(element_visitor& visitor) {
+    visitor.visit_equal_expression(*this);
+}
+
+//
+// Comparison different expression
+//
+void different_expression::accept(element_visitor& visitor) {
+    visitor.visit_different_expression(*this);
+}
+
+//
+// Comparison lesser expression
+//
+void lesser_expression::accept(element_visitor& visitor) {
+    visitor.visit_lesser_expression(*this);
+}
+
+//
+// Comparison greater expression
+//
+void greater_expression::accept(element_visitor& visitor) {
+    visitor.visit_greater_expression(*this);
+}
+
+//
+// Comparison lesser or equal expression
+//
+void lesser_equal_expression::accept(element_visitor& visitor) {
+    visitor.visit_lesser_equal_expression(*this);
+}
+
+//
+// Comparison greater or equal expression
+//
+void greater_equal_expression::accept(element_visitor& visitor) {
+    visitor.visit_greater_equal_expression(*this);
+}
+
+
+//
 // Cast expression
 //
 void cast_expression::accept(element_visitor& visitor) {
@@ -947,6 +997,34 @@ void default_element_visitor::visit_logical_or_expression(logical_or_expression&
 
 void default_element_visitor::visit_logical_not_expression(logical_not_expression& expr) {
     visit_unary_expression(expr);
+}
+
+void default_element_visitor::visit_comparison_expression(comparison_expression& expr) {
+    visit_binary_expression(expr);
+}
+
+void default_element_visitor::visit_equal_expression(equal_expression& expr) {
+    visit_comparison_expression(expr);
+}
+
+void default_element_visitor::visit_different_expression(different_expression& expr) {
+    visit_comparison_expression(expr);
+}
+
+void default_element_visitor::visit_lesser_expression(lesser_expression& expr) {
+    visit_comparison_expression(expr);
+}
+
+void default_element_visitor::visit_greater_expression(greater_expression& expr) {
+    visit_comparison_expression(expr);
+}
+
+void default_element_visitor::visit_lesser_equal_expression(lesser_equal_expression& expr) {
+    visit_comparison_expression(expr);
+}
+
+void default_element_visitor::visit_greater_equal_expression(greater_equal_expression& expr) {
+    visit_comparison_expression(expr);
 }
 
 void default_element_visitor::visit_function_invocation_expression(function_invocation_expression& expr) {

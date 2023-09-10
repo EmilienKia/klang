@@ -356,6 +356,41 @@ public:
         expr.sub_expr()->accept(*this);
     }
 
+    void visit_equal_expression(equal_expression& expr) {
+        expr.left()->accept(*this);
+        _stm << " == ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_different_expression(different_expression& expr) {
+        expr.left()->accept(*this);
+        _stm << " != ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_lesser_expression(lesser_expression& expr) {
+        expr.left()->accept(*this);
+        _stm << " < ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_greater_expression(greater_expression& expr) {
+        expr.left()->accept(*this);
+        _stm << " > ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_lesser_equal_expression(lesser_equal_expression& expr) {
+        expr.left()->accept(*this);
+        _stm << " <= ";
+        expr.right()->accept(*this);
+    }
+
+    void visit_greater_equal_expression(greater_equal_expression& expr) {
+        expr.left()->accept(*this);
+        _stm << " >= ";
+        expr.right()->accept(*this);
+    }
 
     void visit_function_invocation_expression(function_invocation_expression &expr) override {
         expr.callee_expr()->accept(*this);

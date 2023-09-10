@@ -106,6 +106,14 @@ public:
     void visit_logical_or_expression(logical_or_expression&) override;
     void visit_logical_not_expression(logical_not_expression&) override;
 
+    void visit_equal_expression(equal_expression&) override;
+    void visit_different_expression(different_expression&) override;
+    void visit_lesser_expression(lesser_expression&) override;
+    void visit_greater_expression(greater_expression&) override;
+    void visit_lesser_equal_expression(lesser_equal_expression&) override;
+    void visit_greater_equal_expression(greater_equal_expression&) override;
+
+
     void visit_function_invocation_expression(function_invocation_expression&) override;
 
     void visit_cast_expression(cast_expression&) override;

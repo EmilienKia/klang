@@ -252,7 +252,7 @@ void symbol_type_resolver::visit_logical_not_expression(logical_not_expression& 
         std::cerr << "Error: Logical negation for non-primitive types is not supported yet." << std::endl;
     }
 
-    auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
     auto cast = adapt_type(sub, bool_type);
     if(!cast) {
         // TODO throw an exception
@@ -269,6 +269,42 @@ void symbol_type_resolver::visit_logical_not_expression(logical_not_expression& 
     expr.set_type(bool_type);
 }
 
+void symbol_type_resolver::visit_comparison_expression(comparison_expression& expr) {
+    visit_binary_expression(expr);
+
+    auto& left = expr.left();
+    auto& right = expr.right();
+
+    if(!type::is_primitive(left->get_type()) || !type::is_primitive(right->get_type())) {
+        // TODO throw an exception
+        // Logical for non-primitive types is not supported.
+        std::cerr << "Error: Arithmetic for non-primitive types is not supported yet." << std::endl;
+    }
+
+    auto left_type = std::dynamic_pointer_cast<primitive_type>(left->get_type());
+    auto right_type = std::dynamic_pointer_cast<primitive_type>(right->get_type());
+
+    auto adapted_left = left;
+    auto adapted_right = right;
+
+    if(left_type->is_boolean() && !right_type->is_boolean()) {
+        // Adapt right to boolean
+        adapted_right = adapt_type(right, left_type);
+    } else if(!left_type->is_boolean() && right_type->is_boolean()) {
+        // Adapt left to boolean
+        adapted_left = adapt_type(left, right_type);
+    }  else if( left_type->is_integer() || right_type->is_integer() ) {
+        // Adapt right to left type
+        // TODO rework to promote to biggest integer of both
+        adapted_right = adapt_type(right, left_type);
+    } else {
+        // TODO implement other promotions and castings
+    }
+
+    // For primitive type, logical is always returning boolean
+    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    expr.set_type(bool_type);
+}
 
 void symbol_type_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());

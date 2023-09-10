@@ -53,8 +53,8 @@ int main() {
 
 #if 1
     std::string source = R"SRC(
-    ploc(a:int, b: bool) : bool {
-        return a && b;
+    ploc(a:int, b: int) : bool {
+        return a >= b;
     }
     )SRC";
 #endif

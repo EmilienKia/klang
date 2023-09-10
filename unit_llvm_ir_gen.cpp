@@ -658,6 +658,172 @@ void unit_llvm_ir_gen::visit_logical_not_expression(logical_not_expression& expr
     _value = _builder->CreateNot(value);
 }
 
+void unit_llvm_ir_gen::visit_equal_expression(equal_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
+        // TODO throw an exception
+        // Comparison for non-primitive types is not supported.
+        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+    }
+
+    // For primitives, operand types are supposed to be aligned
+    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+
+    if(prim->is_integer_or_bool()) {
+        _value = _builder->CreateICmpEQ(left, right);
+    } else {
+        // TODO support for other types
+    }
+}
+
+void unit_llvm_ir_gen::visit_different_expression(different_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
+        // TODO throw an exception
+        // Comparison for non-primitive types is not supported.
+        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+    }
+
+    // For primitives, operand types are supposed to be aligned
+    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+
+    if(prim->is_integer_or_bool()) {
+        _value = _builder->CreateICmpNE(left, right);
+    } else {
+        // TODO support for other types
+    }
+}
+
+void unit_llvm_ir_gen::visit_lesser_expression(lesser_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
+        // TODO throw an exception
+        // Comparison for non-primitive types is not supported.
+        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+    }
+
+    // For primitives, operand types are supposed to be aligned
+    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+
+    if(prim->is_integer_or_bool()) {
+        if(prim->is_unsigned()) {
+            _value = _builder->CreateICmpULT(left, right);
+        } else {
+            _value = _builder->CreateICmpSLT(left, right);
+        }
+    } else {
+        // TODO support for other types
+    }
+}
+
+void unit_llvm_ir_gen::visit_greater_expression(greater_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
+        // TODO throw an exception
+        // Comparison for non-primitive types is not supported.
+        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+    }
+
+    // For primitives, operand types are supposed to be aligned
+    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+
+    if(prim->is_integer_or_bool()) {
+        if(prim->is_unsigned()) {
+            _value = _builder->CreateICmpUGT(left, right);
+        } else {
+            _value = _builder->CreateICmpSGT(left, right);
+        }
+    } else {
+        // TODO support for other types
+    }
+}
+
+void unit_llvm_ir_gen::visit_lesser_equal_expression(lesser_equal_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
+        // TODO throw an exception
+        // Comparison for non-primitive types is not supported.
+        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+    }
+
+    // For primitives, operand types are supposed to be aligned
+    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+
+    if(prim->is_integer_or_bool()) {
+        if(prim->is_unsigned()) {
+            _value = _builder->CreateICmpULE(left, right);
+        } else {
+            _value = _builder->CreateICmpSLE(left, right);
+        }
+    } else {
+        // TODO support for other types
+    }
+}
+
+void unit_llvm_ir_gen::visit_greater_equal_expression(greater_equal_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
+        // TODO throw an exception
+        // Comparison for non-primitive types is not supported.
+        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+    }
+
+    // For primitives, operand types are supposed to be aligned
+    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+
+    if(prim->is_integer_or_bool()) {
+        if(prim->is_unsigned()) {
+            _value = _builder->CreateICmpUGE(left, right);
+        } else {
+            _value = _builder->CreateICmpSGE(left, right);
+        }
+    } else {
+        // TODO support for other types
+    }
+}
+
 
 void unit_llvm_ir_gen::visit_unit(unit &unit) {
     visit_namespace(*_unit.get_root_namespace());

@@ -824,6 +824,106 @@ public:
 
 
 
+class comparison_expression : public binary_expression
+{
+protected:
+    comparison_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+};
+
+class equal_expression : public comparison_expression
+{
+protected:
+    equal_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<equal_expression> expr{ new equal_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class different_expression : public comparison_expression
+{
+protected:
+    different_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<different_expression> expr{ new different_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class lesser_expression : public comparison_expression
+{
+protected:
+    lesser_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<lesser_expression> expr{ new lesser_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class greater_expression : public comparison_expression
+{
+protected:
+    greater_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<greater_expression> expr{ new greater_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+
+class lesser_equal_expression : public comparison_expression
+{
+protected:
+    lesser_equal_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<lesser_equal_expression> expr{ new lesser_equal_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
+class greater_equal_expression : public comparison_expression
+{
+protected:
+    greater_equal_expression() = default;
+
+public:
+    void accept(element_visitor& visitor) override;
+
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<greater_equal_expression> expr{ new greater_equal_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
+
 class cast_expression : public unary_expression
 {
 protected:
@@ -1467,6 +1567,14 @@ public:
     virtual void visit_logical_or_expression(logical_or_expression&) =0;
     virtual void visit_logical_not_expression(logical_not_expression&) =0;
 
+    virtual void visit_comparison_expression(comparison_expression&) =0;
+    virtual void visit_equal_expression(equal_expression&) =0;
+    virtual void visit_different_expression(different_expression&) =0;
+    virtual void visit_lesser_expression(lesser_expression&) =0;
+    virtual void visit_greater_expression(greater_expression&) =0;
+    virtual void visit_lesser_equal_expression(lesser_equal_expression&) =0;
+    virtual void visit_greater_equal_expression(greater_equal_expression&) =0;
+
     virtual void visit_function_invocation_expression(function_invocation_expression&) =0;
 };
 
@@ -1531,6 +1639,14 @@ public:
     virtual void visit_logical_and_expression(logical_and_expression&) override;
     virtual void visit_logical_or_expression(logical_or_expression&) override;
     virtual void visit_logical_not_expression(logical_not_expression&) override;
+
+    virtual void visit_comparison_expression(comparison_expression&) override;
+    virtual void visit_equal_expression(equal_expression&) override;
+    virtual void visit_different_expression(different_expression&) override;
+    virtual void visit_lesser_expression(lesser_expression&) override;
+    virtual void visit_greater_expression(greater_expression&) override;
+    virtual void visit_lesser_equal_expression(lesser_equal_expression&) override;
+    virtual void visit_greater_equal_expression(greater_equal_expression&) override;
 
     virtual void visit_function_invocation_expression(function_invocation_expression&) override;
 };
