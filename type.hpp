@@ -39,6 +39,7 @@ public:
     inline static bool is_prim_integer(const std::shared_ptr<type>& type);
     inline static bool is_prim_integer_or_bool(const std::shared_ptr<type>& type);
     inline static bool is_prim_bool(const std::shared_ptr<type>& type);
+    inline static bool is_prim_float(const std::shared_ptr<type>& type);
 };
 
 /**
@@ -125,6 +126,11 @@ public:
         return _type == other._type;
     }
 
+    bool operator == (PRIMITIVE_TYPE t) const {
+        return _type == t;
+    }
+
+
     const std::string& to_string()const;
 
     static std::shared_ptr<primitive_type> from_type(PRIMITIVE_TYPE type);
@@ -149,6 +155,11 @@ inline bool type::is_prim_integer_or_bool(const std::shared_ptr<type>& type) {
 inline bool type::is_prim_bool(const std::shared_ptr<type>& type) {
     auto prim = std::dynamic_pointer_cast<primitive_type>(type);
     return prim != nullptr && prim->is_boolean();
+}
+
+inline bool type::is_prim_float(const std::shared_ptr<type>& type){
+    auto prim = std::dynamic_pointer_cast<primitive_type>(type);
+    return prim != nullptr && prim->is_float();
 }
 
 } // namespace k::unit

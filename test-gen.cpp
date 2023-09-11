@@ -1641,6 +1641,298 @@ TEST_CASE( "uint64 arithmetic", "[gen][uint64][arithmetic]" ) {
     }
 }
 
+TEST_CASE( "float arithmetic", "[gen][float][arithmetic]" ) {
+
+    auto jit = gen(R"SRC(
+        module __float__;
+        add(a : float, b : float) : float {
+            return a + b;
+        }
+        sub(a : float, b : float) : float {
+            return a - b;
+        }
+        mul(a : float, b : float) : float {
+            return a * b;
+        }
+        div(a : float, b : float) : float {
+            return a / b;
+        }
+        mod(a : float, b : float) : float {
+            return a % b;
+        }
+        plus(a : float) : float {
+            return + a;
+        }
+        minus(a : float) : float {
+            return - a;
+        }
+        eq(a:float, b:float) : bool { return a == b; }
+        ne(a:float, b:float) : bool { return a != b; }
+        lt(a:float, b:float) : bool { return a < b; }
+        le(a:float, b:float) : bool { return a <= b; }
+        gt(a:float, b:float) : bool { return a > b; }
+        ge(a:float, b:float) : bool { return a >= b; }
+        )SRC");
+    REQUIRE( jit );
+
+    typedef float type_t;
+
+    SECTION( "float addition" ) {
+        auto add = jit->lookup_symbol<type_t(*)(type_t, type_t)>("add");
+        REQUIRE(add != nullptr);
+        REQUIRE( add(0, 0) == 0 );
+        REQUIRE( add(2, 3) == 5 );
+        REQUIRE( add(-2, -3) == -5 );
+        REQUIRE( add(42, -42) == 0 );
+    }
+
+    SECTION( "float substraction" ) {
+        auto sub = jit->lookup_symbol<type_t(*)(type_t, type_t)>("sub");
+        REQUIRE(sub != nullptr);
+        REQUIRE( sub(0, 0) == 0 );
+        REQUIRE( sub(3, 2) == 1 );
+        REQUIRE( sub(2, 3) == -1 );
+        REQUIRE( sub(-3, -2) == -1 );
+        REQUIRE( sub(-2, -3) == 1 );
+        REQUIRE( sub(42, -42) == 84 );
+        REQUIRE( sub(-42, 42) == -84 );
+        REQUIRE( sub(-42, -42) == 0 );
+        REQUIRE( sub(42, 42) == 0 );
+    }
+
+    SECTION( "float multiplication" ) {
+        auto mul = jit->lookup_symbol<type_t(*)(type_t, type_t)>("mul");
+        REQUIRE(mul != nullptr);
+        REQUIRE( mul(0, 0) == 0 );
+        REQUIRE( mul(2, 3) == 6 );
+        REQUIRE( mul(-2, -3) == 6 );
+        REQUIRE( mul(2, -3) == -6 );
+        REQUIRE( mul(-2, 3) == -6 );
+    }
+
+    SECTION( "float division" ) {
+        auto div = jit->lookup_symbol<type_t(*)(type_t, type_t)>("div");
+        REQUIRE(div != nullptr);
+        REQUIRE( div(6, 3) == 2 );
+        REQUIRE( div(-6, -2) == 3 );
+        REQUIRE( div(6, -3) == -2 );
+        REQUIRE( div(-6, 2) == -3 );
+    }
+
+    SECTION( "float modulo" ) {
+        auto mod = jit->lookup_symbol<type_t(*)(type_t, type_t)>("mod");
+        REQUIRE(mod != nullptr);
+        REQUIRE( mod(6, 2) == 0 );
+        REQUIRE( mod(7, 3) == 1 );
+    }
+
+    SECTION( "float plus" ) {
+        auto plus = jit->lookup_symbol<type_t(*)(type_t)>("plus");
+        REQUIRE(plus != nullptr);
+        REQUIRE( plus(42) == 42 );
+    }
+
+    SECTION( "float minus" ) {
+        auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
+        REQUIRE(minus != nullptr);
+        REQUIRE( minus(42) == -42 );
+    }
+
+    SECTION("float equal") {
+        auto eq = jit->lookup_symbol<bool(*)(type_t, type_t)>("eq");
+        REQUIRE(eq != nullptr);
+        REQUIRE( eq(42, 42) == true );
+        REQUIRE( eq(42, 24) == false );
+    }
+
+    SECTION("float not equal") {
+        auto ne = jit->lookup_symbol<bool(*)(type_t, type_t)>("ne");
+        REQUIRE(ne != nullptr);
+        REQUIRE( ne(42, 42) == false );
+        REQUIRE( ne(42, 24) == true );
+    }
+
+    SECTION("float less than") {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        REQUIRE( lt(42, 42) == false );
+        REQUIRE( lt(42, 24) == false );
+        REQUIRE( lt(24, 42) == true );
+    }
+
+    SECTION("float less or equal") {
+        auto le = jit->lookup_symbol<bool(*)(type_t, type_t)>("le");
+        REQUIRE(le != nullptr);
+        REQUIRE( le(42, 42) == true );
+        REQUIRE( le(42, 24) == false );
+        REQUIRE( le(24, 42) == true );
+    }
+
+    SECTION("float greater than") {
+        auto gt = jit->lookup_symbol<bool(*)(type_t, type_t)>("gt");
+        REQUIRE(gt != nullptr);
+        REQUIRE( gt(42, 42) == false );
+        REQUIRE( gt(42, 24) == true );
+        REQUIRE( gt(24, 42) == false );
+    }
+
+    SECTION("float greater or equal") {
+        auto ge = jit->lookup_symbol<bool(*)(type_t, type_t)>("ge");
+        REQUIRE(ge != nullptr);
+        REQUIRE( ge(42, 42) == true );
+        REQUIRE( ge(42, 24) == true );
+        REQUIRE( ge(24, 42) == false );
+    }
+}
+
+
+
+TEST_CASE( "double arithmetic", "[gen][double][arithmetic]" ) {
+
+    auto jit = gen(R"SRC(
+        module __double__;
+        add(a : double, b : double) : double {
+            return a + b;
+        }
+        sub(a : double, b : double) : double {
+            return a - b;
+        }
+        mul(a : double, b : double) : double {
+            return a * b;
+        }
+        div(a : double, b : double) : double {
+            return a / b;
+        }
+        mod(a : double, b : double) : double {
+            return a % b;
+        }
+        plus(a : double) : double {
+            return + a;
+        }
+        minus(a : double) : double {
+            return - a;
+        }
+        eq(a:double, b:double) : bool { return a == b; }
+        ne(a:double, b:double) : bool { return a != b; }
+        lt(a:double, b:double) : bool { return a < b; }
+        le(a:double, b:double) : bool { return a <= b; }
+        gt(a:double, b:double) : bool { return a > b; }
+        ge(a:double, b:double) : bool { return a >= b; }
+        )SRC");
+    REQUIRE( jit );
+
+    typedef double type_t;
+
+    SECTION( "double addition" ) {
+        auto add = jit->lookup_symbol<type_t(*)(type_t, type_t)>("add");
+        REQUIRE(add != nullptr);
+        REQUIRE( add(0, 0) == 0 );
+        REQUIRE( add(2, 3) == 5 );
+        REQUIRE( add(-2, -3) == -5 );
+        REQUIRE( add(42, -42) == 0 );
+    }
+
+    SECTION( "double substraction" ) {
+        auto sub = jit->lookup_symbol<type_t(*)(type_t, type_t)>("sub");
+        REQUIRE(sub != nullptr);
+        REQUIRE( sub(0, 0) == 0 );
+        REQUIRE( sub(3, 2) == 1 );
+        REQUIRE( sub(2, 3) == -1 );
+        REQUIRE( sub(-3, -2) == -1 );
+        REQUIRE( sub(-2, -3) == 1 );
+        REQUIRE( sub(42, -42) == 84 );
+        REQUIRE( sub(-42, 42) == -84 );
+        REQUIRE( sub(-42, -42) == 0 );
+        REQUIRE( sub(42, 42) == 0 );
+    }
+
+    SECTION( "double multiplication" ) {
+        auto mul = jit->lookup_symbol<type_t(*)(type_t, type_t)>("mul");
+        REQUIRE(mul != nullptr);
+        REQUIRE( mul(0, 0) == 0 );
+        REQUIRE( mul(2, 3) == 6 );
+        REQUIRE( mul(-2, -3) == 6 );
+        REQUIRE( mul(2, -3) == -6 );
+        REQUIRE( mul(-2, 3) == -6 );
+    }
+
+    SECTION( "double division" ) {
+        auto div = jit->lookup_symbol<type_t(*)(type_t, type_t)>("div");
+        REQUIRE(div != nullptr);
+        REQUIRE( div(6, 3) == 2 );
+        REQUIRE( div(-6, -2) == 3 );
+        REQUIRE( div(6, -3) == -2 );
+        REQUIRE( div(-6, 2) == -3 );
+    }
+
+    SECTION( "double modulo" ) {
+        auto mod = jit->lookup_symbol<type_t(*)(type_t, type_t)>("mod");
+        REQUIRE(mod != nullptr);
+        REQUIRE( mod(6, 2) == 0 );
+        REQUIRE( mod(7, 3) == 1 );
+    }
+
+    SECTION( "double plus" ) {
+        auto plus = jit->lookup_symbol<type_t(*)(type_t)>("plus");
+        REQUIRE(plus != nullptr);
+        REQUIRE( plus(42) == 42 );
+    }
+
+    SECTION( "double minus" ) {
+        auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
+        REQUIRE(minus != nullptr);
+        REQUIRE( minus(42) == -42 );
+    }
+
+    SECTION("double equal") {
+        auto eq = jit->lookup_symbol<bool(*)(type_t, type_t)>("eq");
+        REQUIRE(eq != nullptr);
+        REQUIRE( eq(42, 42) == true );
+        REQUIRE( eq(42, 24) == false );
+    }
+
+    SECTION("double not equal") {
+        auto ne = jit->lookup_symbol<bool(*)(type_t, type_t)>("ne");
+        REQUIRE(ne != nullptr);
+        REQUIRE( ne(42, 42) == false );
+        REQUIRE( ne(42, 24) == true );
+    }
+
+    SECTION("double less than") {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        REQUIRE( lt(42, 42) == false );
+        REQUIRE( lt(42, 24) == false );
+        REQUIRE( lt(24, 42) == true );
+    }
+
+    SECTION("double less or equal") {
+        auto le = jit->lookup_symbol<bool(*)(type_t, type_t)>("le");
+        REQUIRE(le != nullptr);
+        REQUIRE( le(42, 42) == true );
+        REQUIRE( le(42, 24) == false );
+        REQUIRE( le(24, 42) == true );
+    }
+
+    SECTION("double greater than") {
+        auto gt = jit->lookup_symbol<bool(*)(type_t, type_t)>("gt");
+        REQUIRE(gt != nullptr);
+        REQUIRE( gt(42, 42) == false );
+        REQUIRE( gt(42, 24) == true );
+        REQUIRE( gt(24, 42) == false );
+    }
+
+    SECTION("double greater or equal") {
+        auto ge = jit->lookup_symbol<bool(*)(type_t, type_t)>("ge");
+        REQUIRE(ge != nullptr);
+        REQUIRE( ge(42, 42) == true );
+        REQUIRE( ge(42, 24) == true );
+        REQUIRE( ge(24, 42) == false );
+    }
+}
+
+
+
 TEST_CASE("Boolean values and casting", "[gen][bool]") {
     auto jit = gen(R"SRC(
         module __bool__;

@@ -40,6 +40,7 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
                 auto val = llvm::APInt((unsigned) i.size, i.int_content(), (uint8_t) i.base);
                 _value = llvm::ConstantInt::get(*_context, val);
             } break;
+            // TODO add floating point number literal
             case lex::any_literal_type_index::CHARACTER:
                 // TODO
                 break;
@@ -80,6 +81,10 @@ llvm::Type* unit_llvm_ir_gen::get_llvm_type(const std::shared_ptr<type>& type) {
             llvm_type = _builder->getIntNTy(prim->type_size());
         } else if (prim->is_boolean()) {
             llvm_type = _builder->getInt1Ty();
+        } else if (*prim == primitive_type::FLOAT) {
+            return _builder->getFloatTy();
+        } else if (*prim == primitive_type::DOUBLE) {
+            return _builder->getDoubleTy();
         } else {
             // TODO support float types
         }
@@ -149,6 +154,8 @@ void unit_llvm_ir_gen::visit_addition_expression(addition_expression &expr) {
 
     if(type::is_prim_integer(expr.get_type())) {
         _value = _builder->CreateAdd(left, right);
+    } else if(type::is_prim_float(expr.get_type())) {
+        _value = _builder->CreateFAdd(left, right);
     } else {
         // TODO: Support other types
     }
@@ -164,6 +171,8 @@ void unit_llvm_ir_gen::visit_substraction_expression(substraction_expression &ex
 
     if(type::is_prim_integer(expr.get_type())) {
         _value = _builder->CreateSub(left, right);
+    } else if(type::is_prim_float(expr.get_type())) {
+        _value = _builder->CreateFSub(left, right);
     } else {
         // TODO: Support other types
     }
@@ -181,6 +190,8 @@ void unit_llvm_ir_gen::visit_multiplication_expression(multiplication_expression
     if(type::is_prim_integer(expr.get_type())) {
         // TODO Should poison for int/uint multiplication overflow ?
         _value = _builder->CreateMul(left, right);
+    } else if(type::is_prim_float(expr.get_type())) {
+        _value = _builder->CreateFMul(left, right);
     } else {
         // TODO: Support other types
     }
@@ -201,6 +212,8 @@ void unit_llvm_ir_gen::visit_division_expression(division_expression &expr) {
             } else {
                 _value = _builder->CreateSDiv(left, right);
             }
+        } else if(prim->is_float()) {
+            _value = _builder->CreateFDiv(left, right);
         }
     } else {
         // TODO: Support other types
@@ -222,6 +235,8 @@ void unit_llvm_ir_gen::visit_modulo_expression(modulo_expression &expr) {
             } else {
                 _value = _builder->CreateSRem(left, right);
             }
+        } else if(prim->is_float()) {
+            _value = _builder->CreateFRem(left, right);
         }
     } else {
         // TODO: Support other types
@@ -239,6 +254,10 @@ void unit_llvm_ir_gen::visit_bitwise_and_expression(bitwise_and_expression& expr
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
         if(prim->is_integer()) {
             _value = _builder->CreateAnd(left, right);
+        } else if(prim->is_float()) {
+            // TODO throw an exception
+            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
+            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
         }
     } else {
         // TODO: Support other types
@@ -256,6 +275,10 @@ void unit_llvm_ir_gen::visit_bitwise_or_expression(bitwise_or_expression& expr) 
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
         if(prim->is_integer()) {
             _value = _builder->CreateOr(left, right);
+        } else if(prim->is_float()) {
+            // TODO throw an exception
+            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
+            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
         }
     } else {
         // TODO: Support other types
@@ -273,6 +296,10 @@ void unit_llvm_ir_gen::visit_bitwise_xor_expression(bitwise_xor_expression& expr
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
         if(prim->is_integer()) {
             _value = _builder->CreateXor(left, right);
+        } else if(prim->is_float()) {
+            // TODO throw an exception
+            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
+            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
         }
     } else {
         // TODO: Support other types
@@ -291,6 +318,10 @@ void unit_llvm_ir_gen::visit_left_shift_expression(left_shift_expression& expr) 
         if(prim->is_integer()) {
             // TODO may it poison when overflow ?
             _value = _builder->CreateShl(left, right);
+        } else if(prim->is_float()) {
+            // TODO throw an exception
+            // Error : shifting operations are not meaningful for float numbers, hence not supported.
+            std::cerr << "Error : shifting operations are not meaningful for float numbers, hence not supported." << std::endl;
         }
     } else {
         // TODO: Support other types
@@ -314,12 +345,15 @@ void unit_llvm_ir_gen::visit_right_shift_expression(right_shift_expression& expr
                 // TODO may it poison when overflow ?
                 _value = _builder->CreateAShr(left, right);
             }
+        } else if(prim->is_float()) {
+            // TODO throw an exception
+            // Error : shifting operations are not meaningful for float numbers, hence not supported.
+            std::cerr << "Error : shifting operations are not meaningful for float numbers, hence not supported." << std::endl;
         }
     } else {
         // TODO: Support other types
     }
 }
-
 
 
 void unit_llvm_ir_gen::create_assignement(std::shared_ptr<expression> expr, llvm::Value* value) {
@@ -366,6 +400,8 @@ void unit_llvm_ir_gen::visit_addition_assignation_expression(additition_assignat
 
     if(type::is_prim_integer(expr.get_type())) {
         _value = _builder->CreateAdd(left, right);
+    } else if(type::is_prim_float(expr.get_type())) {
+        _value = _builder->CreateFAdd(left, right);
     } else {
         // TODO: Support other types
     }
@@ -382,6 +418,8 @@ void unit_llvm_ir_gen::visit_substraction_assignation_expression(substraction_as
 
     if(type::is_prim_integer(expr.get_type())) {
         _value = _builder->CreateSub(left, right);
+    } else if(type::is_prim_float(expr.get_type())) {
+        _value = _builder->CreateFSub(left, right);
     } else {
         // TODO: Support other types
     }
@@ -399,6 +437,8 @@ void unit_llvm_ir_gen::visit_multiplication_assignation_expression(multiplicatio
     if(type::is_prim_integer(expr.get_type())) {
         // TODO Should poison for int/uint multiplication overflow ?
         _value = _builder->CreateMul(left, right);
+    } else if(type::is_prim_float(expr.get_type())) {
+        _value = _builder->CreateFMul(left, right);
     } else {
         // TODO: Support other types
     }
@@ -420,6 +460,8 @@ void unit_llvm_ir_gen::visit_division_assignation_expression(division_assignatio
             } else {
                 _value = _builder->CreateSDiv(left, right);
             }
+        } else if(prim->is_float()) {
+            _value = _builder->CreateFDiv(left, right);
         }
     } else {
         // TODO: Support other types
@@ -442,6 +484,8 @@ void unit_llvm_ir_gen::visit_modulo_assignation_expression(modulo_assignation_ex
             } else {
                 _value = _builder->CreateSRem(left, right);
             }
+        } else if(prim->is_float()) {
+            _value = _builder->CreateFRem(left, right);
         }
     } else {
         // TODO: Support other types
@@ -460,6 +504,10 @@ void unit_llvm_ir_gen::visit_bitwise_and_assignation_expression(bitwise_and_assi
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
         if(prim->is_integer()) {
             _value = _builder->CreateAnd(left, right);
+        } else if(prim->is_float()) {
+            // TODO throw an exception
+            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
+            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
         }
     } else {
         // TODO: Support other types
@@ -478,6 +526,10 @@ void unit_llvm_ir_gen::visit_bitwise_or_assignation_expression(bitwise_or_assign
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
         if(prim->is_integer()) {
             _value = _builder->CreateOr(left, right);
+        } else if(prim->is_float()) {
+            // TODO throw an exception
+            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
+            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
         }
     } else {
         // TODO: Support other types
@@ -496,6 +548,10 @@ void unit_llvm_ir_gen::visit_bitwise_xor_assignation_expression(bitwise_xor_assi
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
         if(prim->is_integer()) {
             _value = _builder->CreateXor(left, right);
+        } else if(prim->is_float()) {
+            // TODO throw an exception
+            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
+            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
         }
     } else {
         // TODO: Support other types
@@ -515,6 +571,10 @@ void unit_llvm_ir_gen::visit_left_shift_assignation_expression(left_shift_assign
         if(prim->is_integer()) {
             // TODO may it poison when overflow ?
             _value = _builder->CreateShl(left, right);
+        } else if(prim->is_float()) {
+            // TODO throw an exception
+            // Error : shifting operations are not meaningful for float numbers, hence not supported.
+            std::cerr << "Error : shifting operations are not meaningful for float numbers, hence not supported." << std::endl;
         }
     } else {
         // TODO: Support other types
@@ -538,6 +598,10 @@ void unit_llvm_ir_gen::visit_right_shift_assignation_expression(right_shift_assi
                 // TODO may it poison when overflow ?
                 _value = _builder->CreateAShr(left, right);
             }
+        } else if(prim->is_float()) {
+            // TODO throw an exception
+            // Error : shifting operations are not meaningful for float numbers, hence not supported.
+            std::cerr << "Error : shifting operations are not meaningful for float numbers, hence not supported." << std::endl;
         }
     } else {
         // TODO: Support other types
@@ -553,7 +617,7 @@ void unit_llvm_ir_gen::visit_unary_plus_expression(unary_plus_expression& expr) 
         return;
     }
 
-    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+    if(type::is_primitive(expr.get_type())) {
         // When primitive, return the value itself
         _value = val;
     } else {
@@ -575,6 +639,8 @@ void unit_llvm_ir_gen::visit_unary_minus_expression(unary_minus_expression& expr
             // TODO may it poison when overflow ?
             //_value = _builder->CreateSub(_builder->getIntN(prim->type_size(), 0), val);
             _value = _builder->CreateNeg(val);
+        } else if(prim->is_float()) {
+            _value = _builder->CreateFNeg(val);
         } else {
             // TODO: Support other types
         };
@@ -595,6 +661,10 @@ void unit_llvm_ir_gen::visit_bitwise_not_expression(bitwise_not_expression& expr
         // When primitive, return the value itself
         if(prim->is_integer_or_bool()) {
             _value = _builder->CreateNot(val);
+        } else if(prim->is_float()) {
+            // TODO throw an exception
+            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
+            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
         } else {
             // TODO: Support other types
         };
@@ -678,6 +748,8 @@ void unit_llvm_ir_gen::visit_equal_expression(equal_expression& expr) {
 
     if(prim->is_integer_or_bool()) {
         _value = _builder->CreateICmpEQ(left, right);
+    } else if(prim->is_float()) {
+        _value = _builder->CreateFCmpOEQ(left, right);
     } else {
         // TODO support for other types
     }
@@ -703,6 +775,8 @@ void unit_llvm_ir_gen::visit_different_expression(different_expression& expr) {
 
     if(prim->is_integer_or_bool()) {
         _value = _builder->CreateICmpNE(left, right);
+    } else if(prim->is_float()) {
+        _value = _builder->CreateFCmpONE(left, right);
     } else {
         // TODO support for other types
     }
@@ -732,6 +806,8 @@ void unit_llvm_ir_gen::visit_lesser_expression(lesser_expression& expr) {
         } else {
             _value = _builder->CreateICmpSLT(left, right);
         }
+    } else if(prim->is_float()) {
+        _value = _builder->CreateFCmpOLT(left, right);
     } else {
         // TODO support for other types
     }
@@ -761,6 +837,8 @@ void unit_llvm_ir_gen::visit_greater_expression(greater_expression& expr) {
         } else {
             _value = _builder->CreateICmpSGT(left, right);
         }
+    } else if(prim->is_float()) {
+        _value = _builder->CreateFCmpOGT(left, right);
     } else {
         // TODO support for other types
     }
@@ -790,6 +868,8 @@ void unit_llvm_ir_gen::visit_lesser_equal_expression(lesser_equal_expression& ex
         } else {
             _value = _builder->CreateICmpSLE(left, right);
         }
+    } else if(prim->is_float()) {
+        _value = _builder->CreateFCmpOLE(left, right);
     } else {
         // TODO support for other types
     }
@@ -819,6 +899,8 @@ void unit_llvm_ir_gen::visit_greater_equal_expression(greater_equal_expression& 
         } else {
             _value = _builder->CreateICmpSGE(left, right);
         }
+    } else if(prim->is_float()) {
+        _value = _builder->CreateFCmpOGE(left, right);
     } else {
         // TODO support for other types
     }
@@ -999,11 +1081,6 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
     auto src = std::dynamic_pointer_cast<primitive_type>(source_type);
     auto tgt = std::dynamic_pointer_cast<primitive_type>(target_type);
 
-    if(src->is_float() || tgt->is_float()) {
-        // TODO Support also float primitive type
-        std::cerr << "Error: in casting expression, only integer and boolean primitive types are supported yet." << std::endl;
-    }
-
     _value = nullptr;
     expr.sub_expr()->accept(*this);
     if(!_value) {
@@ -1012,9 +1089,6 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
         std::cerr << "Error: in casting expression, expression to cast is not returning any value." << std::endl;
     }
 
-    //
-    // TODO REVIEW Integer casting procedure to adapt each case (especially unsigned/sign mix-up with truncate or extend)
-    //
     if(src->is_boolean()) {
         if(tgt->is_integer()) {
             if(tgt->is_unsigned()) {
@@ -1022,29 +1096,77 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
             } else {
                 _value = _builder->CreateSExt(_value, _builder->getIntNTy(tgt->type_size()));
             }
+        } else if (tgt->is_float()) {
+            if(*tgt == primitive_type::FLOAT) {
+                auto ftype = get_llvm_type(tgt);
+                auto ftrue = llvm::ConstantFP::get(ftype, llvm::APFloat(1.0f));
+                auto ffalse = llvm::ConstantFP::get(ftype, llvm::APFloat(0.0f));
+                _value = _builder->CreateSelect(_value, ftrue, ffalse);
+            } else if(*tgt == primitive_type::DOUBLE) {
+                auto dtype = get_llvm_type(tgt);
+                auto dtrue = llvm::ConstantFP::get(dtype, llvm::APFloat(1.0));
+                auto dfalse = llvm::ConstantFP::get(dtype, llvm::APFloat(0.0));
+                _value = _builder->CreateSelect(_value, dtrue, dfalse);
+            } // else must not happen
         } else {
             // Support other types
         }
     } else if(src->is_integer()) {
         if(tgt->is_boolean()) {
             _value = _builder->CreateICmpNE(_value, _builder->getIntN(src->type_size(), 0));
-        } else if (tgt->is_signed()) {
-            if (src->is_unsigned()) {
-                // TODO Add "Unsigned to signed" overflow warning
-                std::cerr << "Cast unsigned integer to signed integer may result on overflow" << std::endl;
+        } else if (tgt->is_integer()) {
+            if (tgt->is_signed()) {
+                if (src->is_unsigned()) {
+                    // TODO Add "Unsigned to signed" overflow warning
+                    std::cerr << "Cast unsigned integer to signed integer may result on overflow" << std::endl;
+                }
+                // SExt or trunc for signed integers
+                _value = _builder->CreateSExtOrTrunc(_value, get_llvm_type(tgt));
+            } else /* if (tgt->is_unsigned())*/  {
+                if (src->is_unsigned()) {
+                    // TODO Add "Signed to unsigned" truncation/misunderstanding warning
+                    std::cerr
+                            << "Cast signed integer to unsigned integer may result on truncating/misinterpreting of integers"
+                            << std::endl;
+                }
+                // SExt or trunc for signed integers
+                _value = _builder->CreateZExtOrTrunc(_value, get_llvm_type(tgt));
             }
-            // SExt or trunc for signed integers
-            _value = _builder->CreateSExtOrTrunc(_value, get_llvm_type(tgt));
-        } else if (tgt->is_unsigned()) {
-            if (src->is_unsigned()) {
-                // TODO Add "Signed to unsigned" truncation/misunderstanding warning
-                std::cerr
-                        << "Cast signed integer to unsigned integer may result on truncating/misinterpreting of integers"
-                        << std::endl;
+        } else if (tgt->is_float()) {
+            if(src->is_unsigned()) {
+                if(*tgt == primitive_type::FLOAT) {
+                    _value = _builder->CreateUIToFP(_value, _builder->getFloatTy());
+                } else if(*tgt == primitive_type::FLOAT) {
+                    _value = _builder->CreateUIToFP(_value, _builder->getDoubleTy());
+                } /* else must not happen */
+            } else {
+                if(*tgt == primitive_type::FLOAT) {
+                    _value = _builder->CreateSIToFP(_value, _builder->getFloatTy());
+                } else if(*tgt == primitive_type::FLOAT) {
+                    _value = _builder->CreateSIToFP(_value, _builder->getDoubleTy());
+                } /* else must not happen */
             }
-            // SExt or trunc for signed integers
-            _value = _builder->CreateZExtOrTrunc(_value, get_llvm_type(tgt));
         } else {
+            // Support other types
+        }
+    } else if(src->is_float()) {
+        if(tgt->is_boolean()) {
+            _value = _builder->CreateFCmpUNE(_value, llvm::ConstantFP::get(get_llvm_type(tgt), 0.0));
+        } else if(tgt->is_integer()) {
+            if(tgt->is_unsigned()) {
+                _value = _builder->CreateFPToUI(_value, get_llvm_type(tgt));
+            } else {
+                _value = _builder->CreateFPToSI(_value, get_llvm_type(tgt));
+            }
+        } else if(tgt->is_float()) {
+            if(*src == primitive_type::FLOAT && *tgt == primitive_type::DOUBLE) {
+                _value = _builder->CreateFPExt(_value, get_llvm_type(tgt));
+            } else if(*src == primitive_type::DOUBLE && *tgt == primitive_type::FLOAT) {
+                _value = _builder->CreateFPTrunc(_value, get_llvm_type(tgt));
+            } else {
+                // Do nothing, float type is already aligned
+            }
+        } else{
             // Support other types
         }
     } else {

@@ -59,8 +59,25 @@ void symbol_type_resolver::visit_block(block& block)
 
 void symbol_type_resolver::visit_return_statement(return_statement& stmt)
 {
+    auto func = stmt.get_block()->get_function();
+    auto ret_type = func->return_type();
+    // TODO check if return type is void to prevent to return sometinhf
+
     if(auto expr = stmt.get_expression()) {
         expr->accept(*this);
+
+        auto cast = adapt_type(expr, ret_type);
+        if(!cast) {
+            // TODO throw an exception
+            // Error: return expression type must be compatible to function return type (cannot be cast).
+            std::cerr << "Error: return expression type must be compatible to function return type" << std::endl;
+        } else if(cast != expr ) {
+            // Casted, assign casted expression as return expr.
+            stmt.set_expression(cast);
+        } else {
+            // Compatible type, no need to cast.
+        }
+
     }
 }
 
@@ -399,25 +416,9 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_type(const std::shared_p
         return expr;
     }
 
-    if(prim_src->is_integer() && prim_tgt->is_integer_or_bool()) {
-        if (prim_src->type_size() != prim_tgt->type_size() || (prim_src->is_signed()!=prim_tgt->is_signed()) ) {
-            // TODO inject intermediate casting expr
-            if (prim_src->type_size() > prim_tgt->type_size()) {
-                // Just warn for casting
-                // TODO Replace by a warning log with more context
-                std::cerr << "Warning: integer implicit downcast may loose data." << std::endl;
-            }
-            auto cast = cast_expression::make_shared(expr, prim_tgt);
-            cast->set_type(prim_tgt);
-            return cast;
-        } else {
-            // Types are the same, shall not happen
-            return expr;
-        }
-    } else {
-        // TODO support float and boolean types
-        return nullptr;
-    }
+    auto cast = cast_expression::make_shared(expr, prim_tgt);
+    cast->set_type(prim_tgt);
+    return cast;
 
 }
 
