@@ -39,6 +39,13 @@ namespace k::lex {
         BIGINT = 256 // Big integer
     };
 
+    enum float_size {
+        FLOAT = 32, // 32 bits
+        DOUBLE = 64, // 64 bits
+
+        FLOAT_DEFAULT =  FLOAT
+    };
+
     struct char_coord
     {
         std::size_t pos = 0;
@@ -189,6 +196,26 @@ namespace k::lex {
         k::value_type value()const override;
     };
 
+    struct float_num : public literal {
+        using literal::literal;
+
+        size_t num_content_size = 0;
+        float_size size = FLOAT;
+
+        float_num(char_coord start, char_coord end, const std::string& content,
+                  size_t num_content_size = 0, float_size size = FLOAT):
+                literal(start, end, content),
+                num_content_size(num_content_size),
+                size(size) {}
+
+        std::string_view float_content() const {
+            return {content.begin(), content.begin()+num_content_size};
+        }
+
+        // TODO add all content and accessors
+        k::value_type value()const override;
+    };
+
     struct character : public literal {
         using literal::literal;
 
@@ -311,17 +338,18 @@ namespace k::lex {
 
     extern const std::set<std::string> keyword_set;
 
-    typedef std::variant<keyword, identifier, character, string, integer, boolean, null, comment, punctuator, operator_> any_lexeme;
+    typedef std::variant<keyword, identifier, character, string, integer, float_num, boolean, null, comment, punctuator, operator_> any_lexeme;
 //    typedef k::helpers::any_of<lexeme, keyword, identifier, character, string, integer, boolean, null, comment, punctuator, operator_> any_lexeme;
 
-    typedef anyof::any_of<literal, integer, character, string, boolean, null> any_literal;
+    typedef anyof::any_of<literal, integer, float_num, character, string, boolean, null> any_literal;
 
     enum any_literal_type_index {
         INTEGER = 0,
-        CHARACTER = 1,
-        STRING = 2,
-        BOOLEAN = 3,
-        NUL = 4,
+        FLOAT_NUM = 1,
+        CHARACTER = 2,
+        STRING = 3,
+        BOOLEAN = 4,
+        NUL = 5,
         NOT_DEFINED = any_literal::npos
     };
 
@@ -464,6 +492,7 @@ namespace k::lex {
     template<>
     inline bool is<literal>(const any_lexeme& lex) {
         return std::holds_alternative<integer>(lex)
+               || std::holds_alternative<float_num>(lex)
                || std::holds_alternative<character>(lex)
                || std::holds_alternative<string>(lex)
                || std::holds_alternative<boolean>(lex)
@@ -487,6 +516,8 @@ namespace k::lex {
         any_lexeme& reflex = optlexref->get();
         if(std::holds_alternative<integer>(reflex)) {
             return lex::any_literal{std::get<integer>(reflex)};
+        } else if(std::holds_alternative<float_num>(reflex)) {
+            return lex::any_literal{std::get<float_num>(reflex)};
         } else if(std::holds_alternative<character>(reflex)) {
             return lex::any_literal{std::get<character>(reflex)};
         } else if(std::holds_alternative<string>(reflex)) {
@@ -516,6 +547,7 @@ namespace k::lex {
             DECIMAL,
             HEXADECIMAL,
             SLASH,
+            POINT,
             COMMENT_SINGLE_LINE,
             COMMENT_MULTI_LINES,
             COMMENT_MULTI_LINES_END,
@@ -532,6 +564,14 @@ namespace k::lex {
             INT_LONG128A_SUFFIX,
             INT_LONG128B_SUFFIX,
             INT_BIGINT_SUFFIX,
+            FLOAT_DIGIT_POINT_DIGIT,
+            FLOAT_DIGIT_POINT_DIGIT_EXP,
+            FLOAT_DIGIT_POINT_DIGIT_EXP_DIGIT,
+            FLOAT_POINT_DIGIT,
+            FLOAT_POINT_DIGIT_EXP,
+            FLOAT_POINT_DIGIT_EXP_DIGIT,
+            FLOAT_DIGIT_EXP,
+            FLOAT_DIGIT_EXP_DIGIT,
             OPERATOR
         };
     protected:
@@ -559,6 +599,7 @@ namespace k::lex {
         size_t num_prefix_size = 0;
         size_t num_content_size = 0;
 
+        float_size fsize = FLOAT;
 
     private:
         /// List of all chars used in operators or punctuators
@@ -580,6 +621,7 @@ namespace k::lex {
         static std::map<std::string, punct_or_op_type_t, lexer::less_order_op_punct_for_lookup> puncts_or_ops;
 
         void push_integer_and_reset();
+        void push_float_and_reset();
 
         static void init();
 

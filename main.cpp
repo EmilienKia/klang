@@ -53,8 +53,10 @@ int main() {
 
 #if 1
     std::string source = R"SRC(
-    ploc(a:bool) : float {
-        return a;
+    ploc(a:float) : float {
+        b : double;
+        b = 4.2d;
+        return a + b;
     }
     )SRC";
 #endif
@@ -95,6 +97,12 @@ int main() {
         std::cerr << "JIT instantiation error." << std::endl;
         return -1;
     }
+
+#if 1
+    auto ploc = jit.get()->lookup_symbol<float(*)(float)>("ploc");
+    std::cout << "Test : ploc(1.2) = " << (ploc(1.2)) << std::endl;
+#endif
+
 
 #if 0
     int (*test)(int, int) = (int(*)(int, int)) jit.get()->lookup_symbol<int(*)(int, int)>("test");

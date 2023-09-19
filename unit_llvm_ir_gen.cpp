@@ -40,7 +40,12 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
                 auto val = llvm::APInt((unsigned) i.size, i.int_content(), (uint8_t) i.base);
                 _value = llvm::ConstantInt::get(*_context, val);
             } break;
-            // TODO add floating point number literal
+            case lex::any_literal_type_index::FLOAT_NUM: {
+                const auto &f = lit.get<lex::float_num>();
+                llvm::Type* type = f.size==lex::DOUBLE ? _builder->getDoubleTy() : _builder->getFloatTy() ;
+                llvm::APFloat val(type->getScalarType()->getFltSemantics(), f.float_content());
+                _value = llvm::ConstantFP::get(type, val);
+            } break;
             case lex::any_literal_type_index::CHARACTER:
                 // TODO
                 break;
@@ -921,7 +926,14 @@ void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definiti
     llvm::Type *type = get_llvm_type(var.get_type());
 
     // TODO initialize the variable with the expression
-    llvm::Constant *value = llvm::ConstantInt::get(type, 0);
+    llvm::Constant *value;
+    if(type::is_prim_integer(var.get_type())) {
+        value = llvm::ConstantInt::get(type, 0);
+    } else if(type::is_prim_bool(var.get_type())) {
+        value = llvm::ConstantInt::getFalse(type);
+    } else if(type::is_prim_float(var.get_type())) {
+        value = llvm::ConstantFP::get(type, 0.0);
+    }
 
     // TODO use the real mangled name
     //std::string mangledName;
@@ -1019,9 +1031,17 @@ void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
     llvm::AllocaInst* alloca = build.CreateAlloca(type, nullptr, var.get_name());
     _variables.insert({var.shared_as<variable_statement>(), alloca});
 
-    // TODO replace init by 0 with the real init
-    llvm::Value* zero = llvm::ConstantInt::get(type, 0);
-    build.CreateStore(zero, alloca);
+    // TODO initialize the variable with the expression
+    llvm::Constant *value;
+    if(type::is_prim_integer(var.get_type())) {
+        value = llvm::ConstantInt::get(type, 0);
+    } else if(type::is_prim_bool(var.get_type())) {
+        value = llvm::ConstantInt::getFalse(type);
+    } else if(type::is_prim_float(var.get_type())) {
+        value = llvm::ConstantFP::get(type, 0.0);
+    }
+
+    build.CreateStore(value, alloca);
 }
 
 void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_expression &expr) {

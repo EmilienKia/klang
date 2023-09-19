@@ -1115,6 +1115,187 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
     }
 }
 
+TEST_CASE( "Lex one float", "[lexer][float]" ) {
+    lexer lex;
+
+    SECTION("Lex implicit float") {
+
+        SECTION("Lex float 123.45e8") {
+            auto lexemes = lex.parse_all("123.45e8");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123.45e8");
+            REQUIRE(l.size == FLOAT);
+        }
+
+        SECTION("Lex float 123e8") {
+            auto lexemes = lex.parse_all("123e8");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123e8");
+            REQUIRE(l.size == FLOAT);
+        }
+
+        SECTION("Lex float 123e-8") {
+            auto lexemes = lex.parse_all("123e-8");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123e-8");
+            REQUIRE(l.size == FLOAT);
+        }
+
+        SECTION("Lex float .45e8") {
+            auto lexemes = lex.parse_all(".45e8");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == ".45e8");
+            REQUIRE(l.size == FLOAT);
+        }
+
+        SECTION("Lex float 123.45") {
+            auto lexemes = lex.parse_all("123.45");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123.45");
+            REQUIRE(l.size == FLOAT);
+        }
+
+        SECTION("Lex float .45") {
+            auto lexemes = lex.parse_all(".45");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == ".45");
+            REQUIRE(l.size == FLOAT);
+        }
+
+    }
+
+    SECTION("Lex explicit float") {
+
+        SECTION("Lex float 123.45e8f") {
+            auto lexemes = lex.parse_all("123.45e8f");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123.45e8f");
+            REQUIRE(l.size == FLOAT);
+        }
+
+        SECTION("Lex float 123e8f") {
+            auto lexemes = lex.parse_all("123e8f");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123e8f");
+            REQUIRE(l.size == FLOAT);
+        }
+
+        SECTION("Lex float 123e-8f") {
+            auto lexemes = lex.parse_all("123e-8f");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123e-8f");
+            REQUIRE(l.size == FLOAT);
+        }
+
+        SECTION("Lex float .45e8f") {
+            auto lexemes = lex.parse_all(".45e8f");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == ".45e8f");
+            REQUIRE(l.size == FLOAT);
+        }
+
+        SECTION("Lex float 123.45f") {
+            auto lexemes = lex.parse_all("123.45f");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123.45f");
+            REQUIRE(l.size == FLOAT);
+        }
+
+        SECTION("Lex float .45f") {
+            auto lexemes = lex.parse_all(".45f");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == ".45f");
+            REQUIRE(l.size == FLOAT);
+        }
+
+    }
+
+
+    SECTION("Lex explicit double") {
+
+        SECTION("Lex double 123.45e8d") {
+            auto lexemes = lex.parse_all("123.45e8d");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123.45e8d");
+            REQUIRE(l.size == DOUBLE);
+        }
+
+        SECTION("Lex double 123e8d") {
+            auto lexemes = lex.parse_all("123e8d");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123e8d");
+            REQUIRE(l.size == DOUBLE);
+        }
+
+        SECTION("Lex double 123e-8d") {
+            auto lexemes = lex.parse_all("123e-8d");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123e-8d");
+            REQUIRE(l.size == DOUBLE);
+        }
+
+        SECTION("Lex double .45e8d") {
+            auto lexemes = lex.parse_all(".45e8d");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == ".45e8d");
+            REQUIRE(l.size == DOUBLE);
+        }
+
+        SECTION("Lex double 123.45d") {
+            auto lexemes = lex.parse_all("123.45d");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == "123.45d");
+            REQUIRE(l.size == DOUBLE);
+        }
+
+        SECTION("Lex double .45d") {
+            auto lexemes = lex.parse_all(".45d");
+            REQUIRE(lexemes.size() == 1);
+            REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
+            float_num l = std::get<float_num>(lexemes[0]);
+            REQUIRE(l.content == ".45d");
+            REQUIRE(l.size == DOUBLE);
+        }
+
+    }
+
+    // TODO
+}
+
 
 TEST_CASE( "Lex one char", "[lexer]" ) {
     lexer lex;

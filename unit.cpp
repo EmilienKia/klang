@@ -51,6 +51,17 @@ std::shared_ptr<type> value_expression::type_from_literal(const k::lex::any_lite
                 // TODO Add (unsigned) long long and bigint
                 return {};
         }
+    } else if(std::holds_alternative<lex::float_num>(literal)) {
+        auto lit = literal.get<lex::float_num>();
+        switch(lit.size) {
+            case k::lex::FLOAT:
+                return primitive_type::from_type(primitive_type::FLOAT);
+            case k::lex::DOUBLE:
+                return primitive_type::from_type(primitive_type::DOUBLE);
+            default:
+                // TODO Add other floating point types
+                return {};
+        }
     } else if(std::holds_alternative<lex::character>(literal)) {
         return primitive_type::from_type(primitive_type::CHAR);
     } else if(std::holds_alternative<lex::boolean>(literal)) {

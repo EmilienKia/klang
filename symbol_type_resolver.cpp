@@ -100,6 +100,7 @@ void symbol_type_resolver::visit_value_expression(value_expression& expr)
     // Nothing to view here:
     // - No symbol to resolve
     // - Type is supposed to have already been set at value_expression construction.
+    // See value_expression::type_from_literal(const k::lex::any_literal& literal)
 }
 
 void symbol_type_resolver::visit_symbol_expression(symbol_expression& symbol)

@@ -201,12 +201,32 @@ namespace k::lex {
                         begin = pos;
                         content = c;
                         lex_state = SLASH;
+                    } else if (c == '.') {
+                        begin = pos;
+                        content = c;
+                        lex_state = POINT;
                     } else if (is_operator_punctuator_char(c)) {
                         begin = pos;
                         content = c;
                         lex_state = OPERATOR;
                     } else {
                         /* TODO */
+                    }
+                    break;
+                case POINT:
+                    if (c >='0' && c <='9') {
+                        content += c;
+                        num_content_size = 2;
+                        lex_state = FLOAT_POINT_DIGIT;
+                    } else if (is_operator_punctuator_char(c)) {
+                        content += c;
+                        lex_state = OPERATOR;
+                    } else {
+                        lexemes.push_back(operator_(begin, pos, content, operator_::DOT));
+                        content.clear();
+                        begin = {0, 0, 0};
+                        lex_state = START;
+                        continue;
                     }
                     break;
                 case SLASH:
@@ -358,6 +378,10 @@ namespace k::lex {
                         content += c;
                         num_content_size = 1;
                         lex_state = INT_LONG_SUFFIX;
+                    } else if (c == '.') {
+                        content += c;
+                        num_content_size = 2;
+                        lex_state = FLOAT_DIGIT_POINT_DIGIT;
                     } else {
                         // TODO also add size suffix handling
                         // Emit "0" number
@@ -470,6 +494,18 @@ namespace k::lex {
                     } else if (c == 'b' || c == 'B') {
                         content += c;
                         lex_state = INT_BIGINT_SUFFIX;
+                    } else if (c == '.') {
+                        content += c;
+                        num_content_size++;
+                        lex_state = FLOAT_DIGIT_POINT_DIGIT;
+                    } else if (c == 'e' || c == 'E') {
+                        content += c;
+                        num_content_size++;
+                        lex_state = FLOAT_DIGIT_EXP;
+                    } else if (c == 'f' || c == 'F' || c == 'd' || c == 'D') {
+                        content += c;
+                        push_float_and_reset();
+                        lex_state = START;
                     } else {
                         // TODO add suffix handling
                         // Emit "0" number
@@ -540,6 +576,185 @@ namespace k::lex {
                         // TODO add suffix handling
                         // Emit "0" number
                         push_integer_and_reset();
+                        lex_state = START;
+                        continue;
+                    }
+                    break;
+                case FLOAT_DIGIT_POINT_DIGIT:
+                    if(c >= '0' && c <= '9') {
+                        content += c;
+                        num_content_size++;
+                    } else if(c == 'e' || c == 'E') {
+                        content += c;
+                        num_content_size++;
+                        lex_state = FLOAT_DIGIT_POINT_DIGIT_EXP;
+                    } else if (c == 'f' || c == 'F') {
+                        content += c;
+                        fsize = FLOAT;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else if (c == 'd' || c == 'D') {
+                        content += c;
+                        fsize = DOUBLE;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else {
+                        // TODO add other fp suffix handling
+                        push_float_and_reset();
+                        lex_state = START;
+                        continue;
+                    }
+                    break;
+                case FLOAT_DIGIT_POINT_DIGIT_EXP:
+                    if(c == '+' || c == '-' || c >= '0' && c <= '9') {
+                        content += c;
+                        num_content_size++;
+                        lex_state = FLOAT_DIGIT_POINT_DIGIT_EXP_DIGIT;
+                    } else if (c == 'f' || c == 'F') {
+                        content += c;
+                        fsize = FLOAT;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else if (c == 'd' || c == 'D') {
+                        content += c;
+                        fsize = DOUBLE;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else {
+                        // TODO add other fp suffix handling
+                        push_float_and_reset();
+                        lex_state = START;
+                        continue;
+                    }
+                    break;
+                case FLOAT_DIGIT_POINT_DIGIT_EXP_DIGIT:
+                    if(c >= '0' && c <= '9') {
+                        content += c;
+                        num_content_size++;
+                    } else if (c == 'f' || c == 'F') {
+                        content += c;
+                        fsize = FLOAT;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else if (c == 'd' || c == 'D') {
+                        content += c;
+                        fsize = DOUBLE;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else {
+                        // TODO add other fp suffix handling
+                        push_float_and_reset();
+                        lex_state = START;
+                        continue;
+                    }
+                    break;
+                case FLOAT_POINT_DIGIT:
+                    if(c >= '0' && c <= '9') {
+                        content += c;
+                        num_content_size++;
+                    } else if(c == 'e' || c == 'E') {
+                        content += c;
+                        num_content_size++;
+                        lex_state = FLOAT_POINT_DIGIT_EXP;
+                    } else if (c == 'f' || c == 'F') {
+                        content += c;
+                        fsize = FLOAT;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else if (c == 'd' || c == 'D') {
+                        content += c;
+                        fsize = DOUBLE;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else {
+                        // TODO add other fp suffix handling
+                        push_float_and_reset();
+                        lex_state = START;
+                        continue;
+                    }
+                    break;
+                case FLOAT_POINT_DIGIT_EXP:
+                    if(c == '+' || c == '-' || c >= '0' && c <= '9') {
+                        content += c;
+                        num_content_size++;
+                        lex_state = FLOAT_POINT_DIGIT_EXP_DIGIT;
+                    } else if (c == 'f' || c == 'F') {
+                        content += c;
+                        fsize = FLOAT;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else if (c == 'd' || c == 'D') {
+                        content += c;
+                        fsize = DOUBLE;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else {
+                        // TODO add other fp suffix handling
+                        push_float_and_reset();
+                        lex_state = START;
+                        continue;
+                    }
+                    break;
+                case FLOAT_POINT_DIGIT_EXP_DIGIT:
+                    if(c >= '0' && c <= '9') {
+                        content += c;
+                        num_content_size++;
+                    } else if (c == 'f' || c == 'F') {
+                        content += c;
+                        fsize = FLOAT;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else if (c == 'd' || c == 'D') {
+                        content += c;
+                        fsize = DOUBLE;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else {
+                        // TODO add other fp suffix handling
+                        push_float_and_reset();
+                        lex_state = START;
+                        continue;
+                    }
+                    break;
+                case FLOAT_DIGIT_EXP:
+                    if(c == '+' || c == '-' || c >= '0' && c <= '9') {
+                        content += c;
+                        num_content_size++;
+                        lex_state = FLOAT_DIGIT_EXP_DIGIT;
+                    } else if (c == 'f' || c == 'F') {
+                        content += c;
+                        fsize = FLOAT;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else if (c == 'd' || c == 'D') {
+                        content += c;
+                        fsize = DOUBLE;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else {
+                        // TODO add other fp suffix handling
+                        push_float_and_reset();
+                        lex_state = START;
+                        continue;
+                    }
+                    break;
+                case FLOAT_DIGIT_EXP_DIGIT:
+                    if(c >= '0' && c <= '9') {
+                        content += c;
+                        num_content_size++;
+                    } else if (c == 'f' || c == 'F') {
+                        content += c;
+                        fsize = FLOAT;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else if (c == 'd' || c == 'D') {
+                        content += c;
+                        fsize = DOUBLE;
+                        push_float_and_reset();
+                        lex_state = START;
+                    } else {
+                        // TODO add other fp suffix handling
+                        push_float_and_reset();
                         lex_state = START;
                         continue;
                     }
@@ -793,6 +1008,14 @@ namespace k::lex {
         begin = {0, 0, 0};
     }
 
+    void lexer::push_float_and_reset() {
+        lexemes.push_back(float_num(begin, pos, content, num_content_size, fsize));
+        fsize = FLOAT_DEFAULT;
+        num_content_size = 0;
+        content.clear();
+        begin = {0, 0, 0};
+    }
+
     std::vector<any_lexeme> lexer::parse_all(std::string_view src) {
         parse(src);
         return lexemes;
@@ -836,6 +1059,13 @@ namespace k::lex {
     //
     k::value_type integer::value()const {
         // TODO
+        return {};
+    }
+
+    //
+    // Floating point number litteral
+    //
+    k::value_type float_num::value() const {
         return {};
     }
 
