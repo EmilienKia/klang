@@ -3,6 +3,7 @@
 #include <string_view>
 #include <vector>
 
+#include "logger.hpp"
 #include "parser.hpp"
 #include "ast_dump.hpp"
 #include "unit.hpp"
@@ -61,8 +62,9 @@ int main() {
     )SRC";
 #endif
 
+    k::log::logger logger;
 
-    k::parse::parser parser(source);
+    k::parse::parser parser(logger, source);
     k::parse::ast::unit ast_unit = parser.parse_unit();
 
     k::parse::dump::ast_dump_visitor visit(std::cout);
@@ -91,6 +93,8 @@ int main() {
     gen.optimize_functions();
     gen.verify();
     gen.dump();
+
+    logger.print();
 
     auto jit = gen.to_jit();
     if(!jit){

@@ -4,6 +4,7 @@
 
 #include <catch2/catch.hpp>
 
+#include "logger.hpp"
 #include "parser.hpp"
 #include "ast_dump.hpp"
 #include "unit.hpp"
@@ -14,7 +15,8 @@
 
 
 std::unique_ptr<k::unit::gen::unit_llvm_jit> gen(std::string_view src, bool dump = false) {
-    k::parse::parser parser(src);
+    k::log::logger log;
+    k::parse::parser parser(log, src);
     k::parse::ast::unit ast_unit = parser.parse_unit();
 
     if(dump) {

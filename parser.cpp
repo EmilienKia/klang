@@ -33,16 +33,11 @@ parsing_error::parsing_error(const char *string, const lex::lexeme& lexeme) :
 //
 // Parser
 //
-parser::parser(std::string_view src)
+parser::parser(k::log::logger& logger, std::string_view src):
+    _logger(logger),
+    _lexer(logger)
 {
     _lexer.parse(src);
-}
-
-ast::unit parser::parse(std::string_view src)
-{
-    _lexer.parse(src);
-
-    return parse_unit();
 }
 
 ast::unit parser::parse_unit()

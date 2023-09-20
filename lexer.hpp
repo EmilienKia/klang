@@ -17,6 +17,10 @@
 #include <variant>
 #include <vector>
 
+namespace k::log {
+class logger;
+}
+
 namespace k::lex {
 
     inline bool is_whitespace(char c) {
@@ -576,6 +580,8 @@ namespace k::lex {
         };
     protected:
 
+        k::log::logger& _logger;
+
         std::vector<any_lexeme> lexemes;
 
         /** Current lexer state. */
@@ -626,7 +632,7 @@ namespace k::lex {
         static void init();
 
     public:
-        lexer();
+        lexer(k::log::logger& logger);
 
         void parse(std::string_view src);
 

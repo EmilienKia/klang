@@ -1,17 +1,21 @@
 #include <catch2/catch.hpp>
 
 #include "lexer.hpp"
+#include "logger.hpp"
 
 using namespace k::lex;
+using namespace k::log;
 
 TEST_CASE( "Lex empty source", "[lexer]" ) {
-    lexer lex;
+    logger log;
+    lexer lex(log);
     auto lexemes = lex.parse_all("");
     REQUIRE( lexemes.empty() );
 }
 
 TEST_CASE( "Lex one identifier", "[lexer]" ) {
-    lexer lex;
+    logger log;
+    lexer lex(log);
 
     SECTION("Lex char-only identifier") {
         auto lexemes = lex.parse_all("toto");
@@ -40,7 +44,8 @@ TEST_CASE( "Lex one identifier", "[lexer]" ) {
 
 
 TEST_CASE( "Lex one keyword", "[lexer]" ) {
-    lexer lex;
+    logger log;
+    lexer lex(log);
 /*
     SECTION("Lex true keyword") {
         auto lexemes = lex.parse("true ");
@@ -81,7 +86,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
     // TODO Add lexing and tests for l64, l128 suffices
     // TODO Add lexing and tests for bi suffices
     // TODO Add lexing, tests and spec for i8, i16, i32, i64, i128, u8, u16, u32, u64 and u128 suffices
-    lexer lex;
+    logger log;
+    lexer lex(log);
 
     SECTION("Lex decimal", "[decimal]") {
 
@@ -1298,7 +1304,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
 
 
 TEST_CASE( "Lex one char", "[lexer]" ) {
-    lexer lex;
+    logger log;
+    lexer lex(log);
 
     SECTION("Lex char char") {
         auto lexemes = lex.parse_all("'c'");
@@ -1382,7 +1389,8 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
 
 
 TEST_CASE( "Lex one string", "[lexer]" ) {
-    lexer lex;
+    logger log;
+    lexer lex(log);
 
     SECTION("Lex string") {
         auto lexemes = lex.parse_all("\"Hell0\\\' world \\\\ !\"");
@@ -1405,7 +1413,8 @@ TEST_CASE( "Lex one string", "[lexer]" ) {
 
 
 TEST_CASE( "Lex one boolean", "[lexer]" ) {
-    lexer lex;
+    logger log;
+    lexer lex(log);
 
     SECTION("Lex true boolean") {
         auto lexemes = lex.parse_all("true");
@@ -1440,7 +1449,8 @@ TEST_CASE( "Lex one boolean", "[lexer]" ) {
 
 
 TEST_CASE( "Lex null", "[lexer]" ) {
-    lexer lex;
+    logger log;
+    lexer lex(log);
 
     SECTION("Lex one null") {
         auto lexemes = lex.parse_all("null");
@@ -1459,7 +1469,8 @@ TEST_CASE( "Lex null", "[lexer]" ) {
 }
 
 TEST_CASE( "Lex one comment", "[lexer]" ) {
-    lexer lex;
+    logger log;
+    lexer lex(log);
 
     SECTION("Lex end-of-line comment") {
         auto lexemes = lex.parse_all("// Hello my comment\n");
@@ -1497,7 +1508,8 @@ TEST_CASE( "Lex one comment", "[lexer]" ) {
 }
 
 TEST_CASE( "Lex one punctuator", "[lexer]" ) {
-    lexer lex;
+    logger log;
+    lexer lex(log);
 
     SECTION("Lex parenthesis") {
         auto lexemes = lex.parse_all("(");
@@ -1545,7 +1557,8 @@ TEST_CASE( "Lex one punctuator", "[lexer]" ) {
 }
 
 TEST_CASE( "Lex one operator", "[lexer]" ) {
-    lexer lex;
+    logger log;
+    lexer lex(log);
 
     SECTION("Lex dot") {
         auto lexemes = lex.parse_all(".");
@@ -1567,7 +1580,8 @@ TEST_CASE( "Lex one operator", "[lexer]" ) {
 }
 
 TEST_CASE("Additional lexer tests", "[lexer]") {
-    lexer lex;
+    logger log;
+    lexer lex(log);
 
     SECTION("Lex \"ident(0)\"") {
         auto lexemes = lex.parse_all("ident(0)");

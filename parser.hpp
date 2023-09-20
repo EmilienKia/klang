@@ -37,6 +37,8 @@ public:
 
 class parser {
 protected:
+    k::log::logger& _logger;
+
     lex::lexer _lexer;
 
     k::parse::ast::unit _unit;
@@ -44,11 +46,7 @@ protected:
 
 public:
 
-    parser() = default;
-    parser(std::string_view src);
-
-
-    ast::unit parse(std::string_view src);
+    parser(k::log::logger& logger, std::string_view src);
 
 
 
