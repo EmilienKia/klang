@@ -14,28 +14,41 @@ namespace k {
 namespace log {
 
 void logger::info(unsigned int code, const k::lex::char_coord& coord, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::info, code, coord, coord, message, args});
+    push_back(log_entry{log_entry::CRITICALITY::info, code, coord, coord, coord, message, args});
 }
 
 void logger::warning(unsigned int code, const k::lex::char_coord& coord, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::warning, code, coord, coord, message, args});
+    push_back(log_entry{log_entry::CRITICALITY::warning, code, coord, coord, coord, message, args});
 }
 
 void logger::error(unsigned int code, const k::lex::char_coord& coord, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::error, code, coord, coord, message, args});
+    push_back(log_entry{log_entry::CRITICALITY::error, code, coord, coord, coord, message, args});
 }
 
 void logger::info(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::info, code, start, end, message, args});
+    push_back(log_entry{log_entry::CRITICALITY::info, code, start, end, start, message, args});
 }
 
 void logger::warning(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::warning, code, start, end, message, args});
+    push_back(log_entry{log_entry::CRITICALITY::warning, code, start, end, start, message, args});
 }
 
 void logger::error(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::error, code, start, end, message, args});
+    push_back(log_entry{log_entry::CRITICALITY::error, code, start, end, start, message, args});
 }
+
+void logger::info(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string& message, const std::vector<std::string>& args) {
+    push_back(log_entry{log_entry::CRITICALITY::info, code, start, end, pos, message, args});
+}
+
+void logger::warning(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string& message, const std::vector<std::string>& args) {
+    push_back(log_entry{log_entry::CRITICALITY::warning, code, start, end, pos, message, args});
+}
+
+void logger::error(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string& message, const std::vector<std::string>& args) {
+    push_back(log_entry{log_entry::CRITICALITY::error, code, start, end, pos, message, args});
+}
+
 
 void logger::print() const {
     for(const auto& log : *this) {

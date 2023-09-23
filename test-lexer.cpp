@@ -1122,7 +1122,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
 }
 
 TEST_CASE( "Lex one float", "[lexer][float]" ) {
-    lexer lex;
+    logger log;
+    lexer lex(log);
 
     SECTION("Lex implicit float") {
 

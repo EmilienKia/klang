@@ -22,7 +22,7 @@ struct log_entry {
 
     unsigned int code;
 
-    k::lex::char_coord start, end;
+    k::lex::char_coord start, end, pos;
 
     std::string message;
 
@@ -42,6 +42,10 @@ public:
     void info(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string& message, const std::vector<std::string>& args = {});
     void warning(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string& message, const std::vector<std::string>& args = {});
     void error(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string& message, const std::vector<std::string>& args = {});
+
+    void info(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string& message, const std::vector<std::string>& args = {});
+    void warning(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string& message, const std::vector<std::string>& args = {});
+    void error(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string& message, const std::vector<std::string>& args = {});
 
     void print() const;
 
