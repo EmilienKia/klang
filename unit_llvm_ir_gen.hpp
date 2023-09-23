@@ -31,13 +31,23 @@
 
 #include "unit.hpp"
 
+#include "logger.hpp"
+#include "lexer.hpp"
+
 
 namespace k::unit::gen {
 
 class unit_llvm_jit;
 
+class generation_error : public std::runtime_error {
+public:
+    generation_error(const std::string &arg);
+    generation_error(const char *string);
+};
 
-class unit_llvm_ir_gen : public default_element_visitor {
+
+
+class unit_llvm_ir_gen : public default_element_visitor, protected k::lex::lexeme_logger {
 protected:
     unit& _unit;
 
@@ -55,8 +65,14 @@ protected:
 
     llvm::Type* get_llvm_type(const std::shared_ptr<type>& type);
 
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        error(code, lexeme, message, args);
+        throw generation_error(message);
+    }
+
 public:
-    unit_llvm_ir_gen(unit& unit);
+    unit_llvm_ir_gen(k::log::logger& logger, unit& unit);
 
     void visit_unit(unit &) override;
 

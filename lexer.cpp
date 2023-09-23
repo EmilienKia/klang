@@ -1074,6 +1074,22 @@ namespace k::lex {
         this->index = index;
     }
 
+    opt_ref_any_lexeme lexer::pick() {
+        if(!lexemes.empty() && index<lexemes.size()-1) {
+            return std::ref(lexemes[index+1]);
+        }  else {
+            return {};
+        }
+    }
+
+    char_coord lexer::end_coord() const {
+        if(lexemes.empty()) {
+            return {};
+        } else {
+            return std::visit([](auto&& arg)->char_coord{return arg.end;}, lexemes.back());
+        }
+    }
+
     bool lexer::eof() const {
         return lexemes.empty() || index>=lexemes.size();
     }
@@ -1127,5 +1143,46 @@ namespace k::lex {
         return {nullptr};
     }
 
+    //
+    // Lexeme logger facility
+    //
+    void lexeme_logger::info(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
+        _logger.info(_error_class|code, lexeme.start, lexeme.end, message, args);
+    }
+
+    void lexeme_logger::warning(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
+        _logger.warning(_error_class|code, lexeme.start, lexeme.end, message, args);
+    }
+
+    void lexeme_logger::error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
+        _logger.error(_error_class|code, lexeme.start, lexeme.end, message, args);
+    }
+
+    void lexeme_logger::info(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
+        if(lexeme) {
+            const auto& lex = as_lexeme(lexeme);
+            _logger.info(_error_class|code, lex.start, lex.end, message, args);
+        } else {
+            _logger.info(_error_class|code, /*_lexer.end_coord()*/ {}, message, args);
+        }
+    }
+
+    void lexeme_logger::warning(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
+        if(lexeme) {
+            const auto& lex = as_lexeme(lexeme);
+            _logger.warning(_error_class|code, lex.start, lex.end, message, args);
+        } else {
+            _logger.warning(_error_class|code, /*_lexer.end_coord()*/ {}, message, args);
+        }
+    }
+
+    void lexeme_logger::error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
+        if(lexeme) {
+            const auto& lex = as_lexeme(lexeme);
+            _logger.error(_error_class|code, lex.start, lex.end, message, args);
+        } else {
+            _logger.error(_error_class|code, /*_lexer.end_coord()*/ {}, message, args);
+        }
+    }
 
 } // k::lex

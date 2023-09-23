@@ -15,10 +15,22 @@
 namespace k::unit::gen {
 
 //
+// Exceptions
+//
+generation_error::generation_error(const std::string &arg) :
+        runtime_error(arg)
+{}
+
+generation_error::generation_error(const char *string) :
+        runtime_error(string)
+{}
+
+//
 // LLVM unit generator
 //
 
-unit_llvm_ir_gen::unit_llvm_ir_gen(unit& unit):
+unit_llvm_ir_gen::unit_llvm_ir_gen(k::log::logger& logger, unit& unit):
+lexeme_logger(logger, 0x40000),
 _unit(unit)
 {
     // TODO initialize them only once

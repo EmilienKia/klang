@@ -26,7 +26,7 @@ std::unique_ptr<k::unit::gen::unit_llvm_jit> gen(std::string_view src, bool dump
     }
 
     k::unit::unit unit;
-    k::parse::ast_unit_visitor::visit(ast_unit, unit);
+    k::parse::ast_unit_visitor::visit(log, ast_unit, unit);
 
     if(dump) {
         k::unit::dump::unit_dump unit_dump(std::cout);
@@ -34,7 +34,7 @@ std::unique_ptr<k::unit::gen::unit_llvm_jit> gen(std::string_view src, bool dump
         unit_dump.dump(unit);
     }
 
-    k::unit::symbol_type_resolver var_resolver(unit);
+    k::unit::symbol_type_resolver var_resolver(log, unit);
     var_resolver.resolve();
 
     if(dump) {
@@ -43,7 +43,7 @@ std::unique_ptr<k::unit::gen::unit_llvm_jit> gen(std::string_view src, bool dump
         unit_dump.dump(unit);
     }
 
-    k::unit::gen::unit_llvm_ir_gen gen(unit);
+    k::unit::gen::unit_llvm_ir_gen gen(log, unit);
     unit.accept(gen);
     gen.verify();
 

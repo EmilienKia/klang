@@ -7,12 +7,13 @@
 
 #include "ast.hpp"
 #include "unit.hpp"
-
+#include "logger.hpp"
+#include "lexer.hpp"
 #include <vector>
 
 namespace k::parse {
 
-class ast_unit_visitor : public k::parse::default_ast_visitor {
+class ast_unit_visitor : public k::parse::default_ast_visitor, protected lex::lexeme_logger {
 protected:
 
     typedef k::parse::default_ast_visitor super;
@@ -68,8 +69,8 @@ protected:
     std::shared_ptr<unit::expression> _expr;
 
 
-
-    ast_unit_visitor(k::unit::unit& unit) :
+    ast_unit_visitor(k::log::logger& logger, k::unit::unit& unit) :
+        lex::lexeme_logger(logger, 0x20000),
         _unit(unit) {}
 
 
@@ -108,8 +109,18 @@ protected:
 
     void visit_comma_expr(ast::expr_list_expr &) override;
 
+    [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        error(code, lexeme, message, args);
+        throw parsing_error(message);
+    }
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        error(code, lexeme, message, args);
+        throw parsing_error(message);
+    }
+
 public:
-    static void visit(k::parse::ast::unit& src, k::unit::unit& unit);
+    static void visit(k::log::logger& logger, k::parse::ast::unit& src, k::unit::unit& unit);
 
 
 };

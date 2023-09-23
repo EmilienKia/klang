@@ -6,6 +6,22 @@
 
 namespace k::unit {
 
+
+//
+// Exceptions
+//
+resolution_error::resolution_error(const std::string &arg) :
+        runtime_error(arg)
+{}
+
+resolution_error::resolution_error(const char *string) :
+        runtime_error(string)
+{}
+
+//
+// Symabol and type resolver
+//
+
 void symbol_type_resolver::resolve()
 {
     visit_unit(_unit);
@@ -69,7 +85,7 @@ void symbol_type_resolver::visit_return_statement(return_statement& stmt)
         auto cast = adapt_type(expr, ret_type);
         if(!cast) {
             // TODO throw an exception
-            // Error: return expression type must be compatible to function return type (cannot be cast).
+            // Error 0x0001: return expression type must be compatible to function return type (cannot be cast).
             std::cerr << "Error: return expression type must be compatible to function return type" << std::endl;
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
@@ -125,7 +141,7 @@ void symbol_type_resolver::visit_unary_expression(unary_expression& expr)
 
     if(!sub) {
         // TODO throw an exception
-        // Error: unary expression must have non-null sub expresssion
+        // Error 0x0002: unary expression must have non-null sub expresssion
         std::cerr << "Error: unary expression must have non-null sub expresssion" << std::endl;
     }
 
@@ -133,7 +149,7 @@ void symbol_type_resolver::visit_unary_expression(unary_expression& expr)
 
     if(!type::is_resolved(sub->get_type())) {
         // TODO throw an exception
-        // Error: unary expression must have resolved type for its sub-expression
+        // Error 0x0003: unary expression must have resolved type for its sub-expression
         std::cerr << "Error: unary expression must have resolved type for its sub-expression" << std::endl;
     }
 }
@@ -145,7 +161,7 @@ void symbol_type_resolver::visit_binary_expression(binary_expression& expr)
 
     if(!left || !right) {
         // TODO throw an exception
-        // Error: binary expression must have non-null left and right expresssion
+        // Error 0x0004: binary expression must have non-null left and right expresssion
         std::cerr << "Error: binary expression must have non-null left and right expresssion" << std::endl;
     }
 
@@ -154,7 +170,7 @@ void symbol_type_resolver::visit_binary_expression(binary_expression& expr)
 
     if(!type::is_resolved(left->get_type()) || !type::is_resolved(right->get_type())) {
         // TODO throw an exception
-        // Error: binary expression must have resolved type at left and right sub-expression
+        // Error 0x0005: binary expression must have resolved type at left and right sub-expression
         std::cerr << "Error: binary expression must have resolved type at left and right sub-expression" << std::endl;
     }
 }

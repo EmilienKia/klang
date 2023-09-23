@@ -22,33 +22,26 @@ namespace k::parse {
 
 
 class parsing_error : public std::runtime_error {
-protected:
-    const lex::lexeme* _lexeme;
 public:
     parsing_error(const std::string &arg);
     parsing_error(const char *string);
-
-    parsing_error(const std::string &arg, const lex::lexeme& lexeme);
-    parsing_error(const char *string, const lex::lexeme& lexeme);
-
 };
 
 
-
-class parser {
+class parser : protected lex::lexeme_logger {
 protected:
-    k::log::logger& _logger;
-
     lex::lexer _lexer;
 
     k::parse::ast::unit _unit;
 
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        error(code, lexeme, message, args);
+        throw parsing_error(message);
+    }
 
 public:
 
     parser(k::log::logger& logger, std::string_view src);
-
-
 
     /**
      * UNIT := ?MODULE_DECLARATION *IMPORT DECLARATIONS

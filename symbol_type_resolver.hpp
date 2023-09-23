@@ -7,13 +7,25 @@
 
 #include "unit.hpp"
 
+#include "logger.hpp"
+#include "lexer.hpp"
+
 namespace k::unit {
+
+
+class resolution_error : public std::runtime_error {
+public:
+    resolution_error(const std::string &arg);
+    resolution_error(const char *string);
+};
+
+
 
 /**
  * Unit symbol resolver
  * This helper class will resolve method and variable usages to their definitions.
  */
-class symbol_type_resolver : public default_element_visitor {
+class symbol_type_resolver : public default_element_visitor, protected k::lex::lexeme_logger {
 protected:
     unit& _unit;
 
@@ -21,12 +33,20 @@ protected:
 
 public:
 
-    symbol_type_resolver(unit& unit) : _unit(unit) {
+    symbol_type_resolver(k::log::logger& logger, unit& unit) :
+    lexeme_logger(logger, 0x30000),
+    _unit(unit)  {
     }
 
     void resolve();
 
 protected:
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        error(code, lexeme, message, args);
+        throw resolution_error(message);
+    }
+
 
     void visit_unit(unit&) override;
 

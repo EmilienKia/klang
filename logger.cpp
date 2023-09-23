@@ -69,9 +69,9 @@ void logger::print(const log_entry& entry) {
             store.push_back(arg);
         }
         std::string msg = fmt::vformat(entry.message, store);
-        fmt::print("{},{} - {} {:0>4X} : {}\n", entry.start.line, entry.start.col, criticality_str[entry.criticality], entry.code, msg);
+        fmt::print("{},{} - {} {:0>5X} : {}\n", entry.start.line, entry.start.col, criticality_str[entry.criticality], entry.code, msg);
     } else {
-        fmt::print("{},{} - {} {:0>4X} : {}\n", entry.start.line, entry.start.col, criticality_str[entry.criticality], entry.code, entry.message);
+        fmt::print("{},{} - {} {:0>5X} : {}\n", entry.start.line, entry.start.col, criticality_str[entry.criticality], entry.code, entry.message);
     }
 }
 

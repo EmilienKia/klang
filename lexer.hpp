@@ -644,6 +644,10 @@ namespace k::lex {
         size_t tell() const;
         void seek(size_t pos);
 
+        opt_ref_any_lexeme pick();
+
+        char_coord end_coord() const;
+
         bool eof() const;
 
     };
@@ -658,6 +662,31 @@ namespace k::lex {
         void sync() { _index = _lexer.tell(); }
         void rollback() { _lexer.seek(_index); }
     };
+
+
+    inline const lex::lexeme& as_lexeme(const lex::opt_ref_any_lexeme& lexeme) {
+        const auto& lex = lexeme.value().get();
+        return std::visit([](auto&& arg)->const lex::lexeme&{return (const lex::lexeme&)arg;}, lex);
+    }
+
+    class lexeme_logger {
+    protected:
+        k::log::logger& _logger;
+        unsigned long _error_class;
+
+        lexeme_logger(k::log::logger& logger,unsigned long error_class) : _logger(logger), _error_class(error_class) {}
+
+        // TODO Link it to source container to get lines and end-of-file marker.
+
+        void info(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
+        void warning(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
+        void error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
+
+        void info(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
+        void warning(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
+        void error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
+    };
+
 
 } // k::lex
 #endif //KLANG_LEXER_HPP

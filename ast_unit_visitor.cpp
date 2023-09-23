@@ -1,6 +1,8 @@
 //
 // Created by Emilien Kia <emilien.kia+dev@gmail.com>.
 //
+// Note: Last parser log number: 0x20008
+//
 
 #include "ast_unit_visitor.hpp"
 
@@ -8,8 +10,8 @@
 
 namespace k::parse {
 
-    void ast_unit_visitor::visit(k::parse::ast::unit& src, k::unit::unit& unit) {
-        ast_unit_visitor visitor(unit);
+    void ast_unit_visitor::visit(k::log::logger& logger, k::parse::ast::unit& src, k::unit::unit& unit) {
+        ast_unit_visitor visitor(logger, unit);
         visitor.visit_unit(src);
     }
 
@@ -46,7 +48,7 @@ namespace k::parse {
     void ast_unit_visitor::visit_visibility_decl(ast::visibility_decl &visibility) {
         auto scope = std::dynamic_pointer_cast<ns_context>(_contexts.back());
         if(!scope) {
-            // TODO throw exception : current context doesnt support default visibility
+            throw_error(0x0001, visibility.scope, "Current context doesnt support default visibility");
         }
 
         switch(visibility.scope.type) {
@@ -60,7 +62,7 @@ namespace k::parse {
                 scope->visibility = unit::PRIVATE;
                 break;
             default:
-                // TODO throw an exception : Unrecognized visibility context keyword
+                throw_error(0x0002, visibility.scope, "Unrecognized visibility context keyword {}", {visibility.scope.content});
                 break;
         }
     }
@@ -68,7 +70,7 @@ namespace k::parse {
     void ast_unit_visitor::visit_namespace_decl(ast::namespace_decl &ns) {
         auto parent_scope = std::dynamic_pointer_cast<ns_context>(_contexts.back());
         if(!parent_scope) {
-            // TODO throw exception : current context is not a namespace
+//            throw_error(0x0003, ..., "Current context is not a namespace namespace");
         }
 
         std::shared_ptr<k::unit::ns> namesp = parent_scope->content->get_child_namespace(ns.name->content);
@@ -88,11 +90,11 @@ namespace k::parse {
         } else if(auto parent = std::dynamic_pointer_cast<generic_context<unit::block>>(parent_context)) {
             parent_scope = std::dynamic_pointer_cast<unit::variable_holder>(parent->content);
         } else {
-            // TODO throw exception : current context doesnt support variable declaration
+            throw_error(0x0004, decl.name, "Current context doesnt support variable declaration");
         }
 
         if(!parent_scope) {
-            // TODO throw exception : current context doesnt support variable declaration
+            throw_error(0x0005, decl.name, "Current context doesnt support variable declaration");
         }
 
         std::shared_ptr<unit::variable_definition> var = parent_scope->append_variable(decl.name.content);
@@ -108,7 +110,7 @@ namespace k::parse {
     void ast_unit_visitor::visit_function_decl(ast::function_decl & func) {
         auto parent_scope = std::dynamic_pointer_cast<ns_context>(_contexts.back());
         if(!parent_scope) {
-            // TODO throw exception : current context doesnt support functions
+            throw_error(0x0006, func.name, "Current context doesnt support functions");
         }
 
         std::shared_ptr<unit::function> function = parent_scope->content->define_function(func.name.content);
@@ -308,6 +310,7 @@ namespace k::parse {
                 _expr = unit::greater_equal_expression::make_shared(lexpr, rexpr);
                 break;
             default: // TODO other operations
+                throw_error(0x0007, expr.op, "Binary operator '{}' not supported", {expr.op.content});
                 break;
         }
     }
@@ -335,6 +338,9 @@ namespace k::parse {
                 break;
             case lex::operator_::EXCLAMATION_MARK:
                 _expr = unit::logical_not_expression::make_shared(sub);
+                break;
+            default:
+                throw_error(0x0008, expr.op, "Unnary operator '{}' not supported", {expr.op.content});
                 break;
         }
     }
