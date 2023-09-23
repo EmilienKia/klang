@@ -370,19 +370,31 @@ namespace k::parse {
         };
 
         struct block_statement : public statement {
+            lex::punctuator open_brace, close_brace;
             std::vector <any_statement> statements;
 
-            block_statement(const std::vector <any_statement> &statements) : statements(statements) {}
+            block_statement(const lex::punctuator& open_brace,
+                            const lex::punctuator& close_brace,
+                            const std::vector <any_statement> &statements) :
+                            open_brace(open_brace),
+                            close_brace(close_brace),
+                            statements(statements) {}
 
-            block_statement(std::vector <any_statement> &&statements) : statements(statements) {}
+            block_statement(lex::punctuator&& open_brace,
+                            lex::punctuator&& close_brace,
+                            std::vector <any_statement> &&statements) :
+                            open_brace(open_brace),
+                            close_brace(close_brace),
+                            statements(statements) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
 
         struct return_statement : public statement {
+            lex::keyword ret;
             ast::expr_ptr expr;
 
-            return_statement(ast::expr_ptr expr) : expr(expr) {}
+            return_statement(const lex::keyword& ret, ast::expr_ptr expr) : ret(ret), expr(expr) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -404,15 +416,24 @@ namespace k::parse {
         };
 
         struct namespace_decl : public declaration {
+            lex::keyword ns;
+            lex::punctuator open_par, close_par;
             std::optional <lex::identifier> name;
             std::vector <decl_ptr> declarations;
 
-            namespace_decl(const std::optional <lex::identifier> &name,
+            namespace_decl(const lex::keyword& ns,
+                           const lex::punctuator& open_par,
+                           const lex::punctuator& close_par,
+                           const std::optional <lex::identifier> &name,
                            const std::vector <decl_ptr> &declarations) :
-                    name(name), declarations(declarations) {}
+                    ns(ns), open_par(open_par), close_par(close_par), name(name), declarations(declarations) {}
 
-            namespace_decl(std::optional <lex::identifier> &&name, std::vector <decl_ptr> &&declarations) :
-                    name(name), declarations(declarations) {}
+            namespace_decl(lex::keyword&& ns,
+                           lex::punctuator&& open_par,
+                           lex::punctuator&& close_par,
+                           std::optional <lex::identifier> &&name,
+                           std::vector <decl_ptr> &&declarations) :
+                    ns(ns), open_par(open_par), close_par(close_par), name(name), declarations(declarations) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

@@ -154,8 +154,13 @@ std::optional<ast::namespace_decl> parser::parse_namespace_decl()
 {
     lex::lex_holder holder(_lexer);
 
+    std::optional<lex::keyword> ns;
+    std::optional<lex::punctuator> open_par, close_par;
+
     // Not a "namespace" keyword, skip namespace declaration
-    if(lex::opt_ref_any_lexeme lnamespace = _lexer.get(); lnamespace!=lex::keyword::NAMESPACE) {
+    if(lex::opt_ref_any_lexeme lnamespace = _lexer.get(); lnamespace==lex::keyword::NAMESPACE) {
+        ns = lex::as<lex::keyword>(lnamespace);
+    } else {
         holder.rollback();
         return {};
     }
@@ -171,18 +176,22 @@ std::optional<ast::namespace_decl> parser::parse_namespace_decl()
     }
 
     // Expect an open brace
-    if(lex::opt_ref_any_lexeme lopenbrace= _lexer.get(); lopenbrace!=lex::punctuator::BRACE_OPEN) {
+    if(lex::opt_ref_any_lexeme lopenbrace= _lexer.get(); lopenbrace==lex::punctuator::BRACE_OPEN) {
+        open_par = lex::as<lex::punctuator>(lopenbrace);
+    } else {
         throw_error(0x0005, _lexer.pick(), "Namespace open brace is missing");
     }
 
     std::vector<ast::decl_ptr> declarations = parse_declarations();
 
     // Expect a closing brace
-    if(lex::opt_ref_any_lexeme lclosingbrace= _lexer.get(); lclosingbrace!=lex::punctuator::BRACE_CLOSE) {
+    if(lex::opt_ref_any_lexeme lclosingbrace= _lexer.get(); lclosingbrace==lex::punctuator::BRACE_CLOSE) {
+        close_par = lex::as<lex::punctuator>(lclosingbrace);
+    } else {
         throw_error(0x0006, _lexer.pick(), "Namespace closing brace is expected");
     }
 
-    return {{name, declarations}};
+    return {{*ns, *open_par, *close_par, name, declarations}};
 }
 
 std::vector<lex::keyword> parser::parse_specifiers()
@@ -366,7 +375,10 @@ std::optional<ast::block_statement> parser::parse_statement_block()
     lex::lex_holder holder(_lexer);
 
     // Look for open brace
-    if(auto lopenbrace = _lexer.get(); lopenbrace!=lex::punctuator::BRACE_OPEN) {
+    std::optional<lex::punctuator> open_brace;
+    if(auto lopenbrace = _lexer.get(); lopenbrace==lex::punctuator::BRACE_OPEN) {
+        open_brace = lex::as<lex::punctuator>(lopenbrace);
+    } else {
         holder.rollback();
         return {};
         // Err: statement block requires a opening brace.
@@ -381,18 +393,24 @@ std::optional<ast::block_statement> parser::parse_statement_block()
     }
 
     // Look for closing brace
-    if(auto lclosebrace = _lexer.get(); lclosebrace != lex::punctuator::BRACE_CLOSE) {
+    std::optional<lex::punctuator> close_brace;
+    if(auto lclosebrace = _lexer.get(); lclosebrace == lex::punctuator::BRACE_CLOSE) {
+        close_brace = lex::as<lex::punctuator>(lclosebrace);
+    } else {
         throw_error(0x0010, _lexer.pick(), "Block is expecting a closing brace '}'");
     }
 
-    return {{statements}};
+    return {{*open_brace, *close_brace, statements}};
 }
 
 std::optional<ast::return_statement> parser::parse_return_statement()
 {
     lex::lex_holder holder(_lexer);
 
-    if(auto lreturn = _lexer.get(); lreturn!=lex::keyword::RETURN) {
+    std::optional<lex::keyword> ret;
+    if(auto lreturn = _lexer.get(); lreturn==lex::keyword::RETURN) {
+        ret = lex::as<lex::keyword>(lreturn);
+    } else {
         holder.rollback();
         return {};
     }
@@ -404,7 +422,7 @@ std::optional<ast::return_statement> parser::parse_return_statement()
         throw_error(0x0011, _lexer.pick(), "Return statement is expecting to finish by a semicolon ';'");
     }
 
-    return {{expr}};
+    return {{*ret, expr}};
 
 }
 

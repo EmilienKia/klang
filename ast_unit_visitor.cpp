@@ -70,7 +70,7 @@ namespace k::parse {
     void ast_unit_visitor::visit_namespace_decl(ast::namespace_decl &ns) {
         auto parent_scope = std::dynamic_pointer_cast<ns_context>(_contexts.back());
         if(!parent_scope) {
-//            throw_error(0x0003, ..., "Current context is not a namespace namespace");
+            throw_error(0x0003, ns.ns, "Current context is not a namespace namespace");
         }
 
         std::shared_ptr<k::unit::ns> namesp = parent_scope->content->get_child_namespace(ns.name->content);
@@ -340,7 +340,7 @@ namespace k::parse {
                 _expr = unit::logical_not_expression::make_shared(sub);
                 break;
             default:
-                throw_error(0x0008, expr.op, "Unnary operator '{}' not supported", {expr.op.content});
+                throw_error(0x0008, expr.op, "Unary operator '{}' not supported", {expr.op.content});
                 break;
         }
     }
