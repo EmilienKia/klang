@@ -77,23 +77,19 @@ void symbol_type_resolver::visit_return_statement(return_statement& stmt)
 {
     auto func = stmt.get_block()->get_function();
     auto ret_type = func->return_type();
-    // TODO check if return type is void to prevent to return sometinhf
+    // TODO check if return type is void to prevent to return sometinhg
 
     if(auto expr = stmt.get_expression()) {
         expr->accept(*this);
-
         auto cast = adapt_type(expr, ret_type);
         if(!cast) {
-            // TODO throw an exception
-            // Error 0x0001: return expression type must be compatible to function return type (cannot be cast).
-            std::cerr << "Error: return expression type must be compatible to function return type" << std::endl;
+            throw_error(0x0001, stmt.get_ast_return_statement()->ret, "Return expression type must be compatible to the expected function return type");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_expression(cast);
         } else {
             // Compatible type, no need to cast.
         }
-
     }
 }
 

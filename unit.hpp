@@ -311,6 +311,7 @@ class unary_expression  : public expression {
 protected:
     /** Sub expression. */
     std::shared_ptr<expression> _sub_expr;
+    std::shared_ptr<k::parse::ast::unary_expression> _ast_unary_expr;
 
     unary_expression() = default;
 
@@ -336,6 +337,16 @@ public:
     std::shared_ptr<expression>& sub_expr() {
         return _sub_expr;
     }
+
+    void set_ast_unary_expr(const std::shared_ptr<k::parse::ast::unary_expression>& expr) {
+        _ast_unary_expr = expr;
+    }
+
+    const std::shared_ptr<k::parse::ast::unary_expression>& get_ast_unary_expr() const {
+        return _ast_unary_expr;
+    }
+
+
 };
 
 class binary_expression : public expression
@@ -730,10 +741,10 @@ protected:
 public:
     void accept(element_visitor& visitor) override;
 
-    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
         std::shared_ptr<unary_plus_expression> expr{ new unary_plus_expression()};
         expr->assign(sub_expr);
-        return std::shared_ptr<expression>{expr};
+        return std::shared_ptr<unary_expression>{expr};
     }
 };
 
@@ -745,10 +756,10 @@ protected:
 public:
     void accept(element_visitor& visitor) override;
 
-    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
         std::shared_ptr<unary_minus_expression> expr{ new unary_minus_expression()};
         expr->assign(sub_expr);
-        return std::shared_ptr<expression>{expr};
+        return std::shared_ptr<unary_expression>{expr};
     }
 };
 
@@ -760,10 +771,10 @@ protected:
 public:
     void accept(element_visitor& visitor) override;
 
-    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
         std::shared_ptr<bitwise_not_expression> expr{ new bitwise_not_expression()};
         expr->assign(sub_expr);
-        return std::shared_ptr<expression>{expr};
+        return std::shared_ptr<unary_expression>{expr};
     }
 };
 
@@ -815,14 +826,12 @@ protected:
 public:
     void accept(element_visitor& visitor) override;
 
-    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
         std::shared_ptr<logical_not_expression> expr{ new logical_not_expression()};
         expr->assign(sub_expr);
-        return std::shared_ptr<expression>{expr};
+        return std::shared_ptr<unary_expression>{expr};
     }
 };
-
-
 
 class comparison_expression : public binary_expression
 {
@@ -1065,11 +1074,21 @@ protected:
 
     std::shared_ptr<expression> _expression;
 
+    std::shared_ptr<k::parse::ast::return_statement> _ast_return_stmt;
+
     explicit return_statement(const std::shared_ptr<block>& block) :
             statement(block) {}
 
 public:
     void accept(element_visitor& visitor) override;
+
+    void set_ast_return_statement(std::shared_ptr<k::parse::ast::return_statement> _ast_return_stmt) {
+        _ast_return_stmt = _ast_return_stmt;
+    }
+
+    std::shared_ptr<const k::parse::ast::return_statement> get_ast_return_statement() const {
+        return _ast_return_stmt;
+    }
 
     std::shared_ptr<expression> get_expression() { return _expression; };
     std::shared_ptr<const expression> get_expression() const { return _expression; };

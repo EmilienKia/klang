@@ -42,6 +42,11 @@ public:
 
 protected:
 
+    [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        error(code, lexeme, message, args);
+        throw resolution_error(message);
+    }
+
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         error(code, lexeme, message, args);
         throw resolution_error(message);

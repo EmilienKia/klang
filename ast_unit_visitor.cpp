@@ -166,6 +166,7 @@ namespace k::parse {
         std::shared_ptr<block_context> block = std::dynamic_pointer_cast<block_context>(_contexts.back());
 
         std::shared_ptr<unit::return_statement> ret_stmt = block->content->append_return_statement();
+        ret_stmt->set_ast_return_statement(stmt.shared_as<ast::return_statement>());
 
         // Push function context
         stack<return_context> push(_contexts, ret_stmt);
@@ -330,23 +331,26 @@ namespace k::parse {
         expr.expr()->visit(*this);
         auto sub = _expr;
 
+        std::shared_ptr<unit::unary_expression> unary;
         switch(expr.op.type) {
             case lex::operator_::PLUS:
-                _expr = unit::unary_plus_expression::make_shared(sub);
+                unary = unit::unary_plus_expression::make_shared(sub);
                 break;
             case lex::operator_::MINUS:
-                _expr = unit::unary_minus_expression::make_shared(sub);
+                unary = unit::unary_minus_expression::make_shared(sub);
                 break;
             case lex::operator_::TILDE:
-                _expr = unit::bitwise_not_expression::make_shared(sub);
+                unary = unit::bitwise_not_expression::make_shared(sub);
                 break;
             case lex::operator_::EXCLAMATION_MARK:
-                _expr = unit::logical_not_expression::make_shared(sub);
+                unary = unit::logical_not_expression::make_shared(sub);
                 break;
             default:
                 throw_error(0x0008, expr.op, "Unary operator '{}' not supported", {expr.op.content});
                 break;
         }
+        unary->set_ast_unary_expr(expr.shared_as<ast::unary_prefix_expr>());
+        _expr = unary;
     }
 
     void ast_unit_visitor::visit_unary_postfix_expr(ast::unary_postfix_expr &) {
