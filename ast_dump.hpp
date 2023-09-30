@@ -78,15 +78,14 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             // Module name:
             prefix();
             if(unit.module_name) {
-                visit_qualified_identifier(*unit.module_name);
+                unit.module_name->visit(*this);
             } else {
-                _stm << "<<no-module-name>>";
+                _stm << "<<no-module-name>>" << std::endl;
             }
-            _stm << std::endl;
 
             auto pf = prefix_inc();
             for(auto import : unit.imports) {
-                visit_import(import);
+                visit_import(*import);
             }
             visit_declarations(unit.declarations);
         }
@@ -95,6 +94,16 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             for(auto& decl : decls) {
                 decl->visit(*this);
             }
+        }
+
+        void visit_module_name(ast::module_name& name) override {
+            if(name.qname) {
+                _stm << "module ";
+                name.qname->visit(*this);
+            } else {
+                _stm << "module <<unamed-module>>";
+            }
+            _stm << std::endl;
         }
 
         void visit_import(ast::import& anImport) override {
@@ -176,10 +185,10 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             _stm << function.name.content << "(";
 
             if(!function.params.empty()) {
-                visit_parameter_specifier(function.params[0]);
+                visit_parameter_specifier(*function.params[0]);
                 for(size_t n=1; n<function.params.size(); ++n) {
                     _stm << ", ";
-                    visit_parameter_specifier(function.params[n]);
+                    visit_parameter_specifier(*function.params[n]);
                 }
             }
             _stm << ")";

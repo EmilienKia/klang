@@ -15,6 +15,10 @@ void ast::unit::visit(ast_visitor &visitor) {
     visitor.visit_unit(*this);
 }
 
+void ast::module_name::visit(ast_visitor &visitor) {
+    visitor.visit_module_name(*this);
+}
+
 void ast::import::visit(ast_visitor &visitor) {
     visitor.visit_import(*this);
 }
@@ -113,16 +117,24 @@ void ast::identifier_expr::visit(ast_visitor &visitor) {
     visitor.visit_identifier_expr(*this);
 }
 
-
+//
 // Default AST visitor
+//
 
 void default_ast_visitor::visit_unit(ast::unit& unit) {
-    for(ast::import& import : unit.imports) {
-        import.visit(*this);
+    if(unit.module_name) {
+        unit.module_name->visit(*this);
+    }
+
+    for(auto import : unit.imports) {
+        import->visit(*this);
     }
     for(ast::decl_ptr& decl : unit.declarations) {
         decl->visit(*this);
     }
+}
+
+void default_ast_visitor::visit_module_name(ast::module_name &) {
 }
 
 void default_ast_visitor::visit_import(ast::import &) {

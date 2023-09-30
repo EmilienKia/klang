@@ -68,16 +68,16 @@ int main() {
     try {
 
         k::parse::parser parser(logger, source);
-        k::parse::ast::unit ast_unit = parser.parse_unit();
+        std::shared_ptr<k::parse::ast::unit> ast_unit = parser.parse_unit();
 
         k::parse::dump::ast_dump_visitor visit(std::cout);
         std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
-        visit.visit_unit(ast_unit);
+        visit.visit_unit(*ast_unit);
 
         k::unit::dump::unit_dump unit_dump(std::cout);
 
         k::unit::unit unit;
-        parse::ast_unit_visitor::visit(logger, ast_unit, unit);
+        parse::ast_unit_visitor::visit(logger, *ast_unit, unit);
         std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
         unit_dump.dump(unit);
 

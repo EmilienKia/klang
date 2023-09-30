@@ -25,16 +25,27 @@ namespace k::parse {
 
     namespace ast {
 
-        struct ast_node {
+    struct ast_node  : public std::enable_shared_from_this<ast_node> {
             virtual void visit(ast_visitor &visitor) = 0;
+
+            template<typename T>
+            std::shared_ptr<T> shared_as() {
+                return std::dynamic_pointer_cast<T>(shared_from_this());
+            }
+
+            template<typename T>
+            std::shared_ptr<const T> shared_as() const {
+                return std::dynamic_pointer_cast<T>(shared_from_this());
+            }
         };
 
         struct import : public ast_node {
+            lex::keyword import_kw;
             lex::identifier name;
 
-            import(const lex::identifier &name) : name(name) {}
+            import(const lex::keyword& import_kw, const lex::identifier &name) : import_kw(import_kw), name(name) {}
 
-            import(lex::identifier &&name) : name(name) {}
+            import(lex::keyword&& import_kw, lex::identifier &&name) : import_kw(import_kw), name(name) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -136,12 +147,10 @@ namespace k::parse {
             expression(expression &&) = default;
         };
 
-
         struct visibility_decl;
         struct namespace_decl;
         struct variable_decl;
         struct function_decl;
-
 
         /**
          * Declaration (member of a namespace).
@@ -149,8 +158,6 @@ namespace k::parse {
         struct declaration : public ast_node {
         };
 
-        typedef anyof::any_of <declaration, visibility_decl, namespace_decl, function_decl, variable_decl> any_declaration;
-        typedef anyof::any_of_opt <declaration, visibility_decl, namespace_decl, function_decl, variable_decl> any_declaration_opt;
         typedef std::shared_ptr<declaration> decl_ptr;
 
         struct statement : public ast_node {
@@ -160,9 +167,6 @@ namespace k::parse {
         struct return_statement;
         typedef variable_decl declaration_statement;
         struct expression_statement;
-
-        typedef anyof::any_of <statement, block_statement, return_statement, declaration_statement, expression_statement> any_statement;
-        typedef anyof::any_of_opt <statement, block_statement, return_statement, declaration_statement, expression_statement> any_statement_opt;
 
         struct unary_expression : public expression {
         protected:
@@ -371,18 +375,18 @@ namespace k::parse {
 
         struct block_statement : public statement {
             lex::punctuator open_brace, close_brace;
-            std::vector <any_statement> statements;
+            std::vector<std::shared_ptr<statement>> statements;
 
             block_statement(const lex::punctuator& open_brace,
                             const lex::punctuator& close_brace,
-                            const std::vector <any_statement> &statements) :
+                            const std::vector<std::shared_ptr<statement>> &statements) :
                             open_brace(open_brace),
                             close_brace(close_brace),
                             statements(statements) {}
 
             block_statement(lex::punctuator&& open_brace,
                             lex::punctuator&& close_brace,
-                            std::vector <any_statement> &&statements) :
+                            std::vector<std::shared_ptr<statement>> &&statements) :
                             open_brace(open_brace),
                             close_brace(close_brace),
                             statements(statements) {}
@@ -471,37 +475,55 @@ namespace k::parse {
         };
 
         struct function_decl : public declaration {
-            std::vector <lex::keyword> specifiers;
+            std::vector<lex::keyword> specifiers;
             lex::identifier name;
             std::shared_ptr<ast::type_specifier> type;
-            std::vector <parameter_spec> params;
-            std::optional <block_statement> content;
+            std::vector<std::shared_ptr<parameter_spec>> params;
+            std::shared_ptr<block_statement> content;
 
             function_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
-                          const std::shared_ptr<ast::type_specifier> &type, const std::vector <parameter_spec> &params,
-                          const std::optional <block_statement> &content) :
+                          const std::shared_ptr<ast::type_specifier> &type, const std::vector<std::shared_ptr<parameter_spec>> &params,
+                          const std::shared_ptr <block_statement> &content) :
+                    specifiers(specifiers), name(name), type(type), params(params), content(content) {}
+
+            function_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
+                          const std::shared_ptr<ast::type_specifier> &type, const std::vector<std::shared_ptr<parameter_spec>> &params) :
+                    specifiers(specifiers), name(name), type(type), params(params) {}
+
+            function_decl(std::vector <lex::keyword> &&specifiers, lex::identifier &&name,
+                          std::shared_ptr<ast::type_specifier> &&type, std::vector<std::shared_ptr<parameter_spec>> &&params,
+                          std::shared_ptr <block_statement> &&content) :
                     specifiers(specifiers), name(name), type(type), params(params), content(content) {}
 
             function_decl(std::vector <lex::keyword> &&specifiers, lex::identifier &&name,
-                          std::shared_ptr<ast::type_specifier> &&type, std::vector <parameter_spec> &&params,
-                          std::optional <block_statement> &&content) :
-                    specifiers(specifiers), name(name), type(type), params(params), content(content) {}
+                          std::shared_ptr<ast::type_specifier> &&type, std::vector<std::shared_ptr<parameter_spec>> &&params) :
+                    specifiers(specifiers), name(name), type(type), params(params) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        struct module_name : public ast_node {
+            lex::keyword module;
+            std::shared_ptr<qualified_identifier> qname;
 
+            module_name(const lex::keyword& module, const std::shared_ptr<ast::qualified_identifier>& qname):
+                module(module), qname(qname) {};
+            module_name(lex::keyword&& module, std::shared_ptr<ast::qualified_identifier>&& qname):
+                    module(module), qname(qname) {};
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
 
 
         /**
          * Unit.
          */
         struct unit : public ast_node {
-            /** Unit module name */
-            std::optional <ast::qualified_identifier> module_name;
+            /** Unit module name, if any, null otherwise */
+            std::shared_ptr<ast::module_name> module_name;
 
             /** Import declarations */
-            std::vector <import> imports;
+            std::vector<std::shared_ptr<import>> imports;
 
             // TODO remove it:
             std::vector <decl_ptr> declarations;
@@ -514,6 +536,7 @@ namespace k::parse {
     class ast_visitor {
     public:
         virtual void visit_unit(ast::unit &) = 0;
+        virtual void visit_module_name(ast::module_name &) = 0;
         virtual void visit_import(ast::import &) = 0;
 
         virtual void visit_identified_type_specifier(ast::identified_type_specifier &) = 0;
@@ -553,6 +576,7 @@ namespace k::parse {
     class default_ast_visitor : public ast_visitor {
     public:
         void visit_unit(ast::unit &) override;
+        void visit_module_name(ast::module_name &) override;
         void visit_import(ast::import &) override;
 
         void visit_identified_type_specifier(ast::identified_type_specifier &) override;

@@ -32,36 +32,39 @@ parser::parser(k::log::logger& logger, std::string_view src):
     _lexer.parse(src);
 }
 
-ast::unit parser::parse_unit()
+std::shared_ptr<ast::unit> parser::parse_unit()
 {
+    auto unit = std::make_shared<ast::unit>();
+
     auto module_name = parse_module_declaration();
     if(module_name) {
-        _unit.module_name = module_name;
+        unit->module_name = module_name;
     }
 
-    while(std::optional<ast::import> import = parse_import()) {
-        _unit.imports.push_back(std::move(import.value()));
+    while(auto import = parse_import()) {
+        unit->imports.push_back(import);
     }
 
     for(auto decl : parse_declarations()) {
-        _unit.declarations.push_back(decl);
+        unit->declarations.push_back(decl);
     }
 
-    return _unit;
+    return unit;
 }
 
-std::optional<ast::qualified_identifier> parser::parse_module_declaration()
+std::shared_ptr<ast::module_name> parser::parse_module_declaration()
 {
     lex::lex_holder holder(_lexer);
 
     // Not a "module" keyword, skip module declaration
-    if(auto lmod = _lexer.get(); lmod!=lex::keyword::MODULE) {
+    auto lmod = _lexer.get();
+    if(lmod!=lex::keyword::MODULE) {
         holder.rollback();
         return {};
     }
 
     // Expect a module identifier:
-    std::optional<ast::qualified_identifier> ident = parse_qualified_identifier();
+    std::shared_ptr<ast::qualified_identifier> ident = parse_qualified_identifier();
     if(!ident) {
         throw_error(0x0001, _lexer.pick(), "Module name is missing");
     }
@@ -70,15 +73,16 @@ std::optional<ast::qualified_identifier> parser::parse_module_declaration()
     if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
         throw_error(0x0002, _lexer.pick(), "Semicolon is missing after module name at end of module declaration");
     }
-    return ident;
+    return std::make_shared<ast::module_name>(lex::as<lex::keyword>(lmod), ident);
 }
 
-std::optional<ast::import> parser::parse_import()
+std::shared_ptr<ast::import> parser::parse_import()
 {
     lex::lex_holder holder(_lexer);
 
     // Not an "import" keyword, skip import declaration
-    if(auto limport = _lexer.get(); limport!=lex::keyword::IMPORT) {
+    auto limport = _lexer.get();
+    if(limport!=lex::keyword::IMPORT) {
         holder.rollback();
         return {};
     }
@@ -94,7 +98,7 @@ std::optional<ast::import> parser::parse_import()
         throw_error(0x0004, _lexer.pick(), "Semicolon is missing after module name at end of import declaration");
     }
 
-    return {lex::as<lex::identifier>(lname)};
+    return std::make_shared<ast::import>(lex::as<lex::keyword>(limport), lex::as<lex::identifier>(lname));
 }
 
 std::vector<ast::decl_ptr> parser::parse_declarations()
@@ -112,29 +116,29 @@ ast::decl_ptr parser::parse_declaration()
 
     // Look for a visibility decl
     if(auto decl = parse_visibility_decl()) {
-        return std::make_shared<ast::visibility_decl>(decl.value());
+        return decl;
     }
 
     // Look for a namespace decl
     if(auto decl = parse_namespace_decl()) {
-        return std::make_shared<ast::namespace_decl>(decl.value());
+        return decl;
     }
 
     // Look for a function decl
     if(auto decl = parse_function_decl()) {
-        return std::make_shared<ast::function_decl>(decl.value());
+        return decl;
     }
 
     // Look for a variable decl
     if(auto decl = parse_variable_decl()) {
-        return std::make_shared<ast::variable_decl>(decl.value());
+        return decl;
     }
 
     holder.rollback();
     return {};
 }
 
-std::optional<ast::visibility_decl> parser::parse_visibility_decl()
+std::shared_ptr<ast::visibility_decl> parser::parse_visibility_decl()
 {
     lex::lex_holder holder(_lexer);
 
@@ -142,7 +146,7 @@ std::optional<ast::visibility_decl> parser::parse_visibility_decl()
         if(lkw==lex::keyword::PUBLIC || lkw==lex::keyword::PROTECTED || lkw==lex::keyword::PRIVATE) {
             // Expect a colon
             if(lex::opt_ref_any_lexeme lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
-                return ast::visibility_decl{lex::as<lex::keyword>(lkw)};
+                return std::make_shared<ast::visibility_decl>(lex::as<lex::keyword>(lkw));
             }
         }
     }
@@ -150,7 +154,7 @@ std::optional<ast::visibility_decl> parser::parse_visibility_decl()
     return {};
 }
 
-std::optional<ast::namespace_decl> parser::parse_namespace_decl()
+std::shared_ptr<ast::namespace_decl> parser::parse_namespace_decl()
 {
     lex::lex_holder holder(_lexer);
 
@@ -191,7 +195,7 @@ std::optional<ast::namespace_decl> parser::parse_namespace_decl()
         throw_error(0x0006, _lexer.pick(), "Namespace closing brace is expected");
     }
 
-    return {{*ns, *open_par, *close_par, name, declarations}};
+    return std::make_shared<ast::namespace_decl>(*ns, *open_par, *close_par, name, declarations);
 }
 
 std::vector<lex::keyword> parser::parse_specifiers()
@@ -217,7 +221,7 @@ std::vector<lex::keyword> parser::parse_specifiers()
     return res;
 }
 
-std::optional<ast::qualified_identifier> parser::parse_qualified_identifier()
+std::shared_ptr<ast::qualified_identifier> parser::parse_qualified_identifier()
 {
     lex::lex_holder holder(_lexer);
 
@@ -259,10 +263,10 @@ std::optional<ast::qualified_identifier> parser::parse_qualified_identifier()
         }
     }
 
-    return {{initial, names}};
+    return std::make_shared<ast::qualified_identifier>(initial, names);
 }
 
-std::optional<ast::function_decl> parser::parse_function_decl() {
+std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     lex::lex_holder holder(_lexer);
 
     std::vector<lex::keyword> specifiers = parse_specifiers();
@@ -281,7 +285,7 @@ std::optional<ast::function_decl> parser::parse_function_decl() {
     }
 
     // Look for parameter_spec declarations
-    std::vector<ast::parameter_spec> params;
+    std::vector<std::shared_ptr<ast::parameter_spec>> params;
     auto lex = _lexer.get();
     if(!lex) {
         throw_error(0x0009, _lexer.pick(), "Function declaration expects finalizing its declaration");
@@ -292,7 +296,7 @@ std::optional<ast::function_decl> parser::parse_function_decl() {
         // Look for first parameter_spec
         auto param = parse_parameter_spec();
         if(param) {
-            params.push_back(param.value());
+            params.push_back(param);
         } else {
             throw_error(0x000A, _lexer.pick(), "Function declaration expects a first parameter declaration");
         }
@@ -312,7 +316,7 @@ std::optional<ast::function_decl> parser::parse_function_decl() {
             // Look for next parameter_spec
             auto param = parse_parameter_spec();
             if(param) {
-                params.push_back(param.value());
+                params.push_back(param);
             } else {
                 throw_error(0x000D, _lexer.pick(), "Function declaration expects a parameter specification");
             }
@@ -333,17 +337,17 @@ std::optional<ast::function_decl> parser::parse_function_decl() {
 
     auto statements = parse_statement_block();
     if(statements) {
-        return {{specifiers, lex::as<lex::identifier>(lname), restype, params, statements}};
+        return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, statements);
     } else
     // Look for final semicolon
     // TODO remove function declaration-only.
     if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
         throw_error(0x000F, _lexer.pick(), "Function declaration expects a final semicolon ';'");
     }
-    return {{specifiers, lex::as<lex::identifier>(lname), restype, params, {}}};
+    return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params);
 }
 
-std::optional<ast::parameter_spec> parser::parse_parameter_spec()
+std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
 {
     lex::lex_holder holder(_lexer);
 
@@ -367,10 +371,10 @@ std::optional<ast::parameter_spec> parser::parse_parameter_spec()
         return {};
     }
 
-    return {{specifiers, name, type}};
+    return std::make_shared<ast::parameter_spec>(specifiers, name, type);
 }
 
-std::optional<ast::block_statement> parser::parse_statement_block()
+std::shared_ptr<ast::block_statement> parser::parse_statement_block()
 {
     lex::lex_holder holder(_lexer);
 
@@ -385,10 +389,10 @@ std::optional<ast::block_statement> parser::parse_statement_block()
         //throw parsing_error("Closing brace for statement block is missing" /*, *lopenbrace */);
     }
 
-    std::vector<ast::any_statement> statements;
+    std::vector<std::shared_ptr<ast::statement>> statements;
     while(auto statement = parse_statement()) {
         if(statement) {
-            statements.push_back(ast::any_statement{statement});
+            statements.push_back(statement);
         }
     }
 
@@ -400,10 +404,10 @@ std::optional<ast::block_statement> parser::parse_statement_block()
         throw_error(0x0010, _lexer.pick(), "Block is expecting a closing brace '}'");
     }
 
-    return {{*open_brace, *close_brace, statements}};
+    return std::make_shared<ast::block_statement>(*open_brace, *close_brace, statements);
 }
 
-std::optional<ast::return_statement> parser::parse_return_statement()
+std::shared_ptr<ast::return_statement> parser::parse_return_statement()
 {
     lex::lex_holder holder(_lexer);
 
@@ -422,37 +426,33 @@ std::optional<ast::return_statement> parser::parse_return_statement()
         throw_error(0x0011, _lexer.pick(), "Return statement is expecting to finish by a semicolon ';'");
     }
 
-    return {{*ret, expr}};
+    return std::make_shared<ast::return_statement>(*ret, expr);
 
 }
 
-ast::any_statement_opt parser::parse_statement()
+std::shared_ptr<ast::statement> parser::parse_statement()
 {
-    auto block = parse_statement_block();
-    if(block) {
-        return ast::any_statement_opt{block.value()};
+    if(auto block = parse_statement_block()) {
+        return block;
     }
 
-    auto ret = parse_return_statement();
-    if(ret) {
-        return ast::any_statement_opt{ret.value()};
+    if(auto ret = parse_return_statement()) {
+        return ret;
     }
 
-    auto var = parse_variable_decl();
-    if(var) {
-        return ast::any_statement_opt{var.value()};
+    if(auto var = parse_variable_decl()) {
+        return var;
     }
 
-    auto expr = parse_expression_statement();
-    if(expr) {
-        return ast::any_statement_opt{expr.value()};
+    if(auto expr = parse_expression_statement()) {
+        return expr;
     }
 
     return {};
 }
 
 
-std::optional<ast::variable_decl> parser::parse_variable_decl()
+std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
 {
     lex::lex_holder holder(_lexer);
 
@@ -495,7 +495,7 @@ std::optional<ast::variable_decl> parser::parse_variable_decl()
         throw_error(0x0014, _lexer.pick(), "Variable declaration expects to finish by a semicolon ';'");
     }
 
-    return {{specifiers, lex::as<lex::identifier>(lname), type, expr}};
+    return std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, expr);
 }
 
 std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
@@ -527,7 +527,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
     holder.rollback();
 
     // Expect a type qualified identifier:
-    std::optional<ast::qualified_identifier> qid = parse_qualified_identifier();
+    std::shared_ptr<ast::qualified_identifier> qid = parse_qualified_identifier();
     if(!qid) {
         holder.rollback();
         return {};
@@ -536,7 +536,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
     return std::make_shared<ast::identified_type_specifier>(*qid);
 }
 
-std::optional<ast::expression_statement> parser::parse_expression_statement()
+std::shared_ptr<ast::expression_statement> parser::parse_expression_statement()
 {
     ast::expr_ptr expr = parse_expression();
     if(!expr) {
@@ -548,7 +548,7 @@ std::optional<ast::expression_statement> parser::parse_expression_statement()
         throw_error(0x0015, _lexer.pick(), "Expression statement expects to finish by a semicolon ';'");
     }
 
-    return {{expr}};
+    return std::make_shared<ast::expression_statement>(expr);
 }
 
 ast::expr_ptr parser::parse_expression()
@@ -1058,7 +1058,7 @@ ast::expr_ptr parser::parse_identifier_expr()
 {
     lex::lex_holder holder(_lexer);
 
-    std::optional<ast::qualified_identifier> ident = parse_qualified_identifier();
+    std::shared_ptr<ast::qualified_identifier> ident = parse_qualified_identifier();
     if(ident) {
         return std::make_shared<ast::identifier_expr>(*ident);
     } else {

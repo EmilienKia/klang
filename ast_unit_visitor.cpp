@@ -20,10 +20,14 @@ namespace k::parse {
         stack<ns_context> push(_contexts, _unit.get_root_namespace());
 
         if(unit.module_name) {
-            _unit.set_unit_name(unit.module_name->to_name());
+            _unit.set_unit_name(unit.module_name->qname->to_name());
         }
 
         super::visit_unit(unit);
+    }
+
+    void ast_unit_visitor::visit_module_name(ast::module_name &) {
+        // Not used, proceed at unit level.
     }
 
     void ast_unit_visitor::visit_import(ast::import &) {
@@ -127,7 +131,7 @@ namespace k::parse {
         std::shared_ptr<unit::block> block = function->get_block();
 
         for(auto param : func.params) {
-            std::shared_ptr<unit::parameter> parameter = function->append_parameter(param.name->content, unit::unresolved_type::from_type_specifier(*param.type));
+            std::shared_ptr<unit::parameter> parameter = function->append_parameter(param->name->content, unit::unresolved_type::from_type_specifier(*(param->type)));
             // TODO add param specs
         }
 

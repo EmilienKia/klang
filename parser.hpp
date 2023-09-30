@@ -45,21 +45,27 @@ public:
 
     /**
      * UNIT := ?MODULE_DECLARATION *IMPORT DECLARATIONS
-     * @return
+     *
+     * @return The newly parsed unit
+     * @throws parsing_error If a parsinng arror occurs
      */
-    ast::unit parse_unit();
+    std::shared_ptr<ast::unit> parse_unit();
 
     /**
      * MODULE_DECLARATION := 'module' QUALIFIED_IDENTIFIER ';'
-     * @return
+     *
+     * @return Thhe module declaration, if any, null if not present.
+     * @throws parsing_error If a parsinng arror occurs.
      */
-    std::optional<ast::qualified_identifier> parse_module_declaration();
+    std::shared_ptr<ast::module_name> parse_module_declaration();
 
     /**
      * IMPORT := 'import' identifier ';'
-     * @return
+     *
+     * @return An import declaration, if any, null if not present.
+     * @throws parsing_error If a parsinng arror occurs.
      */
-    std::optional<ast::import> parse_import();
+    std::shared_ptr<ast::import> parse_import();
 
     /**
      * DECLARATIONS := *DECLARATION
@@ -76,36 +82,38 @@ public:
      * VISIBILITY_DECL := ('public'|'protected'|'private') ':'
      * @return
      */
-    std::optional<ast::visibility_decl> parse_visibility_decl();
+    std::shared_ptr<ast::visibility_decl> parse_visibility_decl();
 
     /**
      * NAMESPACE_DECL := 'namespace' ?identifier '{' *DECLARATION '}'
      * @return
      */
-    std::optional<ast::namespace_decl> parse_namespace_decl();
+    std::shared_ptr<ast::namespace_decl> parse_namespace_decl();
 
     /**
      * QUALIFIED_IDENTIFIER := ?'::' identifier *( '::' identifier )
-     * @return
+     *
+     * @return The qualified identifier, if parsed correctly completly.
+     * @throws parsing_error If a parsinng arror occurs
      */
-    std::optional<ast::qualified_identifier> parse_qualified_identifier();
+    std::shared_ptr<ast::qualified_identifier> parse_qualified_identifier();
 
     /**
      * Current support : FUNCTION_DECL := SPECIFIERS identifier '(' [ PARAMETER *[',' PARAMETER ] ] ')' ?[':' TYPE_SPEC] (';' | STATEMENT_BLOCK )
      * @return
      */
-    std::optional<ast::function_decl> parse_function_decl();
+    std::shared_ptr<ast::function_decl> parse_function_decl();
 
     /**
      * Current support : PARAMETER := SPECIFIERS ?[identifier ':'] TYPE_SPEC ';'
      */
-    std::optional<ast::parameter_spec> parse_parameter_spec();
+    std::shared_ptr<ast::parameter_spec> parse_parameter_spec();
 
     /**
      * Current support : VARIABLE_DECL := SPECIFIERS identifier ':' TYPE_SPEC ?['=' CONDITIONAL_EXPR] ';'
      * TODO VARIABLE_DECL := SPECIFIERS identifier ?[':' TYPE_SPEC ?[(INITIALIZER)] ['=' CONDITIONAL_EXPR]
      */
-    std::optional<ast::variable_decl> parse_variable_decl();
+    std::shared_ptr<ast::variable_decl> parse_variable_decl();
 
     /**
      * Current support : TYPE_SPEC := ?('unsigned') ('byte'|'char'|'short'|'int'|'long'|'float'|'double')
@@ -124,24 +132,24 @@ public:
      * STATEMENT_BLOCK := '{' *STATEMENT '}'
      * @return
      */
-    std::optional<ast::block_statement> parse_statement_block();
+    std::shared_ptr<ast::block_statement> parse_statement_block();
 
     /**
      * RETURN_STATEMENT := 'return' ?[EXPRESSION] ';'
      * @return
      */
-     std::optional<ast::return_statement> parse_return_statement();
+     std::shared_ptr<ast::return_statement> parse_return_statement();
 
     /**
      * STATEMENT := STATEMENT_BLOCK | RETURN_STATEMENT | VARIABLE_DECL | EXPRESSION_STATEMENT
      * @return
      */
-    ast::any_statement_opt parse_statement();
+    std::shared_ptr<ast::statement> parse_statement();
 
     /**
      * EXPRESSION_STATEMENT := ?[EXPRESSION] ';'
      */
-    std::optional<ast::expression_statement> parse_expression_statement();
+    std::shared_ptr<ast::expression_statement> parse_expression_statement();
 
     /**
      * EXPRESSION := ASSIGNMENT_EXPR *[ ',' ASSIGNMENT_EXPR]

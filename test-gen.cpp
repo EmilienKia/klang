@@ -17,16 +17,16 @@
 std::unique_ptr<k::unit::gen::unit_llvm_jit> gen(std::string_view src, bool dump = false) {
     k::log::logger log;
     k::parse::parser parser(log, src);
-    k::parse::ast::unit ast_unit = parser.parse_unit();
+    std::shared_ptr<k::parse::ast::unit> ast_unit = parser.parse_unit();
 
     if(dump) {
         k::parse::dump::ast_dump_visitor visit(std::cout);
         std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
-        visit.visit_unit(ast_unit);
+        visit.visit_unit(*ast_unit);
     }
 
     k::unit::unit unit;
-    k::parse::ast_unit_visitor::visit(log, ast_unit, unit);
+    k::parse::ast_unit_visitor::visit(log, *ast_unit, unit);
 
     if(dump) {
         k::unit::dump::unit_dump unit_dump(std::cout);
