@@ -140,8 +140,14 @@ public:
      */
      std::shared_ptr<ast::return_statement> parse_return_statement();
 
+     /*
+      * IF_ELSE_STATEMENT := 'if' '(' [EXPRESSION] ')' [STATEMENT]  ?( 'else' [STATEMENT] )
+      * TODO Add inline variable declaration
+      */
+     std::shared_ptr<ast::if_else_statement> parse_if_else_statement();
+
     /**
-     * STATEMENT := STATEMENT_BLOCK | RETURN_STATEMENT | VARIABLE_DECL | EXPRESSION_STATEMENT
+     * STATEMENT := STATEMENT_BLOCK | RETURN_STATEMENT | IF_ELSE_STATEMENT | VARIABLE_DECL | EXPRESSION_STATEMENT
      * @return
      */
     std::shared_ptr<ast::statement> parse_statement();

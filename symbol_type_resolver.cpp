@@ -1,6 +1,8 @@
 //
 // Created by Emilien Kia <emilien.kia+dev@gmail.com>.
 //
+// Note: Last resolver log number: 0x30002
+//
 
 #include "symbol_type_resolver.hpp"
 
@@ -90,6 +92,32 @@ void symbol_type_resolver::visit_return_statement(return_statement& stmt)
         } else {
             // Compatible type, no need to cast.
         }
+    }
+}
+
+void symbol_type_resolver::visit_if_else_statement(if_else_statement& stmt)
+{
+    // Resolve and cast test
+    {
+        auto expr = stmt.get_test_expr();
+        expr->accept(*this);
+        auto cast = adapt_type(expr, primitive_type::from_type(primitive_type::BOOL));
+        if(!cast) {
+            throw_error(0x0002, stmt.get_ast_if_else_stmt()->if_kw, "If test expression type must be convertible to bool");
+        } else if(cast != expr ) {
+            // Casted, assign casted expression as return expr.
+            stmt.set_test_expr(cast);
+        } else {
+            // Compatible type, no need to cast.
+        }
+    }
+
+    // Resolve then statement
+    stmt.get_then_stmt()->accept(*this);
+
+    // Resolve else statement
+    if(auto expr = stmt.get_else_stmt()) {
+        expr->accept(*this);
     }
 }
 
@@ -323,12 +351,23 @@ void symbol_type_resolver::visit_comparison_expression(comparison_expression& ex
     } else if(!left_type->is_boolean() && right_type->is_boolean()) {
         // Adapt left to boolean
         adapted_left = adapt_type(left, right_type);
-    }  else if( left_type->is_integer() || right_type->is_integer() ) {
+    }  else {
         // Adapt right to left type
         // TODO rework to promote to biggest integer of both
         adapted_right = adapt_type(right, left_type);
-    } else {
-        // TODO implement other promotions and castings
+    }
+
+    if(!adapted_left || !adapted_right) {
+        // TODO throw an exception
+        // Adaptation is not possible
+        std::cerr << "Error: Type alignment for comparison expression is not possible." << std::endl;
+    }
+
+    if(adapted_left!=left) {
+        expr.assign_left(adapted_left);
+    }
+    if(adapted_right!=right) {
+        expr.assign_right(adapted_right);
     }
 
     // For primitive type, logical is always returning boolean

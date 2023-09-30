@@ -151,7 +151,9 @@ namespace k::lex {
             LONG,
             FLOAT,
             DOUBLE,
-            UNSIGNED
+            UNSIGNED,
+            IF,
+            ELSE
             /* TODO add new lexeme definition here. */
         };
 

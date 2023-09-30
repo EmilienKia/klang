@@ -225,6 +225,23 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             _stm << ";" << std::endl;
         }
 
+        virtual void visit_if_else_statement(ast::if_else_statement& stmt) override {
+            prefix() << "if ( ";
+            stmt.test_expr->visit(*this);
+            _stm << " ) " << std::endl;
+            {
+                auto pf = prefix_inc();
+                stmt.then_stmt->visit(*this);
+            }
+            if(stmt.else_stmt) {
+                prefix() << "else" << std::endl;
+                auto pf = prefix_inc();
+                stmt.else_stmt->visit(*this);
+            } else {
+                prefix() << "<<no-else>>" << std::endl;
+            }
+        }
+
         virtual void visit_expression_statement(ast::expression_statement& stmt) override {
             prefix();
             if(stmt.expr) {

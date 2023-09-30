@@ -996,11 +996,29 @@ void unit_llvm_ir_gen::visit_function(function &function) {
     // Produce content
     function.get_block()->accept(*this);
 
+    // Force adding a return void as last instruction.
+    _builder->CreateRetVoid();
+
+    // Pre-optimize function
+    optimize_function_dead_inst_elimination(*func);
+
     // Verify function
     llvm::verifyFunction(*func);
-
 }
 
+void unit_llvm_ir_gen::optimize_function_dead_inst_elimination(llvm::Function& func) {
+    for(auto& block : func) {
+        llvm::BasicBlock *bb;
+        // Find first terminator instruction
+        auto term = std::find_if(block.begin(), block.end(), [](auto& inst)->bool{return inst.isTerminator();});
+        if(term!=block.end()) {
+            if(++term!=block.end()) {
+                auto& inst_list = block.getInstList();
+                inst_list.erase(term, block.end());
+            }
+        }
+    }
+}
 
 void unit_llvm_ir_gen::visit_block(block& block) {
     for(auto stmt : block.get_statements()) {
@@ -1023,6 +1041,47 @@ void unit_llvm_ir_gen::visit_return_statement(return_statement& stmt) {
     } else {
         _builder->CreateRetVoid();
     }
+}
+
+void unit_llvm_ir_gen::visit_if_else_statement(if_else_statement& stmt) {
+
+    // Condition expression
+    _value = nullptr;
+    stmt.get_test_expr()->accept(*this);
+    auto test_value = _value;
+    _value = nullptr;
+
+    bool has_else = (bool)stmt.get_else_stmt();
+
+    // Retrieve current block and create then, else and continue blocks
+    llvm::Function* func = _builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* then_block = llvm::BasicBlock::Create(*_context, "then", func);
+    llvm::BasicBlock* else_block = has_else ? llvm::BasicBlock::Create(*_context, "else") : nullptr;
+    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(*_context, "cont");
+
+    // Do branching
+    if(has_else) {
+        _builder->CreateCondBr(test_value, then_block, else_block);
+    } else {
+        _builder->CreateCondBr(test_value, then_block, cont_block);
+    }
+
+    // Generate "then" branch
+    _builder->SetInsertPoint(then_block);
+    stmt.get_then_stmt()->accept(*this);
+    _builder->CreateBr(cont_block);
+
+    // Generate "else" branch, if any
+    if(has_else) {
+        func->getBasicBlockList().push_back(else_block);
+        _builder->SetInsertPoint(else_block);
+        stmt.get_else_stmt()->accept(*this);
+        _builder->CreateBr(cont_block);
+    }
+
+    // Generate "continuation" block
+    func->getBasicBlockList().push_back(cont_block);
+    _builder->SetInsertPoint(cont_block);
 }
 
 void unit_llvm_ir_gen::visit_expression_statement(expression_statement& stmt) {
@@ -1227,8 +1286,11 @@ void unit_llvm_ir_gen::optimize_functions() {
     passes->add(llvm::createReassociatePass());
     // Eliminate Common SubExpressions.
     passes->add(llvm::createGVNPass());
+    // Eliminate chains of dead computations.
+    passes->add(llvm::createDeadCodeEliminationPass());
     // Simplify the control flow graph (deleting unreachable blocks, etc).
     passes->add(llvm::createCFGSimplificationPass());
+
     passes->doInitialization();
 
     for(auto& func : *_module) {

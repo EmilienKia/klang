@@ -28,14 +28,12 @@ int main() {
     import net;
     /* Hello */
 
-    ploc(p: int) : int {
-        c : char;
-        c = p + 1;
-        return p * 2 + c;
-    }
-
-    test(titi: int, toto: long) : long {
-        return titi + toto + ploc(toto);
+    ploc(a: int, b: int) : int {
+        if(a > b)
+            return a;
+        else {
+            return b;
+        }
     }
 
     namespace titi {
@@ -57,11 +55,19 @@ int main() {
 
 #if 1
     std::string source = R"SRC(
-    ploc(a:float) : float {
-        b : double;
-        b = 4.2d;
-        return a + b;
-    }
+        fibo(i: unsigned short) : unsigned long {
+            if(i==0) return 1;
+            else if(i==1) return 1;
+            return fibo(i-1) + fibo(i-2);
+        }
+    )SRC";
+#endif
+
+#if 0
+    std::string source = R"SRC(
+        test(a: int, b: float) : bool {
+            return a > b;
+        }
     )SRC";
 #endif
 
@@ -106,6 +112,11 @@ int main() {
         }
 
 #if 1
+        auto fibo = jit.get()->lookup_symbol < unsigned short(*) (unsigned long long) > ("fibo");
+        std::cout << "Test : fibo(0) = " << (fibo(2)) << std::endl;
+#endif
+
+#if 0
         auto ploc = jit.get()->lookup_symbol < float(*)
         (float) > ("ploc");
         std::cout << "Test : ploc(1.2) = " << (ploc(1.2)) << std::endl;

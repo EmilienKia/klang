@@ -86,6 +86,7 @@ namespace k::parse {
     }
 
     void ast_unit_visitor::visit_variable_decl(ast::variable_decl &decl) {
+        // TODO refactor variable declaration to make it stack-less
         std::shared_ptr<context> parent_context = _contexts.back();
         std::shared_ptr<unit::variable_holder> parent_scope;
 
@@ -137,36 +138,33 @@ namespace k::parse {
 
         if(func.content) {
             visit_block_statement(*func.content);
+            if(auto block = std::dynamic_pointer_cast<unit::block>(_stmt)) {
+                function->set_block(block);
+            }
         }
     }
 
     void ast_unit_visitor::visit_block_statement(ast::block_statement &block_stmt) {
-        auto parent_context = _contexts.back();
-
-        std::shared_ptr<unit::block> block;
-
-        if(auto parent = std::dynamic_pointer_cast<func_context>(parent_context) ) {
-            // Root block of function
-            block = parent->content->get_block();
-        } else if(auto parent = std::dynamic_pointer_cast<block_context>(parent_context)) {
-            // Nested block
-            block = parent->content->append_block_statement();
-        }
+        std::shared_ptr<unit::block> block = std::make_shared<unit::block>();
 
         // Push function context
         stack<block_context> push(_contexts, block);
 
         // Visit all children statements
-        for(auto& statement : block_stmt.statements) {
-            statement->visit(*this);
+        for(auto& stmt : block_stmt.statements) {
+            _stmt.reset();
+            stmt->visit(*this);
+            if(_stmt) {
+                block->append_statement(_stmt);
+                _stmt.reset();
+            }
         }
+
+        _stmt = block;
     }
 
     void ast_unit_visitor::visit_return_statement(ast::return_statement &stmt) {
-        std::shared_ptr<block_context> block = std::dynamic_pointer_cast<block_context>(_contexts.back());
-
-        std::shared_ptr<unit::return_statement> ret_stmt = block->content->append_return_statement();
-        ret_stmt->set_ast_return_statement(stmt.shared_as<ast::return_statement>());
+        std::shared_ptr<unit::return_statement> ret_stmt = std::make_shared<unit::return_statement>(stmt.shared_as<ast::return_statement>());
 
         // Push function context
         stack<return_context> push(_contexts, ret_stmt);
@@ -177,14 +175,62 @@ namespace k::parse {
         }
         if(_expr) {
             ret_stmt->set_expression(_expr);
+            _expr.reset();
         }
+
+        _stmt = ret_stmt;
+    }
+
+    void ast_unit_visitor::visit_if_else_statement(ast::if_else_statement &stmt) {
+        std::shared_ptr<unit::if_else_statement> if_else_stmt = std::make_shared<unit::if_else_statement>(stmt.shared_as<ast::if_else_statement>());
+
+        // Push function context
+        stack<if_else_context> push(_contexts, if_else_stmt);
+
+        // Test expression
         _expr.reset();
+        if(stmt.test_expr) {
+            stmt.test_expr->visit(*this);
+        } /* else process absence in next if */
+        if(_expr) {
+            if_else_stmt->set_test_expr(_expr);
+            _expr.reset();
+        } else {
+            // Test expression is mandatory
+            // TODO throw an exception
+        }
+
+        // Then statement
+        _stmt.reset();
+        if(stmt.then_stmt) {
+            stmt.then_stmt->visit(*this);
+        } /* else process absence in next if */
+        if(_stmt) {
+            if_else_stmt->set_then_stmt(_stmt);
+            _stmt.reset();
+        } else {
+            // Then statement is mandatory
+            // TODO throw an exception
+        }
+
+        // Else statement
+        _stmt.reset();
+        if(stmt.else_stmt) {
+            stmt.else_stmt->visit(*this);
+            if(_stmt) {
+                if_else_stmt->set_else_stmt(_stmt);
+                _stmt.reset();
+            } else {
+                // Error in processing else statement
+                // TODO throw an exception
+            }
+        } /* else else statement is not mandatory */
+
+        _stmt = if_else_stmt;
     }
 
     void ast_unit_visitor::visit_expression_statement(ast::expression_statement &stmt) {
-        std::shared_ptr<block_context> block = std::dynamic_pointer_cast<block_context>(_contexts.back());
-
-        std::shared_ptr<unit::expression_statement> expr = block->content->append_expression_statement();
+        std::shared_ptr<unit::expression_statement> expr = std::make_shared<unit::expression_statement>(stmt.shared_as<ast::expression_statement>());
 
         // Push function context
         stack<expr_stmt_context> push(_contexts, expr);
@@ -195,8 +241,10 @@ namespace k::parse {
         }
         if(_expr) {
             expr->set_expression(_expr);
+            _expr.reset();
         }
-        _expr.reset();
+
+        _stmt = expr;
     }
 
     void ast_unit_visitor::visit_literal_expr(ast::literal_expr &expr) {

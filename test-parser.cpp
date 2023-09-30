@@ -943,3 +943,56 @@ TEST_CASE( "Parse return expression : return a + (long)b;", "[parser][expression
     REQUIRE( b );
     REQUIRE( is_same(*b, k::name(false, {"b"}) ) );
 }
+
+//
+// If then else
+//
+
+TEST_CASE( "Parse if-only statement", "[parser][if-else]") {
+    k::log::logger log;
+    k::parse::parser parser(log, "if(a==b) { return true; } ");
+    auto stmt = parser.parse_if_else_statement();
+    REQUIRE( stmt );
+
+    REQUIRE( stmt->if_kw == k::lex::keyword::IF );
+    REQUIRE( ! stmt->else_kw );
+
+    REQUIRE( stmt->test_expr );
+    auto test = std::dynamic_pointer_cast<ast::binary_operator_expr>(stmt->test_expr);
+    REQUIRE( test );
+    REQUIRE( test->op == k::lex::operator_::DOUBLE_EQUAL );
+
+    REQUIRE( stmt->then_stmt );
+    auto block = std::dynamic_pointer_cast<ast::block_statement>(stmt->then_stmt);
+    REQUIRE( block );
+    REQUIRE( block->statements.size() == 1 );
+    REQUIRE( std::dynamic_pointer_cast<ast::return_statement>(block->statements[0]) );
+
+    REQUIRE( stmt->else_stmt == nullptr );
+}
+
+TEST_CASE( "Parse if-else statement", "[parser][if-else]") {
+    k::log::logger log;
+    k::parse::parser parser(log, "if(a!=b) { return true; } else return false; ");
+    auto stmt = parser.parse_if_else_statement();
+    REQUIRE( stmt );
+
+    REQUIRE( stmt->if_kw == k::lex::keyword::IF );
+    REQUIRE( stmt->else_kw );
+    REQUIRE( *(stmt->else_kw) == k::lex::keyword::ELSE );
+
+    REQUIRE( stmt->test_expr );
+    auto test = std::dynamic_pointer_cast<ast::binary_operator_expr>(stmt->test_expr);
+    REQUIRE( test );
+    REQUIRE( test->op == k::lex::operator_::EXCLAMATION_MARK_EQUAL );
+
+    REQUIRE( stmt->then_stmt );
+    auto block = std::dynamic_pointer_cast<ast::block_statement>(stmt->then_stmt);
+    REQUIRE( block );
+    REQUIRE( block->statements.size() == 1 );
+    REQUIRE( std::dynamic_pointer_cast<ast::return_statement>(block->statements[0]) );
+
+    REQUIRE( stmt->else_stmt );
+    auto ret = std::dynamic_pointer_cast<ast::return_statement>(stmt->else_stmt);
+    REQUIRE( ret );
+}

@@ -82,6 +82,7 @@ public:
 
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;
+    void visit_if_else_statement(if_else_statement&) override;
     void visit_expression_statement(expression_statement&) override;
     void visit_variable_statement(variable_statement&) override;
 
@@ -139,6 +140,9 @@ public:
     void optimize_functions();
 
     std::unique_ptr<unit_llvm_jit> to_jit();
+
+protected:
+    void optimize_function_dead_inst_elimination(llvm::Function& func);
 };
 
 

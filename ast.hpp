@@ -167,6 +167,7 @@ namespace k::parse {
         struct return_statement;
         typedef variable_decl declaration_statement;
         struct expression_statement;
+        struct if_else_statement;
 
         struct unary_expression : public expression {
         protected:
@@ -403,6 +404,28 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        struct if_else_statement : public statement {
+            lex::keyword if_kw;
+            std::optional<lex::keyword> else_kw;
+            std::shared_ptr<expression> test_expr;
+            std::shared_ptr<statement> then_stmt;
+            std::shared_ptr<statement> else_stmt;
+
+            if_else_statement(const lex::keyword &if_kw,
+                              const lex::keyword &else_kw,
+                              const std::shared_ptr<expression>& test_expr,
+                              const std::shared_ptr<statement> &then_stmt,
+                              const std::shared_ptr<statement> &else_stmt)
+                    : if_kw(if_kw), else_kw(else_kw), test_expr(test_expr), then_stmt(then_stmt), else_stmt(else_stmt) {}
+
+            if_else_statement(const lex::keyword &if_kw,
+                              const std::shared_ptr<expression>& test_expr,
+                              const std::shared_ptr<statement> &then_stmt)
+                    : if_kw(if_kw), test_expr(test_expr), then_stmt(then_stmt) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         //
         // Declarations
         //
@@ -553,6 +576,7 @@ namespace k::parse {
 
         virtual void visit_block_statement(ast::block_statement &) = 0;
         virtual void visit_return_statement(ast::return_statement &) = 0;
+        virtual void visit_if_else_statement(ast::if_else_statement &) = 0;
         virtual void visit_expression_statement(ast::expression_statement &) = 0;
 
         virtual void visit_literal_expr(ast::literal_expr &) = 0;
@@ -592,6 +616,7 @@ namespace k::parse {
 
         void visit_block_statement(ast::block_statement &) override;
         void visit_return_statement(ast::return_statement &) override;
+        void visit_if_else_statement(ast::if_else_statement &) override;
         void visit_expression_statement(ast::expression_statement &) override;
 
         void visit_literal_expr(ast::literal_expr &) override;

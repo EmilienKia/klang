@@ -155,6 +155,23 @@ public:
         _stm << ";" << std::endl;
     }
 
+    void visit_if_else_statement(if_else_statement& stmt) override {
+        prefix() << "if ( ";
+        if(auto test_expr = stmt.get_test_expr()) {
+            test_expr->accept(*this);
+        }
+        _stm << " ) " << std::endl;
+        {
+            auto pf = prefix_inc();
+            stmt.get_then_stmt()->accept(*this);
+        }
+        if(auto else_stmt = stmt.get_else_stmt()) {
+            prefix() << "else" << std::endl;
+            auto pf = prefix_inc();
+            else_stmt->accept(*this);
+        }
+    }
+
     void visit_block(block& blk) override {
         prefix() << "{" << std::endl;
         {

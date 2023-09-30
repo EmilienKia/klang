@@ -157,8 +157,7 @@ protected:
     expression() = default;
     expression(std::shared_ptr<type> type) : _type(type) {}
 
-    friend class expression_statement;
-    friend class return_statement;
+    friend class statement;
     void set_statement(const std::shared_ptr<statement> &statement) {
         _statement = statement;
     }
@@ -1050,18 +1049,27 @@ public:
 class statement : public element
 {
 protected:
-    /** Block owning the statement. */
-    std::shared_ptr<block> _block;
+    /** Statement owning the statement. */
+    std::shared_ptr<statement> _parent_stmt;
 
-    statement(const std::shared_ptr<block>& block) : _block(block) {}
+    statement() = default;
+    statement(const std::shared_ptr<statement>& parent_stmt) : _parent_stmt(parent_stmt) {}
     virtual ~statement() = default;
+
+    void set_this_as_parent_to(std::shared_ptr<expression>& expr);
+    void set_this_as_parent_to(std::shared_ptr<statement>& stmt);
 
 public:
     void accept(element_visitor& visitor) override;
 
-    std::shared_ptr<block> get_block() { return _block; };
-    std::shared_ptr<const block> get_block() const { return _block; };
+    std::shared_ptr<statement> get_parent_stmt() { return _parent_stmt; };
+    std::shared_ptr<const statement> get_parent_stmt() const { return _parent_stmt; };
 
+    std::shared_ptr<block> get_block();
+    std::shared_ptr<const block> get_block() const;
+
+    virtual std::shared_ptr<function> get_function();
+    virtual std::shared_ptr<const function> get_function() const;
 };
 
 /**
@@ -1076,10 +1084,14 @@ protected:
 
     std::shared_ptr<k::parse::ast::return_statement> _ast_return_stmt;
 
-    explicit return_statement(const std::shared_ptr<block>& block) :
-            statement(block) {}
+    explicit return_statement(const std::shared_ptr<statement>& parent) :
+            statement(parent) {}
 
 public:
+    return_statement() = default;
+    return_statement(const std::shared_ptr<k::parse::ast::return_statement>& ast) :
+            _ast_return_stmt(ast) {}
+
     void accept(element_visitor& visitor) override;
 
     void set_ast_return_statement(std::shared_ptr<k::parse::ast::return_statement> _ast_return_stmt) {
@@ -1095,11 +1107,68 @@ public:
 
     return_statement& set_expression(std::shared_ptr<expression> expr) {
         _expression = expr;
-        _expression->set_statement(shared_as<statement>());
+        set_this_as_parent_to(_expression);
         return *this;
     }
 };
 
+/**
+ * If then else statement
+ */
+class if_else_statement : public statement
+{
+protected:
+    std::shared_ptr<k::parse::ast::if_else_statement> _ast_if_else_stmt;
+
+    std::shared_ptr<expression> _test_expr;
+    std::shared_ptr<statement> _then_stmt;
+    std::shared_ptr<statement> _else_stmt;
+
+public:
+    if_else_statement() = default;
+    if_else_statement(const std::shared_ptr<k::parse::ast::if_else_statement>& ast) :
+            _ast_if_else_stmt(ast) {}
+
+    void accept(element_visitor& visitor) override;
+
+    void set_ast_if_else_stmt(const std::shared_ptr<k::parse::ast::if_else_statement> &ast_if_else_stmt) {
+        _ast_if_else_stmt = ast_if_else_stmt;
+    }
+
+    const std::shared_ptr<k::parse::ast::if_else_statement> &get_ast_if_else_stmt() const {
+        return _ast_if_else_stmt;
+    }
+
+    void set_test_expr(const std::shared_ptr<expression> &test_expr) {
+        _test_expr = test_expr;
+        set_this_as_parent_to(_test_expr);
+    }
+
+    const std::shared_ptr<expression> &get_test_expr() const {
+        return _test_expr;
+    }
+
+    void set_then_stmt(const std::shared_ptr<statement> &then_stmt) {
+        _then_stmt = then_stmt;
+        set_this_as_parent_to(_then_stmt);
+    }
+
+    const std::shared_ptr<statement> &get_then_stmt() const {
+        return _then_stmt;
+    }
+
+    void set_else_stmt(const std::shared_ptr<statement> &else_stmt) {
+        _else_stmt = else_stmt;
+        if(_else_stmt) {
+            set_this_as_parent_to(_else_stmt);
+        }
+    }
+
+    const std::shared_ptr<statement> &get_else_stmt() const {
+        return _else_stmt;
+    }
+
+};
 
 /**
  * Expression statement
@@ -1107,28 +1176,32 @@ public:
 class expression_statement : public statement
 {
 private:
-    expression_statement(const std::shared_ptr<block>& block, const std::shared_ptr<expression>& expr) :
-            statement(block), _expression(expr) {}
+    expression_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<expression>& expr) :
+            statement(parent), _expression(expr) {}
 
-    explicit expression_statement(const std::shared_ptr<block>& block) :
-            statement(block) {}
+    explicit expression_statement(const std::shared_ptr<statement>& parent) :
+            statement(parent) {}
 
     std::shared_ptr<expression> _expression;
+    std::shared_ptr<k::parse::ast::expression_statement> _ast_expr_stmt;
 
-protected:
 
     friend class block;
-    static std::shared_ptr<expression_statement> make_shared(const std::shared_ptr<block>& block) {
-        return std::shared_ptr<expression_statement>(new expression_statement(block));
+    static std::shared_ptr<expression_statement> make_shared(const std::shared_ptr<statement>& parent) {
+        return std::shared_ptr<expression_statement>(new expression_statement(parent));
     }
 
-    static std::shared_ptr<expression_statement> make_shared(const std::shared_ptr<block>& block, const std::shared_ptr<expression>& expr) {
-        std::shared_ptr<expression_statement> res(new expression_statement(block, expr));
-        expr->set_statement(res);
+    static std::shared_ptr<expression_statement> make_shared(const std::shared_ptr<statement>& parent, std::shared_ptr<expression> expr) {
+        std::shared_ptr<expression_statement> res(new expression_statement(parent, expr));
+        res->set_this_as_parent_to(expr);
         return res;
     }
 
 public:
+    expression_statement() = default;
+    expression_statement(const std::shared_ptr<k::parse::ast::expression_statement>& ast):
+            _ast_expr_stmt(ast) {}
+
     void accept(element_visitor& visitor) override;
 
     std::shared_ptr<expression> get_expression() { return _expression; };
@@ -1136,12 +1209,10 @@ public:
 
     expression_statement& set_expression(std::shared_ptr<expression> expr) {
         _expression = std::move(expr);
-        _expression->set_statement(shared_as<statement>());
+        set_this_as_parent_to(_expression);
         return *this;
     }
 };
-
-
 
 /**
  * Variable declaration statement
@@ -1154,11 +1225,11 @@ protected:
 
     std::shared_ptr<parameter> _func_param;
 
-    variable_statement(const std::shared_ptr<block> &block) :
-            statement(block) {}
+    variable_statement(const std::shared_ptr<statement> &parent) :
+            statement(parent) {}
 
-    variable_statement(const std::shared_ptr<block> &block, const std::string& name) :
-            statement(block), variable_definition(name) {}
+    variable_statement(const std::shared_ptr<statement> &parent, const std::string& name) :
+            statement(parent), variable_definition(name) {}
 
 public:
     void accept(element_visitor& visitor) override;
@@ -1186,37 +1257,21 @@ protected:
 
     friend class function;
 
-    /** Function holding this block. */
+    /** Function directly holding this block, if any. */
     std::shared_ptr<function> _function;
-
-    /** Map of all vars defined in this block. */
-    std::map<std::string, std::shared_ptr<variable_statement>> _vars;
 
     /** List of statements of this block. */
     std::vector<std::shared_ptr<statement>> _statements;
 
+    /** Map of all vars defined in this block. */
+    std::map<std::string, std::shared_ptr<variable_statement>> _vars;
 
-    block(const std::shared_ptr<block>& parent) : statement(parent), _function(parent->_function) {}
-
-    block(const std::shared_ptr<function>& function) : statement(nullptr), _function(function) {}
-
-
-    /**
-     * create a block as main block of given function.
-     * This new block will be attached to the given function but will not have any parent block.
-     * @param func Function to which the block will be attached
-     * @return New block
-     */
-    static std::shared_ptr<block> for_function(std::shared_ptr<function> func);
-    /**
-     * create a block as sub block of given block.
-     * This new block will be attached to the same function than its parent.
-     * @param parent Parent of the new block
-     * @return New block
-     */
-    static std::shared_ptr<block> for_block(std::shared_ptr<block> parent);
+    void set_as_parent(std::shared_ptr<function> func) {
+        _function = func;
+    }
 
 public:
+    block() = default;
 
     void accept(element_visitor& visitor) override;
 
@@ -1228,27 +1283,13 @@ public:
         return _statements;
     }
 
-    std::shared_ptr<function> get_function() {
-        return _function;
-    }
+    void append_statement(std::shared_ptr<statement> stmt);
 
-    std::shared_ptr<const function> get_function() const {
-        return _function;
-    }
-
-
-    std::shared_ptr<return_statement> append_return_statement();
-
-    std::shared_ptr<expression_statement> append_expression_statement();
-
-    std::shared_ptr<expression_statement> append_expression_statement(const std::shared_ptr<expression>& expr);
-
-    std::shared_ptr<block> append_block_statement();
+    std::shared_ptr<function> get_function() override;
+    std::shared_ptr<const function> get_function() const override;
 
     std::shared_ptr<variable_definition> append_variable(const std::string& name) override;
-
     std::shared_ptr<variable_definition> get_variable(const std::string& name) override;
-
     std::shared_ptr<variable_definition> lookup_variable(const std::string& name) override;
 };
 
@@ -1352,6 +1393,7 @@ public:
     std::shared_ptr<parameter> get_parameter(const std::string& name);
     std::shared_ptr<const parameter> get_parameter(const std::string& name)const;
 
+    void set_block(const std::shared_ptr<block>& block);
     std::shared_ptr<block> get_block();
 };
 
@@ -1441,15 +1483,11 @@ public:
     }
 
     std::shared_ptr<function> define_function(const std::string& name);
-
     std::shared_ptr<function> get_function(const std::string& name);
-
     std::shared_ptr<function> lookup_function(const std::string& name);
 
     std::shared_ptr<variable_definition> append_variable(const std::string &name) override;
-
     std::shared_ptr<variable_definition> get_variable(const std::string& name) override;
-
     std::shared_ptr<variable_definition> lookup_variable(const std::string& name) override;
 };
 
@@ -1540,6 +1578,7 @@ public:
     virtual void visit_statement(statement&) =0;
     virtual void visit_block(block&) =0;
     virtual void visit_return_statement(return_statement&) =0;
+    virtual void visit_if_else_statement(if_else_statement&) =0;
     virtual void visit_expression_statement(expression_statement&) =0;
     virtual void visit_variable_statement(variable_statement&) =0;
 
@@ -1612,6 +1651,7 @@ public:
     virtual void visit_statement(statement&) override;
     virtual void visit_block(block&) override;
     virtual void visit_return_statement(return_statement&) override;
+    virtual void visit_if_else_statement(if_else_statement&) override;
     virtual void visit_expression_statement(expression_statement&) override;
     virtual void visit_variable_statement(variable_statement&) override;
 

@@ -26,6 +26,9 @@ namespace k::lex {
         {"return", keyword::RETURN},
         {"this", keyword::THIS},
 
+        {"if", keyword::IF},
+        {"else", keyword::ELSE},
+
         {"bool", keyword::BOOL},
         {"byte", keyword::BYTE},
         {"char", keyword::CHAR},

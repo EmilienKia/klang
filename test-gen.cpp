@@ -2174,3 +2174,59 @@ TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
         REQUIRE( ge(false, true) == false );
     }
 }
+
+
+
+//
+// If-then-else
+//
+
+TEST_CASE("If-then-else", "[gen][if-else]") {
+    auto jit = gen(R"SRC(
+        module __if__;
+        min(a: int, b: int) : int {
+            if(a<b)
+                return a;
+            else
+                return b;
+        }
+        max(a: int, b: int) : int {
+            if(a>b) {
+                return a;
+            } else {
+                return b;
+            }
+        }
+        fibo(i: unsigned short) : unsigned long {
+            if(i==0) return 1;
+            else if(i==1) return 1;
+            return fibo(i-1) + fibo(i-2);
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    SECTION("if-then-else simple return statement") {
+        auto min = jit->lookup_symbol<int(*)(int,int)>("min");
+        REQUIRE(min != nullptr);
+        REQUIRE(min(4,2) == 2);
+        REQUIRE(min(2,4) == 2);
+    }
+
+    SECTION("if-then-else with blocks") {
+        auto max = jit->lookup_symbol<int(*)(int,int)>("max");
+        REQUIRE(max != nullptr);
+        REQUIRE(max(4,2) == 4);
+        REQUIRE(max(2,4) == 4);
+    }
+
+    SECTION("if-then-else with nested if and no else") {
+        auto fibo = jit->lookup_symbol<uint64_t(*)(unsigned short)>("fibo");
+        REQUIRE(fibo != nullptr);
+        REQUIRE(fibo(0) == 1);
+        REQUIRE(fibo(1) == 1);
+        REQUIRE(fibo(2) == 2);
+        REQUIRE(fibo(3) == 3);
+        REQUIRE(fibo(4) == 5);
+        REQUIRE(fibo(5) == 8);
+    }
+}

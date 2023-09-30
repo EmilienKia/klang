@@ -1,7 +1,7 @@
 //
 // Created by Emilien Kia <emilien.kia+dev@gmail.com>.
 //
-// Note: Last parser log number: 0x1002B
+// Note: Last parser log number: 0x10030
 //
 
 #include "parser.hpp"
@@ -430,6 +430,61 @@ std::shared_ptr<ast::return_statement> parser::parse_return_statement()
 
 }
 
+std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
+    lex::lex_holder holder(_lexer);
+
+    auto lif = _lexer.get();
+    if(lif != lex::keyword::IF) {
+        holder.rollback();
+        return {};
+    }
+
+    auto lpopen = _lexer.get();
+    if(lpopen != lex::punctuator::PARENTHESIS_OPEN) {
+        throw_error(0x002C, lpopen, "If statement expect an open parenthesis '(' after the 'if' keyword for the tested expression");
+    }
+
+    auto test_expr = parse_expression();
+    if(!test_expr) {
+        throw_error(0x002D, _lexer.pick(), "If statement expect an expression after the open parenthesis '('");
+    }
+
+    auto lpclose = _lexer.get();
+    if(lpclose != lex::punctuator::PARENTHESIS_CLOSE) {
+        throw_error(0x002E, lpclose, "If statement expect a close parenthesis ')' after the tested expression");
+    }
+
+    auto then_stmt = parse_statement();
+    if(!then_stmt) {
+        throw_error(0x002F, lpclose, "If statement expect a statement after the close parenthesis ')'");
+    }
+
+    holder.sync();
+
+    auto lelse = _lexer.get();
+    if(lelse == lex::keyword::ELSE) {
+        auto else_stmt = parse_statement();
+        if(!then_stmt) {
+            throw_error(0x0030, lelse, "If statement expect a statement after the 'else' keyword");
+        }
+
+        return std::make_shared<ast::if_else_statement>(
+                    lex::as<lex::keyword>(lif),
+                    lex::as<lex::keyword>(lelse),
+                    test_expr,
+                    then_stmt,
+                    else_stmt
+                );
+    } else {
+        holder.rollback();
+        return std::make_shared<ast::if_else_statement>(
+                lex::as<lex::keyword>(lif),
+                test_expr,
+                then_stmt
+        );
+    }
+}
+
 std::shared_ptr<ast::statement> parser::parse_statement()
 {
     if(auto block = parse_statement_block()) {
@@ -438,6 +493,10 @@ std::shared_ptr<ast::statement> parser::parse_statement()
 
     if(auto ret = parse_return_statement()) {
         return ret;
+    }
+
+    if(auto if_else = parse_if_else_statement()) {
+        return if_else;
     }
 
     if(auto var = parse_variable_decl()) {
