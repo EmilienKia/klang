@@ -4,14 +4,14 @@
 
 #include <catch2/catch.hpp>
 
-#include "logger.hpp"
-#include "parser.hpp"
-#include "ast_dump.hpp"
-#include "unit.hpp"
-#include "ast_unit_visitor.hpp"
-#include "unit_dump.hpp"
-#include "symbol_type_resolver.hpp"
-#include "unit_llvm_ir_gen.hpp"
+#include "../src/logger.hpp"
+#include "../src/parser.hpp"
+#include "../src/ast_dump.hpp"
+#include "../src/unit.hpp"
+#include "../src/ast_unit_visitor.hpp"
+#include "../src/unit_dump.hpp"
+#include "../src/symbol_type_resolver.hpp"
+#include "../src/unit_llvm_ir_gen.hpp"
 
 
 std::unique_ptr<k::unit::gen::unit_llvm_jit> gen(std::string_view src, bool dump = false) {

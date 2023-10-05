@@ -1,7 +1,7 @@
 #include <catch2/catch.hpp>
 
-#include "lexer.hpp"
-#include "logger.hpp"
+#include "../src/lexer.hpp"
+#include "../src/logger.hpp"
 
 using namespace k::lex;
 using namespace k::log;

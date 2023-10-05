@@ -1,9 +1,9 @@
 #include <catch2/catch.hpp>
 
-#include "lexer.hpp"
-#include "logger.hpp"
-#include "parser.hpp"
-#include "unit.hpp"
+#include "../src/lexer.hpp"
+#include "../src/logger.hpp"
+#include "../src/parser.hpp"
+#include "../src/unit.hpp"
 
 using namespace k::parse;
 
