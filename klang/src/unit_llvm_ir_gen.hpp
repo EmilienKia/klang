@@ -74,6 +74,10 @@ protected:
 public:
     unit_llvm_ir_gen(k::log::logger& logger, unit& unit);
 
+    llvm::Module& get_module() {
+        return *_module;
+    }
+
     void visit_unit(unit &) override;
 
     void visit_namespace(ns &) override;
