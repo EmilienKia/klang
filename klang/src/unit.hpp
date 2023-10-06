@@ -1170,6 +1170,53 @@ public:
 
 };
 
+
+/**
+ * While statement
+ */
+class while_statement : public statement
+{
+protected:
+    std::shared_ptr<k::parse::ast::while_statement> _ast_while_stmt;
+
+    std::shared_ptr<expression> _test_expr;
+    std::shared_ptr<statement> _nested_stmt;
+
+public:
+    while_statement() = default;
+    while_statement(const std::shared_ptr<k::parse::ast::while_statement>& ast) :
+            _ast_while_stmt(ast) {}
+
+    void accept(element_visitor& visitor) override;
+
+    void set_ast_while_stmt(const std::shared_ptr<k::parse::ast::while_statement> &ast_while_stmt) {
+        _ast_while_stmt = ast_while_stmt;
+    }
+
+    const std::shared_ptr<k::parse::ast::while_statement> &get_ast_while_stmt() const {
+        return _ast_while_stmt;
+    }
+
+    void set_test_expr(const std::shared_ptr<expression> &test_expr) {
+        _test_expr = test_expr;
+        set_this_as_parent_to(_test_expr);
+    }
+
+    const std::shared_ptr<expression> &get_test_expr() const {
+        return _test_expr;
+    }
+
+    void set_nested_stmt(const std::shared_ptr<statement> &nested_stmt) {
+        _nested_stmt = nested_stmt;
+        set_this_as_parent_to(_nested_stmt);
+    }
+
+    const std::shared_ptr<statement> &get_nested_stmt() const {
+        return _nested_stmt;
+    }
+
+};
+
 /**
  * Expression statement
  */
@@ -1579,6 +1626,7 @@ public:
     virtual void visit_block(block&) =0;
     virtual void visit_return_statement(return_statement&) =0;
     virtual void visit_if_else_statement(if_else_statement&) =0;
+    virtual void visit_while_statement(while_statement&) =0;
     virtual void visit_expression_statement(expression_statement&) =0;
     virtual void visit_variable_statement(variable_statement&) =0;
 
@@ -1652,6 +1700,7 @@ public:
     virtual void visit_block(block&) override;
     virtual void visit_return_statement(return_statement&) override;
     virtual void visit_if_else_statement(if_else_statement&) override;
+    virtual void visit_while_statement(while_statement&) override;
     virtual void visit_expression_statement(expression_statement&) override;
     virtual void visit_variable_statement(variable_statement&) override;
 

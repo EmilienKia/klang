@@ -426,6 +426,20 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        struct while_statement : public statement {
+            lex::keyword while_kw;
+            std::shared_ptr<expression> test_expr;
+            std::shared_ptr<statement> nested_stmt;
+
+            while_statement(const lex::keyword &while_kw,
+                              const std::shared_ptr<expression>& test_expr,
+                              const std::shared_ptr<statement> &nested_stmt)
+                    : while_kw(while_kw), test_expr(test_expr), nested_stmt(nested_stmt) {}
+
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         //
         // Declarations
         //
@@ -577,6 +591,7 @@ namespace k::parse {
         virtual void visit_block_statement(ast::block_statement &) = 0;
         virtual void visit_return_statement(ast::return_statement &) = 0;
         virtual void visit_if_else_statement(ast::if_else_statement &) = 0;
+        virtual void visit_while_statement(ast::while_statement &) = 0;
         virtual void visit_expression_statement(ast::expression_statement &) = 0;
 
         virtual void visit_literal_expr(ast::literal_expr &) = 0;
@@ -617,6 +632,7 @@ namespace k::parse {
         void visit_block_statement(ast::block_statement &) override;
         void visit_return_statement(ast::return_statement &) override;
         void visit_if_else_statement(ast::if_else_statement &) override;
+        void visit_while_statement(ast::while_statement &) override;
         void visit_expression_statement(ast::expression_statement &) override;
 
         void visit_literal_expr(ast::literal_expr &) override;

@@ -55,10 +55,14 @@ int main() {
 
 #if 1
     std::string source = R"SRC(
-        fibo(i: unsigned short) : unsigned long {
-            if(i==0) return 1;
-            else if(i==1) return 1;
-            return fibo(i-1) + fibo(i-2);
+        cumul(i : int) : int {
+            r : int;
+            r = 0;
+            while(i>0) {
+                r += i;
+                i = i - 1;
+            }
+            return r;
         }
     )SRC";
 #endif
@@ -112,8 +116,13 @@ int main() {
         }
 
 #if 1
-        auto fibo = jit.get()->lookup_symbol < unsigned short(*) (unsigned long long) > ("fibo");
-        std::cout << "Test : fibo(0) = " << (fibo(2)) << std::endl;
+        auto cumul = jit.get()->lookup_symbol < int(*) (int) > ("cumul");
+        std::cout << "Test : cumul(0) = " << (cumul(0)) << std::endl;
+        std::cout << "Test : cumul(1) = " << (cumul(1)) << std::endl;
+        std::cout << "Test : cumul(2) = " << (cumul(2)) << std::endl;
+        std::cout << "Test : cumul(3) = " << (cumul(3)) << std::endl;
+        std::cout << "Test : cumul(4) = " << (cumul(4)) << std::endl;
+        std::cout << "Test : cumul(5) = " << (cumul(5)) << std::endl;
 #endif
 
 #if 0

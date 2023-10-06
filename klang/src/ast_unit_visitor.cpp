@@ -229,6 +229,41 @@ namespace k::parse {
         _stmt = if_else_stmt;
     }
 
+    void ast_unit_visitor::visit_while_statement(ast::while_statement &stmt) {
+        auto while_stmt = std::make_shared<unit::while_statement>(stmt.shared_as<ast::while_statement>());
+
+        // Push function context
+        stack<while_context> push(_contexts, while_stmt);
+
+        // Test expression
+        _expr.reset();
+        if(stmt.test_expr) {
+            stmt.test_expr->visit(*this);
+        } /* else process absence in next if */
+        if(_expr) {
+            while_stmt->set_test_expr(_expr);
+            _expr.reset();
+        } else {
+            // Test expression is mandatory
+            // TODO throw an exception
+        }
+
+        // Nested statement
+        _stmt.reset();
+        if(stmt.nested_stmt) {
+            stmt.nested_stmt->visit(*this);
+        } /* else process absence in next if */
+        if(_stmt) {
+            while_stmt->set_nested_stmt(_stmt);
+            _stmt.reset();
+        } else {
+            // Nested statement is mandatory
+            // TODO throw an exception
+        }
+
+        _stmt = while_stmt;
+    }
+
     void ast_unit_visitor::visit_expression_statement(ast::expression_statement &stmt) {
         std::shared_ptr<unit::expression_statement> expr = std::make_shared<unit::expression_statement>(stmt.shared_as<ast::expression_statement>());
 

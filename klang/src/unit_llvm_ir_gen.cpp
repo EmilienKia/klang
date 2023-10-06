@@ -1055,9 +1055,9 @@ void unit_llvm_ir_gen::visit_if_else_statement(if_else_statement& stmt) {
 
     // Retrieve current block and create then, else and continue blocks
     llvm::Function* func = _builder->GetInsertBlock()->getParent();
-    llvm::BasicBlock* then_block = llvm::BasicBlock::Create(*_context, "then", func);
-    llvm::BasicBlock* else_block = has_else ? llvm::BasicBlock::Create(*_context, "else") : nullptr;
-    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(*_context, "cont");
+    llvm::BasicBlock* then_block = llvm::BasicBlock::Create(*_context, "if-then", func);
+    llvm::BasicBlock* else_block = has_else ? llvm::BasicBlock::Create(*_context, "if-else") : nullptr;
+    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(*_context, "if-continue");
 
     // Do branching
     if(has_else) {
@@ -1078,6 +1078,41 @@ void unit_llvm_ir_gen::visit_if_else_statement(if_else_statement& stmt) {
         stmt.get_else_stmt()->accept(*this);
         _builder->CreateBr(cont_block);
     }
+
+    // Generate "continuation" block
+    func->getBasicBlockList().push_back(cont_block);
+    _builder->SetInsertPoint(cont_block);
+}
+
+void unit_llvm_ir_gen::visit_while_statement(while_statement& stmt) {
+
+    // Retrieve current block and create nested and continue blocks
+    llvm::Function* func = _builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* while_block = llvm::BasicBlock::Create(*_context, "while-condition");
+    llvm::BasicBlock* nested_block = llvm::BasicBlock::Create(*_context, "while-nested");
+    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(*_context, "while-continue");
+
+    // While test block
+    _builder->CreateBr(while_block);
+    func->getBasicBlockList().push_back(while_block);
+    _builder->SetInsertPoint(while_block);
+
+    // Condition expression
+    _value = nullptr;
+    stmt.get_test_expr()->accept(*this);
+    auto test_value = _value;
+    _value = nullptr;
+
+    // Do branching
+    _builder->CreateCondBr(test_value, nested_block, cont_block);
+
+    // Nest bllock
+    func->getBasicBlockList().push_back(nested_block);
+    _builder->SetInsertPoint(nested_block);
+    stmt.get_nested_stmt()->accept(*this);
+
+    // Go back to test
+    _builder->CreateBr(while_block);
 
     // Generate "continuation" block
     func->getBasicBlockList().push_back(cont_block);

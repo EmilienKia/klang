@@ -1,7 +1,7 @@
 //
 // Created by Emilien Kia <emilien.kia+dev@gmail.com>.
 //
-// Note: Last resolver log number: 0x30002
+// Note: Last resolver log number: 0x30003
 //
 
 #include "symbol_type_resolver.hpp"
@@ -119,6 +119,27 @@ void symbol_type_resolver::visit_if_else_statement(if_else_statement& stmt)
     if(auto expr = stmt.get_else_stmt()) {
         expr->accept(*this);
     }
+}
+
+void symbol_type_resolver::visit_while_statement(while_statement& stmt)
+{
+    // Resolve and cast test
+    {
+        auto expr = stmt.get_test_expr();
+        expr->accept(*this);
+        auto cast = adapt_type(expr, primitive_type::from_type(primitive_type::BOOL));
+        if(!cast) {
+            throw_error(0x0003, stmt.get_ast_while_stmt()->while_kw, "While test expression type must be convertible to bool");
+        } else if(cast != expr ) {
+            // Casted, assign casted expression as return expr.
+            stmt.set_test_expr(cast);
+        } else {
+            // Compatible type, no need to cast.
+        }
+    }
+
+    // Resolve nested statement
+    stmt.get_nested_stmt()->accept(*this);
 }
 
 void symbol_type_resolver::visit_expression_statement(expression_statement& stmt)

@@ -2230,3 +2230,37 @@ TEST_CASE("If-then-else", "[gen][if-else]") {
         REQUIRE(fibo(5) == 8);
     }
 }
+
+
+
+//
+// While
+//
+
+TEST_CASE("While", "[gen][while]") {
+    auto jit = gen(R"SRC(
+        module __while__;
+        cumul(i : int) : int {
+            r : int;
+            r = 0;
+            while(i>0) {
+                r += i;
+                i = i - 1;
+            }
+            return r;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    SECTION("while simple statement") {
+        auto cumul = jit->lookup_symbol<int(*)(int)>("cumul");
+        REQUIRE(cumul != nullptr);
+        REQUIRE(cumul(0) == 0);
+        REQUIRE(cumul(1) == 1);
+        REQUIRE(cumul(2) == 3);
+        REQUIRE(cumul(3) == 6);
+        REQUIRE(cumul(4) == 10);
+        REQUIRE(cumul(5) == 15);
+    }
+
+}

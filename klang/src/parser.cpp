@@ -1,7 +1,7 @@
 //
 // Created by Emilien Kia <emilien.kia+dev@gmail.com>.
 //
-// Note: Last parser log number: 0x10030
+// Note: Last parser log number: 0x10034
 //
 
 #include "parser.hpp"
@@ -485,6 +485,42 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
     }
 }
 
+std::shared_ptr<ast::while_statement> parser::parse_while_statement() {
+    lex::lex_holder holder(_lexer);
+
+    auto lwhile = _lexer.get();
+    if(lwhile != lex::keyword::WHILE) {
+        holder.rollback();
+        return {};
+    }
+
+    auto lpopen = _lexer.get();
+    if(lpopen != lex::punctuator::PARENTHESIS_OPEN) {
+        throw_error(0x0031, lpopen, "While statement expect an open parenthesis '(' after the 'while' keyword for the tested expression");
+    }
+
+    auto test_expr = parse_expression();
+    if(!test_expr) {
+        throw_error(0x0032, _lexer.pick(), "While statement expect an expression after the open parenthesis '('");
+    }
+
+    auto lpclose = _lexer.get();
+    if(lpclose != lex::punctuator::PARENTHESIS_CLOSE) {
+        throw_error(0x0033, lpclose, "While statement expect a close parenthesis ')' after the tested expression");
+    }
+
+    auto nested_stmt = parse_statement();
+    if(!nested_stmt) {
+        throw_error(0x0034, lpclose, "While statement expect a statement after the close parenthesis ')'");
+    }
+
+    return std::make_shared<ast::while_statement>(
+            lex::as<lex::keyword>(lwhile),
+            test_expr,
+            nested_stmt
+    );
+}
+
 std::shared_ptr<ast::statement> parser::parse_statement()
 {
     if(auto block = parse_statement_block()) {
@@ -497,6 +533,10 @@ std::shared_ptr<ast::statement> parser::parse_statement()
 
     if(auto if_else = parse_if_else_statement()) {
         return if_else;
+    }
+
+    if(auto while_stmt = parse_while_statement()) {
+        return while_stmt;
     }
 
     if(auto var = parse_variable_decl()) {

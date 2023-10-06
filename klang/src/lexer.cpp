@@ -28,6 +28,7 @@ namespace k::lex {
 
         {"if", keyword::IF},
         {"else", keyword::ELSE},
+        {"while", keyword::WHILE},
 
         {"bool", keyword::BOOL},
         {"byte", keyword::BYTE},

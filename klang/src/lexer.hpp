@@ -153,7 +153,8 @@ namespace k::lex {
             DOUBLE,
             UNSIGNED,
             IF,
-            ELSE
+            ELSE,
+            WHILE
             /* TODO add new lexeme definition here. */
         };
 

@@ -67,6 +67,10 @@ void ast::if_else_statement::visit(ast_visitor &visitor) {
     visitor.visit_if_else_statement(*this);
 }
 
+void ast::while_statement::visit(ast_visitor &visitor) {
+    visitor.visit_while_statement(*this);
+}
+
 void ast::expression_statement::visit(ast_visitor& visitor) {
     visitor.visit_expression_statement(*this);
 }
@@ -188,6 +192,10 @@ void default_ast_visitor::visit_return_statement(ast::return_statement &) {
 }
 
 void default_ast_visitor::visit_if_else_statement(ast::if_else_statement &) {
+
+}
+
+void default_ast_visitor::visit_while_statement(ast::while_statement &) {
 
 }
 

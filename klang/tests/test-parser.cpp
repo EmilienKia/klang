@@ -996,3 +996,28 @@ TEST_CASE( "Parse if-else statement", "[parser][if-else]") {
     auto ret = std::dynamic_pointer_cast<ast::return_statement>(stmt->else_stmt);
     REQUIRE( ret );
 }
+
+
+//
+// While
+//
+
+TEST_CASE( "Parse while statement", "[parser][while]") {
+    k::log::logger log;
+    k::parse::parser parser(log, "while(t != 0) { t = test_continue(); }");
+    auto stmt = parser.parse_while_statement();
+    REQUIRE( stmt );
+
+    REQUIRE( stmt->while_kw == k::lex::keyword::WHILE );
+
+    REQUIRE( stmt->test_expr );
+    auto test = std::dynamic_pointer_cast<ast::binary_operator_expr>(stmt->test_expr);
+    REQUIRE( test );
+    REQUIRE( test->op == k::lex::operator_::EXCLAMATION_MARK_EQUAL );
+
+    REQUIRE( stmt->nested_stmt );
+    auto block = std::dynamic_pointer_cast<ast::block_statement>(stmt->nested_stmt);
+    REQUIRE( block );
+    REQUIRE( block->statements.size() == 1 );
+
+}

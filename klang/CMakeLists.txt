@@ -1,4 +1,5 @@
 
+configure_file(src/config.h.in config.h)
 
 set(CMAKE_CXX_STANDARD 20)
 
@@ -16,16 +17,13 @@ add_definitions(${LLVM_DEFINITIONS_LIST})
 llvm_map_components_to_libnames(LLVM_LIBRARIES core irreader native orcjit support AArch64 AMDGPU ARM AVR BPF Hexagon Lanai M68k Mips MSP430 NVPTX PowerPC RISCV Sparc SystemZ VE WebAssembly X86 XCore)
 message(STATUS "LLVM libs (by cmake): ${LLVM_LIBRARIES}")
 
-
 find_package(Boost 1.74 REQUIRED
         COMPONENTS program_options
 )
-
-include_directories(${Boost_INCLUDE_DIRS} ${PROJECT_BINARY_DIR}/klang)
-
+include_directories(${Boost_INCLUDE_DIRS})
 
 configure_file(src/config.h.in config.h)
-
+include_directories(${PROJECT_BINARY_DIR}/klang)
 
 add_library(klangcomp
         src/lexer.cpp
@@ -39,7 +37,6 @@ add_library(klangcomp
         src/unit_llvm_ir_gen.cpp
         src/logger.cpp
         src/logger.hpp
-        config.h
 )
 
 add_executable(klangc
@@ -48,7 +45,6 @@ add_executable(klangc
 
 target_include_directories(klangc PUBLIC ${PROJECT_BINARY_DIR})
 target_link_libraries(klangc klangcomp ${LLVM_LIBRARIES} fmt::fmt Boost::program_options)
-
 
 add_executable(tests
         tests/test-lexer.cpp

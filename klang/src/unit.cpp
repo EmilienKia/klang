@@ -477,6 +477,14 @@ void if_else_statement::accept(element_visitor &visitor) {
 }
 
 //
+// While statement
+//
+void while_statement::accept(element_visitor &visitor) {
+    visitor.visit_while_statement(*this);
+}
+
+
+//
 // Expression statement
 //
 void expression_statement::accept(element_visitor &visitor) {
@@ -866,6 +874,10 @@ void default_element_visitor::visit_return_statement(return_statement &stmt) {
 }
 
 void default_element_visitor::visit_if_else_statement(if_else_statement &stmt) {
+    visit_statement(stmt);
+}
+
+void default_element_visitor::visit_while_statement(while_statement& stmt) {
     visit_statement(stmt);
 }
 

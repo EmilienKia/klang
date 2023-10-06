@@ -242,6 +242,14 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             }
         }
 
+        virtual void visit_while_statement(ast::while_statement& stmt) override {
+            prefix() << "while ( ";
+            stmt.test_expr->visit(*this);
+            _stm << " ) " << std::endl;
+            auto pf = prefix_inc();
+            stmt.nested_stmt->visit(*this);
+        }
+
         virtual void visit_expression_statement(ast::expression_statement& stmt) override {
             prefix();
             if(stmt.expr) {

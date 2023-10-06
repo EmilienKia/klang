@@ -172,6 +172,16 @@ public:
         }
     }
 
+    void visit_while_statement(while_statement& stmt) override {
+        prefix() << "while ( ";
+        if(auto test_expr = stmt.get_test_expr()) {
+            test_expr->accept(*this);
+        }
+        _stm << " ) " << std::endl;
+        auto pf = prefix_inc();
+        stmt.get_nested_stmt()->accept(*this);
+    }
+
     void visit_block(block& blk) override {
         prefix() << "{" << std::endl;
         {
