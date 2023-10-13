@@ -26,7 +26,6 @@
 
 namespace k::lex {
 
-
     const std::map<std::string, keyword::type_t> keywords {
         {"module", keyword::MODULE},
         {"import", keyword::IMPORT},
@@ -1112,55 +1111,6 @@ namespace k::lex {
 
     bool lexer::eof() const {
         return lexemes.empty() || index>=lexemes.size();
-    }
-
-    //
-    // Integer literal
-    //
-    k::value_type integer::value()const {
-        // TODO
-        return {};
-    }
-
-    //
-    // Floating point number litteral
-    //
-    k::value_type float_num::value() const {
-        return {};
-    }
-
-    //
-    // Character literal
-    //
-    k::value_type character::value()const {
-        // TODO Decode unicode escape
-        return content.at(1);
-    }
-
-    //
-    // String literal
-    //
-    k::value_type string::value()const {
-        // TODO Decode unicode escape
-        return {content.substr(1, content.size()-2)};
-    }
-
-    //
-    // Boolean literal
-    //
-    k::value_type boolean::value()const {
-        if(content=="true") {
-            return {true};
-        } else {
-            return {false};
-        }
-    }
-
-    //
-    // Null literal
-    //
-    k::value_type null::value()const {
-        return {nullptr};
     }
 
     //

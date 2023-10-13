@@ -26,6 +26,7 @@ configure_file(src/config.h.in config.h)
 include_directories(${PROJECT_BINARY_DIR}/klang)
 
 add_library(klangcomp
+        src/lex/lexemes.cpp
         src/lex/lexer.cpp
         src/parse/parser.cpp
         src/parse/ast.cpp
