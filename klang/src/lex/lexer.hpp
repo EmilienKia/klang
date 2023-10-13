@@ -19,8 +19,8 @@
 #ifndef KLANG_LEXER_HPP
 #define KLANG_LEXER_HPP
 
-#include "any_of.hpp"
-#include "common.hpp"
+#include "../common/any_of.hpp"
+#include "../common/common.hpp"
 
 #include <functional>
 #include <map>

@@ -19,8 +19,8 @@
 #ifndef KLANG_PARSER_HPP
 #define KLANG_PARSER_HPP
 
-#include "any_of.hpp"
-#include "lexer.hpp"
+#include "../common/any_of.hpp"
+#include "../lex/lexer.hpp"
 #include "ast.hpp"
 
 #include <iostream>

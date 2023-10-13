@@ -30,9 +30,9 @@
 #include <variant>
 #include <vector>
 
-#include "any_of.hpp"
-#include "common.hpp"
-#include "lexer.hpp"
+#include "../common/any_of.hpp"
+#include "../common/common.hpp"
+#include "../lex/lexer.hpp"
 
 namespace k::parse {
 

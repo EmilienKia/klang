@@ -26,17 +26,17 @@ configure_file(src/config.h.in config.h)
 include_directories(${PROJECT_BINARY_DIR}/klang)
 
 add_library(klangcomp
-        src/lexer.cpp
-        src/parser.cpp
-        src/ast.cpp
-        src/unit.cpp
-        src/common.cpp
-        src/type.cpp
-        src/ast_unit_visitor.cpp
-        src/symbol_type_resolver.cpp
-        src/unit_llvm_ir_gen.cpp
-        src/logger.cpp
-        src/logger.hpp
+        src/lex/lexer.cpp
+        src/parse/parser.cpp
+        src/parse/ast.cpp
+        src/unit/unit.cpp
+        src/common/common.cpp
+        src/unit/type.cpp
+        src/unit/ast_unit_visitor.cpp
+        src/gen/symbol_type_resolver.cpp
+        src/gen/unit_llvm_ir_gen.cpp
+        src/common/logger.cpp
+        src/common/logger.hpp
 )
 
 add_executable(klangc

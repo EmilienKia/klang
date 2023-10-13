@@ -28,14 +28,14 @@
 
 #include "config.h"
 
-#include "logger.hpp"
-#include "parser.hpp"
-#include "ast_dump.hpp"
-#include "unit.hpp"
-#include "ast_unit_visitor.hpp"
-#include "unit_dump.hpp"
-#include "symbol_type_resolver.hpp"
-#include "unit_llvm_ir_gen.hpp"
+#include "common/logger.hpp"
+#include "parse/parser.hpp"
+#include "parse/ast_dump.hpp"
+#include "unit/unit.hpp"
+#include "unit/ast_unit_visitor.hpp"
+#include "unit/unit_dump.hpp"
+#include "gen/symbol_type_resolver.hpp"
+#include "gen/unit_llvm_ir_gen.hpp"
 
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/FileSystem.h"

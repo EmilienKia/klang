@@ -21,7 +21,7 @@
 
 #include "ast_unit_visitor.hpp"
 
-#include "common.hpp"
+#include "../common/common.hpp"
 
 namespace k::parse {
 

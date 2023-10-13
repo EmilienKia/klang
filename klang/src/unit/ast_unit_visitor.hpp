@@ -20,10 +20,10 @@
 #ifndef KLANG_AST_UNIT_VISITOR_HPP
 #define KLANG_AST_UNIT_VISITOR_HPP
 
-#include "ast.hpp"
+#include "../parse/ast.hpp"
 #include "unit.hpp"
-#include "logger.hpp"
-#include "lexer.hpp"
+#include "../common/logger.hpp"
+#include "../lex/lexer.hpp"
 #include <vector>
 
 namespace k::parse {

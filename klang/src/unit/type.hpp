@@ -22,7 +22,7 @@
 #include <memory>
 #include <map>
 
-#include "common.hpp"
+#include "../common/common.hpp"
 
 namespace k {
 namespace parse::ast {

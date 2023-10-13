@@ -43,10 +43,10 @@
 
 
 
-#include "unit.hpp"
+#include "../unit/unit.hpp"
 
-#include "logger.hpp"
-#include "lexer.hpp"
+#include "../common/logger.hpp"
+#include "../lex/lexer.hpp"
 
 
 namespace k::unit::gen {

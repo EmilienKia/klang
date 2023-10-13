@@ -24,10 +24,10 @@
 #include <string>
 #include <utility>
 
-#include "lexer.hpp"
-#include "ast.hpp"
-#include "parser.hpp"
-#include "common.hpp"
+#include "../lex/lexer.hpp"
+#include "../parse/ast.hpp"
+#include "../parse/parser.hpp"
+#include "../common/common.hpp"
 #include "type.hpp"
 
 

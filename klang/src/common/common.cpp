@@ -19,8 +19,8 @@
 
 #include "common.hpp"
 
-#include "lexer.hpp"
-#include "ast.hpp"
+#include "../lex/lexer.hpp"
+#include "../parse/ast.hpp"
 
 #include <iostream>
 #include <sstream>

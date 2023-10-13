@@ -19,7 +19,7 @@
 #ifndef KLANG_LOGGER_HPP
 #define KLANG_LOGGER_HPP
 
-#include "lexer.hpp"
+#include "../lex/lexer.hpp"
 
 #include <vector>
 

@@ -17,10 +17,10 @@
  */
 #include <catch2/catch.hpp>
 
-#include "../src/lexer.hpp"
-#include "../src/logger.hpp"
-#include "../src/parser.hpp"
-#include "../src/unit.hpp"
+#include "../src/lex/lexer.hpp"
+#include "../src/common/logger.hpp"
+#include "../src/parse/parser.hpp"
+#include "../src/unit/unit.hpp"
 
 using namespace k::parse;
 
