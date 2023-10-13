@@ -152,8 +152,14 @@ public:
      */
     std::shared_ptr<ast::while_statement> parse_while_statement();
 
+    /*
+     * FOR_STATEMENT := 'FOR' '(' ([VARIABLE_DECL] | ';') [EXPRESSION_STATEMENT] ?[EXPRESSION]')' [STATEMENT]
+     * TODO add foreach
+     */
+    std::shared_ptr<ast::for_statement> parse_for_statement();
+
     /**
-     * STATEMENT := STATEMENT_BLOCK | RETURN_STATEMENT | IF_ELSE_STATEMENT | WHILE_STATEMENT | VARIABLE_DECL | EXPRESSION_STATEMENT
+     * STATEMENT := STATEMENT_BLOCK | RETURN_STATEMENT | IF_ELSE_STATEMENT | WHILE_STATEMENT | FOR_STATEMENT | VARIABLE_DECL | EXPRESSION_STATEMENT
      * @return
      */
     std::shared_ptr<ast::statement> parse_statement();

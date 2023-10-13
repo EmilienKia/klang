@@ -1021,3 +1021,36 @@ TEST_CASE( "Parse while statement", "[parser][while]") {
     REQUIRE( block->statements.size() == 1 );
 
 }
+
+//
+// For
+//
+
+TEST_CASE( "Parse for statement", "[parser][for]") {
+    k::log::logger log;
+    k::parse::parser parser(log, "for(i : int = 0; i < m; i += 2 ) { res += i; }");
+    auto stmt = parser.parse_for_statement();
+    REQUIRE( stmt );
+
+    REQUIRE( stmt->for_kw == k::lex::keyword::FOR );
+
+    REQUIRE( stmt->decl_expr );
+    auto decl = stmt->decl_expr;
+    REQUIRE( decl->name.content == "i" );
+
+    REQUIRE( stmt->test_expr );
+    auto test = std::dynamic_pointer_cast<ast::binary_operator_expr>(stmt->test_expr);
+    REQUIRE( test );
+    REQUIRE( test->op == k::lex::operator_::CHEVRON_OPEN );
+
+    REQUIRE( stmt->step_expr );
+    auto step = std::dynamic_pointer_cast<ast::binary_operator_expr>(stmt->step_expr);
+    REQUIRE( step );
+    REQUIRE( step->op == k::lex::operator_::PLUS_EQUAL );
+
+    REQUIRE( stmt->nested_stmt );
+    auto block = std::dynamic_pointer_cast<ast::block_statement>(stmt->nested_stmt);
+    REQUIRE( block );
+    REQUIRE( block->statements.size() == 1 );
+
+}

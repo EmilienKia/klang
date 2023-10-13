@@ -90,9 +90,12 @@ namespace k::parse {
         std::shared_ptr<context> parent_context = _contexts.back();
         std::shared_ptr<unit::variable_holder> parent_scope;
 
+        // TODO Might be unique unit::variable_holder test
         if(auto parent = std::dynamic_pointer_cast<generic_context<unit::ns>>(parent_context)) {
             parent_scope = std::dynamic_pointer_cast<unit::variable_holder>(parent->content);
         } else if(auto parent = std::dynamic_pointer_cast<generic_context<unit::block>>(parent_context)) {
+            parent_scope = std::dynamic_pointer_cast<unit::variable_holder>(parent->content);
+        } else if(auto parent = std::dynamic_pointer_cast<generic_context<unit::for_statement>>(parent_context)) {
             parent_scope = std::dynamic_pointer_cast<unit::variable_holder>(parent->content);
         } else {
             throw_error(0x0004, decl.name, "Current context doesnt support variable declaration");
@@ -262,6 +265,64 @@ namespace k::parse {
         }
 
         _stmt = while_stmt;
+    }
+
+    void ast_unit_visitor::visit_for_statement(ast::for_statement &stmt) {
+        auto for_stmt = std::make_shared<unit::for_statement>(stmt.shared_as<ast::for_statement>());
+
+        // Push function context
+        stack<for_context> push(_contexts, for_stmt);
+
+        // Variable decl
+        _stmt.reset();
+        if(stmt.decl_expr) {
+            stmt.decl_expr->visit(*this);
+            // Varable supposed to be already registered.
+        }
+        _stmt.reset();
+
+        // Test expression
+        _expr.reset();
+        if(stmt.test_expr) {
+            stmt.test_expr->visit(*this);
+            if(_expr) {
+                for_stmt->set_test_expr(_expr);
+                _expr.reset();
+            } else {
+                // Test expression failed
+                // TODO throw an exception
+            }
+        }
+        _expr.reset();
+
+        // Step expression
+        _expr.reset();
+        if(stmt.step_expr) {
+            stmt.step_expr->visit(*this);
+            if(_expr) {
+                for_stmt->set_step_expr(_expr);
+                _expr.reset();
+            } else {
+                // Step expression failed
+                // TODO throw an exception
+            }
+        }
+        _expr.reset();
+
+        // Nested statement
+        _stmt.reset();
+        if(stmt.nested_stmt) {
+            stmt.nested_stmt->visit(*this);
+        } /* else process absence in next if */
+        if(_stmt) {
+            for_stmt->set_nested_stmt(_stmt);
+            _stmt.reset();
+        } else {
+            // Nested statement is mandatory
+            // TODO throw an exception
+        }
+
+        _stmt = for_stmt;
     }
 
     void ast_unit_visitor::visit_expression_statement(ast::expression_statement &stmt) {

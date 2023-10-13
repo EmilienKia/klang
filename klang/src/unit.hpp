@@ -21,6 +21,7 @@ namespace k::unit {
 
 class expression;
 class statement;
+class variable_statement;
 class block;
 
 class parameter;
@@ -1056,14 +1057,17 @@ protected:
     statement(const std::shared_ptr<statement>& parent_stmt) : _parent_stmt(parent_stmt) {}
     virtual ~statement() = default;
 
-    void set_this_as_parent_to(std::shared_ptr<expression>& expr);
-    void set_this_as_parent_to(std::shared_ptr<statement>& stmt);
+    void set_this_as_parent_to(std::shared_ptr<expression> expr);
+    void set_this_as_parent_to(std::shared_ptr<statement> stmt);
 
 public:
     void accept(element_visitor& visitor) override;
 
     std::shared_ptr<statement> get_parent_stmt() { return _parent_stmt; };
     std::shared_ptr<const statement> get_parent_stmt() const { return _parent_stmt; };
+
+    virtual std::shared_ptr<variable_holder> get_variable_holder();
+    virtual std::shared_ptr<const variable_holder> get_variable_holder() const;
 
     std::shared_ptr<block> get_block();
     std::shared_ptr<const block> get_block() const;
@@ -1217,6 +1221,60 @@ public:
 
 };
 
+
+/**
+ * For statement
+ */
+class for_statement : public statement , public variable_holder
+{
+protected:
+    std::shared_ptr<k::parse::ast::for_statement> _ast_for_stmt;
+
+    std::shared_ptr<variable_statement> _decl_stmt;
+    std::shared_ptr<expression> _test_expr;
+    std::shared_ptr<expression> _step_expr;
+    std::shared_ptr<statement> _nested_stmt;
+
+
+    /** Map of all vars defined in this block. */
+    std::map<std::string, std::shared_ptr<variable_statement>> _vars;
+
+public:
+    for_statement() = default;
+    for_statement(const std::shared_ptr<k::parse::ast::for_statement>& ast) :
+            _ast_for_stmt(ast) {}
+
+    void accept(element_visitor& visitor) override;
+
+    const std::shared_ptr<k::parse::ast::for_statement> &get_ast_for_stmt() const;
+
+    void set_ast_for_stmt(const std::shared_ptr<k::parse::ast::for_statement> &ast_for_stmt);
+
+    const std::shared_ptr<variable_statement> &get_decl_stmt() const;
+
+    void set_decl_stmt(const std::shared_ptr<variable_statement> &decl_stmt);
+
+    const std::shared_ptr<expression> &get_test_expr() const;
+
+    void set_test_expr(const std::shared_ptr<expression> &test_expr);
+
+    const std::shared_ptr<expression> &get_step_expr() const;
+
+    void set_step_expr(const std::shared_ptr<expression> &step_expr);
+
+    const std::shared_ptr<statement> &get_nested_stmt() const;
+
+    void set_nested_stmt(const std::shared_ptr<statement> &nested_stmt);
+
+    std::shared_ptr<variable_holder> get_variable_holder() override;
+    std::shared_ptr<const variable_holder> get_variable_holder() const override;
+
+    std::shared_ptr<variable_definition> append_variable(const std::string& name) override;
+    std::shared_ptr<variable_definition> get_variable(const std::string& name) override;
+    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) override;
+};
+
+
 /**
  * Expression statement
  */
@@ -1268,6 +1326,7 @@ class variable_statement : public statement, public variable_definition
 {
 protected:
     friend class block;
+    friend class for_statement;
     friend class gen::unit_llvm_ir_gen;
 
     std::shared_ptr<parameter> _func_param;
@@ -1331,6 +1390,9 @@ public:
     }
 
     void append_statement(std::shared_ptr<statement> stmt);
+
+    std::shared_ptr<variable_holder> get_variable_holder() override;
+    std::shared_ptr<const variable_holder> get_variable_holder() const override;
 
     std::shared_ptr<function> get_function() override;
     std::shared_ptr<const function> get_function() const override;
@@ -1627,6 +1689,7 @@ public:
     virtual void visit_return_statement(return_statement&) =0;
     virtual void visit_if_else_statement(if_else_statement&) =0;
     virtual void visit_while_statement(while_statement&) =0;
+    virtual void visit_for_statement(for_statement&) =0;
     virtual void visit_expression_statement(expression_statement&) =0;
     virtual void visit_variable_statement(variable_statement&) =0;
 
@@ -1701,6 +1764,7 @@ public:
     virtual void visit_return_statement(return_statement&) override;
     virtual void visit_if_else_statement(if_else_statement&) override;
     virtual void visit_while_statement(while_statement&) override;
+    virtual void visit_for_statement(for_statement&) override;
     virtual void visit_expression_statement(expression_statement&) override;
     virtual void visit_variable_statement(variable_statement&) override;
 

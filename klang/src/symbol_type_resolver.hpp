@@ -63,6 +63,7 @@ protected:
     void visit_return_statement(return_statement&) override;
     void visit_if_else_statement(if_else_statement&) override;
     void visit_while_statement(while_statement&) override;
+    void visit_for_statement(for_statement&) override;
     void visit_expression_statement(expression_statement&) override;
     void visit_variable_statement(variable_statement&) override;
 

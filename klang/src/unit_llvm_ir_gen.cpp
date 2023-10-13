@@ -1106,13 +1106,66 @@ void unit_llvm_ir_gen::visit_while_statement(while_statement& stmt) {
     // Do branching
     _builder->CreateCondBr(test_value, nested_block, cont_block);
 
-    // Nest bllock
+    // Nest block
     func->getBasicBlockList().push_back(nested_block);
     _builder->SetInsertPoint(nested_block);
     stmt.get_nested_stmt()->accept(*this);
 
     // Go back to test
     _builder->CreateBr(while_block);
+
+    // Generate "continuation" block
+    func->getBasicBlockList().push_back(cont_block);
+    _builder->SetInsertPoint(cont_block);
+}
+
+void unit_llvm_ir_gen::visit_for_statement(for_statement& stmt) {
+
+    // Retrieve current block and create nested and continue blocks
+    llvm::Function* func = _builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* for_block = llvm::BasicBlock::Create(*_context, "for-condition");
+    llvm::BasicBlock* nested_block = llvm::BasicBlock::Create(*_context, "for-nested");
+    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(*_context, "for-continue");
+
+    // Generate variable decl, if any
+    if(auto decl = stmt.get_decl_stmt()) {
+        decl->accept(*this);
+    }
+
+    // If test block
+    _builder->CreateBr(for_block);
+    func->getBasicBlockList().push_back(for_block);
+    _builder->SetInsertPoint(for_block);
+
+    // Condition expression
+    if(auto test_expr = stmt.get_test_expr()) {
+        _value = nullptr;
+        stmt.get_test_expr()->accept(*this);
+        auto test_value = _value;
+        _value = nullptr;
+
+        // Do branching
+        _builder->CreateCondBr(test_value, nested_block, cont_block);
+    } else {
+        _builder->CreateBr(nested_block);
+    }
+
+
+    // Nest block
+    func->getBasicBlockList().push_back(nested_block);
+    _builder->SetInsertPoint(nested_block);
+    stmt.get_nested_stmt()->accept(*this);
+
+    // Step, if any
+    if(auto step = stmt.get_step_expr()) {
+        _value = nullptr;
+        step->accept(*this);
+        auto step_value = _value;
+        _value = nullptr;
+    }
+
+    // Go back to test
+    _builder->CreateBr(for_block);
 
     // Generate "continuation" block
     func->getBasicBlockList().push_back(cont_block);
@@ -1126,17 +1179,16 @@ void unit_llvm_ir_gen::visit_expression_statement(expression_statement& stmt) {
 }
 
 void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
-    // TODO process initialization
-
-    // create the alloca at begining of the function
-    // TODO rework it to do so at right place (or begining of the block ?)
-    auto func = _functions[var.get_block()->get_function()];
+    // Create the alloca at begining of the function ...
+    auto var_func = var.get_function();
+    auto func = _functions[var_func];
     llvm::IRBuilder<> build(&func->getEntryBlock(),func->getEntryBlock().begin());
 
     llvm::Type *  type = get_llvm_type(var.get_type());
     llvm::AllocaInst* alloca = build.CreateAlloca(type, nullptr, var.get_name());
     _variables.insert({var.shared_as<variable_statement>(), alloca});
 
+    // But initialize at the decl place
     // TODO initialize the variable with the expression
     llvm::Constant *value;
     if(type::is_prim_integer(var.get_type())) {
@@ -1147,7 +1199,7 @@ void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
         value = llvm::ConstantFP::get(type, 0.0);
     }
 
-    build.CreateStore(value, alloca);
+    _builder->CreateStore(value, alloca);
 }
 
 void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_expression &expr) {

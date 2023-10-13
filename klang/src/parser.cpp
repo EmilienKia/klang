@@ -1,7 +1,7 @@
 //
 // Created by Emilien Kia <emilien.kia+dev@gmail.com>.
 //
-// Note: Last parser log number: 0x10034
+// Note: Last parser log number: 0x10039
 //
 
 #include "parser.hpp"
@@ -521,6 +521,69 @@ std::shared_ptr<ast::while_statement> parser::parse_while_statement() {
     );
 }
 
+std::shared_ptr<ast::for_statement> parser::parse_for_statement()
+{
+    lex::lex_holder holder(_lexer);
+
+    auto lfor = _lexer.get();
+    if(lfor != lex::keyword::FOR) {
+        holder.rollback();
+        return {};
+    }
+
+    auto lpopen = _lexer.get();
+    if(lpopen != lex::punctuator::PARENTHESIS_OPEN) {
+        throw_error(0x0035, lpopen, "For statement expect an open parenthesis '(' after the 'for' keyword");
+    }
+
+    std::optional<lex::punctuator> first_semicolon_kw;
+    std::shared_ptr<ast::variable_decl> decl_stmt;
+    if(auto decl = parse_variable_decl()) {
+        decl_stmt = decl;
+        // TODO Add semicolon ref
+    } else if(auto lsemicolon = _lexer.get(); lsemicolon == lex::punctuator::SEMICOLON) {
+        first_semicolon_kw = lex::as<lex::punctuator>(lsemicolon);
+    } else {
+        throw_error(0x0036, lpopen, "For statement expect a variable declaration or a semicolon ';' after the open parenthesis'('");
+    }
+
+    std::optional<lex::punctuator> second_semicolon_kw;
+    std::shared_ptr<ast::expression> test_expr;
+    if(auto expr = parse_expression_statement()) {
+        test_expr = expr->expr;
+        // TODO Add semicolon ref
+    } else if(auto lsemicolon = _lexer.get(); lsemicolon == lex::punctuator::SEMICOLON) {
+        second_semicolon_kw = lex::as<lex::punctuator>(lsemicolon);
+    } else {
+        throw_error(0x0037, lpopen, "For statement expect an expression or a semicolon ';' after the first semicolon ';'");
+    }
+
+    std::shared_ptr<ast::expression> step_expr;
+    if(auto expr = parse_expression()) {
+        step_expr = expr;
+    }
+
+    auto lpclose = _lexer.get();
+    if(lpclose != lex::punctuator::PARENTHESIS_CLOSE) {
+        throw_error(0x0038, lpclose, "For statement expect a closing parenthesis ')' after the optional step expression");
+    }
+
+    auto nested_stmt = parse_statement();
+    if(!nested_stmt) {
+        throw_error(0x0039, lpclose, "For statement expect a statement after the close parenthesis ')'");
+    }
+
+    return std::make_shared<ast::for_statement>(
+            lex::as<lex::keyword>(lfor),
+            *first_semicolon_kw,
+            *second_semicolon_kw,
+            decl_stmt,
+            test_expr,
+            step_expr,
+            nested_stmt
+    );
+}
+
 std::shared_ptr<ast::statement> parser::parse_statement()
 {
     if(auto block = parse_statement_block()) {
@@ -537,6 +600,10 @@ std::shared_ptr<ast::statement> parser::parse_statement()
 
     if(auto while_stmt = parse_while_statement()) {
         return while_stmt;
+    }
+
+    if(auto for_stmt = parse_for_statement()) {
+        return for_stmt;
     }
 
     if(auto var = parse_variable_decl()) {

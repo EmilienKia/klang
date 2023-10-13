@@ -154,7 +154,8 @@ namespace k::lex {
             UNSIGNED,
             IF,
             ELSE,
-            WHILE
+            WHILE,
+            FOR
             /* TODO add new lexeme definition here. */
         };
 

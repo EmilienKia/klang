@@ -440,6 +440,33 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        struct for_statement : public statement {
+            lex::keyword for_kw;
+            lex::punctuator first_semicolon_kw;
+            lex::punctuator second_semicolon_kw;
+            std::shared_ptr<variable_decl> decl_expr;
+            std::shared_ptr<expression> test_expr;
+            std::shared_ptr<expression> step_expr;
+            std::shared_ptr<statement> nested_stmt;
+
+
+            for_statement(const lex::keyword &for_kw,
+                          const lex::punctuator &first_semicolon_kw,
+                          const lex::punctuator &second_semicolon_kw,
+                          const std::shared_ptr<variable_decl> &decl_expr,
+                          const std::shared_ptr<expression> &test_expr,
+                          const std::shared_ptr<expression> &step_expr,
+                          const std::shared_ptr<statement> &nested_stmt) :
+                    for_kw(for_kw),
+                    first_semicolon_kw(first_semicolon_kw),
+                    second_semicolon_kw(second_semicolon_kw),
+                    decl_expr(decl_expr), test_expr(test_expr),
+                    step_expr(step_expr),
+                    nested_stmt(nested_stmt) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         //
         // Declarations
         //
@@ -592,6 +619,7 @@ namespace k::parse {
         virtual void visit_return_statement(ast::return_statement &) = 0;
         virtual void visit_if_else_statement(ast::if_else_statement &) = 0;
         virtual void visit_while_statement(ast::while_statement &) = 0;
+        virtual void visit_for_statement(ast::for_statement &) = 0;
         virtual void visit_expression_statement(ast::expression_statement &) = 0;
 
         virtual void visit_literal_expr(ast::literal_expr &) = 0;
@@ -633,6 +661,7 @@ namespace k::parse {
         void visit_return_statement(ast::return_statement &) override;
         void visit_if_else_statement(ast::if_else_statement &) override;
         void visit_while_statement(ast::while_statement &) override;
+        void visit_for_statement(ast::for_statement &) override;
         void visit_expression_statement(ast::expression_statement &) override;
 
         void visit_literal_expr(ast::literal_expr &) override;

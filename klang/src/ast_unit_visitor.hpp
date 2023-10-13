@@ -47,6 +47,7 @@ protected:
     typedef generic_context<unit::return_statement> return_context;
     typedef generic_context<unit::if_else_statement> if_else_context;
     typedef generic_context<unit::while_statement> while_context;
+    typedef generic_context<unit::for_statement> for_context;
     typedef generic_context<unit::expression_statement> expr_stmt_context;
 
     template<typename T>
@@ -98,6 +99,7 @@ protected:
     void visit_return_statement(ast::return_statement &) override;
     void visit_if_else_statement(ast::if_else_statement &) override;
     void visit_while_statement(ast::while_statement &) override;
+    void visit_for_statement(ast::for_statement &) override;
     void visit_expression_statement(ast::expression_statement &) override;
 
     void visit_literal_expr(ast::literal_expr &) override;

@@ -55,12 +55,11 @@ int main() {
 
 #if 1
     std::string source = R"SRC(
-        cumul(i : int) : int {
+        sum(i : short) : int {
             r : int;
             r = 0;
-            while(i>0) {
-                r += i;
-                i = i - 1;
+            for(n: short = 0; n<i; n+=1) {
+                r += n;
             }
             return r;
         }
@@ -116,7 +115,7 @@ int main() {
         }
 
 #if 1
-        auto cumul = jit.get()->lookup_symbol < int(*) (int) > ("cumul");
+        auto cumul = jit.get()->lookup_symbol < int(*) (int) > ("sum");
         std::cout << "Test : cumul(0) = " << (cumul(0)) << std::endl;
         std::cout << "Test : cumul(1) = " << (cumul(1)) << std::endl;
         std::cout << "Test : cumul(2) = " << (cumul(2)) << std::endl;

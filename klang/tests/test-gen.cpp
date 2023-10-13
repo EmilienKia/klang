@@ -2264,3 +2264,36 @@ TEST_CASE("While", "[gen][while]") {
     }
 
 }
+
+
+//
+// For
+//
+
+TEST_CASE("For", "[gen][for]") {
+    auto jit = gen(R"SRC(
+        module __for__;
+        sum(i : short) : int {
+            r : int;
+            r = 0;
+            for(n: short = 0; n<i; n+=1) {
+                r += n;
+            }
+            return r;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    SECTION("for simple statement") {
+        auto sum = jit->lookup_symbol<int(*)(short)>("sum");
+        REQUIRE(sum != nullptr);
+        REQUIRE(sum(0) == 0);
+        REQUIRE(sum(1) == 0);
+        REQUIRE(sum(2) == 1);
+        REQUIRE(sum(3) == 3);
+        REQUIRE(sum(4) == 6);
+        REQUIRE(sum(5) == 10);
+    }
+
+}
+

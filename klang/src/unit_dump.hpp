@@ -106,17 +106,20 @@ public:
 
     void visit_global_variable_definition(global_variable_definition& var) override {
         visit_variable_definition(var);
+        _stm << std::endl;
     }
 
-    void visit_variable_definition(k::unit::variable_definition& var) {
-        prefix() << "variable '" << var.get_name() << "' : ";
+    void visit_variable_definition(k::unit::variable_definition& var, bool inline_decl = false) {
+        if(!inline_decl) {
+            prefix();
+        }
+        _stm << "variable '" << var.get_name() << "' : ";
         dump_type(*var.get_type());
         if(auto init = var.get_init_expr()) {
             _stm << " = ";
             // TODO dump init expression
             init->accept(*this);
         }
-        _stm << std::endl;
     }
 
     void dump_type(k::unit::type& type) {
@@ -145,6 +148,7 @@ public:
 
     void visit_variable_statement(variable_statement& stmt) override {
         visit_variable_definition(stmt);
+        _stm << std::endl;
     }
 
     void visit_return_statement(return_statement& stmt) override {
@@ -176,6 +180,24 @@ public:
         prefix() << "while ( ";
         if(auto test_expr = stmt.get_test_expr()) {
             test_expr->accept(*this);
+        }
+        _stm << " ) " << std::endl;
+        auto pf = prefix_inc();
+        stmt.get_nested_stmt()->accept(*this);
+    }
+
+    void visit_for_statement(for_statement& stmt) override {
+        prefix() << "for ( ";
+        if(auto& var = stmt.get_decl_stmt()) {
+            visit_variable_definition(*var, true);
+        }
+        _stm << " ; ";
+        if(auto test = stmt.get_test_expr()) {
+            test->accept(*this);
+        }
+        _stm << " ; ";
+        if(auto step = stmt.get_step_expr()) {
+            step->accept(*this);
         }
         _stm << " ) " << std::endl;
         auto pf = prefix_inc();

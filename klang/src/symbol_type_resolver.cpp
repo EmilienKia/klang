@@ -1,7 +1,7 @@
 //
 // Created by Emilien Kia <emilien.kia+dev@gmail.com>.
 //
-// Note: Last resolver log number: 0x30003
+// Note: Last resolver log number: 0x30004
 //
 
 #include "symbol_type_resolver.hpp"
@@ -142,6 +142,37 @@ void symbol_type_resolver::visit_while_statement(while_statement& stmt)
     stmt.get_nested_stmt()->accept(*this);
 }
 
+void symbol_type_resolver::visit_for_statement(for_statement& stmt)
+{
+    // Resolve variable decl, if any
+    if(auto decl = stmt.get_decl_stmt()) {
+        decl->accept(*this);
+    }
+
+    // Resolve and cast test
+    if(auto expr = stmt.get_test_expr()) {
+        expr->accept(*this);
+        auto cast = adapt_type(expr, primitive_type::from_type(primitive_type::BOOL));
+        if(!cast) {
+            throw_error(0x0004, stmt.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
+        } else if(cast != expr ) {
+            // Casted, assign casted expression as return expr.
+            stmt.set_test_expr(cast);
+        } else {
+            // Compatible type, no need to cast.
+        }
+    }
+
+    // Resolve step
+    if(auto step = stmt.get_step_expr()) {
+        step->accept(*this);
+    }
+
+    // Resolve nested statement
+    stmt.get_nested_stmt()->accept(*this);
+}
+
+
 void symbol_type_resolver::visit_expression_statement(expression_statement& stmt)
 {
     if(auto expr = stmt.get_expression()) {
@@ -170,8 +201,8 @@ void symbol_type_resolver::visit_symbol_expression(symbol_expression& symbol)
     // TODO: Have to support all symbol types, not only variables
     if(!symbol.is_resolved()) {
         if(auto stmt = symbol.find_statement()) {
-            if(auto block = stmt->get_block()) {
-                if(auto def = block->lookup_variable(symbol.get_name())) {
+            if(auto var_holder = stmt->get_variable_holder()) {
+                if(auto def = var_holder->lookup_variable(symbol.get_name())) {
                     symbol.resolve(def);
                     // Note: type is supposed to be applied at resolution
                 }
@@ -213,10 +244,15 @@ void symbol_type_resolver::visit_binary_expression(binary_expression& expr)
     left->accept(*this);
     right->accept(*this);
 
-    if(!type::is_resolved(left->get_type()) || !type::is_resolved(right->get_type())) {
+    if(!type::is_resolved(left->get_type())) {
         // TODO throw an exception
-        // Error 0x0005: binary expression must have resolved type at left and right sub-expression
-        std::cerr << "Error: binary expression must have resolved type at left and right sub-expression" << std::endl;
+        // Error 0x0005: Error: left sub-expression of binary expression must have resolved type
+        std::cerr << "Error: left sub-expression of binary expression must have resolved type" << std::endl;
+    }
+    if(!type::is_resolved(right->get_type())) {
+        // TODO throw an exception
+        // Error 0x0005b: Error: right sub-expression of binary expression must have resolved type
+        std::cerr << "Error: right sub-expression of binary expression must have resolved type" << std::endl;
     }
 }
 
@@ -245,7 +281,7 @@ void symbol_type_resolver::process_arithmetic(binary_expression& expr) {
     if(!cast) {
         // TODO throw an exception
         // Error: right type is not compatible (cannot be cast).
-        std::cerr << "Error: binary expression must have resolved type at left and right sub-expression" << std::endl;
+        std::cerr << "Error: binary arithmetic expression must have resolved type at left and right sub-expression" << std::endl;
     } else if(cast != right ) {
         // Casted, assign casted expression instead of right source.
         expr.assign_right(cast);
