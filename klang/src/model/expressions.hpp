@@ -23,6 +23,10 @@
 
 namespace k::model {
 
+namespace gen {
+class symbol_type_resolver;
+}
+
 
 /**
  * Base class for all expressions.
@@ -58,7 +62,7 @@ protected:
         _parent_expression = expression;
     }
 
-    friend class symbol_type_resolver;
+    friend class gen::symbol_type_resolver;
 
     void set_type(std::shared_ptr<type> type) {
         _type = type;
@@ -218,7 +222,7 @@ protected:
         _sub_expr->set_parent_expression(shared_as<expression>());
     }
 
-    friend class symbol_type_resolver;
+    friend class gen::symbol_type_resolver;
 
     void assign(const std::shared_ptr<expression> &sub_expr) {
         _sub_expr = sub_expr;
@@ -274,7 +278,7 @@ protected:
         _left_expr->set_parent_expression(shared_as<expression>());
     }
 
-    friend class symbol_type_resolver;
+    friend class gen::symbol_type_resolver;
 
     void assign_right(const std::shared_ptr<expression> &right_expr) {
         _right_expr = right_expr;

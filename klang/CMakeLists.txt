@@ -44,6 +44,9 @@ add_library(klangcomp
         src/model/model_visitor.hpp
         src/model/statements.cpp
         src/model/statements.hpp
+        src/gen/gen_expressions.cpp
+        src/gen/gen_statements.cpp
+        src/gen/gen_unit.cpp
 )
 
 add_executable(klangc

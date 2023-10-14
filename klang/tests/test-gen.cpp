@@ -48,7 +48,7 @@ std::unique_ptr<k::model::gen::unit_llvm_jit> gen(std::string_view src, bool dum
         unit_dump.dump(unit);
     }
 
-    k::model::symbol_type_resolver var_resolver(log, unit);
+    k::model::gen::symbol_type_resolver var_resolver(log, unit);
     var_resolver.resolve();
 
     if(dump) {

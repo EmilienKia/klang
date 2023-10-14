@@ -25,7 +25,7 @@
 #include "../common/logger.hpp"
 #include "../lex/lexer.hpp"
 
-namespace k::model {
+namespace k::model::gen {
 
 
 class resolution_error : public std::runtime_error {
@@ -115,6 +115,6 @@ protected:
 };
 
 
-} // k::model
+} // k::model::gen
 
 #endif //KLANG_SYMBOL_TYPE_RESOLVER_HPP

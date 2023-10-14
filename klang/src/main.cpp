@@ -107,7 +107,7 @@ int main() {
         std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
         unit_dump.dump(unit);
 
-        k::model::symbol_type_resolver resolver(logger, unit);
+        k::model::gen::symbol_type_resolver resolver(logger, unit);
         resolver.resolve();
         std::cout << "#" << std::endl << "# Resolution" << std::endl << "#" << std::endl;
         unit_dump.dump(unit);
