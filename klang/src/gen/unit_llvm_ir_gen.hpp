@@ -43,13 +43,14 @@
 
 
 
-#include "../unit/unit.hpp"
+#include "../model/model.hpp"
+#include "../model/model_visitor.hpp"
 
 #include "../common/logger.hpp"
 #include "../lex/lexer.hpp"
 
 
-namespace k::unit::gen {
+namespace k::model::gen {
 
 class unit_llvm_jit;
 
@@ -61,7 +62,7 @@ public:
 
 
 
-class unit_llvm_ir_gen : public default_element_visitor, protected k::lex::lexeme_logger {
+class unit_llvm_ir_gen : public default_model_visitor, protected k::lex::lexeme_logger {
 protected:
     unit& _unit;
 
@@ -199,6 +200,6 @@ public:
 
 
 
-} // k::unit::gen
+} // k::model::gen
 
 #endif //KLANG_UNIT_LLVM_IR_GEN_HPP

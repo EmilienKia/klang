@@ -20,7 +20,7 @@
 #include "../src/lex/lexer.hpp"
 #include "../src/common/logger.hpp"
 #include "../src/parse/parser.hpp"
-#include "../src/unit/unit.hpp"
+#include "../src/model/model.hpp"
 
 using namespace k::parse;
 

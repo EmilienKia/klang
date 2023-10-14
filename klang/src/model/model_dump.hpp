@@ -19,14 +19,16 @@
 #ifndef KLANG_UNIT_DUMP_HPP
 #define KLANG_UNIT_DUMP_HPP
 
-#include "unit.hpp"
+#include "model.hpp"
+#include "expressions.hpp"
+#include "model_visitor.hpp"
 
 #include <typeinfo>
 
-namespace k::unit::dump {
+namespace k::model::dump {
 
 template<typename OSTM>
-class unit_dump  : public default_element_visitor {
+class unit_dump  : public default_model_visitor {
     OSTM& _stm;
     size_t off = 0;
 public:
@@ -81,7 +83,7 @@ public:
 
     void visit_unit(unit& unit) override {
         // Module name:
-        prefix() << "unit: " << unit.get_unit_name().to_string() << std::endl;
+        prefix() << "model: " << unit.get_unit_name().to_string() << std::endl;
 
         // TODO Imports
         unit.get_root_namespace()->accept(*this);
@@ -123,7 +125,7 @@ public:
         _stm << std::endl;
     }
 
-    void visit_variable_definition(k::unit::variable_definition& var, bool inline_decl = false) {
+    void visit_variable_definition(k::model::variable_definition& var, bool inline_decl = false) {
         if(!inline_decl) {
             prefix();
         }
@@ -136,7 +138,7 @@ public:
         }
     }
 
-    void dump_type(k::unit::type& type) {
+    void dump_type(k::model::type& type) {
         if(auto t = dynamic_cast<primitive_type*>(&type)) {
             dump_primitive_type(*t);
         } else if(auto t = dynamic_cast<unresolved_type*>(&type)) {
@@ -477,5 +479,5 @@ public:
 };
 
 
-} // namespace k::unit::dump
+} // namespace k::model::dump
 #endif //KLANG_UNIT_DUMP_HPP

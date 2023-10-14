@@ -26,7 +26,7 @@
 
 #include "llvm/Target/TargetMachine.h"
 
-namespace k::unit::gen {
+namespace k::model::gen {
 
 //
 // Exceptions
@@ -40,7 +40,7 @@ generation_error::generation_error(const char *string) :
 {}
 
 //
-// LLVM unit generator
+// LLVM model generator
 //
 
 unit_llvm_ir_gen::unit_llvm_ir_gen(k::log::logger& logger, unit& unit):
@@ -986,7 +986,7 @@ void unit_llvm_ir_gen::visit_function(function &function) {
     llvm::FunctionType *func_type = llvm::FunctionType::get(ret_type, param_types, false);
     llvm::Function *func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage, function.name(), *_module);
 
-    _functions.insert({function.shared_as<k::unit::function>(), func});
+    _functions.insert({function.shared_as<k::model::function>(), func});
 
     // create the function content:
     llvm::BasicBlock *block = llvm::BasicBlock::Create(*_context, "entry", func);
@@ -1467,4 +1467,4 @@ llvm::Expected<llvm::JITEvaluatedSymbol> unit_llvm_jit::lookup(llvm::StringRef n
     return _session->lookup({&_main_dynlib}, _mangle(name.str()));
 }
 
-} // k::unit::gen
+} // k::model::gen

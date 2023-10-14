@@ -60,7 +60,7 @@ public:
     /**
      * UNIT := ?MODULE_DECLARATION *IMPORT DECLARATIONS
      *
-     * @return The newly parsed unit
+     * @return The newly parsed model
      * @throws parsing_error If a parsinng arror occurs
      */
     std::shared_ptr<ast::unit> parse_unit();

@@ -35,7 +35,7 @@ class keyword;
 }
 
 
-namespace k::unit {
+namespace k::model {
 
 
 /**
@@ -176,5 +176,5 @@ inline bool type::is_prim_float(const std::shared_ptr<type>& type){
     return prim != nullptr && prim->is_float();
 }
 
-} // namespace k::unit
+} // namespace k::model
 #endif //KLANG_TYPE_HPP

@@ -21,14 +21,14 @@
 #include "../src/common/logger.hpp"
 #include "../src/parse/parser.hpp"
 #include "../src/parse/ast_dump.hpp"
-#include "../src/unit/unit.hpp"
-#include "../src/unit/ast_unit_visitor.hpp"
-#include "../src/unit/unit_dump.hpp"
+#include "../src/model/model.hpp"
+#include "../src/model/model_builder.hpp"
+#include "../src/model/model_dump.hpp"
 #include "../src/gen/symbol_type_resolver.hpp"
 #include "../src/gen/unit_llvm_ir_gen.hpp"
 
 
-std::unique_ptr<k::unit::gen::unit_llvm_jit> gen(std::string_view src, bool dump = false) {
+std::unique_ptr<k::model::gen::unit_llvm_jit> gen(std::string_view src, bool dump = false) {
     k::log::logger log;
     k::parse::parser parser(log, src);
     std::shared_ptr<k::parse::ast::unit> ast_unit = parser.parse_unit();
@@ -39,25 +39,25 @@ std::unique_ptr<k::unit::gen::unit_llvm_jit> gen(std::string_view src, bool dump
         visit.visit_unit(*ast_unit);
     }
 
-    k::unit::unit unit;
-    k::parse::ast_unit_visitor::visit(log, *ast_unit, unit);
+    k::model::unit unit;
+    k::model::model_builder::visit(log, *ast_unit, unit);
 
     if(dump) {
-        k::unit::dump::unit_dump unit_dump(std::cout);
+        k::model::dump::unit_dump unit_dump(std::cout);
         std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
         unit_dump.dump(unit);
     }
 
-    k::unit::symbol_type_resolver var_resolver(log, unit);
+    k::model::symbol_type_resolver var_resolver(log, unit);
     var_resolver.resolve();
 
     if(dump) {
-        k::unit::dump::unit_dump unit_dump(std::cout);
+        k::model::dump::unit_dump unit_dump(std::cout);
         std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
         unit_dump.dump(unit);
     }
 
-    k::unit::gen::unit_llvm_ir_gen gen(log, unit);
+    k::model::gen::unit_llvm_ir_gen gen(log, unit);
     unit.accept(gen);
     gen.verify();
 

@@ -19,18 +19,18 @@
 // Note: Last parser log number: 0x20008
 //
 
-#include "ast_unit_visitor.hpp"
+#include "model_builder.hpp"
 
 #include "../common/common.hpp"
 
-namespace k::parse {
+namespace k::model {
 
-    void ast_unit_visitor::visit(k::log::logger& logger, k::parse::ast::unit& src, k::unit::unit& unit) {
-        ast_unit_visitor visitor(logger, unit);
+    void model_builder::visit(k::log::logger& logger, k::parse::ast::unit& src, k::model::unit& unit) {
+        model_builder visitor(logger, unit);
         visitor.visit_unit(src);
     }
 
-    void ast_unit_visitor::visit_unit(ast::unit &unit) {
+    void model_builder::visit_unit(parse::ast::unit &unit) {
         // Push root ns context
         stack<ns_context> push(_contexts, _unit.get_root_namespace());
 
@@ -41,30 +41,30 @@ namespace k::parse {
         super::visit_unit(unit);
     }
 
-    void ast_unit_visitor::visit_module_name(ast::module_name &) {
-        // Not used, proceed at unit level.
+    void model_builder::visit_module_name(parse::ast::module_name &) {
+        // Not used, proceed at model level.
     }
 
-    void ast_unit_visitor::visit_import(ast::import &) {
+    void model_builder::visit_import(parse::ast::import &) {
     }
 
-    void ast_unit_visitor::visit_identified_type_specifier(ast::identified_type_specifier &) {
-
-    }
-
-    void ast_unit_visitor::visit_parameter_specifier(ast::parameter_spec &) {
+    void model_builder::visit_identified_type_specifier(parse::ast::identified_type_specifier &) {
 
     }
 
-    void ast_unit_visitor::visit_qualified_identifier(ast::qualified_identifier &) {
+    void model_builder::visit_parameter_specifier(parse::ast::parameter_spec &) {
 
     }
 
-    void ast_unit_visitor::visit_keyword_type_specifier(ast::keyword_type_specifier &) {
+    void model_builder::visit_qualified_identifier(parse::ast::qualified_identifier &) {
 
     }
 
-    void ast_unit_visitor::visit_visibility_decl(ast::visibility_decl &visibility) {
+    void model_builder::visit_keyword_type_specifier(parse::ast::keyword_type_specifier &) {
+
+    }
+
+    void model_builder::visit_visibility_decl(parse::ast::visibility_decl &visibility) {
         auto scope = std::dynamic_pointer_cast<ns_context>(_contexts.back());
         if(!scope) {
             throw_error(0x0001, visibility.scope, "Current context doesnt support default visibility");
@@ -72,13 +72,13 @@ namespace k::parse {
 
         switch(visibility.scope.type) {
             case lex::keyword::PUBLIC:
-                scope->visibility = unit::PUBLIC;
+                scope->visibility = model::PUBLIC;
                 break;
             case lex::keyword::PROTECTED:
-                scope->visibility = unit::PROTECTED;
+                scope->visibility = model::PROTECTED;
                 break;
             case lex::keyword::PRIVATE:
-                scope->visibility = unit::PRIVATE;
+                scope->visibility = model::PRIVATE;
                 break;
             default:
                 throw_error(0x0002, visibility.scope, "Unrecognized visibility context keyword {}", {visibility.scope.content});
@@ -86,13 +86,13 @@ namespace k::parse {
         }
     }
 
-    void ast_unit_visitor::visit_namespace_decl(ast::namespace_decl &ns) {
+    void model_builder::visit_namespace_decl(parse::ast::namespace_decl &ns) {
         auto parent_scope = std::dynamic_pointer_cast<ns_context>(_contexts.back());
         if(!parent_scope) {
             throw_error(0x0003, ns.ns, "Current context is not a namespace namespace");
         }
 
-        std::shared_ptr<k::unit::ns> namesp = parent_scope->content->get_child_namespace(ns.name->content);
+        std::shared_ptr<k::model::ns> namesp = parent_scope->content->get_child_namespace(ns.name->content);
 
         // Push namespace context
         stack<ns_context> push(_contexts, namesp);
@@ -100,18 +100,18 @@ namespace k::parse {
         super::visit_namespace_decl(ns);
     }
 
-    void ast_unit_visitor::visit_variable_decl(ast::variable_decl &decl) {
+    void model_builder::visit_variable_decl(parse::ast::variable_decl &decl) {
         // TODO refactor variable declaration to make it stack-less
         std::shared_ptr<context> parent_context = _contexts.back();
-        std::shared_ptr<unit::variable_holder> parent_scope;
+        std::shared_ptr<model::variable_holder> parent_scope;
 
-        // TODO Might be unique unit::variable_holder test
-        if(auto parent = std::dynamic_pointer_cast<generic_context<unit::ns>>(parent_context)) {
-            parent_scope = std::dynamic_pointer_cast<unit::variable_holder>(parent->content);
-        } else if(auto parent = std::dynamic_pointer_cast<generic_context<unit::block>>(parent_context)) {
-            parent_scope = std::dynamic_pointer_cast<unit::variable_holder>(parent->content);
-        } else if(auto parent = std::dynamic_pointer_cast<generic_context<unit::for_statement>>(parent_context)) {
-            parent_scope = std::dynamic_pointer_cast<unit::variable_holder>(parent->content);
+        // TODO Might be unique model::variable_holder test
+        if(auto parent = std::dynamic_pointer_cast<generic_context<model::ns>>(parent_context)) {
+            parent_scope = std::dynamic_pointer_cast<model::variable_holder>(parent->content);
+        } else if(auto parent = std::dynamic_pointer_cast<generic_context<model::block>>(parent_context)) {
+            parent_scope = std::dynamic_pointer_cast<model::variable_holder>(parent->content);
+        } else if(auto parent = std::dynamic_pointer_cast<generic_context<model::for_statement>>(parent_context)) {
+            parent_scope = std::dynamic_pointer_cast<model::variable_holder>(parent->content);
         } else {
             throw_error(0x0004, decl.name, "Current context doesnt support variable declaration");
         }
@@ -120,8 +120,8 @@ namespace k::parse {
             throw_error(0x0005, decl.name, "Current context doesnt support variable declaration");
         }
 
-        std::shared_ptr<unit::variable_definition> var = parent_scope->append_variable(decl.name.content);
-        var->set_type(unit::unresolved_type::from_type_specifier(*decl.type));
+        std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(decl.name.content);
+        var->set_type(model::unresolved_type::from_type_specifier(*decl.type));
 
         if(decl.init) {
             _expr.reset();
@@ -130,13 +130,13 @@ namespace k::parse {
         }
     }
 
-    void ast_unit_visitor::visit_function_decl(ast::function_decl & func) {
+    void model_builder::visit_function_decl(parse::ast::function_decl & func) {
         auto parent_scope = std::dynamic_pointer_cast<ns_context>(_contexts.back());
         if(!parent_scope) {
             throw_error(0x0006, func.name, "Current context doesnt support functions");
         }
 
-        std::shared_ptr<unit::function> function = parent_scope->content->define_function(func.name.content);
+        std::shared_ptr<model::function> function = parent_scope->content->define_function(func.name.content);
 
         // Push function context
         stack<func_context> push(_contexts, function);
@@ -144,26 +144,26 @@ namespace k::parse {
         // TODO add function specs
 
         if(func.type) {
-            function->return_type(unit::unresolved_type::from_type_specifier(*func.type));
+            function->return_type(model::unresolved_type::from_type_specifier(*func.type));
         }
 
-        std::shared_ptr<unit::block> block = function->get_block();
+        std::shared_ptr<model::block> block = function->get_block();
 
         for(auto param : func.params) {
-            std::shared_ptr<unit::parameter> parameter = function->append_parameter(param->name->content, unit::unresolved_type::from_type_specifier(*(param->type)));
+            std::shared_ptr<model::parameter> parameter = function->append_parameter(param->name->content, model::unresolved_type::from_type_specifier(*(param->type)));
             // TODO add param specs
         }
 
         if(func.content) {
             visit_block_statement(*func.content);
-            if(auto block = std::dynamic_pointer_cast<unit::block>(_stmt)) {
+            if(auto block = std::dynamic_pointer_cast<model::block>(_stmt)) {
                 function->set_block(block);
             }
         }
     }
 
-    void ast_unit_visitor::visit_block_statement(ast::block_statement &block_stmt) {
-        std::shared_ptr<unit::block> block = std::make_shared<unit::block>();
+    void model_builder::visit_block_statement(parse::ast::block_statement &block_stmt) {
+        std::shared_ptr<model::block> block = std::make_shared<model::block>();
 
         // Push function context
         stack<block_context> push(_contexts, block);
@@ -181,8 +181,8 @@ namespace k::parse {
         _stmt = block;
     }
 
-    void ast_unit_visitor::visit_return_statement(ast::return_statement &stmt) {
-        std::shared_ptr<unit::return_statement> ret_stmt = std::make_shared<unit::return_statement>(stmt.shared_as<ast::return_statement>());
+    void model_builder::visit_return_statement(parse::ast::return_statement &stmt) {
+        std::shared_ptr<model::return_statement> ret_stmt = std::make_shared<model::return_statement>(stmt.shared_as<parse::ast::return_statement>());
 
         // Push function context
         stack<return_context> push(_contexts, ret_stmt);
@@ -199,8 +199,8 @@ namespace k::parse {
         _stmt = ret_stmt;
     }
 
-    void ast_unit_visitor::visit_if_else_statement(ast::if_else_statement &stmt) {
-        std::shared_ptr<unit::if_else_statement> if_else_stmt = std::make_shared<unit::if_else_statement>(stmt.shared_as<ast::if_else_statement>());
+    void model_builder::visit_if_else_statement(parse::ast::if_else_statement &stmt) {
+        std::shared_ptr<model::if_else_statement> if_else_stmt = std::make_shared<model::if_else_statement>(stmt.shared_as<parse::ast::if_else_statement>());
 
         // Push function context
         stack<if_else_context> push(_contexts, if_else_stmt);
@@ -247,8 +247,8 @@ namespace k::parse {
         _stmt = if_else_stmt;
     }
 
-    void ast_unit_visitor::visit_while_statement(ast::while_statement &stmt) {
-        auto while_stmt = std::make_shared<unit::while_statement>(stmt.shared_as<ast::while_statement>());
+    void model_builder::visit_while_statement(parse::ast::while_statement &stmt) {
+        auto while_stmt = std::make_shared<model::while_statement>(stmt.shared_as<parse::ast::while_statement>());
 
         // Push function context
         stack<while_context> push(_contexts, while_stmt);
@@ -282,8 +282,8 @@ namespace k::parse {
         _stmt = while_stmt;
     }
 
-    void ast_unit_visitor::visit_for_statement(ast::for_statement &stmt) {
-        auto for_stmt = std::make_shared<unit::for_statement>(stmt.shared_as<ast::for_statement>());
+    void model_builder::visit_for_statement(parse::ast::for_statement &stmt) {
+        auto for_stmt = std::make_shared<model::for_statement>(stmt.shared_as<parse::ast::for_statement>());
 
         // Push function context
         stack<for_context> push(_contexts, for_stmt);
@@ -340,8 +340,8 @@ namespace k::parse {
         _stmt = for_stmt;
     }
 
-    void ast_unit_visitor::visit_expression_statement(ast::expression_statement &stmt) {
-        std::shared_ptr<unit::expression_statement> expr = std::make_shared<unit::expression_statement>(stmt.shared_as<ast::expression_statement>());
+    void model_builder::visit_expression_statement(parse::ast::expression_statement &stmt) {
+        std::shared_ptr<model::expression_statement> expr = std::make_shared<model::expression_statement>(stmt.shared_as<parse::ast::expression_statement>());
 
         // Push function context
         stack<expr_stmt_context> push(_contexts, expr);
@@ -358,120 +358,120 @@ namespace k::parse {
         _stmt = expr;
     }
 
-    void ast_unit_visitor::visit_literal_expr(ast::literal_expr &expr) {
-        _expr = unit::value_expression::from_literal(expr.literal);
+    void model_builder::visit_literal_expr(parse::ast::literal_expr &expr) {
+        _expr = model::value_expression::from_literal(expr.literal);
     }
 
-    void ast_unit_visitor::visit_keyword_expr(ast::keyword_expr &expr) {
+    void model_builder::visit_keyword_expr(parse::ast::keyword_expr &expr) {
         // Note: Must not happen
     }
 
-    void ast_unit_visitor::visit_this_expr(ast::keyword_expr &expr) {
+    void model_builder::visit_this_expr(parse::ast::keyword_expr &expr) {
         // TODO keyword "this"
     }
 
-    void ast_unit_visitor::visit_expr_list_expr(ast::expr_list_expr &) {
+    void model_builder::visit_expr_list_expr(parse::ast::expr_list_expr &) {
 
     }
 
-    void ast_unit_visitor::visit_conditional_expr(ast::conditional_expr &) {
+    void model_builder::visit_conditional_expr(parse::ast::conditional_expr &) {
 
     }
 
-    void ast_unit_visitor::visit_binary_operator_expr(ast::binary_operator_expr & expr) {
+    void model_builder::visit_binary_operator_expr(parse::ast::binary_operator_expr & expr) {
 
         expr.lexpr()->visit(*this);
-        std::shared_ptr<unit::expression> lexpr = _expr;
+        std::shared_ptr<model::expression> lexpr = _expr;
         expr.rexpr()->visit(*this);
-        std::shared_ptr<unit::expression> rexpr = _expr;
+        std::shared_ptr<model::expression> rexpr = _expr;
 
         switch(expr.op.type) {
             case lex::operator_::PLUS:
-                _expr = unit::addition_expression::make_shared(lexpr, rexpr);
+                _expr = model::addition_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::MINUS:
-                _expr = unit::substraction_expression::make_shared(lexpr, rexpr);
+                _expr = model::substraction_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::STAR:
-                _expr = unit::multiplication_expression::make_shared(lexpr, rexpr);
+                _expr = model::multiplication_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::SLASH:
-                _expr = unit::division_expression::make_shared(lexpr, rexpr);
+                _expr = model::division_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::PERCENT:
-                _expr = unit::modulo_expression::make_shared(lexpr, rexpr);
+                _expr = model::modulo_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::AMPERSAND:
-                _expr = unit::bitwise_and_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_and_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::PIPE:
-                _expr = unit::bitwise_or_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_or_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CARET:
-                _expr = unit::bitwise_xor_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_xor_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_OPEN:
-                _expr = unit::left_shift_expression::make_shared(lexpr, rexpr);
+                _expr = model::left_shift_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_CLOSE:
-                _expr = unit::right_shift_expression::make_shared(lexpr, rexpr);
+                _expr = model::right_shift_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::EQUAL:
-                _expr = unit::simple_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::simple_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::PLUS_EQUAL:
-                _expr = unit::additition_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::additition_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::MINUS_EQUAL:
-                _expr = unit::substraction_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::substraction_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::STAR_EQUAL:
-                _expr = unit::multiplication_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::multiplication_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::SLASH_EQUAL:
-                _expr = unit::division_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::division_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::PERCENT_EQUAL:
-                _expr = unit::modulo_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::modulo_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::AMPERSAND_EQUAL:
-                _expr = unit::bitwise_and_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_and_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::PIPE_EQUAL:
-                _expr = unit::bitwise_or_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_or_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CARET_EQUAL:
-                _expr = unit::bitwise_xor_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_xor_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_OPEN_EQUAL:
-                _expr = unit::left_shift_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::left_shift_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_CLOSE_EQUAL:
-                _expr = unit::right_shift_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::right_shift_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_AMPERSAND:
-                _expr = unit::logical_and_expression::make_shared(lexpr, rexpr);
+                _expr = model::logical_and_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_PIPE:
-                _expr = unit::logical_or_expression::make_shared(lexpr, rexpr);
+                _expr = model::logical_or_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_EQUAL:
-                _expr = unit::equal_expression::make_shared(lexpr, rexpr);
+                _expr = model::equal_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::EXCLAMATION_MARK_EQUAL:
-                _expr = unit::different_expression::make_shared(lexpr, rexpr);
+                _expr = model::different_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_OPEN:
-                _expr = unit::lesser_expression::make_shared(lexpr, rexpr);
+                _expr = model::lesser_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_CLOSE:
-                _expr = unit::greater_expression::make_shared(lexpr, rexpr);
+                _expr = model::greater_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_OPEN_EQUAL:
-                _expr = unit::lesser_equal_expression::make_shared(lexpr, rexpr);
+                _expr = model::lesser_equal_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_CLOSE_EQUAL:
-                _expr = unit::greater_equal_expression::make_shared(lexpr, rexpr);
+                _expr = model::greater_equal_expression::make_shared(lexpr, rexpr);
                 break;
             default: // TODO other operations
                 throw_error(0x0007, expr.op, "Binary operator '{}' not supported", {expr.op.content});
@@ -479,54 +479,54 @@ namespace k::parse {
         }
     }
 
-    void ast_unit_visitor::visit_cast_expr(ast::cast_expr& expr) {
+    void model_builder::visit_cast_expr(parse::ast::cast_expr& expr) {
         _expr = nullptr;
         expr.expr()->visit(*this);
-        _expr = unit::cast_expression::make_shared(_expr, unit::unresolved_type::from_type_specifier(*expr.type));
+        _expr = model::cast_expression::make_shared(_expr, model::unresolved_type::from_type_specifier(*expr.type));
     }
 
-    void ast_unit_visitor::visit_unary_prefix_expr(ast::unary_prefix_expr& expr) {
+    void model_builder::visit_unary_prefix_expr(parse::ast::unary_prefix_expr& expr) {
         _expr = nullptr;
         expr.expr()->visit(*this);
         auto sub = _expr;
 
-        std::shared_ptr<unit::unary_expression> unary;
+        std::shared_ptr<model::unary_expression> unary;
         switch(expr.op.type) {
             case lex::operator_::PLUS:
-                unary = unit::unary_plus_expression::make_shared(sub);
+                unary = model::unary_plus_expression::make_shared(sub);
                 break;
             case lex::operator_::MINUS:
-                unary = unit::unary_minus_expression::make_shared(sub);
+                unary = model::unary_minus_expression::make_shared(sub);
                 break;
             case lex::operator_::TILDE:
-                unary = unit::bitwise_not_expression::make_shared(sub);
+                unary = model::bitwise_not_expression::make_shared(sub);
                 break;
             case lex::operator_::EXCLAMATION_MARK:
-                unary = unit::logical_not_expression::make_shared(sub);
+                unary = model::logical_not_expression::make_shared(sub);
                 break;
             default:
                 throw_error(0x0008, expr.op, "Unary operator '{}' not supported", {expr.op.content});
                 break;
         }
-        unary->set_ast_unary_expr(expr.shared_as<ast::unary_prefix_expr>());
+        unary->set_ast_unary_expr(expr.shared_as<parse::ast::unary_prefix_expr>());
         _expr = unary;
     }
 
-    void ast_unit_visitor::visit_unary_postfix_expr(ast::unary_postfix_expr &) {
+    void model_builder::visit_unary_postfix_expr(parse::ast::unary_postfix_expr &) {
 
     }
 
-    void ast_unit_visitor::visit_bracket_postifx_expr(ast::bracket_postifx_expr &) {
+    void model_builder::visit_bracket_postifx_expr(parse::ast::bracket_postifx_expr &) {
 
     }
 
-    void ast_unit_visitor::visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr &expr) {
+    void model_builder::visit_parenthesis_postifx_expr(parse::ast::parenthesis_postifx_expr &expr) {
         expr.lexpr()->visit(*this);
-        std::shared_ptr<unit::expression> callee = _expr;
+        std::shared_ptr<model::expression> callee = _expr;
 
         _expr = nullptr;
-        std::vector<std::shared_ptr<unit::expression>> args;
-        if(auto list = std::dynamic_pointer_cast<ast::expr_list_expr>(expr.rexpr())) {
+        std::vector<std::shared_ptr<model::expression>> args;
+        if(auto list = std::dynamic_pointer_cast<parse::ast::expr_list_expr>(expr.rexpr())) {
             for(auto arg : list->exprs()) {
                 arg->visit(*this);
                 args.push_back(_expr);
@@ -537,19 +537,19 @@ namespace k::parse {
             args.push_back(_expr);
         }
 
-        _expr = unit::function_invocation_expression::make_shared(callee, args);
+        _expr = model::function_invocation_expression::make_shared(callee, args);
     }
 
-    void ast_unit_visitor::visit_identifier_expr(ast::identifier_expr &expr) {
+    void model_builder::visit_identifier_expr(parse::ast::identifier_expr &expr) {
         bool has_prefix = expr.qident.initial_doublecolon.has_value();
         std::vector<std::string> idents;
         for(auto ident : expr.qident.names){
             idents.push_back(ident.content);
         }
-        _expr = unit::symbol_expression::from_identifier(name(has_prefix, std::move(idents)));
+        _expr = model::symbol_expression::from_identifier(name(has_prefix, std::move(idents)));
     }
 
-    void ast_unit_visitor::visit_comma_expr(ast::expr_list_expr &) {
+    void model_builder::visit_comma_expr(parse::ast::expr_list_expr &) {
 
     }
 

@@ -17,9 +17,9 @@
  */
 
 #include "type.hpp"
-#include "unit.hpp"
+#include "model.hpp"
 
-namespace k::unit {
+namespace k::model {
 
 //
 // Base type
@@ -156,4 +156,4 @@ const std::string& primitive_type::to_string()const {
 }
 
 
-} // k::unit
+} // k::model

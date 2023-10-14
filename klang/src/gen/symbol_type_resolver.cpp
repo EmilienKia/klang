@@ -21,7 +21,7 @@
 
 #include "symbol_type_resolver.hpp"
 
-namespace k::unit {
+namespace k::model {
 
 
 //
@@ -548,4 +548,4 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_type(const std::shared_p
 
 
 
-} // k::unit
+} // k::model

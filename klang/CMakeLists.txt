@@ -30,14 +30,20 @@ add_library(klangcomp
         src/lex/lexer.cpp
         src/parse/parser.cpp
         src/parse/ast.cpp
-        src/unit/unit.cpp
+        src/model/model.cpp
         src/common/common.cpp
-        src/unit/type.cpp
-        src/unit/ast_unit_visitor.cpp
+        src/model/type.cpp
+        src/model/model_builder.cpp
         src/gen/symbol_type_resolver.cpp
         src/gen/unit_llvm_ir_gen.cpp
         src/common/logger.cpp
         src/common/logger.hpp
+        src/model/expressions.cpp
+        src/model/expressions.hpp
+        src/model/model_visitor.cpp
+        src/model/model_visitor.hpp
+        src/model/statements.cpp
+        src/model/statements.hpp
 )
 
 add_executable(klangc

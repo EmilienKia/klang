@@ -19,12 +19,13 @@
 #ifndef KLANG_SYMBOL_TYPE_RESOLVER_HPP
 #define KLANG_SYMBOL_TYPE_RESOLVER_HPP
 
-#include "../unit/unit.hpp"
+#include "../model/model.hpp"
+#include "../model/model_visitor.hpp"
 
 #include "../common/logger.hpp"
 #include "../lex/lexer.hpp"
 
-namespace k::unit {
+namespace k::model {
 
 
 class resolution_error : public std::runtime_error {
@@ -39,7 +40,7 @@ public:
  * Unit symbol resolver
  * This helper class will resolve method and variable usages to their definitions.
  */
-class symbol_type_resolver : public default_element_visitor, protected k::lex::lexeme_logger {
+class symbol_type_resolver : public default_model_visitor, protected k::lex::lexeme_logger {
 protected:
     unit& _unit;
 
@@ -114,6 +115,6 @@ protected:
 };
 
 
-} // k::unit
+} // k::model
 
 #endif //KLANG_SYMBOL_TYPE_RESOLVER_HPP
