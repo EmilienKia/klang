@@ -323,6 +323,16 @@ void symbol_type_resolver::visit_variable_statement(variable_statement& var)
 {
     if(auto expr = var.get_init_expr()) {
         expr->accept(*this);
+
+        auto cast = adapt_type(expr, var.get_type());
+        if(!cast) {
+// TODO            throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
+        } else if(cast != expr) {
+            // Casted, assign casted expression as return expr.
+            var.set_init_expr(cast);
+        } else {
+            // Compatible type, no need to cast.
+        }
     }
 }
 
@@ -337,17 +347,28 @@ void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
     _variables.insert({var.shared_as<variable_statement>(), alloca});
 
     // But initialize at the decl place
-    // TODO initialize the variable with the expression
-    llvm::Constant *value;
-    if(type::is_prim_integer(var.get_type())) {
-        value = llvm::ConstantInt::get(type, 0);
-    } else if(type::is_prim_bool(var.get_type())) {
-        value = llvm::ConstantInt::getFalse(type);
-    } else if(type::is_prim_float(var.get_type())) {
-        value = llvm::ConstantFP::get(type, 0.0);
+    llvm::Value *value = nullptr;
+    if(auto init = var.get_init_expr()) {
+        _value = nullptr;
+        init->accept(*this);
+        value = _value;
+        _value = nullptr;
     }
 
-    _builder->CreateStore(value, alloca);
+    // If no explicit initialization, init to 0.
+    if(value == nullptr) {
+        if(type::is_prim_integer(var.get_type())) {
+            value = llvm::ConstantInt::get(type, 0);
+        } else if(type::is_prim_bool(var.get_type())) {
+            value = llvm::ConstantInt::getFalse(type);
+        } else if(type::is_prim_float(var.get_type())) {
+            value = llvm::ConstantFP::get(type, 0.0);
+        } /* TODO add init of other types. */
+    }
+
+    if(value) {
+        _builder->CreateStore(value, alloca);
+    }
 }
 
 

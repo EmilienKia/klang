@@ -27,8 +27,41 @@ namespace k::model {
 //
 // Expression
 //
+
+void expression::set_statement(const std::shared_ptr<statement> &statement) {
+    _statement = statement;
+}
+
+void expression::set_parent_expression(const std::shared_ptr<expression> &expression) {
+    _parent_expression = expression;
+}
+
+void expression::set_type(std::shared_ptr<type> type) {
+    _type = type;
+}
+
 void expression::accept(model_visitor &visitor) {
     visitor.visit_expression(*this);
+}
+
+std::shared_ptr<statement> expression::find_statement() {
+    if(_statement) {
+        return _statement;
+    } else if (_parent_expression) {
+        return _parent_expression->find_statement();
+    } else {
+        return nullptr;
+    }
+}
+
+std::shared_ptr<const statement> expression::find_statement() const {
+    if(_statement) {
+        return _statement;
+    } else if (_parent_expression) {
+        return _parent_expression->find_statement();
+    } else {
+        return nullptr;
+    }
 }
 
 //

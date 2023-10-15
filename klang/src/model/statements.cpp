@@ -222,6 +222,12 @@ void variable_statement::accept(model_visitor &visitor) {
     visitor.visit_variable_statement(*this);
 }
 
+variable_definition& variable_statement::set_init_expr(std::shared_ptr<expression> init_expr) {
+    variable_definition::set_init_expr(init_expr);
+    set_this_as_parent_to(init_expr);
+    return *this;
+}
+
 //
 // Block
 //

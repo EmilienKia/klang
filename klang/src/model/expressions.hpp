@@ -48,9 +48,7 @@ protected:
 
     friend class statement;
 
-    void set_statement(const std::shared_ptr<statement> &statement) {
-        _statement = statement;
-    }
+    void set_statement(const std::shared_ptr<statement> &statement);
 
     friend class unary_expression;
 
@@ -58,43 +56,26 @@ protected:
 
     friend class function_invocation_expression;
 
-    void set_parent_expression(const std::shared_ptr<expression> &expression) {
-        _parent_expression = expression;
-    }
+    void set_parent_expression(const std::shared_ptr<expression> &expression);
 
     friend class gen::symbol_type_resolver;
 
-    void set_type(std::shared_ptr<type> type) {
-        _type = type;
-    }
+    void set_type(std::shared_ptr<type> type);
 
 public:
     void accept(model_visitor &visitor) override;
 
-    std::shared_ptr<type> get_type() {
-        return _type;
-    }
-
-    std::shared_ptr<const type> get_type() const {
-        return _type;
-    }
+    std::shared_ptr<type> get_type() { return _type; }
+    std::shared_ptr<const type> get_type() const { return _type; }
 
     std::shared_ptr<statement> get_statement() { return _statement; };
-
     std::shared_ptr<const statement> get_statement() const { return _statement; };
 
-    std::shared_ptr<statement> find_statement() {
-        return _statement ? _statement : _parent_expression ? _parent_expression->find_statement() : nullptr;
-    };
-
-    std::shared_ptr<const statement> find_statement() const {
-        return _statement ? _statement : _parent_expression ? _parent_expression->find_statement() : nullptr;
-    };
+    std::shared_ptr<statement> find_statement();
+    std::shared_ptr<const statement> find_statement() const;
 
     std::shared_ptr<expression> get_parent_expression() { return _parent_expression; };
-
     std::shared_ptr<const expression> get_parent_expression() const { return _parent_expression; };
-
 };
 
 

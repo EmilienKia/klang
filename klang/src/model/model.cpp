@@ -33,6 +33,33 @@ static name to_name(const parse::ast::qualified_identifier &ident) {
     return {ident.has_root_prefix(), idents};
 }
 
+//
+// Variable definition
+//
+
+const std::string& variable_definition::get_name() const {
+    return _name;
+}
+
+std::shared_ptr<type> variable_definition::get_type() const {
+    return _type;
+}
+
+std::shared_ptr<expression> variable_definition::get_init_expr() const {
+    return _expression;
+}
+
+variable_definition& variable_definition::set_type(std::shared_ptr<type> type) {
+    _type = type;
+    return *this;
+}
+
+variable_definition& variable_definition::set_init_expr(std::shared_ptr<expression> init_expr) {
+    _expression = init_expr;
+    return *this;
+}
+
+
 
 //
 // NS element

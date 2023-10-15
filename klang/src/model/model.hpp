@@ -114,28 +114,11 @@ protected:
     variable_definition(const std::string& name, const std::shared_ptr<type> &type) : _name(name), _type(type) {}
 
 public:
-    virtual const std::string& get_name() const override {
-        return _name;
-    }
-
-    virtual std::shared_ptr<type> get_type() const override {
-        return _type;
-    }
-
-    virtual std::shared_ptr<expression> get_init_expr() const override {
-        return _expression;
-    }
-
-    virtual variable_definition& set_type(std::shared_ptr<type> type) {
-        _type = type;
-        return *this;
-    }
-
-    virtual variable_definition& set_init_expr(std::shared_ptr<expression> init_expr) {
-        _expression = init_expr;
-        return *this;
-    }
-
+    virtual const std::string& get_name() const override;
+    virtual std::shared_ptr<type> get_type() const override;
+    virtual std::shared_ptr<expression> get_init_expr() const override;
+    virtual variable_definition& set_type(std::shared_ptr<type> type);
+    virtual variable_definition& set_init_expr(std::shared_ptr<expression> init_expr);
 };
 
 

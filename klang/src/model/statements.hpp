@@ -333,6 +333,7 @@ public:
         return (bool)_func_param;
     }
 
+    virtual variable_definition& set_init_expr(std::shared_ptr<expression> init_expr) override;
 };
 
 
