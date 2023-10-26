@@ -118,6 +118,33 @@ TEST_CASE( "Parse identifiers with prefix", "[parser][expression][identifier]" )
 }
 
 //
+// Parse type specifiers
+//
+
+TEST_CASE( "Parse int[4][] type spec", "[parser][type]") {
+    k::log::logger log;
+    k::parse::parser parser(log, "int[][4]");
+    auto spec = parser.parse_type_spec();
+    REQUIRE( spec );
+
+    auto arr_spec1 = std::dynamic_pointer_cast<ast::array_type_specifier>(spec);
+    REQUIRE( arr_spec1 );
+    REQUIRE( arr_spec1->lex_int );
+    REQUIRE( arr_spec1->lex_int->int_content() == "4" );
+    REQUIRE( arr_spec1->subtype );
+
+    auto arr_spec2 = std::dynamic_pointer_cast<ast::array_type_specifier>(arr_spec1->subtype);
+    REQUIRE( arr_spec2 );
+    REQUIRE( !arr_spec2->lex_int );
+    REQUIRE( arr_spec2->subtype );
+
+    auto subtype = std::dynamic_pointer_cast<ast::keyword_type_specifier>(arr_spec2->subtype);
+    REQUIRE( subtype );
+    REQUIRE( subtype->keyword.type == k::lex::keyword::INT );
+}
+
+
+//
 // Parse Primary expressions
 //
 

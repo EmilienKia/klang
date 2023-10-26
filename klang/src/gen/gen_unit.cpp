@@ -76,7 +76,7 @@ void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definiti
     llvm::Type *type = get_llvm_type(var.get_type());
 
     // TODO initialize the variable with the expression
-    llvm::Constant *value;
+    llvm::Constant *value = nullptr;
     if(type::is_prim_integer(var.get_type())) {
         value = llvm::ConstantInt::get(type, 0);
     } else if(type::is_prim_bool(var.get_type())) {
@@ -84,6 +84,7 @@ void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definiti
     } else if(type::is_prim_float(var.get_type())) {
         value = llvm::ConstantFP::get(type, 0.0);
     }
+    // TODO init for arrays
 
     // TODO use the real mangled name
     //std::string mangledName;

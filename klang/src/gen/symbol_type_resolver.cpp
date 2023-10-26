@@ -44,8 +44,6 @@ void symbol_type_resolver::resolve()
     visit_unit(_unit);
 }
 
-
-
 std::shared_ptr<expression> symbol_type_resolver::adapt_type(const std::shared_ptr<expression>& expr, const std::shared_ptr<type>& type) {
     if(!expr || !type::is_resolved(type) || !type::is_resolved(expr->get_type())) {
         // Arguments must not be null, expr must have a type and types (expr and target) must be resolved.

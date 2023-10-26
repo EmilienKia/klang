@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 //
-// Note: Last parser log number: 0x10039
+// Note: Last parser log number: 0x1003A
 //
 
 #include "parser.hpp"
@@ -681,6 +681,47 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
 
 std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
 {
+    std::shared_ptr<ast::type_specifier> res;
+
+    res = parse_fundamental_type_spec();
+
+    lex::lex_holder holder(_lexer);
+    if(!res) {
+        // Expect a type qualified identifier:
+        std::shared_ptr<ast::qualified_identifier> qid = parse_qualified_identifier();
+        if(qid) {
+            res = std::make_shared<ast::identified_type_specifier>(*qid);
+        } else {
+            holder.rollback();
+            return {};
+        }
+    }
+    holder.sync();
+
+    for(auto lbropen = _lexer.get(); lbropen == lex::punctuator::BRACKET_OPEN; lbropen = _lexer.get()) {
+
+        auto lint = _lexer.get();
+        std::optional<lex::integer> int_index;
+        if (lex::is<lex::integer>(lint)) {
+            int_index = lex::as<lex::integer>(lint);
+        } else {
+            _lexer.unget();
+        }
+
+        auto lbrclose = _lexer.get();
+        if (lbrclose != lex::punctuator::BRACKET_CLOSE) {
+            throw_error(0x003A, lbrclose, "Type specifier array index expect a closing bracket");
+        }
+
+        res = std::make_shared<ast::array_type_specifier>(res, lex::as<lex::punctuator>(lbropen), lex::as<lex::punctuator>(lbrclose), int_index);
+        holder.sync();
+    }
+
+    holder.rollback();
+    return res;
+}
+
+std::shared_ptr<ast::type_specifier> parser::parse_fundamental_type_spec() {
     lex::lex_holder holder(_lexer);
 
     // Look for type prefix
@@ -706,16 +747,9 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
         return std::make_shared<ast::keyword_type_specifier>( std::get<lex::keyword>(ltype.value().get()) , is_unsigned);
     }
     holder.rollback();
-
-    // Expect a type qualified identifier:
-    std::shared_ptr<ast::qualified_identifier> qid = parse_qualified_identifier();
-    if(!qid) {
-        holder.rollback();
-        return {};
-    }
-
-    return std::make_shared<ast::identified_type_specifier>(*qid);
+    return {};
 }
+
 
 std::shared_ptr<ast::expression_statement> parser::parse_expression_statement()
 {
@@ -1189,7 +1223,7 @@ ast::expr_ptr parser::parse_postfix_expr()
                 throw_error(0x0027, _lexer.pick(), "Bracket postfix expression exppects sub-expression");
             }
             auto lclose = _lexer.get();
-            if(lclose != lex::punctuator::BRAKET_CLOSE) {
+            if(lclose != lex::punctuator::BRACKET_CLOSE) {
                 throw_error(0x0028, _lexer.pick(), "Bracket postfix expression exppects closing bracket ']' after sub-expression");
             }
             any = std::make_shared<ast::bracket_postifx_expr>(any, expr);

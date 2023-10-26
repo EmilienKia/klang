@@ -63,7 +63,7 @@ namespace k::lex {
         {"{", punctuator::BRACE_OPEN},
         {"}", punctuator::BRACE_CLOSE},
         {"[", punctuator::BRACKET_OPEN},
-        {"]", punctuator::BRAKET_CLOSE},
+        {"]", punctuator::BRACKET_CLOSE},
         {";", punctuator::SEMICOLON},
         {",", punctuator::COMMA},
         {"::", punctuator::DOUBLE_COLON},

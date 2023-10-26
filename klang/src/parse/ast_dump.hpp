@@ -143,6 +143,15 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             _stm  <<  "<<kwtype:" << identifier.keyword.content << ">>";
         }
 
+        void visit_array_type_specifier(ast::array_type_specifier &arr) override {
+            arr.subtype->visit(*this);
+
+            if(arr.lex_int)
+                _stm << "[" << arr.lex_int->content << "]";
+            else
+                _stm << "[<<undef>>]";
+        }
+
         void visit_visibility_decl(ast::visibility_decl& decl) override {
             prefix() << "visibility " << decl.scope.content << std::endl;
         }

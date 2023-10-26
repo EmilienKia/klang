@@ -18,6 +18,7 @@
 
 #include "lexemes.hpp"
 
+#include <charconv>
 
 namespace k::lex {
 
@@ -27,6 +28,13 @@ namespace k::lex {
 k::value_type integer::value()const {
     // TODO
     return {};
+}
+
+unsigned int integer::to_unsigned_int() const {
+    unsigned int res;
+    auto view = int_content();
+    std::from_chars(view.data(), view.data() + view.size(), res, base);
+    return res;
 }
 
 //

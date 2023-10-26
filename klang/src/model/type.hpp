@@ -54,6 +54,8 @@ public:
     inline static bool is_prim_integer_or_bool(const std::shared_ptr<type>& type);
     inline static bool is_prim_bool(const std::shared_ptr<type>& type);
     inline static bool is_prim_float(const std::shared_ptr<type>& type);
+    inline static bool is_sized_array(const std::shared_ptr<type>& type);
+    inline static bool is_array(const std::shared_ptr<type>& type);
 };
 
 /**
@@ -75,23 +77,9 @@ public:
 };
 
 /**
- * Base class for resolved types.
- */
-class resolved_type : public type {
-public:
-    bool is_resolved() const override;
-};
-
-
-inline bool type::is_resolved(const std::shared_ptr<type>& type) {
-    return std::dynamic_pointer_cast<resolved_type>(type) != nullptr;
-}
-
-
-/**
  * Primitive type
  */
-class primitive_type : public resolved_type {
+class primitive_type : public type {
 public:
     enum PRIMITIVE_TYPE {
         BOOL,
@@ -124,6 +112,8 @@ protected:
     static std::shared_ptr<primitive_type> make_shared(PRIMITIVE_TYPE type, bool is_unsigned, bool is_float, size_t size);
 
 public:
+
+    bool is_resolved() const override;
     bool is_primitive() const override;
 
     bool is_boolean() const {return _type == BOOL;}
@@ -152,6 +142,11 @@ public:
     static std::shared_ptr<type> from_keyword(const lex::keyword& kw, bool is_unsigned = false);
 };
 
+
+inline bool type::is_resolved(const std::shared_ptr<type>& type) {
+    return type!=nullptr && type->is_resolved();
+}
+
 inline bool type::is_primitive(const std::shared_ptr<type>& type) {
     return std::dynamic_pointer_cast<primitive_type>(type) != nullptr;
 }
@@ -175,6 +170,66 @@ inline bool type::is_prim_float(const std::shared_ptr<type>& type){
     auto prim = std::dynamic_pointer_cast<primitive_type>(type);
     return prim != nullptr && prim->is_float();
 }
+
+
+
+/**
+ * Array type, without size
+ */
+class sized_array_type;
+class array_type : public type {
+protected:
+    std::weak_ptr<type> sub_type;
+
+    array_type(std::shared_ptr<type> subtype);
+
+    static std::map<std::shared_ptr<type>, std::shared_ptr<array_type>> _array_types;
+    std::map<unsigned long, std::shared_ptr<sized_array_type>> _sized_types;
+    std::shared_ptr<array_type> _array_type;
+
+public:
+    bool is_resolved() const override;
+
+    std::shared_ptr<type> get_sub_type() const;
+
+    virtual bool is_sized() const;
+
+    std::shared_ptr<sized_array_type> with_size(unsigned long size);
+
+    std::shared_ptr<array_type> array();
+
+    static std::shared_ptr<array_type> from_type(std::shared_ptr<type> subtype);
+};
+
+
+class sized_array_type : public array_type {
+protected:
+    unsigned long size;
+
+    std::weak_ptr<array_type> _unsized_array_type;
+
+    friend class array_type;
+    sized_array_type(std::weak_ptr<array_type> unsized_array_type, unsigned long size);
+
+public:
+    unsigned long get_size() const;
+
+    bool is_sized() const override;
+
+    std::shared_ptr<array_type> get_unsized() const;
+
+    static std::shared_ptr<array_type> from_type_and_size(std::shared_ptr<type> subtype, unsigned long size);
+};
+
+
+inline bool type::is_array(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<array_type>(type) != nullptr;
+}
+
+inline bool type::is_sized_array(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<sized_array_type>(type) != nullptr;
+}
+
 
 } // namespace k::model
 #endif //KLANG_TYPE_HPP

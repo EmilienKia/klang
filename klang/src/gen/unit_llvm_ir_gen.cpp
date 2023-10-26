@@ -63,10 +63,8 @@ llvm::Type* unit_llvm_ir_gen::get_llvm_type(const std::shared_ptr<type>& type) {
         // TODO cannot translate unresolved type.
         return nullptr;
     }
-    auto res_type = std::dynamic_pointer_cast<resolved_type>(type);
-
-    if(res_type->is_primitive()) {
-        auto prim = std::dynamic_pointer_cast<primitive_type>(res_type);
+    if(type::is_primitive(type)) {
+        auto prim = std::dynamic_pointer_cast<primitive_type>(type);
         if(prim->is_integer()) {
             // LLVM looks to use same type descriptor for signed and unsigned integers
             llvm_type = _builder->getIntNTy(prim->type_size());
@@ -79,6 +77,15 @@ llvm::Type* unit_llvm_ir_gen::get_llvm_type(const std::shared_ptr<type>& type) {
         } else {
             // TODO support float types
         }
+    }
+    if(type::is_sized_array(type)) {
+        auto arr = std::dynamic_pointer_cast<sized_array_type>(type);
+        auto subtype = get_llvm_type(arr->get_sub_type());
+        return llvm::ArrayType::get(subtype, arr->get_size());
+    }
+    if(type::is_array(type)) {
+        // TODO
+        std::cerr << "Unsized array are not supported yet." << std::endl;
     }
     return llvm_type;
 }

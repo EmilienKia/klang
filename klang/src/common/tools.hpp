@@ -24,7 +24,6 @@
 namespace tools {
 
 
-
 template<typename Map, typename K, typename F, typename T = typename Map::mapped_type, typename It = typename Map::iterator>
 It compute_if_absent(Map& map, const K& key, F func) {
     It it = map.find(key);

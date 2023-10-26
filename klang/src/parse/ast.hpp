@@ -125,6 +125,18 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        struct array_type_specifier : public type_specifier {
+            std::shared_ptr<type_specifier> subtype;
+            lex::punctuator br_open, br_close;
+            std::optional<lex::integer> lex_int;
+
+            array_type_specifier(const std::shared_ptr<type_specifier> &subtype, const lex::punctuator &br_open,
+                                 const lex::punctuator &br_close, const std::optional<lex::integer> &lex_int):
+                    subtype(subtype), br_open(br_open), br_close(br_close), lex_int(lex_int) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct expression;
         struct unary_expression;
         struct binary_expression;
@@ -620,6 +632,7 @@ namespace k::parse {
 
         virtual void visit_identified_type_specifier(ast::identified_type_specifier &) = 0;
         virtual void visit_keyword_type_specifier(ast::keyword_type_specifier &) = 0;
+        virtual void visit_array_type_specifier(ast::array_type_specifier &) = 0;
 
         virtual void visit_parameter_specifier(ast::parameter_spec &) = 0;
 
@@ -663,6 +676,7 @@ namespace k::parse {
 
         void visit_identified_type_specifier(ast::identified_type_specifier &) override;
         void visit_keyword_type_specifier(ast::keyword_type_specifier &) override;
+        void visit_array_type_specifier(ast::array_type_specifier &) override;
 
         void visit_parameter_specifier(ast::parameter_spec &) override;
         void visit_qualified_identifier(ast::qualified_identifier &) override;

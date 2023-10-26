@@ -130,11 +130,15 @@ public:
     std::shared_ptr<ast::variable_decl> parse_variable_decl();
 
     /**
-     * Current support : TYPE_SPEC := ?('unsigned') ('byte'|'char'|'short'|'int'|'long'|'float'|'double')
-     *                                  | QUALIFIED_IDENTIFIER
+     * TYPE_SPEC := ( FUNDAMENTAL_TYPE_SPEC | QUALIFIED_IDENTIFIER ) *[ '['  ?[ integer ] ']' ]
+     */
+    std::shared_ptr<ast::type_specifier> parse_type_spec();
+
+    /**
+     * FUNDAMENTAL_TYPE_SPEC := ?('unsigned') ('byte'|'char'|'short'|'int'|'long'|'float'|'double')
      * TODO support : support unsigned prefix correctly
      */
-     std::shared_ptr<ast::type_specifier> parse_type_spec();
+    std::shared_ptr<ast::type_specifier> parse_fundamental_type_spec();
 
     /**
      * SPECIFIERS := *('public'|'protected'|'private'|'static'|'const'|'abstract'|'final')

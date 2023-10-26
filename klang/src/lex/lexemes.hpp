@@ -216,6 +216,8 @@ struct integer : public literal {
     }
 
     k::value_type value()const override;
+
+    unsigned int to_unsigned_int() const;
 };
 
 struct float_num : public literal {
@@ -274,7 +276,7 @@ struct punctuator : public lexeme {
         BRACE_OPEN,
         BRACE_CLOSE,
         BRACKET_OPEN,
-        BRAKET_CLOSE,
+        BRACKET_CLOSE,
         SEMICOLON,
         COMMA,
         DOUBLE_COLON,

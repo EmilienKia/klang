@@ -72,7 +72,9 @@ int main() {
 
 #if 1
     std::string source = R"SRC(
+        a : int[5];
         sum(i : short) : int {
+            b : unsigned short[4];
             i += 8;
             r : int = i;
             for(n: short = 0; n<i; n+=1) {

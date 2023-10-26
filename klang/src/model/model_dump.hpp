@@ -143,8 +143,10 @@ public:
             dump_primitive_type(*t);
         } else if(auto t = dynamic_cast<unresolved_type*>(&type)) {
             dump_unresolved_type(*t);
-        //} else if(auto t = dynamic_cast<unresolved_type*>(&type)) {
-        //    dump_unresolved_type(*t);
+        } else if(auto t = dynamic_cast<sized_array_type*>(&type)) {
+            dump_sized_array_type(*t);
+        } else if(auto t = dynamic_cast<array_type*>(&type)) {
+            dump_array_type(*t);
         } else {
             _stm << "<<unknown-type>>";
         }
@@ -156,6 +158,18 @@ public:
 
     void dump_unresolved_type(unresolved_type& type) {
         _stm << "<<unresolved:" << type.type_id().to_string() << ">>";
+    }
+
+    void dump_array_type(array_type& type) {
+        _stm << "<<arr:";
+        dump_type(*type.get_sub_type());
+        _stm << ">>";
+    }
+
+    void dump_sized_array_type(sized_array_type& type) {
+        _stm << "<<arr:" << type.get_size() << ":";
+        dump_type(*type.get_sub_type());
+        _stm << ">>";
     }
 
     void visit_statement(statement& stmt) override {
