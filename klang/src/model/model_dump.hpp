@@ -147,6 +147,10 @@ public:
             dump_sized_array_type(*t);
         } else if(auto t = dynamic_cast<array_type*>(&type)) {
             dump_array_type(*t);
+        } else if(auto t = dynamic_cast<pointer_type*>(&type)) {
+            dump_pointer_type(*t);
+        } else if(auto t = dynamic_cast<reference_type*>(&type)) {
+            dump_reference_type(*t);
         } else {
             _stm << "<<unknown-type>>";
         }
@@ -160,15 +164,27 @@ public:
         _stm << "<<unresolved:" << type.type_id().to_string() << ">>";
     }
 
+    void dump_pointer_type(pointer_type& type) {
+        _stm << "<<ptr:";
+        dump_type(*type.get_subtype());
+        _stm << ">>";
+    }
+
+    void dump_reference_type(reference_type& type) {
+        _stm << "<<ref:";
+        dump_type(*type.get_subtype());
+        _stm << ">>";
+    }
+
     void dump_array_type(array_type& type) {
         _stm << "<<arr:";
-        dump_type(*type.get_sub_type());
+        dump_type(*type.get_subtype());
         _stm << ">>";
     }
 
     void dump_sized_array_type(sized_array_type& type) {
         _stm << "<<arr:" << type.get_size() << ":";
-        dump_type(*type.get_sub_type());
+        dump_type(*type.get_subtype());
         _stm << ">>";
     }
 
@@ -432,6 +448,21 @@ public:
 
     void visit_logical_not_expression(logical_not_expression& expr) override {
         _stm << " ! ";
+        expr.sub_expr()->accept(*this);
+    }
+
+    void visit_address_of_expression(address_of_expression& expr) override {
+        _stm << " & ";
+        expr.sub_expr()->accept(*this);
+    }
+
+    void visit_load_value_expression(load_value_expression& expr) override {
+        _stm << " [&*] ";
+        expr.sub_expr()->accept(*this);
+    }
+
+    void visit_dereference_expression(dereference_expression& expr) override {
+        _stm << " * ";
         expr.sub_expr()->accept(*this);
     }
 

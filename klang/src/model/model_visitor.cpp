@@ -155,44 +155,48 @@ void default_model_visitor::visit_simple_assignation_expression(simple_assignati
     visit_assignation_expression(expr);
 }
 
-void default_model_visitor::visit_addition_assignation_expression(additition_assignation_expression &expr) {
+void default_model_visitor::visit_arithmetic_assignation_expression(arithmetic_assignation_expression& expr) {
     visit_assignation_expression(expr);
+}
+
+void default_model_visitor::visit_addition_assignation_expression(additition_assignation_expression &expr) {
+    visit_arithmetic_assignation_expression(expr);
 }
 
 void default_model_visitor::visit_substraction_assignation_expression(substraction_assignation_expression &expr) {
-    visit_assignation_expression(expr);
+    visit_arithmetic_assignation_expression(expr);
 }
 
 void default_model_visitor::visit_multiplication_assignation_expression(multiplication_assignation_expression &expr) {
-    visit_assignation_expression(expr);
+    visit_arithmetic_assignation_expression(expr);
 }
 
 void default_model_visitor::visit_division_assignation_expression(division_assignation_expression &expr) {
-    visit_assignation_expression(expr);
+    visit_arithmetic_assignation_expression(expr);
 }
 
 void default_model_visitor::visit_modulo_assignation_expression(modulo_assignation_expression &expr) {
-    visit_assignation_expression(expr);
+    visit_arithmetic_assignation_expression(expr);
 }
 
 void default_model_visitor::visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression &expr) {
-    visit_assignation_expression(expr);
+    visit_arithmetic_assignation_expression(expr);
 }
 
 void default_model_visitor::visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression &expr) {
-    visit_assignation_expression(expr);
+    visit_arithmetic_assignation_expression(expr);
 }
 
 void default_model_visitor::visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression &expr) {
-    visit_assignation_expression(expr);
+    visit_arithmetic_assignation_expression(expr);
 }
 
 void default_model_visitor::visit_left_shift_assignation_expression(left_shift_assignation_expression &expr) {
-    visit_assignation_expression(expr);
+    visit_arithmetic_assignation_expression(expr);
 }
 
 void default_model_visitor::visit_right_shift_assignation_expression(right_shift_assignation_expression &expr) {
-    visit_assignation_expression(expr);
+    visit_arithmetic_assignation_expression(expr);
 }
 
 void default_model_visitor::visit_arithmetic_unary_expression(arithmetic_unary_expression &expr) {
@@ -224,6 +228,18 @@ void default_model_visitor::visit_logical_or_expression(logical_or_expression &e
 }
 
 void default_model_visitor::visit_logical_not_expression(logical_not_expression &expr) {
+    visit_unary_expression(expr);
+}
+
+void default_model_visitor::visit_load_value_expression(load_value_expression& expr) {
+    visit_unary_expression(expr);
+}
+
+void default_model_visitor::visit_address_of_expression(address_of_expression &expr) {
+    visit_unary_expression(expr);
+}
+
+void default_model_visitor::visit_dereference_expression(dereference_expression &expr) {
     visit_unary_expression(expr);
 }
 

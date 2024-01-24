@@ -68,6 +68,7 @@ public:
 
     virtual void visit_assignation_expression(assignation_expression&) =0;
     virtual void visit_simple_assignation_expression(simple_assignation_expression&) =0;
+    virtual void visit_arithmetic_assignation_expression(arithmetic_assignation_expression&) =0;
     virtual void visit_addition_assignation_expression(additition_assignation_expression&) =0;
     virtual void visit_substraction_assignation_expression(substraction_assignation_expression&) =0;
     virtual void visit_multiplication_assignation_expression(multiplication_assignation_expression&) =0;
@@ -88,6 +89,10 @@ public:
     virtual void visit_logical_and_expression(logical_and_expression&) =0;
     virtual void visit_logical_or_expression(logical_or_expression&) =0;
     virtual void visit_logical_not_expression(logical_not_expression&) =0;
+
+    virtual void visit_load_value_expression(load_value_expression&) =0;
+    virtual void visit_address_of_expression(address_of_expression&) =0;
+    virtual void visit_dereference_expression(dereference_expression&) =0;
 
     virtual void visit_comparison_expression(comparison_expression&) =0;
     virtual void visit_equal_expression(equal_expression&) =0;
@@ -144,6 +149,7 @@ public:
 
     virtual void visit_assignation_expression(assignation_expression&) override;
     virtual void visit_simple_assignation_expression(simple_assignation_expression&) override;
+    virtual void visit_arithmetic_assignation_expression(arithmetic_assignation_expression&) override;
     virtual void visit_addition_assignation_expression(additition_assignation_expression&) override;
     virtual void visit_substraction_assignation_expression(substraction_assignation_expression&) override;
     virtual void visit_multiplication_assignation_expression(multiplication_assignation_expression&) override;
@@ -164,6 +170,10 @@ public:
     virtual void visit_logical_and_expression(logical_and_expression&) override;
     virtual void visit_logical_or_expression(logical_or_expression&) override;
     virtual void visit_logical_not_expression(logical_not_expression&) override;
+
+    virtual void visit_load_value_expression(load_value_expression&) override;
+    virtual void visit_address_of_expression(address_of_expression&) override;
+    virtual void visit_dereference_expression(dereference_expression&) override;
 
     virtual void visit_comparison_expression(comparison_expression&) override;
     virtual void visit_equal_expression(equal_expression&) override;

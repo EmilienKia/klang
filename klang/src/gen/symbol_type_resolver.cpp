@@ -44,10 +44,53 @@ void symbol_type_resolver::resolve()
     visit_unit(_unit);
 }
 
+std::shared_ptr<expression> symbol_type_resolver::adapt_reference_load_value(const std::shared_ptr<expression>& expr) {
+    auto type = expr->get_type();
+
+    if(!expr || !type::is_resolved(type)) {
+        // Arguments must not be null, expr must have a type and this must be resolved.
+        return nullptr;
+    }
+
+    if(type::is_reference(type)) {
+        auto deref = load_value_expression::make_shared(expr);
+        deref->set_type(type->get_subtype());
+        return deref;
+    } else {
+        return expr;
+    }
+}
+
+
 std::shared_ptr<expression> symbol_type_resolver::adapt_type(const std::shared_ptr<expression>& expr, const std::shared_ptr<type>& type) {
     if(!expr || !type::is_resolved(type) || !type::is_resolved(expr->get_type())) {
         // Arguments must not be null, expr must have a type and types (expr and target) must be resolved.
         return nullptr;
+    }
+
+    auto type_src = expr->get_type();
+
+    if(type::is_pointer(type_src)) {
+        if(type::is_pointer(type)) {
+            if (type == type_src) {
+                // Pointers to same type, return the expression
+                return expr;
+            } else {
+                // Pointers to different types
+                // TODO verify casting
+                return {};
+            }
+        } else {
+            // Error : Source is a pointer, and asked to be cast to an object.
+            return {};
+        }
+    }
+
+    if(type::is_reference(type_src)) {
+        auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
+        if(ref_src->get_subtype() == type) {
+            return adapt_reference_load_value(expr);
+        }
     }
 
     auto prim_src = std::dynamic_pointer_cast<primitive_type>(expr->get_type());
@@ -67,7 +110,6 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_type(const std::shared_p
     auto cast = cast_expression::make_shared(expr, prim_tgt);
     cast->set_type(prim_tgt);
     return cast;
-
 }
 
 

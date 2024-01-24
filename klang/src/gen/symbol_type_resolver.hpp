@@ -91,11 +91,16 @@ protected:
 
     void visit_arithmetic_binary_expression(arithmetic_binary_expression &expression) override;
     void visit_assignation_expression(assignation_expression &expression) override;
+    void visit_arithmetic_assignation_expression(arithmetic_assignation_expression &expression) override;
 
     void visit_arithmetic_unary_expression(arithmetic_unary_expression&) override;
 
     void visit_logical_binary_expression(logical_binary_expression&) override;
     void visit_logical_not_expression(logical_not_expression&) override;
+
+    void visit_load_value_expression(load_value_expression&) override;
+    void visit_address_of_expression(address_of_expression&) override;
+    void visit_dereference_expression(dereference_expression&) override;
 
     void visit_comparison_expression(comparison_expression&) override;
 
@@ -106,7 +111,14 @@ protected:
     void visit_cast_expression(cast_expression&)override;
 
     /**
-     * Adapt an expression to ensure iit maps to a given type, by casting it.
+     * Adapt a reference expression to load its value.
+     * @param expr Reference expression.
+     * @return The given arg if already not a reference or the newly loaded-value expr if is a reference.
+     */
+    std::shared_ptr<expression> adapt_reference_load_value(const std::shared_ptr<expression>& expr);
+
+    /**
+     * Adapt an expression to ensure it maps to a given type, by casting it.
      * @param expr Expression to map.
      * @param type Type to target
      * @return The given arg expression if already compatible, the new wrapping casting expr if mapping, nullptr if not possible.

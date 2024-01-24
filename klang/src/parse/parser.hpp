@@ -130,7 +130,9 @@ public:
     std::shared_ptr<ast::variable_decl> parse_variable_decl();
 
     /**
-     * TYPE_SPEC := ( FUNDAMENTAL_TYPE_SPEC | QUALIFIED_IDENTIFIER ) *[ '['  ?[ integer ] ']' ]
+     * TYPE_SPEC := ( FUNDAMENTAL_TYPE_SPEC | QUALIFIED_IDENTIFIER ) *[ ARRAY_TYPE_SUFFIX | POINTER_TYPE_SUFFIX ]
+     * ARRAY_TYPE_SUFFIX := '['  ?[ integer ] ']'
+     * POINTER_TYPE_SUFFIX := '*' | '&'
      */
     std::shared_ptr<ast::type_specifier> parse_type_spec();
 

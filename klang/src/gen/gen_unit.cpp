@@ -122,6 +122,8 @@ void unit_llvm_ir_gen::visit_function(function &function) {
     llvm::Type* ret_type = nullptr;
     if(const auto& ret = function.return_type()) {
         ret_type = get_llvm_type(ret);
+    } else {
+        ret_type = llvm::Type::getVoidTy(*_context);
     }
 
     // create the function:

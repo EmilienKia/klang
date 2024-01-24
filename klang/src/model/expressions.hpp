@@ -16,6 +16,59 @@
  * limitations under the License.
  */
 
+/*
+ * Expression internal hierachy:
+ * expression
+ * +- value_expression
+ * +- symbol_expression
+ * +- unary_expression
+ * | +- arithmetic_unary_expression
+ * | | +- unary_plus_expression
+ * | | +- unary_minus_expression
+ * | | +- bitwise_not_expression
+ * | +- load_value_expression
+ * | +- address_of_expression
+ * | +- dereference_expression
+ * | +- cast_expression
+ * +- binary_expression
+ * | +- arithmetic_binary_expression
+ * | | +- addition_expression
+ * | | +- substraction_expression
+ * | | +- multiplication_expression
+ * | | +- division_expression
+ * | | +- modulo_expression
+ * | | +- bitwise_and_expression
+ * | | +- bitwise_or_expression
+ * | | +- bitwise_xor_expression
+ * | | +- left_shift_expression
+ * | | +- right_shift_expression
+ * | +- assignation_expression << TODO add pointer support here
+ * | | +- simple_assignation_expression
+ * | | +- arithmetic_assignation_expression
+ * | | | +- additition_assignation_expression
+ * | | | +- substraction_assignation_expression
+ * | | | +- multiplication_assignation_expression
+ * | | | +- division_assignation_expression
+ * | | | +- modulo_assignation_expression
+ * | | | +- bitwise_and_assignation_expression
+ * | | | +- bitwise_or_assignation_expression
+ * | | | +- bitwise_xor_assignation_expression
+ * | | | +- left_shift_assignation_expression
+ * | | | +- right_shift_assignation_expression
+ * | +- logical_binary_expression
+ * | | +- logical_and_expression
+ * | | +- logical_or_expression
+ * | | +- logical_not_expression
+ * | +- comparison_expression
+ * | | +- equal_expression
+ * | | +- different_expression
+ * | | +- lesser_expression
+ * | | +- greater_expression
+ * | | +- lesser_equal_expression
+ * | | +- greater_equal_expression
+ * +- function_invocation_expression
+ */
+
 #ifndef KLANG_MODEL_EXPRESSIONS_HPP
 #define KLANG_MODEL_EXPRESSIONS_HPP
 
@@ -470,7 +523,16 @@ public:
     }
 };
 
-class additition_assignation_expression : public assignation_expression {
+class arithmetic_assignation_expression : public assignation_expression {
+protected:
+    arithmetic_assignation_expression() = default;
+
+public:
+    void accept(model_visitor &visitor) override;
+};
+
+
+class additition_assignation_expression : public arithmetic_assignation_expression {
 protected:
     additition_assignation_expression() = default;
 
@@ -485,7 +547,7 @@ public:
     }
 };
 
-class substraction_assignation_expression : public assignation_expression {
+class substraction_assignation_expression : public arithmetic_assignation_expression {
 protected:
     substraction_assignation_expression() = default;
 
@@ -500,7 +562,7 @@ public:
     }
 };
 
-class multiplication_assignation_expression : public assignation_expression {
+class multiplication_assignation_expression : public arithmetic_assignation_expression {
 protected:
     multiplication_assignation_expression() = default;
 
@@ -515,7 +577,7 @@ public:
     }
 };
 
-class division_assignation_expression : public assignation_expression {
+class division_assignation_expression : public arithmetic_assignation_expression {
 protected:
     division_assignation_expression() = default;
 
@@ -530,7 +592,7 @@ public:
     }
 };
 
-class modulo_assignation_expression : public assignation_expression {
+class modulo_assignation_expression : public arithmetic_assignation_expression {
 protected:
     modulo_assignation_expression() = default;
 
@@ -545,7 +607,7 @@ public:
     }
 };
 
-class bitwise_and_assignation_expression : public assignation_expression {
+class bitwise_and_assignation_expression : public arithmetic_assignation_expression {
 protected:
     bitwise_and_assignation_expression() = default;
 
@@ -560,7 +622,7 @@ public:
     }
 };
 
-class bitwise_or_assignation_expression : public assignation_expression {
+class bitwise_or_assignation_expression : public arithmetic_assignation_expression {
 protected:
     bitwise_or_assignation_expression() = default;
 
@@ -575,7 +637,7 @@ public:
     }
 };
 
-class bitwise_xor_assignation_expression : public assignation_expression {
+class bitwise_xor_assignation_expression : public arithmetic_assignation_expression {
 protected:
     bitwise_xor_assignation_expression() = default;
 
@@ -590,7 +652,7 @@ public:
     }
 };
 
-class left_shift_assignation_expression : public assignation_expression {
+class left_shift_assignation_expression : public arithmetic_assignation_expression {
 protected:
     left_shift_assignation_expression() = default;
 
@@ -605,7 +667,7 @@ public:
     }
 };
 
-class right_shift_assignation_expression : public assignation_expression {
+class right_shift_assignation_expression : public arithmetic_assignation_expression {
 protected:
     right_shift_assignation_expression() = default;
 
@@ -722,6 +784,54 @@ public:
         return std::shared_ptr<unary_expression>{expr};
     }
 };
+
+/**
+ * The load-value expression is an internal tool to get the real value from a reference.
+ * Supposed to be injected to simplify code generation.
+ * Not supposed to be used by external code.
+ */
+class load_value_expression : public unary_expression {
+protected:
+    load_value_expression() = default;
+
+public:
+    void accept(model_visitor &visitor) override;
+
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<load_value_expression> expr{new load_value_expression()};
+        expr->assign(sub_expr);
+        return std::shared_ptr<unary_expression>{expr};
+    }
+};
+
+class address_of_expression : public unary_expression {
+protected:
+    address_of_expression() = default;
+
+public:
+    void accept(model_visitor &visitor) override;
+
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<address_of_expression> expr{new address_of_expression()};
+        expr->assign(sub_expr);
+        return std::shared_ptr<unary_expression>{expr};
+    }
+};
+
+class dereference_expression : public unary_expression {
+protected:
+    dereference_expression() = default;
+
+public:
+    void accept(model_visitor &visitor) override;
+
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<dereference_expression> expr{new dereference_expression()};
+        expr->assign(sub_expr);
+        return std::shared_ptr<unary_expression>{expr};
+    }
+};
+
 
 class comparison_expression : public binary_expression {
 protected:

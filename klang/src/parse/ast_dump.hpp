@@ -152,6 +152,11 @@ class ast_dump_visitor : public k::parse::ast_visitor {
                 _stm << "[<<undef>>]";
         }
 
+        void visit_pointer_type_specifier(ast::pointer_type_specifier &ptr) override {
+            ptr.subtype->visit(*this);
+            _stm << ptr.pointer_type.content;
+        }
+
         void visit_visibility_decl(ast::visibility_decl& decl) override {
             prefix() << "visibility " << decl.scope.content << std::endl;
         }

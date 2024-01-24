@@ -504,6 +504,12 @@ namespace k::model {
             case lex::operator_::EXCLAMATION_MARK:
                 unary = model::logical_not_expression::make_shared(sub);
                 break;
+            case lex::operator_::AMPERSAND:
+                unary = model::address_of_expression::make_shared(sub);
+                break;
+            case lex::operator_::STAR:
+                unary = model::dereference_expression::make_shared(sub);
+                break;
             default:
                 throw_error(0x0008, expr.op, "Unary operator '{}' not supported", {expr.op.content});
                 break;

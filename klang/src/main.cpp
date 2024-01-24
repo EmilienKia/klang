@@ -38,57 +38,25 @@ k::log::logger logger;
 int main() {
     std::cout << "Hello, World!" << std::endl;
 
-#if 0
-    std::string source = R"SRC(
-    module titi;
-    import io;
-    import net;
-    /* Hello */
-
-    ploc(a: int, b: int) : int {
-        if(a > b)
-            return a;
-        else {
-            return b;
-        }
-    }
-
-    namespace titi {
-        protected:
-        static const plic : int = 0;
-        public :
-        sum(a : int, b : int) : int {
-            res : int;
-            {
-                res = a + b * 2;
-                plic = res / 2;
-                res += 3;
-            }
-            return res;
-        }
-    }
-    )SRC";
-#endif
-
 #if 1
     std::string source = R"SRC(
-        a : int[5];
-        sum(i : short) : int {
-            b : unsigned short[4];
-            i += 8;
-            r : int = i;
-            for(n: short = 0; n<i; n+=1) {
-                r += n;
-            }
-            return r;
-        }
-    )SRC";
-#endif
+        a : int;
+        b : int;
 
-#if 0
-    std::string source = R"SRC(
-        test(a: int, b: float) : bool {
-            return a > b;
+        init() {
+            a = 4;
+            b = 5;
+        }
+
+        assign(i: int, j: int) : int {
+            p : int*;
+            if(i<j) {
+                p = &a;
+            } else {
+                p = &b;
+            }
+            *p += i + j;
+            return *p;
         }
     )SRC";
 #endif
@@ -134,33 +102,16 @@ int main() {
         }
 
 #if 1
-        auto cumul = jit.get()->lookup_symbol < int(*) (int) > ("sum");
-        std::cout << "Test : cumul(0) = " << (cumul(0)) << std::endl;
-        std::cout << "Test : cumul(1) = " << (cumul(1)) << std::endl;
-        std::cout << "Test : cumul(2) = " << (cumul(2)) << std::endl;
-        std::cout << "Test : cumul(3) = " << (cumul(3)) << std::endl;
-        std::cout << "Test : cumul(4) = " << (cumul(4)) << std::endl;
-        std::cout << "Test : cumul(5) = " << (cumul(5)) << std::endl;
+        auto init = jit.get()->lookup_symbol < void(*)() > ("init");
+        std::cout << "Init:" << std::endl;
+        init();
+
+        auto assign = jit.get()->lookup_symbol< int(*)(int, int) >("assign");
+        std::cout << "Assign:" << std::endl;
+        int res = assign(2, 1);
+        std::cout << "Res:" << res << std::endl;
 #endif
 
-#if 0
-        auto ploc = jit.get()->lookup_symbol < float(*)
-        (float) > ("ploc");
-        std::cout << "Test : ploc(1.2) = " << (ploc(1.2)) << std::endl;
-#endif
-
-
-#if 0
-        int (*test)(int, int) = (int(*)(int, int)) jit.get()->lookup_symbol<int(*)(int, int)>("test");
-
-        std::cout << "Test : test(0,0) = " << (test(0, 0)) << std::endl;
-        std::cout << "Test : test(1,2) = " << (test(1, 2)) << std::endl;
-
-        int (*sum)(int, int) = (int(*)(int, int)) jit.get()->lookup_symbol<int(*)(int, int)>("sum");
-
-        std::cout << "Test : sum(0,0) = " << (sum(0, 0)) << std::endl;
-        std::cout << "Test : sum(1,2) = " << (sum(1, 2)) << std::endl;
-#endif
 
     } catch(...) {
     }

@@ -123,7 +123,6 @@ TEST_CASE( "Simple method", "[gen]" ) {
     }
 }
 
-
 TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
 
     auto jit = gen(R"SRC(
@@ -2311,3 +2310,41 @@ TEST_CASE("For", "[gen][for]") {
 
 }
 
+//
+// Pointer, addresses and value-of
+//
+
+TEST_CASE("Pointers", "[gen][pointers]") {
+    auto jit = gen(R"SRC(
+        module __pointers__;
+        a : int;
+        b : int;
+
+        init() {
+            a = 4;
+            b = 5;
+        }
+
+        assign(i: int, j: int) : int {
+            p : int*;
+            if(i<j) {
+                p = &a;
+            } else {
+                p = &b;
+            }
+            *p += i + j;
+            return *p;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto init = jit.get()->lookup_symbol < void(*)() > ("init");
+    REQUIRE(init != nullptr);
+    init();
+
+    auto assign = jit.get()->lookup_symbol< int(*)(int, int) >("assign");
+    REQUIRE(assign != nullptr);
+    REQUIRE(assign(1, 2) == 7);
+    REQUIRE(assign(2, 1) == 8);
+
+}

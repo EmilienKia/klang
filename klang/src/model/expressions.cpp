@@ -150,7 +150,8 @@ std::shared_ptr<symbol_expression> symbol_expression::from_identifier(const name
 
 void symbol_expression::resolve(std::shared_ptr<variable_definition> var) {
     _symbol = var;
-    _type = var->get_type();
+    // A variable is always types as a reference
+    _type = var->get_type()->get_reference();
 }
 
 void symbol_expression::resolve(std::shared_ptr<function> func) {
@@ -263,6 +264,12 @@ void simple_assignation_expression::accept(model_visitor &visitor) {
     visitor.visit_simple_assignation_expression(*this);
 }
 
+//
+// Arithmetic assignation expression
+//
+void arithmetic_assignation_expression::accept(model_visitor &visitor) {
+    visitor.visit_arithmetic_assignation_expression(*this);
+}
 
 //
 // Addition assignation expression
@@ -363,14 +370,14 @@ void bitwise_not_expression::accept(model_visitor &visitor) {
 }
 
 //
-// Logical binary exception
+// Logical binary expression
 //
 void logical_binary_expression::accept(model_visitor &visitor) {
     visitor.visit_logical_binary_expression(*this);
 }
 
 //
-// Logical AND exception
+// Logical AND expression
 //
 void logical_and_expression::accept(model_visitor &visitor) {
     visitor.visit_logical_and_expression(*this);
@@ -388,6 +395,27 @@ void logical_or_expression::accept(model_visitor &visitor) {
 //
 void logical_not_expression::accept(model_visitor &visitor) {
     visitor.visit_logical_not_expression(*this);
+}
+
+//
+// Load value expression
+//
+void load_value_expression::accept(model_visitor &visitor) {
+    visitor.visit_load_value_expression(*this);
+}
+
+//
+// Address of expression
+//
+void address_of_expression::accept(model_visitor &visitor) {
+    visitor.visit_address_of_expression(*this);
+}
+
+//
+// Dereference expression
+//
+void dereference_expression::accept(model_visitor &visitor) {
+    visitor.visit_dereference_expression(*this);
 }
 
 //

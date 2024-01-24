@@ -26,15 +26,54 @@ namespace k::model {
 // Base type
 //
 
+type::type(std::shared_ptr<type> subtype):
+        subtype(subtype)
+{}
+
+std::shared_ptr<type> type::get_subtype() const
+{
+    return subtype.lock();
+}
+
+bool type::is_primitive() const
+{
+    return subtype.use_count()!=0;
+}
+
 bool type::is_resolved() const
 {
     return false;
 }
 
-bool type::is_primitive() const
+std::shared_ptr<reference_type> type::get_reference()
 {
-    return false;
+    if(!reference) {
+        reference = std::shared_ptr<reference_type>(new reference_type(shared_from_this()));
+    }
+    return reference;
 }
+
+std::shared_ptr<pointer_type> type::get_pointer()
+{
+    if(!pointer) {
+        pointer = std::shared_ptr<pointer_type>(new pointer_type(shared_from_this()));
+    }
+    return pointer;
+}
+
+std::shared_ptr<array_type> type::get_array()
+{
+    if(!array) {
+        array = std::shared_ptr<array_type>(new array_type(shared_from_this()));
+    }
+    return array;
+}
+
+std::shared_ptr<sized_array_type> type::get_array(unsigned long size)
+{
+    return get_array()->with_size(size);
+}
+
 
 //
 // Unresolved type
@@ -61,17 +100,26 @@ std::shared_ptr<type> unresolved_type::from_type_specifier(const k::parse::ast::
         return std::shared_ptr<type>{new unresolved_type(ident->name.to_name())};
     } else if(auto kw = dynamic_cast<const k::parse::ast::keyword_type_specifier*>(&type_spec)) {
         return primitive_type::from_keyword(kw->keyword);
+    } else if(auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(&type_spec)) {
+        auto subtype = unresolved_type::from_type_specifier(*ptr->subtype);
+        if(ptr->pointer_type==lex::operator_::STAR) {
+            return subtype->get_pointer();
+        } else if(ptr->pointer_type==lex::operator_::AMPERSAND) {
+            return subtype->get_reference();
+        } else
+            return {}; // Shall not happen
     } else if(auto arr = dynamic_cast<const k::parse::ast::array_type_specifier*>(&type_spec)) {
         auto subtype = unresolved_type::from_type_specifier(*arr->subtype);
         if(arr->lex_int) {
-            return sized_array_type::from_type_and_size(subtype, arr->lex_int->to_unsigned_int());
+            return subtype->get_array(arr->lex_int->to_unsigned_int());
         } else {
-            return array_type::from_type(subtype);
+            return subtype->get_array();
         }
     } else {
         return {};
     }
 }
+
 
 //
 // Primitive type
@@ -159,22 +207,41 @@ const std::string& primitive_type::to_string()const {
 }
 
 //
+// Pointer type
+//
+pointer_type::pointer_type(const std::shared_ptr<type> &subtype):
+type(subtype)
+{}
+
+bool pointer_type::is_resolved() const
+{
+    return subtype.lock()->is_resolved();
+}
+
+//
+// Reference type
+//
+reference_type::reference_type(const std::shared_ptr<type> &subtype):
+type(subtype)
+{}
+
+bool reference_type::is_resolved() const
+{
+    return subtype.lock()->is_resolved();
+}
+
+
+//
 // Array type
 //
 
-std::map<std::shared_ptr<type>, std::shared_ptr<array_type>> array_type::_array_types;
-
 array_type::array_type(std::shared_ptr<type> subtype) :
-    sub_type(subtype)
+    type(subtype)
 {}
 
 bool array_type::is_resolved() const
 {
-    return sub_type.lock()->is_resolved();
-}
-
-std::shared_ptr<type> array_type::get_sub_type() const {
-    return sub_type.lock();
+    return subtype.lock()->is_resolved();
 }
 
 bool array_type::is_sized() const {
@@ -187,32 +254,12 @@ std::shared_ptr<sized_array_type> array_type::with_size(unsigned long size) {
             )->second;
 }
 
-std::shared_ptr<array_type> array_type::array() {
-    if(!_array_type) {
-        _array_type = std::shared_ptr<array_type>(new array_type( std::dynamic_pointer_cast<array_type>(shared_from_this()) ));
-    }
-    return _array_type;
-}
-
-std::shared_ptr<array_type> array_type::from_type(std::shared_ptr<type> subtype) {
-    if(type::is_primitive(subtype)) {
-        return tools::compute_if_absent(_array_types, subtype,
-                        [](auto ty){return std::shared_ptr<array_type>{new array_type(ty)};}
-                    )->second;
-    } else if(auto arrtype = std::dynamic_pointer_cast<array_type>(subtype) ) {
-        return arrtype->array();
-    } else {
-        // Should not happen
-        return {};
-    }
-}
-
 //
 // Sized array type
 //
 
 sized_array_type::sized_array_type(std::weak_ptr<array_type> unsized_array_type, unsigned long size) :
-    array_type(unsized_array_type.lock()->get_sub_type()),
+    array_type(unsized_array_type.lock()->get_subtype()),
     _unsized_array_type(unsized_array_type),
     size(size)
 {}
@@ -225,12 +272,13 @@ bool sized_array_type::is_sized() const {
     return true;
 }
 
-std::shared_ptr<array_type> sized_array_type::from_type_and_size(std::shared_ptr<type> subtype, unsigned long size) {
-    return array_type::from_type(subtype)->with_size(size);
-}
-
 std::shared_ptr<array_type> sized_array_type::get_unsized() const {
     return _unsized_array_type.lock();
 }
+
+std::shared_ptr<sized_array_type> sized_array_type::with_size(unsigned long size) {
+    return _unsized_array_type.lock()->with_size(size);
+}
+
 
 } // k::model

@@ -696,28 +696,39 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
             return {};
         }
     }
-    holder.sync();
 
-    for(auto lbropen = _lexer.get(); lbropen == lex::punctuator::BRACKET_OPEN; lbropen = _lexer.get()) {
-
-        auto lint = _lexer.get();
-        std::optional<lex::integer> int_index;
-        if (lex::is<lex::integer>(lint)) {
-            int_index = lex::as<lex::integer>(lint);
-        } else {
-            _lexer.unget();
-        }
-
-        auto lbrclose = _lexer.get();
-        if (lbrclose != lex::punctuator::BRACKET_CLOSE) {
-            throw_error(0x003A, lbrclose, "Type specifier array index expect a closing bracket");
-        }
-
-        res = std::make_shared<ast::array_type_specifier>(res, lex::as<lex::punctuator>(lbropen), lex::as<lex::punctuator>(lbrclose), int_index);
+    while(true) {
         holder.sync();
+        auto lex = _lexer.get();
+
+        if(lex == lex::operator_::STAR || lex == lex::operator_::AMPERSAND) {
+            res = std::make_shared<ast::pointer_type_specifier>(res, lex::as<lex::operator_>(lex));
+            continue;
+        }
+
+        if(lex == lex::punctuator::BRACKET_OPEN) {
+
+            auto lint = _lexer.get();
+            std::optional<lex::integer> int_index;
+            if (lex::is<lex::integer>(lint)) {
+                int_index = lex::as<lex::integer>(lint);
+            } else {
+                _lexer.unget();
+            }
+
+            auto lbrclose = _lexer.get();
+            if (lbrclose != lex::punctuator::BRACKET_CLOSE) {
+                throw_error(0x003A, lbrclose, "Type specifier array index expect a closing bracket");
+            }
+
+            res = std::make_shared<ast::array_type_specifier>(res, lex::as<lex::punctuator>(lex), lex::as<lex::punctuator>(lbrclose), int_index);
+            continue;
+        }
+
+        holder.rollback();
+        break;
     }
 
-    holder.rollback();
     return res;
 }
 
