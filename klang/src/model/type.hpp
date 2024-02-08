@@ -78,7 +78,7 @@ public:
     inline static bool is_array(const std::shared_ptr<type>& type);
 
 
-    std::shared_ptr<reference_type> get_reference();
+    virtual std::shared_ptr<reference_type> get_reference();
     std::shared_ptr<pointer_type> get_pointer();
     std::shared_ptr<array_type> get_array();
     std::shared_ptr<sized_array_type> get_array(unsigned long size);
@@ -208,6 +208,8 @@ protected:
 
 public:
     bool is_resolved() const override;
+
+    std::shared_ptr<reference_type> get_reference() override;
 };
 
 inline bool type::is_reference(const std::shared_ptr<type>& type) {

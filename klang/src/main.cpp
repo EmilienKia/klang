@@ -40,23 +40,32 @@ int main() {
 
 #if 1
     std::string source = R"SRC(
-        a : int;
-        b : int;
 
-        init() {
-            a = 4;
-            b = 5;
+        a : int;
+
+        assign(var: int*, val: int) : int {
+            *var = val;
+            return *var;
         }
 
-        assign(i: int, j: int) : int {
-            p : int*;
-            if(i<j) {
-                p = &a;
-            } else {
-                p = &b;
-            }
-            *p += i + j;
-            return *p;
+        test() : int {
+            return assign(&a, 4);
+        }
+    )SRC";
+#endif
+
+#if 0
+    std::string source = R"SRC(
+
+        a : int;
+
+        assign(var: int&, val: int) : int {
+            var = val;
+            return var;
+        }
+
+        test() : int {
+            return assign(a, 4);
         }
     )SRC";
 #endif
@@ -102,14 +111,14 @@ int main() {
         }
 
 #if 1
-        auto init = jit.get()->lookup_symbol < void(*)() > ("init");
-        std::cout << "Init:" << std::endl;
-        init();
 
-        auto assign = jit.get()->lookup_symbol< int(*)(int, int) >("assign");
-        std::cout << "Assign:" << std::endl;
-        int res = assign(2, 1);
-        std::cout << "Res:" << res << std::endl;
+        auto assign = jit.get()->lookup_symbol< int(*)(int&, int) >("assign");
+        int var = 0;
+        std::cout << "Var:" << var << "(=0)" << std::endl;
+        std::cout << "Assign (&var, 1):" << std::endl;
+        int res = assign(var, 1);
+        std::cout << "Res:" << res << "(=1)" << std::endl;
+        std::cout << "Var:" << var << "(=1)" << std::endl;
 #endif
 
 
