@@ -614,6 +614,15 @@ void symbol_type_resolver::visit_assignation_expression(assignation_expression &
     auto ref_target_type = std::dynamic_pointer_cast<reference_type>(left_type);
     auto target_type = ref_target_type->get_subtype();
 
+    if(type::is_reference(target_type)) {
+        // Left hand is a ref-to-ref-to-something, i.e. a ref-something variable.
+        // Deref again target type
+        left = load_value_expression::make_shared(left);
+        left->set_type(target_type);
+        expr.assign_left(left);
+        target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
+    }
+
     auto source_type = right->get_type();
 
     if(type::is_pointer(target_type)) {

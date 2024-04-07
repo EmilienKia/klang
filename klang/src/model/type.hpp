@@ -73,6 +73,7 @@ public:
     inline static bool is_prim_bool(const std::shared_ptr<type>& type);
     inline static bool is_prim_float(const std::shared_ptr<type>& type);
     inline static bool is_reference(const std::shared_ptr<type>& type);
+    inline static bool is_double_reference(const std::shared_ptr<type>& type);
     inline static bool is_pointer(const std::shared_ptr<type>& type);
     inline static bool is_sized_array(const std::shared_ptr<type>& type);
     inline static bool is_array(const std::shared_ptr<type>& type);
@@ -209,13 +210,20 @@ protected:
 public:
     bool is_resolved() const override;
 
-    std::shared_ptr<reference_type> get_reference() override;
+//    std::shared_ptr<reference_type> get_reference() override;
 };
 
 inline bool type::is_reference(const std::shared_ptr<type>& type) {
     return std::dynamic_pointer_cast<reference_type>(type) != nullptr;
 }
 
+inline bool type::is_double_reference(const std::shared_ptr<type>& type) {
+    std::shared_ptr<reference_type> ref_type = std::dynamic_pointer_cast<reference_type>(type);
+    if(!ref_type) {
+        return false;
+    }
+    return is_reference(ref_type->get_subtype());
+}
 
 /**
  * Pointer type

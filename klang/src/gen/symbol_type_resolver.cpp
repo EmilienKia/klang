@@ -62,7 +62,7 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_reference_load_value(con
 }
 
 
-std::shared_ptr<expression> symbol_type_resolver::adapt_type(const std::shared_ptr<expression>& expr, const std::shared_ptr<type>& type) {
+std::shared_ptr<expression> symbol_type_resolver::adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type) {
     if(!expr || !type::is_resolved(type) || !type::is_resolved(expr->get_type())) {
         // Arguments must not be null, expr must have a type and types (expr and target) must be resolved.
         return nullptr;
@@ -86,7 +86,25 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_type(const std::shared_p
         }
     }
 
+    if(type::is_double_reference(type_src)) {
+        auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
+        auto deref = load_value_expression::make_shared(expr);
+        deref->set_type(ref_src->get_subtype());
+        expr = deref;
+        type_src = ref_src->get_subtype();
+    }
+
     if(type::is_reference(type_src)) {
+        if(type::is_reference(type)) {
+            if (type == type_src) {
+                // Reference to same type, return the expression
+                return expr;
+            } else {
+                // Reference to different types
+                // TODO verify casting
+                return {};
+            }
+        }
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
         if(ref_src->get_subtype() == type) {
             return adapt_reference_load_value(expr);

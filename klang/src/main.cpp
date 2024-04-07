@@ -38,7 +38,7 @@ k::log::logger logger;
 int main() {
     std::cout << "Hello, World!" << std::endl;
 
-#if 1
+#if 0
     std::string source = R"SRC(
 
         a : int;
@@ -52,9 +52,7 @@ int main() {
             return assign(&a, 4);
         }
     )SRC";
-#endif
-
-#if 0
+#else
     std::string source = R"SRC(
 
         a : int;
@@ -98,10 +96,11 @@ int main() {
         gen.dump();
 
         std::cout << "#" << std::endl << "# LLVM Optimize Module" << std::endl << "#" << std::endl;
+#if 1 // Optimize
         gen.optimize_functions();
         gen.verify();
         gen.dump();
-
+#endif
         logger.print();
 
         auto jit = gen.to_jit();
@@ -111,7 +110,6 @@ int main() {
         }
 
 #if 1
-
         auto assign = jit.get()->lookup_symbol< int(*)(int&, int) >("assign");
         int var = 0;
         std::cout << "Var:" << var << "(=0)" << std::endl;

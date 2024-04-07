@@ -123,7 +123,7 @@ protected:
      * @param type Type to target
      * @return The given arg expression if already compatible, the new wrapping casting expr if mapping, nullptr if not possible.
      */
-    std::shared_ptr<expression> adapt_type(const std::shared_ptr<expression>& expr, const std::shared_ptr<type>& type);
+    std::shared_ptr<expression> adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type);
 };
 
 

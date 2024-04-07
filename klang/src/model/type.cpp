@@ -230,9 +230,11 @@ bool reference_type::is_resolved() const
     return subtype.lock()->is_resolved();
 }
 
+/*
 std::shared_ptr<reference_type> reference_type::get_reference() {
     return std::dynamic_pointer_cast<reference_type>(shared_from_this());
 }
+*/
 
 
 //

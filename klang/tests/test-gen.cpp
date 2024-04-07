@@ -2348,3 +2348,36 @@ TEST_CASE("Pointers", "[gen][pointers]") {
     REQUIRE(assign(2, 1) == 8);
 
 }
+
+//
+// References
+//
+
+TEST_CASE("References", "[gen][refs]") {
+    auto jit = gen(R"SRC(
+        module __refs__;
+        a : int;
+
+        assign(var: int&, val: int) : int {
+            var = val;
+            return var;
+        }
+
+        test() : int {
+            return assign(a, 4);
+        }
+
+        value() : int {
+            return a;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit.get()->lookup_symbol < int(*)() > ("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 4);
+
+    auto value = jit.get()->lookup_symbol< int(*)() >("value");
+    REQUIRE(value != nullptr);
+    REQUIRE(value() == 4);
+}
