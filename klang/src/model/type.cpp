@@ -120,6 +120,9 @@ std::shared_ptr<type> unresolved_type::from_type_specifier(const k::parse::ast::
     }
 }
 
+std::string unresolved_type::to_string() const {
+    return "<<unresolved>>";
+}
 
 //
 // Primitive type
@@ -188,7 +191,7 @@ std::shared_ptr<type> primitive_type::from_keyword(const lex::keyword& kw, bool 
     return from_string(is_unsigned ? ("unsigned " + kw.content) : kw.content);
 }
 
-const std::string& primitive_type::to_string()const {
+std::string primitive_type::to_string()const {
     static std::map<primitive_type::PRIMITIVE_TYPE, std::string> type_names {
             {BOOL, "bool"},
             {BYTE, "byte"},
@@ -218,6 +221,16 @@ bool pointer_type::is_resolved() const
     return subtype.lock()->is_resolved();
 }
 
+std::string pointer_type::to_string() const {
+    auto sub = subtype.lock();
+    if(sub) {
+        return sub->to_string() + "*";
+    } else {
+        return "<<nosub>>*";
+    }
+}
+
+
 //
 // Reference type
 //
@@ -236,6 +249,14 @@ std::shared_ptr<reference_type> reference_type::get_reference() {
 }
 */
 
+std::string reference_type::to_string() const {
+    auto sub = subtype.lock();
+    if(sub) {
+        return sub->to_string() + "&";
+    } else {
+        return "<<nosub>>&";
+    }
+}
 
 //
 // Array type
@@ -258,6 +279,15 @@ std::shared_ptr<sized_array_type> array_type::with_size(unsigned long size) {
     return tools::compute_if_absent(_sized_types, size,
                     [&](unsigned long sz){return std::shared_ptr<sized_array_type>{new sized_array_type(std::weak_ptr<array_type>(std::dynamic_pointer_cast<array_type>(this->shared_from_this())), sz)};}
             )->second;
+}
+
+std::string array_type::to_string() const {
+    auto sub = subtype.lock();
+    if(sub) {
+        return sub->to_string() + "[]";
+    } else {
+        return "<<nosub>>[]";
+    }
 }
 
 //
@@ -285,6 +315,20 @@ std::shared_ptr<array_type> sized_array_type::get_unsized() const {
 std::shared_ptr<sized_array_type> sized_array_type::with_size(unsigned long size) {
     return _unsized_array_type.lock()->with_size(size);
 }
+
+
+std::string sized_array_type::to_string() const {
+    auto sub = subtype.lock();
+    std::ostringstream stm;
+    if(sub) {
+        stm << sub->to_string();
+    } else {
+        stm << "<<nosub>>";
+    }
+    stm << '[' << size << ']';
+    return stm.str();
+}
+
 
 
 } // k::model

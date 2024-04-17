@@ -78,11 +78,12 @@ public:
     inline static bool is_sized_array(const std::shared_ptr<type>& type);
     inline static bool is_array(const std::shared_ptr<type>& type);
 
-
     virtual std::shared_ptr<reference_type> get_reference();
     std::shared_ptr<pointer_type> get_pointer();
     std::shared_ptr<array_type> get_array();
     std::shared_ptr<sized_array_type> get_array(unsigned long size);
+
+    virtual std::string to_string() const =0;
 };
 
 /**
@@ -101,6 +102,8 @@ public:
     static std::shared_ptr<type> from_type_specifier(const k::parse::ast::type_specifier& type_spec);
 
     const name& type_id() const {return _type_id;}
+
+    std::string to_string() const override;
 };
 
 /**
@@ -162,7 +165,7 @@ public:
     }
 
 
-    const std::string& to_string()const;
+    std::string to_string()const override;
 
     static std::shared_ptr<primitive_type> from_type(PRIMITIVE_TYPE type);
     static std::shared_ptr<type> from_string(const std::string& type_name);
@@ -210,6 +213,8 @@ protected:
 public:
     bool is_resolved() const override;
 
+    std::string to_string() const override;
+
 //    std::shared_ptr<reference_type> get_reference() override;
 };
 
@@ -236,6 +241,8 @@ protected:
 
 public:
     bool is_resolved() const override;
+
+    std::string to_string() const override;
 };
 
 inline bool type::is_pointer(const std::shared_ptr<type>& type) {
@@ -260,6 +267,8 @@ public:
     virtual bool is_sized() const;
 
     virtual std::shared_ptr<sized_array_type> with_size(unsigned long size);
+
+    std::string to_string() const override;
 };
 
 
@@ -280,6 +289,9 @@ public:
     std::shared_ptr<array_type> get_unsized() const;
 
     std::shared_ptr<sized_array_type> with_size(unsigned long size) override;
+
+    std::string to_string() const override;
+
 };
 
 
