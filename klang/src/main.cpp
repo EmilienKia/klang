@@ -33,40 +33,36 @@ using namespace k;
 
 k::log::logger logger;
 
-
 #if 1
 int main() {
     std::cout << "Hello, World!" << std::endl;
 
-#if 0
     std::string source = R"SRC(
 
-        a : int;
-
-        assign(var: int*, val: int) : int {
-            *var = val;
-            return *var;
+        set(p: int[4]&, i: int, v: int) {
+                p[i] = v;
         }
 
-        test() : int {
-            return assign(&a, 4);
+        get(p: int[4]&, i: int) : int {
+                return p[i];
+        }
+		
+        test(p: int[4]&) : int {
+		l: int[4];
+
+                set(l, 0, 1);
+                set(l, 1, 2);
+                set(l, 2, 4);
+                set(l, 3, 8);
+
+                set(p, 0, l[0]);
+                set(p, 1, l[1]);
+                set(p, 2, l[2]);
+                set(p, 3, l[3]);
+
+                return p[3];
         }
     )SRC";
-#else
-    std::string source = R"SRC(
-
-        a : int;
-
-        assign(var: int&, val: int) : int {
-            var = val;
-            return var;
-        }
-
-        test() : int {
-            return assign(a, 4);
-        }
-    )SRC";
-#endif
 
     try {
 
@@ -110,13 +106,18 @@ int main() {
         }
 
 #if 1
-        auto assign = jit.get()->lookup_symbol< int(*)(int&, int) >("assign");
-        int var = 0;
-        std::cout << "Var:" << var << "(=0)" << std::endl;
-        std::cout << "Assign (&var, 1):" << std::endl;
-        int res = assign(var, 1);
-        std::cout << "Res:" << res << "(=1)" << std::endl;
-        std::cout << "Var:" << var << "(=1)" << std::endl;
+        int arr[4] = {0, 0, 0, 0};
+        auto ptr = &arr;
+
+        auto test = jit.get()->lookup_symbol<int(*)(int(*)[4]) >("test");
+        int res = test(ptr);
+
+        std::cout << "test() = " << res << std::endl;
+        std::cout << "arr[0] = " << arr[0] << std::endl;
+        std::cout << "arr[1] = " << arr[1] << std::endl;
+        std::cout << "arr[2] = " << arr[2] << std::endl;
+        std::cout << "arr[3] = " << arr[3] << std::endl;
+
 #endif
 
 

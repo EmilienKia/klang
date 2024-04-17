@@ -397,7 +397,12 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_bracket_postifx_expr(ast::bracket_postifx_expr& expr) override {
-
+            expr.lexpr()->visit(*this);
+            _stm << "[";
+            if(expr.rexpr()) {
+                expr.rexpr()->visit(*this);
+            }
+            _stm << "]";
         }
 
         void visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr& expr) override {

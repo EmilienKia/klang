@@ -476,6 +476,13 @@ void cast_expression::accept(model_visitor &visitor) {
 }
 
 //
+// Subscript expression
+//
+void subscript_expression::accept(model_visitor &visitor) {
+    visitor.visit_subscript_expression(*this);
+}
+
+//
 // Function invocation expression
 //
 void function_invocation_expression::accept(model_visitor &visitor) {

@@ -18,6 +18,21 @@
 #include "symbol_type_resolver.hpp"
 #include "unit_llvm_ir_gen.hpp"
 
+#include "llvm/Support/raw_os_ostream.h"
+template<typename STM>
+STM& operator << (STM& stm, const llvm::Type& type) {
+    llvm::raw_os_ostream ross(stm);
+    type.print(ross, true);
+    return stm;
+}
+
+template<typename STM>
+STM& operator << (STM& stm, const llvm::Value& value) {
+    llvm::raw_os_ostream ross(stm);
+    value.print(ross, true);
+    return stm;
+}
+
 namespace k::model::gen {
 
 //
@@ -1796,6 +1811,85 @@ void unit_llvm_ir_gen::visit_greater_equal_expression(greater_equal_expression& 
     } else {
         // TODO support for other types
     }
+}
+
+//
+// Subscript expression
+//
+
+void symbol_type_resolver::visit_subscript_expression(subscript_expression& expr) {
+    visit_binary_expression(expr);
+
+    auto left = expr.left();
+    auto right = expr.right();
+
+    auto left_type = left->get_type();
+
+//  TODO dereference for double references
+
+    // Dereference if needed
+    if(!type::is_reference(left_type)) {
+        // TODO throw an exception
+        // Subscript expression is supported only for references to arrays.
+        std::cerr << "Error: Subscript expression is supported only for reference to arrays." << std::endl;        
+    }
+    if(type::is_double_reference(left_type)) {
+        // Deref first ref
+        left_type = left_type->get_subtype();
+    }
+    left_type = std::dynamic_pointer_cast<reference_type>(left_type)->get_subtype();
+
+    if(!type::is_array(left_type)) {
+        // TODO throw an exception
+        // Subscript expression is supported only for arrays.
+        std::cerr << "Error: Subscript expression is supported only for arrays." << std::endl;
+    }
+    auto arr_type = std::dynamic_pointer_cast<array_type>(left_type);
+    expr.set_type(arr_type->get_subtype()->get_reference());
+
+    // Check the right hand can be cast to unsigned integer
+    // TODO adapt to the really right index type.
+    // TODO is array really indexed by uint ?
+    auto adapted_right = adapt_type(right, primitive_type::from_type(primitive_type::UNSIGNED_INT));
+    if(!adapted_right) {
+        // TODO thrown an exception
+        // Error: cannot cast index expression to index type
+        std::cerr << "Error: Cannot cast index expression to index type in subscript expression." << std::endl;
+    } else if(adapted_right!=right) {
+        right = adapted_right;
+        expr.assign_right(right);
+    }
+}
+
+void unit_llvm_ir_gen::visit_subscript_expression(subscript_expression& expr) {
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        // TODO throw exception ?
+        _value = nullptr;
+        return;
+    }
+
+    auto left_type = expr.left()->get_type();
+
+    // Dereference if double ref
+    if(type::is_double_reference(left_type)) {
+        left_type = left_type->get_subtype();
+        left = _builder->CreateLoad(get_llvm_type(left_type), left);
+    }
+
+    // Dereference index if needed
+    auto right_type = expr.right()->get_type();
+    if(type::is_reference(right_type)) {
+        right_type = std::dynamic_pointer_cast<reference_type>(right_type)->get_subtype();
+        right = _builder->CreateLoad(get_llvm_type(right_type), right);
+    }
+
+    auto arr_type = get_llvm_type(left_type->get_subtype());
+
+    llvm::Value* indices[] = {_builder->getInt32(0), right};
+
+//    _value = _builder->Insert(llvm::GetElementPtrInst::Create(arr_type, left, indices));
+    _value = _builder->CreateGEP(arr_type, left, indices);
 }
 
 //

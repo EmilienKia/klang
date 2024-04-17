@@ -502,6 +502,13 @@ public:
         expr.right()->accept(*this);
     }
 
+    void visit_subscript_expression(subscript_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << "[";
+        expr.right()->accept(*this);
+        _stm << "]";
+    }
+
     void visit_function_invocation_expression(function_invocation_expression &expr) override {
         expr.callee_expr()->accept(*this);
         _stm << "(";

@@ -959,6 +959,26 @@ public:
     }
 };
 
+class subscript_expression : public binary_expression {
+protected:
+    subscript_expression() = default;
+
+    subscript_expression(const std::shared_ptr<expression> &callee_expr,
+                                   const std::shared_ptr<expression> &index_expr) :
+                                   binary_expression(callee_expr, index_expr)
+    {
+    }
+
+public:
+    void accept(model_visitor &visitor) override;
+
+    static std::shared_ptr<expression>
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<subscript_expression> expr{new subscript_expression()};
+        expr->assign(left_expr, right_expr);
+        return std::shared_ptr<expression>{expr};
+    }
+};
 
 class function_invocation_expression : public expression {
 protected:

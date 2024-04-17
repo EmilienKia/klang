@@ -154,7 +154,7 @@ public:
     void visit_lesser_equal_expression(lesser_equal_expression&) override;
     void visit_greater_equal_expression(greater_equal_expression&) override;
 
-
+    void visit_subscript_expression(subscript_expression&) override;
     void visit_function_invocation_expression(function_invocation_expression&) override;
 
     void visit_cast_expression(cast_expression&) override;

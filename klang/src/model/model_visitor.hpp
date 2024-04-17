@@ -102,6 +102,7 @@ public:
     virtual void visit_lesser_equal_expression(lesser_equal_expression&) =0;
     virtual void visit_greater_equal_expression(greater_equal_expression&) =0;
 
+    virtual void visit_subscript_expression(subscript_expression&) =0;
     virtual void visit_function_invocation_expression(function_invocation_expression&) =0;
 };
 
@@ -183,6 +184,7 @@ public:
     virtual void visit_lesser_equal_expression(lesser_equal_expression&) override;
     virtual void visit_greater_equal_expression(greater_equal_expression&) override;
 
+    virtual void visit_subscript_expression(subscript_expression&) override;
     virtual void visit_function_invocation_expression(function_invocation_expression&) override;
 };
 

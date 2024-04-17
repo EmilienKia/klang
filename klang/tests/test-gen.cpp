@@ -2381,3 +2381,48 @@ TEST_CASE("References", "[gen][refs]") {
     REQUIRE(value != nullptr);
     REQUIRE(value() == 4);
 }
+
+//
+// Array indice references
+//
+
+TEST_CASE("Array indice references", "[gen][refs][array]") {
+    auto jit = gen(R"SRC(
+        module __arrs__;
+        set(p: int[4]&, i: int, v: int) {
+                p[i] = v;
+        }
+
+        get(p: int[4]&, i: int) : int {
+                return p[i];
+        }
+		
+        test(p: int[4]&) : int {
+		l: int[4];
+
+                set(l, 0, 1);
+                set(l, 1, 2);
+                set(l, 2, 4);
+                set(l, 3, 8);
+
+                set(p, 0, l[0]);
+                set(p, 1, l[1]);
+                set(p, 2, l[2]);
+                set(p, 3, l[3]);
+
+                return p[3];
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    int arr[4] = {0, 0, 0, 0};
+    auto ptr = &arr;
+
+    auto test = jit.get()->lookup_symbol<int(*)(int(*)[4]) >("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test(ptr) == 8);
+    REQUIRE(arr[0] == 1);
+    REQUIRE(arr[1] == 2);
+    REQUIRE(arr[2] == 4);
+    REQUIRE(arr[3] == 8);
+}

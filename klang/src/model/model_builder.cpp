@@ -522,8 +522,12 @@ namespace k::model {
 
     }
 
-    void model_builder::visit_bracket_postifx_expr(parse::ast::bracket_postifx_expr &) {
-
+    void model_builder::visit_bracket_postifx_expr(parse::ast::bracket_postifx_expr &expr) {
+        expr.lexpr()->visit(*this);
+        std::shared_ptr<model::expression> lexpr = _expr;
+        expr.rexpr()->visit(*this);
+        std::shared_ptr<model::expression> rexpr = _expr;
+        _expr = model::subscript_expression::make_shared(lexpr, rexpr);
     }
 
     void model_builder::visit_parenthesis_postifx_expr(parse::ast::parenthesis_postifx_expr &expr) {
