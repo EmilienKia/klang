@@ -87,7 +87,7 @@ public:
     std::vector<ast::decl_ptr> parse_declarations();
 
     /**
-     *  DECLARATION := VISIBILITY_DECL | NAMESPACE_DECL | FUNCTION_DECL | VARIABLE_DECL
+     *  DECLARATION := VISIBILITY_DECL | NAMESPACE_DECL | FUNCTION_DECL | STRUCT_DECLARATION | VARIABLE_DECL
      * @return
      */
     ast::decl_ptr parse_declaration();
@@ -103,6 +103,11 @@ public:
      * @return
      */
     std::shared_ptr<ast::namespace_decl> parse_namespace_decl();
+
+    /**
+     * STRUCT_DECL := SPECIFIERS 'struct' identifier '{' DECLARATIONS '}'
+     */
+    std::shared_ptr<ast::struct_decl> parse_struct_decl();
 
     /**
      * QUALIFIED_IDENTIFIER := ?'::' identifier *( '::' identifier )
@@ -318,8 +323,9 @@ public:
      * POSTFIX_EXPR := PRIMARY_EXPR *[ '++'|'--'
      *                                  | [ '[' EXPRESSION ']' ]
      *                                  | [ '(' EXPRESSION_LIST ')' ]
+     *                                  | [ ['.'|'->'] IDENTIFIER_EXPR ]
      *                               ]
-     * TODO: support braces and point/Arrow
+     * TODO: support braces and arrow
      * @return
      */
     ast::expr_ptr parse_postfix_expr();

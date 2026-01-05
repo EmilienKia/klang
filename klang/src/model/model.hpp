@@ -31,7 +31,15 @@
 #include "type.hpp"
 
 
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Type.h>
+
+
 namespace k::model {
+
+class context;
 
 class expression;
 class statement;
@@ -40,6 +48,7 @@ class block;
 
 class parameter;
 class function;
+class structure;
 class ns;
 class unit;
 
@@ -56,6 +65,7 @@ enum visibility {
 };
 
 
+
 class model_visitor;
 
 /**
@@ -64,22 +74,91 @@ class model_visitor;
 class element : public std::enable_shared_from_this<element>
 {
 protected:
-    virtual ~element() = default;
+    std::shared_ptr<context> _context;
+    std::shared_ptr<element> _parent;
+
+    element() = delete;
+    element(std::shared_ptr<context> context, std::shared_ptr<element> parent = nullptr) : _context(context), _parent(parent) {}
+    element(std::shared_ptr<element> parent) : _parent(parent) {}
+
+    friend statement;
+    void set_parent(const std::shared_ptr<element> &parent_element) {
+        _parent = parent_element;
+    }
+
+    static void set_parent(const std::shared_ptr<element> &parent, const std::shared_ptr<element> &child) {
+        if(child && parent) {
+            child->set_parent(parent);
+        }
+    }
 
 public:
+    virtual ~element() = default;
+
+    std::shared_ptr<context> get_context();
+
     template<typename T>
-    std::shared_ptr<T> shared_as() {
+    inline std::shared_ptr<T> shared_as() {
         return std::dynamic_pointer_cast<T>(shared_from_this());
     }
 
     template<typename T>
-    std::shared_ptr<const T> shared_as() const {
+    inline std::shared_ptr<const T> shared_as() const {
         return std::dynamic_pointer_cast<T>(shared_from_this());
+    }
+
+    template<typename T>
+    inline std::shared_ptr<T> parent() {
+        return std::dynamic_pointer_cast<T>(_parent);
+    }
+
+    template<typename T>
+    inline std::shared_ptr<const T> parent() const {
+        return std::dynamic_pointer_cast<T>(_parent);
+    }
+
+    template<typename T>
+    inline std::shared_ptr<T> ancestor() {
+        std::shared_ptr<element> current = _parent;
+        while(current) {
+            if(auto ancestor = std::dynamic_pointer_cast<T>(current)) {
+                return ancestor;
+            }
+            current = current->_parent;
+        }
+        return {};
+    }
+
+    template<typename T>
+    inline std::shared_ptr<const T> ancestor() const {
+        std::shared_ptr<const element> current = _parent;
+        while(current) {
+            if(auto ancestor = std::dynamic_pointer_cast<const T>(current)) {
+                return ancestor;
+            }
+            current = current->_parent;
+        }
+        return {};
     }
 
     virtual void accept(model_visitor& visitor) =0;
 
 };
+
+
+template<>
+inline std::shared_ptr<element> element::parent<element>() {
+    return _parent;
+}
+
+template<>
+inline std::shared_ptr<const element> element::parent<element>() const {
+    return _parent;
+}
+
+
+
+
 
 
 /**
@@ -124,61 +203,134 @@ public:
 
 
 /**
-* Interface for holding variables (like ns and blocks)
+* Interface for holding variables (like ns, structs and blocks)
 */
 class variable_holder
 {
 public:
-    virtual std::shared_ptr<variable_definition> append_variable(const std::string& name) =0;
+    virtual std::shared_ptr<variable_definition> append_variable(const std::string& name);
+    virtual std::shared_ptr<variable_definition> get_variable(const std::string& name) const;
+    virtual std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const;
 
-    virtual std::shared_ptr<variable_definition> get_variable(const std::string& name) =0;
+    typedef std::map<std::string, std::shared_ptr<variable_definition>> variable_map_t;
+        
+protected:
+    /** Map of all defined vars. */
+    variable_map_t _vars;
 
-    virtual std::shared_ptr<variable_definition> lookup_variable(const std::string& name) =0;
+    virtual std::shared_ptr<variable_definition> do_create_variable(const std::string &name) =0;
+    virtual void on_variable_defined(std::shared_ptr<variable_definition>) =0;
+
+public:
+    const variable_map_t& variables() const {return _vars;}
+    variable_map_t::const_iterator variable_begin() const;
+    variable_map_t::const_iterator variable_end() const;
 };
 
 
+/**
+* Interface for holding functions (like ns and structs)
+*/
+class function_holder
+{
+public:
+    virtual std::shared_ptr<function> define_function(const std::string& name);
+    virtual std::shared_ptr<function> get_function(const std::string& name) const;
+    virtual std::shared_ptr<function> lookup_function(const std::string& name) const;
 
+protected:
+    /** List of all defined functions. */
+    std::vector<std::shared_ptr<function>> _functions;
+
+    virtual std::shared_ptr<function> do_create_function(const std::string &name) =0;
+    virtual void on_function_defined(std::shared_ptr<function>) =0;
+};
 
 /**
- * Element part of a namespace.
- */
-class ns_element : public element {
+* Interface for holding structures (like ns and structs)
+*/
+class structure_holder
+{
+public:
+    virtual std::shared_ptr<structure> define_structure(const std::string& name);
+    virtual std::shared_ptr<structure> get_structure(const std::string& name);
+    virtual std::shared_ptr<structure> lookup_structure(const std::string& name);
+
 protected:
-    /** Unit this element is declared in. */
-    unit& _unit;
+    /** Map of all defined structures. */
+    std::map<std::string, std::shared_ptr<structure>> _structs;
 
-    /** Parent namespace, null if no parent (root ns only). */
-    std::shared_ptr<ns> _parent_ns;
+    virtual std::shared_ptr<structure> do_create_structure(const std::string &name) =0;
+    virtual void on_structure_defined(std::shared_ptr<structure>) =0;
+};
 
-    ns_element() = delete;
-    virtual ~ns_element() = default;
-    ns_element(const ns_element& elem) = default;
-    ns_element(ns_element&& elem) = default;
 
-    ns_element(unit& unit, std::shared_ptr<ns> parent) : _unit(unit), _parent_ns(std::move(parent)) {}
+class member_variable_definition : public element, public variable_definition {
+protected:
 
+    friend class structure;
+    friend class gen::unit_llvm_ir_gen;
+
+    member_variable_definition(std::shared_ptr<structure> st);
+
+    member_variable_definition(std::shared_ptr<structure> st, const std::string& name);
+
+public:
+    void accept(model_visitor& visitor) override;
+
+};
+
+
+class structure : public element, public variable_holder, public function_holder {
+protected:
+    friend class ns;
+    friend class gen::unit_llvm_ir_gen;
+    friend class gen::symbol_type_resolver;
+
+    std::string _name;
+
+    /** Collection of all children of this namespace. */
+    std::vector<std::shared_ptr<element>> _children;
+
+    std::shared_ptr<struct_type> _type;
+
+    structure(std::shared_ptr<element> parent, const std::string& name);
+
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
+    void on_variable_defined(std::shared_ptr<variable_definition>) override;
+
+    std::shared_ptr<function> do_create_function(const std::string &name) override;
+    void on_function_defined(std::shared_ptr<function>) override;
+
+    void set_struct_type(const std::shared_ptr<struct_type>& st_type) {
+        _type = st_type;
+    }
 public:
 
     void accept(model_visitor& visitor) override;
 
-    /**
-     * Retrieve the model this element is declared in.
-     * @return Unit reference
-     */
-    unit& get_unit() {return _unit;}
-    const unit& get_unit() const {return _unit;}
+    const std::string& get_name() const {
+        return _name;
+    }
 
-    /**
-     * Retrieve the namespace this element is declared in.
-     * @return Parent namespace, null if no parent (root ns only).
-     */
-    std::shared_ptr<ns> parent_ns() {return _parent_ns;}
-    std::shared_ptr<const ns> parent_ns() const {return _parent_ns;}
+    std::shared_ptr<struct_type> get_struct_type() const {
+        return _type;
+    }
 
+    //
+    // Children functions
+    //
+
+    const std::vector<std::shared_ptr<element>>& get_children() const {
+        return _children;
+    }
+
+    std::shared_ptr<function> lookup_function(const std::string& name) const override;
+
+    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const override;
 };
 
-
-class parameter : public variable_definition {
+class parameter : public element, public variable_definition {
 protected:
 
     friend class function;
@@ -189,8 +341,10 @@ protected:
     size_t _pos;
 
     parameter(std::shared_ptr<function> func, size_t pos);
+    parameter(std::shared_ptr<function> func, const std::string &name, size_t pos);
     parameter(std::shared_ptr<function> func, const std::string &name, const std::shared_ptr<type> &type, size_t pos);
 public:
+    void accept(model_visitor& visitor) override;
 
     size_t get_pos() const {
         return _pos;
@@ -200,10 +354,11 @@ public:
     std::shared_ptr<const function> get_function() const {return _function;}
 };
 
-class function : public ns_element {
+class function : public element, public variable_holder {
 protected:
 
     friend class ns;
+    friend class structure;
     friend class gen::unit_llvm_ir_gen;
 
     std::string _name;
@@ -213,7 +368,10 @@ protected:
 
     std::shared_ptr<block> _block;
 
-    function(std::shared_ptr<ns> ns, const std::string& name);
+    function(std::shared_ptr<element> parent, const std::string& name);
+
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
+    void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
 public:
     void accept(model_visitor& visitor) override;
@@ -228,6 +386,8 @@ public:
         return _parameters;
     }
 
+    std::shared_ptr<variable_definition> append_variable(const std::string& name) override;
+
     std::shared_ptr<parameter> append_parameter(const std::string& name, std::shared_ptr<type> type);
     std::shared_ptr<parameter> insert_parameter(const std::string& name, std::shared_ptr<type> type, size_t pos);
 
@@ -239,10 +399,14 @@ public:
 
     void set_block(const std::shared_ptr<block>& block);
     std::shared_ptr<block> get_block();
+
+    bool is_member() const;
+    std::shared_ptr<const structure> get_owner() const;
+    std::shared_ptr<structure> get_owner();
 };
 
 
-class global_variable_definition : public ns_element, public variable_definition {
+class global_variable_definition : public element, public variable_definition {
 protected:
 
     friend class ns;
@@ -258,9 +422,9 @@ public:
 };
 
 
-class ns : public ns_element, public variable_holder {
+class ns : public element, public variable_holder, public function_holder, public structure_holder {
 private:
-    ns(unit& unit, std::shared_ptr<ns> parent, const std::string& name);
+    ns(std::shared_ptr<element> parent, const std::string& name);
 
 protected:
 
@@ -270,16 +434,25 @@ protected:
     std::string _name;
 
     /** Collection of all children of this namespace. */
-    std::vector<std::shared_ptr<ns_element>> _children;
+    std::vector<std::shared_ptr</*ns_element*/element>> _children;
 
     /** Map of direct child namespaces. */
     std::map<std::string, std::shared_ptr<ns>> _ns;
 
-    /** Map of all vars defined in this namespace. */
-    std::map<std::string, std::shared_ptr<global_variable_definition>> _vars;
+    /** Map of all structures defined in this namespace. */
+    std::map<std::string, std::shared_ptr<structure>> _structs;
 
-    static std::shared_ptr<ns> create(unit& unit, std::shared_ptr<ns> parent, const std::string& name);
+    static std::shared_ptr<ns> create(std::shared_ptr<element> parent, const std::string& name);
 
+protected:
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
+    void on_variable_defined(std::shared_ptr<variable_definition>) override;
+
+    std::shared_ptr<function> do_create_function(const std::string &name) override;
+    void on_function_defined(std::shared_ptr<function> func) override;
+
+    std::shared_ptr<structure> do_create_structure(const std::string &name) override;
+    void on_structure_defined(std::shared_ptr<structure>) override;
 public:
 
     void accept(model_visitor& visitor) override;
@@ -297,7 +470,8 @@ public:
      * Test if this namespace is the root namespace.
      * @return True if root namespace, false otherwise.
      */
-    bool is_root() const { return !_parent_ns; }
+    //bool is_root() const { return !_parent_ns; }
+    bool is_root() const { return !!parent<unit>(); }
 
     //
     // Children namespace manipulations
@@ -322,17 +496,15 @@ public:
     // Children functions
     //
 
-    const std::vector<std::shared_ptr<ns_element>>& get_children() const {
+    const std::vector<std::shared_ptr</*ns_element*/element>>& get_children() const {
         return _children;
     }
 
-    std::shared_ptr<function> define_function(const std::string& name);
-    std::shared_ptr<function> get_function(const std::string& name);
-    std::shared_ptr<function> lookup_function(const std::string& name);
+    std::shared_ptr<function> lookup_function(const std::string& name) const override;
 
-    std::shared_ptr<variable_definition> append_variable(const std::string &name) override;
-    std::shared_ptr<variable_definition> get_variable(const std::string& name) override;
-    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) override;
+    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const override;
+
+    std::shared_ptr<structure> lookup_structure(const std::string& name) override;
 };
 
 
@@ -346,9 +518,11 @@ protected:
     /** Root namespace.*/
     std::shared_ptr<ns> _root_ns;
 
+    unit() = delete;
+    unit(std::shared_ptr<context> context);
 public:
 
-    unit();
+    static std::shared_ptr<unit> create(std::shared_ptr<context> context);
 
     void accept(model_visitor& visitor) override;
 
@@ -383,9 +557,7 @@ public:
      * Retrieve the root namespace of this model.
      * @return The root namespace.
      */
-    std::shared_ptr<ns> get_root_namespace() {
-        return _root_ns;
-    }
+    std::shared_ptr<ns> get_root_namespace();
     std::shared_ptr<const ns> get_root_namespace() const {
         return _root_ns;
     }

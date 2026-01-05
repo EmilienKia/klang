@@ -54,7 +54,7 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
             case lex::any_literal_type_index::INTEGER: {
                 const auto &i = lit.get<lex::integer>();
                 auto val = llvm::APInt((unsigned) i.size, i.int_content(), (uint8_t) i.base);
-                _value = llvm::ConstantInt::get(*_context, val);
+                _value = llvm::ConstantInt::get(**_context, val);
             } break;
             case lex::any_literal_type_index::FLOAT_NUM: {
                 const auto &f = lit.get<lex::float_num>();
@@ -88,23 +88,39 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
 }
 
 //
-// Symbol expression
+// Symbol expression:
+//
+// Symbol expression could be found in two cases:
+// - In the symbol part (right hand) of a member-of expression, like b in "a.b".
+//   In this case, the symbol is supposed to be already resolved when visiting the member-of expression.
+//   It must not be resolved again here.
+// - As a standalone symbol expression, like a or b in "a + b".
+//   In this case, the symbol must be resolved here.
+//   It could be only:
+//   - a non-member variable: local variable, parameter, global variable.
+//      - the returned value is the reference (address) of the variable.
+//      - the return value type is always a reference to the variable type.
+//   - a non-member function: function name used as a function pointer. It returns the reference of the function.
+//      - the return value is always a function reference address.
+//      - the return value type is always a function reference type.
 //
 
 void symbol_type_resolver::visit_symbol_expression(symbol_expression& symbol)
 {
-    // TODO: Have to check the variable definition (for block-variable) is done before the expression;
-    // TODO: Have to support all symbol types, not only variables
-    if(!symbol.is_resolved()) {
-        if(auto stmt = symbol.find_statement()) {
-            if(auto var_holder = stmt->get_variable_holder()) {
-                if(auto def = var_holder->lookup_variable(symbol.get_name())) {
-                    symbol.resolve(def);
-                    // Note: type is supposed to be applied at resolution
-                    // Note: a variable type is supposed to be always a reference
-                }
-            }
-        }
+    auto found_symbol = resolve_symbol(symbol);
+    if (std::holds_alternative<std::shared_ptr<variable_definition>>(found_symbol)) {
+        auto var_def = std::get<std::shared_ptr<variable_definition>>(found_symbol);
+        symbol.resolve(var_def);
+        // Note: type is supposed to be applied at resolution
+        // Note: a variable type is supposed to be always a reference
+    } else if (std::holds_alternative<std::shared_ptr<function>>(found_symbol)) {
+        auto func =  std::get<std::shared_ptr<function>>(found_symbol);
+        symbol.resolve(func);
+        // Note: type is supposed to be applied at resolution
+    } else {
+        // Symbol not found
+        // TODO throw an exception
+        std::cerr << "Error: Unable to resolve symbol '" << symbol.get_name().to_string() << "'." << std::endl;
     }
 }
 
@@ -124,10 +140,51 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
         } else if (auto local_var = std::dynamic_pointer_cast<variable_statement>(var_def)) {
             ptr = _variables[local_var];
             name = local_var->get_name();
+        } else if (auto member_var = std::dynamic_pointer_cast<member_variable_definition>(var_def)) {
+            name = member_var->get_name();
+
+            // Get 'this' pointer
+            llvm::Value* this_value_ref = nullptr;
+            {
+                auto func = std::dynamic_pointer_cast<function>(symbol.find_statement()->get_function());
+                if(!func) {
+                    // TODO throw exception : no function found in context for member variable access
+                    std::cerr << "Error: no function context available for member variable '" << name << "' access." << std::endl;
+                }
+                this_value_ref = _function_this_variables[func];
+            }
+
+            // Get member variable
+            if(_struct_stack.empty()) {
+                // TODO throw exception : no 'this' pointer available for member variable access
+                std::cerr << "Error: no 'this' context available for member variable '" << name << "' access." << std::endl;
+            }
+            auto struct_ref = _struct_stack.top();
+            auto struct_type = struct_ref->get_struct_type();
+            if(struct_type) {
+                if(auto field = struct_type->get_member(name); field) {
+                    ptr = _builder->CreateStructGEP(
+                            _context->get_llvm_type(struct_type),
+                            this_value_ref,
+                            (unsigned)field->index,
+                            "this_" + struct_ref->get_name() + "_" + name + "_ptr"
+                    );
+                } else {
+                    // TODO throw an exception
+                    std::cerr << "Error: Struct type '" << struct_type->name() << "' has no member named '" << name << "'. (1)" << std::endl;
+                }
+            } else { // TODO add here the method resolution
+                // TODO throw an exception
+                std::cout << "Error: Struct type has no type information for member variable '" << name << "' access." << std::endl;
+            }
+
+        } else {
+            // TODO Support other types of variable definitions
+            std::cout << "Error: Unsupported variable definition type in symbol expression." << std::endl;
         }
 
         // Handle type of symbol
-        llvm::Type* type = get_llvm_type(var_def->get_type());
+        llvm::Type* type = _context->get_llvm_type(var_def->get_type());
 
         if(ptr && type) {
 //            _value = _builder->CreateLoad(type, ptr, name);
@@ -135,9 +192,25 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
             _value = ptr;
         }
 
-    } else {
-        // TODO Support other types of symbols, not only variables
+    } else if (symbol.is_function()) {
+        auto func = symbol.get_function();
+
+        // Find the function definition
+        auto it = _functions.find(func);
+        if(it==_functions.end()) {
+            // Error: function definition is not found.
+            // TODO throw exception
+            std::cerr << "Error: function definition is not found." << std::endl;
+        }
+        llvm::Function* llvm_func = it->second;
+        if(!llvm_func) {
+            // Error: function definition is not found.
+            // TODO throw exception
+            std::cerr << "Error: llvm function definition is not found." << std::endl;
+        }
+        _value = llvm_func;
     }
+    // TODO Support other types of symbols, not only variables and functions
 }
 
 //
@@ -253,7 +326,7 @@ void symbol_type_resolver::process_arithmetic(binary_expression& expr) {
     // If source type is reference, deref it
     if(type::is_reference(source_type)) {
         // Source type must be de-referenced
-        right = load_value_expression::make_shared(right);
+        right = load_value_expression::make_shared(_context, right);
         source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
         right->set_type(source_type);
         expr.assign_right(right);
@@ -293,7 +366,7 @@ void unit_llvm_ir_gen::visit_addition_expression(addition_expression &expr) {
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
         auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = get_llvm_type(ref_type->get_subtype());
+        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -322,7 +395,7 @@ void unit_llvm_ir_gen::visit_substraction_expression(substraction_expression &ex
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
         auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = get_llvm_type(ref_type->get_subtype());
+        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -351,7 +424,7 @@ void unit_llvm_ir_gen::visit_multiplication_expression(multiplication_expression
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
         auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = get_llvm_type(ref_type->get_subtype());
+        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -382,7 +455,7 @@ void unit_llvm_ir_gen::visit_division_expression(division_expression &expr) {
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
         auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = get_llvm_type(ref_type->get_subtype());
+        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -417,7 +490,7 @@ void unit_llvm_ir_gen::visit_modulo_expression(modulo_expression &expr) {
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
         auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = get_llvm_type(ref_type->get_subtype());
+        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -452,7 +525,7 @@ void unit_llvm_ir_gen::visit_bitwise_and_expression(bitwise_and_expression& expr
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
         auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = get_llvm_type(ref_type->get_subtype());
+        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -485,7 +558,7 @@ void unit_llvm_ir_gen::visit_bitwise_or_expression(bitwise_or_expression& expr) 
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
         auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = get_llvm_type(ref_type->get_subtype());
+        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -518,7 +591,7 @@ void unit_llvm_ir_gen::visit_bitwise_xor_expression(bitwise_xor_expression& expr
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
         auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = get_llvm_type(ref_type->get_subtype());
+        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -551,7 +624,7 @@ void unit_llvm_ir_gen::visit_left_shift_expression(left_shift_expression& expr) 
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
         auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = get_llvm_type(ref_type->get_subtype());
+        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -585,7 +658,7 @@ void unit_llvm_ir_gen::visit_right_shift_expression(right_shift_expression& expr
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
         auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = get_llvm_type(ref_type->get_subtype());
+        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -623,7 +696,7 @@ void symbol_type_resolver::visit_assignation_expression(assignation_expression &
 
     if(!type::is_reference(left_type)) {
         // TODO throw an exception
-        // Assignement must have a reference at left hand
+        // Assignment must have a reference at left hand
         std::cerr << "Error: Assignment must have a reference at left hand." << std::endl;
     }
     auto ref_target_type = std::dynamic_pointer_cast<reference_type>(left_type);
@@ -632,7 +705,7 @@ void symbol_type_resolver::visit_assignation_expression(assignation_expression &
     if(type::is_reference(target_type)) {
         // Left hand is a ref-to-ref-to-something, i.e. a ref-something variable.
         // Deref again target type
-        left = load_value_expression::make_shared(left);
+        left = load_value_expression::make_shared(_context, left);
         left->set_type(target_type);
         expr.assign_left(left);
         target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
@@ -669,13 +742,13 @@ void symbol_type_resolver::visit_assignation_expression(assignation_expression &
     // If source type is reference, deref it
     if(type::is_reference(source_type)) {
         // Source type must be de-referenced
-        right = load_value_expression::make_shared(right);
+        right = load_value_expression::make_shared(_context, right);
         source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
         right->set_type(source_type);
         expr.assign_right(right);
     }
 
-    // TODO Promote to largest target_type instread to align to left operand.
+    // TODO Promote to largest target_type instead to align to left operand.
     auto cast = adapt_type(right, target_type);
     if(!cast) {
         // TODO throw an exception
@@ -704,7 +777,7 @@ void unit_llvm_ir_gen::visit_simple_assignation_expression(simple_assignation_ex
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type())->get_subtype();
     auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = get_llvm_type(left_type);
+    auto llvm_type = _context->get_llvm_type(left_type);
 
     _value = right;
 
@@ -749,7 +822,7 @@ void unit_llvm_ir_gen::visit_addition_assignation_expression(additition_assignat
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
     auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = get_llvm_type(left_type);
+    auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
     if(type::is_prim_integer(left_type)) {
@@ -780,7 +853,7 @@ void unit_llvm_ir_gen::visit_substraction_assignation_expression(substraction_as
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
     auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = get_llvm_type(left_type);
+    auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
     if(type::is_prim_integer(left_type)) {
@@ -811,7 +884,7 @@ void unit_llvm_ir_gen::visit_multiplication_assignation_expression(multiplicatio
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
     auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = get_llvm_type(left_type);
+    auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
     if(type::is_prim_integer(left_type)) {
@@ -842,7 +915,7 @@ void unit_llvm_ir_gen::visit_division_assignation_expression(division_assignatio
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
     auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = get_llvm_type(left_type);
+    auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
@@ -879,7 +952,7 @@ void unit_llvm_ir_gen::visit_modulo_assignation_expression(modulo_assignation_ex
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
     auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = get_llvm_type(left_type);
+    auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
@@ -916,7 +989,7 @@ void unit_llvm_ir_gen::visit_bitwise_and_assignation_expression(bitwise_and_assi
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
     auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = get_llvm_type(left_type);
+    auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
@@ -951,7 +1024,7 @@ void unit_llvm_ir_gen::visit_bitwise_or_assignation_expression(bitwise_or_assign
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
     auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = get_llvm_type(left_type);
+    auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
@@ -986,7 +1059,7 @@ void unit_llvm_ir_gen::visit_bitwise_xor_assignation_expression(bitwise_xor_assi
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
     auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = get_llvm_type(left_type);
+    auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
@@ -1021,7 +1094,7 @@ void unit_llvm_ir_gen::visit_left_shift_assignation_expression(left_shift_assign
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
     auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = get_llvm_type(left_type);
+    auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
@@ -1057,7 +1130,7 @@ void unit_llvm_ir_gen::visit_right_shift_assignation_expression(right_shift_assi
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
     auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = get_llvm_type(left_type);
+    auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
@@ -1129,7 +1202,7 @@ void unit_llvm_ir_gen::visit_unary_plus_expression(unary_plus_expression& expr) 
     if(type::is_reference(type)) {
         type = type->get_subtype();
         // If reference, dereference it.
-        val = _builder->CreateLoad(get_llvm_type(type), val);
+        val = _builder->CreateLoad(_context->get_llvm_type(type), val);
     }
 
     if(type::is_primitive(type)) {
@@ -1156,7 +1229,7 @@ void unit_llvm_ir_gen::visit_unary_minus_expression(unary_minus_expression& expr
     if(type::is_reference(type)) {
         type = type->get_subtype();
         // If reference, dereference it.
-        val = _builder->CreateLoad(get_llvm_type(type), val);
+        val = _builder->CreateLoad(_context->get_llvm_type(type), val);
     }
 
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(type)) {
@@ -1191,7 +1264,7 @@ void unit_llvm_ir_gen::visit_bitwise_not_expression(bitwise_not_expression& expr
     if(type::is_reference(type)) {
         type = type->get_subtype();
         // If reference, dereference it.
-        val = _builder->CreateLoad(get_llvm_type(type), val);
+        val = _builder->CreateLoad(_context->get_llvm_type(type), val);
     }
 
     if(auto prim = std::dynamic_pointer_cast<primitive_type>(type)) {
@@ -1241,7 +1314,7 @@ void symbol_type_resolver::visit_logical_binary_expression(logical_binary_expres
         std::cerr << "Error: Arithmetic for non-primitive types is not supported yet." << std::endl;
     }
 
-    auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    auto bool_type = _context->from_type(primitive_type::BOOL);
 
     auto cast_left = adapt_type(left, bool_type);
     if(!cast_left) {
@@ -1268,7 +1341,7 @@ void symbol_type_resolver::visit_logical_binary_expression(logical_binary_expres
     }
 
     // For primitive type, logical is always returning boolean
-    expr.set_type(primitive_type::from_type(primitive_type::BOOL));
+    expr.set_type(_context->from_type(primitive_type::BOOL));
 }
 
 //
@@ -1286,7 +1359,7 @@ void unit_llvm_ir_gen::visit_logical_and_expression(logical_and_expression& expr
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
-        llvm::Type* type = get_llvm_type(expr.left()->get_type());
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -1314,7 +1387,7 @@ void unit_llvm_ir_gen::visit_logical_or_expression(logical_or_expression& expr) 
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
     if(type::is_reference(expr.left()->get_type())) {
-        llvm::Type* type = get_llvm_type(expr.left()->get_type());
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -1348,7 +1421,7 @@ void symbol_type_resolver::visit_logical_not_expression(logical_not_expression& 
         std::cerr << "Error: Logical negation for non-primitive types is not supported yet." << std::endl;
     }
 
-    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto cast = adapt_type(sub, bool_type);
     if(!cast) {
         // TODO throw an exception
@@ -1380,7 +1453,7 @@ void unit_llvm_ir_gen::visit_logical_not_expression(logical_not_expression& expr
     if(type::is_reference(type)) {
         // Dereference
         type = type->get_subtype();
-        value = _builder->CreateLoad(get_llvm_type(type), value);
+        value = _builder->CreateLoad(_context->get_llvm_type(type), value);
     }
 
     if(!type::is_primitive(type)) {
@@ -1444,7 +1517,7 @@ void symbol_type_resolver::visit_load_value_expression(load_value_expression& ex
 void unit_llvm_ir_gen::visit_load_value_expression(load_value_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
-    _value = _builder->CreateLoad(get_llvm_type(expr.get_type()), _value);
+    _value = _builder->CreateLoad(_context->get_llvm_type(expr.get_type()), _value);
 }
 
 
@@ -1482,14 +1555,78 @@ void unit_llvm_ir_gen::visit_dereference_expression(dereference_expression& expr
 
     if(auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.sub_expr()->get_type())) {
         if(auto sub_ref_type = std::dynamic_pointer_cast<pointer_type>(ref_type->get_subtype())) {
-            llvm::Type* type = get_llvm_type(sub_ref_type);
+            llvm::Type* type = _context->get_llvm_type(sub_ref_type);
             _value = _builder->CreateLoad(type, _value);
         }
     }
-
-    // _value = _value;
 }
 
+//
+// Abstract Member of expression
+//
+void symbol_type_resolver::visit_member_of_expression(member_of_expression& expr) {
+  // TODO
+}
+
+void unit_llvm_ir_gen::visit_member_of_expression(member_of_expression& expr) {
+    // TODO
+}
+
+//
+// Member of object expression
+//
+void symbol_type_resolver::visit_member_of_object_expression(member_of_object_expression& expr) {
+    expr.sub_expr()->accept(*this);
+    auto type = expr.sub_expr()->get_type();
+
+    if(!type::is_reference(type)) {
+        // TODO throw an exception
+        std::cerr << "Error: Member-of-object expression can be applied only to reference types." << std::endl;
+    }
+    if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(type->get_subtype())) {
+        auto member_name =  expr.symbol();
+        if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
+            return expr.set_type(field->field_type.lock()->get_reference());
+        } else {
+            // TODO throw an exception
+            std::cerr << "Error: Struct type '" << struct_subtype->name() << "' has no member named '" << member_name.get_name().to_string() << "'. (2)" << std::endl;
+        }
+    } else { // TODO add here the method resolution
+        // TODO throw an exception
+        std::cerr << "Error: Member-of-object expression can be applied only to struct types." << std::endl;
+    }
+}
+
+void unit_llvm_ir_gen::visit_member_of_object_expression(member_of_object_expression& expr) {
+    _value = nullptr;
+    expr.sub_expr()->accept(*this);
+    auto struct_ref = _value;
+
+    auto type = expr.sub_expr()->get_type(); // Is a reference
+    if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(type->get_subtype())) {
+        auto member_name =  expr.symbol();
+        if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
+            _value = _builder->CreateStructGEP(type->get_subtype()->get_llvm_type(), _value, field->index);
+        } else {
+            // TODO throw an exception
+            std::cerr << "Error: Struct type '" << struct_subtype->name() << "' has no member named '" << member_name.get_name().to_string() << "'. (3)" << std::endl;
+        }
+    } else { // TODO add here the method resolution
+        // TODO throw an exception
+        std::cerr << "Error: Member-of-object expression can be applied only to struct types." << std::endl;
+    }
+}
+
+//
+// Member of pointer expression
+//
+void symbol_type_resolver::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
+    // TODO
+}
+
+void unit_llvm_ir_gen::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
+    // TODO
+}
 
 //
 // Comparison expressions
@@ -1553,7 +1690,7 @@ void symbol_type_resolver::visit_comparison_expression(comparison_expression& ex
     }
 
     // For primitive type, logical is always returning boolean
-    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    static auto bool_type = _context->from_type(primitive_type::BOOL);
     expr.set_type(bool_type);
 }
 
@@ -1570,7 +1707,7 @@ void unit_llvm_ir_gen::visit_equal_expression(equal_expression& expr) {
     }
 
     // If operands are references, dereference them.
-    llvm::Type* type = get_llvm_type(expr.get_type());
+    llvm::Type* type = _context->get_llvm_type(expr.get_type());
     if(type::is_reference(expr.left()->get_type())) {
         left = _builder->CreateLoad(type, left);
     }
@@ -1585,7 +1722,7 @@ void unit_llvm_ir_gen::visit_equal_expression(equal_expression& expr) {
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
 
     if(prim->is_integer_or_bool()) {
@@ -1610,7 +1747,7 @@ void unit_llvm_ir_gen::visit_different_expression(different_expression& expr) {
     }
 
     // If operands are references, dereference them.
-    llvm::Type* type = get_llvm_type(expr.get_type());
+    llvm::Type* type = _context->get_llvm_type(expr.get_type());
     if(type::is_reference(expr.left()->get_type())) {
         left = _builder->CreateLoad(type, left);
     }
@@ -1625,7 +1762,7 @@ void unit_llvm_ir_gen::visit_different_expression(different_expression& expr) {
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
 
     if(prim->is_integer_or_bool()) {
@@ -1650,7 +1787,7 @@ void unit_llvm_ir_gen::visit_lesser_expression(lesser_expression& expr) {
     }
 
     // If operands are references, dereference them.
-    llvm::Type* type = get_llvm_type(expr.get_type());
+    llvm::Type* type = _context->get_llvm_type(expr.get_type());
     if(type::is_reference(expr.left()->get_type())) {
         left = _builder->CreateLoad(type, left);
     }
@@ -1665,7 +1802,7 @@ void unit_llvm_ir_gen::visit_lesser_expression(lesser_expression& expr) {
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
 
     if(prim->is_integer_or_bool()) {
@@ -1694,7 +1831,7 @@ void unit_llvm_ir_gen::visit_greater_expression(greater_expression& expr) {
     }
 
     // If operands are references, dereference them.
-    llvm::Type* type = get_llvm_type(expr.get_type());
+    llvm::Type* type = _context->get_llvm_type(expr.get_type());
     if(type::is_reference(expr.left()->get_type())) {
         left = _builder->CreateLoad(type, left);
     }
@@ -1709,7 +1846,7 @@ void unit_llvm_ir_gen::visit_greater_expression(greater_expression& expr) {
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
 
     if(prim->is_integer_or_bool()) {
@@ -1738,7 +1875,7 @@ void unit_llvm_ir_gen::visit_lesser_equal_expression(lesser_equal_expression& ex
     }
 
     // If operands are references, dereference them.
-    llvm::Type* type = get_llvm_type(expr.get_type());
+    llvm::Type* type = _context->get_llvm_type(expr.get_type());
     if(type::is_reference(expr.left()->get_type())) {
         left = _builder->CreateLoad(type, left);
     }
@@ -1753,7 +1890,7 @@ void unit_llvm_ir_gen::visit_lesser_equal_expression(lesser_equal_expression& ex
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
 
     if(prim->is_integer_or_bool()) {
@@ -1782,7 +1919,7 @@ void unit_llvm_ir_gen::visit_greater_equal_expression(greater_equal_expression& 
     }
 
     // If operands are references, dereference them.
-    llvm::Type* type = get_llvm_type(expr.get_type());
+    llvm::Type* type = _context->get_llvm_type(expr.get_type());
     if(type::is_reference(expr.left()->get_type())) {
         left = _builder->CreateLoad(type, left);
     }
@@ -1797,7 +1934,7 @@ void unit_llvm_ir_gen::visit_greater_equal_expression(greater_equal_expression& 
     }
 
     // For primitives, operand types are supposed to be aligned
-    static auto bool_type = primitive_type::from_type(primitive_type::BOOL);
+    static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
 
     if(prim->is_integer_or_bool()) {
@@ -1850,7 +1987,7 @@ void symbol_type_resolver::visit_subscript_expression(subscript_expression& expr
     // Check the right hand can be cast to unsigned integer
     // TODO adapt to the really right index type.
     // TODO is array really indexed by uint ?
-    auto adapted_right = adapt_type(right, primitive_type::from_type(primitive_type::UNSIGNED_INT));
+    auto adapted_right = adapt_type(right, _context->from_type(primitive_type::UNSIGNED_INT));
     if(!adapted_right) {
         // TODO thrown an exception
         // Error: cannot cast index expression to index type
@@ -1874,17 +2011,17 @@ void unit_llvm_ir_gen::visit_subscript_expression(subscript_expression& expr) {
     // Dereference if double ref
     if(type::is_double_reference(left_type)) {
         left_type = left_type->get_subtype();
-        left = _builder->CreateLoad(get_llvm_type(left_type), left);
+        left = _builder->CreateLoad(_context->get_llvm_type(left_type), left);
     }
 
     // Dereference index if needed
     auto right_type = expr.right()->get_type();
     if(type::is_reference(right_type)) {
         right_type = std::dynamic_pointer_cast<reference_type>(right_type)->get_subtype();
-        right = _builder->CreateLoad(get_llvm_type(right_type), right);
+        right = _builder->CreateLoad(_context->get_llvm_type(right_type), right);
     }
 
-    auto arr_type = get_llvm_type(left_type->get_subtype());
+    auto arr_type = _context->get_llvm_type(left_type->get_subtype());
 
     llvm::Value* indices[] = {_builder->getInt32(0), right};
 
@@ -1898,25 +2035,74 @@ void unit_llvm_ir_gen::visit_subscript_expression(subscript_expression& expr) {
 
 void symbol_type_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
-    if(!callee) {
-        // TODO Support only variable expr as function name for now.
-        std::cerr << "Error : only support symbol expr as function name for now" << std::endl;
+    auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
+
+    if(!callee && !member_callee) {
+        std::cerr << "Error : only support global or object-member method call" << std::endl;
+    }
+
+    if (member_callee) {
+        member_callee->accept(*this);
+        callee = std::dynamic_pointer_cast<symbol_expression>(member_callee->symbol().shared_as<symbol_expression>());
+        if (!callee) {
+            std::cerr << "Error : only support object-member method call with symbol expression" << std::endl;
+        }
     }
 
     for(auto& arg : expr.arguments()) {
         arg->accept(*this);
     }
 
-    if(auto stmt = callee->find_statement()) {
-        if(auto block = stmt->get_block()) {
-            if(auto func = block->get_function()) {
-                if(auto ns = func->parent_ns()) {
-                    if(auto function = ns->lookup_function(callee->get_name())) {
+    // Resolve function to call
+    if(member_callee) {
+        // Resolve member function to call
+        if (auto sub_expr_ref_type = std::dynamic_pointer_cast<reference_type>(member_callee->sub_expr()->get_type()); sub_expr_ref_type) {
+            if (auto sub_expr_type = std::dynamic_pointer_cast<struct_type>(sub_expr_ref_type->get_subtype()); sub_expr_type) {
+                if (auto st = sub_expr_type->get_struct(); st)  {
+                    // Found struct type
+                    if (auto func = st->lookup_function(callee->get_name()); func) {
+                        if(!func->is_member()) {
+                            // TODO throw an exception
+                            std::cerr << "Error : function '" << callee->get_name().to_string() << "' is not a member function of struct '" << st->get_name() << "'" << std::endl;
+                            return;
+                        }
+                        // TODO Check the found function own is of compatible type
                         // TODO support overloading
                         // TODO enforce prototype matching
                         // Function prototype and expression type are set at resolution
-                        callee->resolve(function);
-                        expr.set_type(function->return_type());
+                        callee->resolve(func);
+                        expr.set_type(func->return_type());
+                    } else {
+                        // TODO throw an exception
+                        std::cerr << "Error : cannot find member function '" << callee->get_name().to_string() << "' in struct '" << st->get_name() << "'" << std::endl;
+                        return;
+                    }
+                } else {
+                    // TODO throw an exception
+                    std::cerr << "Error : object-member call only support struct callee type" << std::endl;
+                    return;
+                }
+            } else {
+                // TODO throw an exception
+                std::cerr << "Error : object-member call only support reference to struct callee type" << std::endl;
+            }
+        } else {
+            // TODO throw an exception
+            std::cerr << "Error : object-member call only support reference (to struct) callee type" << std::endl;
+        }
+    } else {
+        // Resolve global function
+        if(auto stmt = callee->find_statement()) {
+            if(auto block = stmt->get_block()) {
+                if(auto func = block->get_function()) {
+                    if(auto nsp = func->parent<ns>()) {
+                        if(auto function = nsp->lookup_function(callee->get_name())) {
+                            // TODO support overloading
+                            // TODO enforce prototype matching
+                            // Function prototype and expression type are set at resolution
+                            callee->resolve(function);
+                            expr.set_type(function->return_type());
+                        }
                     }
                 }
             }
@@ -1963,13 +2149,37 @@ void symbol_type_resolver::visit_function_invocation_expression(function_invocat
 
 void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_expression &expr) {
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
-    if(!callee || !callee->is_function()) {
-        // Function invocation is supported only for function symbol yet.
-        // TODO throw exception
-        std::cerr << "Function invocation is supported only for symbol yet." << std::endl;
+    auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
+
+    if(!callee && !member_callee) {
+        std::cerr << "Error : only support global or object-member method call" << std::endl;
     }
 
+    if (member_callee) {
+        member_callee->accept(*this);
+        callee = std::dynamic_pointer_cast<symbol_expression>(member_callee->symbol().shared_as<symbol_expression>());
+        if (!callee) {
+            std::cerr << "Error : only support object-member method call with symbol expression" << std::endl;
+        }
+    }
+
+    // Generate arguments and add the to the args list
     std::vector<llvm::Value*> args;
+    if (member_callee) {
+        // First argument is the object pointer (this)
+        member_callee->sub_expr()->accept(*this);
+        if(!_value) {
+            // Problem with 'this' argument generation
+            // TODO throw exception
+            std::cerr << "Problem with generation of 'this' argument of a member function call." << std::endl;
+        }
+
+        // Load the 'this' pointer value
+        auto this_type = member_callee->sub_expr()->get_type();
+        _value = _builder->CreateLoad(_context->get_llvm_type(this_type), _value);
+
+        args.push_back(_value);
+    }
     for(auto arg : expr.arguments()) {
         _value = nullptr;
         arg->accept(*this);
@@ -1983,6 +2193,7 @@ void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_
 
     // TODO Check function argument count
 
+    // Find the function definition
     auto function = callee->get_function();
     auto it = _functions.find(function);
     if(it==_functions.end()) {
@@ -2027,7 +2238,7 @@ void symbol_type_resolver::visit_cast_expression(cast_expression& expr) {
             if(type::is_reference(target_type)) {
                 // TODO throw an error, casting references is not supported yet (not for any primitive type)
             }
-            auto deref = load_value_expression::make_shared(sub_expr->shared_as<expression>());
+            auto deref = load_value_expression::make_shared(_context, sub_expr->shared_as<expression>());
             expr.assign(deref);
             deref->set_type(source_type->get_subtype());
         }
@@ -2077,12 +2288,12 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
             }
         } else if (tgt->is_float()) {
             if(*tgt == primitive_type::FLOAT) {
-                auto ftype = get_llvm_type(tgt);
+                auto ftype = _context->get_llvm_type(tgt);
                 auto ftrue = llvm::ConstantFP::get(ftype, llvm::APFloat(1.0f));
                 auto ffalse = llvm::ConstantFP::get(ftype, llvm::APFloat(0.0f));
                 _value = _builder->CreateSelect(_value, ftrue, ffalse);
             } else if(*tgt == primitive_type::DOUBLE) {
-                auto dtype = get_llvm_type(tgt);
+                auto dtype = _context->get_llvm_type(tgt);
                 auto dtrue = llvm::ConstantFP::get(dtype, llvm::APFloat(1.0));
                 auto dfalse = llvm::ConstantFP::get(dtype, llvm::APFloat(0.0));
                 _value = _builder->CreateSelect(_value, dtrue, dfalse);
@@ -2100,7 +2311,7 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
                     std::cerr << "Cast unsigned integer to signed integer may result on overflow" << std::endl;
                 }
                 // SExt or trunc for signed integers
-                _value = _builder->CreateSExtOrTrunc(_value, get_llvm_type(tgt));
+                _value = _builder->CreateSExtOrTrunc(_value, _context->get_llvm_type(tgt));
             } else /* if (tgt->is_unsigned())*/  {
                 if (src->is_unsigned()) {
                     // TODO Add "Signed to unsigned" truncation/misunderstanding warning
@@ -2109,7 +2320,7 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
                             << std::endl;
                 }
                 // SExt or trunc for signed integers
-                _value = _builder->CreateZExtOrTrunc(_value, get_llvm_type(tgt));
+                _value = _builder->CreateZExtOrTrunc(_value, _context->get_llvm_type(tgt));
             }
         } else if (tgt->is_float()) {
             if(src->is_unsigned()) {
@@ -2130,18 +2341,18 @@ void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
         }
     } else if(src->is_float()) {
         if(tgt->is_boolean()) {
-            _value = _builder->CreateFCmpUNE(_value, llvm::ConstantFP::get(get_llvm_type(tgt), 0.0));
+            _value = _builder->CreateFCmpUNE(_value, llvm::ConstantFP::get(_context->get_llvm_type(tgt), 0.0));
         } else if(tgt->is_integer()) {
             if(tgt->is_unsigned()) {
-                _value = _builder->CreateFPToUI(_value, get_llvm_type(tgt));
+                _value = _builder->CreateFPToUI(_value, _context->get_llvm_type(tgt));
             } else {
-                _value = _builder->CreateFPToSI(_value, get_llvm_type(tgt));
+                _value = _builder->CreateFPToSI(_value, _context->get_llvm_type(tgt));
             }
         } else if(tgt->is_float()) {
             if(*src == primitive_type::FLOAT && *tgt == primitive_type::DOUBLE) {
-                _value = _builder->CreateFPExt(_value, get_llvm_type(tgt));
+                _value = _builder->CreateFPExt(_value, _context->get_llvm_type(tgt));
             } else if(*src == primitive_type::DOUBLE && *tgt == primitive_type::FLOAT) {
-                _value = _builder->CreateFPTrunc(_value, get_llvm_type(tgt));
+                _value = _builder->CreateFPTrunc(_value, _context->get_llvm_type(tgt));
             } else {
                 // Do nothing, float type is already aligned
             }

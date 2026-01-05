@@ -169,6 +169,14 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             }
         }
 
+        void visit_struct_decl(ast::struct_decl& decl) override {
+            prefix() << "struct " << decl.name.content << std::endl;
+            auto pf = prefix_inc();
+            for(auto d : decl.declarations) {
+                d->visit(*this);
+            }
+        }
+
         void visit_identified_type_specifier(ast::identified_type_specifier& type) override {
             type.name.visit(*this);
         }
@@ -412,6 +420,12 @@ class ast_dump_visitor : public k::parse::ast_visitor {
                 expr.rexpr()->visit(*this);
             }
             _stm << ")";
+        }
+
+        void visit_member_access_postfix_expr(ast::member_access_postfix_expr& expr) override {
+            expr.expr()->visit(*this);
+            _stm << expr.op.content;
+            expr.ident_expr->visit(*this);
         }
 
         void visit_identifier_expr(ast::identifier_expr& expr) override {

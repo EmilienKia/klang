@@ -45,6 +45,8 @@ namespace k::lex {
         {"while", keyword::WHILE},
         {"for", keyword::FOR},
 
+        {"struct", keyword::STRUCT},
+
         {"bool", keyword::BOOL},
         {"byte", keyword::BYTE},
         {"char", keyword::CHAR},

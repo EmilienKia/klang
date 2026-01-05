@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 //
-// Note: Last parser log number: 0x1003A
+// Note: Last parser log number: 0x1003C
 //
 
 #include "parser.hpp"
@@ -139,6 +139,11 @@ ast::decl_ptr parser::parse_declaration()
         return decl;
     }
 
+    // Look for a struct decl
+    if(auto decl = parse_struct_decl()) {
+        return decl;
+    }
+
     // Look for a function decl
     if(auto decl = parse_function_decl()) {
         return decl;
@@ -211,6 +216,49 @@ std::shared_ptr<ast::namespace_decl> parser::parse_namespace_decl()
     }
 
     return std::make_shared<ast::namespace_decl>(*ns, *open_par, *close_par, name, declarations);
+}
+
+std::shared_ptr<ast::struct_decl> parser::parse_struct_decl()
+{
+    lex::lex_holder holder(_lexer);
+
+    std::vector<lex::keyword> specifiers = parse_specifiers();
+
+    std::optional<lex::keyword> st;
+    std::optional<lex::punctuator> open_brace, close_brace;
+
+    // Not a "struct" keyword, skip namespace declaration
+    if(lex::opt_ref_any_lexeme lstruct = _lexer.get(); lstruct==lex::keyword::STRUCT) {
+        st = lex::as<lex::keyword>(lstruct);
+    } else {
+        holder.rollback();
+        return {};
+    }
+
+    // Expect a name:
+    auto lname= _lexer.get();
+    if(lex::is_not<lex::identifier>(lname)) {
+        holder.rollback();
+        return {};
+    }
+
+    // Expect an open brace
+    if(lex::opt_ref_any_lexeme lopenbrace= _lexer.get(); lopenbrace==lex::punctuator::BRACE_OPEN) {
+        open_brace = lex::as<lex::punctuator>(lopenbrace);
+    } else {
+        throw_error(0x003B, _lexer.pick(), "Struct open brace is missing");
+    }
+
+    std::vector<ast::decl_ptr> declarations = parse_declarations();
+
+    // Expect a closing brace
+    if(lex::opt_ref_any_lexeme lclosingbrace= _lexer.get(); lclosingbrace==lex::punctuator::BRACE_CLOSE) {
+        close_brace = lex::as<lex::punctuator>(lclosingbrace);
+    } else {
+        throw_error(0x003C, _lexer.pick(), "Struct closing brace is expected");
+    }
+
+    return std::make_shared<ast::struct_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), declarations);
 }
 
 std::vector<lex::keyword> parser::parse_specifiers()
@@ -1231,11 +1279,11 @@ ast::expr_ptr parser::parse_postfix_expr()
         } else if(lop == lex::punctuator::BRACKET_OPEN) {
             ast::expr_ptr expr = parse_expression();
             if(!expr) {
-                throw_error(0x0027, _lexer.pick(), "Bracket postfix expression exppects sub-expression");
+                throw_error(0x0027, _lexer.pick(), "Bracket postfix expression expects sub-expression");
             }
             auto lclose = _lexer.get();
             if(lclose != lex::punctuator::BRACKET_CLOSE) {
-                throw_error(0x0028, _lexer.pick(), "Bracket postfix expression exppects closing bracket ']' after sub-expression");
+                throw_error(0x0028, _lexer.pick(), "Bracket postfix expression expects closing bracket ']' after sub-expression");
             }
             any = std::make_shared<ast::bracket_postifx_expr>(any, expr);
         } else if(lop == lex::punctuator::PARENTHESIS_OPEN) {
@@ -1246,6 +1294,13 @@ ast::expr_ptr parser::parse_postfix_expr()
                 throw_error(0x0029, _lexer.pick(), "Parenthesis postfix expression expects closing parenthesis ')'");
             }
             any = std::make_shared<ast::parenthesis_postifx_expr>(any, expr);
+        } else if(lop == lex::operator_::ARROW || lop == lex::operator_::DOT) {
+            ast::expr_ptr expr = parse_identifier_expr();
+            auto ident_expr = std::dynamic_pointer_cast<ast::identifier_expr>(expr);
+            if(!ident_expr) {
+                throw_error(0x003B, _lexer.pick(), "Member access postfix expression expects an identifier after the '.' or '->' operator");
+            }
+            any = std::make_shared<ast::member_access_postfix_expr>(lex::as<lex::operator_>(lop), any, ident_expr);
         } else {
             _lexer.unget();
             break;

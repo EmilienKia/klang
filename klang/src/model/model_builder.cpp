@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 //
-// Note: Last parser log number: 0x20008
+// Note: Last parser log number: 0x20009
 //
 
 #include "model_builder.hpp"
@@ -25,8 +25,8 @@
 
 namespace k::model {
 
-    void model_builder::visit(k::log::logger& logger, k::parse::ast::unit& src, k::model::unit& unit) {
-        model_builder visitor(logger, unit);
+    void model_builder::visit(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit) {
+        model_builder visitor(logger, context, unit);
         visitor.visit_unit(src);
     }
 
@@ -65,7 +65,7 @@ namespace k::model {
     }
 
     void model_builder::visit_visibility_decl(parse::ast::visibility_decl &visibility) {
-        auto scope = std::dynamic_pointer_cast<ns_context>(_contexts.back());
+        auto scope = current_context<visibility_context>();
         if(!scope) {
             throw_error(0x0001, visibility.scope, "Current context doesnt support default visibility");
         }
@@ -87,12 +87,8 @@ namespace k::model {
     }
 
     void model_builder::visit_namespace_decl(parse::ast::namespace_decl &ns) {
-        auto parent_scope = std::dynamic_pointer_cast<ns_context>(_contexts.back());
-        if(!parent_scope) {
-            throw_error(0x0003, ns.ns, "Current context is not a namespace namespace");
-        }
-
-        std::shared_ptr<k::model::ns> namesp = parent_scope->content->get_child_namespace(ns.name->content);
+        auto parent_ns = current_context_content<model::ns>();
+        std::shared_ptr<k::model::ns> namesp = parent_ns->get_child_namespace(ns.name->content);
 
         // Push namespace context
         stack<ns_context> push(_contexts, namesp);
@@ -100,28 +96,30 @@ namespace k::model {
         super::visit_namespace_decl(ns);
     }
 
+    void model_builder::visit_struct_decl(parse::ast::struct_decl& st) {
+        std::shared_ptr<model::structure_holder> parent_scope = current_context_content<model::structure_holder>();
+        if(!parent_scope){
+            throw_error(0x0009, st.st, "Current context doesnt support structure declaration");
+        }
+
+        std::shared_ptr<model::structure> struc = parent_scope->define_structure(st.name.content);
+
+
+        // Push function context
+        stack<struct_context> push(_contexts, struc);
+
+        default_ast_visitor::visit_struct_decl(st);
+    }
+
     void model_builder::visit_variable_decl(parse::ast::variable_decl &decl) {
         // TODO refactor variable declaration to make it stack-less
-        std::shared_ptr<context> parent_context = _contexts.back();
-        std::shared_ptr<model::variable_holder> parent_scope;
-
-        // TODO Might be unique model::variable_holder test
-        if(auto parent = std::dynamic_pointer_cast<generic_context<model::ns>>(parent_context)) {
-            parent_scope = std::dynamic_pointer_cast<model::variable_holder>(parent->content);
-        } else if(auto parent = std::dynamic_pointer_cast<generic_context<model::block>>(parent_context)) {
-            parent_scope = std::dynamic_pointer_cast<model::variable_holder>(parent->content);
-        } else if(auto parent = std::dynamic_pointer_cast<generic_context<model::for_statement>>(parent_context)) {
-            parent_scope = std::dynamic_pointer_cast<model::variable_holder>(parent->content);
-        } else {
+        std::shared_ptr<model::variable_holder> parent_scope = current_context_content<model::variable_holder>();
+        if(!parent_scope){
             throw_error(0x0004, decl.name, "Current context doesnt support variable declaration");
         }
 
-        if(!parent_scope) {
-            throw_error(0x0005, decl.name, "Current context doesnt support variable declaration");
-        }
-
         std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(decl.name.content);
-        var->set_type(model::unresolved_type::from_type_specifier(*decl.type));
+        var->set_type(_context->from_type_specifier(*decl.type));
 
         if(decl.init) {
             _expr.reset();
@@ -131,12 +129,11 @@ namespace k::model {
     }
 
     void model_builder::visit_function_decl(parse::ast::function_decl & func) {
-        auto parent_scope = std::dynamic_pointer_cast<ns_context>(_contexts.back());
+        auto parent_scope = current_context_content<function_holder>();
         if(!parent_scope) {
-            throw_error(0x0006, func.name, "Current context doesnt support functions");
+            throw_error(0x0005, func.name, "Current context doesnt support function declaration");
         }
-
-        std::shared_ptr<model::function> function = parent_scope->content->define_function(func.name.content);
+        std::shared_ptr<model::function> function = parent_scope->define_function(func.name.content);
 
         // Push function context
         stack<func_context> push(_contexts, function);
@@ -144,13 +141,11 @@ namespace k::model {
         // TODO add function specs
 
         if(func.type) {
-            function->return_type(model::unresolved_type::from_type_specifier(*func.type));
+            function->return_type(_context->from_type_specifier(*func.type));
         }
 
-        std::shared_ptr<model::block> block = function->get_block();
-
         for(auto param : func.params) {
-            std::shared_ptr<model::parameter> parameter = function->append_parameter(param->name->content, model::unresolved_type::from_type_specifier(*(param->type)));
+            std::shared_ptr<model::parameter> parameter = function->append_parameter(param->name->content, _context->from_type_specifier(*(param->type)));
             // TODO add param specs
         }
 
@@ -163,7 +158,12 @@ namespace k::model {
     }
 
     void model_builder::visit_block_statement(parse::ast::block_statement &block_stmt) {
-        std::shared_ptr<model::block> block = std::make_shared<model::block>();
+        auto parent_scope = current_context_content<element>(); // Could be a function or a block
+        if(!parent_scope) {
+            throw_error(0x0006, block_stmt.open_brace, "Current context doesnt support block statement");
+        }
+
+        std::shared_ptr<model::block> block = std::make_shared<model::block>(_context, parent_scope);
 
         // Push function context
         stack<block_context> push(_contexts, block);
@@ -182,7 +182,12 @@ namespace k::model {
     }
 
     void model_builder::visit_return_statement(parse::ast::return_statement &stmt) {
-        std::shared_ptr<model::return_statement> ret_stmt = std::make_shared<model::return_statement>(stmt.shared_as<parse::ast::return_statement>());
+        auto parent_scope = current_context_content<statement>();
+        if(!parent_scope) {
+            throw_error(0x0007, stmt.ret, "Current context doesnt support return statement");
+        }
+
+        std::shared_ptr<model::return_statement> ret_stmt = std::make_shared<model::return_statement>(_context, parent_scope, stmt.shared_as<parse::ast::return_statement>());
 
         // Push function context
         stack<return_context> push(_contexts, ret_stmt);
@@ -200,7 +205,12 @@ namespace k::model {
     }
 
     void model_builder::visit_if_else_statement(parse::ast::if_else_statement &stmt) {
-        std::shared_ptr<model::if_else_statement> if_else_stmt = std::make_shared<model::if_else_statement>(stmt.shared_as<parse::ast::if_else_statement>());
+        auto parent_scope = current_context_content<statement>();
+        if(!parent_scope) {
+            throw_error(0x0008, stmt.if_kw, "Current context doesnt support if else statement");
+        }
+
+        std::shared_ptr<model::if_else_statement> if_else_stmt = std::make_shared<model::if_else_statement>(_context, parent_scope, stmt.shared_as<parse::ast::if_else_statement>());
 
         // Push function context
         stack<if_else_context> push(_contexts, if_else_stmt);
@@ -248,7 +258,12 @@ namespace k::model {
     }
 
     void model_builder::visit_while_statement(parse::ast::while_statement &stmt) {
-        auto while_stmt = std::make_shared<model::while_statement>(stmt.shared_as<parse::ast::while_statement>());
+        auto parent_scope = current_context_content<statement>();
+        if(!parent_scope) {
+            throw_error(0x0009, stmt.while_kw, "Current context doesnt support while statement");
+        }
+
+        auto while_stmt = std::make_shared<model::while_statement>(_context, parent_scope, stmt.shared_as<parse::ast::while_statement>());
 
         // Push function context
         stack<while_context> push(_contexts, while_stmt);
@@ -283,7 +298,12 @@ namespace k::model {
     }
 
     void model_builder::visit_for_statement(parse::ast::for_statement &stmt) {
-        auto for_stmt = std::make_shared<model::for_statement>(stmt.shared_as<parse::ast::for_statement>());
+        auto parent_scope = current_context_content<statement>();
+        if(!parent_scope) {
+            throw_error(0x000A, stmt.for_kw, "Current context doesnt support for statement");
+        }
+
+        auto for_stmt = std::make_shared<model::for_statement>(_context, parent_scope, stmt.shared_as<parse::ast::for_statement>());
 
         // Push function context
         stack<for_context> push(_contexts, for_stmt);
@@ -341,7 +361,13 @@ namespace k::model {
     }
 
     void model_builder::visit_expression_statement(parse::ast::expression_statement &stmt) {
-        std::shared_ptr<model::expression_statement> expr = std::make_shared<model::expression_statement>(stmt.shared_as<parse::ast::expression_statement>());
+        auto parent_scope = current_context_content<statement>();
+        if(!parent_scope) {
+            // TODO throw an exception
+//            throw_error(0x000B, stmt., "Current context doesnt support expression statement");
+        }
+
+        std::shared_ptr<model::expression_statement> expr = std::make_shared<model::expression_statement>(_context, parent_scope, stmt.shared_as<parse::ast::expression_statement>());
 
         // Push function context
         stack<expr_stmt_context> push(_contexts, expr);
@@ -359,7 +385,7 @@ namespace k::model {
     }
 
     void model_builder::visit_literal_expr(parse::ast::literal_expr &expr) {
-        _expr = model::value_expression::from_literal(expr.literal);
+        _expr = model::value_expression::from_literal(_context, expr.literal);
     }
 
     void model_builder::visit_keyword_expr(parse::ast::keyword_expr &expr) {
@@ -387,91 +413,91 @@ namespace k::model {
 
         switch(expr.op.type) {
             case lex::operator_::PLUS:
-                _expr = model::addition_expression::make_shared(lexpr, rexpr);
+                _expr = model::addition_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::MINUS:
-                _expr = model::substraction_expression::make_shared(lexpr, rexpr);
+                _expr = model::substraction_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::STAR:
-                _expr = model::multiplication_expression::make_shared(lexpr, rexpr);
+                _expr = model::multiplication_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::SLASH:
-                _expr = model::division_expression::make_shared(lexpr, rexpr);
+                _expr = model::division_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::PERCENT:
-                _expr = model::modulo_expression::make_shared(lexpr, rexpr);
+                _expr = model::modulo_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::AMPERSAND:
-                _expr = model::bitwise_and_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_and_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::PIPE:
-                _expr = model::bitwise_or_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_or_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::CARET:
-                _expr = model::bitwise_xor_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_xor_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_OPEN:
-                _expr = model::left_shift_expression::make_shared(lexpr, rexpr);
+                _expr = model::left_shift_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_CLOSE:
-                _expr = model::right_shift_expression::make_shared(lexpr, rexpr);
+                _expr = model::right_shift_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::EQUAL:
-                _expr = model::simple_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::simple_assignation_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::PLUS_EQUAL:
-                _expr = model::additition_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::additition_assignation_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::MINUS_EQUAL:
-                _expr = model::substraction_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::substraction_assignation_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::STAR_EQUAL:
-                _expr = model::multiplication_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::multiplication_assignation_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::SLASH_EQUAL:
-                _expr = model::division_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::division_assignation_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::PERCENT_EQUAL:
-                _expr = model::modulo_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::modulo_assignation_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::AMPERSAND_EQUAL:
-                _expr = model::bitwise_and_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_and_assignation_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::PIPE_EQUAL:
-                _expr = model::bitwise_or_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_or_assignation_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::CARET_EQUAL:
-                _expr = model::bitwise_xor_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::bitwise_xor_assignation_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_OPEN_EQUAL:
-                _expr = model::left_shift_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::left_shift_assignation_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_CLOSE_EQUAL:
-                _expr = model::right_shift_assignation_expression::make_shared(lexpr, rexpr);
+                _expr = model::right_shift_assignation_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_AMPERSAND:
-                _expr = model::logical_and_expression::make_shared(lexpr, rexpr);
+                _expr = model::logical_and_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_PIPE:
-                _expr = model::logical_or_expression::make_shared(lexpr, rexpr);
+                _expr = model::logical_or_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_EQUAL:
-                _expr = model::equal_expression::make_shared(lexpr, rexpr);
+                _expr = model::equal_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::EXCLAMATION_MARK_EQUAL:
-                _expr = model::different_expression::make_shared(lexpr, rexpr);
+                _expr = model::different_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_OPEN:
-                _expr = model::lesser_expression::make_shared(lexpr, rexpr);
+                _expr = model::lesser_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_CLOSE:
-                _expr = model::greater_expression::make_shared(lexpr, rexpr);
+                _expr = model::greater_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_OPEN_EQUAL:
-                _expr = model::lesser_equal_expression::make_shared(lexpr, rexpr);
+                _expr = model::lesser_equal_expression::make_shared(_context, lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_CLOSE_EQUAL:
-                _expr = model::greater_equal_expression::make_shared(lexpr, rexpr);
+                _expr = model::greater_equal_expression::make_shared(_context, lexpr, rexpr);
                 break;
             default: // TODO other operations
                 throw_error(0x0007, expr.op, "Binary operator '{}' not supported", {expr.op.content});
@@ -482,7 +508,7 @@ namespace k::model {
     void model_builder::visit_cast_expr(parse::ast::cast_expr& expr) {
         _expr = nullptr;
         expr.expr()->visit(*this);
-        _expr = model::cast_expression::make_shared(_expr, model::unresolved_type::from_type_specifier(*expr.type));
+        _expr = model::cast_expression::make_shared(_context, _expr, _context->from_type_specifier(*expr.type));
     }
 
     void model_builder::visit_unary_prefix_expr(parse::ast::unary_prefix_expr& expr) {
@@ -493,22 +519,22 @@ namespace k::model {
         std::shared_ptr<model::unary_expression> unary;
         switch(expr.op.type) {
             case lex::operator_::PLUS:
-                unary = model::unary_plus_expression::make_shared(sub);
+                unary = model::unary_plus_expression::make_shared(_context, sub);
                 break;
             case lex::operator_::MINUS:
-                unary = model::unary_minus_expression::make_shared(sub);
+                unary = model::unary_minus_expression::make_shared(_context, sub);
                 break;
             case lex::operator_::TILDE:
-                unary = model::bitwise_not_expression::make_shared(sub);
+                unary = model::bitwise_not_expression::make_shared(_context, sub);
                 break;
             case lex::operator_::EXCLAMATION_MARK:
-                unary = model::logical_not_expression::make_shared(sub);
+                unary = model::logical_not_expression::make_shared(_context, sub);
                 break;
             case lex::operator_::AMPERSAND:
-                unary = model::address_of_expression::make_shared(sub);
+                unary = model::address_of_expression::make_shared(_context, sub);
                 break;
             case lex::operator_::STAR:
-                unary = model::dereference_expression::make_shared(sub);
+                unary = model::dereference_expression::make_shared(_context, sub);
                 break;
             default:
                 throw_error(0x0008, expr.op, "Unary operator '{}' not supported", {expr.op.content});
@@ -527,7 +553,7 @@ namespace k::model {
         std::shared_ptr<model::expression> lexpr = _expr;
         expr.rexpr()->visit(*this);
         std::shared_ptr<model::expression> rexpr = _expr;
-        _expr = model::subscript_expression::make_shared(lexpr, rexpr);
+        _expr = model::subscript_expression::make_shared(_context, lexpr, rexpr);
     }
 
     void model_builder::visit_parenthesis_postifx_expr(parse::ast::parenthesis_postifx_expr &expr) {
@@ -547,7 +573,34 @@ namespace k::model {
             args.push_back(_expr);
         }
 
-        _expr = model::function_invocation_expression::make_shared(callee, args);
+        _expr = model::function_invocation_expression::make_shared(_context, callee, args);
+    }
+
+    void model_builder::visit_member_access_postfix_expr(parse::ast::member_access_postfix_expr &expr) {
+        expr.expr()->visit(*this);
+        std::shared_ptr<model::expression> callee = _expr;
+
+        _expr = nullptr;
+        expr.ident_expr->visit(*this);
+        std::shared_ptr<model::symbol_expression> member = std::dynamic_pointer_cast<symbol_expression>(_expr);
+        if(!member) {
+            // TODO
+            // throw_error(0x2000, expr.ident_expr->qident.names.front(), "Member access requires an identifier");
+        }
+
+        switch (expr.op.type) {
+            case lex::operator_::DOT:
+                _expr = model::member_of_object_expression::make_shared(_context, callee, member);
+                break;
+            case lex::operator_::ARROW:
+                _expr = model::member_of_pointer_expression::make_shared(_context, callee, member);
+                break;
+            default:
+                // TODO
+                // throw_error(0x2001, _expr.op, "Member access requires '.' or '::' operator");
+                _expr = nullptr;
+                break;
+        }
     }
 
     void model_builder::visit_identifier_expr(parse::ast::identifier_expr &expr) {
@@ -556,7 +609,7 @@ namespace k::model {
         for(auto ident : expr.qident.names){
             idents.push_back(ident.content);
         }
-        _expr = model::symbol_expression::from_identifier(name(has_prefix, std::move(idents)));
+        _expr = model::symbol_expression::from_identifier(_context, name(has_prefix, std::move(idents)));
     }
 
     void model_builder::visit_comma_expr(parse::ast::expr_list_expr &) {

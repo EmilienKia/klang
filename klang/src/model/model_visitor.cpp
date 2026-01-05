@@ -31,20 +31,28 @@ void default_model_visitor::visit_unit(unit &unit) {
     visit_element(unit);
 }
 
-void default_model_visitor::visit_ns_element(ns_element &elem) {
-    visit_element(elem);
+void default_model_visitor::visit_namespace(ns &ns) {
+    visit_element(ns);
 }
 
-void default_model_visitor::visit_namespace(ns &ns) {
-    visit_ns_element(ns);
+void default_model_visitor::visit_structure(structure &st) {
+    visit_element(st);
 }
 
 void default_model_visitor::visit_function(function &func) {
-    visit_ns_element(func);
+    visit_element(func);
+}
+
+void default_model_visitor::visit_parameter(parameter& param) {
+    visit_element(param);
 }
 
 void default_model_visitor::visit_global_variable_definition(global_variable_definition &def) {
-    visit_ns_element(def);
+    visit_element(def);
+}
+
+void default_model_visitor::visit_member_variable_definition(member_variable_definition& def) {
+    visit_element(def);
 }
 
 void default_model_visitor::visit_statement(statement &stmt) {
@@ -229,6 +237,19 @@ void default_model_visitor::visit_logical_or_expression(logical_or_expression &e
 
 void default_model_visitor::visit_logical_not_expression(logical_not_expression &expr) {
     visit_unary_expression(expr);
+}
+
+void default_model_visitor::visit_member_of_expression(member_of_expression& expr) {
+    visit_unary_expression(expr);
+    visit_symbol_expression(expr.symbol());
+}
+
+void default_model_visitor::visit_member_of_object_expression(member_of_object_expression& expr) {
+    visit_member_of_expression(expr);
+}
+
+void default_model_visitor::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
+    visit_member_of_expression(expr);
 }
 
 void default_model_visitor::visit_load_value_expression(load_value_expression& expr) {

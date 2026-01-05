@@ -18,6 +18,8 @@
 
 #include "unit_llvm_ir_gen.hpp"
 
+#include "../model/context.hpp"
+
 #include <llvm/IR/Verifier.h>
 
 #include "llvm/Transforms/InstCombine/InstCombine.h"
@@ -43,64 +45,14 @@ generation_error::generation_error(const char *string) :
 // LLVM model generator
 //
 
-unit_llvm_ir_gen::unit_llvm_ir_gen(k::log::logger& logger, unit& unit):
+unit_llvm_ir_gen::unit_llvm_ir_gen(k::log::logger& logger, std::shared_ptr<context> context, unit& unit):
 lexeme_logger(logger, 0x40000),
+_context(context),
 _unit(unit)
 {
-    // TODO initialize them only once
-    LLVMInitializeNativeTarget();
-    LLVMInitializeNativeAsmPrinter();
-    LLVMInitializeNativeAsmParser();
-
-    _context = std::make_unique<llvm::LLVMContext>();
-    _builder = std::make_unique<llvm::IRBuilder<>>(*_context);
-    _module = std::make_unique<llvm::Module>(unit.get_unit_name().to_string(), *_context);
+    _builder = std::make_unique<llvm::IRBuilder<>>(**_context);
+    _module = std::make_unique<llvm::Module>(unit.get_unit_name().to_string(), **_context);
 }
-
-llvm::Type* unit_llvm_ir_gen::get_llvm_type(const std::shared_ptr<type>& type) {
-    if(!type::is_resolved(type)) {
-        // TODO cannot translate unresolved type.
-        return nullptr;
-    }
-    if(type::is_primitive(type)) {
-        auto prim = std::dynamic_pointer_cast<primitive_type>(type);
-        if(prim->is_integer()) {
-            // LLVM looks to use same type descriptor for signed and unsigned integers
-            return _builder->getIntNTy(prim->type_size());
-        } else if (prim->is_boolean()) {
-            return _builder->getInt1Ty();
-        } else if (*prim == primitive_type::FLOAT) {
-            return _builder->getFloatTy();
-        } else if (*prim == primitive_type::DOUBLE) {
-            return _builder->getDoubleTy();
-        } else {
-            // TODO support float types
-        }
-    }
-    if(type::is_sized_array(type)) {
-        auto arr = std::dynamic_pointer_cast<sized_array_type>(type);
-        auto subtype = get_llvm_type(arr->get_subtype());
-        return llvm::ArrayType::get(subtype, arr->get_size());
-    }
-    if(type::is_array(type)) {
-        // TODO
-        std::cerr << "Unsized array are not supported yet." << std::endl;
-    }
-    if(type::is_reference(type)) {
-        auto ref_type = std::dynamic_pointer_cast<reference_type>(type);
-        // TODO Rework address space type
-        auto subtype = get_llvm_type(ref_type->get_subtype());
-        return llvm::PointerType::get(subtype, 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
-    }
-    if(type::is_pointer(type)) {
-        auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type);
-        // TODO Rework address space type
-        auto subtype = get_llvm_type(ptr_type->get_subtype());
-        return llvm::PointerType::get(subtype, 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
-    }
-    return nullptr;
-}
-
 
 void unit_llvm_ir_gen::dump() {
     _module->print(llvm::outs(), nullptr);
@@ -139,7 +91,7 @@ void unit_llvm_ir_gen::optimize_functions() {
 std::unique_ptr<unit_llvm_jit> unit_llvm_ir_gen::to_jit() {
     auto jit = unit_llvm_jit::create();
     if(jit) {
-        jit.get()->add_module(llvm::orc::ThreadSafeModule(std::move(_module), std::move(_context)));
+        jit.get()->add_module(llvm::orc::ThreadSafeModule(std::move(_module), _context->move_llvm_context()));
     }
     return jit;
 }
@@ -196,10 +148,6 @@ void unit_llvm_jit::add_module(llvm::orc::ThreadSafeModule module, llvm::orc::Re
     if(llvm::Error err = _compile_layer.add(res_tracker, std::move(module))) {
         std::cerr << "Failed to register module to jit." << std::endl;
     }
-}
-
-llvm::Expected<llvm::JITEvaluatedSymbol> unit_llvm_jit::lookup(llvm::StringRef name) {
-    return _session->lookup({&_main_dynlib}, _mangle(name.str()));
 }
 
 } // k::model::gen

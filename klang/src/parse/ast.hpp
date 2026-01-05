@@ -389,6 +389,17 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        struct identifier_expr;
+        struct member_access_postfix_expr : public unary_expression {
+            lex::operator_ op;
+            std::shared_ptr<identifier_expr> ident_expr;
+
+            member_access_postfix_expr(const lex::operator_& op, const expr_ptr &expr, const std::shared_ptr<identifier_expr> &ident_expr)
+            : unary_expression(expr), op(op), ident_expr(ident_expr) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct identifier_expr : public expression {
 
             ast::qualified_identifier qident;
@@ -543,6 +554,32 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        struct struct_decl : public declaration {
+            std::vector <lex::keyword> specifiers;
+            lex::keyword st;
+            lex::punctuator open_brace, close_brace;
+            lex::identifier name;
+            std::vector <decl_ptr> declarations;
+
+            struct_decl(const std::vector <lex::keyword>& specifiers,
+                            const lex::keyword& st,
+                            const lex::punctuator& open_brace,
+                            const lex::punctuator& close_brace,
+                            const lex::identifier& name,
+                            const std::vector <decl_ptr> &declarations) :
+                    specifiers(specifiers), st(st), open_brace(open_brace), close_brace(close_brace), name(name), declarations(declarations) {}
+
+            struct_decl(std::vector <lex::keyword>&& specifiers,
+                            lex::keyword&& st,
+                            lex::punctuator&& open_brace,
+                            lex::punctuator&& close_brace,
+                            lex::identifier &&name,
+                            std::vector <decl_ptr> &&declarations) :
+                    specifiers(specifiers), st(st), open_brace(open_brace), close_brace(close_brace), name(name), declarations(declarations) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct variable_decl : public declaration, public statement {
             std::vector <lex::keyword> specifiers;
             lex::identifier name;
@@ -651,6 +688,7 @@ namespace k::parse {
 
         virtual void visit_visibility_decl(ast::visibility_decl &) = 0;
         virtual void visit_namespace_decl(ast::namespace_decl &) = 0;
+        virtual void visit_struct_decl(ast::struct_decl &) = 0;
         virtual void visit_variable_decl(ast::variable_decl &) = 0;
         virtual void visit_function_decl(ast::function_decl &) = 0;
 
@@ -673,6 +711,7 @@ namespace k::parse {
         virtual void visit_unary_postfix_expr(ast::unary_postfix_expr &) = 0;
         virtual void visit_bracket_postifx_expr(ast::bracket_postifx_expr &) = 0;
         virtual void visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr &) = 0;
+        virtual void visit_member_access_postfix_expr(ast::member_access_postfix_expr &) = 0;
         virtual void visit_identifier_expr(ast::identifier_expr &) = 0;
 
         virtual void visit_comma_expr(ast::expr_list_expr &) = 0;
@@ -695,6 +734,7 @@ namespace k::parse {
 
         void visit_visibility_decl(ast::visibility_decl &) override;
         void visit_namespace_decl(ast::namespace_decl &) override;
+        void visit_struct_decl(ast::struct_decl &) override;
         void visit_variable_decl(ast::variable_decl &) override;
         void visit_function_decl(ast::function_decl &) override;
 
@@ -717,6 +757,7 @@ namespace k::parse {
         void visit_unary_postfix_expr(ast::unary_postfix_expr &) override;
         void visit_bracket_postifx_expr(ast::bracket_postifx_expr &) override;
         void visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr &) override;
+        void visit_member_access_postfix_expr(ast::member_access_postfix_expr &) override;
         void visit_identifier_expr(ast::identifier_expr &) override;
 
         void visit_comma_expr(ast::expr_list_expr &) override;

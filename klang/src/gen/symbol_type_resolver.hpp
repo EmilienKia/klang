@@ -22,6 +22,8 @@
 #include "../model/model.hpp"
 #include "../model/model_visitor.hpp"
 
+#include "../model/context.hpp"
+
 #include "../common/logger.hpp"
 #include "../lex/lexer.hpp"
 
@@ -42,20 +44,32 @@ public:
  */
 class symbol_type_resolver : public default_model_visitor, protected k::lex::lexeme_logger {
 protected:
+
+    std::shared_ptr<context> _context;
+
     unit& _unit;
 
-    std::vector<std::string> _naming_context;
+    std::vector<std::pair<std::string, std::shared_ptr<element>>> _naming_context;
 
 public:
 
-    symbol_type_resolver(k::log::logger& logger, unit& unit) :
+    symbol_type_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
     lexeme_logger(logger, 0x30000),
+    _context(context),
     _unit(unit)  {
     }
 
     void resolve();
 
 protected:
+
+    static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+    resolve_symbol(const element& elem, const name& name);
+
+    static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+    resolve_symbol(const symbol_expression& symbol) {
+        return resolve_symbol(symbol, symbol.get_name());
+    }
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         error(code, lexeme, message, args);
@@ -71,6 +85,8 @@ protected:
     void visit_unit(unit&) override;
 
     void visit_namespace(ns&) override;
+    void visit_structure(structure&) override;
+    void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition&) override;
     void visit_function(function&) override;
 
@@ -101,6 +117,9 @@ protected:
     void visit_load_value_expression(load_value_expression&) override;
     void visit_address_of_expression(address_of_expression&) override;
     void visit_dereference_expression(dereference_expression&) override;
+    void visit_member_of_expression(member_of_expression&) override;
+    void visit_member_of_object_expression(member_of_object_expression&) override;
+    void visit_member_of_pointer_expression(member_of_pointer_expression&) override;
 
     void visit_comparison_expression(comparison_expression&) override;
 

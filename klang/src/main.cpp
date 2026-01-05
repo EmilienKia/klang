@@ -33,95 +33,157 @@ using namespace k;
 
 k::log::logger logger;
 
+
+std::unique_ptr<k::model::gen::unit_llvm_jit> gen(std::string_view src, bool optimize = true, bool dump = true) {
+    k::log::logger log;
+    k::parse::parser parser(log, src);
+    std::shared_ptr<k::parse::ast::unit> ast_unit = parser.parse_unit();
+
+    if(dump) {
+        std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
+        k::parse::dump::ast_dump_visitor visit(std::cout);
+        visit.visit_unit(*ast_unit);
+    }
+
+    auto context = k::model::context::create(); 
+
+    auto unit = k::model::unit::create(context);
+    if(dump) {
+        std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
+    }
+    k::model::model_builder::visit(log, context, *ast_unit, *unit);
+
+    if(dump) {
+        k::model::dump::unit_dump unit_dump(std::cout);
+        unit_dump.dump(*unit);
+    }
+
+    k::model::gen::symbol_type_resolver var_resolver(log, context, *unit);
+    if(dump) {
+        std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
+    }
+    var_resolver.resolve();
+
+    if(dump) {
+        k::model::dump::unit_dump unit_dump(std::cout);
+        unit_dump.dump(*unit);
+    }
+
+    k::model::gen::unit_llvm_ir_gen gen(log, context, *unit);
+    if(dump) {
+        std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
+    }
+    unit->accept(gen);
+    gen.verify();
+
+    if(dump) {
+        gen.dump();
+    }
+
+    if(dump) {
+        std::cout << "#" << std::endl << "# LLVM Optimize Module" << std::endl << "#" << std::endl;
+    }
+    if (optimize) {
+        gen.optimize_functions();
+    }
+    gen.verify();
+    if(dump) {
+        gen.dump();
+    }
+
+    return gen.to_jit();
+}
+
+
+
+
 #if 1
 int main() {
     std::cout << "Hello, World!" << std::endl;
 
     std::string source = R"SRC(
 
-        set(p: int[4]&, i: int, v: int) {
-                p[i] = v;
+        struct plop {
+            a : int;
+            b: int;
+            add() : int {
+                return a + b;
+            }
         }
 
-        get(p: int[4]&, i: int) : int {
-                return p[i];
+        test_add() : int {
+            q : plop;
+            q.a = 10;
+            q.b = 32;
+            return q.add();
         }
-		
-        test(p: int[4]&) : int {
-		l: int[4];
 
-                set(l, 0, 1);
-                set(l, 1, 2);
-                set(l, 2, 4);
-                set(l, 3, 8);
-
-                set(p, 0, l[0]);
-                set(p, 1, l[1]);
-                set(p, 2, l[2]);
-                set(p, 3, l[3]);
-
-                return p[3];
+        another_test() : int {
+            return test_add() + 5;
         }
+
+        glop : plop;
+        test_glop() : int {
+            glop.a = 10;
+            glop.b = 32;
+            return glop.add();
+        }
+
+        test() : int {
+            p : plop;
+            p.a = 10;
+            p.b = p.a + 20;
+            glop.a = 5;
+            glop.b = p.a + 7;
+            p.b += 12;
+            return p.add();
+        }
+
     )SRC";
 
+    struct plop {
+        int a;
+        int b;
+    };
+
     try {
-
-        k::parse::parser parser(logger, source);
-        std::shared_ptr<k::parse::ast::unit> ast_unit = parser.parse_unit();
-
-        k::parse::dump::ast_dump_visitor visit(std::cout);
-        std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
-        visit.visit_unit(*ast_unit);
-
-        k::model::dump::unit_dump unit_dump(std::cout);
-
-        k::model::unit unit;
-        k::model::model_builder::visit(logger, *ast_unit, unit);
-        std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
-        unit_dump.dump(unit);
-
-        k::model::gen::symbol_type_resolver resolver(logger, unit);
-        resolver.resolve();
-        std::cout << "#" << std::endl << "# Resolution" << std::endl << "#" << std::endl;
-        unit_dump.dump(unit);
-
-        k::model::gen::unit_llvm_ir_gen gen(logger, unit);
-        std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
-        unit.accept(gen);
-        gen.verify();
-        gen.dump();
-
-        std::cout << "#" << std::endl << "# LLVM Optimize Module" << std::endl << "#" << std::endl;
-#if 1 // Optimize
-        gen.optimize_functions();
-        gen.verify();
-        gen.dump();
-#endif
-        logger.print();
-
-        auto jit = gen.to_jit();
+        auto jit = gen(source, true, true);
         if (!jit) {
             std::cerr << "JIT instantiation error." << std::endl;
             return -1;
         }
 
-#if 1
-        int arr[4] = {0, 0, 0, 0};
-        auto ptr = &arr;
+        auto test_add = jit->lookup_symbol < int(*)() > ("test_add");
+        auto res_add = test_add();
+        std::cout << "test_add() = " << res_add << std::endl;
 
-        auto test = jit.get()->lookup_symbol<int(*)(int(*)[4]) >("test");
-        int res = test(ptr);
-
+        auto test = jit->lookup_symbol < int(*)() > ("test");
+        auto res = test();
         std::cout << "test() = " << res << std::endl;
-        std::cout << "arr[0] = " << arr[0] << std::endl;
-        std::cout << "arr[1] = " << arr[1] << std::endl;
-        std::cout << "arr[2] = " << arr[2] << std::endl;
-        std::cout << "arr[3] = " << arr[3] << std::endl;
 
-#endif
+        auto glop = jit->lookup_symbol < plop* > ("glop");
+        std::cout << "glop->a = " << glop->a << std::endl;
+        std::cout << "glop->b = " << glop->b << std::endl;
+
+        auto test_glop = jit->lookup_symbol < int(*)() > ("test_glop");
+        auto res_glop = test_glop();
+        std::cout << "test_glop() = " << res_glop << std::endl;
+        std::cout << "glop->a = " << glop->a << std::endl;
+        std::cout << "glop->b = " << glop->b << std::endl;
+
+        auto another_test = jit->lookup_symbol < int(*)() > ("another_test");
+        auto another_res = another_test();
+        std::cout << "another_test() = " << another_res << std::endl;
 
 
+    } catch(k::model::gen::resolution_error err) {
+        std::cerr << "Resolution error: " << err.what() << std::endl;
+    } catch(k::model::gen::generation_error err) {
+        std::cerr << "Generation error: " << err.what() << std::endl;
+    } catch(std::exception err) {
+        std::cerr << "Other exception: " << err.what() << std::endl;
     } catch(...) {
+        std::cerr << "Error" << std::endl;
     }
     logger.print();
 

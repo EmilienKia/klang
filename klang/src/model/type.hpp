@@ -21,8 +21,17 @@
 
 #include <memory>
 #include <map>
+#include <optional>
 
 #include "../common/common.hpp"
+
+namespace llvm {
+    class Constant;
+    class ConstantStruct;
+    class Type;
+    class StructType;
+    class Value;
+}
 
 namespace k {
 namespace parse::ast {
@@ -37,11 +46,21 @@ class keyword;
 
 namespace k::model {
 
+namespace gen {
+    class symbol_type_resolver;
+}
+
+
+class context;
+
+class structure;
+
 class reference_type;
 class pointer_type;
 class sized_array_type;
 class array_type;
-
+class struct_type;
+class function_reference_type;
 
 /**
  * Base type class
@@ -54,8 +73,10 @@ protected:
     std::shared_ptr<pointer_type> pointer;
     std::shared_ptr<array_type> array;
 
-    type() = default;
-    type(std::shared_ptr<type> subtype);
+    mutable llvm::Type* _llvm_type;
+
+    type(llvm::Type* llvm_type = nullptr) : _llvm_type(llvm_type) {}
+    type(std::shared_ptr<type> subtype, llvm::Type* llvm_type = nullptr);
 
 public:
     virtual ~type() = default;
@@ -77,11 +98,17 @@ public:
     inline static bool is_pointer(const std::shared_ptr<type>& type);
     inline static bool is_sized_array(const std::shared_ptr<type>& type);
     inline static bool is_array(const std::shared_ptr<type>& type);
+    inline static bool is_struct(const std::shared_ptr<type>& type);
+    inline static bool is_function_reference(const std::shared_ptr<type>& type);
 
     virtual std::shared_ptr<reference_type> get_reference();
     std::shared_ptr<pointer_type> get_pointer();
     std::shared_ptr<array_type> get_array();
     std::shared_ptr<sized_array_type> get_array(unsigned long size);
+
+    virtual llvm::Type* get_llvm_type() const;
+
+    virtual llvm::Constant* generate_default_value_initializer() const;
 
     virtual std::string to_string() const =0;
 };
@@ -93,17 +120,23 @@ class unresolved_type : public type {
 protected:
     name _type_id;
 
+    std::shared_ptr<type> _resolved;
+
+    friend class context;
+
     unresolved_type(const name& type_id): _type_id(type_id) {}
     unresolved_type(name&& type_id): _type_id(type_id) {}
 
-public:
-    static std::shared_ptr<type> from_string(const std::string& type_name);
-    static std::shared_ptr<type> from_identifier(const name& type_id);
-    static std::shared_ptr<type> from_type_specifier(const k::parse::ast::type_specifier& type_spec);
+    void resolve(std::shared_ptr<type> res_type) {_resolved = res_type;}
 
+public:
     const name& type_id() const {return _type_id;}
 
     std::string to_string() const override;
+
+    bool is_resolved()const {return !!_resolved;}
+    std::shared_ptr<type> get_resolved()const {return _resolved;}
+
 };
 
 /**
@@ -133,13 +166,13 @@ protected:
     bool _is_float;
     size_t _size; // Size in bits, boolean is 1 (unsigned)
 
-    primitive_type(PRIMITIVE_TYPE type, bool is_unsigned, bool is_float, size_t size):
-        _type(type), _is_unsigned(is_unsigned),_is_float(is_float), _size(size){}
+    primitive_type(PRIMITIVE_TYPE prim_type, bool is_unsigned, bool is_float, size_t size, llvm::Type* llvm_type):
+        type(llvm_type), _type(prim_type), _is_unsigned(is_unsigned),_is_float(is_float), _size(size){}
     primitive_type(const primitive_type&) = default;
     primitive_type(primitive_type&&) = default;
 
-    static std::map<PRIMITIVE_TYPE, std::shared_ptr<primitive_type>> _predef_types;
-    static std::shared_ptr<primitive_type> make_shared(PRIMITIVE_TYPE type, bool is_unsigned, bool is_float, size_t size);
+    friend class context;
+    static std::shared_ptr<primitive_type> make_shared(PRIMITIVE_TYPE type, bool is_unsigned, bool is_float, size_t size, llvm::Type* llvm_type);
 
 public:
 
@@ -164,6 +197,7 @@ public:
         return _type == t;
     }
 
+    llvm::Constant* generate_default_value_initializer() const override;
 
     std::string to_string()const override;
 
@@ -213,6 +247,8 @@ protected:
 public:
     bool is_resolved() const override;
 
+    llvm::Type* get_llvm_type() const override;
+
     std::string to_string() const override;
 
 //    std::shared_ptr<reference_type> get_reference() override;
@@ -242,6 +278,8 @@ protected:
 public:
     bool is_resolved() const override;
 
+    llvm::Type* get_llvm_type() const override;
+
     std::string to_string() const override;
 };
 
@@ -268,6 +306,8 @@ public:
 
     virtual std::shared_ptr<sized_array_type> with_size(unsigned long size);
 
+    llvm::Type* get_llvm_type() const override;
+
     std::string to_string() const override;
 };
 
@@ -290,6 +330,8 @@ public:
 
     std::shared_ptr<sized_array_type> with_size(unsigned long size) override;
 
+    llvm::Type* get_llvm_type() const override;
+
     std::string to_string() const override;
 
 };
@@ -302,6 +344,129 @@ inline bool type::is_array(const std::shared_ptr<type>& type) {
 inline bool type::is_sized_array(const std::shared_ptr<type>& type) {
     return std::dynamic_pointer_cast<sized_array_type>(type) != nullptr;
 }
+
+
+
+
+/**
+ * Struct type
+ */
+class struct_type : public type {
+public:
+    struct field {
+        size_t index;
+        std::string name;
+        std::weak_ptr<type> field_type;
+    };
+    typedef std::vector<field> fields_t;
+
+protected:
+    friend class type;
+    friend class struct_type_builder;
+    friend class k::model::structure;
+    friend class k::model::gen::symbol_type_resolver;
+
+    std::string _name;
+
+    std::vector<field> _fields;
+
+    std::weak_ptr<k::model::structure> _struct;
+
+    struct_type(const std::string& name, std::weak_ptr<k::model::structure> st, std::vector<field>&& fields, llvm::StructType* llvm_struct_type);
+
+public:
+    std::string name() const {return _name;}
+
+    bool is_resolved() const override;
+
+    std::string to_string() const override;
+    std::shared_ptr<structure> get_struct();
+
+    inline fields_t::size_type fields_size()const {return _fields.size();}
+    inline fields_t::const_iterator fields_begin()const {return _fields.begin();}
+    inline fields_t::const_iterator fields_end()const {return _fields.end();}
+
+    bool has_member(const std::string& name) const;
+    std::optional<field> get_member(const std::string& name) const;
+
+    llvm::Constant* generate_default_value_initializer() const override;
+};
+
+class struct_type_builder {
+protected:
+    std::shared_ptr<context> _context;
+    std::string _name;
+    std::weak_ptr<k::model::structure> _struct;
+    std::vector<struct_type::field> _fields;
+
+public:
+    struct_type_builder(std::shared_ptr<context> context);
+
+    void name(const std::string& name) {_name = name;}
+    void structure(std::weak_ptr<k::model::structure> st) {_struct = st;}
+
+    void append_field(const std::string& name, std::shared_ptr<type> type);
+
+    std::shared_ptr<struct_type> build();
+};
+
+
+
+inline bool type::is_struct(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<struct_type>(type) != nullptr;
+}
+
+
+/**
+ * Function reference type
+ */
+class function_reference_type : public type {
+protected:
+    friend class type;
+    friend class function_reference_type_builder;
+
+    std::shared_ptr<type> _return_type;
+    std::vector<std::shared_ptr<type>> _parameter_types;
+
+    function_reference_type() : type(nullptr) {}
+    function_reference_type(const std::shared_ptr<type>& return_type, const std::vector<std::shared_ptr<type>>& parameter_types, llvm::Type* llvm_type):
+        type(llvm_type), _return_type(return_type), _parameter_types(parameter_types) {}
+
+public:
+    bool is_resolved() const override;
+    std::string to_string() const override;
+};
+
+class member_function_reference_type : public function_reference_type {
+protected:
+    std::shared_ptr<structure> _member_of;
+
+    member_function_reference_type(const std::shared_ptr<structure>& member_of, const std::shared_ptr<type>& return_type, const std::vector<std::shared_ptr<type>>& parameter_types, llvm::Type* llvm_type):
+        function_reference_type(return_type, parameter_types, llvm_type), _member_of(member_of) {}
+
+    std::string to_string() const override;
+};
+
+
+class function_reference_type_builder {
+protected:
+    std::shared_ptr<context> _context;
+    std::shared_ptr<structure> _member_of;
+    std::shared_ptr<type> _return_type;
+    std::vector<std::shared_ptr<type>> _parameter_types;
+public:
+    function_reference_type_builder(const std::shared_ptr<context>& context);
+    void member_of(const std::shared_ptr<structure>& st) {_member_of = st;}
+    void return_type(const std::shared_ptr<type>& return_type) {_return_type = return_type;}
+    void append_parameter_type(const std::shared_ptr<type>& param_type) {_parameter_types.push_back(param_type);}
+    std::shared_ptr<function_reference_type> build() const;
+};
+
+
+inline bool type::is_function_reference(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<function_reference_type>(type) != nullptr;
+}
+
 
 } // namespace k::model
 #endif //KLANG_TYPE_HPP

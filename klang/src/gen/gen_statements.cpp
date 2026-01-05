@@ -90,7 +90,7 @@ void symbol_type_resolver::visit_if_else_statement(if_else_statement& stmt)
     {
         auto expr = stmt.get_test_expr();
         expr->accept(*this);
-        auto cast = adapt_type(expr, primitive_type::from_type(primitive_type::BOOL));
+        auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
         if(!cast) {
             throw_error(0x0002, stmt.get_ast_if_else_stmt()->if_kw, "If test expression type must be convertible to bool");
         } else if(cast != expr ) {
@@ -122,9 +122,9 @@ void unit_llvm_ir_gen::visit_if_else_statement(if_else_statement& stmt) {
 
     // Retrieve current block and create then, else and continue blocks
     llvm::Function* func = _builder->GetInsertBlock()->getParent();
-    llvm::BasicBlock* then_block = llvm::BasicBlock::Create(*_context, "if-then", func);
-    llvm::BasicBlock* else_block = has_else ? llvm::BasicBlock::Create(*_context, "if-else") : nullptr;
-    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(*_context, "if-continue");
+    llvm::BasicBlock* then_block = llvm::BasicBlock::Create(**_context, "if-then", func);
+    llvm::BasicBlock* else_block = has_else ? llvm::BasicBlock::Create(**_context, "if-else") : nullptr;
+    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(**_context, "if-continue");
 
     // Do branching
     if(has_else) {
@@ -140,14 +140,14 @@ void unit_llvm_ir_gen::visit_if_else_statement(if_else_statement& stmt) {
 
     // Generate "else" branch, if any
     if(has_else) {
-        func->getBasicBlockList().push_back(else_block);
+        func->insert(func->end(), else_block);
         _builder->SetInsertPoint(else_block);
         stmt.get_else_stmt()->accept(*this);
         _builder->CreateBr(cont_block);
     }
 
     // Generate "continuation" block
-    func->getBasicBlockList().push_back(cont_block);
+    func->insert(func->end(), cont_block);
     _builder->SetInsertPoint(cont_block);
 }
 
@@ -161,7 +161,7 @@ void symbol_type_resolver::visit_while_statement(while_statement& stmt)
     {
         auto expr = stmt.get_test_expr();
         expr->accept(*this);
-        auto cast = adapt_type(expr, primitive_type::from_type(primitive_type::BOOL));
+        auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
         if(!cast) {
             throw_error(0x0003, stmt.get_ast_while_stmt()->while_kw, "While test expression type must be convertible to bool");
         } else if(cast != expr ) {
@@ -180,13 +180,13 @@ void unit_llvm_ir_gen::visit_while_statement(while_statement& stmt) {
 
     // Retrieve current block and create nested and continue blocks
     llvm::Function* func = _builder->GetInsertBlock()->getParent();
-    llvm::BasicBlock* while_block = llvm::BasicBlock::Create(*_context, "while-condition");
-    llvm::BasicBlock* nested_block = llvm::BasicBlock::Create(*_context, "while-nested");
-    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(*_context, "while-continue");
+    llvm::BasicBlock* while_block = llvm::BasicBlock::Create(**_context, "while-condition");
+    llvm::BasicBlock* nested_block = llvm::BasicBlock::Create(**_context, "while-nested");
+    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(**_context, "while-continue");
 
     // While test block
     _builder->CreateBr(while_block);
-    func->getBasicBlockList().push_back(while_block);
+    func->insert(func->end(), while_block);
     _builder->SetInsertPoint(while_block);
 
     // Condition expression
@@ -199,7 +199,7 @@ void unit_llvm_ir_gen::visit_while_statement(while_statement& stmt) {
     _builder->CreateCondBr(test_value, nested_block, cont_block);
 
     // Nest block
-    func->getBasicBlockList().push_back(nested_block);
+    func->insert(func->end(), nested_block);
     _builder->SetInsertPoint(nested_block);
     stmt.get_nested_stmt()->accept(*this);
 
@@ -207,7 +207,7 @@ void unit_llvm_ir_gen::visit_while_statement(while_statement& stmt) {
     _builder->CreateBr(while_block);
 
     // Generate "continuation" block
-    func->getBasicBlockList().push_back(cont_block);
+    func->insert(func->end(), cont_block);
     _builder->SetInsertPoint(cont_block);
 }
 
@@ -225,7 +225,7 @@ void symbol_type_resolver::visit_for_statement(for_statement& stmt)
     // Resolve and cast test
     if(auto expr = stmt.get_test_expr()) {
         expr->accept(*this);
-        auto cast = adapt_type(expr, primitive_type::from_type(primitive_type::BOOL));
+        auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
         if(!cast) {
             throw_error(0x0004, stmt.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
         } else if(cast != expr ) {
@@ -249,9 +249,9 @@ void unit_llvm_ir_gen::visit_for_statement(for_statement& stmt) {
 
     // Retrieve current block and create nested and continue blocks
     llvm::Function* func = _builder->GetInsertBlock()->getParent();
-    llvm::BasicBlock* for_block = llvm::BasicBlock::Create(*_context, "for-condition");
-    llvm::BasicBlock* nested_block = llvm::BasicBlock::Create(*_context, "for-nested");
-    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(*_context, "for-continue");
+    llvm::BasicBlock* for_block = llvm::BasicBlock::Create(**_context, "for-condition");
+    llvm::BasicBlock* nested_block = llvm::BasicBlock::Create(**_context, "for-nested");
+    llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(**_context, "for-continue");
 
     // Generate variable decl, if any
     if(auto decl = stmt.get_decl_stmt()) {
@@ -260,7 +260,7 @@ void unit_llvm_ir_gen::visit_for_statement(for_statement& stmt) {
 
     // If test block
     _builder->CreateBr(for_block);
-    func->getBasicBlockList().push_back(for_block);
+    func->insert(func->end(), for_block);
     _builder->SetInsertPoint(for_block);
 
     // Condition expression
@@ -278,7 +278,7 @@ void unit_llvm_ir_gen::visit_for_statement(for_statement& stmt) {
 
 
     // Nest block
-    func->getBasicBlockList().push_back(nested_block);
+    func->insert(func->end(), nested_block);
     _builder->SetInsertPoint(nested_block);
     stmt.get_nested_stmt()->accept(*this);
 
@@ -294,7 +294,7 @@ void unit_llvm_ir_gen::visit_for_statement(for_statement& stmt) {
     _builder->CreateBr(for_block);
 
     // Generate "continuation" block
-    func->getBasicBlockList().push_back(cont_block);
+    func->insert(func->end(), cont_block);
     _builder->SetInsertPoint(cont_block);
 }
 
@@ -321,6 +321,20 @@ void unit_llvm_ir_gen::visit_expression_statement(expression_statement& stmt) {
 
 void symbol_type_resolver::visit_variable_statement(variable_statement& var)
 {
+    if (auto var_type = var.get_type(); !type::is_resolved(var_type)) {
+        std::shared_ptr<unresolved_type> unres_type = std::dynamic_pointer_cast<unresolved_type>(var_type);
+        if (!unres_type) {
+// TODO            throw_error(0x0005, ...);
+        }
+        // Variable type is not resolved, try to resolve it
+        std::shared_ptr<type> res_type = _context->from_string(unres_type->type_id());
+        if(!type::is_resolved(var_type)) {
+            // TODO Err : type not resolvable, unknown type, throw_error(0x0006, ...);
+        }
+
+        var.set_type(res_type);
+    }
+
     if(auto expr = var.get_init_expr()) {
         expr->accept(*this);
 
@@ -337,12 +351,13 @@ void symbol_type_resolver::visit_variable_statement(variable_statement& var)
 }
 
 void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
-    // Create the alloca at begining of the function ...
+    // Create the alloca at beginning of the function ...
     auto var_func = var.get_function();
     auto func = _functions[var_func];
     llvm::IRBuilder<> build(&func->getEntryBlock(),func->getEntryBlock().begin());
 
-    llvm::Type *  type = get_llvm_type(var.get_type());
+    std::shared_ptr<k::model::type> var_type = var.get_type();
+    llvm::Type *  type = _context->get_llvm_type(var_type);
     llvm::AllocaInst* alloca = build.CreateAlloca(type, nullptr, var.get_name());
     _variables.insert({var.shared_as<variable_statement>(), alloca});
 
@@ -355,15 +370,9 @@ void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
         _value = nullptr;
     }
 
-    // If no explicit initialization, init to 0.
+    // If no explicit initialization, init to default value initializer.
     if(value == nullptr) {
-        if(type::is_prim_integer(var.get_type())) {
-            value = llvm::ConstantInt::get(type, 0);
-        } else if(type::is_prim_bool(var.get_type())) {
-            value = llvm::ConstantInt::getFalse(type);
-        } else if(type::is_prim_float(var.get_type())) {
-            value = llvm::ConstantFP::get(type, 0.0);
-        } /* TODO add init of other types. */
+        value = var.get_type()->generate_default_value_initializer();
     }
 
     if(value) {

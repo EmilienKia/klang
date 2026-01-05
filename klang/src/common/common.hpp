@@ -64,6 +64,10 @@ public:
         return _identifiers.size();
     }
 
+    bool empty() const {
+        return _identifiers.empty();
+    }
+
     const std::string& at(size_t index) const {
         return _identifiers.at(index);
     }

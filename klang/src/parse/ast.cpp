@@ -49,6 +49,10 @@ void ast::namespace_decl::visit(ast_visitor &visitor) {
     visitor.visit_namespace_decl(*this);
 }
 
+void ast::struct_decl::visit(ast_visitor &visitor) {
+    visitor.visit_struct_decl(*this);
+}
+
 void ast::identified_type_specifier::visit(ast_visitor &visitor) {
     visitor.visit_identified_type_specifier(*this);
 }
@@ -135,6 +139,11 @@ void ast::parenthesis_postifx_expr::visit(ast_visitor &visitor)
     visitor.visit_parenthesis_postifx_expr(*this);
 }
 
+void ast::member_access_postfix_expr::visit(ast_visitor &visitor)
+{
+    visitor.visit_member_access_postfix_expr(*this);
+}
+
 void ast::literal_expr::visit(ast_visitor& visitor) {
     visitor.visit_literal_expr(*this);
 }
@@ -205,6 +214,12 @@ void default_ast_visitor::visit_visibility_decl(ast::visibility_decl &) {
 
 void default_ast_visitor::visit_namespace_decl(ast::namespace_decl &ns) {
     for(ast::decl_ptr& decl : ns.declarations) {
+        decl->visit(*this);
+    }
+}
+
+void default_ast_visitor::visit_struct_decl(ast::struct_decl &st) {
+    for(ast::decl_ptr& decl : st.declarations) {
         decl->visit(*this);
     }
 }
@@ -282,6 +297,10 @@ void default_ast_visitor::visit_bracket_postifx_expr(ast::bracket_postifx_expr &
 }
 
 void default_ast_visitor::visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr &) {
+
+}
+
+void default_ast_visitor::visit_member_access_postfix_expr(ast::member_access_postfix_expr &) {
 
 }
 

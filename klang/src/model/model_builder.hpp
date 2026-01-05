@@ -22,6 +22,7 @@
 
 #include "../parse/ast.hpp"
 #include "model.hpp"
+#include "context.hpp"
 #include "expressions.hpp"
 #include "statements.hpp"
 #include "../common/logger.hpp"
@@ -39,33 +40,34 @@ protected:
 
     struct context {
         virtual ~context() = default;
+
+        std::shared_ptr<element> content;
+
+        context() = default;
+        context(std::shared_ptr<element> content): content(content) {}
+
+        template<typename Ty>
+        inline std::shared_ptr<Ty> content_as() const {
+            return std::dynamic_pointer_cast<Ty>(content);
+        }        
     };
 
-    template<typename T>
-    struct generic_context : public context {
-        typedef T content_t;
-        std::shared_ptr<content_t> content;
-
-        generic_context() = default;
-        generic_context(std::shared_ptr<content_t> content): content(content) {}
-    };
-
-    struct ns_context : public generic_context<model::ns> {
-        typedef generic_context<model::ns> super_t;
-
+    struct visibility_context : public context {
         model::visibility visibility = model::DEFAULT;
 
-        ns_context() = default;
-        ns_context(std::shared_ptr<model::ns> ns): super_t(ns) {}
+        visibility_context() = default;
+        visibility_context(std::shared_ptr<element> elem, model::visibility visibility = model::DEFAULT): context(elem), visibility(visibility) {}
     };
 
-    typedef generic_context<model::function> func_context;
-    typedef generic_context<model::block> block_context;
-    typedef generic_context<model::return_statement> return_context;
-    typedef generic_context<model::if_else_statement> if_else_context;
-    typedef generic_context<model::while_statement> while_context;
-    typedef generic_context<model::for_statement> for_context;
-    typedef generic_context<model::expression_statement> expr_stmt_context;
+    typedef visibility_context ns_context;
+    typedef visibility_context struct_context;
+    typedef context func_context;
+    typedef context block_context;
+    typedef context return_context;
+    typedef context if_else_context;
+    typedef context while_context;
+    typedef context for_context;
+    typedef context expr_stmt_context;
 
     template<typename T>
     class stack {
@@ -82,6 +84,26 @@ protected:
         ~stack() {_contexts.pop_back();}
     };
 
+    template<typename Ty = context>
+    inline std::shared_ptr<Ty> current_context() const {
+        if(_contexts.empty()) {
+            return {};
+        } else {
+            return std::dynamic_pointer_cast<Ty>(_contexts.back());
+        }
+    }
+
+    template<typename Ty>
+    inline std::shared_ptr<Ty> current_context_content() const {
+        if(_contexts.empty()) {
+            return {};
+        } else {
+            return _contexts.back()->content_as<Ty>();
+        }
+    }
+
+    std::shared_ptr<k::model::context> _context;
+
     /** Stack of contexts. */
     std::vector<std::shared_ptr<context>> _contexts;
 
@@ -91,8 +113,9 @@ protected:
     std::shared_ptr<model::statement> _stmt;
 
 
-    model_builder(k::log::logger& logger, k::model::unit& unit) :
+    model_builder(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::model::unit& unit) :
         lex::lexeme_logger(logger, 0x20000),
+        _context(context),
         _unit(unit) {}
 
 
@@ -109,6 +132,7 @@ protected:
 
     void visit_visibility_decl(parse::ast::visibility_decl &) override;
     void visit_namespace_decl(parse::ast::namespace_decl &) override;
+    void visit_struct_decl(parse::ast::struct_decl &) override;
     void visit_variable_decl(parse::ast::variable_decl &) override;
     void visit_function_decl(parse::ast::function_decl &) override;
 
@@ -131,6 +155,7 @@ protected:
     void visit_unary_postfix_expr(parse::ast::unary_postfix_expr &) override;
     void visit_bracket_postifx_expr(parse::ast::bracket_postifx_expr &) override;
     void visit_parenthesis_postifx_expr(parse::ast::parenthesis_postifx_expr &) override;
+    void visit_member_access_postfix_expr(parse::ast::member_access_postfix_expr &) override;
     void visit_identifier_expr(parse::ast::identifier_expr &) override;
 
     void visit_comma_expr(parse::ast::expr_list_expr &) override;
@@ -146,7 +171,7 @@ protected:
     }
 
 public:
-    static void visit(k::log::logger& logger, k::parse::ast::unit& src, k::model::unit& unit);
+    static void visit(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit);
 
 
 };

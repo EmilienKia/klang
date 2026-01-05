@@ -36,12 +36,59 @@ resolution_error::resolution_error(const char *string) :
 {}
 
 //
-// Symabol and type resolver
+// Symbol and type resolver
 //
 
 void symbol_type_resolver::resolve()
 {
     visit_unit(_unit);
+}
+
+std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+symbol_type_resolver::resolve_symbol(const element& elem, const name& name) {
+    if (name.has_root_prefix()) {
+        // TODO if name has root prefix, look at the unit directly.
+        std::clog << "Try to resolve symbol with root prefix: " << name.to_string() << std::endl;
+    } else if (name.empty()) {
+        // Invalid name, must have at least one part
+        return std::monostate{};
+    } else if(name.size() > 1) {
+        // TODO support qualified names
+        std::clog << "Try to resolve symbol with qualified name: " << name.to_string() << std::endl;
+    } else /*(name.size() == 1)*/ {
+        // Simple name, try to resolve it directly
+
+        // Look at a variable
+        if (auto var_holder = dynamic_cast<const variable_holder*>(&elem)) {
+            if (auto def = var_holder->get_variable(name)) {
+                return def;
+            }
+        }
+
+        // Look at a function
+        if (auto func_holder = dynamic_cast<const function_holder*>(&elem)) {
+            if (auto func = func_holder->lookup_function(name.to_string())) {
+                return func;
+            }
+        }
+
+        // TODO: Workaround, remove it when function will be a (parameter) variable_holder
+        if (auto blck = dynamic_cast<const block*>(&elem)) {
+            if (auto func = blck->get_direct_function()) {
+                if (auto param = func->get_parameter(name.to_string())) {
+                    return std::const_pointer_cast<parameter>(param);
+                }
+            }
+        }
+    }
+
+    if (auto parent_elem = elem.parent<element>()) {
+        // Try to find the symbol in the parent element context
+        return resolve_symbol(*parent_elem, name);
+    } else {
+        // No parent element, cannot resolve symbol here
+        return std::monostate{};
+    }
 }
 
 std::shared_ptr<expression> symbol_type_resolver::adapt_reference_load_value(const std::shared_ptr<expression>& expr) {
@@ -53,7 +100,7 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_reference_load_value(con
     }
 
     if(type::is_reference(type)) {
-        auto deref = load_value_expression::make_shared(expr);
+        auto deref = load_value_expression::make_shared(_context, expr);
         deref->set_type(type->get_subtype());
         return deref;
     } else {
@@ -88,7 +135,7 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_type(std::shared_ptr<exp
 
     if(type::is_double_reference(type_src)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
-        auto deref = load_value_expression::make_shared(expr);
+        auto deref = load_value_expression::make_shared(_context, expr);
         deref->set_type(ref_src->get_subtype());
         expr = deref;
         type_src = ref_src->get_subtype();
@@ -125,7 +172,7 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_type(std::shared_ptr<exp
         return expr;
     }
 
-    auto cast = cast_expression::make_shared(expr, prim_tgt);
+    auto cast = cast_expression::make_shared(_context, expr, prim_tgt);
     cast->set_type(prim_tgt);
     return cast;
 }

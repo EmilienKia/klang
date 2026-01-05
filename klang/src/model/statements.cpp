@@ -31,11 +31,11 @@ namespace k::model {
 //
 
 void statement::set_this_as_parent_to(std::shared_ptr<expression> expr) {
-    expr->set_statement(shared_as<statement>());
+    expr->set_parent(shared_as<statement>());
 }
 
 void statement::set_this_as_parent_to(std::shared_ptr<statement> stmt) {
-    stmt->_parent_stmt = shared_as<statement>();
+    stmt->set_parent(shared_as<statement>());
 }
 
 void statement::accept(model_visitor &visitor) {
@@ -43,40 +43,20 @@ void statement::accept(model_visitor &visitor) {
 }
 
 std::shared_ptr<variable_holder> statement::get_variable_holder() {
-    if (_parent_stmt) {
-        return _parent_stmt->get_variable_holder();
-    } else {
-        return nullptr;
-    }
+    return parent<variable_holder>();
 }
 
 std::shared_ptr<const variable_holder> statement::get_variable_holder() const {
-    if (_parent_stmt) {
-        return _parent_stmt->get_variable_holder();
-    } else {
-        return nullptr;
-    }
+    return parent<variable_holder>();
 }
 
 std::shared_ptr<block> statement::get_block() {
-    if (auto blk = std::dynamic_pointer_cast<block>(_parent_stmt)) {
-        return blk;
-    } else if (_parent_stmt) {
-        return _parent_stmt->get_block();
-    } else {
-        return nullptr;
-    }
+    return ancestor<block>();
 }
 
 std::shared_ptr<const block> statement::get_block() const {
-    if (auto blk = std::dynamic_pointer_cast<const block>(_parent_stmt)) {
-        return blk;
-    } else if (_parent_stmt) {
-        return _parent_stmt->get_block();
-    } else {
-        return nullptr;
-    }
-};
+    return ancestor<block>();
+}
 
 std::shared_ptr<function> statement::get_function() {
     auto blk = get_block();
@@ -171,40 +151,25 @@ std::shared_ptr<const variable_holder> for_statement::get_variable_holder() cons
     return shared_as<const variable_holder>();
 }
 
-std::shared_ptr<variable_definition> for_statement::append_variable(const std::string &name) {
-    if (_vars.contains(name)) {
-        // TODO throw exception : var is already defined.
-    }
-
-    std::shared_ptr<variable_statement> var{new variable_statement(shared_as<statement>(), name)};
-    _vars[name] = var;
-    _decl_stmt = var; // Supposed to have only one var declaration for now
-    return var;
+std::shared_ptr<variable_definition> for_statement::do_create_variable(const std::string &name) {
+    return std::shared_ptr<variable_definition>(new variable_statement(_context, shared_as<statement>(), name));
 }
 
-std::shared_ptr<variable_definition> for_statement::get_variable(const std::string &name) {
-    auto it = _vars.find(name);
-    if (it != _vars.end()) {
-        return it->second;
-    } else {
-        return {};
-    }
+void for_statement::on_variable_defined(std::shared_ptr<variable_definition> var) {
+    _decl_stmt = std::dynamic_pointer_cast<variable_statement>(var); // Supposed to have only one var declaration for now
 }
 
-std::shared_ptr<variable_definition> for_statement::lookup_variable(const std::string &name) {
+std::shared_ptr<variable_definition> for_statement::lookup_variable(const std::string &name) const {
     // TODO add qualified name lookup
-    if (auto var = get_variable(name)) {
+    if (auto var = variable_holder::lookup_variable(name)) {
         return var;
-    }
-
-    if (auto parent = get_parent_stmt()->get_variable_holder()) {
+    } else if (auto parent = get_parent_stmt()->get_variable_holder()) {
         // Has a parent variable holder, look at it
         return parent->lookup_variable(name);
     } else {
         // For statement is necessarily on a block (direct or indirect)
+        return {};
     }
-
-    return {};
 }
 
 
@@ -270,30 +235,17 @@ void block::append_statement(std::shared_ptr<statement> stmt) {
     // TODO add specific process for variables
 }
 
-std::shared_ptr<variable_definition> block::append_variable(const std::string &name) {
-    if (_vars.contains(name)) {
-        // TODO throw exception : var is already defined.
-    }
-
-    std::shared_ptr<variable_statement> var{
-            new variable_statement(std::dynamic_pointer_cast<block>(shared_from_this()), name)};
-    _vars[name] = var;
-    _statements.push_back(var);
-    return var;
+std::shared_ptr<variable_definition> block::do_create_variable(const std::string &name) {
+    return std::shared_ptr<variable_definition>(new variable_statement(_context, shared_as<block>(), name));
 }
 
-std::shared_ptr<variable_definition> block::get_variable(const std::string &name) {
-    auto it = _vars.find(name);
-    if (it != _vars.end()) {
-        return it->second;
-    } else {
-        return {};
-    }
+void block::on_variable_defined(std::shared_ptr<variable_definition> var) {
+    _statements.push_back(std::dynamic_pointer_cast<variable_statement>(var));
 }
 
-std::shared_ptr<variable_definition> block::lookup_variable(const std::string &name) {
+std::shared_ptr<variable_definition> block::lookup_variable(const std::string &name) const {
     // TODO add qualified name lookup
-    if (auto var = get_variable(name)) {
+    if (auto var = variable_holder::lookup_variable(name)) {
         return var;
     }
 
@@ -307,7 +259,7 @@ std::shared_ptr<variable_definition> block::lookup_variable(const std::string &n
         if (auto param = _function->get_parameter(name)) {
             // Has a parameter of same name
             return param;
-        } else if (auto ns = _function->parent_ns()) {
+        } else if (auto ns = _function->parent<variable_holder>()) {
             // Else base block of a function, look at the enclosing scope (ns)
             return ns->lookup_variable(name);
         }

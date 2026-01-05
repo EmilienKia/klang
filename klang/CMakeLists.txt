@@ -30,7 +30,10 @@ add_library(klangcomp
         src/lex/lexer.cpp
         src/parse/parser.cpp
         src/parse/ast.cpp
+        src/model/context.cpp
+        src/model/context.hpp
         src/model/model.cpp
+        src/model/model.hpp
         src/common/common.cpp
         src/model/type.cpp
         src/model/model_builder.cpp
@@ -59,10 +62,9 @@ target_link_libraries(klangc klangcomp ${LLVM_LIBRARIES} fmt::fmt Boost::program
 add_executable(tests
         tests/test-lexer.cpp
         tests/test-parser.cpp
-        tests/tests.cpp
         tests/test-gen.cpp
 )
-target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt)
+target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain)
 
 
 add_executable(klang

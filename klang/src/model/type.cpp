@@ -18,6 +18,7 @@
 
 #include "type.hpp"
 #include "model.hpp"
+#include "context.hpp"
 #include "../common/tools.hpp"
 
 namespace k::model {
@@ -26,8 +27,9 @@ namespace k::model {
 // Base type
 //
 
-type::type(std::shared_ptr<type> subtype):
-        subtype(subtype)
+type::type(std::shared_ptr<type> subtype, llvm::Type* llvm_type):
+        subtype(subtype),
+        _llvm_type(llvm_type)
 {}
 
 std::shared_ptr<type> type::get_subtype() const
@@ -74,76 +76,28 @@ std::shared_ptr<sized_array_type> type::get_array(unsigned long size)
     return get_array()->with_size(size);
 }
 
+llvm::Type* type::get_llvm_type() const {
+    return _llvm_type;
+};
+
+llvm::Constant* type::generate_default_value_initializer() const {
+    return nullptr;
+}
 
 //
 // Unresolved type
 //
 
-std::shared_ptr<type> unresolved_type::from_string(const std::string& type_name)
-{
-    auto prim = primitive_type::from_string(type_name);
-    if(prim) {
-        return prim;
-    } else {
-        return std::shared_ptr<type>{new unresolved_type(name(type_name))};
-    }
-}
-
-std::shared_ptr<type> unresolved_type::from_identifier(const name& type_id)
-{
-    return std::shared_ptr<type>{new unresolved_type(type_id)};
-}
-
-std::shared_ptr<type> unresolved_type::from_type_specifier(const k::parse::ast::type_specifier& type_spec)
-{
-    if(auto ident = dynamic_cast<const k::parse::ast::identified_type_specifier*>(&type_spec)) {
-        return std::shared_ptr<type>{new unresolved_type(ident->name.to_name())};
-    } else if(auto kw = dynamic_cast<const k::parse::ast::keyword_type_specifier*>(&type_spec)) {
-        return primitive_type::from_keyword(kw->keyword);
-    } else if(auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(&type_spec)) {
-        auto subtype = unresolved_type::from_type_specifier(*ptr->subtype);
-        if(ptr->pointer_type==lex::operator_::STAR) {
-            return subtype->get_pointer();
-        } else if(ptr->pointer_type==lex::operator_::AMPERSAND) {
-            return subtype->get_reference();
-        } else
-            return {}; // Shall not happen
-    } else if(auto arr = dynamic_cast<const k::parse::ast::array_type_specifier*>(&type_spec)) {
-        auto subtype = unresolved_type::from_type_specifier(*arr->subtype);
-        if(arr->lex_int) {
-            return subtype->get_array(arr->lex_int->to_unsigned_int());
-        } else {
-            return subtype->get_array();
-        }
-    } else {
-        return {};
-    }
-}
-
 std::string unresolved_type::to_string() const {
-    return "<<unresolved>>";
+    return "<<unresolved:" + _type_id.to_string() + ">>";
 }
 
 //
 // Primitive type
 //
 
-std::map<primitive_type::PRIMITIVE_TYPE, std::shared_ptr<primitive_type>> primitive_type::_predef_types{
-        {primitive_type::BOOL, primitive_type::make_shared(primitive_type::BOOL, true, false, 1)},
-        {primitive_type::BYTE, primitive_type::make_shared(primitive_type::BYTE, true, false, 1*8)},
-        {primitive_type::CHAR, primitive_type::make_shared(primitive_type::CHAR, false, false, 1*8)},
-        {primitive_type::SHORT, primitive_type::make_shared(primitive_type::SHORT, false, false, 2*8)},
-        {primitive_type::UNSIGNED_SHORT, primitive_type::make_shared(primitive_type::UNSIGNED_SHORT, true, false, 2*8)},
-        {primitive_type::INT, primitive_type::make_shared(primitive_type::INT, false, false, 4*8)},
-        {primitive_type::UNSIGNED_INT, primitive_type::make_shared(primitive_type::UNSIGNED_INT, true, false, 4*8)},
-        {primitive_type::LONG, primitive_type::make_shared(primitive_type::LONG, false, false, 8*8)},
-        {primitive_type::UNSIGNED_LONG, primitive_type::make_shared(primitive_type::UNSIGNED_LONG, true, false, 8*8)},
-        {primitive_type::FLOAT, primitive_type::make_shared(primitive_type::FLOAT, false, true, 4*8)},
-        {primitive_type::DOUBLE, primitive_type::make_shared(primitive_type::DOUBLE, false, true, 8*8)},
-};
-
-std::shared_ptr<primitive_type> primitive_type::make_shared(primitive_type::PRIMITIVE_TYPE type, bool is_unsigned, bool is_float, size_t size) {
-    return std::shared_ptr<primitive_type>(new primitive_type(type, is_unsigned, is_float, size));
+std::shared_ptr<primitive_type> primitive_type::make_shared(primitive_type::PRIMITIVE_TYPE type, bool is_unsigned, bool is_float, size_t size, llvm::Type* llvm_type) {
+    return std::shared_ptr<primitive_type>(new primitive_type(type, is_unsigned, is_float, size, llvm_type));
 }
 
 bool primitive_type::is_resolved() const
@@ -154,41 +108,6 @@ bool primitive_type::is_resolved() const
 bool primitive_type::is_primitive() const
 {
     return true;
-}
-
-std::shared_ptr<primitive_type> primitive_type::from_type(PRIMITIVE_TYPE type){
-    return _predef_types[type];
-}
-
-std::shared_ptr<type> primitive_type::from_string(const std::string& type_name) {
-    static std::map<std::string, primitive_type::PRIMITIVE_TYPE> type_map {
-            {"bool", BOOL},
-            {"byte", BYTE},
-            {"char", CHAR},
-            {"unsigned char", UNSIGNED_CHAR},
-            {"short", SHORT},
-            {"unsigned short", UNSIGNED_SHORT},
-            {"int", INT},
-            {"unsigned int", UNSIGNED_INT},
-            {"long", LONG},
-            {"unsigned long", UNSIGNED_LONG},
-            // TODO Add (unsigned) long long
-            {"float", FLOAT},
-            {"double", DOUBLE}
-    };
-    auto it = type_map.find(type_name);
-    if(it!=type_map.end()) {
-        return _predef_types[it->second];
-    } else {
-        // TODO throw exception
-        // Error : predefined type is not recognized or supported.
-        std::cerr << "Error: predefined type '" << type_name << "' is not recognized (or not supported yet)." << std::endl;
-        return {};
-    }
-}
-
-std::shared_ptr<type> primitive_type::from_keyword(const lex::keyword& kw, bool is_unsigned) {
-    return from_string(is_unsigned ? ("unsigned " + kw.content) : kw.content);
 }
 
 std::string primitive_type::to_string()const {
@@ -209,6 +128,17 @@ std::string primitive_type::to_string()const {
     return type_names[_type];
 }
 
+llvm::Constant* primitive_type::generate_default_value_initializer() const {
+    if (is_integer()) {
+        return llvm::ConstantInt::get(get_llvm_type(), 0);
+    } else if (is_float()) {
+        return llvm::ConstantFP::get(get_llvm_type(), 0.0);
+    } else if (is_boolean()) {
+        return llvm::ConstantInt::getFalse(get_llvm_type());
+    } // TODO handle other primitive types
+    return nullptr;
+}
+
 //
 // Pointer type
 //
@@ -219,6 +149,13 @@ type(subtype)
 bool pointer_type::is_resolved() const
 {
     return subtype.lock()->is_resolved();
+}
+
+llvm::Type* pointer_type::get_llvm_type() const {
+    if(_llvm_type==nullptr && is_resolved()) {
+        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
+    }
+    return _llvm_type;
 }
 
 std::string pointer_type::to_string() const {
@@ -248,6 +185,13 @@ std::shared_ptr<reference_type> reference_type::get_reference() {
     return std::dynamic_pointer_cast<reference_type>(shared_from_this());
 }
 */
+
+llvm::Type* reference_type::get_llvm_type() const {
+    if(_llvm_type==nullptr && is_resolved()) {
+        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
+    }
+    return _llvm_type;
+}
 
 std::string reference_type::to_string() const {
     auto sub = subtype.lock();
@@ -279,6 +223,11 @@ std::shared_ptr<sized_array_type> array_type::with_size(unsigned long size) {
     return tools::compute_if_absent(_sized_types, size,
                     [&](unsigned long sz){return std::shared_ptr<sized_array_type>{new sized_array_type(std::weak_ptr<array_type>(std::dynamic_pointer_cast<array_type>(this->shared_from_this())), sz)};}
             )->second;
+}
+
+llvm::Type* array_type::get_llvm_type() const {
+    std::cerr << "Unsized array are not supported yet." << std::endl;
+    return nullptr;
 }
 
 std::string array_type::to_string() const {
@@ -316,6 +265,9 @@ std::shared_ptr<sized_array_type> sized_array_type::with_size(unsigned long size
     return _unsized_array_type.lock()->with_size(size);
 }
 
+llvm::Type* sized_array_type::get_llvm_type() const {
+    return llvm::ArrayType::get(subtype.lock()->get_llvm_type(), get_size());
+}
 
 std::string sized_array_type::to_string() const {
     auto sub = subtype.lock();
@@ -329,6 +281,165 @@ std::string sized_array_type::to_string() const {
     return stm.str();
 }
 
+//
+// Structure type builder
+//
+struct_type_builder::struct_type_builder(std::shared_ptr<context> context) :
+    _context(context)
+{
+}
+
+void struct_type_builder::append_field(const std::string& name, std::shared_ptr<type> type) {
+    _fields.push_back(struct_type::field{
+        .index = _fields.size(),
+        .name = name,
+        .field_type = type
+        });
+}
+
+std::shared_ptr<struct_type> struct_type_builder::build() {
+    std::vector<llvm::Type*> types;
+    for(size_t idx=0; idx<_fields.size(); ++idx) {
+        auto& field = _fields[idx];
+        auto type = field.field_type.lock();
+        types.push_back(_context->get_llvm_type(type));
+    }
+
+    llvm::StructType* st = llvm::StructType::create(**_context, llvm::ArrayRef<llvm::Type*>(types), _name);
+    std::shared_ptr<struct_type> st_type{new struct_type(_name, _struct, std::move(_fields), st)}; 
+    _context->add_struct(st_type);
+
+    return st_type;
+}
+
+
+//
+// Structure type
+//
+
+struct_type::struct_type(const std::string& name, std::weak_ptr<structure> st, std::vector<field>&& fields, llvm::StructType* llvm_struct_type):
+type(llvm_struct_type),
+_name(name),
+_fields(fields),
+_struct(st)
+{
+}
+
+bool struct_type::is_resolved() const
+{
+    // NOTE: is it relevant to check subtypes resolution each time ?
+    /*for(const auto& field : _fields) {
+        auto field_type = field.field_type.lock();
+        if(!field_type->is_resolved()) {
+            return false;
+        }
+    }*/
+    return true;
+}
+
+std::string struct_type::to_string() const {
+    return "struct:" + _name;
+}
+
+std::shared_ptr<structure> struct_type::get_struct() {
+    return _struct.lock();
+}
+
+bool struct_type::has_member(const std::string& name) const {
+    for(const auto& field : _fields) {
+        if(field.name == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::optional<struct_type::field> struct_type::get_member(const std::string& name) const {
+    for(const auto& field : _fields) {
+        if(field.name == name) {
+            return field;
+        }
+    }
+    return std::nullopt;
+}
+
+llvm::Constant* struct_type::generate_default_value_initializer() const {
+    // TODO implement default struct initializer
+    return llvm::ConstantAggregateZero::get(get_llvm_type());
+}
+
+
+
+//
+// Function reference type
+//
+bool function_reference_type::is_resolved() const {
+    // NOTE: is it relevant to check subtypes resolution each time ?
+    /*if(!_return_type->is_resolved()) {
+        return false;
+    }
+    for(const auto& param_type : _parameter_types) {
+        if(!param_type->is_resolved()) {
+            return false;
+        }
+    }*/
+    return true;
+}
+
+std::string function_reference_type::to_string() const {
+    std::ostringstream stm;
+    stm << "fn:((";
+    for(size_t n=0; n<_parameter_types.size(); ++n) {
+        if(n>0) {
+            stm << ", ";
+        }
+        auto param_type = _parameter_types[n];
+        stm << param_type->to_string();
+    }
+    stm << "):" ;
+    stm << _return_type->to_string();
+    stm << ")";
+    return stm.str();
+}
+
+std::string member_function_reference_type::to_string() const {
+    std::ostringstream stm;
+    stm << "memfn:((" << _member_of->get_name() << ")(";
+    for(size_t n=0; n<_parameter_types.size(); ++n) {
+        if(n>0) {
+            stm << ", ";
+        }
+        auto param_type = _parameter_types[n];
+        stm << param_type->to_string();
+    }
+    stm << "):" ;
+    stm << _return_type->to_string();
+    stm << ")";
+    return stm.str();
+}
+
+
+//
+// Function reference type builder
+//
+function_reference_type_builder::function_reference_type_builder(const std::shared_ptr<context> &context):
+    _context(context)
+{}
+
+std::shared_ptr<function_reference_type> function_reference_type_builder::build() const {
+    std::vector<llvm::Type*> params;
+    if (_member_of) {
+        params.push_back(_member_of->get_struct_type()->get_reference()->get_llvm_type());
+    }
+    for (auto& param : _parameter_types) {
+        params.push_back(_context->get_llvm_type(param));
+    }
+    llvm::Type* ret_type = _return_type ? _context->get_llvm_type(_return_type) : llvm::Type::getVoidTy(**_context);
+    llvm::FunctionType* fn_type = llvm::FunctionType::get(ret_type, params, false);
+
+    std::shared_ptr<function_reference_type> fn_ref_type{new function_reference_type(_return_type, _parameter_types, fn_type)};
+    return fn_ref_type;
+}
 
 
 } // k::model

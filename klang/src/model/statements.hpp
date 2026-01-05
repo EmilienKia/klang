@@ -31,11 +31,12 @@ namespace k::model {
 class statement : public element
 {
 protected:
-    /** Statement owning the statement. */
-    std::shared_ptr<statement> _parent_stmt;
-
-    statement() = default;
-    statement(const std::shared_ptr<statement>& parent_stmt) : _parent_stmt(parent_stmt) {}
+    statement() = delete;
+    statement(std::shared_ptr<context> context) : element(context) {}
+    statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent_stmt) :
+        element(context, parent_stmt) {}
+    statement(std::shared_ptr<context> context, const std::shared_ptr<element>& parent) :
+        element(context, parent) {}
     virtual ~statement() = default;
 
     void set_this_as_parent_to(std::shared_ptr<expression> expr);
@@ -44,8 +45,8 @@ protected:
 public:
     void accept(model_visitor& visitor) override;
 
-    std::shared_ptr<statement> get_parent_stmt() { return _parent_stmt; };
-    std::shared_ptr<const statement> get_parent_stmt() const { return _parent_stmt; };
+    std::shared_ptr<statement> get_parent_stmt() { return parent<statement>(); };
+    std::shared_ptr<const statement> get_parent_stmt() const { return parent<statement>(); };
 
     virtual std::shared_ptr<variable_holder> get_variable_holder();
     virtual std::shared_ptr<const variable_holder> get_variable_holder() const;
@@ -69,13 +70,12 @@ protected:
 
     std::shared_ptr<k::parse::ast::return_statement> _ast_return_stmt;
 
-    explicit return_statement(const std::shared_ptr<statement>& parent) :
-            statement(parent) {}
-
 public:
-    return_statement() = default;
-    return_statement(const std::shared_ptr<k::parse::ast::return_statement>& ast) :
-            _ast_return_stmt(ast) {}
+    return_statement() = delete;
+    return_statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent) :
+            statement(context, parent) {}
+    return_statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::return_statement>& ast) :
+            statement(context, parent), _ast_return_stmt(ast) {}
 
     void accept(model_visitor& visitor) override;
 
@@ -110,9 +110,10 @@ protected:
     std::shared_ptr<statement> _else_stmt;
 
 public:
-    if_else_statement() = default;
-    if_else_statement(const std::shared_ptr<k::parse::ast::if_else_statement>& ast) :
-            _ast_if_else_stmt(ast) {}
+    if_else_statement() = delete;
+    if_else_statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent) : statement(context, parent) {}
+    if_else_statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::if_else_statement>& ast) :
+            statement(context, parent), _ast_if_else_stmt(ast) {}
 
     void accept(model_visitor& visitor) override;
 
@@ -168,9 +169,10 @@ protected:
     std::shared_ptr<statement> _nested_stmt;
 
 public:
-    while_statement() = default;
-    while_statement(const std::shared_ptr<k::parse::ast::while_statement>& ast) :
-            _ast_while_stmt(ast) {}
+    while_statement() = delete;
+    while_statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent) : statement(context, parent) {}
+    while_statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::while_statement>& ast) :
+            statement(context, parent), _ast_while_stmt(ast) {}
 
     void accept(model_visitor& visitor) override;
 
@@ -217,13 +219,14 @@ protected:
     std::shared_ptr<statement> _nested_stmt;
 
 
-    /** Map of all vars defined in this block. */
-    std::map<std::string, std::shared_ptr<variable_statement>> _vars;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
+    void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
 public:
-    for_statement() = default;
-    for_statement(const std::shared_ptr<k::parse::ast::for_statement>& ast) :
-            _ast_for_stmt(ast) {}
+    for_statement() = delete;
+    for_statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent) : statement(context, parent) {}
+    for_statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::for_statement>& ast) :
+            statement(context, parent), _ast_for_stmt(ast) {}
 
     void accept(model_visitor& visitor) override;
 
@@ -250,9 +253,7 @@ public:
     std::shared_ptr<variable_holder> get_variable_holder() override;
     std::shared_ptr<const variable_holder> get_variable_holder() const override;
 
-    std::shared_ptr<variable_definition> append_variable(const std::string& name) override;
-    std::shared_ptr<variable_definition> get_variable(const std::string& name) override;
-    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) override;
+    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const override;
 };
 
 
@@ -262,31 +263,29 @@ public:
 class expression_statement : public statement
 {
 private:
-    expression_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<expression>& expr) :
-            statement(parent), _expression(expr) {}
-
-    explicit expression_statement(const std::shared_ptr<statement>& parent) :
-            statement(parent) {}
+    expression_statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent, const std::shared_ptr<expression>& expr) :
+            statement(context, parent), _expression(expr) {}
 
     std::shared_ptr<expression> _expression;
     std::shared_ptr<k::parse::ast::expression_statement> _ast_expr_stmt;
 
 
     friend class block;
-    static std::shared_ptr<expression_statement> make_shared(const std::shared_ptr<statement>& parent) {
-        return std::shared_ptr<expression_statement>(new expression_statement(parent));
+    static std::shared_ptr<expression_statement> make_shared(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent) {
+        return std::shared_ptr<expression_statement>(new expression_statement(context, parent));
     }
 
-    static std::shared_ptr<expression_statement> make_shared(const std::shared_ptr<statement>& parent, std::shared_ptr<expression> expr) {
-        std::shared_ptr<expression_statement> res(new expression_statement(parent, expr));
+    static std::shared_ptr<expression_statement> make_shared(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent, std::shared_ptr<expression> expr) {
+        std::shared_ptr<expression_statement> res(new expression_statement(context, parent, expr));
         res->set_this_as_parent_to(expr);
         return res;
     }
 
 public:
-    expression_statement() = default;
-    expression_statement(const std::shared_ptr<k::parse::ast::expression_statement>& ast):
-            _ast_expr_stmt(ast) {}
+    expression_statement() = delete;
+    expression_statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent) : statement(context, parent) {}
+    expression_statement(std::shared_ptr<context> context, const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::expression_statement>& ast):
+            statement(context, parent), _ast_expr_stmt(ast) {}
 
     void accept(model_visitor& visitor) override;
 
@@ -312,11 +311,11 @@ protected:
 
     std::shared_ptr<parameter> _func_param;
 
-    variable_statement(const std::shared_ptr<statement> &parent) :
-            statement(parent) {}
+    variable_statement(std::shared_ptr<context> context, const std::shared_ptr<statement> &parent) :
+            statement(context, parent) {}
 
-    variable_statement(const std::shared_ptr<statement> &parent, const std::string& name) :
-            statement(parent), variable_definition(name) {}
+    variable_statement(std::shared_ptr<context> context, const std::shared_ptr<statement> &parent, const std::string& name) :
+            statement(context, parent), variable_definition(name) {}
 
 public:
     void accept(model_visitor& visitor) override;
@@ -342,7 +341,6 @@ public:
  */
 class block : public statement , public variable_holder {
 protected:
-
     friend class function;
 
     /** Function directly holding this block, if any. */
@@ -351,15 +349,17 @@ protected:
     /** List of statements of this block. */
     std::vector<std::shared_ptr<statement>> _statements;
 
-    /** Map of all vars defined in this block. */
-    std::map<std::string, std::shared_ptr<variable_statement>> _vars;
-
     void set_as_parent(std::shared_ptr<function> func) {
+        _parent = func;
         _function = func;
     }
 
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
+    void on_variable_defined(std::shared_ptr<variable_definition>) override;
+
 public:
-    block() = default;
+    block() = delete;
+    block(std::shared_ptr<context> context, const std::shared_ptr<element>& parent) : statement(context, parent) {}
 
     void accept(model_visitor& visitor) override;
 
@@ -379,9 +379,11 @@ public:
     std::shared_ptr<function> get_function() override;
     std::shared_ptr<const function> get_function() const override;
 
-    std::shared_ptr<variable_definition> append_variable(const std::string& name) override;
-    std::shared_ptr<variable_definition> get_variable(const std::string& name) override;
-    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) override;
+    std::shared_ptr<function> get_direct_function() {return _function;}
+    std::shared_ptr<const function> get_direct_function() const {return _function;}
+
+
+    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const override;
 };
 
 

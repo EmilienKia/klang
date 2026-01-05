@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 
 #include "../src/common/logger.hpp"
 #include "../src/parse/parser.hpp"
@@ -39,26 +39,27 @@ std::unique_ptr<k::model::gen::unit_llvm_jit> gen(std::string_view src, bool dum
         visit.visit_unit(*ast_unit);
     }
 
-    k::model::unit unit;
-    k::model::model_builder::visit(log, *ast_unit, unit);
+    auto context = k::model::context::create();
+    auto unit = k::model::unit::create(context);
+    k::model::model_builder::visit(log, context, *ast_unit, *unit);
 
     if(dump) {
         k::model::dump::unit_dump unit_dump(std::cout);
         std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
-        unit_dump.dump(unit);
+        unit_dump.dump(*unit);
     }
 
-    k::model::gen::symbol_type_resolver var_resolver(log, unit);
+    k::model::gen::symbol_type_resolver var_resolver(log, context, *unit);
     var_resolver.resolve();
 
     if(dump) {
         k::model::dump::unit_dump unit_dump(std::cout);
         std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
-        unit_dump.dump(unit);
+        unit_dump.dump(*unit);
     }
 
-    k::model::gen::unit_llvm_ir_gen gen(log, unit);
-    unit.accept(gen);
+    k::model::gen::unit_llvm_ir_gen gen(log, context, *unit);
+    unit->accept(gen);
     gen.verify();
 
     if(dump) {
@@ -2383,10 +2384,10 @@ TEST_CASE("References", "[gen][refs]") {
 }
 
 //
-// Array indice references
+// Array indices references
 //
 
-TEST_CASE("Array indice references", "[gen][refs][array]") {
+TEST_CASE("Array indices references", "[gen][refs][array]") {
     auto jit = gen(R"SRC(
         module __arrs__;
         set(p: int[4]&, i: int, v: int) {
@@ -2425,4 +2426,83 @@ TEST_CASE("Array indice references", "[gen][refs][array]") {
     REQUIRE(arr[1] == 2);
     REQUIRE(arr[2] == 4);
     REQUIRE(arr[3] == 8);
+}
+
+//
+// Structure content references and invocation
+//
+
+TEST_CASE("Structure content references and invocation", "[gen][struct]") {
+    auto jit = gen(R"SRC(
+        module __structs__;
+
+        struct plop {
+            a : int;
+            b: int;
+            add() : int {
+                return a + b;
+            }
+        }
+
+        // Test member function invocation with local object
+        test_local() : int {
+            q : plop;
+            q.a = 10;
+            q.b = 32;
+            return q.add();
+        }
+
+        another_test_local() : int {
+            return test_local() + 5;
+        }
+
+        // Test member function invocation with global object
+        glop : plop;
+        test_global() : int {
+            glop.a = 18;
+            glop.b = 24;
+            return glop.add();
+        }
+
+        // Test member variable references and assignments
+        test_accesses() : int {
+            p : plop;
+            p.a = 10;
+            p.b = p.a + 20;
+            glop.a = 5;
+            glop.b = p.a + 7;
+            p.b += 12;
+            return p.add();
+        }
+
+        )SRC");
+    REQUIRE(jit);
+
+    auto test_local = jit->lookup_symbol < int(*)() > ("test_local");
+    auto res_test_local = test_local();
+    REQUIRE( res_test_local == 42 );
+
+    auto another_test_local = jit->lookup_symbol < int(*)() > ("another_test_local");
+    auto res_another_test_local = another_test_local();
+    REQUIRE( res_another_test_local == 47 );
+
+    auto test_global = jit->lookup_symbol < int(*)() > ("test_global");
+    auto res_test_global = test_global();
+    REQUIRE( res_test_global == 42 );
+
+    struct plop {
+        int a;
+        int b;
+    };
+    auto glop = jit->lookup_symbol < plop* > ("glop");
+    REQUIRE( glop != nullptr );
+    REQUIRE( glop->a == 18 );
+    REQUIRE( glop->b == 24 );
+
+    auto test_accesses = jit->lookup_symbol < int(*)() > ("test_accesses");
+    auto res_test_accesses = test_accesses();
+    REQUIRE( res_test_accesses == 52 );
+    REQUIRE( glop->a == 5 );
+    REQUIRE( glop->b == 17 );
+
 }

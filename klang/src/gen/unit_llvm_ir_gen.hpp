@@ -66,20 +66,20 @@ class unit_llvm_ir_gen : public default_model_visitor, protected k::lex::lexeme_
 protected:
     unit& _unit;
 
-    std::unique_ptr<llvm::LLVMContext> _context;
+    std::shared_ptr<context> _context;
+
     std::unique_ptr<llvm::IRBuilder<>> _builder;
     std::unique_ptr<llvm::Module> _module;
 
     llvm::Value* _value;
 
+    std::stack<std::shared_ptr<structure>> _struct_stack;
+
     std::map<std::shared_ptr<global_variable_definition>, llvm::GlobalVariable*> _global_vars;
     std::map<std::shared_ptr<function>, llvm::Function*> _functions;
-    std::map<std::shared_ptr<parameter>, llvm::Argument*> _parameters;
     std::map<std::shared_ptr<parameter>, llvm::AllocaInst*> _parameter_variables;
+    std::map<std::shared_ptr<function>, llvm::AllocaInst*> _function_this_variables;
     std::map<std::shared_ptr<variable_statement>, llvm::AllocaInst*> _variables;
-
-    llvm::Type* get_llvm_type(const std::shared_ptr<type>& type);
-
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         error(code, lexeme, message, args);
@@ -87,7 +87,7 @@ protected:
     }
 
 public:
-    unit_llvm_ir_gen(k::log::logger& logger, unit& unit);
+    unit_llvm_ir_gen(k::log::logger& logger, std::shared_ptr<context> context, unit& unit);
 
     llvm::Module& get_module() {
         return *_module;
@@ -97,6 +97,8 @@ public:
 
     void visit_namespace(ns &) override;
     void visit_function(function &) override;
+    void visit_structure(structure&) override;
+    void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition &) override;
 
     void visit_block(block&) override;
@@ -146,6 +148,9 @@ public:
     void visit_load_value_expression(load_value_expression&) override;
     void visit_address_of_expression(address_of_expression&) override;
     void visit_dereference_expression(dereference_expression&) override;
+    void visit_member_of_expression(member_of_expression&) override;
+    void visit_member_of_object_expression(member_of_object_expression&) override;
+    void visit_member_of_pointer_expression(member_of_pointer_expression&) override;
 
     void visit_equal_expression(equal_expression&) override;
     void visit_different_expression(different_expression&) override;
@@ -187,16 +192,11 @@ public:
 
     static std::unique_ptr<unit_llvm_jit> create();
 
-//    const llvm::DataLayout &get_data_layout() const { return _layout; }
-//    llvm::orc::JITDylib &get_main_jit_dynlib() { return _main_dynlib; }
-
     void add_module(llvm::orc::ThreadSafeModule module, llvm::orc::ResourceTrackerSP res_tracker = nullptr);
-
-    llvm::Expected<llvm::JITEvaluatedSymbol> lookup(llvm::StringRef name);
 
     template<typename T>
     T lookup_symbol(llvm::StringRef name) {
-        return (T) _session->lookup({&_main_dynlib}, _mangle(name.str()))->getAddress();
+        return _session->lookup(llvm::ArrayRef<llvm::orc::JITDylib*>{&_main_dynlib}, _mangle(name.str()))->getAddress().toPtr<T>();
     }
 
 };

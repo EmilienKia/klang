@@ -18,6 +18,7 @@
 
 #include "expressions.hpp"
 
+#include "context.hpp"
 #include "model_visitor.hpp"
 
 namespace k::model {
@@ -28,14 +29,6 @@ namespace k::model {
 // Expression
 //
 
-void expression::set_statement(const std::shared_ptr<statement> &statement) {
-    _statement = statement;
-}
-
-void expression::set_parent_expression(const std::shared_ptr<expression> &expression) {
-    _parent_expression = expression;
-}
-
 void expression::set_type(std::shared_ptr<type> type) {
     _type = type;
 }
@@ -45,93 +38,45 @@ void expression::accept(model_visitor &visitor) {
 }
 
 std::shared_ptr<statement> expression::find_statement() {
-    if(_statement) {
-        return _statement;
-    } else if (_parent_expression) {
-        return _parent_expression->find_statement();
-    } else {
-        return nullptr;
-    }
+    return ancestor<statement>();
 }
 
 std::shared_ptr<const statement> expression::find_statement() const {
-    if(_statement) {
-        return _statement;
-    } else if (_parent_expression) {
-        return _parent_expression->find_statement();
-    } else {
-        return nullptr;
-    }
-}
+    return ancestor<statement>();
+};
 
 //
 // Value expression
 //
 
-value_expression::value_expression(const k::lex::any_literal &literal) :
-        expression(type_from_literal(literal)),
+value_expression::value_expression(std::shared_ptr<context> context, const k::lex::any_literal &literal) :
+        expression(context, context->from_literal(literal)),
         _literal(literal) {
-}
-
-std::shared_ptr<type> value_expression::type_from_literal(const k::lex::any_literal &literal) {
-    if (std::holds_alternative<lex::integer>(literal)) {
-        auto lit = literal.get<lex::integer>();
-        switch (lit.size) {
-            case k::lex::BYTE:
-                return primitive_type::from_type(lit.unsigned_num ? primitive_type::BYTE : primitive_type::CHAR);
-            case k::lex::SHORT:
-                return primitive_type::from_type(
-                        lit.unsigned_num ? primitive_type::UNSIGNED_SHORT : primitive_type::SHORT);
-            case k::lex::INT:
-                return primitive_type::from_type(lit.unsigned_num ? primitive_type::UNSIGNED_INT : primitive_type::INT);
-            case k::lex::LONG:
-                return primitive_type::from_type(
-                        lit.unsigned_num ? primitive_type::UNSIGNED_LONG : primitive_type::LONG);
-            default:
-                // TODO Add (unsigned) long long and bigint
-                return {};
-        }
-    } else if (std::holds_alternative<lex::float_num>(literal)) {
-        auto lit = literal.get<lex::float_num>();
-        switch (lit.size) {
-            case k::lex::FLOAT:
-                return primitive_type::from_type(primitive_type::FLOAT);
-            case k::lex::DOUBLE:
-                return primitive_type::from_type(primitive_type::DOUBLE);
-            default:
-                // TODO Add other floating point types
-                return {};
-        }
-    } else if (std::holds_alternative<lex::character>(literal)) {
-        return primitive_type::from_type(primitive_type::CHAR);
-    } else if (std::holds_alternative<lex::boolean>(literal)) {
-        return primitive_type::from_type(primitive_type::BOOL);
-    } else {
-        // TODO handle other literal types
-        return nullptr;
-    }
 }
 
 void value_expression::accept(model_visitor &visitor) {
     visitor.visit_value_expression(*this);
 }
 
-std::shared_ptr<value_expression> value_expression::from_literal(const k::lex::any_literal &literal) {
-    return std::shared_ptr<value_expression>(new value_expression(literal));
+std::shared_ptr<value_expression> value_expression::from_literal(std::shared_ptr<context> context, const k::lex::any_literal &literal) {
+    return std::shared_ptr<value_expression>(new value_expression(context, literal));
 }
 
 //
 // Symbol expression
 //
 
-symbol_expression::symbol_expression(const name &name) :
+symbol_expression::symbol_expression(std::shared_ptr<context> context, const name &name) :
+        expression(context),
         _name(name) {}
 
-symbol_expression::symbol_expression(const std::shared_ptr<variable_definition> &var) :
+symbol_expression::symbol_expression(std::shared_ptr<context> context, const std::shared_ptr<variable_definition> &var) :
+        expression(context),
         _name(var->get_name()),
         _symbol(var) {}
 
-symbol_expression::symbol_expression(const std::shared_ptr<function> &func) :
+symbol_expression::symbol_expression(std::shared_ptr<context> context, const std::shared_ptr<function> &func) :
+        expression(context),
         _name(func->name()),
         _symbol(func) {}
 
@@ -140,12 +85,12 @@ void symbol_expression::accept(model_visitor &visitor) {
     visitor.visit_symbol_expression(*this);
 }
 
-std::shared_ptr<symbol_expression> symbol_expression::from_string(const std::string &name) {
-    return std::shared_ptr<symbol_expression>(new symbol_expression(name));
+std::shared_ptr<symbol_expression> symbol_expression::from_string(std::shared_ptr<context> context, const std::string &name) {
+    return std::shared_ptr<symbol_expression>(new symbol_expression(context, name));
 }
 
-std::shared_ptr<symbol_expression> symbol_expression::from_identifier(const name &name) {
-    return std::shared_ptr<symbol_expression>(new symbol_expression(name));
+std::shared_ptr<symbol_expression> symbol_expression::from_identifier(std::shared_ptr<context> context, const name &name) {
+    return std::shared_ptr<symbol_expression>(new symbol_expression(context, name));
 }
 
 void symbol_expression::resolve(std::shared_ptr<variable_definition> var) {
@@ -416,6 +361,27 @@ void address_of_expression::accept(model_visitor &visitor) {
 //
 void dereference_expression::accept(model_visitor &visitor) {
     visitor.visit_dereference_expression(*this);
+}
+
+//
+// Member of expression
+//
+void member_of_expression::accept(model_visitor &visitor) {
+    visitor.visit_member_of_expression(*this);
+}
+
+//
+// Member of object expression
+//
+void member_of_object_expression::accept(model_visitor &visitor) {
+    visitor.visit_member_of_object_expression(*this);
+}
+
+//
+// Member of pointer expression
+//
+void member_of_pointer_expression::accept(model_visitor &visitor) {
+    visitor.visit_member_of_pointer_expression(*this);
 }
 
 //

@@ -45,7 +45,7 @@ void symbol_type_resolver::visit_namespace(ns& ns)
     bool has_name = false;
     if(!ns.get_name().empty()) {
         has_name = true;
-        _naming_context.push_back(ns.get_name());
+        _naming_context.push_back({ns.get_name(), ns.shared_as<element>()});
     }
 
     for(auto& child : ns.get_children()) {
@@ -64,33 +64,90 @@ void unit_llvm_ir_gen::visit_namespace(ns &ns) {
 }
 
 //
+// Structure
+//
+void symbol_type_resolver::visit_structure(structure& st) {
+    _naming_context.push_back({st.get_name(), st.shared_as<element>()});
+    for(auto& child : st.get_children()) {
+        child->accept(*this);
+    }
+    _naming_context.pop_back();
+
+    // Create type for structure
+    struct_type_builder builder(_context);
+    builder.name(st.get_name());
+    builder.structure(st.shared_as<structure>());
+    for(auto& var : st.variables()) {
+        builder.append_field(var.first, var.second->get_type());
+    }
+    auto st_type = builder.build();
+    st.set_struct_type(st_type);
+}
+
+void unit_llvm_ir_gen::visit_structure(structure& st) {
+    _struct_stack.push(st.shared_as<structure>());
+
+    // There is nothing yet.
+    // TODO
+    // Add constructors and destructors.
+
+    // Add methods:
+    for(auto& child : st.get_children()) {
+        child->accept(*this);
+    }
+
+    _struct_stack.pop();
+}
+
+
+//
+// Member variable definition
+//
+void symbol_type_resolver::visit_member_variable_definition(member_variable_definition& var) {
+    // TODO
+}
+
+void unit_llvm_ir_gen::visit_member_variable_definition(member_variable_definition&) {
+    // TODO
+}
+
+
+//
 // Global variable definition
 //
 
 void symbol_type_resolver::visit_global_variable_definition(global_variable_definition& var)
 {
+    if(!type::is_resolved(var.get_type())) {
+        auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
+        if(!unres_type) {
+            // TODO throw an exception
+            std::cerr << "Error: global variable definition has an unresolvable type." << std::endl;
+        }
+        auto type = _context->from_string(unres_type->type_id());
+        if(!type || !type::is_resolved(type)) {
+            // TODO throw an exception
+            std::cerr << "Error: global variable definition has an unresolvable type." << std::endl;
+        } else {
+            var.set_type(type);
+        }
+    }
     // TODO visit parameter definition (just in case default init is referencing a variable).
 }
 
 void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definition &var) {
-    llvm::Type *type = get_llvm_type(var.get_type());
+    auto type = var.get_type();
+    llvm::Type *llvm_type = _context->get_llvm_type(type);
 
     // TODO initialize the variable with the expression
-    llvm::Constant *value = nullptr;
-    if(type::is_prim_integer(var.get_type())) {
-        value = llvm::ConstantInt::get(type, 0);
-    } else if(type::is_prim_bool(var.get_type())) {
-        value = llvm::ConstantInt::getFalse(type);
-    } else if(type::is_prim_float(var.get_type())) {
-        value = llvm::ConstantFP::get(type, 0.0);
-    }
-    // TODO init for arrays
+    // Here is the 0-filled initialization:
+    llvm::Constant *value = type->generate_default_value_initializer();
 
     // TODO use the real mangled name
     //std::string mangledName;
     //Mangler::getNameWithPrefix(mangledName, "test::toto", Mangler::ManglingMode::Default);
 
-    auto variable = new llvm::GlobalVariable(*_module, type, false, llvm::GlobalValue::ExternalLinkage, value, var.get_name());
+    auto variable = new llvm::GlobalVariable(*_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, value, var.get_name());
     _global_vars.insert({var.shared_as<global_variable_definition>(), variable});
 }
 
@@ -100,7 +157,7 @@ void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definiti
 
 void symbol_type_resolver::visit_function(function& fn)
 {
-    _naming_context.push_back(fn.name());
+    _naming_context.push_back({fn.name(), fn.shared_as<element>()});
 
     // TODO visit parameter definition (just in case default init is referencing a variable).
 
@@ -114,16 +171,21 @@ void symbol_type_resolver::visit_function(function& fn)
 void unit_llvm_ir_gen::visit_function(function &function) {
     // Parameter types:
     std::vector<llvm::Type*> param_types;
+    if (function.is_member() /* TODO and is not static */) {
+        // First parameter is the 'this' pointer
+        auto owner = function.get_owner();
+        param_types.push_back(_context->get_llvm_type(owner->get_struct_type()->get_reference()));
+    }
     for(const auto& param : function.parameters()) {
-        param_types.push_back(get_llvm_type(param->get_type()));
+        param_types.push_back(_context->get_llvm_type(param->get_type()));
     }
 
     // Return type, if any:
     llvm::Type* ret_type = nullptr;
     if(const auto& ret = function.return_type()) {
-        ret_type = get_llvm_type(ret);
+        ret_type = _context->get_llvm_type(ret);
     } else {
-        ret_type = llvm::Type::getVoidTy(*_context);
+        ret_type = llvm::Type::getVoidTy(**_context);
     }
 
     // create the function:
@@ -133,21 +195,29 @@ void unit_llvm_ir_gen::visit_function(function &function) {
     _functions.insert({function.shared_as<k::model::function>(), func});
 
     // create the function content:
-    llvm::BasicBlock *block = llvm::BasicBlock::Create(*_context, "entry", func);
+    llvm::BasicBlock *block = llvm::BasicBlock::Create(**_context, "entry", func);
     _builder->SetInsertPoint(block);
 
     // Capture arguments
     auto arg_it = func->arg_begin();
+    if (function.is_member() /* TODO and is not static */) {
+        // First parameter is the 'this' pointer
+        llvm::Argument *arg = &*(arg_it++);
+        arg->setName("this");
+        // Create dedicated local storage for "this" argument
+        llvm::AllocaInst* alloca = _builder->CreateAlloca(llvm::PointerType::get(_context->llvm_context(), 0), nullptr, "this");
+        _function_this_variables.insert({function.shared_as<model::function>(), alloca});
+        // Read "this" param value and store it in dedicated local var
+        _builder->CreateStore(arg, alloca);
+    }
     for(const auto& param : function.parameters()) {
+        // Iterate to get all explicit parameters
         llvm::Argument *arg = &*(arg_it++);
         arg->setName(param->get_name());
-        _parameters.insert({param, arg});
-
-        llvm::AllocaInst* alloca = _builder->CreateAlloca(get_llvm_type(param->get_type()), nullptr, param->get_name());
+        // Create dedicated local storage for argument
+        llvm::AllocaInst* alloca = _builder->CreateAlloca(_context->get_llvm_type(param->get_type()), nullptr, param->get_name());
         _parameter_variables.insert({param, alloca});
-
         // Read param value and store it in dedicated local var
-        //auto val = _builder->CreateLoad(int32Type, arg);
         _builder->CreateStore(arg, alloca);
     }
 
@@ -171,8 +241,7 @@ void unit_llvm_ir_gen::optimize_function_dead_inst_elimination(llvm::Function& f
         auto term = std::find_if(block.begin(), block.end(), [](auto& inst)->bool{return inst.isTerminator();});
         if(term!=block.end()) {
             if(++term!=block.end()) {
-                auto& inst_list = block.getInstList();
-                inst_list.erase(term, block.end());
+                block.erase(term, block.end());
             }
         }
     }

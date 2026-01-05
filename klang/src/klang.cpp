@@ -39,12 +39,11 @@
 
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Host.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
-
+#include "llvm/TargetParser/Host.h"
 
 namespace po = boost::program_options;
 using namespace k;
@@ -132,14 +131,12 @@ int main(int argc, const char** argv) {
     std::string features = "";
 
     llvm::TargetOptions target_options;
-    llvm::Optional<llvm::Reloc::Model> reloc_model;
+    std::optional<llvm::Reloc::Model> reloc_model;
     auto target_machine = target->createTargetMachine(
             target_triple, cpu,
             features,
             target_options,
-            reloc_model,
-            llvm::None,
-            llvm::CodeGenOpt::Default);
+            reloc_model);
 
 
     if(vm.count("version")) {
@@ -186,21 +183,22 @@ int main(int argc, const char** argv) {
 
         k::model::dump::unit_dump unit_dump(std::cout);
 
-        k::model::unit unit;
-        k::model::model_builder::visit(logger, *ast_unit, unit);
+        auto context = k::model::context::create();
+        auto unit = k::model::unit::create(context);
+        k::model::model_builder::visit(logger, context, *ast_unit, *unit);
         std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
-        unit_dump.dump(unit);
+        unit_dump.dump(*unit);
 
-        k::model::gen::symbol_type_resolver resolver(logger, unit);
+        k::model::gen::symbol_type_resolver resolver(logger, context, *unit);
         resolver.resolve();
         std::cout << "#" << std::endl << "# Resolution" << std::endl << "#" << std::endl;
-        unit_dump.dump(unit);
+        unit_dump.dump(*unit);
 
-        k::model::gen::unit_llvm_ir_gen gen(logger, unit);
+        k::model::gen::unit_llvm_ir_gen gen(logger, context, *unit);
         gen.get_module().setDataLayout(target_machine->createDataLayout());
         gen.get_module().setTargetTriple(target_machine->getTargetTriple().getTriple());
         std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
-        unit.accept(gen);
+        unit->accept(gen);
         gen.verify();
         gen.dump();
 
@@ -219,7 +217,7 @@ int main(int argc, const char** argv) {
         }
 
         llvm::legacy::PassManager pass;
-        auto FileType = llvm::CGFT_ObjectFile;
+        auto FileType = llvm::CodeGenFileType::ObjectFile;
 
         if (target_machine->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
             llvm::errs() << "TargetMachine can't emit a file of this type";

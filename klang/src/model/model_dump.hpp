@@ -27,6 +27,7 @@
 
 namespace k::model::dump {
 
+
 template<typename OSTM>
 class unit_dump  : public default_model_visitor {
     OSTM& _stm;
@@ -89,10 +90,6 @@ public:
         unit.get_root_namespace()->accept(*this);
     }
 
-    void visit_ns_element(ns_element& elem) override {
-        prefix() << "<<unknown ns element>>" << std::endl;
-    }
-
     void visit_namespace(ns& ns) override {
         prefix() << "namespace '" << ns.get_name() << "' {" << std::endl;
         {
@@ -102,6 +99,18 @@ public:
             }
         }
         prefix() << "} // " << ns.get_name() << std::endl;
+    }
+
+    void visit_structure(structure& st) override {
+        prefix() << "struct '" << st.get_name() << "' {" << std::endl;
+        {
+            auto pf = prefix_inc();
+            for(auto& child : st.get_children()) {
+                child->accept(*this);
+            }
+        }
+        prefix() << "} // " << st.get_name() << std::endl;
+
     }
 
     void visit_function(function& func) override {
@@ -118,6 +127,16 @@ public:
         dump_type(*func.return_type());
         _stm << std::endl;
         func.get_block()->accept(*this);
+    }
+
+    void visit_parameter(parameter& param) override {
+        visit_variable_definition(param, true);
+        _stm << ", ";
+    }
+
+    void visit_member_variable_definition(member_variable_definition& var) override {
+        visit_variable_definition(var);
+        _stm << std::endl;
     }
 
     void visit_global_variable_definition(global_variable_definition& var) override {
@@ -269,7 +288,7 @@ public:
         _stm << ";" << std::endl;
     }
 
-    void visit_expression(expression& expr) {
+    void visit_expression(expression& expr) override {
         _stm << "<<unknown-expr:" << typeid(expr).name() << ">>";
     }
 
@@ -451,13 +470,13 @@ public:
         expr.sub_expr()->accept(*this);
     }
 
-    void visit_address_of_expression(address_of_expression& expr) override {
-        _stm << " & ";
+    void visit_load_value_expression(load_value_expression& expr) override {
+        _stm << " [&*] ";
         expr.sub_expr()->accept(*this);
     }
 
-    void visit_load_value_expression(load_value_expression& expr) override {
-        _stm << " [&*] ";
+    void visit_address_of_expression(address_of_expression& expr) override {
+        _stm << " & ";
         expr.sub_expr()->accept(*this);
     }
 
@@ -466,37 +485,49 @@ public:
         expr.sub_expr()->accept(*this);
     }
 
-    void visit_equal_expression(equal_expression& expr) {
+    void visit_member_of_object_expression(member_of_object_expression& expr) override {
+        expr.sub_expr()->accept(*this);
+        _stm << " . ";
+        expr.symbol().accept(*this);
+    }
+
+    void visit_member_of_pointer_expression(member_of_pointer_expression& expr) override {
+        expr.sub_expr()->accept(*this);
+        _stm << " -> ";
+        expr.symbol().accept(*this);
+    }
+
+    void visit_equal_expression(equal_expression& expr) override {
         expr.left()->accept(*this);
         _stm << " == ";
         expr.right()->accept(*this);
     }
 
-    void visit_different_expression(different_expression& expr) {
+    void visit_different_expression(different_expression& expr) override {
         expr.left()->accept(*this);
         _stm << " != ";
         expr.right()->accept(*this);
     }
 
-    void visit_lesser_expression(lesser_expression& expr) {
+    void visit_lesser_expression(lesser_expression& expr) override {
         expr.left()->accept(*this);
         _stm << " < ";
         expr.right()->accept(*this);
     }
 
-    void visit_greater_expression(greater_expression& expr) {
+    void visit_greater_expression(greater_expression& expr) override {
         expr.left()->accept(*this);
         _stm << " > ";
         expr.right()->accept(*this);
     }
 
-    void visit_lesser_equal_expression(lesser_equal_expression& expr) {
+    void visit_lesser_equal_expression(lesser_equal_expression& expr) override {
         expr.left()->accept(*this);
         _stm << " <= ";
         expr.right()->accept(*this);
     }
 
-    void visit_greater_equal_expression(greater_equal_expression& expr) {
+    void visit_greater_equal_expression(greater_equal_expression& expr) override {
         expr.left()->accept(*this);
         _stm << " >= ";
         expr.right()->accept(*this);

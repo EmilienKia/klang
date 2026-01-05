@@ -169,7 +169,8 @@ struct keyword : public lexeme {
         IF,
         ELSE,
         WHILE,
-        FOR
+        FOR,
+        STRUCT
         /* TODO add new lexeme definition here. */
     };
 
