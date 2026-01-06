@@ -163,7 +163,7 @@ namespace k::model {
             throw_error(0x0006, block_stmt.open_brace, "Current context doesnt support block statement");
         }
 
-        std::shared_ptr<model::block> block = std::make_shared<model::block>(_context, parent_scope);
+        std::shared_ptr<model::block> block = std::make_shared<model::block>(parent_scope);
 
         // Push function context
         stack<block_context> push(_contexts, block);
@@ -187,7 +187,7 @@ namespace k::model {
             throw_error(0x0007, stmt.ret, "Current context doesnt support return statement");
         }
 
-        std::shared_ptr<model::return_statement> ret_stmt = std::make_shared<model::return_statement>(_context, parent_scope, stmt.shared_as<parse::ast::return_statement>());
+        std::shared_ptr<model::return_statement> ret_stmt = std::make_shared<model::return_statement>(parent_scope, stmt.shared_as<parse::ast::return_statement>());
 
         // Push function context
         stack<return_context> push(_contexts, ret_stmt);
@@ -210,7 +210,7 @@ namespace k::model {
             throw_error(0x0008, stmt.if_kw, "Current context doesnt support if else statement");
         }
 
-        std::shared_ptr<model::if_else_statement> if_else_stmt = std::make_shared<model::if_else_statement>(_context, parent_scope, stmt.shared_as<parse::ast::if_else_statement>());
+        std::shared_ptr<model::if_else_statement> if_else_stmt = std::make_shared<model::if_else_statement>(parent_scope, stmt.shared_as<parse::ast::if_else_statement>());
 
         // Push function context
         stack<if_else_context> push(_contexts, if_else_stmt);
@@ -263,7 +263,7 @@ namespace k::model {
             throw_error(0x0009, stmt.while_kw, "Current context doesnt support while statement");
         }
 
-        auto while_stmt = std::make_shared<model::while_statement>(_context, parent_scope, stmt.shared_as<parse::ast::while_statement>());
+        auto while_stmt = std::make_shared<model::while_statement>(parent_scope, stmt.shared_as<parse::ast::while_statement>());
 
         // Push function context
         stack<while_context> push(_contexts, while_stmt);
@@ -303,7 +303,7 @@ namespace k::model {
             throw_error(0x000A, stmt.for_kw, "Current context doesnt support for statement");
         }
 
-        auto for_stmt = std::make_shared<model::for_statement>(_context, parent_scope, stmt.shared_as<parse::ast::for_statement>());
+        auto for_stmt = std::make_shared<model::for_statement>(parent_scope, stmt.shared_as<parse::ast::for_statement>());
 
         // Push function context
         stack<for_context> push(_contexts, for_stmt);
@@ -367,7 +367,7 @@ namespace k::model {
 //            throw_error(0x000B, stmt., "Current context doesnt support expression statement");
         }
 
-        std::shared_ptr<model::expression_statement> expr = std::make_shared<model::expression_statement>(_context, parent_scope, stmt.shared_as<parse::ast::expression_statement>());
+        std::shared_ptr<model::expression_statement> expr = std::make_shared<model::expression_statement>(parent_scope, stmt.shared_as<parse::ast::expression_statement>());
 
         // Push function context
         stack<expr_stmt_context> push(_contexts, expr);
@@ -385,7 +385,7 @@ namespace k::model {
     }
 
     void model_builder::visit_literal_expr(parse::ast::literal_expr &expr) {
-        _expr = model::value_expression::from_literal(_context, expr.literal);
+        _expr = model::value_expression::from_literal(expr.literal);
     }
 
     void model_builder::visit_keyword_expr(parse::ast::keyword_expr &expr) {
@@ -413,91 +413,91 @@ namespace k::model {
 
         switch(expr.op.type) {
             case lex::operator_::PLUS:
-                _expr = model::addition_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::addition_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::MINUS:
-                _expr = model::substraction_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::substraction_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::STAR:
-                _expr = model::multiplication_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::multiplication_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::SLASH:
-                _expr = model::division_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::division_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::PERCENT:
-                _expr = model::modulo_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::modulo_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::AMPERSAND:
-                _expr = model::bitwise_and_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::bitwise_and_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::PIPE:
-                _expr = model::bitwise_or_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::bitwise_or_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CARET:
-                _expr = model::bitwise_xor_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::bitwise_xor_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_OPEN:
-                _expr = model::left_shift_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::left_shift_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_CLOSE:
-                _expr = model::right_shift_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::right_shift_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::EQUAL:
-                _expr = model::simple_assignation_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::simple_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::PLUS_EQUAL:
-                _expr = model::additition_assignation_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::additition_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::MINUS_EQUAL:
-                _expr = model::substraction_assignation_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::substraction_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::STAR_EQUAL:
-                _expr = model::multiplication_assignation_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::multiplication_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::SLASH_EQUAL:
-                _expr = model::division_assignation_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::division_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::PERCENT_EQUAL:
-                _expr = model::modulo_assignation_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::modulo_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::AMPERSAND_EQUAL:
-                _expr = model::bitwise_and_assignation_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::bitwise_and_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::PIPE_EQUAL:
-                _expr = model::bitwise_or_assignation_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::bitwise_or_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CARET_EQUAL:
-                _expr = model::bitwise_xor_assignation_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::bitwise_xor_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_OPEN_EQUAL:
-                _expr = model::left_shift_assignation_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::left_shift_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_CHEVRON_CLOSE_EQUAL:
-                _expr = model::right_shift_assignation_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::right_shift_assignation_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_AMPERSAND:
-                _expr = model::logical_and_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::logical_and_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_PIPE:
-                _expr = model::logical_or_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::logical_or_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::DOUBLE_EQUAL:
-                _expr = model::equal_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::equal_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::EXCLAMATION_MARK_EQUAL:
-                _expr = model::different_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::different_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_OPEN:
-                _expr = model::lesser_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::lesser_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_CLOSE:
-                _expr = model::greater_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::greater_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_OPEN_EQUAL:
-                _expr = model::lesser_equal_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::lesser_equal_expression::make_shared(lexpr, rexpr);
                 break;
             case lex::operator_::CHEVRON_CLOSE_EQUAL:
-                _expr = model::greater_equal_expression::make_shared(_context, lexpr, rexpr);
+                _expr = model::greater_equal_expression::make_shared(lexpr, rexpr);
                 break;
             default: // TODO other operations
                 throw_error(0x0007, expr.op, "Binary operator '{}' not supported", {expr.op.content});
@@ -508,7 +508,7 @@ namespace k::model {
     void model_builder::visit_cast_expr(parse::ast::cast_expr& expr) {
         _expr = nullptr;
         expr.expr()->visit(*this);
-        _expr = model::cast_expression::make_shared(_context, _expr, _context->from_type_specifier(*expr.type));
+        _expr = model::cast_expression::make_shared(_expr, _context->from_type_specifier(*expr.type));
     }
 
     void model_builder::visit_unary_prefix_expr(parse::ast::unary_prefix_expr& expr) {
@@ -519,22 +519,22 @@ namespace k::model {
         std::shared_ptr<model::unary_expression> unary;
         switch(expr.op.type) {
             case lex::operator_::PLUS:
-                unary = model::unary_plus_expression::make_shared(_context, sub);
+                unary = model::unary_plus_expression::make_shared(sub);
                 break;
             case lex::operator_::MINUS:
-                unary = model::unary_minus_expression::make_shared(_context, sub);
+                unary = model::unary_minus_expression::make_shared(sub);
                 break;
             case lex::operator_::TILDE:
-                unary = model::bitwise_not_expression::make_shared(_context, sub);
+                unary = model::bitwise_not_expression::make_shared(sub);
                 break;
             case lex::operator_::EXCLAMATION_MARK:
-                unary = model::logical_not_expression::make_shared(_context, sub);
+                unary = model::logical_not_expression::make_shared(sub);
                 break;
             case lex::operator_::AMPERSAND:
-                unary = model::address_of_expression::make_shared(_context, sub);
+                unary = model::address_of_expression::make_shared(sub);
                 break;
             case lex::operator_::STAR:
-                unary = model::dereference_expression::make_shared(_context, sub);
+                unary = model::dereference_expression::make_shared(sub);
                 break;
             default:
                 throw_error(0x0008, expr.op, "Unary operator '{}' not supported", {expr.op.content});
@@ -553,7 +553,7 @@ namespace k::model {
         std::shared_ptr<model::expression> lexpr = _expr;
         expr.rexpr()->visit(*this);
         std::shared_ptr<model::expression> rexpr = _expr;
-        _expr = model::subscript_expression::make_shared(_context, lexpr, rexpr);
+        _expr = model::subscript_expression::make_shared(lexpr, rexpr);
     }
 
     void model_builder::visit_parenthesis_postifx_expr(parse::ast::parenthesis_postifx_expr &expr) {
@@ -573,7 +573,7 @@ namespace k::model {
             args.push_back(_expr);
         }
 
-        _expr = model::function_invocation_expression::make_shared(_context, callee, args);
+        _expr = model::function_invocation_expression::make_shared(callee, args);
     }
 
     void model_builder::visit_member_access_postfix_expr(parse::ast::member_access_postfix_expr &expr) {
@@ -590,10 +590,10 @@ namespace k::model {
 
         switch (expr.op.type) {
             case lex::operator_::DOT:
-                _expr = model::member_of_object_expression::make_shared(_context, callee, member);
+                _expr = model::member_of_object_expression::make_shared(callee, member);
                 break;
             case lex::operator_::ARROW:
-                _expr = model::member_of_pointer_expression::make_shared(_context, callee, member);
+                _expr = model::member_of_pointer_expression::make_shared(callee, member);
                 break;
             default:
                 // TODO
@@ -609,7 +609,7 @@ namespace k::model {
         for(auto ident : expr.qident.names){
             idents.push_back(ident.content);
         }
-        _expr = model::symbol_expression::from_identifier(_context, name(has_prefix, std::move(idents)));
+        _expr = model::symbol_expression::from_identifier(name(has_prefix, std::move(idents)));
     }
 
     void model_builder::visit_comma_expr(parse::ast::expr_list_expr &) {

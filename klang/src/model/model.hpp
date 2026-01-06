@@ -74,12 +74,9 @@ class model_visitor;
 class element : public std::enable_shared_from_this<element>
 {
 protected:
-    std::shared_ptr<context> _context;
-    std::shared_ptr<element> _parent;
+    std::shared_ptr<element> _parent = nullptr;
 
-    element() = delete;
-    element(std::shared_ptr<context> context, std::shared_ptr<element> parent = nullptr) : _context(context), _parent(parent) {}
-    element(std::shared_ptr<element> parent) : _parent(parent) {}
+    element(std::shared_ptr<element> parent = nullptr) : _parent(parent) {}
 
     friend statement;
     void set_parent(const std::shared_ptr<element> &parent_element) {
@@ -511,6 +508,9 @@ public:
 
 class unit : public element {
 protected:
+    friend class element;
+    /** Analysis context */
+    std::shared_ptr<context> _context;
 
     /** Unit name */
     name _unit_name;

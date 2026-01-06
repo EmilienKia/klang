@@ -91,14 +91,12 @@ class symbol_type_resolver;
 class expression : public element {
 protected:
     /** Type of the expression. */
-    std::shared_ptr<type> _type;
+    std::shared_ptr<type> _type = nullptr;
 
     virtual ~expression() = default;
 
-    expression() = delete;
-    expression(std::shared_ptr<context> context) : element(context) {}
-
-    expression(std::shared_ptr<context> context, std::shared_ptr<type> type) : element(context), _type(type) {}
+    expression() = default;
+    expression(std::shared_ptr<type> type) : _type(type) {}
 
     friend class unary_expression;
     friend class binary_expression;
@@ -126,7 +124,6 @@ public:
     std::shared_ptr<const expression> get_parent_expression() const { return parent<expression>(); };
 };
 
-
 class value_expression : public expression {
 protected:
     /** Value if constructed directly or already resolved from literal. */
@@ -137,17 +134,15 @@ protected:
 
     value_expression() = delete;
 
-    value_expression(std::shared_ptr<context> context, const k::lex::any_literal &literal);
+    value_expression(const k::lex::any_literal &literal);
 
 public:
     void accept(model_visitor &visitor) override;
 
     template<typename T>
-    explicit value_expression(std::shared_ptr<context> context, T val) : expression(context),  _value(val) {}
-
-    explicit value_expression(std::shared_ptr<context> context, const std::string &str) : expression(context), _value(str) {}
-
-    explicit value_expression(std::shared_ptr<context> context, std::string &&str) : expression(context), _value(std::move(str)) {}
+    explicit value_expression(T val) : _value(val) {}
+    explicit value_expression(const std::string &str) : _value(str) {}
+    explicit value_expression(std::string &&str) : _value(std::move(str)) {}
 
     bool is_literal() const {
         return _literal.has_value();
@@ -161,15 +156,15 @@ public:
         return _literal.value();
     }
 
-    static std::shared_ptr<value_expression> from_literal(std::shared_ptr<context> context, const k::lex::any_literal &literal);
+    static std::shared_ptr<value_expression> from_literal(const k::lex::any_literal &literal);
 
     template<typename T>
-    static std::shared_ptr<value_expression> from_value(std::shared_ptr<context> context, T val) {
-        return std::make_shared<value_expression>(context, val);
+    static std::shared_ptr<value_expression> from_value(T val) {
+        return std::make_shared<value_expression>(val);
     }
 
-    static std::shared_ptr<value_expression> from_value(std::shared_ptr<context> context, const std::string &str) {
-        return std::make_shared<value_expression>(context, str);
+    static std::shared_ptr<value_expression> from_value(const std::string &str) {
+        return std::make_shared<value_expression>(str);
     }
 
 };
@@ -185,18 +180,18 @@ protected:
             std::shared_ptr<function>
     > _symbol;
 
-    symbol_expression(std::shared_ptr<context> context, const name &name);
+    symbol_expression(const name &name);
 
-    symbol_expression(std::shared_ptr<context> context, const std::shared_ptr<variable_definition> &var);
+    symbol_expression(const std::shared_ptr<variable_definition> &var);
 
-    symbol_expression(std::shared_ptr<context> context, const std::shared_ptr<function> &func);
+    symbol_expression(const std::shared_ptr<function> &func);
 
 public:
     void accept(model_visitor &visitor) override;
 
-    static std::shared_ptr<symbol_expression> from_string(std::shared_ptr<context> context, const std::string &type_name);
+    static std::shared_ptr<symbol_expression> from_string(const std::string &type_name);
 
-    static std::shared_ptr<symbol_expression> from_identifier(std::shared_ptr<context> context, const name &type_id);
+    static std::shared_ptr<symbol_expression> from_identifier(const name &type_id);
 
     const name &get_name() const {
         return _name;
@@ -241,11 +236,9 @@ protected:
     std::shared_ptr<expression> _sub_expr;
     std::shared_ptr<k::parse::ast::unary_expression> _ast_unary_expr;
 
-    unary_expression() = delete;
-    unary_expression(std::shared_ptr<context> context) : expression(context) {}
-
-    unary_expression(std::shared_ptr<context> context, const std::shared_ptr<expression> &sub_expr)
-            : expression(context), _sub_expr(sub_expr) {
+    unary_expression() = default;
+    unary_expression(const std::shared_ptr<expression> &sub_expr)
+            : _sub_expr(sub_expr) {
         _sub_expr->set_parent_expression(shared_as<expression>());
     }
 
@@ -285,11 +278,9 @@ protected:
     /** Right hand sub expression. */
     std::shared_ptr<expression> _right_expr;
 
-    binary_expression() = delete;
-    binary_expression(std::shared_ptr<context> context) : expression(context) {}
-
-    binary_expression(std::shared_ptr<context> context, const std::shared_ptr<expression> &leftExpr, const std::shared_ptr<expression> &rightExpr)
-            : expression(context), _left_expr(leftExpr), _right_expr(rightExpr) {
+    binary_expression() = default;
+    binary_expression(const std::shared_ptr<expression> &leftExpr, const std::shared_ptr<expression> &rightExpr)
+            : _left_expr(leftExpr), _right_expr(rightExpr) {
         _left_expr->set_parent_expression(shared_as<expression>());
         _right_expr->set_parent_expression(shared_as<expression>());
     }
@@ -335,8 +326,7 @@ public:
 
 class arithmetic_binary_expression : public binary_expression {
 protected:
-    arithmetic_binary_expression() = delete;
-    arithmetic_binary_expression(std::shared_ptr<context> context) : binary_expression(context){}
+    arithmetic_binary_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
@@ -344,15 +334,14 @@ public:
 
 class addition_expression : public arithmetic_binary_expression {
 protected:
-    addition_expression() = delete;
-    addition_expression(std::shared_ptr<context> context) : arithmetic_binary_expression(context){}
+    addition_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<addition_expression> expr{new addition_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<addition_expression> expr{new addition_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -360,16 +349,15 @@ public:
 
 class substraction_expression : public arithmetic_binary_expression {
 protected:
-    substraction_expression() = delete;
-    substraction_expression(std::shared_ptr<context> context) : arithmetic_binary_expression(context){}
+    substraction_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<substraction_expression> expr{new substraction_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<substraction_expression> expr{new substraction_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -377,15 +365,14 @@ public:
 
 class multiplication_expression : public arithmetic_binary_expression {
 protected:
-    multiplication_expression() = delete;
-    multiplication_expression(std::shared_ptr<context> context) : arithmetic_binary_expression(context){}
+    multiplication_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<multiplication_expression> expr{new multiplication_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<multiplication_expression> expr{new multiplication_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -393,15 +380,14 @@ public:
 
 class division_expression : public arithmetic_binary_expression {
 protected:
-    division_expression() = delete;
-    division_expression(std::shared_ptr<context> context) : arithmetic_binary_expression(context) {}
+    division_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<division_expression> expr{new division_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<division_expression> expr{new division_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -410,14 +396,13 @@ public:
 class modulo_expression : public arithmetic_binary_expression {
 protected:
     modulo_expression() = default;
-    modulo_expression(std::shared_ptr<context> context) : arithmetic_binary_expression(context) {}
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<modulo_expression> expr{new modulo_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<modulo_expression> expr{new modulo_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -425,15 +410,14 @@ public:
 
 class bitwise_and_expression : public arithmetic_binary_expression {
 protected:
-    bitwise_and_expression() = delete;
-    bitwise_and_expression(std::shared_ptr<context> context) : arithmetic_binary_expression(context) {}
+    bitwise_and_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<bitwise_and_expression> expr{new bitwise_and_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<bitwise_and_expression> expr{new bitwise_and_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -441,15 +425,14 @@ public:
 
 class bitwise_or_expression : public arithmetic_binary_expression {
 protected:
-    bitwise_or_expression() = delete;
-    bitwise_or_expression(std::shared_ptr<context> context) : arithmetic_binary_expression(context) {}
+    bitwise_or_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<bitwise_or_expression> expr{new bitwise_or_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<bitwise_or_expression> expr{new bitwise_or_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -457,15 +440,14 @@ public:
 
 class bitwise_xor_expression : public arithmetic_binary_expression {
 protected:
-    bitwise_xor_expression() = delete;
-    bitwise_xor_expression(std::shared_ptr<context> context) : arithmetic_binary_expression(context) {}
+    bitwise_xor_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<bitwise_xor_expression> expr{new bitwise_xor_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<bitwise_xor_expression> expr{new bitwise_xor_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -473,15 +455,14 @@ public:
 
 class left_shift_expression : public arithmetic_binary_expression {
 protected:
-    left_shift_expression() = delete;
-    left_shift_expression(std::shared_ptr<context> context) : arithmetic_binary_expression(context) {}
+    left_shift_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<left_shift_expression> expr{new left_shift_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<left_shift_expression> expr{new left_shift_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -489,15 +470,14 @@ public:
 
 class right_shift_expression : public arithmetic_binary_expression {
 protected:
-    right_shift_expression() = delete;
-    right_shift_expression(std::shared_ptr<context> context) : arithmetic_binary_expression(context) {}
+    right_shift_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<right_shift_expression> expr{new right_shift_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<right_shift_expression> expr{new right_shift_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -506,8 +486,7 @@ public:
 
 class assignation_expression : public binary_expression {
 protected:
-    assignation_expression() = delete;
-    assignation_expression(std::shared_ptr<context> context) : binary_expression(context) {}
+    assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
@@ -516,15 +495,14 @@ public:
 
 class simple_assignation_expression : public assignation_expression {
 protected:
-    simple_assignation_expression() = delete;
-    simple_assignation_expression(std::shared_ptr<context> context) : assignation_expression(context) {}
+    simple_assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<simple_assignation_expression> expr{new simple_assignation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<simple_assignation_expression> expr{new simple_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -532,8 +510,7 @@ public:
 
 class arithmetic_assignation_expression : public assignation_expression {
 protected:
-    arithmetic_assignation_expression() = delete;
-    arithmetic_assignation_expression(std::shared_ptr<context> context) : assignation_expression(context) {}
+    arithmetic_assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
@@ -542,15 +519,14 @@ public:
 
 class additition_assignation_expression : public arithmetic_assignation_expression {
 protected:
-    additition_assignation_expression() = delete;
-    additition_assignation_expression(std::shared_ptr<context> context) : arithmetic_assignation_expression(context) {}
+    additition_assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<additition_assignation_expression> expr{new additition_assignation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<additition_assignation_expression> expr{new additition_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -558,15 +534,14 @@ public:
 
 class substraction_assignation_expression : public arithmetic_assignation_expression {
 protected:
-    substraction_assignation_expression() = delete;
-    substraction_assignation_expression(std::shared_ptr<context> context) : arithmetic_assignation_expression(context) {}
+    substraction_assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<substraction_assignation_expression> expr{new substraction_assignation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<substraction_assignation_expression> expr{new substraction_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -574,15 +549,14 @@ public:
 
 class multiplication_assignation_expression : public arithmetic_assignation_expression {
 protected:
-    multiplication_assignation_expression() = delete;
-    multiplication_assignation_expression(std::shared_ptr<context> context) : arithmetic_assignation_expression(context) {}
+    multiplication_assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<multiplication_assignation_expression> expr{new multiplication_assignation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<multiplication_assignation_expression> expr{new multiplication_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -590,15 +564,14 @@ public:
 
 class division_assignation_expression : public arithmetic_assignation_expression {
 protected:
-    division_assignation_expression() = delete;
-    division_assignation_expression(std::shared_ptr<context> context) : arithmetic_assignation_expression(context) {}
+    division_assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<division_assignation_expression> expr{new division_assignation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<division_assignation_expression> expr{new division_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -606,15 +579,14 @@ public:
 
 class modulo_assignation_expression : public arithmetic_assignation_expression {
 protected:
-    modulo_assignation_expression() = delete;
-    modulo_assignation_expression(std::shared_ptr<context> context) : arithmetic_assignation_expression(context) {}
+    modulo_assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<modulo_assignation_expression> expr{new modulo_assignation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<modulo_assignation_expression> expr{new modulo_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -622,15 +594,14 @@ public:
 
 class bitwise_and_assignation_expression : public arithmetic_assignation_expression {
 protected:
-    bitwise_and_assignation_expression() = delete;
-    bitwise_and_assignation_expression(std::shared_ptr<context> context) : arithmetic_assignation_expression(context) {}
+    bitwise_and_assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<bitwise_and_assignation_expression> expr{new bitwise_and_assignation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<bitwise_and_assignation_expression> expr{new bitwise_and_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -638,15 +609,14 @@ public:
 
 class bitwise_or_assignation_expression : public arithmetic_assignation_expression {
 protected:
-    bitwise_or_assignation_expression() = delete;
-    bitwise_or_assignation_expression(std::shared_ptr<context> context) : arithmetic_assignation_expression(context) {}
+    bitwise_or_assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<bitwise_or_assignation_expression> expr{new bitwise_or_assignation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<bitwise_or_assignation_expression> expr{new bitwise_or_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -654,15 +624,14 @@ public:
 
 class bitwise_xor_assignation_expression : public arithmetic_assignation_expression {
 protected:
-    bitwise_xor_assignation_expression() = delete;
-    bitwise_xor_assignation_expression(std::shared_ptr<context> context) : arithmetic_assignation_expression(context) {}
+    bitwise_xor_assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<bitwise_xor_assignation_expression> expr{new bitwise_xor_assignation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<bitwise_xor_assignation_expression> expr{new bitwise_xor_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -670,15 +639,14 @@ public:
 
 class left_shift_assignation_expression : public arithmetic_assignation_expression {
 protected:
-    left_shift_assignation_expression() = delete;
-    left_shift_assignation_expression(std::shared_ptr<context> context) : arithmetic_assignation_expression(context) {}
+    left_shift_assignation_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<left_shift_assignation_expression> expr{new left_shift_assignation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<left_shift_assignation_expression> expr{new left_shift_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -687,14 +655,13 @@ public:
 class right_shift_assignation_expression : public arithmetic_assignation_expression {
 protected:
     right_shift_assignation_expression() = default;
-    right_shift_assignation_expression(std::shared_ptr<context> context) : arithmetic_assignation_expression(context) {}
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<right_shift_assignation_expression> expr{new right_shift_assignation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<right_shift_assignation_expression> expr{new right_shift_assignation_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -702,8 +669,7 @@ public:
 
 class arithmetic_unary_expression : public unary_expression {
 protected:
-    arithmetic_unary_expression() = delete;
-    arithmetic_unary_expression(std::shared_ptr<context> context) : unary_expression(context) {}
+    arithmetic_unary_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
@@ -711,14 +677,13 @@ public:
 
 class unary_plus_expression : public arithmetic_unary_expression {
 protected:
-    unary_plus_expression() = delete;
-    unary_plus_expression(std::shared_ptr<context> context) : arithmetic_unary_expression(context) {}
+    unary_plus_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
-    static std::shared_ptr<unary_expression> make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &sub_expr) {
-        std::shared_ptr<unary_plus_expression> expr{new unary_plus_expression(context)};
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<unary_plus_expression> expr{new unary_plus_expression()};
         expr->assign(sub_expr);
         return std::shared_ptr<unary_expression>{expr};
     }
@@ -726,14 +691,13 @@ public:
 
 class unary_minus_expression : public arithmetic_unary_expression {
 protected:
-    unary_minus_expression() = delete;
-    unary_minus_expression(std::shared_ptr<context> context) : arithmetic_unary_expression(context) {}
+    unary_minus_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
-    static std::shared_ptr<unary_expression> make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &sub_expr) {
-        std::shared_ptr<unary_minus_expression> expr{new unary_minus_expression(context)};
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<unary_minus_expression> expr{new unary_minus_expression()};
         expr->assign(sub_expr);
         return std::shared_ptr<unary_expression>{expr};
     }
@@ -741,14 +705,13 @@ public:
 
 class bitwise_not_expression : public arithmetic_unary_expression {
 protected:
-    bitwise_not_expression() = delete;
-    bitwise_not_expression(std::shared_ptr<context> context) : arithmetic_unary_expression(context) {}
+    bitwise_not_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
-    static std::shared_ptr<unary_expression> make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &sub_expr) {
-        std::shared_ptr<bitwise_not_expression> expr{new bitwise_not_expression(context)};
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<bitwise_not_expression> expr{new bitwise_not_expression()};
         expr->assign(sub_expr);
         return std::shared_ptr<unary_expression>{expr};
     }
@@ -757,8 +720,7 @@ public:
 
 class logical_binary_expression : public binary_expression {
 protected:
-    logical_binary_expression() = delete;
-    logical_binary_expression(std::shared_ptr<context> context) : binary_expression(context) {}
+    logical_binary_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
@@ -766,15 +728,14 @@ public:
 
 class logical_and_expression : public logical_binary_expression {
 protected:
-    logical_and_expression() = delete;
-    logical_and_expression(std::shared_ptr<context> context) : logical_binary_expression(context) {}
+    logical_and_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<logical_and_expression> expr{new logical_and_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<logical_and_expression> expr{new logical_and_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -782,15 +743,14 @@ public:
 
 class logical_or_expression : public logical_binary_expression {
 protected:
-    logical_or_expression() = delete;
-    logical_or_expression(std::shared_ptr<context> context) : logical_binary_expression(context) {}
+    logical_or_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<logical_or_expression> expr{new logical_or_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<logical_or_expression> expr{new logical_or_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -798,14 +758,13 @@ public:
 
 class logical_not_expression : public unary_expression {
 protected:
-    logical_not_expression() = delete;
-    logical_not_expression(std::shared_ptr<context> context) : unary_expression(context) {}
+    logical_not_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
-    static std::shared_ptr<unary_expression> make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &sub_expr) {
-        std::shared_ptr<logical_not_expression> expr{new logical_not_expression(context)};
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<logical_not_expression> expr{new logical_not_expression()};
         expr->assign(sub_expr);
         return std::shared_ptr<unary_expression>{expr};
     }
@@ -818,14 +777,13 @@ public:
  */
 class load_value_expression : public unary_expression {
 protected:
-    load_value_expression() = delete;
-    load_value_expression(std::shared_ptr<context> context) : unary_expression(context) {}
+    load_value_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
-    static std::shared_ptr<unary_expression> make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &sub_expr) {
-        std::shared_ptr<load_value_expression> expr{new load_value_expression(context)};
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<load_value_expression> expr{new load_value_expression()};
         expr->assign(sub_expr);
         return std::shared_ptr<unary_expression>{expr};
     }
@@ -833,14 +791,13 @@ public:
 
 class address_of_expression : public unary_expression {
 protected:
-    address_of_expression() = delete;
-    address_of_expression(std::shared_ptr<context> context) : unary_expression(context) {}
+    address_of_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
-    static std::shared_ptr<unary_expression> make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &sub_expr) {
-        std::shared_ptr<address_of_expression> expr{new address_of_expression(context)};
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<address_of_expression> expr{new address_of_expression()};
         expr->assign(sub_expr);
         return std::shared_ptr<unary_expression>{expr};
     }
@@ -848,14 +805,13 @@ public:
 
 class dereference_expression : public unary_expression {
 protected:
-    dereference_expression() = delete;
-    dereference_expression(std::shared_ptr<context> context) : unary_expression(context) {}
+    dereference_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
-    static std::shared_ptr<unary_expression> make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &sub_expr) {
-        std::shared_ptr<dereference_expression> expr{new dereference_expression(context)};
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<dereference_expression> expr{new dereference_expression()};
         expr->assign(sub_expr);
         return std::shared_ptr<unary_expression>{expr};
     }
@@ -865,8 +821,7 @@ class member_of_expression : public unary_expression {
 protected:
     std::shared_ptr<symbol_expression> _symbol;
 
-    member_of_expression() = delete;
-    member_of_expression(std::shared_ptr<context> context) : unary_expression(context) {}
+    member_of_expression() = default;
 
     friend class gen::symbol_type_resolver;
 
@@ -890,14 +845,13 @@ public:
 
 class member_of_object_expression : public member_of_expression {
 protected:
-    member_of_object_expression() = delete;
-    member_of_object_expression(std::shared_ptr<context> context) : member_of_expression(context) {}
+    member_of_object_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
-    static std::shared_ptr<member_of_object_expression> make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &sub_expr, const std::shared_ptr<symbol_expression>& symbol) {
-        std::shared_ptr<member_of_object_expression> expr{new member_of_object_expression(context)};
+    static std::shared_ptr<member_of_object_expression> make_shared(const std::shared_ptr<expression> &sub_expr, const std::shared_ptr<symbol_expression>& symbol) {
+        std::shared_ptr<member_of_object_expression> expr{new member_of_object_expression()};
         expr->assign(sub_expr, symbol);
         return std::shared_ptr<member_of_object_expression>{expr};
     }
@@ -905,14 +859,13 @@ public:
 
 class member_of_pointer_expression : public member_of_expression {
 protected:
-    member_of_pointer_expression() = delete;
-    member_of_pointer_expression(std::shared_ptr<context> context) : member_of_expression(context) {}
+    member_of_pointer_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
-    static std::shared_ptr<member_of_pointer_expression> make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &sub_expr, const std::shared_ptr<symbol_expression>& symbol) {
-        std::shared_ptr<member_of_pointer_expression> expr{new member_of_pointer_expression(context)};
+    static std::shared_ptr<member_of_pointer_expression> make_shared(const std::shared_ptr<expression> &sub_expr, const std::shared_ptr<symbol_expression>& symbol) {
+        std::shared_ptr<member_of_pointer_expression> expr{new member_of_pointer_expression()};
         expr->assign(sub_expr, symbol);
         return std::shared_ptr<member_of_pointer_expression>{expr};
     }
@@ -920,8 +873,7 @@ public:
 
 class comparison_expression : public binary_expression {
 protected:
-    comparison_expression() = delete;
-    comparison_expression(std::shared_ptr<context> context) : binary_expression(context) {}
+    comparison_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
@@ -929,15 +881,14 @@ public:
 
 class equal_expression : public comparison_expression {
 protected:
-    equal_expression() = delete;
-    equal_expression(std::shared_ptr<context> context) : comparison_expression(context) {}
+    equal_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<equal_expression> expr{new equal_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<equal_expression> expr{new equal_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -945,15 +896,14 @@ public:
 
 class different_expression : public comparison_expression {
 protected:
-    different_expression() = delete;
-    different_expression(std::shared_ptr<context> context) : comparison_expression(context) {}
+    different_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<different_expression> expr{new different_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<different_expression> expr{new different_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -961,15 +911,14 @@ public:
 
 class lesser_expression : public comparison_expression {
 protected:
-    lesser_expression() = delete;
-    lesser_expression(std::shared_ptr<context> context) : comparison_expression(context) {}
+    lesser_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<lesser_expression> expr{new lesser_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<lesser_expression> expr{new lesser_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -977,15 +926,14 @@ public:
 
 class greater_expression : public comparison_expression {
 protected:
-    greater_expression() = delete;
-    greater_expression(std::shared_ptr<context> context) : comparison_expression(context) {}
+    greater_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<greater_expression> expr{new greater_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<greater_expression> expr{new greater_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -995,14 +943,13 @@ public:
 class lesser_equal_expression : public comparison_expression {
 protected:
     lesser_equal_expression() = default;
-    lesser_equal_expression(std::shared_ptr<context> context) : comparison_expression(context) {}
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<lesser_equal_expression> expr{new lesser_equal_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<lesser_equal_expression> expr{new lesser_equal_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -1010,15 +957,14 @@ public:
 
 class greater_equal_expression : public comparison_expression {
 protected:
-    greater_equal_expression() = delete;
-    greater_equal_expression(std::shared_ptr<context> context) : comparison_expression(context) {}
+    greater_equal_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<greater_equal_expression> expr{new greater_equal_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<greater_equal_expression> expr{new greater_equal_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -1029,15 +975,14 @@ protected:
     // Casting type
     std::shared_ptr<type> _cast_type;
 
-    cast_expression() = delete;
-    cast_expression(std::shared_ptr<context> context) : unary_expression(context) {}
+    cast_expression() = default;
 
 public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &expr, const std::shared_ptr<type> &type) {
-        std::shared_ptr<cast_expression> rexpr{new cast_expression(context)};
+    make_shared(const std::shared_ptr<expression> &expr, const std::shared_ptr<type> &type) {
+        std::shared_ptr<cast_expression> rexpr{new cast_expression()};
         rexpr->assign(expr);
         rexpr->_cast_type = type;
         return std::shared_ptr<expression>{rexpr};
@@ -1054,13 +999,11 @@ public:
 
 class subscript_expression : public binary_expression {
 protected:
-    subscript_expression() = delete;
-    subscript_expression(std::shared_ptr<context> context) : binary_expression(context) {}
+    subscript_expression() = default;
 
-    subscript_expression(std::shared_ptr<context> context, 
-                                    const std::shared_ptr<expression> &callee_expr,
-                                   const std::shared_ptr<expression> &index_expr) :
-                                   binary_expression(context, callee_expr, index_expr)
+    subscript_expression(const std::shared_ptr<expression> &callee_expr,
+                         const std::shared_ptr<expression> &index_expr) :
+                         binary_expression(callee_expr, index_expr)
     {
     }
 
@@ -1068,8 +1011,8 @@ public:
     void accept(model_visitor &visitor) override;
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
-        std::shared_ptr<subscript_expression> expr{new subscript_expression(context)};
+    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+        std::shared_ptr<subscript_expression> expr{new subscript_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
     }
@@ -1083,27 +1026,24 @@ protected:
     std::vector<std::shared_ptr<expression>> _arguments;
 
 
-    function_invocation_expression() = delete;
-    function_invocation_expression(std::shared_ptr<context> context) : expression(context) {}
+    function_invocation_expression() = default;
 
-    function_invocation_expression(std::shared_ptr<context> context, const std::shared_ptr<expression> &callee_expr)
-            : expression(context), _callee_expr(callee_expr) {
+    function_invocation_expression(const std::shared_ptr<expression> &callee_expr)
+            : _callee_expr(callee_expr) {
         _callee_expr->set_parent_expression(shared_as<expression>());
     }
 
-    function_invocation_expression(std::shared_ptr<context> context, 
-                                   const std::shared_ptr<expression> &callee_expr,
+    function_invocation_expression(const std::shared_ptr<expression> &callee_expr,
                                    const std::shared_ptr<expression> &arg_expr)
-            : expression(context), _callee_expr(callee_expr) {
+            : _callee_expr(callee_expr) {
         _callee_expr->set_parent_expression(shared_as<expression>());
         arg_expr->set_parent_expression(shared_as<expression>());
         _arguments.push_back(arg_expr);
     }
 
-    function_invocation_expression(std::shared_ptr<context> context, 
-                                   const std::shared_ptr<expression> &callee_expr,
+    function_invocation_expression(const std::shared_ptr<expression> &callee_expr,
                                    const std::vector<std::shared_ptr<expression>> &args)
-            : expression (context), _callee_expr(callee_expr) {
+            : _callee_expr(callee_expr) {
         _callee_expr->set_parent_expression(shared_as<expression>());
         _arguments = args;
         for (auto &arg: args) {
@@ -1147,8 +1087,8 @@ public:
     }
 
     static std::shared_ptr<expression>
-    make_shared(std::shared_ptr<context> context, const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args) {
-        std::shared_ptr<function_invocation_expression> expr{new function_invocation_expression(context)};
+    make_shared(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args) {
+        std::shared_ptr<function_invocation_expression> expr{new function_invocation_expression()};
         expr->assign(callee_expr, args);
         return std::shared_ptr<expression>{expr};
     }

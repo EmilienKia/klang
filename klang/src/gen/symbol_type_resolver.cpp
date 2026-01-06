@@ -100,7 +100,7 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_reference_load_value(con
     }
 
     if(type::is_reference(type)) {
-        auto deref = load_value_expression::make_shared(_context, expr);
+        auto deref = load_value_expression::make_shared(expr);
         deref->set_type(type->get_subtype());
         return deref;
     } else {
@@ -135,7 +135,7 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_type(std::shared_ptr<exp
 
     if(type::is_double_reference(type_src)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
-        auto deref = load_value_expression::make_shared(_context, expr);
+        auto deref = load_value_expression::make_shared(expr);
         deref->set_type(ref_src->get_subtype());
         expr = deref;
         type_src = ref_src->get_subtype();
@@ -172,7 +172,7 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_type(std::shared_ptr<exp
         return expr;
     }
 
-    auto cast = cast_expression::make_shared(_context, expr, prim_tgt);
+    auto cast = cast_expression::make_shared(expr, prim_tgt);
     cast->set_type(prim_tgt);
     return cast;
 }

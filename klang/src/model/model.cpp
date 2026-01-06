@@ -39,7 +39,16 @@ static name to_name(const parse::ast::qualified_identifier &ident) {
 // Base model element
 //
 std::shared_ptr<context> element::get_context() {
-    return _context ? _context : ( _parent ? _parent->get_context() : nullptr);
+    std::shared_ptr<element> current = shared_as<element>();
+    std::shared_ptr<element> parent = _parent;
+    while(parent) {
+        current = parent;
+        parent = parent->_parent;
+    }
+    if (auto root = current->shared_as<unit>()) {
+        return root->_context;
+    }
+    return {};
 }
 
 
@@ -227,7 +236,7 @@ void function::set_block(const std::shared_ptr<block>& block) {
 
 std::shared_ptr<block> function::get_block() {
     if (!_block) {
-        _block = std::make_shared<block>(_context, shared_as<function>());
+        _block = std::make_shared<block>(shared_as<function>());
         _block->set_as_parent(shared_as<function>());
     }
     return _block;
@@ -530,7 +539,8 @@ std::shared_ptr<unit> unit::create(std::shared_ptr<context> context) {
 }
 
 unit::unit(std::shared_ptr<context> context):
-element(context)
+element(nullptr),
+_context(context)
 {
 //    _root_ns = ns::create(shared_as<unit>(), "");
 }

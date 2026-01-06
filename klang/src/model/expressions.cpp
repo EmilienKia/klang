@@ -49,8 +49,7 @@ std::shared_ptr<const statement> expression::find_statement() const {
 // Value expression
 //
 
-value_expression::value_expression(std::shared_ptr<context> context, const k::lex::any_literal &literal) :
-        expression(context, context->from_literal(literal)),
+value_expression::value_expression(const k::lex::any_literal &literal) :
         _literal(literal) {
 }
 
@@ -58,25 +57,22 @@ void value_expression::accept(model_visitor &visitor) {
     visitor.visit_value_expression(*this);
 }
 
-std::shared_ptr<value_expression> value_expression::from_literal(std::shared_ptr<context> context, const k::lex::any_literal &literal) {
-    return std::shared_ptr<value_expression>(new value_expression(context, literal));
+std::shared_ptr<value_expression> value_expression::from_literal(const k::lex::any_literal &literal) {
+    return std::shared_ptr<value_expression>(new value_expression(literal));
 }
 
 //
 // Symbol expression
 //
 
-symbol_expression::symbol_expression(std::shared_ptr<context> context, const name &name) :
-        expression(context),
+symbol_expression::symbol_expression(const name &name) :
         _name(name) {}
 
-symbol_expression::symbol_expression(std::shared_ptr<context> context, const std::shared_ptr<variable_definition> &var) :
-        expression(context),
+symbol_expression::symbol_expression(const std::shared_ptr<variable_definition> &var) :
         _name(var->get_name()),
         _symbol(var) {}
 
-symbol_expression::symbol_expression(std::shared_ptr<context> context, const std::shared_ptr<function> &func) :
-        expression(context),
+symbol_expression::symbol_expression(const std::shared_ptr<function> &func) :
         _name(func->name()),
         _symbol(func) {}
 
@@ -85,12 +81,12 @@ void symbol_expression::accept(model_visitor &visitor) {
     visitor.visit_symbol_expression(*this);
 }
 
-std::shared_ptr<symbol_expression> symbol_expression::from_string(std::shared_ptr<context> context, const std::string &name) {
-    return std::shared_ptr<symbol_expression>(new symbol_expression(context, name));
+std::shared_ptr<symbol_expression> symbol_expression::from_string(const std::string &name) {
+    return std::shared_ptr<symbol_expression>(new symbol_expression(name));
 }
 
-std::shared_ptr<symbol_expression> symbol_expression::from_identifier(std::shared_ptr<context> context, const name &name) {
-    return std::shared_ptr<symbol_expression>(new symbol_expression(context, name));
+std::shared_ptr<symbol_expression> symbol_expression::from_identifier(const name &name) {
+    return std::shared_ptr<symbol_expression>(new symbol_expression(name));
 }
 
 void symbol_expression::resolve(std::shared_ptr<variable_definition> var) {

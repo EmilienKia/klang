@@ -41,10 +41,7 @@ namespace k::model::gen {
 
 void symbol_type_resolver::visit_value_expression(value_expression& expr)
 {
-    // Nothing to view here:
-    // - No symbol to resolve
-    // - Type is supposed to have already been set at value_expression construction.
-    // See value_expression::type_from_literal(const k::lex::any_literal& literal)
+    expr.set_type(_context->from_literal(expr.any_literal()));
 }
 
 void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
@@ -326,7 +323,7 @@ void symbol_type_resolver::process_arithmetic(binary_expression& expr) {
     // If source type is reference, deref it
     if(type::is_reference(source_type)) {
         // Source type must be de-referenced
-        right = load_value_expression::make_shared(_context, right);
+        right = load_value_expression::make_shared(right);
         source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
         right->set_type(source_type);
         expr.assign_right(right);
@@ -705,7 +702,7 @@ void symbol_type_resolver::visit_assignation_expression(assignation_expression &
     if(type::is_reference(target_type)) {
         // Left hand is a ref-to-ref-to-something, i.e. a ref-something variable.
         // Deref again target type
-        left = load_value_expression::make_shared(_context, left);
+        left = load_value_expression::make_shared(left);
         left->set_type(target_type);
         expr.assign_left(left);
         target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
@@ -742,7 +739,7 @@ void symbol_type_resolver::visit_assignation_expression(assignation_expression &
     // If source type is reference, deref it
     if(type::is_reference(source_type)) {
         // Source type must be de-referenced
-        right = load_value_expression::make_shared(_context, right);
+        right = load_value_expression::make_shared(right);
         source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
         right->set_type(source_type);
         expr.assign_right(right);
@@ -2238,7 +2235,7 @@ void symbol_type_resolver::visit_cast_expression(cast_expression& expr) {
             if(type::is_reference(target_type)) {
                 // TODO throw an error, casting references is not supported yet (not for any primitive type)
             }
-            auto deref = load_value_expression::make_shared(_context, sub_expr->shared_as<expression>());
+            auto deref = load_value_expression::make_shared(sub_expr->shared_as<expression>());
             expr.assign(deref);
             deref->set_type(source_type->get_subtype());
         }
