@@ -313,8 +313,17 @@ protected:
     variable_statement(const std::shared_ptr<statement> &parent) :
             statement(parent) {}
 
-    variable_statement(const std::shared_ptr<statement> &parent, const std::string& name) :
-            statement(parent), variable_definition(name) {}
+    static std::shared_ptr<variable_statement> make_shared(const std::shared_ptr<statement>& parent) {
+        return std::shared_ptr<variable_statement>(new variable_statement(parent));
+    }
+
+    static std::shared_ptr<variable_statement> make_shared(const std::shared_ptr<statement>& parent, const std::string& name) {
+        auto var_def = std::shared_ptr<variable_statement>(new variable_statement(parent));
+        var_def->init(name);
+        return var_def;
+    }
+
+    void update_mangled_name() override;
 
 public:
     void accept(model_visitor& visitor) override;

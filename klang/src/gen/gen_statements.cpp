@@ -46,7 +46,7 @@ void unit_llvm_ir_gen::visit_block(block& block) {
 void symbol_type_resolver::visit_return_statement(return_statement& stmt)
 {
     auto func = stmt.get_block()->get_function();
-    auto ret_type = func->return_type();
+    auto ret_type = func->get_return_type();
     // TODO check if return type is void to prevent to return sometinhg
 
     if(auto expr = stmt.get_expression()) {
@@ -321,6 +321,8 @@ void unit_llvm_ir_gen::visit_expression_statement(expression_statement& stmt) {
 
 void symbol_type_resolver::visit_variable_statement(variable_statement& var)
 {
+    visit_named_element(var);
+
     if (auto var_type = var.get_type(); !type::is_resolved(var_type)) {
         std::shared_ptr<unresolved_type> unres_type = std::dynamic_pointer_cast<unresolved_type>(var_type);
         if (!unres_type) {
@@ -358,7 +360,7 @@ void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
 
     std::shared_ptr<k::model::type> var_type = var.get_type();
     llvm::Type *  type = _context->get_llvm_type(var_type);
-    llvm::AllocaInst* alloca = build.CreateAlloca(type, nullptr, var.get_name());
+    llvm::AllocaInst* alloca = build.CreateAlloca(type, nullptr, var.get_short_name());
     _variables.insert({var.shared_as<variable_statement>(), alloca});
 
     // But initialize at the decl place

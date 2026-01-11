@@ -20,6 +20,7 @@
 #include "context.hpp"
 #include "expressions.hpp"
 #include "model_visitor.hpp"
+#include "mangler.hpp"
 
 #include "../common/tools.hpp"
 
@@ -49,6 +50,22 @@ std::shared_ptr<context> element::get_context() {
         return root->_context;
     }
     return {};
+}
+
+//
+// Bases of named element
+//
+
+void named_element::update_names() {
+    _short_name = _name.back();
+    if (_name.has_root_prefix()) {
+        _fq_name = _name.to_string();
+        update_mangled_name();
+    } else {
+        _fq_name.clear();
+        _mangled_name.clear();
+    }
+
 }
 
 
@@ -109,7 +126,7 @@ std::shared_ptr<function> function_holder::define_function(const std::string &na
 std::shared_ptr<function> function_holder::get_function(const std::string &name) const {
     // TODO add prototype checking
     for (auto func: _functions) {
-        if (func->name() == name) {
+        if (func->get_short_name() == name) {
             return func;
         }
     }
@@ -158,8 +175,9 @@ std::shared_ptr<structure> structure_holder::lookup_structure(const std::string 
 // Variable definition
 //
 
-const std::string& variable_definition::get_name() const {
-    return _name;
+void variable_definition::init(const std::string &name, const std::shared_ptr<type> &type) {
+    assign_name(name);
+    _type = type;
 }
 
 std::shared_ptr<type> variable_definition::get_type() const {
@@ -200,16 +218,24 @@ parameter::parameter(std::shared_ptr<function> func, size_t pos) :
         _function(std::move(func)), _pos(pos) {
 }
 
-parameter::parameter(std::shared_ptr<function> func, const std::string &name, size_t pos) :
-        element(func),
-        variable_definition(name), _function(std::move(func)), _pos(pos) {
+std::shared_ptr<parameter> parameter::make_shared(std::shared_ptr<function> func, size_t pos) {
+    return std::shared_ptr<parameter>(new parameter(std::move(func), pos));
 }
 
+std::shared_ptr<parameter> parameter::make_shared(std::shared_ptr<function> func, const std::string &name, size_t pos) {
+    auto param = std::shared_ptr<parameter>(new parameter(std::move(func), pos));
+    param->init(name);
+    return param;
+}
 
-parameter::parameter(std::shared_ptr<function> func, const std::string &name, const std::shared_ptr<type> &type,
-                     size_t pos) :
-        element(func),
-        variable_definition(name, type), _function(std::move(func)), _pos(pos) {
+std::shared_ptr<parameter> parameter::make_shared(std::shared_ptr<function> func, const std::string &name, const std::shared_ptr<type> &type, size_t pos) {
+    auto param = std::shared_ptr<parameter>(new parameter(std::move(func), pos));
+    param->init(name, type);
+    return param;
+}
+
+void parameter::update_mangled_name() {
+    // Parameter is not mangled cause not exported
 }
 
 void parameter::accept(model_visitor& visitor) {
@@ -220,9 +246,14 @@ void parameter::accept(model_visitor& visitor) {
 // Function
 //
 
-function::function(std::shared_ptr<element> parent, const std::string &name) :
-        element(parent),
-        _name(name) {
+std::shared_ptr<function> function::make_shared(std::shared_ptr<element> parent, const std::string& name) {
+    auto fn = std::shared_ptr<function>(new function(std::move(parent)));
+    fn->assign_name(name);
+    return fn;
+}
+
+void function::update_mangled_name() {
+    _mangled_name = mangler(get_context()).mangle_function(*this);
 }
 
 void function::accept(model_visitor &visitor) {
@@ -254,7 +285,7 @@ std::shared_ptr<structure> function::function::get_owner() {
     return std::dynamic_pointer_cast<structure>(parent<element>());
 }
 
-void function::return_type(std::shared_ptr<type> return_type) {
+void function::set_return_type(std::shared_ptr<type> return_type) {
     _return_type = return_type;
 }
 
@@ -266,7 +297,7 @@ std::shared_ptr<variable_definition> function::append_variable(const std::string
 }
 
 std::shared_ptr<variable_definition> function::do_create_variable(const std::string &name) {
-    return _parameters.emplace_back(new parameter(shared_as<function>(), name, _parameters.size()));
+    return _parameters.emplace_back(parameter::make_shared(shared_as<function>(), name, _parameters.size()));
 }
 
 void function::on_variable_defined(std::shared_ptr<variable_definition>) {
@@ -274,7 +305,7 @@ void function::on_variable_defined(std::shared_ptr<variable_definition>) {
 }
 
 std::shared_ptr<parameter> function::append_parameter(const std::string &name, std::shared_ptr<type> type) {
-    auto param = _parameters.emplace_back(new parameter(shared_as<function>(), name, type, _parameters.size()));
+    auto param = _parameters.emplace_back(parameter::make_shared(shared_as<function>(), name, type, _parameters.size()));
     _vars[name] = param;
     return param;
 }
@@ -283,15 +314,14 @@ std::shared_ptr<parameter> function::insert_parameter(const std::string &name, s
     if (pos >= _parameters.size()) {
         size_t idx = _parameters.size();
         while (idx < pos) {
-            _parameters.emplace_back(new parameter(shared_as<function>(), idx));
+            _parameters.emplace_back(parameter::make_shared(shared_as<function>(), idx));
             idx = _parameters.size();
         }
-        auto param = _parameters.emplace_back(new parameter(shared_as<function>(), name, type, idx));
+        auto param = _parameters.emplace_back(parameter::make_shared(shared_as<function>(), name, type, idx));
         _vars[name] = param;
         return param;
     } else {
-        auto res = _parameters.emplace(_parameters.begin() + pos,
-                                       new parameter(shared_as<function>(), name, type, pos));
+        auto res = _parameters.emplace(_parameters.begin() + pos, parameter::make_shared(shared_as<function>(), name, type, pos));
         _vars[name] = *res;
         auto it = res;
         while (++it != _parameters.end()) {
@@ -323,7 +353,7 @@ std::shared_ptr<const parameter> function::get_parameter(size_t index) const {
 
 std::shared_ptr<parameter> function::get_parameter(const std::string &name) {
     for (auto param: _parameters) {
-        if (param->get_name() == name) {
+        if (param->get_short_name() == name) {
             return param;
         }
     }
@@ -332,7 +362,7 @@ std::shared_ptr<parameter> function::get_parameter(const std::string &name) {
 
 std::shared_ptr<const parameter> function::get_parameter(const std::string &name) const {
     for (auto param: _parameters) {
-        if (param->get_name() == name) {
+        if (param->get_short_name() == name) {
             return param;
         }
     }
@@ -346,8 +376,19 @@ std::shared_ptr<const parameter> function::get_parameter(const std::string &name
 member_variable_definition::member_variable_definition(std::shared_ptr<structure> st) :
         element(st) {}
 
-member_variable_definition::member_variable_definition(std::shared_ptr<structure> st, const std::string &name) :
-        element(st), variable_definition(name) {}
+std::shared_ptr<member_variable_definition> member_variable_definition::make_shared(std::shared_ptr<structure> st) {
+    return std::shared_ptr<member_variable_definition>(new member_variable_definition(std::move(st)));
+}
+
+std::shared_ptr<member_variable_definition> member_variable_definition::make_shared(std::shared_ptr<structure> st, const std::string &name) {
+    auto var_def =  std::shared_ptr<member_variable_definition>(new member_variable_definition(std::move(st)));
+    var_def->init(name);
+    return var_def;
+}
+
+void member_variable_definition::update_mangled_name() {
+    // TODO Implement mangling scheme
+}
 
 void member_variable_definition::accept(model_visitor &visitor) {
     visitor.visit_member_variable_definition(*this);
@@ -358,9 +399,15 @@ void member_variable_definition::accept(model_visitor &visitor) {
 // Structure
 //
 
-structure::structure(std::shared_ptr<element> parent, const std::string& name) :
-    element(parent),
-    _name(name) {
+std::shared_ptr<structure> structure::make_shared(std::shared_ptr<element> parent, const std::string &name) {
+    auto st = std::shared_ptr<structure>(new structure(std::move(parent)));
+    st->assign_name(name);
+    return st;
+}
+
+void structure::update_mangled_name() {
+    // Useless but for information
+    _mangled_name = _name.has_root_prefix() ? mangler::mangle_structure(_name) : "";
 }
 
 void structure::accept(model_visitor& visitor) {
@@ -370,7 +417,7 @@ void structure::accept(model_visitor& visitor) {
 
 std::shared_ptr<function> structure::do_create_function(const std::string &name) {
     std::shared_ptr<structure> this_st = shared_as<structure>();
-    return std::shared_ptr<function>{new function(this_st, name)};
+    return std::shared_ptr<function>{function::make_shared(this_st, name)};
 }
 
 void structure::on_function_defined(std::shared_ptr<function> func) {
@@ -391,7 +438,7 @@ std::shared_ptr<function> structure::lookup_function(const std::string& name) co
 
 
 std::shared_ptr<variable_definition> structure::do_create_variable(const std::string &name) {
-    return std::shared_ptr<variable_definition>(new member_variable_definition(shared_as<structure>(), name));
+    return std::shared_ptr<variable_definition>(member_variable_definition::make_shared(shared_as<structure>(), name));
 }
 
 void structure::on_variable_defined(std::shared_ptr<variable_definition> var) {
@@ -419,8 +466,19 @@ std::shared_ptr<variable_definition> structure::lookup_variable(const std::strin
 global_variable_definition::global_variable_definition(std::shared_ptr<ns> ns) :
         element(ns) {}
 
-global_variable_definition::global_variable_definition(std::shared_ptr<ns> ns, const std::string &name) :
-        element(ns), variable_definition(name) {}
+std::shared_ptr<global_variable_definition> global_variable_definition::make_shared(std::shared_ptr<ns> ns) {
+    return std::shared_ptr<global_variable_definition>(new global_variable_definition(std::move(ns)));
+}
+std::shared_ptr<global_variable_definition> global_variable_definition::make_shared(std::shared_ptr<ns> ns, const std::string& name) {
+    auto var_def = std::shared_ptr<global_variable_definition>(new global_variable_definition(std::move(ns)));
+    var_def->init(name);
+    return var_def;
+}
+
+void global_variable_definition::update_mangled_name() {
+    _mangled_name = _name.has_root_prefix() ? mangler::mangle_global_variable(_name) : "";
+}
+
 
 void global_variable_definition::accept(model_visitor &visitor) {
     visitor.visit_global_variable_definition(*this);
@@ -429,24 +487,27 @@ void global_variable_definition::accept(model_visitor &visitor) {
 //
 // Namespace
 //
-ns::ns(std::shared_ptr<element> parent, const std::string &name) :
-        element(parent),
-        _name(name) {
+
+std::shared_ptr<ns> ns::make_shared(std::shared_ptr<element> parent, const std::string &name) {
+    auto nspace = std::shared_ptr<ns>(new ns(parent));
+    nspace->assign_name(name);
+    return nspace;
+}
+
+void ns::update_mangled_name() {
+    // Useless but for information
+    _mangled_name = _name.has_root_prefix() ? mangler::mangle_namespace(_name) : "";
 }
 
 void ns::accept(model_visitor &visitor) {
     visitor.visit_namespace(*this);
 }
 
-std::shared_ptr<ns> ns::create(std::shared_ptr<element> parent, const std::string &name) {
-    return std::shared_ptr<ns>(new ns(parent, name));
-}
-
 std::shared_ptr<ns> ns::get_child_namespace(const std::string &child_name) {
     auto it = _ns.find(child_name);
     std::shared_ptr<ns> namesp;
     if (it == _ns.end()) {
-        namesp = std::shared_ptr<ns>(new ns(shared_as<ns>(), child_name));
+        namesp = std::shared_ptr<ns>(ns::make_shared(shared_as<ns>(), child_name));
         _ns.insert({child_name, namesp});
         _children.push_back(namesp);
     } else {
@@ -465,7 +526,7 @@ std::shared_ptr<const ns> ns::get_child_namespace(const std::string &child_name)
 }
 
 std::shared_ptr<variable_definition> ns::do_create_variable(const std::string &name) {
-    return std::shared_ptr<variable_definition>(new global_variable_definition(std::dynamic_pointer_cast<ns>(shared_from_this()), name));
+    return std::shared_ptr<variable_definition>(global_variable_definition::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name));
 }
 
 void ns::on_variable_defined(std::shared_ptr<variable_definition> var) {
@@ -476,7 +537,7 @@ void ns::on_variable_defined(std::shared_ptr<variable_definition> var) {
 
 std::shared_ptr<function> ns::do_create_function(const std::string &name) {
     std::shared_ptr<ns> this_ns = shared_as<ns>();
-    return std::shared_ptr<function>{new function(this_ns, name)};
+    return std::shared_ptr<function>{function::make_shared(this_ns, name)};
 }
 
 void ns::on_function_defined(std::shared_ptr<function> func) {
@@ -484,7 +545,7 @@ void ns::on_function_defined(std::shared_ptr<function> func) {
 }
 
 std::shared_ptr<structure> ns::do_create_structure(const std::string &name) {
-    return std::shared_ptr<structure>(new structure(std::dynamic_pointer_cast<ns>(shared_from_this()), name));
+    return std::shared_ptr<structure>(structure::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name));
 }
 
 void ns::on_structure_defined(std::shared_ptr<structure> st) {
@@ -549,9 +610,14 @@ void unit::accept(model_visitor &visitor) {
     visitor.visit_unit(*this);
 }
 
+void unit::set_unit_name(const name& unit_name) {
+    _unit_name = unit_name.without_root_prefix();
+    get_root_namespace()->assign_name(unit_name.with_root_prefix());
+}
+
 std::shared_ptr<ns> unit::get_root_namespace() {
     if(!_root_ns) {
-        _root_ns = ns::create(shared_as<unit>(), "");
+        _root_ns = ns::make_shared(shared_as<unit>(), "");
     }
     return _root_ns;
 }

@@ -49,8 +49,6 @@ protected:
 
     unit& _unit;
 
-    std::vector<std::pair<std::string, std::shared_ptr<element>>> _naming_context;
-
 public:
 
     symbol_type_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
@@ -81,6 +79,7 @@ protected:
         throw resolution_error(message);
     }
 
+    void visit_named_element(named_element&);
 
     void visit_unit(unit&) override;
 

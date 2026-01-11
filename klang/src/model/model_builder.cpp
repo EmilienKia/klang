@@ -22,8 +22,20 @@
 #include "model_builder.hpp"
 
 #include "../common/common.hpp"
+#include <random>
+#include <sstream>
+#include <iomanip>
 
 namespace k::model {
+
+    static std::string gen_random_unsigned_id() {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<uint16_t> dis(0, 0xFFFF);
+        std::ostringstream oss;
+        oss << std::hex << std::setw(4) << std::setfill('0') << dis(gen);
+        return oss.str();
+    }
 
     void model_builder::visit(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit) {
         model_builder visitor(logger, context, unit);
@@ -34,18 +46,22 @@ namespace k::model {
         // Push root ns context
         stack<ns_context> push(_contexts, _unit.get_root_namespace());
 
-        if(unit.module_name) {
-            _unit.set_unit_name(unit.module_name->qname->to_name());
-        }
-
         super::visit_unit(unit);
+
+        if (_unit.get_unit_name().empty()) {
+            // If no module name defined, set a default one
+            _unit.set_unit_name(k::name("anon"+gen_random_unsigned_id()));
+        }
     }
 
-    void model_builder::visit_module_name(parse::ast::module_name &) {
-        // Not used, proceed at model level.
+    void model_builder::visit_module_name(parse::ast::module_name &name) {
+        if(name.qname) {
+            _unit.set_unit_name(name.qname->to_name());
+        }
     }
 
     void model_builder::visit_import(parse::ast::import &) {
+        // TODO Imports not supported yet
     }
 
     void model_builder::visit_identified_type_specifier(parse::ast::identified_type_specifier &) {
@@ -141,7 +157,7 @@ namespace k::model {
         // TODO add function specs
 
         if(func.type) {
-            function->return_type(_context->from_type_specifier(*func.type));
+            function->set_return_type(_context->from_type_specifier(*func.type));
         }
 
         for(auto param : func.params) {

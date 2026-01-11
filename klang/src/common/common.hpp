@@ -68,12 +68,24 @@ public:
         return _identifiers.empty();
     }
 
+    const std::vector<std::string>& parts() const {
+        return _identifiers;
+    }
+
     const std::string& at(size_t index) const {
         return _identifiers.at(index);
     }
 
     const std::string& operator[] (size_t index) const {
         return _identifiers[index];
+    }
+
+    const std::string& front() const {
+        return _identifiers.front();
+    }
+
+    const std::string& back() const {
+        return _identifiers.back();
     }
 
     bool operator == (const name& other) const;
@@ -83,6 +95,23 @@ public:
     operator std::string () const{
         return to_string();
     }
+
+    name with_root_prefix() const {
+        return name(true, _identifiers);
+    }
+
+    name without_root_prefix() const {
+        return name(false, _identifiers);
+    }
+
+    name with_back(const std::string& part) const {
+        std::vector<std::string> new_parts = _identifiers;
+        new_parts.push_back(part);
+        return name(_root_prefix, std::move(new_parts));
+    }
+
+    // TODO Parse a raw name, usefull for model::named_element
+    // static name parse_name(const std::string& str);
 };
 
 /**

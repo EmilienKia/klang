@@ -91,41 +91,45 @@ public:
     }
 
     void visit_namespace(ns& ns) override {
-        prefix() << "namespace '" << ns.get_name() << "' {" << std::endl;
+        prefix() << "namespace '" << ns.get_short_name() << "' ("
+                 << ns.get_fq_name() << " / " << ns.get_mangled_name()
+                 << ") {" << std::endl;
         {
             auto pf = prefix_inc();
             for(auto& child : ns.get_children()) {
                 child->accept(*this);
             }
         }
-        prefix() << "} // " << ns.get_name() << std::endl;
+        prefix() << "} // " << ns.get_short_name() << std::endl;
     }
 
     void visit_structure(structure& st) override {
-        prefix() << "struct '" << st.get_name() << "' {" << std::endl;
+        prefix() << "struct '" << st.get_short_name() << "' ("
+                 << st.get_fq_name() << " / " << st.get_mangled_name()
+                 << ") {" << std::endl;
         {
             auto pf = prefix_inc();
             for(auto& child : st.get_children()) {
                 child->accept(*this);
             }
         }
-        prefix() << "} // " << st.get_name() << std::endl;
+        prefix() << "} // " << st.get_short_name() << std::endl;
 
     }
 
     void visit_function(function& func) override {
-        prefix() << "function '" << func.name() << "' (";
+        prefix() << "function '" << func.get_short_name() << "' (";
         for(size_t idx = 0; idx<func.parameters().size(); idx++) {
             if(idx!=0) {
                 _stm << ", ";
             }
             auto param = func.parameters()[idx];
-            _stm << param->get_name() << " : ";
+            _stm << param->get_short_name() << " : ";
             dump_type(*param->get_type());
         }
         _stm << ") : ";
-        dump_type(*func.return_type());
-        _stm << std::endl;
+        dump_type(*func.get_return_type());
+        _stm << " (" << func.get_fq_name() << " / " << func.get_mangled_name() << ") " << std::endl;
         func.get_block()->accept(*this);
     }
 
@@ -140,15 +144,19 @@ public:
     }
 
     void visit_global_variable_definition(global_variable_definition& var) override {
-        visit_variable_definition(var);
+        visit_variable_definition(var, true);
         _stm << std::endl;
     }
 
-    void visit_variable_definition(k::model::variable_definition& var, bool inline_decl = false) {
+    void visit_variable_definition(k::model::variable_definition& var, bool full_name = false, bool inline_decl = false) {
         if(!inline_decl) {
             prefix();
         }
-        _stm << "variable '" << var.get_name() << "' : ";
+        _stm << "variable '" << var.get_short_name() << "' ";
+        if (full_name) {
+            _stm << "( " << var.get_fq_name() << " / " << var.get_mangled_name() << " )";
+        }
+        _stm << " : ";
         dump_type(*var.get_type());
         if(auto init = var.get_init_expr()) {
             _stm << " = ";
@@ -295,9 +303,9 @@ public:
     void visit_symbol_expression(symbol_expression& expr) override {
         // TODO support other symbol types, not only variables
         if(expr.is_variable_def()) {
-            _stm << "<<symbol-var-expr:" << expr.get_variable_def()->get_name() << ">>";
+            _stm << "<<symbol-var-expr:" << expr.get_variable_def()->get_short_name() << ">>";
         } else if (expr.is_function()) {
-            _stm << "<<symbol-func-expr:" << expr.get_function()->name() << ">>";
+            _stm << "<<symbol-func-expr:" << expr.get_function()->get_short_name() << ">>";
         } else {
             _stm << "<<unresolved-symbol-expr:" << expr.get_name().to_string() << ">>";
         }

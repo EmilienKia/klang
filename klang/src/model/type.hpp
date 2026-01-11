@@ -176,6 +176,8 @@ protected:
 
 public:
 
+    PRIMITIVE_TYPE get_type() const {return _type;}
+
     bool is_resolved() const override;
     bool is_primitive() const override;
 
@@ -251,7 +253,8 @@ public:
 
     std::string to_string() const override;
 
-//    std::shared_ptr<reference_type> get_reference() override;
+    std::shared_ptr<type> get_referenced_type() const {return get_subtype();}
+
 };
 
 inline bool type::is_reference(const std::shared_ptr<type>& type) {
@@ -281,6 +284,9 @@ public:
     llvm::Type* get_llvm_type() const override;
 
     std::string to_string() const override;
+
+    std::shared_ptr<type> get_pointed_type() const {return get_subtype();}
+
 };
 
 inline bool type::is_pointer(const std::shared_ptr<type>& type) {
@@ -380,7 +386,7 @@ public:
     bool is_resolved() const override;
 
     std::string to_string() const override;
-    std::shared_ptr<structure> get_struct();
+    std::shared_ptr<structure> get_struct() const;
 
     inline fields_t::size_type fields_size()const {return _fields.size();}
     inline fields_t::const_iterator fields_begin()const {return _fields.begin();}

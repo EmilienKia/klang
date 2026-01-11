@@ -69,11 +69,11 @@ symbol_expression::symbol_expression(const name &name) :
         _name(name) {}
 
 symbol_expression::symbol_expression(const std::shared_ptr<variable_definition> &var) :
-        _name(var->get_name()),
+        _name(var->get_short_name()),
         _symbol(var) {}
 
 symbol_expression::symbol_expression(const std::shared_ptr<function> &func) :
-        _name(func->name()),
+        _name(func->get_short_name()),
         _symbol(func) {}
 
 

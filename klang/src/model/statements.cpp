@@ -152,7 +152,7 @@ std::shared_ptr<const variable_holder> for_statement::get_variable_holder() cons
 }
 
 std::shared_ptr<variable_definition> for_statement::do_create_variable(const std::string &name) {
-    return std::shared_ptr<variable_definition>(new variable_statement(shared_as<statement>(), name));
+    return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<statement>(), name));
 }
 
 void for_statement::on_variable_defined(std::shared_ptr<variable_definition> var) {
@@ -183,6 +183,11 @@ void expression_statement::accept(model_visitor &visitor) {
 //
 // Variable statement
 //
+
+void variable_statement::update_mangled_name() {
+    // TODO Implement mangling scheme
+}
+
 void variable_statement::accept(model_visitor &visitor) {
     visitor.visit_variable_statement(*this);
 }
@@ -236,7 +241,7 @@ void block::append_statement(std::shared_ptr<statement> stmt) {
 }
 
 std::shared_ptr<variable_definition> block::do_create_variable(const std::string &name) {
-    return std::shared_ptr<variable_definition>(new variable_statement(shared_as<block>(), name));
+    return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<block>(), name));
 }
 
 void block::on_variable_defined(std::shared_ptr<variable_definition> var) {

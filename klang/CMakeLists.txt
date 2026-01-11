@@ -41,6 +41,8 @@ add_library(klangcomp
         src/gen/unit_llvm_ir_gen.cpp
         src/common/logger.cpp
         src/common/logger.hpp
+        src/model/mangler.hpp
+        src/model/mangler.cpp
         src/model/expressions.cpp
         src/model/expressions.hpp
         src/model/model_visitor.cpp

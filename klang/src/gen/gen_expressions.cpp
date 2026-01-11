@@ -130,15 +130,15 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
         // Handle source of symbol
         if (auto param = std::dynamic_pointer_cast<parameter>(var_def)) {
             ptr =  _parameter_variables[param];
-            name = param->get_name();
+            name = param->get_short_name();
         } else if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_def)) {
             ptr = _global_vars[global_var];
-            name = global_var->get_name();
+            name = global_var->get_short_name();
         } else if (auto local_var = std::dynamic_pointer_cast<variable_statement>(var_def)) {
             ptr = _variables[local_var];
-            name = local_var->get_name();
+            name = local_var->get_short_name();
         } else if (auto member_var = std::dynamic_pointer_cast<member_variable_definition>(var_def)) {
-            name = member_var->get_name();
+            name = member_var->get_short_name();
 
             // Get 'this' pointer
             llvm::Value* this_value_ref = nullptr;
@@ -164,7 +164,7 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
                             _context->get_llvm_type(struct_type),
                             this_value_ref,
                             (unsigned)field->index,
-                            "this_" + struct_ref->get_name() + "_" + name + "_ptr"
+                            "this_" + struct_ref->get_short_name() + "_" + name + "_ptr"
                     );
                 } else {
                     // TODO throw an exception
@@ -2060,7 +2060,7 @@ void symbol_type_resolver::visit_function_invocation_expression(function_invocat
                     if (auto func = st->lookup_function(callee->get_name()); func) {
                         if(!func->is_member()) {
                             // TODO throw an exception
-                            std::cerr << "Error : function '" << callee->get_name().to_string() << "' is not a member function of struct '" << st->get_name() << "'" << std::endl;
+                            std::cerr << "Error : function '" << callee->get_name().to_string() << "' is not a member function of struct '" << st->get_short_name() << "'" << std::endl;
                             return;
                         }
                         // TODO Check the found function own is of compatible type
@@ -2068,10 +2068,10 @@ void symbol_type_resolver::visit_function_invocation_expression(function_invocat
                         // TODO enforce prototype matching
                         // Function prototype and expression type are set at resolution
                         callee->resolve(func);
-                        expr.set_type(func->return_type());
+                        expr.set_type(func->get_return_type());
                     } else {
                         // TODO throw an exception
-                        std::cerr << "Error : cannot find member function '" << callee->get_name().to_string() << "' in struct '" << st->get_name() << "'" << std::endl;
+                        std::cerr << "Error : cannot find member function '" << callee->get_name().to_string() << "' in struct '" << st->get_short_name() << "'" << std::endl;
                         return;
                     }
                 } else {
@@ -2098,7 +2098,7 @@ void symbol_type_resolver::visit_function_invocation_expression(function_invocat
                             // TODO enforce prototype matching
                             // Function prototype and expression type are set at resolution
                             callee->resolve(function);
-                            expr.set_type(function->return_type());
+                            expr.set_type(function->get_return_type());
                         }
                     }
                 }

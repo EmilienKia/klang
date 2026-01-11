@@ -154,29 +154,65 @@ inline std::shared_ptr<const element> element::parent<element>() const {
 }
 
 
+class named_element
+{
+protected:
+    name _name;
+    std::string _short_name;
+    std::string _fq_name;
+    std::string _mangled_name;
 
+    virtual void update_names();
+    virtual void update_mangled_name() = 0;
 
+public:
+    named_element() = default;
+    named_element(const named_element&) = default;
+    named_element(named_element&&) = default;
 
+    void assign_name(const std::string& name) {
+        _name = name;
+        update_names();
+    }
+
+    void assign_name(const name& name) {
+        _name = name;
+        update_names();
+    }
+
+    named_element& operator=(const std::string& name) {
+        assign_name(name);
+        return *this;
+    }
+
+    named_element& operator=(const name& name) {
+        assign_name(name);
+        return *this;
+    }
+
+    const name& get_name() const {
+        return _name;
+    }
+
+    const std::string& get_short_name() const {
+        return _short_name;
+    }
+
+    const std::string& get_fq_name() const {
+        return _fq_name;
+    }
+
+    const std::string& get_mangled_name() const {
+        return _mangled_name;
+    }
+};
 
 /**
  * Interface for variables
  */
-class variable_declaration
-{
-public:
-    virtual const std::string& get_name() const = 0;
-    virtual std::shared_ptr<type> get_type() const = 0;
-
-    virtual std::shared_ptr<expression> get_init_expr() const = 0;
-};
-
-
-class variable_definition : public variable_declaration
+class variable_definition : public named_element
 {
 protected:
-    /** Variable name.*/
-    std::string _name;
-
     /** Type of the variable */
     std::shared_ptr<type> _type;
 
@@ -186,13 +222,12 @@ protected:
     variable_definition() = default;
     variable_definition(const variable_definition&) = default;
     variable_definition(variable_definition&&) = default;
-    variable_definition(const std::string& name) : _name(name) {}
-    variable_definition(const std::string& name, const std::shared_ptr<type> &type) : _name(name), _type(type) {}
 
 public:
-    virtual const std::string& get_name() const override;
-    virtual std::shared_ptr<type> get_type() const override;
-    virtual std::shared_ptr<expression> get_init_expr() const override;
+    virtual void init(const std::string &name, const std::shared_ptr<type> &type = nullptr);
+
+    virtual std::shared_ptr<type> get_type() const;
+    virtual std::shared_ptr<expression> get_init_expr() const;
     virtual variable_definition& set_type(std::shared_ptr<type> type);
     virtual variable_definition& set_init_expr(std::shared_ptr<expression> init_expr);
 };
@@ -270,7 +305,10 @@ protected:
 
     member_variable_definition(std::shared_ptr<structure> st);
 
-    member_variable_definition(std::shared_ptr<structure> st, const std::string& name);
+    static std::shared_ptr<member_variable_definition> make_shared(std::shared_ptr<structure> st);
+    static std::shared_ptr<member_variable_definition> make_shared(std::shared_ptr<structure> st, const std::string &name);
+
+    void update_mangled_name() override;
 
 public:
     void accept(model_visitor& visitor) override;
@@ -278,20 +316,21 @@ public:
 };
 
 
-class structure : public element, public variable_holder, public function_holder {
+class structure : public element, public named_element, public variable_holder, public function_holder {
 protected:
     friend class ns;
     friend class gen::unit_llvm_ir_gen;
     friend class gen::symbol_type_resolver;
-
-    std::string _name;
 
     /** Collection of all children of this namespace. */
     std::vector<std::shared_ptr<element>> _children;
 
     std::shared_ptr<struct_type> _type;
 
-    structure(std::shared_ptr<element> parent, const std::string& name);
+    structure(std::shared_ptr<element> parent) :
+        element(parent) {}
+
+    static std::shared_ptr<structure> make_shared(std::shared_ptr<element> parent, const std::string &name);
 
     std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
@@ -302,13 +341,12 @@ protected:
     void set_struct_type(const std::shared_ptr<struct_type>& st_type) {
         _type = st_type;
     }
+
+    void update_mangled_name() override;
+
 public:
 
     void accept(model_visitor& visitor) override;
-
-    const std::string& get_name() const {
-        return _name;
-    }
 
     std::shared_ptr<struct_type> get_struct_type() const {
         return _type;
@@ -338,8 +376,13 @@ protected:
     size_t _pos;
 
     parameter(std::shared_ptr<function> func, size_t pos);
-    parameter(std::shared_ptr<function> func, const std::string &name, size_t pos);
-    parameter(std::shared_ptr<function> func, const std::string &name, const std::shared_ptr<type> &type, size_t pos);
+
+    static std::shared_ptr<parameter> make_shared(std::shared_ptr<function> func, size_t pos);
+    static std::shared_ptr<parameter> make_shared(std::shared_ptr<function> func, const std::string &name, size_t pos);
+    static std::shared_ptr<parameter> make_shared(std::shared_ptr<function> func, const std::string &name, const std::shared_ptr<type> &type, size_t pos);
+
+    void update_mangled_name() override;
+
 public:
     void accept(model_visitor& visitor) override;
 
@@ -351,33 +394,34 @@ public:
     std::shared_ptr<const function> get_function() const {return _function;}
 };
 
-class function : public element, public variable_holder {
+class function : public element, public named_element, public variable_holder {
 protected:
 
     friend class ns;
     friend class structure;
     friend class gen::unit_llvm_ir_gen;
 
-    std::string _name;
-
     std::shared_ptr<type> _return_type;
     std::vector<std::shared_ptr<parameter>> _parameters;
 
     std::shared_ptr<block> _block;
 
-    function(std::shared_ptr<element> parent, const std::string& name);
+    function(std::shared_ptr<element> parent) :
+        element(parent) {}
+
+    static std::shared_ptr<function> make_shared(std::shared_ptr<element> parent, const std::string& name);
 
     std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
+    void update_mangled_name() override;
+
 public:
     void accept(model_visitor& visitor) override;
 
-    const std::string& name() const {return _name;}
-
-    void return_type(std::shared_ptr<type> return_type);
-    std::shared_ptr<type> return_type() {return _return_type;}
-    std::shared_ptr<const type> return_type() const {return _return_type;}
+    void set_return_type(std::shared_ptr<type> return_type);
+    std::shared_ptr<type> get_return_type() {return _return_type;}
+    std::shared_ptr<const type> get_return_type() const {return _return_type;}
 
     const std::vector<std::shared_ptr<parameter>>& parameters() const {
         return _parameters;
@@ -388,6 +432,7 @@ public:
     std::shared_ptr<parameter> append_parameter(const std::string& name, std::shared_ptr<type> type);
     std::shared_ptr<parameter> insert_parameter(const std::string& name, std::shared_ptr<type> type, size_t pos);
 
+    size_t get_parameter_size() const {return _parameters.size();}
     std::shared_ptr<parameter> get_parameter(size_t index);
     std::shared_ptr<const parameter> get_parameter(size_t index)const;
 
@@ -411,7 +456,10 @@ protected:
 
     global_variable_definition(std::shared_ptr<ns> ns);
 
-    global_variable_definition(std::shared_ptr<ns> ns, const std::string& name);
+    static std::shared_ptr<global_variable_definition> make_shared(std::shared_ptr<ns> ns);
+    static std::shared_ptr<global_variable_definition> make_shared(std::shared_ptr<ns> ns, const std::string& name);
+
+    void update_mangled_name() override;
 
 public:
     void accept(model_visitor& visitor) override;
@@ -419,16 +467,10 @@ public:
 };
 
 
-class ns : public element, public variable_holder, public function_holder, public structure_holder {
-private:
-    ns(std::shared_ptr<element> parent, const std::string& name);
-
+class ns : public element, public named_element, public variable_holder, public function_holder, public structure_holder {
 protected:
 
     friend class unit;
-
-    /** Name of the namespace. */
-    std::string _name;
 
     /** Collection of all children of this namespace. */
     std::vector<std::shared_ptr</*ns_element*/element>> _children;
@@ -439,9 +481,11 @@ protected:
     /** Map of all structures defined in this namespace. */
     std::map<std::string, std::shared_ptr<structure>> _structs;
 
-    static std::shared_ptr<ns> create(std::shared_ptr<element> parent, const std::string& name);
+    ns(std::shared_ptr<element> parent):
+        element(parent) {}
 
-protected:
+    static std::shared_ptr<ns> make_shared(std::shared_ptr<element> parent, const std::string& name);
+
     std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
@@ -450,14 +494,11 @@ protected:
 
     std::shared_ptr<structure> do_create_structure(const std::string &name) override;
     void on_structure_defined(std::shared_ptr<structure>) override;
+
+    void update_mangled_name() override;
 public:
 
     void accept(model_visitor& visitor) override;
-
-    const std::string& get_name() const {
-        return _name;
-    }
-
 
     //
     // This namespace manipulations
@@ -467,7 +508,6 @@ public:
      * Test if this namespace is the root namespace.
      * @return True if root namespace, false otherwise.
      */
-    //bool is_root() const { return !_parent_ns; }
     bool is_root() const { return !!parent<unit>(); }
 
     //
@@ -538,10 +578,7 @@ public:
      * Set the model name
      * @param unit_name New model name
      */
-    void set_unit_name(const name& unit_name) {
-        _unit_name = unit_name;
-    }
-
+    void set_unit_name(const name& unit_name);
 
     //
     // Imports
@@ -577,7 +614,6 @@ public:
     std::shared_ptr<const ns> find_namespace(std::string_view name) const;
 
 };
-
 
 
 } // namespace k::model

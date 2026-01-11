@@ -341,7 +341,7 @@ std::string struct_type::to_string() const {
     return "struct:" + _name;
 }
 
-std::shared_ptr<structure> struct_type::get_struct() {
+std::shared_ptr<structure> struct_type::get_struct() const {
     return _struct.lock();
 }
 
@@ -404,7 +404,7 @@ std::string function_reference_type::to_string() const {
 
 std::string member_function_reference_type::to_string() const {
     std::ostringstream stm;
-    stm << "memfn:((" << _member_of->get_name() << ")(";
+    stm << "memfn:((" << _member_of->get_short_name() << ")(";
     for(size_t n=0; n<_parameter_types.size(); ++n) {
         if(n>0) {
             stm << ", ";
