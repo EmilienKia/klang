@@ -52,6 +52,8 @@ add_library(klangcomp
         src/gen/gen_expressions.cpp
         src/gen/gen_statements.cpp
         src/gen/gen_unit.cpp
+        src/compiler.hpp
+        src/compiler.cpp
 )
 
 add_executable(klangc

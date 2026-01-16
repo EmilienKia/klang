@@ -55,7 +55,11 @@ protected:
 
 public:
 
+    parser(k::log::logger& logger);
+
     parser(k::log::logger& logger, std::string_view src);
+
+    void parse(std::string_view src);
 
     /**
      * UNIT := ?MODULE_DECLARATION *IMPORT DECLARATIONS

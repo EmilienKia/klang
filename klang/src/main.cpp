@@ -20,6 +20,7 @@
 #include <string_view>
 #include <vector>
 
+#include "compiler.hpp"
 #include "common/logger.hpp"
 #include "parse/parser.hpp"
 #include "parse/ast_dump.hpp"
@@ -33,76 +34,11 @@ using namespace k;
 
 k::log::logger logger;
 
-
 std::unique_ptr<k::model::gen::unit_llvm_jit> gen(std::string_view src, bool optimize = true, bool dump = true) {
-    k::log::logger log;
-    k::parse::parser parser(log, src);
-    std::shared_ptr<k::parse::ast::unit> ast_unit = parser.parse_unit();
-
-    if(dump) {
-        std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
-        k::parse::dump::ast_dump_visitor visit(std::cout);
-        visit.visit_unit(*ast_unit);
-    }
-
-    auto context = k::model::context::create(); 
-
-    auto unit = k::model::unit::create(context);
-    if(dump) {
-        std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
-    }
-    k::model::model_builder::visit(log, context, *ast_unit, *unit);
-
-    if(dump) {
-        k::model::dump::unit_dump unit_dump(std::cout);
-        unit_dump.dump(*unit);
-    }
-
-    k::model::gen::symbol_resolver symbol_resolver(log, context, *unit);
-    symbol_resolver.resolve();
-
-    if(dump) {
-        k::model::dump::unit_dump unit_dump(std::cout);
-        std::cout << "#" << std::endl << "# Symbol resolution" << std::endl << "#" << std::endl;
-        unit_dump.dump(*unit);
-    }
-
-    context->resolve_types();
-
-    k::model::gen::type_reference_resolver type_ref_resolver(log, context, *unit);
-    type_ref_resolver.resolve();
-
-    if(dump) {
-        k::model::dump::unit_dump unit_dump(std::cout);
-        std::cout << "#" << std::endl << "# Type resolution" << std::endl << "#" << std::endl;
-        unit_dump.dump(*unit);
-    }
-
-    k::model::gen::unit_llvm_ir_gen gen(log, context, *unit);
-    if(dump) {
-        std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
-    }
-    unit->accept(gen);
-    gen.verify();
-
-    if(dump) {
-        gen.dump();
-    }
-
-    if(dump) {
-        std::cout << "#" << std::endl << "# LLVM Optimize Module" << std::endl << "#" << std::endl;
-    }
-    if (optimize) {
-        gen.optimize_functions();
-    }
-    gen.verify();
-    if(dump) {
-        gen.dump();
-    }
-
-    return gen.to_jit();
+    k::compiler comp;
+    comp.compile(src, false, dump);
+    return comp.to_jit();
 }
-
 
 
 

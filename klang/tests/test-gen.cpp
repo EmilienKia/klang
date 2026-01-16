@@ -26,74 +26,13 @@
 #include "../src/model/model_dump.hpp"
 #include "../src/gen/resolvers.hpp"
 #include "../src/gen/unit_llvm_ir_gen.hpp"
+#include "../src/compiler.hpp"
 
 
 std::unique_ptr<k::model::gen::unit_llvm_jit> gen(std::string_view src, bool dump = false) {
-    try {
-        k::log::logger log;
-        k::parse::parser parser(log, src);
-        std::shared_ptr<k::parse::ast::unit> ast_unit = parser.parse_unit();
-
-        if(dump) {
-            k::parse::dump::ast_dump_visitor visit(std::cout);
-            std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
-            visit.visit_unit(*ast_unit);
-        }
-
-        auto context = k::model::context::create();
-        auto unit = k::model::unit::create(context);
-        k::model::model_builder::visit(log, context, *ast_unit, *unit);
-
-        if(dump) {
-            k::model::dump::unit_dump unit_dump(std::cout);
-            std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
-            unit_dump.dump(*unit);
-        }
-
-        k::model::gen::symbol_resolver symbol_resolver(log, context, *unit);
-        symbol_resolver.resolve();
-
-        if(dump) {
-            k::model::dump::unit_dump unit_dump(std::cout);
-            std::cout << "#" << std::endl << "# Symbol resolution" << std::endl << "#" << std::endl;
-            unit_dump.dump(*unit);
-        }
-
-        context->resolve_types();
-
-        k::model::gen::type_reference_resolver type_ref_resolver(log, context, *unit);
-        type_ref_resolver.resolve();
-
-        if(dump) {
-            k::model::dump::unit_dump unit_dump(std::cout);
-            std::cout << "#" << std::endl << "# Type resolution" << std::endl << "#" << std::endl;
-            unit_dump.dump(*unit);
-        }
-
-        k::model::gen::unit_llvm_ir_gen gen(log, context, *unit);
-        unit->accept(gen);
-        gen.verify();
-
-        if(dump) {
-            std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
-            gen.dump();
-        }
-
-        //gen.optimize_functions();
-        gen.verify();
-
-        /*
-        if(dump) {
-            std::cout << "#" << std::endl << "# LLVM Optimize Module" << std::endl << "#" << std::endl;
-            gen.dump();
-        }
-        */
-
-        return gen.to_jit();
-    } catch (std::exception e) {
-        std::cerr << "Exception : " << e.what() << std::endl;
-        return nullptr;
-    }
+    k::compiler comp;
+    comp.compile(src, false, dump);
+    return comp.to_jit();
 }
 
 

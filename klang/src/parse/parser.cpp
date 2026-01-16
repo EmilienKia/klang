@@ -40,10 +40,19 @@ parsing_error::parsing_error(const char *string) :
 //
 // Parser
 //
+parser::parser(k::log::logger& logger):
+    lexeme_logger(logger, 0x10000),
+    _lexer(logger)
+{}
+
 parser::parser(k::log::logger& logger, std::string_view src):
     lexeme_logger(logger, 0x10000),
     _lexer(logger)
 {
+    _lexer.parse(src);
+}
+
+void parser::parse(std::string_view src) {
     _lexer.parse(src);
 }
 
