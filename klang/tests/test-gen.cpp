@@ -24,58 +24,76 @@
 #include "../src/model/model.hpp"
 #include "../src/model/model_builder.hpp"
 #include "../src/model/model_dump.hpp"
-#include "../src/gen/symbol_type_resolver.hpp"
+#include "../src/gen/resolvers.hpp"
 #include "../src/gen/unit_llvm_ir_gen.hpp"
 
 
 std::unique_ptr<k::model::gen::unit_llvm_jit> gen(std::string_view src, bool dump = false) {
-    k::log::logger log;
-    k::parse::parser parser(log, src);
-    std::shared_ptr<k::parse::ast::unit> ast_unit = parser.parse_unit();
+    try {
+        k::log::logger log;
+        k::parse::parser parser(log, src);
+        std::shared_ptr<k::parse::ast::unit> ast_unit = parser.parse_unit();
 
-    if(dump) {
-        k::parse::dump::ast_dump_visitor visit(std::cout);
-        std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
-        visit.visit_unit(*ast_unit);
+        if(dump) {
+            k::parse::dump::ast_dump_visitor visit(std::cout);
+            std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
+            visit.visit_unit(*ast_unit);
+        }
+
+        auto context = k::model::context::create();
+        auto unit = k::model::unit::create(context);
+        k::model::model_builder::visit(log, context, *ast_unit, *unit);
+
+        if(dump) {
+            k::model::dump::unit_dump unit_dump(std::cout);
+            std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
+            unit_dump.dump(*unit);
+        }
+
+        k::model::gen::symbol_resolver symbol_resolver(log, context, *unit);
+        symbol_resolver.resolve();
+
+        if(dump) {
+            k::model::dump::unit_dump unit_dump(std::cout);
+            std::cout << "#" << std::endl << "# Symbol resolution" << std::endl << "#" << std::endl;
+            unit_dump.dump(*unit);
+        }
+
+        context->resolve_types();
+
+        k::model::gen::type_reference_resolver type_ref_resolver(log, context, *unit);
+        type_ref_resolver.resolve();
+
+        if(dump) {
+            k::model::dump::unit_dump unit_dump(std::cout);
+            std::cout << "#" << std::endl << "# Type resolution" << std::endl << "#" << std::endl;
+            unit_dump.dump(*unit);
+        }
+
+        k::model::gen::unit_llvm_ir_gen gen(log, context, *unit);
+        unit->accept(gen);
+        gen.verify();
+
+        if(dump) {
+            std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
+            gen.dump();
+        }
+
+        //gen.optimize_functions();
+        gen.verify();
+
+        /*
+        if(dump) {
+            std::cout << "#" << std::endl << "# LLVM Optimize Module" << std::endl << "#" << std::endl;
+            gen.dump();
+        }
+        */
+
+        return gen.to_jit();
+    } catch (std::exception e) {
+        std::cerr << "Exception : " << e.what() << std::endl;
+        return nullptr;
     }
-
-    auto context = k::model::context::create();
-    auto unit = k::model::unit::create(context);
-    k::model::model_builder::visit(log, context, *ast_unit, *unit);
-
-    if(dump) {
-        k::model::dump::unit_dump unit_dump(std::cout);
-        std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
-        unit_dump.dump(*unit);
-    }
-
-    k::model::gen::symbol_type_resolver var_resolver(log, context, *unit);
-    var_resolver.resolve();
-
-    if(dump) {
-        k::model::dump::unit_dump unit_dump(std::cout);
-        std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
-        unit_dump.dump(*unit);
-    }
-
-    k::model::gen::unit_llvm_ir_gen gen(log, context, *unit);
-    unit->accept(gen);
-    gen.verify();
-
-    if(dump) {
-        std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
-        gen.dump();
-    }
-
-    gen.optimize_functions();
-    gen.verify();
-
-    if(dump) {
-        std::cout << "#" << std::endl << "# LLVM Optimize Module" << std::endl << "#" << std::endl;
-        gen.dump();
-    }
-
-    return gen.to_jit();
 }
 
 
@@ -2432,7 +2450,46 @@ TEST_CASE("Array indices references", "[gen][refs][array]") {
 // Structure content references and invocation
 //
 
-TEST_CASE("Structure content references and invocation", "[gen][struct]") {
+
+TEST_CASE("Structure content references and invocation with local variable", "[gen][struct]") {
+    auto jit = gen(R"SRC(
+        module __structs__;
+
+        struct plop {
+            a : int;
+            b: int;
+            add(c: int) : int {
+                return a + b + c;
+            }
+        }
+
+        // Test member function invocation with local object
+        test_local() : int {
+            q : plop;
+            q.a = 10;
+            q.b = 32;
+            return q.add(8);
+        }
+
+        another_test_local() : int {
+            return test_local() + 5;
+        }
+
+        )SRC", true);
+    REQUIRE(jit);
+
+    auto test_local = jit->lookup_symbol < int(*)() > ("test_local");
+    auto res_test_local = test_local();
+    REQUIRE( res_test_local == (10 + 32 + 8) );
+
+    auto another_test_local = jit->lookup_symbol < int(*)() > ("another_test_local");
+    auto res_another_test_local = another_test_local();
+    REQUIRE( res_another_test_local == (10 + 32 + 5 + 8) );
+
+}
+
+
+TEST_CASE("Structure content references and invocation with global variable", "[gen][struct]") {
     auto jit = gen(R"SRC(
         module __structs__;
 
@@ -2442,18 +2499,6 @@ TEST_CASE("Structure content references and invocation", "[gen][struct]") {
             add() : int {
                 return a + b;
             }
-        }
-
-        // Test member function invocation with local object
-        test_local() : int {
-            q : plop;
-            q.a = 10;
-            q.b = 32;
-            return q.add();
-        }
-
-        another_test_local() : int {
-            return test_local() + 5;
         }
 
         // Test member function invocation with global object
@@ -2474,17 +2519,8 @@ TEST_CASE("Structure content references and invocation", "[gen][struct]") {
             p.b += 12;
             return p.add();
         }
-
         )SRC");
     REQUIRE(jit);
-
-    auto test_local = jit->lookup_symbol < int(*)() > ("test_local");
-    auto res_test_local = test_local();
-    REQUIRE( res_test_local == 42 );
-
-    auto another_test_local = jit->lookup_symbol < int(*)() > ("another_test_local");
-    auto res_another_test_local = another_test_local();
-    REQUIRE( res_another_test_local == 47 );
 
     auto test_global = jit->lookup_symbol < int(*)() > ("test_global");
     auto res_test_global = test_global();
@@ -2504,5 +2540,106 @@ TEST_CASE("Structure content references and invocation", "[gen][struct]") {
     REQUIRE( res_test_accesses == 52 );
     REQUIRE( glop->a == 5 );
     REQUIRE( glop->b == 17 );
+}
+
+
+TEST_CASE("Structure content and invocation through reference", "[gen][struct]") {
+    SKIP(); // Currently, explicit reference types are not implemented yet
+    auto jit = gen(R"SRC(
+        module __structs__;
+
+        struct plop {
+            a : int;
+            b: int;
+            add() : int {
+                return a + b;
+            }
+        }
+
+        // Test member function invocation with ref param object
+        test_ref_call(r: plop&) : int {
+            r.b = 72;
+            return r.add();
+        }
+
+        test_ref() : int {
+            l : plop;
+            l.a = 28;
+            return test_ref_call(l) + l.b;
+        }
+
+        )SRC");
+    REQUIRE(jit);
+
+    auto test_ref = jit->lookup_symbol < int(*)() > ("test_ref");
+    auto res_test_ref = test_ref();
+    REQUIRE( res_test_ref == ((28 + 72) + 72) );
+
+}
+
+//
+// Var name lookup and "this" usage
+//
+
+TEST_CASE("Implicit and explicit 'this' name lookup", "[gen][struct]") {
+    auto jit = gen(R"SRC(
+        module __structs__;
+
+        struct plop {
+            a: double;
+            b: int;
+            c: int;
+            implicit() : int {
+                return b;
+            }
+            explicit() : int {
+                return this.b;
+            }
+        }
+
+        test() : int {
+            p : plop;
+            p.a = 42.2;
+            p.b = 10;
+            p.c = 35;
+            return p.implicit() + p.explicit();
+        }
+
+        )SRC", true);
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol < int(*)() > ("test");
+    auto res_test = test();
+    REQUIRE( res_test == (10 + 10) );
+
+}
+
+TEST_CASE("This and var name lookup", "[gen][struct]") {
+    auto jit = gen(R"SRC(
+        module __structs__;
+
+        struct plop {
+            a: double;
+            b: int;
+            c: int;
+            add(b: int) : int {
+                return this.b + b;
+            }
+        }
+
+        test() : int {
+            p : plop;
+            p.a = 42.2;
+            p.b = 10;
+            p.c = 35;
+            return p.add(20);
+        }
+
+        )SRC", true);
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol < int(*)() > ("test");
+    auto res_test = test();
+    REQUIRE( res_test == (10 + 20) );
 
 }

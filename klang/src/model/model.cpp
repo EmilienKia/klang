@@ -256,6 +256,13 @@ void function::update_mangled_name() {
     _mangled_name = mangler(get_context()).mangle_function(*this);
 }
 
+void function::create_this_parameter() {
+    if (is_member() && !_this_param) {
+        _this_param = parameter::make_shared(shared_as<function>(), "this", get_owner()->get_struct_type()->get_reference(), -1);
+        _this_param->set_parent(shared_from_this());
+    }
+}
+
 void function::accept(model_visitor &visitor) {
     visitor.visit_function(*this);
 }

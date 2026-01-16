@@ -37,7 +37,7 @@ add_library(klangcomp
         src/common/common.cpp
         src/model/type.cpp
         src/model/model_builder.cpp
-        src/gen/symbol_type_resolver.cpp
+        src/gen/resolvers.cpp
         src/gen/unit_llvm_ir_gen.cpp
         src/common/logger.cpp
         src/common/logger.hpp

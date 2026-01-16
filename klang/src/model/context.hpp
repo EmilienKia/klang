@@ -70,6 +70,8 @@ public:
     std::shared_ptr<type> from_type_specifier(const k::parse::ast::type_specifier& type_spec);
     std::shared_ptr<type> from_literal(const k::lex::any_literal &literal);
 
+    void add_struct(std::shared_ptr<struct_type> st_type);
+
     llvm::Type* get_llvm_type(const std::shared_ptr<type>& type);
 
     void resolve_types();
@@ -82,9 +84,6 @@ protected:
 
     friend class gen::unit_llvm_ir_gen;
     std::unique_ptr<llvm::LLVMContext> move_llvm_context();
-
-    friend class struct_type_builder;
-    void add_struct(std::shared_ptr<struct_type> st_type);
 
 private:
     void init();

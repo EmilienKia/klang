@@ -26,7 +26,7 @@
 #include "model/model.hpp"
 #include "model/model_builder.hpp"
 #include "model/model_dump.hpp"
-#include "gen/symbol_type_resolver.hpp"
+#include "gen/resolvers.hpp"
 #include  "gen/unit_llvm_ir_gen.hpp"
 
 using namespace k;
@@ -58,14 +58,23 @@ std::unique_ptr<k::model::gen::unit_llvm_jit> gen(std::string_view src, bool opt
         unit_dump.dump(*unit);
     }
 
-    k::model::gen::symbol_type_resolver var_resolver(log, context, *unit);
-    if(dump) {
-        std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
-    }
-    var_resolver.resolve();
+    k::model::gen::symbol_resolver symbol_resolver(log, context, *unit);
+    symbol_resolver.resolve();
 
     if(dump) {
         k::model::dump::unit_dump unit_dump(std::cout);
+        std::cout << "#" << std::endl << "# Symbol resolution" << std::endl << "#" << std::endl;
+        unit_dump.dump(*unit);
+    }
+
+    context->resolve_types();
+
+    k::model::gen::type_reference_resolver type_ref_resolver(log, context, *unit);
+    type_ref_resolver.resolve();
+
+    if(dump) {
+        k::model::dump::unit_dump unit_dump(std::cout);
+        std::cout << "#" << std::endl << "# Type resolution" << std::endl << "#" << std::endl;
         unit_dump.dump(*unit);
     }
 

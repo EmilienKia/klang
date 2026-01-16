@@ -54,7 +54,8 @@ class unit;
 
 
 namespace gen {
-    class unit_llvm_ir_gen;
+class type_reference_resolver;
+class unit_llvm_ir_gen;
 }
 
 enum visibility {
@@ -270,6 +271,8 @@ public:
     virtual std::shared_ptr<function> get_function(const std::string& name) const;
     virtual std::shared_ptr<function> lookup_function(const std::string& name) const;
 
+    std::vector<std::shared_ptr<function>> functions() {return _functions;}
+
 protected:
     /** List of all defined functions. */
     std::vector<std::shared_ptr<function>> _functions;
@@ -320,7 +323,7 @@ class structure : public element, public named_element, public variable_holder, 
 protected:
     friend class ns;
     friend class gen::unit_llvm_ir_gen;
-    friend class gen::symbol_type_resolver;
+    friend class gen::symbol_resolver;
 
     /** Collection of all children of this namespace. */
     std::vector<std::shared_ptr<element>> _children;
@@ -396,14 +399,15 @@ public:
 
 class function : public element, public named_element, public variable_holder {
 protected:
-
     friend class ns;
     friend class structure;
     friend class gen::unit_llvm_ir_gen;
+    friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
 
     std::shared_ptr<type> _return_type;
     std::vector<std::shared_ptr<parameter>> _parameters;
-
+    std::shared_ptr<parameter> _this_param;
     std::shared_ptr<block> _block;
 
     function(std::shared_ptr<element> parent) :
@@ -415,6 +419,8 @@ protected:
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
     void update_mangled_name() override;
+
+    void create_this_parameter();
 
 public:
     void accept(model_visitor& visitor) override;
@@ -438,6 +444,10 @@ public:
 
     std::shared_ptr<parameter> get_parameter(const std::string& name);
     std::shared_ptr<const parameter> get_parameter(const std::string& name)const;
+
+    std::shared_ptr<parameter> get_this_parameter() const {
+        return _this_param;
+    }
 
     void set_block(const std::shared_ptr<block>& block);
     std::shared_ptr<block> get_block();

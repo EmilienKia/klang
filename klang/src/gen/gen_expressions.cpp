@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "symbol_type_resolver.hpp"
+#include "resolvers.hpp"
 #include "unit_llvm_ir_gen.hpp"
 
 #include "llvm/Support/raw_os_ostream.h"
@@ -39,7 +39,11 @@ namespace k::model::gen {
 // Value expression
 //
 
-void symbol_type_resolver::visit_value_expression(value_expression& expr)
+void symbol_resolver::visit_value_expression(value_expression& expr)
+{
+}
+
+void type_reference_resolver::visit_value_expression(value_expression& expr)
 {
     expr.set_type(_context->from_literal(expr.any_literal()));
 }
@@ -102,23 +106,43 @@ void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
 //      - the return value type is always a function reference type.
 //
 
-void symbol_type_resolver::visit_symbol_expression(symbol_expression& symbol)
+void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
 {
     auto found_symbol = resolve_symbol(symbol);
     if (std::holds_alternative<std::shared_ptr<variable_definition>>(found_symbol)) {
         auto var_def = std::get<std::shared_ptr<variable_definition>>(found_symbol);
-        symbol.resolve(var_def);
-        // Note: type is supposed to be applied at resolution
-        // Note: a variable type is supposed to be always a reference
+        symbol.set_target(var_def);
     } else if (std::holds_alternative<std::shared_ptr<function>>(found_symbol)) {
         auto func =  std::get<std::shared_ptr<function>>(found_symbol);
-        symbol.resolve(func);
-        // Note: type is supposed to be applied at resolution
+        symbol.set_target(func);
     } else {
         // Symbol not found
         // TODO throw an exception
         std::cerr << "Error: Unable to resolve symbol '" << symbol.get_name().to_string() << "'." << std::endl;
     }
+}
+
+void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
+{
+    if(!symbol.is_resolved()) {
+        // TODO throw an exception
+        std::cerr << "Error: symbol expression is not resolved." << std::endl;
+    }
+    if (symbol.is_variable_def()) {
+        auto var_def = symbol.get_variable_def();
+        auto var_type = var_def->get_type();
+        // Variable symbol will always be a reference to the variable type.
+        if (type::is_reference(var_type)) {
+            // Variable is already a reference, so symbol type is the variable type.
+            symbol.set_type(var_type);
+        } else {
+            // Variable is not a reference, so symbol type is a reference to the variable type.
+            symbol.set_type(var_type->get_reference());
+        }
+    } else if (symbol.is_function()) {
+        // TODO set function type
+    }
+    // TODO resolve other types of symbols
 }
 
 void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
@@ -142,13 +166,15 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
 
             // Get 'this' pointer
             llvm::Value* this_value_ref = nullptr;
-            {
-                auto func = std::dynamic_pointer_cast<function>(symbol.find_statement()->get_function());
-                if(!func) {
-                    // TODO throw exception : no function found in context for member variable access
-                    std::cerr << "Error: no function context available for member variable '" << name << "' access." << std::endl;
-                }
-                this_value_ref = _function_this_variables[func];
+            auto func = std::dynamic_pointer_cast<function>(symbol.find_statement()->get_function());
+            if(!func) {
+                // TODO throw exception : no function found in context for member variable access
+                std::cerr << "Error: no function context available for member variable '" << member_var->get_fq_name() << "' access." << std::endl;
+            }
+            this_value_ref = _function_this_variables[func];
+            if (!this_value_ref) {
+                // TODO throw exception : no 'this' pointer found in function for member variable access
+                std::cerr << "Error: no 'this' pointer available in function context for member variable '" << member_var->get_fq_name() << "' access." << std::endl;
             }
 
             // Get member variable
@@ -160,9 +186,14 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
             auto struct_type = struct_ref->get_struct_type();
             if(struct_type) {
                 if(auto field = struct_type->get_member(name); field) {
+                    auto this_ptr = _builder->CreateLoad(
+                            _context->get_llvm_type(struct_type->get_reference()),
+                            this_value_ref,
+                            "this_ref"
+                    );
                     ptr = _builder->CreateStructGEP(
                             _context->get_llvm_type(struct_type),
-                            this_value_ref,
+                            this_ptr,
                             (unsigned)field->index,
                             "this_" + struct_ref->get_short_name() + "_" + name + "_ptr"
                     );
@@ -181,12 +212,17 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
         }
 
         // Handle type of symbol
-        llvm::Type* type = _context->get_llvm_type(var_def->get_type());
+        auto var_type = var_def->get_type();
+        llvm::Type* type = _context->get_llvm_type(var_type);
 
         if(ptr && type) {
-//            _value = _builder->CreateLoad(type, ptr, name);
-            // Value of a symbol (as a reference) is always its address.
-            _value = ptr;
+            if (type::is_reference(var_type)) {
+                // Type is a reference (pointer), so value is loaded from the pointer
+                _value = _builder->CreateLoad(type, ptr, name + "_ref");
+            } else {
+                // Value of a symbol (as a reference) is always its address.
+                _value = ptr;
+            }
         }
 
     } else if (symbol.is_function()) {
@@ -214,7 +250,18 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
 // Unary expression
 //
 
-void symbol_type_resolver::visit_unary_expression(unary_expression& expr)
+void symbol_resolver::visit_unary_expression(unary_expression& expr)
+{
+    auto& sub = expr.sub_expr();
+    if(!sub) {
+        // TODO throw an exception
+        // Error 0x0002: unary expression must have non-null sub expresssion
+        std::cerr << "Error: unary expression must have non-null sub expresssion" << std::endl;
+    }
+    sub->accept(*this);
+}
+
+void type_reference_resolver::visit_unary_expression(unary_expression& expr)
 {
     auto& sub = expr.sub_expr();
 
@@ -246,7 +293,23 @@ llvm::Value* unit_llvm_ir_gen::process_unary_expression(unary_expression& expr) 
 // Binary expression
 //
 
-void symbol_type_resolver::visit_binary_expression(binary_expression& expr)
+void symbol_resolver::visit_binary_expression(binary_expression& expr)
+{
+    auto& left = expr.left();
+    auto& right = expr.right();
+
+    if(!left || !right) {
+        // TODO throw an exception
+        // Error 0x0004: binary expression must have non-null left and right expresssion
+        std::cerr << "Error: binary expression must have non-null left and right expresssion" << std::endl;
+    }
+
+    left->accept(*this);
+    right->accept(*this);
+
+}
+
+void type_reference_resolver::visit_binary_expression(binary_expression& expr)
 {
     auto& left = expr.left();
     auto& right = expr.right();
@@ -289,7 +352,11 @@ std::pair<llvm::Value*,llvm::Value*> unit_llvm_ir_gen::process_binary_expression
 // Arithmetic binary expression
 //
 
-void symbol_type_resolver::process_arithmetic(binary_expression& expr) {
+void symbol_resolver::process_arithmetic(binary_expression& expr) {
+    visit_binary_expression(expr);
+}
+
+void type_reference_resolver::process_arithmetic(binary_expression& expr) {
     // TODO Rework conversions and promotions
     visit_binary_expression(expr);
 
@@ -343,7 +410,11 @@ void symbol_type_resolver::process_arithmetic(binary_expression& expr) {
     }
 }
 
-void symbol_type_resolver::visit_arithmetic_binary_expression(arithmetic_binary_expression &expr) {
+void symbol_resolver::visit_arithmetic_binary_expression(arithmetic_binary_expression &expr) {
+    process_arithmetic(expr);
+}
+
+void type_reference_resolver::visit_arithmetic_binary_expression(arithmetic_binary_expression &expr) {
     process_arithmetic(expr);
 }
 
@@ -682,7 +753,7 @@ void unit_llvm_ir_gen::visit_right_shift_expression(right_shift_expression& expr
 // Assignation expression
 //
 
-void symbol_type_resolver::visit_assignation_expression(assignation_expression &expr) {
+void type_reference_resolver::visit_assignation_expression(assignation_expression &expr) {
     // TODO Rework conversions and promotions and mutualize with symbol_type_resolver::process_arithmetic(...)
     visit_binary_expression(expr);
 
@@ -788,7 +859,11 @@ void unit_llvm_ir_gen::visit_simple_assignation_expression(simple_assignation_ex
 // Arithmetic assignation expression
 //
 
-void symbol_type_resolver::visit_arithmetic_assignation_expression(arithmetic_assignation_expression &expr) {
+void symbol_resolver::visit_arithmetic_assignation_expression(arithmetic_assignation_expression &expr) {
+    visit_assignation_expression(expr);
+}
+
+void type_reference_resolver::visit_arithmetic_assignation_expression(arithmetic_assignation_expression &expr) {
     visit_assignation_expression(expr);
 
     auto left = expr.left();
@@ -1157,7 +1232,7 @@ void unit_llvm_ir_gen::visit_right_shift_assignation_expression(right_shift_assi
 // Arithmetic unary expression
 //
 
-void symbol_type_resolver::visit_arithmetic_unary_expression(arithmetic_unary_expression& expr) {
+void type_reference_resolver::visit_arithmetic_unary_expression(arithmetic_unary_expression& expr) {
     visit_unary_expression(expr);
 
     auto& sub = expr.sub_expr();
@@ -1284,7 +1359,7 @@ void unit_llvm_ir_gen::visit_bitwise_not_expression(bitwise_not_expression& expr
 // Logical binary expression
 //
 
-void symbol_type_resolver::visit_logical_binary_expression(logical_binary_expression& expr) {
+void type_reference_resolver::visit_logical_binary_expression(logical_binary_expression& expr) {
     visit_binary_expression(expr);
 
     auto left = expr.left();
@@ -1401,7 +1476,7 @@ void unit_llvm_ir_gen::visit_logical_or_expression(logical_or_expression& expr) 
 // Logical not expression (!)
 //
 
-void symbol_type_resolver::visit_logical_not_expression(logical_not_expression& expr) {
+void type_reference_resolver::visit_logical_not_expression(logical_not_expression& expr) {
     visit_unary_expression(expr);
 
     auto& sub = expr.sub_expr();
@@ -1466,7 +1541,7 @@ void unit_llvm_ir_gen::visit_logical_not_expression(logical_not_expression& expr
 // Address of expression
 //
 
-void symbol_type_resolver::visit_address_of_expression(address_of_expression& expr) {
+void type_reference_resolver::visit_address_of_expression(address_of_expression& expr) {
     default_model_visitor::visit_address_of_expression(expr);
 
     auto sub_expr = expr.sub_expr();
@@ -1498,7 +1573,7 @@ void unit_llvm_ir_gen::visit_address_of_expression(address_of_expression& expr) 
 // Load value expression
 //
 
-void symbol_type_resolver::visit_load_value_expression(load_value_expression& expr) {
+void type_reference_resolver::visit_load_value_expression(load_value_expression& expr) {
     auto type = expr.sub_expr()->get_type();
 
     if(auto ref_type = std::dynamic_pointer_cast<reference_type>(type)) {
@@ -1522,7 +1597,7 @@ void unit_llvm_ir_gen::visit_load_value_expression(load_value_expression& expr) 
 // Dereference expression
 //
 
-void symbol_type_resolver::visit_dereference_expression(dereference_expression& expr) {
+void type_reference_resolver::visit_dereference_expression(dereference_expression& expr) {
     expr.sub_expr()->accept(*this);
 
     auto type = expr.sub_expr()->get_type();
@@ -1559,20 +1634,9 @@ void unit_llvm_ir_gen::visit_dereference_expression(dereference_expression& expr
 }
 
 //
-// Abstract Member of expression
-//
-void symbol_type_resolver::visit_member_of_expression(member_of_expression& expr) {
-  // TODO
-}
-
-void unit_llvm_ir_gen::visit_member_of_expression(member_of_expression& expr) {
-    // TODO
-}
-
-//
 // Member of object expression
 //
-void symbol_type_resolver::visit_member_of_object_expression(member_of_object_expression& expr) {
+void type_reference_resolver::visit_member_of_object_expression(member_of_object_expression& expr) {
     expr.sub_expr()->accept(*this);
     auto type = expr.sub_expr()->get_type();
 
@@ -1580,20 +1644,33 @@ void symbol_type_resolver::visit_member_of_object_expression(member_of_object_ex
         // TODO throw an exception
         std::cerr << "Error: Member-of-object expression can be applied only to reference types." << std::endl;
     }
-    if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(type->get_subtype())) {
+    auto subtype = type->get_subtype();
+    /*if(type::is_reference(subtype)) {
+        // Dereference the subreference to handle (double reference) for case like reference parameter (like 'this')
+        subtype = subtype->get_subtype();
+    }*/
+    if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(subtype)) {
         auto member_name =  expr.symbol();
         if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
-            return expr.set_type(field->field_type.lock()->get_reference());
+            expr.set_type(field->field_type.lock()->get_reference());
+        } else if(auto method = struct_subtype->get_struct()->get_function(member_name.get_name())) {
+            // TODO Refactor to return the function type
+            std::clog << "Info: Looking for member of object for " << struct_subtype->name() << "::" << method->get_name().to_string() << " (1)" << std::endl;
         } else {
             // TODO throw an exception
             std::cerr << "Error: Struct type '" << struct_subtype->name() << "' has no member named '" << member_name.get_name().to_string() << "'. (2)" << std::endl;
         }
-    } else { // TODO add here the method resolution
+    } else { // TODO add here other types of objects
         // TODO throw an exception
-        std::cerr << "Error: Member-of-object expression can be applied only to struct types." << std::endl;
+        std::cerr << "Error: Member-of-object expression can be applied only to struct types. (1)" << std::endl;
     }
 }
 
+//
+// Member of object expression
+// If the member is a field, return the address of the field within the struct.
+// If the member is a function, return the address of the object onto which the function will be called (the future this ref).
+//
 void unit_llvm_ir_gen::visit_member_of_object_expression(member_of_object_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
@@ -1604,20 +1681,23 @@ void unit_llvm_ir_gen::visit_member_of_object_expression(member_of_object_expres
         auto member_name =  expr.symbol();
         if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
             _value = _builder->CreateStructGEP(type->get_subtype()->get_llvm_type(), _value, field->index);
+        } else if(auto method = struct_subtype->get_struct()->get_function(member_name.get_name())) {
+            std::clog << "Trace: Looking for member of object for " << struct_subtype->name() << "::" << method->get_name().to_string() << " (2)"  << std::endl;
+            // Note return the already-assigned address of the struct onto which the function is applied to
         } else {
             // TODO throw an exception
             std::cerr << "Error: Struct type '" << struct_subtype->name() << "' has no member named '" << member_name.get_name().to_string() << "'. (3)" << std::endl;
         }
     } else { // TODO add here the method resolution
         // TODO throw an exception
-        std::cerr << "Error: Member-of-object expression can be applied only to struct types." << std::endl;
+        std::cerr << "Error: Member-of-object expression can be applied only to struct types. (2)" << std::endl;
     }
 }
 
 //
 // Member of pointer expression
 //
-void symbol_type_resolver::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
+void type_reference_resolver::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
     // TODO
 }
 
@@ -1628,7 +1708,7 @@ void unit_llvm_ir_gen::visit_member_of_pointer_expression(member_of_pointer_expr
 //
 // Comparison expressions
 //
-void symbol_type_resolver::visit_comparison_expression(comparison_expression& expr) {
+void type_reference_resolver::visit_comparison_expression(comparison_expression& expr) {
     visit_binary_expression(expr);
 
     auto& left = expr.left();
@@ -1951,7 +2031,7 @@ void unit_llvm_ir_gen::visit_greater_equal_expression(greater_equal_expression& 
 // Subscript expression
 //
 
-void symbol_type_resolver::visit_subscript_expression(subscript_expression& expr) {
+void type_reference_resolver::visit_subscript_expression(subscript_expression& expr) {
     visit_binary_expression(expr);
 
     auto left = expr.left();
@@ -2030,7 +2110,15 @@ void unit_llvm_ir_gen::visit_subscript_expression(subscript_expression& expr) {
 // Function invocation expression
 //
 
-void symbol_type_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
+void symbol_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
+    expr.callee_expr()->accept(*this);
+    for (auto arg : expr.arguments()) {
+        arg->accept(*this);
+    }
+    // TODO Add more pre process here ?!?
+}
+
+void type_reference_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
 
@@ -2067,7 +2155,7 @@ void symbol_type_resolver::visit_function_invocation_expression(function_invocat
                         // TODO support overloading
                         // TODO enforce prototype matching
                         // Function prototype and expression type are set at resolution
-                        callee->resolve(func);
+                        callee->set_target(func);
                         expr.set_type(func->get_return_type());
                     } else {
                         // TODO throw an exception
@@ -2097,7 +2185,7 @@ void symbol_type_resolver::visit_function_invocation_expression(function_invocat
                             // TODO support overloading
                             // TODO enforce prototype matching
                             // Function prototype and expression type are set at resolution
-                            callee->resolve(function);
+                            callee->set_target(function);
                             expr.set_type(function->get_return_type());
                         }
                     }
@@ -2152,17 +2240,14 @@ void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_
         std::cerr << "Error : only support global or object-member method call" << std::endl;
     }
 
+    // Generate arguments and add the to the args list
+    std::vector<llvm::Value*> args;
     if (member_callee) {
-        member_callee->accept(*this);
         callee = std::dynamic_pointer_cast<symbol_expression>(member_callee->symbol().shared_as<symbol_expression>());
         if (!callee) {
             std::cerr << "Error : only support object-member method call with symbol expression" << std::endl;
         }
-    }
 
-    // Generate arguments and add the to the args list
-    std::vector<llvm::Value*> args;
-    if (member_callee) {
         // First argument is the object pointer (this)
         member_callee->sub_expr()->accept(*this);
         if(!_value) {
@@ -2170,10 +2255,6 @@ void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_
             // TODO throw exception
             std::cerr << "Problem with generation of 'this' argument of a member function call." << std::endl;
         }
-
-        // Load the 'this' pointer value
-        auto this_type = member_callee->sub_expr()->get_type();
-        _value = _builder->CreateLoad(_context->get_llvm_type(this_type), _value);
 
         args.push_back(_value);
     }
@@ -2213,7 +2294,7 @@ void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_
 // Cast expression
 //
 
-void symbol_type_resolver::visit_cast_expression(cast_expression& expr) {
+void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
     auto sub_expr = expr.sub_expr();
     sub_expr->accept(*this);
 

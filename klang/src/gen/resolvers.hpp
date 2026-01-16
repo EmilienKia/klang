@@ -16,8 +16,8 @@
  * limitations under the License.
  */
 
-#ifndef KLANG_SYMBOL_TYPE_RESOLVER_HPP
-#define KLANG_SYMBOL_TYPE_RESOLVER_HPP
+#ifndef KLANG_RESOLVERS_HPP
+#define KLANG_RESOLVERS_HPP
 
 #include "../model/model.hpp"
 #include "../model/model_visitor.hpp"
@@ -41,8 +41,9 @@ public:
 /**
  * Unit symbol resolver
  * This helper class will resolve method and variable usages to their definitions.
+ * It must be run after the model building phase and before type resolution and any code generation phase.
  */
-class symbol_type_resolver : public default_model_visitor, protected k::lex::lexeme_logger {
+class symbol_resolver : public default_model_visitor, protected k::lex::lexeme_logger {
 protected:
 
     std::shared_ptr<context> _context;
@@ -51,7 +52,7 @@ protected:
 
 public:
 
-    symbol_type_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
+    symbol_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
     lexeme_logger(logger, 0x30000),
     _context(context),
     _unit(unit)  {
@@ -87,6 +88,100 @@ protected:
     void visit_structure(structure&) override;
     void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition&) override;
+    void visit_parameter(parameter &) override;
+    void visit_function(function&) override;
+
+    void visit_block(block&) override;
+    void visit_return_statement(return_statement&) override;
+    void visit_if_else_statement(if_else_statement&) override;
+    void visit_while_statement(while_statement&) override;
+    void visit_for_statement(for_statement&) override;
+    void visit_expression_statement(expression_statement&) override;
+    void visit_variable_statement(variable_statement&) override;
+
+    void visit_value_expression(value_expression&) override;
+    void visit_symbol_expression(symbol_expression&) override;
+    void visit_unary_expression(unary_expression&) override;
+    void visit_binary_expression(binary_expression&) override;
+
+    void process_arithmetic(binary_expression&);
+
+    void visit_arithmetic_binary_expression(arithmetic_binary_expression &expression) override;
+    void visit_arithmetic_assignation_expression(arithmetic_assignation_expression &expression) override;
+
+    void visit_function_invocation_expression(function_invocation_expression &) override;
+
+    /**
+     * Adapt a reference expression to load its value.
+     * @param expr Reference expression.
+     * @return The given arg if already not a reference or the newly loaded-value expr if is a reference.
+     */
+    std::shared_ptr<expression> adapt_reference_load_value(const std::shared_ptr<expression>& expr);
+
+    /**
+     * Adapt an expression to ensure it maps to a given type, by casting it.
+     * @param expr Expression to map.
+     * @param type Type to target
+     * @return The given arg expression if already compatible, the new wrapping casting expr if mapping, nullptr if not possible.
+     */
+    std::shared_ptr<expression> adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type);
+};
+
+
+// TODO Add the type definition resolver here in the meantime
+
+
+/**
+ * Unit type resolver
+ * This helper class will resolve all types usages, and particularly set types for expressions and variables.
+ * It must be run after symbol resolution and before any code generation phase.
+ */
+class type_reference_resolver : public default_model_visitor, protected k::lex::lexeme_logger {
+protected:
+
+    std::shared_ptr<context> _context;
+
+    unit& _unit;
+
+public:
+
+    type_reference_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
+    lexeme_logger(logger, 0x30000),
+    _context(context),
+    _unit(unit)  {
+    }
+
+    void resolve();
+
+protected:
+
+    /*
+    static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+    resolve_symbol(const element& elem, const name& name);
+
+    static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+    resolve_symbol(const symbol_expression& symbol) {
+        return resolve_symbol(symbol, symbol.get_name());
+    }
+    */
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        error(code, lexeme, message, args);
+        throw resolution_error(message);
+    }
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        error(code, lexeme, message, args);
+        throw resolution_error(message);
+    }
+
+    void visit_unit(unit&) override;
+
+    void visit_namespace(ns&) override;
+    void visit_structure(structure&) override;
+    void visit_member_variable_definition(member_variable_definition&) override;
+    void visit_global_variable_definition(global_variable_definition&) override;
+    void visit_parameter(parameter &) override;
     void visit_function(function&) override;
 
     void visit_block(block&) override;
@@ -113,10 +208,10 @@ protected:
     void visit_logical_binary_expression(logical_binary_expression&) override;
     void visit_logical_not_expression(logical_not_expression&) override;
 
-    void visit_load_value_expression(load_value_expression&) override;
     void visit_address_of_expression(address_of_expression&) override;
+    void visit_load_value_expression(load_value_expression&) override;
     void visit_dereference_expression(dereference_expression&) override;
-    void visit_member_of_expression(member_of_expression&) override;
+//    void visit_member_of_expression(member_of_expression&) override;
     void visit_member_of_object_expression(member_of_object_expression&) override;
     void visit_member_of_pointer_expression(member_of_pointer_expression&) override;
 
@@ -144,6 +239,7 @@ protected:
 };
 
 
+
 } // k::model::gen
 
-#endif //KLANG_SYMBOL_TYPE_RESOLVER_HPP
+#endif //KLANG_RESOLVERS_HPP

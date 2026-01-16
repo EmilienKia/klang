@@ -70,11 +70,11 @@ symbol_expression::symbol_expression(const name &name) :
 
 symbol_expression::symbol_expression(const std::shared_ptr<variable_definition> &var) :
         _name(var->get_short_name()),
-        _symbol(var) {}
+        _target(var) {}
 
 symbol_expression::symbol_expression(const std::shared_ptr<function> &func) :
         _name(func->get_short_name()),
-        _symbol(func) {}
+        _target(func) {}
 
 
 void symbol_expression::accept(model_visitor &visitor) {
@@ -89,15 +89,12 @@ std::shared_ptr<symbol_expression> symbol_expression::from_identifier(const name
     return std::shared_ptr<symbol_expression>(new symbol_expression(name));
 }
 
-void symbol_expression::resolve(std::shared_ptr<variable_definition> var) {
-    _symbol = var;
-    // A variable is always types as a reference
-    _type = var->get_type()->get_reference();
+void symbol_expression::set_target(std::shared_ptr<variable_definition> var) {
+    _target = var;
 }
 
-void symbol_expression::resolve(std::shared_ptr<function> func) {
-    _symbol = func;
-    // TODO Add function prototype to type
+void symbol_expression::set_target(std::shared_ptr<function> func) {
+    _target = func;
 }
 
 //

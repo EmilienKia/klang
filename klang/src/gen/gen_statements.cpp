@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "symbol_type_resolver.hpp"
+#include "resolvers.hpp"
 #include "unit_llvm_ir_gen.hpp"
 
 namespace k::model::gen {
@@ -26,7 +26,14 @@ using namespace k::model;
 // Block
 //
 
-void symbol_type_resolver::visit_block(block& block)
+void symbol_resolver::visit_block(block& block)
+{
+    for(auto& stmt : block.get_statements()) {
+        stmt->accept(*this);
+    }
+}
+
+void type_reference_resolver::visit_block(block& block)
 {
     for(auto& stmt : block.get_statements()) {
         stmt->accept(*this);
@@ -43,7 +50,14 @@ void unit_llvm_ir_gen::visit_block(block& block) {
 // Return
 //
 
-void symbol_type_resolver::visit_return_statement(return_statement& stmt)
+void symbol_resolver::visit_return_statement(return_statement& stmt)
+{
+    if(auto expr = stmt.get_expression()) {
+        expr->accept(*this);
+    }
+}
+
+void type_reference_resolver::visit_return_statement(return_statement& stmt)
 {
     auto func = stmt.get_block()->get_function();
     auto ret_type = func->get_return_type();
@@ -62,6 +76,7 @@ void symbol_type_resolver::visit_return_statement(return_statement& stmt)
         }
     }
 }
+
 
 void unit_llvm_ir_gen::visit_return_statement(return_statement& stmt) {
 
@@ -84,7 +99,19 @@ void unit_llvm_ir_gen::visit_return_statement(return_statement& stmt) {
 // If-then-else
 //
 
-void symbol_type_resolver::visit_if_else_statement(if_else_statement& stmt)
+void symbol_resolver::visit_if_else_statement(if_else_statement& stmt)
+{
+    stmt.get_test_expr()->accept(*this);
+
+    stmt.get_then_stmt()->accept(*this);
+
+    // Resolve else statement
+    if(auto expr = stmt.get_else_stmt()) {
+        expr->accept(*this);
+    }
+}
+
+void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
 {
     // Resolve and cast test
     {
@@ -155,7 +182,13 @@ void unit_llvm_ir_gen::visit_if_else_statement(if_else_statement& stmt) {
 // While
 //
 
-void symbol_type_resolver::visit_while_statement(while_statement& stmt)
+void symbol_resolver::visit_while_statement(while_statement& stmt)
+{
+    stmt.get_test_expr()->accept(*this);
+    stmt.get_nested_stmt()->accept(*this);
+}
+
+void type_reference_resolver::visit_while_statement(while_statement& stmt)
 {
     // Resolve and cast test
     {
@@ -215,7 +248,28 @@ void unit_llvm_ir_gen::visit_while_statement(while_statement& stmt) {
 // For
 //
 
-void symbol_type_resolver::visit_for_statement(for_statement& stmt)
+void symbol_resolver::visit_for_statement(for_statement& stmt)
+{
+    // Resolve variable decl, if any
+    if(auto decl = stmt.get_decl_stmt()) {
+        decl->accept(*this);
+    }
+
+    // Resolve and cast test
+    if(auto expr = stmt.get_test_expr()) {
+        expr->accept(*this);
+    }
+
+    // Resolve step
+    if(auto step = stmt.get_step_expr()) {
+        step->accept(*this);
+    }
+
+    // Resolve nested statement
+    stmt.get_nested_stmt()->accept(*this);
+}
+
+void type_reference_resolver::visit_for_statement(for_statement& stmt)
 {
     // Resolve variable decl, if any
     if(auto decl = stmt.get_decl_stmt()) {
@@ -302,7 +356,14 @@ void unit_llvm_ir_gen::visit_for_statement(for_statement& stmt) {
 // Expression statement
 //
 
-void symbol_type_resolver::visit_expression_statement(expression_statement& stmt)
+void symbol_resolver::visit_expression_statement(expression_statement& stmt)
+{
+    if(auto expr = stmt.get_expression()) {
+        expr->accept(*this);
+    }
+}
+
+void type_reference_resolver::visit_expression_statement(expression_statement& stmt)
 {
     if(auto expr = stmt.get_expression()) {
         expr->accept(*this);
@@ -319,14 +380,21 @@ void unit_llvm_ir_gen::visit_expression_statement(expression_statement& stmt) {
 // Variable statement
 //
 
-void symbol_type_resolver::visit_variable_statement(variable_statement& var)
+void symbol_resolver::visit_variable_statement(variable_statement& var)
 {
     visit_named_element(var);
 
+    if(auto expr = var.get_init_expr()) {
+        expr->accept(*this);
+    }
+}
+
+void type_reference_resolver::visit_variable_statement(variable_statement& var)
+{
     if (auto var_type = var.get_type(); !type::is_resolved(var_type)) {
         std::shared_ptr<unresolved_type> unres_type = std::dynamic_pointer_cast<unresolved_type>(var_type);
         if (!unres_type) {
-// TODO            throw_error(0x0005, ...);
+            // TODO            throw_error(0x0005, ...);
         }
         // Variable type is not resolved, try to resolve it
         std::shared_ptr<type> res_type = _context->from_string(unres_type->type_id());
@@ -342,7 +410,7 @@ void symbol_type_resolver::visit_variable_statement(variable_statement& var)
 
         auto cast = adapt_type(expr, var.get_type());
         if(!cast) {
-// TODO            throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
+            // TODO            throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
         } else if(cast != expr) {
             // Casted, assign casted expression as return expr.
             var.set_init_expr(cast);
@@ -351,6 +419,7 @@ void symbol_type_resolver::visit_variable_statement(variable_statement& var)
         }
     }
 }
+
 
 void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
     // Create the alloca at beginning of the function ...

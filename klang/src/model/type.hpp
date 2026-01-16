@@ -47,7 +47,7 @@ class keyword;
 namespace k::model {
 
 namespace gen {
-    class symbol_type_resolver;
+    class symbol_resolver;
 }
 
 
@@ -370,7 +370,8 @@ protected:
     friend class type;
     friend class struct_type_builder;
     friend class k::model::structure;
-    friend class k::model::gen::symbol_type_resolver;
+    friend class k::model::gen::symbol_resolver;
+    friend class k::model::context;
 
     std::string _name;
 
@@ -380,7 +381,11 @@ protected:
 
     struct_type(const std::string& name, std::weak_ptr<k::model::structure> st, std::vector<field>&& fields, llvm::StructType* llvm_struct_type);
 
+    void set_llvm_type(std::vector<field>&& fields, llvm::StructType* llvm_struct_type);
+
 public:
+    struct_type(const std::string& name, std::weak_ptr<k::model::structure> st);
+
     std::string name() const {return _name;}
 
     bool is_resolved() const override;

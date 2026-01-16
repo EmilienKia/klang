@@ -19,7 +19,7 @@
 // Note: Last resolver log number: 0x30004
 //
 
-#include "symbol_type_resolver.hpp"
+#include "resolvers.hpp"
 
 namespace k::model::gen {
 
@@ -36,16 +36,31 @@ resolution_error::resolution_error(const char *string) :
 {}
 
 //
-// Symbol and type resolver
+// Symbol resolver
 //
 
-void symbol_type_resolver::resolve()
+void symbol_resolver::resolve()
 {
     visit_unit(_unit);
 }
 
 std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
-symbol_type_resolver::resolve_symbol(const element& elem, const name& name) {
+symbol_resolver::resolve_symbol(const element& elem, const name& name) {
+
+    // Specifically look at the "this" symbol (non-static function specific parameter)
+    if (name.size() == 1 && name.to_string() == "this") {
+        auto func = elem.ancestor<function>();
+        while (func) {
+            if (func->is_member() && func->get_this_parameter()) {
+                return std::const_pointer_cast<parameter>(func->get_this_parameter());
+            }
+            func = func->ancestor<function>();
+        }
+        // TODO throw exception Symbol 'this' used outside a non-static member function.
+        std::clog << "Symbol 'this' used outside a non-static member function." << std::endl;
+        return std::monostate{};
+    }
+
     if (name.has_root_prefix()) {
         // TODO if name has root prefix, look at the unit directly.
         std::clog << "Try to resolve symbol with root prefix: " << name.to_string() << std::endl;
@@ -91,7 +106,7 @@ symbol_type_resolver::resolve_symbol(const element& elem, const name& name) {
     }
 }
 
-std::shared_ptr<expression> symbol_type_resolver::adapt_reference_load_value(const std::shared_ptr<expression>& expr) {
+std::shared_ptr<expression> symbol_resolver::adapt_reference_load_value(const std::shared_ptr<expression>& expr) {
     auto type = expr->get_type();
 
     if(!expr || !type::is_resolved(type)) {
@@ -109,7 +124,101 @@ std::shared_ptr<expression> symbol_type_resolver::adapt_reference_load_value(con
 }
 
 
-std::shared_ptr<expression> symbol_type_resolver::adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type) {
+std::shared_ptr<expression> symbol_resolver::adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type) {
+    if(!expr || !type::is_resolved(type) || !type::is_resolved(expr->get_type())) {
+        // Arguments must not be null, expr must have a type and types (expr and target) must be resolved.
+        return nullptr;
+    }
+
+    auto type_src = expr->get_type();
+
+    if(type::is_pointer(type_src)) {
+        if(type::is_pointer(type)) {
+            if (type == type_src) {
+                // Pointers to same type, return the expression
+                return expr;
+            } else {
+                // Pointers to different types
+                // TODO verify casting
+                return {};
+            }
+        } else {
+            // Error : Source is a pointer, and asked to be cast to an object.
+            return {};
+        }
+    }
+
+    if(type::is_double_reference(type_src)) {
+        auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
+        auto deref = load_value_expression::make_shared(expr);
+        deref->set_type(ref_src->get_subtype());
+        expr = deref;
+        type_src = ref_src->get_subtype();
+    }
+
+    if(type::is_reference(type_src)) {
+        if(type::is_reference(type)) {
+            if (type == type_src) {
+                // Reference to same type, return the expression
+                return expr;
+            } else {
+                // Reference to different types
+                // TODO verify casting
+                return {};
+            }
+        }
+        auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
+        if(ref_src->get_subtype() == type) {
+            return adapt_reference_load_value(expr);
+        }
+    }
+
+    auto prim_src = std::dynamic_pointer_cast<primitive_type>(expr->get_type());
+    auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type);
+
+    if(!prim_src || !prim_tgt) {
+        // Support only primitive types for now.
+        // TODO support not-primitive type casting
+        return {};
+    }
+
+    if(prim_src==prim_tgt) {
+        // Trivially agree for same types
+        return expr;
+    }
+
+    auto cast = cast_expression::make_shared(expr, prim_tgt);
+    cast->set_type(prim_tgt);
+    return cast;
+}
+
+//
+// Type resolver
+//
+
+void type_reference_resolver::resolve()
+{
+    visit_unit(_unit);
+}
+
+std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(const std::shared_ptr<expression>& expr) {
+    auto type = expr->get_type();
+
+    if(!expr || !type::is_resolved(type)) {
+        // Arguments must not be null, expr must have a type and this must be resolved.
+        return nullptr;
+    }
+
+    if(type::is_reference(type)) {
+        auto deref = load_value_expression::make_shared(expr);
+        deref->set_type(type->get_subtype());
+        return deref;
+    } else {
+        return expr;
+    }
+}
+
+std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type) {
     if(!expr || !type::is_resolved(type) || !type::is_resolved(expr->get_type())) {
         // Arguments must not be null, expr must have a type and types (expr and target) must be resolved.
         return nullptr;

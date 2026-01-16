@@ -409,7 +409,7 @@ namespace k::model {
     }
 
     void model_builder::visit_this_expr(parse::ast::keyword_expr &expr) {
-        // TODO keyword "this"
+        _expr = model::symbol_expression::from_identifier(name("this"));
     }
 
     void model_builder::visit_expr_list_expr(parse::ast::expr_list_expr &) {

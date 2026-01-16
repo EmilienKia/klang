@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "symbol_type_resolver.hpp"
+#include "resolvers.hpp"
 #include "unit_llvm_ir_gen.hpp"
 
 #include <llvm/IR/Verifier.h>
@@ -26,7 +26,8 @@ namespace k::model::gen {
 // Named element
 //
 
-void symbol_type_resolver::visit_named_element(named_element& named) {
+void symbol_resolver::visit_named_element(named_element& named) {
+    // Assign fully qualified name if not already assigned, and compute the mangled name accordingly
     if (named.get_fq_name().empty()) {
         if (named.get_short_name().empty()) {
             // TODO correctly handle unnamed elements
@@ -44,7 +45,12 @@ void symbol_type_resolver::visit_named_element(named_element& named) {
 // Unit
 //
 
-void symbol_type_resolver::visit_unit(unit& unit)
+void symbol_resolver::visit_unit(unit& unit)
+{
+    visit_namespace(*_unit.get_root_namespace());
+}
+
+void type_reference_resolver::visit_unit(unit& unit)
 {
     visit_namespace(*_unit.get_root_namespace());
 }
@@ -57,7 +63,7 @@ void unit_llvm_ir_gen::visit_unit(unit &unit) {
 // Namespace
 //
 
-void symbol_type_resolver::visit_namespace(ns& ns)
+void symbol_resolver::visit_namespace(ns& ns)
 {
     if (ns.get_fq_name().empty()) {
         if (ns.is_root()) {
@@ -85,6 +91,14 @@ void symbol_type_resolver::visit_namespace(ns& ns)
 
 }
 
+void type_reference_resolver::visit_namespace(ns& ns)
+{
+    for(auto& child : ns.get_children()) {
+        child->accept(*this);
+    }
+}
+
+
 void unit_llvm_ir_gen::visit_namespace(ns &ns) {
     for(auto child : ns.get_children()) {
         child->accept(*this);
@@ -94,22 +108,33 @@ void unit_llvm_ir_gen::visit_namespace(ns &ns) {
 //
 // Structure
 //
-void symbol_type_resolver::visit_structure(structure& st) {
+void symbol_resolver::visit_structure(structure& st) {
     visit_named_element(st);
 
+    // Pre declare type
+    std::shared_ptr<struct_type> st_type{new struct_type(st.get_short_name(), st.shared_as<structure>())};
+    _context->add_struct(st_type);
+    st.set_struct_type(st_type);
+
+    // Visit variable children
+    for(auto& child : st.get_children()) {
+        if(auto var = std::dynamic_pointer_cast<member_variable_definition>(child)) {
+            var->accept(*this);
+        }
+    }
+
+    // Visit function children
+    for(auto& child : st.get_children()) {
+        if(auto func = std::dynamic_pointer_cast<function>(child)) {
+            func->accept(*this);
+        }
+    }
+}
+
+void type_reference_resolver::visit_structure(structure& st) {
     for(auto& child : st.get_children()) {
         child->accept(*this);
     }
-
-    // Create type for structure
-    struct_type_builder builder(_context);
-    builder.name(st.get_short_name());
-    builder.structure(st.shared_as<structure>());
-    for(auto& var : st.variables()) {
-        builder.append_field(var.first, var.second->get_type());
-    }
-    auto st_type = builder.build();
-    st.set_struct_type(st_type);
 }
 
 void unit_llvm_ir_gen::visit_structure(structure& st) {
@@ -131,13 +156,21 @@ void unit_llvm_ir_gen::visit_structure(structure& st) {
 //
 // Member variable definition
 //
-void symbol_type_resolver::visit_member_variable_definition(member_variable_definition& var) {
+void symbol_resolver::visit_member_variable_definition(member_variable_definition& var) {
     visit_named_element(var);
-    // TODO
+    // No symbol resolution today, because only primitive types are supported today.
+    // TODO Add complex member resolution.
+    // TODO visit the initialization expression if any
+}
+
+void type_reference_resolver::visit_member_variable_definition(member_variable_definition& var) {
+    // No type resolution today, because only primitive types are supported today.
+    // TODO Add complex member resolution.
 }
 
 void unit_llvm_ir_gen::visit_member_variable_definition(member_variable_definition&) {
-    // TODO
+    // Do nothing for now
+    // Everything is done at structure level
 }
 
 
@@ -145,9 +178,14 @@ void unit_llvm_ir_gen::visit_member_variable_definition(member_variable_definiti
 // Global variable definition
 //
 
-void symbol_type_resolver::visit_global_variable_definition(global_variable_definition& var)
+void symbol_resolver::visit_global_variable_definition(global_variable_definition& var)
 {
     visit_named_element(var);
+    // TODO visit parameter definition (just in case default init is referencing a variable).
+}
+
+void type_reference_resolver::visit_global_variable_definition(global_variable_definition& var)
+{
     if(!type::is_resolved(var.get_type())) {
         auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
         if(!unres_type) {
@@ -165,7 +203,7 @@ void symbol_type_resolver::visit_global_variable_definition(global_variable_defi
     // TODO visit parameter definition (just in case default init is referencing a variable).
 }
 
-void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definition &var) {
+void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definition& var) {
     auto type = var.get_type();
     llvm::Type *llvm_type = _context->get_llvm_type(type);
 
@@ -182,12 +220,77 @@ void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definiti
 }
 
 //
+// Function parameter
+//
+void symbol_resolver::visit_parameter(parameter& param) {
+    visit_named_element(param);
+
+    if(auto expr = param.get_init_expr()) {
+        expr->accept(*this);
+    }
+}
+
+void type_reference_resolver::visit_parameter(parameter& param) {
+
+    if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
+        std::shared_ptr<unresolved_type> unres_type = std::dynamic_pointer_cast<unresolved_type>(var_type);
+        if (!unres_type) {
+            // TODO            throw_error(0x0005, ...);
+        }
+        // Variable type is not resolved, try to resolve it
+        std::shared_ptr<type> res_type = _context->from_string(unres_type->type_id());
+        if(!type::is_resolved(var_type)) {
+            // TODO Err : type not resolvable, unknown type, throw_error(0x0006, ...);
+        }
+
+        param.set_type(res_type);
+    }
+
+    if(auto expr = param.get_init_expr()) {
+        expr->accept(*this);
+
+        auto cast = adapt_type(expr, param.get_type());
+        if(!cast) {
+            // TODO            throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
+        } else if(cast != expr) {
+            // Casted, assign casted expression as return expr.
+            param.set_init_expr(cast);
+        } else {
+            // Compatible type, no need to cast.
+        }
+    }
+}
+
+//
 // Function
 //
 
-void symbol_type_resolver::visit_function(function& fn)
-{
+void symbol_resolver::visit_function(function& fn) {
     visit_named_element(fn);
+
+    if (fn.is_member()) {
+        fn.create_this_parameter();
+    }
+
+    for(auto param : fn.parameters()) {
+        param->accept(*this);
+    }
+    // TODO visit parameter definition (just in case default init is referencing a variable).
+
+    if(auto block = fn.get_block()) {
+        visit_block(*block);
+    }
+}
+
+void type_reference_resolver::visit_function(function& fn) {
+
+    if (fn.is_member()) {
+        fn.get_this_parameter()->accept(*this);
+    }
+
+    for(auto param : fn.parameters()) {
+        param->accept(*this);
+    }
     // TODO visit parameter definition (just in case default init is referencing a variable).
 
     if(auto block = fn.get_block()) {
@@ -196,13 +299,13 @@ void symbol_type_resolver::visit_function(function& fn)
 
 }
 
+
 void unit_llvm_ir_gen::visit_function(function &function) {
     // Parameter types:
     std::vector<llvm::Type*> param_types;
     if (function.is_member() /* TODO and is not static */) {
         // First parameter is the 'this' pointer
-        auto owner = function.get_owner();
-        param_types.push_back(_context->get_llvm_type(owner->get_struct_type()->get_reference()));
+        param_types.push_back(_context->get_llvm_type(function.get_this_parameter()->get_type()));
     }
     for(const auto& param : function.parameters()) {
         param_types.push_back(_context->get_llvm_type(param->get_type()));
@@ -235,6 +338,7 @@ void unit_llvm_ir_gen::visit_function(function &function) {
         // Create dedicated local storage for "this" argument
         llvm::AllocaInst* alloca = _builder->CreateAlloca(llvm::PointerType::get(_context->llvm_context(), 0), nullptr, "this");
         _function_this_variables.insert({function.shared_as<model::function>(), alloca});
+        _parameter_variables.insert({function.get_this_parameter(), alloca});
         // Read "this" param value and store it in dedicated local var
         _builder->CreateStore(arg, alloca);
     }

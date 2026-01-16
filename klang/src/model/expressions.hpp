@@ -81,7 +81,7 @@
 namespace k::model {
 
 namespace gen {
-class symbol_type_resolver;
+class symbol_resolver;
 }
 
 
@@ -107,7 +107,8 @@ protected:
         set_parent(expression);
     }
 
-    friend class gen::symbol_type_resolver;
+    friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
 
     void set_type(std::shared_ptr<type> type);
 
@@ -178,7 +179,7 @@ protected:
             std::monostate, // Not resolved
             std::shared_ptr<variable_definition>,
             std::shared_ptr<function>
-    > _symbol;
+    > _target;
 
     symbol_expression(const name &name);
 
@@ -198,16 +199,16 @@ public:
     }
 
     bool is_variable_def() const {
-        return std::holds_alternative<std::shared_ptr<variable_definition>>(_symbol);
+        return std::holds_alternative<std::shared_ptr<variable_definition>>(_target);
     }
 
     bool is_function() const {
-        return std::holds_alternative<std::shared_ptr<function>>(_symbol);
+        return std::holds_alternative<std::shared_ptr<function>>(_target);
     }
 
     std::shared_ptr<variable_definition> get_variable_def() const {
         if (is_variable_def()) {
-            return std::get<std::shared_ptr<variable_definition>>(_symbol);
+            return std::get<std::shared_ptr<variable_definition>>(_target);
         } else {
             return nullptr;
         }
@@ -215,19 +216,19 @@ public:
 
     std::shared_ptr<function> get_function() const {
         if (is_function()) {
-            return std::get<std::shared_ptr<function>>(_symbol);
+            return std::get<std::shared_ptr<function>>(_target);
         } else {
             return nullptr;
         }
     }
 
     bool is_resolved() const {
-        return _symbol.index() != 0;
+        return _target.index() != 0;
     }
 
-    void resolve(std::shared_ptr<variable_definition> var);
+    void set_target(std::shared_ptr<variable_definition> var);
 
-    void resolve(std::shared_ptr<function> func);
+    void set_target(std::shared_ptr<function> func);
 };
 
 class unary_expression : public expression {
@@ -242,7 +243,8 @@ protected:
         _sub_expr->set_parent_expression(shared_as<expression>());
     }
 
-    friend class gen::symbol_type_resolver;
+    friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
 
     void assign(const std::shared_ptr<expression> &sub_expr) {
         _sub_expr = sub_expr;
@@ -297,7 +299,7 @@ protected:
         _left_expr->set_parent_expression(shared_as<expression>());
     }
 
-    friend class gen::symbol_type_resolver;
+    friend class gen::type_reference_resolver;
 
     void assign_right(const std::shared_ptr<expression> &right_expr) {
         _right_expr = right_expr;
@@ -823,7 +825,7 @@ protected:
 
     member_of_expression() = default;
 
-    friend class gen::symbol_type_resolver;
+    friend class gen::symbol_resolver;
 
     void assign(const std::shared_ptr<expression> &sub_expr, const std::shared_ptr<symbol_expression> &symbol_expr)
     {

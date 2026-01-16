@@ -34,7 +34,7 @@
 #include "model/model.hpp"
 #include "model/model_builder.hpp"
 #include "model/model_dump.hpp"
-#include "gen/symbol_type_resolver.hpp"
+#include "gen/resolvers.hpp"
 #include "gen/unit_llvm_ir_gen.hpp"
 
 #include "llvm/MC/TargetRegistry.h"
@@ -189,7 +189,7 @@ int main(int argc, const char** argv) {
         std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
         unit_dump.dump(*unit);
 
-        k::model::gen::symbol_type_resolver resolver(logger, context, *unit);
+        k::model::gen::symbol_resolver resolver(logger, context, *unit);
         resolver.resolve();
         std::cout << "#" << std::endl << "# Resolution" << std::endl << "#" << std::endl;
         unit_dump.dump(*unit);

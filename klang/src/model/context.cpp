@@ -18,6 +18,8 @@
 
 #include "context.hpp"
 
+
+#include "model.hpp"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/TargetSelect.h"
 
@@ -204,12 +206,30 @@ std::shared_ptr<unresolved_type> context::create_unresolved(name&& type_id) {
     return res;
 }
 
-
 void context::resolve_types() {
-    
-// TODO HERE !!!
+    // Note: primitive types (and derivative) are always resolved.
+    // Note: references, pointers and arrays depend on only from their subtypes.
 
+    // Resolve structures:
+    for(auto& [name, st_type] : _struct_types) {
+        if (!st_type->is_resolved()) {
+            auto st = st_type->get_struct();
+            std::vector<struct_type::field> fields;
+            std::vector<llvm::Type*> types;
+            for(auto& var : st->variables()) {
+                auto type = var.second->get_type();
+                if (!type->is_resolved()) {
+                    // TODO Structure only support primitive types or derivative yet (implicitly resolved)
+                    // So this shall not happen.
+                    throw std::runtime_error("Cannot resolve structure field type: " + type->to_string());
+                }
+                fields.emplace_back(fields.size(), var.first, type);
+                types.push_back(get_llvm_type(type));
+            }
+            auto llvm_type = llvm::StructType::create(llvm_context(), llvm::ArrayRef<llvm::Type*>(types), name);
+            st_type->set_llvm_type(std::move(fields), llvm_type);
+        }
+    }
 }
-
 
 } // namespace k::model

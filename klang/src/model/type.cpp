@@ -188,7 +188,8 @@ std::shared_ptr<reference_type> reference_type::get_reference() {
 
 llvm::Type* reference_type::get_llvm_type() const {
     if(_llvm_type==nullptr && is_resolved()) {
-        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
+        auto llvm_subtype = subtype.lock()->get_llvm_type();
+        _llvm_type = llvm::PointerType::get(llvm_subtype, 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
     }
     return _llvm_type;
 }
@@ -317,6 +318,14 @@ std::shared_ptr<struct_type> struct_type_builder::build() {
 // Structure type
 //
 
+struct_type::struct_type(const std::string& name, std::weak_ptr<k::model::structure> st):
+type(nullptr),
+_name(name),
+_struct(st)
+{
+}
+
+
 struct_type::struct_type(const std::string& name, std::weak_ptr<structure> st, std::vector<field>&& fields, llvm::StructType* llvm_struct_type):
 type(llvm_struct_type),
 _name(name),
@@ -327,14 +336,16 @@ _struct(st)
 
 bool struct_type::is_resolved() const
 {
-    // NOTE: is it relevant to check subtypes resolution each time ?
-    /*for(const auto& field : _fields) {
+    /*
+    for(const auto& field : _fields) {
         auto field_type = field.field_type.lock();
         if(!field_type->is_resolved()) {
             return false;
         }
-    }*/
+    }
     return true;
+*/
+    return get_llvm_type() != nullptr;
 }
 
 std::string struct_type::to_string() const {
@@ -344,6 +355,12 @@ std::string struct_type::to_string() const {
 std::shared_ptr<structure> struct_type::get_struct() const {
     return _struct.lock();
 }
+
+void struct_type::set_llvm_type(std::vector<field>&& fields, llvm::StructType* llvm_struct_type) {
+    _fields = fields;
+    _llvm_type = llvm_struct_type;
+}
+
 
 bool struct_type::has_member(const std::string& name) const {
     for(const auto& field : _fields) {
