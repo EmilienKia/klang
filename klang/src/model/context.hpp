@@ -76,6 +76,8 @@ public:
 
     void resolve_types();
 
+    std::shared_ptr<type> resolve_type(const std::shared_ptr<type>& type);
+
 protected:
 
     std::shared_ptr<unresolved_type> create_unresolved(const name& type_id);

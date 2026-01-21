@@ -232,4 +232,63 @@ void context::resolve_types() {
     }
 }
 
+std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
+    if (type->is_resolved()) {
+        return type;
+    } else if (type::is_pointer(type)) {
+        auto res = resolve_type(type->get_subtype());
+        if (!res) {
+            // Not resolvable
+            // TODO throw an exception
+            std::cerr << "Error: cannot resolve pointer subtype." << std::endl;
+            return nullptr;
+        } else {
+            return res->get_pointer();
+        }
+    } else if (type::is_reference(type)) {
+        auto res = resolve_type(type->get_subtype());
+        if (!res) {
+            // Not resolvable
+            // TODO throw an exception
+            std::cerr << "Error: cannot resolve reference subtype." << std::endl;
+            return nullptr;
+        } else {
+            return res->get_reference();
+        }
+    } else if (type::is_array(type)) {
+        auto res = resolve_type(type->get_subtype());
+        if (!res) {
+            // Not resolvable
+            // TODO throw an exception
+            std::cerr << "Error: cannot resolve array subtype." << std::endl;
+            return nullptr;
+        } else {
+            if (type::is_sized_array(type)) {
+                auto sized_arr = std::dynamic_pointer_cast<sized_array_type>(type);
+                return res->get_array(sized_arr->get_size());
+            } else {
+                return res->get_array();
+            }
+        }
+    } else if (auto unres = std::dynamic_pointer_cast<unresolved_type>(type)) {
+        auto res = unres->get_resolved();
+        if (res) {
+            return res;
+        } else {
+            auto resolved_type = from_string(unres->type_id().to_string());
+            if (!resolved_type->is_resolved()) {
+                // TODO throw an exception
+                std::cerr << "Error: cannot resolve type: " << unres->type_id().to_string() << std::endl;
+                return nullptr;
+            } else {
+                unres->resolve(resolved_type);
+                return resolved_type;
+            }
+        }
+    } else {
+        // Unknown type
+        return nullptr;
+    }
+}
+
 } // namespace k::model

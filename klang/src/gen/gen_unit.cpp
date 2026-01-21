@@ -233,16 +233,10 @@ void symbol_resolver::visit_parameter(parameter& param) {
 void type_reference_resolver::visit_parameter(parameter& param) {
 
     if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
-        std::shared_ptr<unresolved_type> unres_type = std::dynamic_pointer_cast<unresolved_type>(var_type);
-        if (!unres_type) {
-            // TODO            throw_error(0x0005, ...);
-        }
-        // Variable type is not resolved, try to resolve it
-        std::shared_ptr<type> res_type = _context->from_string(unres_type->type_id());
-        if(!type::is_resolved(var_type)) {
+        std::shared_ptr<type> res_type = _context->resolve_type(var_type);
+        if (!type::is_resolved(res_type)) {
             // TODO Err : type not resolvable, unknown type, throw_error(0x0006, ...);
         }
-
         param.set_type(res_type);
     }
 

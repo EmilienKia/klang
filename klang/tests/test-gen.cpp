@@ -2475,7 +2475,7 @@ TEST_CASE("Structure content references and invocation with local variable", "[g
             return test_local() + 5;
         }
 
-        )SRC", true);
+        )SRC");
     REQUIRE(jit);
 
     auto test_local = jit->lookup_symbol < int(*)() > ("test_local");
@@ -2544,7 +2544,6 @@ TEST_CASE("Structure content references and invocation with global variable", "[
 
 
 TEST_CASE("Structure content and invocation through reference", "[gen][struct]") {
-    SKIP(); // Currently, explicit reference types are not implemented yet
     auto jit = gen(R"SRC(
         module __structs__;
 
@@ -2605,7 +2604,7 @@ TEST_CASE("Implicit and explicit 'this' name lookup", "[gen][struct]") {
             return p.implicit() + p.explicit();
         }
 
-        )SRC", true);
+        )SRC");
     REQUIRE(jit);
 
     auto test = jit->lookup_symbol < int(*)() > ("test");
@@ -2635,7 +2634,7 @@ TEST_CASE("This and var name lookup", "[gen][struct]") {
             return p.add(20);
         }
 
-        )SRC", true);
+        )SRC");
     REQUIRE(jit);
 
     auto test = jit->lookup_symbol < int(*)() > ("test");
