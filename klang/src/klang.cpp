@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@
 
 #include <boost/program_options.hpp>
 
+#include "compiler.hpp"
 #include "config.h"
 
 #include "common/logger.hpp"
@@ -46,7 +47,6 @@
 #include "llvm/TargetParser/Host.h"
 
 namespace po = boost::program_options;
-using namespace k;
 
 k::log::logger logger;
 
@@ -160,13 +160,12 @@ int main(int argc, const char** argv) {
     }
 
 
-
     if(input_files.empty()) {
         std::cerr << "No input file." << std::endl;
         return -1;
     }
 
-    if(input_files.empty() > 1) {
+    if(input_files.size() > 1) {
         std::cout << "klangc is supporting only one input file yet. Additional files will be ignored." << std::endl;
     }
 
@@ -174,59 +173,9 @@ int main(int argc, const char** argv) {
 
     try {
 
-        k::parse::parser parser(logger, source);
-        std::shared_ptr<k::parse::ast::unit> ast_unit = parser.parse_unit();
-
-        k::parse::dump::ast_dump_visitor visit(std::cout);
-        std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
-        visit.visit_unit(*ast_unit);
-
-        k::model::dump::unit_dump unit_dump(std::cout);
-
-        auto context = k::model::context::create();
-        auto unit = k::model::unit::create(context);
-        k::model::model_builder::visit(logger, context, *ast_unit, *unit);
-        std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
-        unit_dump.dump(*unit);
-
-        k::model::gen::symbol_resolver resolver(logger, context, *unit);
-        resolver.resolve();
-        std::cout << "#" << std::endl << "# Resolution" << std::endl << "#" << std::endl;
-        unit_dump.dump(*unit);
-
-        k::model::gen::unit_llvm_ir_gen gen(logger, context, *unit);
-        gen.get_module().setDataLayout(target_machine->createDataLayout());
-        gen.get_module().setTargetTriple(target_machine->getTargetTriple().getTriple());
-        std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
-        unit->accept(gen);
-        gen.verify();
-        gen.dump();
-
-        std::cout << "#" << std::endl << "# LLVM Optimize Module" << std::endl << "#" << std::endl;
-        gen.optimize_functions();
-        gen.verify();
-        gen.dump();
-
-
-
-        std::error_code EC;
-        llvm::raw_fd_ostream dest(output_file, EC, llvm::sys::fs::OF_None);
-        if (EC) {
-            llvm::errs() << "Could not open file: " << EC.message();
-            return 1;
-        }
-
-        llvm::legacy::PassManager pass;
-        auto FileType = llvm::CodeGenFileType::ObjectFile;
-
-        if (target_machine->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
-            llvm::errs() << "TargetMachine can't emit a file of this type";
-            return 1;
-        }
-
-        pass.run(gen.get_module());
-        dest.flush();
-
+        k::compiler compiler(target_machine);
+        compiler.compile(source, true, false);
+        return compiler.gen_object_file(output_file) ? 0 : -1;
 
     } catch(...) {
     }

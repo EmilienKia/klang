@@ -28,9 +28,10 @@
 
 namespace k {
 
-compiler::compiler():
+compiler::compiler(llvm::TargetMachine* target):
     _parser(_log),
-    _context(k::model::context::create())
+    _context(k::model::context::create()),
+    _target(target)
 {}
 
 void compiler::compile(std::string_view src, bool optimize, bool dump) {
@@ -86,6 +87,12 @@ void compiler::compile(std::string_view src, bool optimize, bool dump) {
 void compiler::process_gen(bool optimize, bool dump) {
 
     auto gen = std::make_unique<k::model::gen::unit_llvm_ir_gen>(_log, _context, *_unit);
+
+    if (_target) {
+        gen->get_module().setDataLayout(_target->createDataLayout());
+        gen->get_module().setTargetTriple(_target->getTargetTriple().getTriple());
+    }
+
     if(dump) {
         std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
     }
@@ -119,7 +126,38 @@ std::unique_ptr<k::model::gen::unit_llvm_jit> compiler::to_jit() {
         _gen.reset();
         return jit;
     } else {
+        std::cerr << "Error : Failed to generate code for JIT." << std::endl;
         return nullptr;
+    }
+}
+
+bool compiler::gen_object_file(const std::string& output_file) {
+    if (!_gen) {
+        process_gen();
+    }
+    if (_gen) {
+        std::error_code EC;
+        llvm::raw_fd_ostream dest(output_file, EC, llvm::sys::fs::OF_None);
+        if (EC) {
+            llvm::errs() << "Could not open file: " << EC.message();
+            return false;
+        }
+
+        llvm::legacy::PassManager pass;
+        auto FileType = llvm::CodeGenFileType::ObjectFile;
+
+        if (_target->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
+            llvm::errs() << "TargetMachine can't emit a file of this type";
+            return false;
+        }
+
+        pass.run(_gen->get_module());
+        dest.flush();
+        return true;
+
+    } else {
+        std::cerr << "Error : Failed to generate code for object file." << std::endl;
+        return false;
     }
 }
 

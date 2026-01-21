@@ -22,6 +22,10 @@
 #include "common/logger.hpp"
 #include "parse/parser.hpp"
 
+namespace llvm {
+class TargetMachine;
+}
+
 namespace k {
 namespace model {
 namespace gen {
@@ -43,15 +47,18 @@ protected:
 
     std::unique_ptr<model::gen::unit_llvm_ir_gen> _gen;
 
+    llvm::TargetMachine* _target;
+
     void process_gen(bool optimize = true, bool dump = true);
 
 public:
-    compiler();
+    compiler(llvm::TargetMachine* target = nullptr);
 
     void compile(std::string_view src, bool optimize = true, bool dump = true);
 
     std::unique_ptr<k::model::gen::unit_llvm_jit> to_jit();
 
+    bool gen_object_file(const std::string& output_file);
 };
 
 } // k
