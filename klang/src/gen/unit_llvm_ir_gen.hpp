@@ -109,6 +109,7 @@ public:
     void visit_expression_statement(expression_statement&) override;
     void visit_variable_statement(variable_statement&) override;
 
+    llvm::Constant* get_llvm_constant_from_value_expr(const value_expression&) const;
     void visit_value_expression(value_expression&) override;
     void visit_symbol_expression(symbol_expression&) override;
 

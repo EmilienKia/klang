@@ -2581,3 +2581,43 @@ TEST_CASE("This and var name lookup", "[gen][struct]") {
     REQUIRE( res_test == (10 + 20) );
 
 }
+
+TEST_CASE("Local variable constant init expression", "[gen][variable]") {
+    auto jit = gen(R"SRC(
+        module __vars__;
+
+        test() : int {
+            a : int = 5;
+            b : int = 12;
+            return a + b;
+        }
+
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol < int(*)() > ("test");
+    auto res_test = test();
+    REQUIRE( res_test == (5 + 12) );
+
+}
+
+
+TEST_CASE("Global variable constant init expression", "[gen][variable]") {
+    auto jit = gen(R"SRC(
+        module __vars__;
+
+        a : int = 5;
+        b : int = 12;
+
+        test() : int {
+            return a + b;
+        }
+
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol < int(*)() > ("test");
+    auto res_test = test();
+    REQUIRE( res_test == (5 + 12) );
+
+}

@@ -134,7 +134,7 @@ public:
 
     /**
      * Current support : VARIABLE_DECL := SPECIFIERS identifier ':' TYPE_SPEC ?['=' CONDITIONAL_EXPR] ';'
-     * TODO VARIABLE_DECL := SPECIFIERS identifier ?[':' TYPE_SPEC ?[(INITIALIZER)] ['=' CONDITIONAL_EXPR]
+     * TODO VARIABLE_DECL := SPECIFIERS identifier ?[ [':' TYPE_SPEC ?[[(INITIALIZER)]|[{STRUCT_INITIALIZER}]|['=' CONDITIONAL_EXPR]] | ['=' CONDITIONAL_EXPR] ]
      */
     std::shared_ptr<ast::variable_decl> parse_variable_decl();
 

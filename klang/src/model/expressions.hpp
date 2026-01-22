@@ -157,6 +157,10 @@ public:
         return _literal.value();
     }
 
+    void set_value(const k::value_type& value) {
+        _value = value;
+    }
+
     static std::shared_ptr<value_expression> from_literal(const k::lex::any_literal &literal);
 
     template<typename T>

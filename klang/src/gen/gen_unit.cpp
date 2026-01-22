@@ -181,7 +181,10 @@ void unit_llvm_ir_gen::visit_member_variable_definition(member_variable_definiti
 void symbol_resolver::visit_global_variable_definition(global_variable_definition& var)
 {
     visit_named_element(var);
-    // TODO visit parameter definition (just in case default init is referencing a variable).
+
+    if(auto expr = var.get_init_expr()) {
+        expr->accept(*this);
+    }
 }
 
 void type_reference_resolver::visit_global_variable_definition(global_variable_definition& var)
@@ -200,22 +203,56 @@ void type_reference_resolver::visit_global_variable_definition(global_variable_d
             var.set_type(type);
         }
     }
-    // TODO visit parameter definition (just in case default init is referencing a variable).
+
+    if(auto expr = var.get_init_expr()) {
+        expr->accept(*this);
+
+        auto cast = adapt_type(expr, var.get_type());
+        if(!cast) {
+            // TODO            throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
+        } else if(cast != expr) {
+            // Casted, assign casted expression as return expr.
+            var.set_init_expr(cast);
+        } else {
+            // Compatible type, no need to cast.
+        }
+    }
 }
 
 void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definition& var) {
     auto type = var.get_type();
     llvm::Type *llvm_type = _context->get_llvm_type(type);
 
-    // TODO initialize the variable with the expression
-    // Here is the 0-filled initialization:
-    llvm::Constant *value = type->generate_default_value_initializer();
+    // Generate initialization
+    llvm::Constant* constInitValue = nullptr;
+    if(auto initExpr = var.get_init_expr()) {
+        // TODO initialize the variable with the expression
+        if (auto valueExpr = std::dynamic_pointer_cast<value_expression>(initExpr)) {
+            // Constant init expression
+            if (auto constant = get_llvm_constant_from_value_expr(*valueExpr)) {
+                // TODO Implement type conversion
+                constInitValue = constant;
+            } else {
+                // TODO Support casted constant expression (and any other resolvable complex constant init expression)
+                constInitValue = type->generate_default_value_initializer();
+            }
+        } else {
+            // Complex init expression
+            // TODO Support complex init expression
+            // Use 0-filled instead
+            constInitValue = type->generate_default_value_initializer();
+        }
+    } else {
+        // No explicit initialization
+        // Here is the 0-filled initialization:
+        constInitValue = type->generate_default_value_initializer();
+    }
 
     // TODO use the real mangled name
     //std::string mangledName;
     //Mangler::getNameWithPrefix(mangledName, "test::toto", Mangler::ManglingMode::Default);
 
-    auto variable = new llvm::GlobalVariable(*_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, value, var.get_short_name());
+    auto variable = new llvm::GlobalVariable(*_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, constInitValue, var.get_short_name());
     _global_vars.insert({var.shared_as<global_variable_definition>(), variable});
 }
 

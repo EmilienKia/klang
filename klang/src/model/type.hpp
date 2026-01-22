@@ -43,7 +43,6 @@ class keyword;
 }
 }
 
-
 namespace k::model {
 
 namespace gen {
