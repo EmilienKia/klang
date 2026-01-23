@@ -433,21 +433,42 @@ void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
     _variables.insert({var.shared_as<variable_statement>(), alloca});
 
     // But initialize at the decl place
-    llvm::Value *value = nullptr;
     if(auto init = var.get_init_expr()) {
         _value = nullptr;
         init->accept(*this);
-        value = _value;
-        _value = nullptr;
-    }
-
-    // If no explicit initialization, init to default value initializer.
-    if(value == nullptr) {
-        value = var.get_type()->generate_default_value_initializer();
-    }
-
-    if(value) {
-        _builder->CreateStore(value, alloca);
+        if (_value!=nullptr) {
+            _builder->CreateStore(_value, alloca);
+            _value = nullptr;
+        } else {
+            // TODO handle error (nullptr) in init expr generation
+        }
+    } else {
+        // No explicit initialization, use default
+        if(auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
+            auto def_value_init = st_type->generate_default_value_initializer();
+            if (def_value_init) {
+                _builder->CreateStore(var_type->generate_default_value_initializer(), alloca);
+            } else {
+                // TODO Failed to generate initialization
+            }
+            // NOTE : How to handle complex initialization ?
+        } else if (type::is_primitive(var_type)) {
+            // For primitives, use default value initializer
+            llvm::Value *value = var.get_type()->generate_default_value_initializer();
+            if (value) {
+                _builder->CreateStore(var_type->generate_default_value_initializer(), alloca);
+            } else {
+                // TODO Failed to generate initialization
+            }
+        } else {
+            // TODO Correctly initialize other types (including ref/prt/arrays...)
+            llvm::Value *value = var.get_type()->generate_default_value_initializer();
+            if (value) {
+                _builder->CreateStore(var_type->generate_default_value_initializer(), alloca);
+            } else {
+                // TODO Failed to generate initialization
+            }
+        }
     }
 }
 

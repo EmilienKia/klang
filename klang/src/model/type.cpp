@@ -356,9 +356,10 @@ std::shared_ptr<structure> struct_type::get_struct() const {
     return _struct.lock();
 }
 
-void struct_type::set_llvm_type(std::vector<field>&& fields, llvm::StructType* llvm_struct_type) {
+void struct_type::set_llvm_type(std::vector<field>&& fields, llvm::StructType* llvm_struct_type, llvm::Constant* default_init_constant) {
     _fields = fields;
     _llvm_type = llvm_struct_type;
+    _default_init_constant = default_init_constant;
 }
 
 
@@ -381,8 +382,7 @@ std::optional<struct_type::field> struct_type::get_member(const std::string& nam
 }
 
 llvm::Constant* struct_type::generate_default_value_initializer() const {
-    // TODO implement default struct initializer
-    return llvm::ConstantAggregateZero::get(get_llvm_type());
+    return _default_init_constant!=nullptr ? _default_init_constant : llvm::ConstantAggregateZero::get(get_llvm_type());
 }
 
 

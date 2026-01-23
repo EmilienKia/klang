@@ -51,41 +51,9 @@ void type_reference_resolver::visit_value_expression(value_expression& expr)
 
 llvm::Constant* unit_llvm_ir_gen::get_llvm_constant_from_value_expr(const value_expression& expr) const {
     if(expr.is_literal()) {
-        auto lit = expr.any_literal();
-        switch(lit.index()) {
-            case lex::any_literal_type_index::INTEGER: {
-                const auto &i = lit.get<lex::integer>();
-                auto val = llvm::APInt((unsigned) i.size, i.int_content(), (uint8_t) i.base);
-                return llvm::ConstantInt::get(**_context, val);
-            } break;
-            case lex::any_literal_type_index::FLOAT_NUM: {
-                const auto &f = lit.get<lex::float_num>();
-                llvm::Type* type = f.size==lex::DOUBLE ? _builder->getDoubleTy() : _builder->getFloatTy() ;
-                llvm::APFloat val(type->getScalarType()->getFltSemantics(), f.float_content());
-                return llvm::ConstantFP::get(type, val);
-            } break;
-            case lex::any_literal_type_index::CHARACTER:
-                // TODO
-                break;
-            case lex::any_literal_type_index::STRING:
-                // TODO
-                break;
-            case lex::any_literal_type_index::BOOLEAN: {
-                const auto& b = lit.get<lex::boolean>();
-                if(std::get<bool>(b.value())) {
-                    return _builder->getTrue();
-                } else {
-                    return _builder->getFalse();
-                }
-            } break;
-            case lex::any_literal_type_index::NUL:
-                // TODO
-                break;
-            default:
-                break;
-        }
+        return _context->get_llvm_constant_from_literal(expr.any_literal());
     } else {
-
+        // TODO
     }
     return nullptr;
 }

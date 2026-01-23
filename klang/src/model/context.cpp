@@ -19,6 +19,7 @@
 #include "context.hpp"
 
 
+#include "expressions.hpp"
 #include "model.hpp"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/TargetSelect.h"
@@ -194,6 +195,33 @@ llvm::Type* context::get_llvm_type(const std::shared_ptr<type>& type) {
 }
 
 
+llvm::Constant* context::get_llvm_constant_from_literal(const k::lex::any_literal &literal) {
+    if (std::holds_alternative<lex::integer>(literal)) {
+        const auto &i = literal.get<lex::integer>();
+        auto val = llvm::APInt((unsigned) i.size, i.int_content(), (uint8_t) i.base);
+        return llvm::ConstantInt::get(**this, val);
+    } else if (std::holds_alternative<lex::float_num>(literal)) {
+        const auto &f = literal.get<lex::float_num>();
+        llvm::Type* type = f.size==lex::DOUBLE ?  llvm::Type::getDoubleTy(*_context) : llvm::Type::getFloatTy(*_context) ;
+        llvm::APFloat val(type->getScalarType()->getFltSemantics(), f.float_content());
+        return llvm::ConstantFP::get(type, val);
+    } else if (std::holds_alternative<lex::character>(literal)) {
+        const auto &c = literal.get<lex::character>();
+        auto val = llvm::APInt(8, static_cast<uint64_t>(std::get<char>(c.value())));
+        return llvm::ConstantInt::get(**this, val);
+    } else if (std::holds_alternative<lex::boolean>(literal)) {
+        const auto& b = literal.get<lex::boolean>();
+        if(std::get<bool>(b.value())) {
+            return llvm::ConstantInt::getTrue(*_context);
+        } else {
+            return llvm::ConstantInt::getFalse(*_context);
+        }
+    } else {
+        // TODO handle other literal types
+        return nullptr;
+    }
+}
+
 std::shared_ptr<unresolved_type> context::create_unresolved(const name& type_id) {
     std::shared_ptr<unresolved_type> res{new unresolved_type(type_id)};
     _unresolved.push_back(res);
@@ -211,23 +239,36 @@ void context::resolve_types() {
     // Note: references, pointers and arrays depend on only from their subtypes.
 
     // Resolve structures:
-    for(auto& [name, st_type] : _struct_types) {
+    for(auto& [st_name, st_type] : _struct_types) {
         if (!st_type->is_resolved()) {
             auto st = st_type->get_struct();
             std::vector<struct_type::field> fields;
             std::vector<llvm::Type*> types;
-            for(auto& var : st->variables()) {
-                auto type = var.second->get_type();
+            std::vector<llvm::Constant*> inits;
+            for(auto [var_name,var] : st->variables()) {
+                auto type = var->get_type();
                 if (!type->is_resolved()) {
                     // TODO Structure only support primitive types or derivative yet (implicitly resolved)
                     // So this shall not happen.
                     throw std::runtime_error("Cannot resolve structure field type: " + type->to_string());
                 }
-                fields.emplace_back(fields.size(), var.first, type);
+                if (auto value_init = std::dynamic_pointer_cast<value_expression>(var->get_init_expr())) {
+                    // TODO HERE EKI !!!
+                    llvm::Constant* init_value = value_init->is_literal() ? get_llvm_constant_from_literal(value_init->any_literal()) : nullptr;
+                    if (init_value == nullptr) {
+                        // Cant generate constant initializer, use 0-based initializer instead
+                        init_value = type->generate_default_value_initializer();
+                    }
+                    inits.push_back(init_value);
+                } else {
+                    inits.push_back(type->generate_default_value_initializer());
+                }
+                fields.emplace_back(fields.size(), var_name, type);
                 types.push_back(get_llvm_type(type));
             }
-            auto llvm_type = llvm::StructType::create(llvm_context(), llvm::ArrayRef<llvm::Type*>(types), name);
-            st_type->set_llvm_type(std::move(fields), llvm_type);
+            auto llvm_type = llvm::StructType::create(llvm_context(), llvm::ArrayRef<llvm::Type*>(types), st_name);
+            auto default_const_value = llvm::ConstantStruct::get(llvm::cast<llvm::StructType>(llvm_type), llvm::ArrayRef<llvm::Constant*>(inits));
+            st_type->set_llvm_type(std::move(fields), llvm_type, default_const_value);
         }
     }
 }

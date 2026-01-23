@@ -421,7 +421,6 @@ void structure::accept(model_visitor& visitor) {
     visitor.visit_structure(*this);
 }
 
-
 std::shared_ptr<function> structure::do_create_function(const std::string &name) {
     std::shared_ptr<structure> this_st = shared_as<structure>();
     return std::shared_ptr<function>{function::make_shared(this_st, name)};

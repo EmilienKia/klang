@@ -74,9 +74,13 @@ public:
 
     llvm::Type* get_llvm_type(const std::shared_ptr<type>& type);
 
+    llvm::Constant* get_llvm_constant_from_literal(const k::lex::any_literal &literal);
+
     void resolve_types();
 
     std::shared_ptr<type> resolve_type(const std::shared_ptr<type>& type);
+
+
 
 protected:
 

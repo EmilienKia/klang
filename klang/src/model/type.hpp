@@ -378,9 +378,11 @@ protected:
 
     std::weak_ptr<k::model::structure> _struct;
 
+    llvm::Constant* _default_init_constant = nullptr;
+
     struct_type(const std::string& name, std::weak_ptr<k::model::structure> st, std::vector<field>&& fields, llvm::StructType* llvm_struct_type);
 
-    void set_llvm_type(std::vector<field>&& fields, llvm::StructType* llvm_struct_type);
+    void set_llvm_type(std::vector<field>&& fields, llvm::StructType* llvm_struct_type, llvm::Constant* default_init_constant);
 
 public:
     struct_type(const std::string& name, std::weak_ptr<k::model::structure> st);

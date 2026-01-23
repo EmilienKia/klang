@@ -2481,7 +2481,6 @@ TEST_CASE("Structure content references and invocation with global variable", "[
     REQUIRE( glop->b == 17 );
 }
 
-
 TEST_CASE("Structure content and invocation through reference", "[gen][struct]") {
     auto jit = gen(R"SRC(
         module __structs__;
@@ -2512,7 +2511,6 @@ TEST_CASE("Structure content and invocation through reference", "[gen][struct]")
     auto test_ref = jit->lookup_symbol < int(*)() > ("test_ref");
     auto res_test_ref = test_ref();
     REQUIRE( res_test_ref == ((28 + 72) + 72) );
-
 }
 
 //
@@ -2549,7 +2547,6 @@ TEST_CASE("Implicit and explicit 'this' name lookup", "[gen][struct]") {
     auto test = jit->lookup_symbol < int(*)() > ("test");
     auto res_test = test();
     REQUIRE( res_test == (10 + 10) );
-
 }
 
 TEST_CASE("This and var name lookup", "[gen][struct]") {
@@ -2579,7 +2576,6 @@ TEST_CASE("This and var name lookup", "[gen][struct]") {
     auto test = jit->lookup_symbol < int(*)() > ("test");
     auto res_test = test();
     REQUIRE( res_test == (10 + 20) );
-
 }
 
 TEST_CASE("Local variable constant init expression", "[gen][variable]") {
@@ -2598,9 +2594,7 @@ TEST_CASE("Local variable constant init expression", "[gen][variable]") {
     auto test = jit->lookup_symbol < int(*)() > ("test");
     auto res_test = test();
     REQUIRE( res_test == (5 + 12) );
-
 }
-
 
 TEST_CASE("Global variable constant init expression", "[gen][variable]") {
     auto jit = gen(R"SRC(
@@ -2619,5 +2613,66 @@ TEST_CASE("Global variable constant init expression", "[gen][variable]") {
     auto test = jit->lookup_symbol < int(*)() > ("test");
     auto res_test = test();
     REQUIRE( res_test == (5 + 12) );
+}
 
+TEST_CASE("Struct fields default 0-initialization", "[gen][struct]") {
+    auto jit = gen(R"SRC(
+        module __struct__;
+
+        struct plop {
+            // Should be default init to 0
+            a : int;
+            b : int;
+            c : int;
+            sum() : int {
+                return a + b + c;
+            }
+        }
+
+        test_local() : int {
+            p : plop;
+            return p.sum();
+        }
+
+        )SRC");
+    REQUIRE(jit);
+
+    auto test_local = jit->lookup_symbol < int(*)() > ("test_local");
+    auto res_test_local = test_local();
+    REQUIRE( res_test_local == (0 + 0 + 0) );
+}
+
+TEST_CASE("Struct fields trivial constant default initialization", "[gen][struct]") {
+    auto jit = gen(R"SRC(
+        module __struct__;
+
+        struct plop {
+            a : int = 5;
+            b : int = 12;
+            c : int; // Should be default init to 0
+            sum() : int {
+                return a + b + c;
+            }
+        }
+
+        test_local() : int {
+            p : plop;
+            return p.sum();
+        }
+
+        g : plop;
+        test_global() : int {
+            return g.sum();
+        }
+
+        )SRC");
+    REQUIRE(jit);
+
+    auto test_local = jit->lookup_symbol < int(*)() > ("test_local");
+    auto res_test_local = test_local();
+    REQUIRE( res_test_local == (5 + 12 + 0) );
+
+    auto test_global = jit->lookup_symbol < int(*)() > ("test_global");
+    auto res_test_global = test_global();
+    REQUIRE( res_test_global == (5 + 12 + 0) );
 }
