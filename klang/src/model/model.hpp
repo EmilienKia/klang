@@ -538,7 +538,6 @@ public:
      */
     std::shared_ptr<const ns> get_child_namespace(const std::string& child_name)const;
 
-
     //
     // Children functions
     //

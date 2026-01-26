@@ -2676,3 +2676,340 @@ TEST_CASE("Struct fields trivial constant default initialization", "[gen][struct
     auto res_test_global = test_global();
     REQUIRE( res_test_global == (5 + 12 + 0) );
 }
+
+TEST_CASE("Relative name lookup", "[gen][name_lookup]") {
+
+    k::compiler comp;
+    comp.compile(R"SRC(
+        module the::test;
+
+        struct plop {
+            a : int = 5;
+            b : int = 12;
+            c : int; // Should be default init to 0
+            sum() : int {
+                return a + b + c;
+            }
+        }
+
+        test_local() : int {
+            p : plop;
+            return p.sum();
+        }
+
+        g : plop;
+        test_global() : int {
+            return g.sum();
+        }
+
+        )SRC");
+
+    // Global function:
+    auto test_local_elems = comp.find_elements("test_local");
+    REQUIRE( test_local_elems.size() == 1 );
+    auto test_local_elem = std::dynamic_pointer_cast<k::model::function>(test_local_elems.front());
+    REQUIRE( test_local_elem != nullptr );
+    REQUIRE( test_local_elem->get_short_name() == "test_local" );
+    REQUIRE( test_local_elem->get_fq_name() == "::the::test::test_local" );
+    REQUIRE( test_local_elem->get_mangled_name() == "_KFN3the4test10test_localEv" );
+    REQUIRE( test_local_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+
+    // Global variable:
+    auto g_elems = comp.find_elements("g");
+    REQUIRE( g_elems.size() == 1 );
+    auto g_elem = std::dynamic_pointer_cast<k::model::global_variable_definition>(g_elems.front());
+    REQUIRE( g_elem != nullptr );
+    REQUIRE( g_elem->get_short_name() == "g" );
+    REQUIRE( g_elem->get_fq_name() == "::the::test::g" );
+    REQUIRE( g_elem->get_mangled_name() == "_KN3the4test1gE" );
+    REQUIRE( g_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+
+    // Structure:
+    auto plop_elems = comp.find_elements("plop");
+    REQUIRE( plop_elems.size() == 1 );
+    auto plop_elem = std::dynamic_pointer_cast<k::model::structure>(plop_elems.front());
+    REQUIRE( plop_elem != nullptr );
+    REQUIRE( plop_elem->get_short_name() == "plop" );
+    REQUIRE( plop_elem->get_fq_name() == "::the::test::plop" );
+    REQUIRE( plop_elem->get_mangled_name() == "_KN3the4test4plopE" );
+    REQUIRE( plop_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+
+    // Member function:
+    auto plop_sum_elems = comp.find_elements("plop::sum");
+    REQUIRE( plop_sum_elems.size() == 1 );
+    auto plop_sum_elem = std::dynamic_pointer_cast<k::model::function>(plop_sum_elems.front());
+    REQUIRE( plop_sum_elem != nullptr );
+    REQUIRE( plop_sum_elem->get_short_name() == "sum" );
+    REQUIRE( plop_sum_elem->get_fq_name() == "::the::test::plop::sum" );
+    REQUIRE( plop_sum_elem->get_mangled_name() == "_KFMN3the4test4plop3sumEv" );
+    REQUIRE( plop_sum_elem->parent<k::model::structure>() == plop_elem );
+
+}
+
+TEST_CASE("Relative mangled name lookup", "[gen][name_lookup]") {
+
+    k::compiler comp;
+    comp.compile(R"SRC(
+        module the::test;
+
+        struct plop {
+            a : int = 5;
+            b : int = 12;
+            c : int; // Should be default init to 0
+            sum() : int {
+                return a + b + c;
+            }
+        }
+
+        test_local() : int {
+            p : plop;
+            return p.sum();
+        }
+
+        g : plop;
+        test_global() : int {
+            return g.sum();
+        }
+
+        )SRC");
+
+    // Global function:
+    REQUIRE( comp.get_element_mangled_name("test_local") == "_KFN3the4test10test_localEv" );
+
+    // Global variable:
+    REQUIRE( comp.get_element_mangled_name("g") == "_KN3the4test1gE" );
+
+    // Member function:
+    REQUIRE( comp.get_element_mangled_name("plop::sum") == "_KFMN3the4test4plop3sumEv" );
+
+    // Structure (cannot be mangled):
+    REQUIRE_THROWS_AS(comp.get_element_mangled_name("plop"), std::runtime_error);
+
+    // No such element:
+    REQUIRE_THROWS_AS(comp.get_element_mangled_name("blahblah::blah"), std::runtime_error);
+}
+
+TEST_CASE("Relative to root namespace name lookup", "[gen][name_lookup]") {
+
+    k::compiler comp;
+    comp.compile(R"SRC(
+        module the::test;
+
+        struct plop {
+            a : int = 5;
+            b : int = 12;
+            c : int; // Should be default init to 0
+            sum() : int {
+                return a + b + c;
+            }
+        }
+
+        test_local() : int {
+            p : plop;
+            return p.sum();
+        }
+
+        g : plop;
+        test_global() : int {
+            return g.sum();
+        }
+
+        )SRC");
+
+    // Global function:
+    auto test_local_elems = comp.find_elements("the::test::test_local");
+    REQUIRE( test_local_elems.size() == 1 );
+    auto test_local_elem = std::dynamic_pointer_cast<k::model::function>(test_local_elems.front());
+    REQUIRE( test_local_elem != nullptr );
+    REQUIRE( test_local_elem->get_short_name() == "test_local" );
+    REQUIRE( test_local_elem->get_fq_name() == "::the::test::test_local" );
+    REQUIRE( test_local_elem->get_mangled_name() == "_KFN3the4test10test_localEv" );
+    REQUIRE( test_local_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+
+    // Global variable:
+    auto g_elems = comp.find_elements("the::test::g");
+    REQUIRE( g_elems.size() == 1 );
+    auto g_elem = std::dynamic_pointer_cast<k::model::global_variable_definition>(g_elems.front());
+    REQUIRE( g_elem != nullptr );
+    REQUIRE( g_elem->get_short_name() == "g" );
+    REQUIRE( g_elem->get_fq_name() == "::the::test::g" );
+    REQUIRE( g_elem->get_mangled_name() == "_KN3the4test1gE" );
+    REQUIRE( g_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+
+    // Structure:
+    auto plop_elems = comp.find_elements("the::test::plop");
+    REQUIRE( plop_elems.size() == 1 );
+    auto plop_elem = std::dynamic_pointer_cast<k::model::structure>(plop_elems.front());
+    REQUIRE( plop_elem != nullptr );
+    REQUIRE( plop_elem->get_short_name() == "plop" );
+    REQUIRE( plop_elem->get_fq_name() == "::the::test::plop" );
+    REQUIRE( plop_elem->get_mangled_name() == "_KN3the4test4plopE" );
+    REQUIRE( plop_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+
+    // Member function:
+    auto plop_sum_elems = comp.find_elements("the::test::plop::sum");
+    REQUIRE( plop_sum_elems.size() == 1 );
+    auto plop_sum_elem = std::dynamic_pointer_cast<k::model::function>(plop_sum_elems.front());
+    REQUIRE( plop_sum_elem != nullptr );
+    REQUIRE( plop_sum_elem->get_short_name() == "sum" );
+    REQUIRE( plop_sum_elem->get_fq_name() == "::the::test::plop::sum" );
+    REQUIRE( plop_sum_elem->get_mangled_name() == "_KFMN3the4test4plop3sumEv" );
+    REQUIRE( plop_sum_elem->parent<k::model::structure>() == plop_elem );
+
+}
+
+TEST_CASE("Relative to root namespace mangled name lookup", "[gen][name_lookup]") {
+
+    k::compiler comp;
+    comp.compile(R"SRC(
+        module the::test;
+
+        struct plop {
+            a : int = 5;
+            b : int = 12;
+            c : int; // Should be default init to 0
+            sum() : int {
+                return a + b + c;
+            }
+        }
+
+        test_local() : int {
+            p : plop;
+            return p.sum();
+        }
+
+        g : plop;
+        test_global() : int {
+            return g.sum();
+        }
+
+        )SRC");
+
+    // Global function:
+    REQUIRE( comp.get_element_mangled_name("the::test::test_local") == "_KFN3the4test10test_localEv" );
+
+    // Global variable:
+    REQUIRE( comp.get_element_mangled_name("the::test::g") == "_KN3the4test1gE" );
+
+    // Member function:
+    REQUIRE( comp.get_element_mangled_name("the::test::plop::sum") == "_KFMN3the4test4plop3sumEv" );
+
+    // Structure (cannot be mangled):
+    REQUIRE_THROWS_AS(comp.get_element_mangled_name("the::test::plop"), std::runtime_error);
+
+    // No such element:
+    REQUIRE_THROWS_AS(comp.get_element_mangled_name("the::test::blahblah::blah"), std::runtime_error);
+}
+
+TEST_CASE("Absolute name lookup", "[gen][name_lookup]") {
+
+    k::compiler comp;
+    comp.compile(R"SRC(
+        module the::test;
+
+        struct plop {
+            a : int = 5;
+            b : int = 12;
+            c : int; // Should be default init to 0
+            sum() : int {
+                return a + b + c;
+            }
+        }
+
+        test_local() : int {
+            p : plop;
+            return p.sum();
+        }
+
+        g : plop;
+        test_global() : int {
+            return g.sum();
+        }
+
+        )SRC");
+
+    // Global function:
+    auto test_local_elems = comp.find_elements("::the::test::test_local");
+    REQUIRE( test_local_elems.size() == 1 );
+    auto test_local_elem = std::dynamic_pointer_cast<k::model::function>(test_local_elems.front());
+    REQUIRE( test_local_elem != nullptr );
+    REQUIRE( test_local_elem->get_short_name() == "test_local" );
+    REQUIRE( test_local_elem->get_fq_name() == "::the::test::test_local" );
+    REQUIRE( test_local_elem->get_mangled_name() == "_KFN3the4test10test_localEv" );
+    REQUIRE( test_local_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+
+    // Global variable:
+    auto g_elems = comp.find_elements("::the::test::g");
+    REQUIRE( g_elems.size() == 1 );
+    auto g_elem = std::dynamic_pointer_cast<k::model::global_variable_definition>(g_elems.front());
+    REQUIRE( g_elem != nullptr );
+    REQUIRE( g_elem->get_short_name() == "g" );
+    REQUIRE( g_elem->get_fq_name() == "::the::test::g" );
+    REQUIRE( g_elem->get_mangled_name() == "_KN3the4test1gE" );
+    REQUIRE( g_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+
+    // Structure:
+    auto plop_elems = comp.find_elements("::the::test::plop");
+    REQUIRE( plop_elems.size() == 1 );
+    auto plop_elem = std::dynamic_pointer_cast<k::model::structure>(plop_elems.front());
+    REQUIRE( plop_elem != nullptr );
+    REQUIRE( plop_elem->get_short_name() == "plop" );
+    REQUIRE( plop_elem->get_fq_name() == "::the::test::plop" );
+    REQUIRE( plop_elem->get_mangled_name() == "_KN3the4test4plopE" );
+    REQUIRE( plop_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+
+    // Member function:
+    auto plop_sum_elems = comp.find_elements("::the::test::plop::sum");
+    REQUIRE( plop_sum_elems.size() == 1 );
+    auto plop_sum_elem = std::dynamic_pointer_cast<k::model::function>(plop_sum_elems.front());
+    REQUIRE( plop_sum_elem != nullptr );
+    REQUIRE( plop_sum_elem->get_short_name() == "sum" );
+    REQUIRE( plop_sum_elem->get_fq_name() == "::the::test::plop::sum" );
+    REQUIRE( plop_sum_elem->get_mangled_name() == "_KFMN3the4test4plop3sumEv" );
+    REQUIRE( plop_sum_elem->parent<k::model::structure>() == plop_elem );
+}
+
+TEST_CASE("Absolute mangled name lookup", "[gen][name_lookup]") {
+
+    k::compiler comp;
+    comp.compile(R"SRC(
+        module the::test;
+
+        struct plop {
+            a : int = 5;
+            b : int = 12;
+            c : int; // Should be default init to 0
+            sum() : int {
+                return a + b + c;
+            }
+        }
+
+        test_local() : int {
+            p : plop;
+            return p.sum();
+        }
+
+        g : plop;
+        test_global() : int {
+            return g.sum();
+        }
+
+        )SRC");
+
+    // Global function:
+    REQUIRE( comp.get_element_mangled_name("::the::test::test_local") == "_KFN3the4test10test_localEv" );
+
+    // Global variable:
+    REQUIRE( comp.get_element_mangled_name("::the::test::g") == "_KN3the4test1gE" );
+
+    // Member function:
+    REQUIRE( comp.get_element_mangled_name("::the::test::plop::sum") == "_KFMN3the4test4plop3sumEv" );
+
+    // Structure (cannot be mangled):
+    REQUIRE_THROWS_AS(comp.get_element_mangled_name("::the::test::plop"), std::runtime_error);
+
+    // No such element:
+    REQUIRE_THROWS_AS(comp.get_element_mangled_name("::the::test::blahblah::blah"), std::runtime_error);
+}
+
+

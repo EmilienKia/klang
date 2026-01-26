@@ -34,6 +34,102 @@ compiler::compiler(llvm::TargetMachine* target):
     _target(target)
 {}
 
+std::vector<std::shared_ptr<model::element>> compiler::find_elements(const name& name) const {
+    std::vector<std::shared_ptr<model::element>> results;
+
+    if (!_unit || name.empty()) {
+        return results;
+    }
+
+    auto root_ns = _unit->get_root_namespace();
+    if (!root_ns) {
+        return results;
+    }
+
+    if (name.has_root_prefix()) {
+        // Has root prefix : absolute search
+        if(name.start_with(root_ns->get_name())) {
+            // Explicitly look at the ns content
+            auto search_name = name.without_front(root_ns->get_name().size()).without_root_prefix();
+            if (!search_name.empty()) { // Cannot retrieve namespaces
+               find_elements_from(search_name, root_ns,results);
+            }
+        }
+        // TODO Look at imported modules
+    } else {
+        // No root prefix : relative search
+        // 1. Look at members of root namespace
+        find_elements_from(name, root_ns, results);
+        // 2. Look at the root namespace with explicit path
+        if(name.start_with(root_ns->get_name())) {
+            // TODO look at the intermediate ns names of the root ns
+            // Explicitly look at the ns content
+            auto search_name = name.without_front(root_ns->get_name().size());
+            if (!search_name.empty()) { // Cannot retrieve namespaces
+                find_elements_from(search_name, root_ns,results);
+            }
+        }
+        // 3. Look at imported modules
+        // TODO Look at imported modules
+    }
+    return results;
+}
+
+void compiler::find_elements_from(const name& name, const std::shared_ptr<model::element>& element, std::vector<std::shared_ptr<model::element>>& res) const {
+    auto [front, rest] = name.pop_front();
+    bool is_leaf = rest.empty();
+
+    if (is_leaf) {
+        if (auto var_holder = std::dynamic_pointer_cast<model::variable_holder>(element)) {
+            // Only resolve global or static variables ...
+            if (auto var = std::dynamic_pointer_cast<model::global_variable_definition>(var_holder->get_variable(front))) {
+                res.push_back(std::dynamic_pointer_cast<model::element>(var));
+            }
+        }
+        if (auto fn_holder = std::dynamic_pointer_cast<model::function_holder>(element)) {
+            // ... and functions
+            if (auto fn = fn_holder->get_function(front)) {
+                res.push_back(std::dynamic_pointer_cast<model::element>(fn));
+            }
+        }
+        if (auto st_holder = std::dynamic_pointer_cast<model::structure_holder>(element)) {
+            // ... and structures
+            if (auto st = st_holder->get_structure(front)) {
+                res.push_back(std::dynamic_pointer_cast<model::element>(st));
+            }
+        }
+    } else {
+        if (auto st_holder = std::dynamic_pointer_cast<model::structure_holder>(element)) {
+            if (auto st = st_holder->get_structure(front)) {
+                // Recurse structures to find functions or static variables
+                find_elements_from(rest, std::dynamic_pointer_cast<model::element>(st), res);
+            }
+        }
+        if (auto ns = std::dynamic_pointer_cast<model::ns>(element)) {
+            if (auto subns = ns->get_child_namespace(front)) {
+                // Recurse sub namespaces
+                find_elements_from(rest, std::dynamic_pointer_cast<model::element>(subns), res);
+            }
+        }
+    }
+}
+
+std::string compiler::get_element_mangled_name(const name& name) const {
+    std::vector<std::shared_ptr<k::model::named_element>> filtered;
+    for (const auto& elem : find_elements(name)) {
+        if (std::dynamic_pointer_cast<k::model::global_variable_definition>(elem) || std::dynamic_pointer_cast<k::model::function>(elem)) {
+            filtered.emplace_back(std::dynamic_pointer_cast<k::model::named_element>(elem));
+        }
+    }
+    if (filtered.empty()) {
+        throw std::runtime_error("No matching element found");
+    } else if (filtered.size() > 1) {
+        throw std::runtime_error("Too many elements found");
+    } else {
+        return filtered.front()->get_mangled_name();
+    }
+}
+
 void compiler::compile(std::string_view src, bool optimize, bool dump) {
     try {
         _parser.parse(src);

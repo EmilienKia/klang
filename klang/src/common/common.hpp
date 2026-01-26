@@ -32,6 +32,9 @@ protected:
     bool _root_prefix = false;
     std::vector<std::string> _identifiers;
 
+    template<typename IT>
+    name(bool root_prefix, IT first, IT last ) : _root_prefix(root_prefix), _identifiers(first, last) {}
+
 public:
     name() =default;
 
@@ -90,6 +93,8 @@ public:
 
     bool operator == (const name& other) const;
 
+    bool start_with(const name& prefix) const;
+
     std::string to_string()const;
 
     operator std::string () const{
@@ -104,14 +109,15 @@ public:
         return name(false, _identifiers);
     }
 
-    name with_back(const std::string& part) const {
-        std::vector<std::string> new_parts = _identifiers;
-        new_parts.push_back(part);
-        return name(_root_prefix, std::move(new_parts));
-    }
+    name without_back(size_t count = 1) const;
+    name without_front(size_t count = 1) const;
 
-    // TODO Parse a raw name, usefull for model::named_element
-    // static name parse_name(const std::string& str);
+    std::pair<std::string, name> pop_front() const;
+    std::pair<name, std::string> pop_back() const;
+
+    name with_back(const std::string& part) const;
+
+    static name from(const std::string& str);
 };
 
 /**

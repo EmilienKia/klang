@@ -19,6 +19,7 @@
 
 #include "../src/lex/lexer.hpp"
 #include "../src/common/logger.hpp"
+#include "../src/common/common.hpp"
 
 using namespace k::lex;
 using namespace k::log;
@@ -1622,5 +1623,87 @@ TEST_CASE("Additional lexer tests", "[lexer]") {
         any_lexeme lex3 = lexemes[3];
         REQUIRE( std::holds_alternative<punctuator>(lex3) );
         REQUIRE( lex3 == punctuator::PARENTHESIS_CLOSE );
+    }
+}
+
+
+
+//
+// Test k::name parsing
+//
+
+TEST_CASE("Name parsing - nominal cases",  "[lexer][name]") {
+    using Case = std::tuple<std::string, bool, std::vector<std::string>>;
+    auto [input, expected_abs, expected_parts] = GENERATE(table<std::string, bool, std::vector<std::string>>({
+        // Simple relatives
+        Case{"Alpha",                       false, {"Alpha"}},
+        Case{"_hidden",                     false, {"_hidden"}},
+        Case{"_",                           false, {"_"}},
+
+        // Qualified relatives
+        Case{"AppCore::EngineX::Renderer2D", false, {"AppCore","EngineX","Renderer2D"}},
+        Case{"Layer1::_Private2::Codec3_",    false, {"Layer1","_Private2","Codec3_"}},
+        Case{"N0::N1::N2::N3",                false, {"N0","N1","N2","N3"}},
+
+        // Simple absolutes
+        Case{"::Rooted",                    true,  {"Rooted"}},
+        // Qualified absolutes
+        Case{"::RootProject::Module_42::Service9", true, {"RootProject","Module_42","Service9"}},
+        Case{"::Top::_Inner::_Leaf1",       true,  {"Top","_Inner","_Leaf1"}},
+
+        // Letters, digits and underscore mixes
+        Case{"Alpha1::_2::C3_",             false, {"Alpha1","_2","C3_"}},
+        Case{"Sys2D::Filter_3",             false, {"Sys2D","Filter_3"}},
+
+        // Various additional cases
+        Case{"Project", false, {"Project"}},
+        Case{"Model_X", false, {"Model_X"}},
+        Case{"Sys2D::Filter_3", false, {"Sys2D", "Filter_3"}},
+        Case{"::Root::FeatureA", true, {"Root", "FeatureA"}},
+        Case{"::Top::_Inner::_Leaf1", true, {"Top", "_Inner", "_Leaf1"}},
+        Case{"Alpha1::_2::C3_", false, {"Alpha1", "_2", "C3_"}}
+    }));
+
+    CAPTURE(input);
+
+    auto n = k::name::from(input);
+
+    // Check for root prefix
+    CHECK(n.has_root_prefix() == expected_abs);
+
+    // Check size and order
+    REQUIRE(n.size() == expected_parts.size());
+    CHECK(n.parts() == expected_parts);
+
+    // Indexes
+    for (std::size_t i = 0; i < expected_parts.size(); ++i) {
+        CHECK(n[i] == expected_parts[i]);
+    }
+
+    // Front and back access
+    CHECK(n.front() == expected_parts.front());
+    CHECK(n.back()  == expected_parts.back());
+}
+
+TEST_CASE("Name parsing - Invalid names", "[lexer][name]") {
+    const std::vector<std::string> invalids = {
+        "",            // Empty
+        "::",          // Empty with heading prefix
+        "A::",         // Finishing with separator
+        "1Alpha",      // Starting with a digit
+        "Alpha::9B",   // Starting with a digit
+        "Alpha:::Beta",// Triple ':'
+        "Alpha:B",     // Unique ':'
+        "Alpha::Beta::", // Finishing by '::'
+        "::Gamma::",   // Finishing by '::'
+        "App:: Core",  // Space
+        "App ::Core",  // Space
+        "Némo",        // Non ASCII
+        "Node-1",      // Dash
+    };
+
+    for (const auto& s : invalids) {
+        CAPTURE(s);
+        REQUIRE_THROWS_AS(k::name::from(s), std::runtime_error);
     }
 }
