@@ -39,13 +39,13 @@ class unit;
 class context;
 }
 
-class compiler {
+class compiler : public std::enable_shared_from_this<compiler> {
 protected:
     k::log::logger _log;
-    k::parse::parser _parser;
+    std::string _source;
     std::shared_ptr<k::parse::ast::unit> _ast_unit;
     std::shared_ptr<model::context> _context;
-    std::shared_ptr<model::unit> _unit;
+    std::shared_ptr<model::unit> _model_unit;
 
     std::unique_ptr<model::gen::unit_llvm_ir_gen> _gen;
 
@@ -53,11 +53,14 @@ protected:
 
     void process_gen(bool optimize = true, bool dump = true);
 
-public:
     compiler(llvm::TargetMachine* target = nullptr);
 
+public:
+
+    static std::shared_ptr<compiler> create(llvm::TargetMachine* target = nullptr);
+
     std::shared_ptr<model::unit> get_unit() {
-        return _unit;
+        return _model_unit;
     }
 
     /**
@@ -90,7 +93,7 @@ public:
     }
 
 
-    void compile(std::string_view src, bool optimize = true, bool dump = false);
+    void parse_source(const std::string_view& src, bool optimize = true, bool dump = false);
 
     std::unique_ptr<k::model::gen::unit_llvm_jit> to_jit();
 

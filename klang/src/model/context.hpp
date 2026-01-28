@@ -37,7 +37,15 @@
 #include <llvm/IR/Type.h>
 
 
+namespace k {
+class compiler;
+}
+
 namespace k::model {
+class variable_statement;
+class parameter;
+class function;
+class global_variable_definition;
 
 namespace gen {
     class unit_llvm_ir_gen;
@@ -46,13 +54,24 @@ namespace gen {
 
 class context {
 protected:
+    friend class k::model::gen::unit_llvm_ir_gen;
+
     std::unique_ptr<llvm::LLVMContext> _context;
 
+    // Types:
     std::map<primitive_type::PRIMITIVE_TYPE, std::shared_ptr<primitive_type>> _primitive_types;
-
     std::map<std::string, std::shared_ptr<struct_type>> _struct_types;
-
     std::vector<std::shared_ptr<unresolved_type>> _unresolved;
+
+    // Entities:
+    std::map<std::shared_ptr<global_variable_definition>, llvm::GlobalVariable*> _global_vars;
+    std::map<std::shared_ptr<function>, llvm::Function*> _functions;
+    std::map<std::shared_ptr<parameter>, llvm::AllocaInst*> _parameter_variables;
+    std::map<std::shared_ptr<function>, llvm::AllocaInst*> _function_this_variables;
+    std::map<std::shared_ptr<variable_statement>, llvm::AllocaInst*> _variables;
+
+    // LLVM module
+    std::unique_ptr<llvm::Module> _module;
 
     context();
 
@@ -81,6 +100,8 @@ public:
     std::shared_ptr<type> resolve_type(const std::shared_ptr<type>& type);
 
 
+    void init_module(const std::string& module_name);
+    llvm::Module& module() {return *_module;}
 
 protected:
 
@@ -88,7 +109,7 @@ protected:
     std::shared_ptr<unresolved_type> create_unresolved(name&& type_id);
 
 
-    friend class gen::unit_llvm_ir_gen;
+    friend class k::compiler;
     std::unique_ptr<llvm::LLVMContext> move_llvm_context();
 
 private:

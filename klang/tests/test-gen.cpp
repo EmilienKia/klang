@@ -29,17 +29,17 @@
 #include "../src/compiler.hpp"
 
 
-std::unique_ptr<k::model::gen::unit_llvm_jit> gen(std::string_view src, bool dump = false) {
-    k::compiler comp;
-    comp.compile(src, false, dump);
-    return comp.to_jit();
+std::unique_ptr<k::model::gen::unit_llvm_jit> gen_jit(std::string_view src, bool dump = false) {
+    auto comp = k::compiler::create();
+    comp->parse_source(src, false, dump);
+    return comp->to_jit();
 }
 
 
 TEST_CASE( "Simple method", "[gen]" ) {
 
     SECTION("Simple int() method") {
-        auto jit = gen(R"SRC(
+        auto jit = gen_jit(R"SRC(
         module test;
         test() : int {
             return 42;
@@ -53,7 +53,7 @@ TEST_CASE( "Simple method", "[gen]" ) {
     }
 
     SECTION( "Simple int(int) method" ) {
-        auto jit = gen(R"SRC(
+        auto jit = gen_jit(R"SRC(
         module test;
         increment(i : int) : int {
             return i + 1;
@@ -67,7 +67,7 @@ TEST_CASE( "Simple method", "[gen]" ) {
     }
 
     SECTION( "Simple int(int, int) method" ) {
-        auto jit = gen(R"SRC(
+        auto jit = gen_jit(R"SRC(
         module test;
         multiply(a : int, b : int) : int {
             return a * b;
@@ -83,7 +83,7 @@ TEST_CASE( "Simple method", "[gen]" ) {
 
 TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
 
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __int8__;
         add(a : char, b : char) : char {
             return a + b;
@@ -282,7 +282,7 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
 
 TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
 
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __uint8__;
         add(a : byte, b : byte) : byte {
             return a + b;
@@ -467,7 +467,7 @@ TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
 
 TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
 
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __int16__;
         add(a : short, b : short) : short {
             return a + b;
@@ -666,7 +666,7 @@ TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
 
 TEST_CASE( "uint16 arithmetic", "[gen][uint16][arithmetic]" ) {
 
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __int16__;
         add(a : unsigned short, b : unsigned short) : unsigned short {
             return a + b;
@@ -851,7 +851,7 @@ TEST_CASE( "uint16 arithmetic", "[gen][uint16][arithmetic]" ) {
 
 TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
 
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __int32__;
         add(a : int, b : int) : int {
             return a + b;
@@ -1049,7 +1049,7 @@ TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
 
 TEST_CASE( "uint32 arithmetic", "[gen][uint32][arithmetic]" ) {
 
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __uint32__;
         add(a : unsigned int, b : unsigned int) : unsigned int {
             return a + b;
@@ -1233,7 +1233,7 @@ TEST_CASE( "uint32 arithmetic", "[gen][uint32][arithmetic]" ) {
 
 TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
 
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __int64__;
         add(a : long, b : long) : long {
             return a + b;
@@ -1432,7 +1432,7 @@ TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
 
 TEST_CASE( "uint64 arithmetic", "[gen][uint64][arithmetic]" ) {
 
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __uint64__;
         add(a : unsigned long, b : unsigned long) : unsigned long {
             return a + b;
@@ -1616,7 +1616,7 @@ TEST_CASE( "uint64 arithmetic", "[gen][uint64][arithmetic]" ) {
 
 TEST_CASE( "float arithmetic", "[gen][float][arithmetic]" ) {
 
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __float__;
         add(a : float, b : float) : float {
             return a + b;
@@ -1762,7 +1762,7 @@ TEST_CASE( "float arithmetic", "[gen][float][arithmetic]" ) {
 
 TEST_CASE( "double arithmetic", "[gen][double][arithmetic]" ) {
 
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __double__;
         add(a : double, b : double) : double {
             return a + b;
@@ -1907,7 +1907,7 @@ TEST_CASE( "double arithmetic", "[gen][double][arithmetic]" ) {
 
 
 TEST_CASE("Boolean values and casting", "[gen][bool]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __bool__;
         ret_true() : bool {
             return true;
@@ -2020,7 +2020,7 @@ TEST_CASE("Boolean values and casting", "[gen][bool]") {
 
 
 TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __bool__;
         not(b : bool) : bool {
             return !b;
@@ -2153,7 +2153,7 @@ TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
 //
 
 TEST_CASE("If-then-else", "[gen][if-else]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __if__;
         min(a: int, b: int) : int {
             if(a<b)
@@ -2209,7 +2209,7 @@ TEST_CASE("If-then-else", "[gen][if-else]") {
 //
 
 TEST_CASE("While", "[gen][while]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __while__;
         cumul(i : int) : int {
             r : int;
@@ -2242,7 +2242,7 @@ TEST_CASE("While", "[gen][while]") {
 //
 
 TEST_CASE("For", "[gen][for]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __for__;
         sum(i : short) : int {
             r : int;
@@ -2273,7 +2273,7 @@ TEST_CASE("For", "[gen][for]") {
 //
 
 TEST_CASE("Pointers", "[gen][pointers]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __pointers__;
         a : int;
         b : int;
@@ -2312,7 +2312,7 @@ TEST_CASE("Pointers", "[gen][pointers]") {
 //
 
 TEST_CASE("References", "[gen][refs]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __refs__;
         a : int;
 
@@ -2345,7 +2345,7 @@ TEST_CASE("References", "[gen][refs]") {
 //
 
 TEST_CASE("Array indices references", "[gen][refs][array]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __arrs__;
         set(p: int[4]&, i: int, v: int) {
                 p[i] = v;
@@ -2391,7 +2391,7 @@ TEST_CASE("Array indices references", "[gen][refs][array]") {
 
 
 TEST_CASE("Structure content references and invocation with local variable", "[gen][struct]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __structs__;
 
         struct plop {
@@ -2429,7 +2429,7 @@ TEST_CASE("Structure content references and invocation with local variable", "[g
 
 
 TEST_CASE("Structure content references and invocation with global variable", "[gen][struct]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __structs__;
 
         struct plop {
@@ -2482,7 +2482,7 @@ TEST_CASE("Structure content references and invocation with global variable", "[
 }
 
 TEST_CASE("Structure content and invocation through reference", "[gen][struct]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __structs__;
 
         struct plop {
@@ -2518,7 +2518,7 @@ TEST_CASE("Structure content and invocation through reference", "[gen][struct]")
 //
 
 TEST_CASE("Implicit and explicit 'this' name lookup", "[gen][struct]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __structs__;
 
         struct plop {
@@ -2550,7 +2550,7 @@ TEST_CASE("Implicit and explicit 'this' name lookup", "[gen][struct]") {
 }
 
 TEST_CASE("This and var name lookup", "[gen][struct]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __structs__;
 
         struct plop {
@@ -2579,7 +2579,7 @@ TEST_CASE("This and var name lookup", "[gen][struct]") {
 }
 
 TEST_CASE("Local variable constant init expression", "[gen][variable]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __vars__;
 
         test() : int {
@@ -2597,7 +2597,7 @@ TEST_CASE("Local variable constant init expression", "[gen][variable]") {
 }
 
 TEST_CASE("Global variable constant init expression", "[gen][variable]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __vars__;
 
         a : int = 5;
@@ -2616,7 +2616,7 @@ TEST_CASE("Global variable constant init expression", "[gen][variable]") {
 }
 
 TEST_CASE("Struct fields default 0-initialization", "[gen][struct]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __struct__;
 
         struct plop {
@@ -2643,7 +2643,7 @@ TEST_CASE("Struct fields default 0-initialization", "[gen][struct]") {
 }
 
 TEST_CASE("Struct fields trivial constant default initialization", "[gen][struct]") {
-    auto jit = gen(R"SRC(
+    auto jit = gen_jit(R"SRC(
         module __struct__;
 
         struct plop {
@@ -2679,8 +2679,8 @@ TEST_CASE("Struct fields trivial constant default initialization", "[gen][struct
 
 TEST_CASE("Relative name lookup", "[gen][name_lookup]") {
 
-    k::compiler comp;
-    comp.compile(R"SRC(
+    auto comp = k::compiler::create();
+    comp->parse_source(R"SRC(
         module the::test;
 
         struct plop {
@@ -2705,37 +2705,37 @@ TEST_CASE("Relative name lookup", "[gen][name_lookup]") {
         )SRC");
 
     // Global function:
-    auto test_local_elems = comp.find_elements("test_local");
+    auto test_local_elems = comp->find_elements("test_local");
     REQUIRE( test_local_elems.size() == 1 );
     auto test_local_elem = std::dynamic_pointer_cast<k::model::function>(test_local_elems.front());
     REQUIRE( test_local_elem != nullptr );
     REQUIRE( test_local_elem->get_short_name() == "test_local" );
     REQUIRE( test_local_elem->get_fq_name() == "::the::test::test_local" );
     REQUIRE( test_local_elem->get_mangled_name() == "_KFN3the4test10test_localEv" );
-    REQUIRE( test_local_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+    REQUIRE( test_local_elem->parent<k::model::ns>() == comp->get_unit()->get_root_namespace() );
 
     // Global variable:
-    auto g_elems = comp.find_elements("g");
+    auto g_elems = comp->find_elements("g");
     REQUIRE( g_elems.size() == 1 );
     auto g_elem = std::dynamic_pointer_cast<k::model::global_variable_definition>(g_elems.front());
     REQUIRE( g_elem != nullptr );
     REQUIRE( g_elem->get_short_name() == "g" );
     REQUIRE( g_elem->get_fq_name() == "::the::test::g" );
     REQUIRE( g_elem->get_mangled_name() == "_KN3the4test1gE" );
-    REQUIRE( g_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+    REQUIRE( g_elem->parent<k::model::ns>() == comp->get_unit()->get_root_namespace() );
 
     // Structure:
-    auto plop_elems = comp.find_elements("plop");
+    auto plop_elems = comp->find_elements("plop");
     REQUIRE( plop_elems.size() == 1 );
     auto plop_elem = std::dynamic_pointer_cast<k::model::structure>(plop_elems.front());
     REQUIRE( plop_elem != nullptr );
     REQUIRE( plop_elem->get_short_name() == "plop" );
     REQUIRE( plop_elem->get_fq_name() == "::the::test::plop" );
     REQUIRE( plop_elem->get_mangled_name() == "_KN3the4test4plopE" );
-    REQUIRE( plop_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+    REQUIRE( plop_elem->parent<k::model::ns>() == comp->get_unit()->get_root_namespace() );
 
     // Member function:
-    auto plop_sum_elems = comp.find_elements("plop::sum");
+    auto plop_sum_elems = comp->find_elements("plop::sum");
     REQUIRE( plop_sum_elems.size() == 1 );
     auto plop_sum_elem = std::dynamic_pointer_cast<k::model::function>(plop_sum_elems.front());
     REQUIRE( plop_sum_elem != nullptr );
@@ -2748,8 +2748,8 @@ TEST_CASE("Relative name lookup", "[gen][name_lookup]") {
 
 TEST_CASE("Relative mangled name lookup", "[gen][name_lookup]") {
 
-    k::compiler comp;
-    comp.compile(R"SRC(
+    auto comp = k::compiler::create();
+    comp->parse_source(R"SRC(
         module the::test;
 
         struct plop {
@@ -2774,25 +2774,25 @@ TEST_CASE("Relative mangled name lookup", "[gen][name_lookup]") {
         )SRC");
 
     // Global function:
-    REQUIRE( comp.get_element_mangled_name("test_local") == "_KFN3the4test10test_localEv" );
+    REQUIRE( comp->get_element_mangled_name("test_local") == "_KFN3the4test10test_localEv" );
 
     // Global variable:
-    REQUIRE( comp.get_element_mangled_name("g") == "_KN3the4test1gE" );
+    REQUIRE( comp->get_element_mangled_name("g") == "_KN3the4test1gE" );
 
     // Member function:
-    REQUIRE( comp.get_element_mangled_name("plop::sum") == "_KFMN3the4test4plop3sumEv" );
+    REQUIRE( comp->get_element_mangled_name("plop::sum") == "_KFMN3the4test4plop3sumEv" );
 
     // Structure (cannot be mangled):
-    REQUIRE_THROWS_AS(comp.get_element_mangled_name("plop"), std::runtime_error);
+    REQUIRE_THROWS_AS(comp->get_element_mangled_name("plop"), std::runtime_error);
 
     // No such element:
-    REQUIRE_THROWS_AS(comp.get_element_mangled_name("blahblah::blah"), std::runtime_error);
+    REQUIRE_THROWS_AS(comp->get_element_mangled_name("blahblah::blah"), std::runtime_error);
 }
 
 TEST_CASE("Relative to root namespace name lookup", "[gen][name_lookup]") {
 
-    k::compiler comp;
-    comp.compile(R"SRC(
+    auto comp = k::compiler::create();
+    comp->parse_source(R"SRC(
         module the::test;
 
         struct plop {
@@ -2817,37 +2817,37 @@ TEST_CASE("Relative to root namespace name lookup", "[gen][name_lookup]") {
         )SRC");
 
     // Global function:
-    auto test_local_elems = comp.find_elements("the::test::test_local");
+    auto test_local_elems = comp->find_elements("the::test::test_local");
     REQUIRE( test_local_elems.size() == 1 );
     auto test_local_elem = std::dynamic_pointer_cast<k::model::function>(test_local_elems.front());
     REQUIRE( test_local_elem != nullptr );
     REQUIRE( test_local_elem->get_short_name() == "test_local" );
     REQUIRE( test_local_elem->get_fq_name() == "::the::test::test_local" );
     REQUIRE( test_local_elem->get_mangled_name() == "_KFN3the4test10test_localEv" );
-    REQUIRE( test_local_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+    REQUIRE( test_local_elem->parent<k::model::ns>() == comp->get_unit()->get_root_namespace() );
 
     // Global variable:
-    auto g_elems = comp.find_elements("the::test::g");
+    auto g_elems = comp->find_elements("the::test::g");
     REQUIRE( g_elems.size() == 1 );
     auto g_elem = std::dynamic_pointer_cast<k::model::global_variable_definition>(g_elems.front());
     REQUIRE( g_elem != nullptr );
     REQUIRE( g_elem->get_short_name() == "g" );
     REQUIRE( g_elem->get_fq_name() == "::the::test::g" );
     REQUIRE( g_elem->get_mangled_name() == "_KN3the4test1gE" );
-    REQUIRE( g_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+    REQUIRE( g_elem->parent<k::model::ns>() == comp->get_unit()->get_root_namespace() );
 
     // Structure:
-    auto plop_elems = comp.find_elements("the::test::plop");
+    auto plop_elems = comp->find_elements("the::test::plop");
     REQUIRE( plop_elems.size() == 1 );
     auto plop_elem = std::dynamic_pointer_cast<k::model::structure>(plop_elems.front());
     REQUIRE( plop_elem != nullptr );
     REQUIRE( plop_elem->get_short_name() == "plop" );
     REQUIRE( plop_elem->get_fq_name() == "::the::test::plop" );
     REQUIRE( plop_elem->get_mangled_name() == "_KN3the4test4plopE" );
-    REQUIRE( plop_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+    REQUIRE( plop_elem->parent<k::model::ns>() == comp->get_unit()->get_root_namespace() );
 
     // Member function:
-    auto plop_sum_elems = comp.find_elements("the::test::plop::sum");
+    auto plop_sum_elems = comp->find_elements("the::test::plop::sum");
     REQUIRE( plop_sum_elems.size() == 1 );
     auto plop_sum_elem = std::dynamic_pointer_cast<k::model::function>(plop_sum_elems.front());
     REQUIRE( plop_sum_elem != nullptr );
@@ -2860,8 +2860,8 @@ TEST_CASE("Relative to root namespace name lookup", "[gen][name_lookup]") {
 
 TEST_CASE("Relative to root namespace mangled name lookup", "[gen][name_lookup]") {
 
-    k::compiler comp;
-    comp.compile(R"SRC(
+    auto comp = k::compiler::create();
+    comp->parse_source(R"SRC(
         module the::test;
 
         struct plop {
@@ -2886,25 +2886,25 @@ TEST_CASE("Relative to root namespace mangled name lookup", "[gen][name_lookup]"
         )SRC");
 
     // Global function:
-    REQUIRE( comp.get_element_mangled_name("the::test::test_local") == "_KFN3the4test10test_localEv" );
+    REQUIRE( comp->get_element_mangled_name("the::test::test_local") == "_KFN3the4test10test_localEv" );
 
     // Global variable:
-    REQUIRE( comp.get_element_mangled_name("the::test::g") == "_KN3the4test1gE" );
+    REQUIRE( comp->get_element_mangled_name("the::test::g") == "_KN3the4test1gE" );
 
     // Member function:
-    REQUIRE( comp.get_element_mangled_name("the::test::plop::sum") == "_KFMN3the4test4plop3sumEv" );
+    REQUIRE( comp->get_element_mangled_name("the::test::plop::sum") == "_KFMN3the4test4plop3sumEv" );
 
     // Structure (cannot be mangled):
-    REQUIRE_THROWS_AS(comp.get_element_mangled_name("the::test::plop"), std::runtime_error);
+    REQUIRE_THROWS_AS(comp->get_element_mangled_name("the::test::plop"), std::runtime_error);
 
     // No such element:
-    REQUIRE_THROWS_AS(comp.get_element_mangled_name("the::test::blahblah::blah"), std::runtime_error);
+    REQUIRE_THROWS_AS(comp->get_element_mangled_name("the::test::blahblah::blah"), std::runtime_error);
 }
 
 TEST_CASE("Absolute name lookup", "[gen][name_lookup]") {
 
-    k::compiler comp;
-    comp.compile(R"SRC(
+    auto comp = k::compiler::create();
+    comp->parse_source(R"SRC(
         module the::test;
 
         struct plop {
@@ -2929,37 +2929,37 @@ TEST_CASE("Absolute name lookup", "[gen][name_lookup]") {
         )SRC");
 
     // Global function:
-    auto test_local_elems = comp.find_elements("::the::test::test_local");
+    auto test_local_elems = comp->find_elements("::the::test::test_local");
     REQUIRE( test_local_elems.size() == 1 );
     auto test_local_elem = std::dynamic_pointer_cast<k::model::function>(test_local_elems.front());
     REQUIRE( test_local_elem != nullptr );
     REQUIRE( test_local_elem->get_short_name() == "test_local" );
     REQUIRE( test_local_elem->get_fq_name() == "::the::test::test_local" );
     REQUIRE( test_local_elem->get_mangled_name() == "_KFN3the4test10test_localEv" );
-    REQUIRE( test_local_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+    REQUIRE( test_local_elem->parent<k::model::ns>() == comp->get_unit()->get_root_namespace() );
 
     // Global variable:
-    auto g_elems = comp.find_elements("::the::test::g");
+    auto g_elems = comp->find_elements("::the::test::g");
     REQUIRE( g_elems.size() == 1 );
     auto g_elem = std::dynamic_pointer_cast<k::model::global_variable_definition>(g_elems.front());
     REQUIRE( g_elem != nullptr );
     REQUIRE( g_elem->get_short_name() == "g" );
     REQUIRE( g_elem->get_fq_name() == "::the::test::g" );
     REQUIRE( g_elem->get_mangled_name() == "_KN3the4test1gE" );
-    REQUIRE( g_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+    REQUIRE( g_elem->parent<k::model::ns>() == comp->get_unit()->get_root_namespace() );
 
     // Structure:
-    auto plop_elems = comp.find_elements("::the::test::plop");
+    auto plop_elems = comp->find_elements("::the::test::plop");
     REQUIRE( plop_elems.size() == 1 );
     auto plop_elem = std::dynamic_pointer_cast<k::model::structure>(plop_elems.front());
     REQUIRE( plop_elem != nullptr );
     REQUIRE( plop_elem->get_short_name() == "plop" );
     REQUIRE( plop_elem->get_fq_name() == "::the::test::plop" );
     REQUIRE( plop_elem->get_mangled_name() == "_KN3the4test4plopE" );
-    REQUIRE( plop_elem->parent<k::model::ns>() == comp.get_unit()->get_root_namespace() );
+    REQUIRE( plop_elem->parent<k::model::ns>() == comp->get_unit()->get_root_namespace() );
 
     // Member function:
-    auto plop_sum_elems = comp.find_elements("::the::test::plop::sum");
+    auto plop_sum_elems = comp->find_elements("::the::test::plop::sum");
     REQUIRE( plop_sum_elems.size() == 1 );
     auto plop_sum_elem = std::dynamic_pointer_cast<k::model::function>(plop_sum_elems.front());
     REQUIRE( plop_sum_elem != nullptr );
@@ -2971,8 +2971,8 @@ TEST_CASE("Absolute name lookup", "[gen][name_lookup]") {
 
 TEST_CASE("Absolute mangled name lookup", "[gen][name_lookup]") {
 
-    k::compiler comp;
-    comp.compile(R"SRC(
+    auto comp = k::compiler::create();
+    comp->parse_source(R"SRC(
         module the::test;
 
         struct plop {
@@ -2997,19 +2997,19 @@ TEST_CASE("Absolute mangled name lookup", "[gen][name_lookup]") {
         )SRC");
 
     // Global function:
-    REQUIRE( comp.get_element_mangled_name("::the::test::test_local") == "_KFN3the4test10test_localEv" );
+    REQUIRE( comp->get_element_mangled_name("::the::test::test_local") == "_KFN3the4test10test_localEv" );
 
     // Global variable:
-    REQUIRE( comp.get_element_mangled_name("::the::test::g") == "_KN3the4test1gE" );
+    REQUIRE( comp->get_element_mangled_name("::the::test::g") == "_KN3the4test1gE" );
 
     // Member function:
-    REQUIRE( comp.get_element_mangled_name("::the::test::plop::sum") == "_KFMN3the4test4plop3sumEv" );
+    REQUIRE( comp->get_element_mangled_name("::the::test::plop::sum") == "_KFMN3the4test4plop3sumEv" );
 
     // Structure (cannot be mangled):
-    REQUIRE_THROWS_AS(comp.get_element_mangled_name("::the::test::plop"), std::runtime_error);
+    REQUIRE_THROWS_AS(comp->get_element_mangled_name("::the::test::plop"), std::runtime_error);
 
     // No such element:
-    REQUIRE_THROWS_AS(comp.get_element_mangled_name("::the::test::blahblah::blah"), std::runtime_error);
+    REQUIRE_THROWS_AS(comp->get_element_mangled_name("::the::test::blahblah::blah"), std::runtime_error);
 }
 
 

@@ -127,13 +127,13 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
 
         // Handle source of symbol
         if (auto param = std::dynamic_pointer_cast<parameter>(var_def)) {
-            ptr =  _parameter_variables[param];
+            ptr =  _context->_parameter_variables[param];
             name = param->get_short_name();
         } else if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_def)) {
-            ptr = _global_vars[global_var];
+            ptr = _context->_global_vars[global_var];
             name = global_var->get_short_name();
         } else if (auto local_var = std::dynamic_pointer_cast<variable_statement>(var_def)) {
-            ptr = _variables[local_var];
+            ptr = _context->_variables[local_var];
             name = local_var->get_short_name();
         } else if (auto member_var = std::dynamic_pointer_cast<member_variable_definition>(var_def)) {
             name = member_var->get_short_name();
@@ -145,7 +145,7 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
                 // TODO throw exception : no function found in context for member variable access
                 std::cerr << "Error: no function context available for member variable '" << member_var->get_fq_name() << "' access." << std::endl;
             }
-            this_value_ref = _function_this_variables[func];
+            this_value_ref = _context->_function_this_variables[func];
             if (!this_value_ref) {
                 // TODO throw exception : no 'this' pointer found in function for member variable access
                 std::cerr << "Error: no 'this' pointer available in function context for member variable '" << member_var->get_fq_name() << "' access." << std::endl;
@@ -203,8 +203,8 @@ void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
         auto func = symbol.get_function();
 
         // Find the function definition
-        auto it = _functions.find(func);
-        if(it==_functions.end()) {
+        auto it = _context->_functions.find(func);
+        if(it==_context->_functions.end()) {
             // Error: function definition is not found.
             // TODO throw exception
             std::cerr << "Error: function definition is not found." << std::endl;
@@ -2247,8 +2247,8 @@ void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_
 
     // Find the function definition
     auto function = callee->get_function();
-    auto it = _functions.find(function);
-    if(it==_functions.end()) {
+    auto it = _context->_functions.find(function);
+    if(it==_context->_functions.end()) {
         // Error: function definition is not found.
         // TODO throw exception
         std::cerr << "Error: function definition is not found." << std::endl;

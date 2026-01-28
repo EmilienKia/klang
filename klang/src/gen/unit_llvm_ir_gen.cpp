@@ -28,6 +28,10 @@
 
 #include "llvm/Target/TargetMachine.h"
 
+namespace k {
+class compiler;
+}
+
 namespace k::model::gen {
 
 //
@@ -51,15 +55,19 @@ _context(context),
 _unit(unit)
 {
     _builder = std::make_unique<llvm::IRBuilder<>>(**_context);
-    _module = std::make_unique<llvm::Module>(unit.get_unit_name().to_string(), **_context);
+    context->init_module(unit.get_unit_name());
+}
+
+llvm::Module& unit_llvm_ir_gen::get_module() {
+    return _context->module();
 }
 
 void unit_llvm_ir_gen::dump() {
-    _module->print(llvm::outs(), nullptr);
+    _context->module().print(llvm::outs(), nullptr);
 }
 
 void unit_llvm_ir_gen::verify() {
-    llvm::verifyModule(*_module, &llvm::outs());
+    llvm::verifyModule(_context->module(), &llvm::outs());
 }
 
 
@@ -68,8 +76,8 @@ void unit_llvm_ir_gen::optimize_functions() {
     std::shared_ptr<llvm::legacy::FunctionPassManager> passes;
 
     // Initialize Function pass manager
-    passes = std::make_shared<llvm::legacy::FunctionPassManager>(_module.get());
-    // Do simple "peephole" optimizations and bit-twiddling optzns.
+    passes = std::make_shared<llvm::legacy::FunctionPassManager>(&_context->module());
+    // Do simple "peephole" optimizations and bit-twiddling options.
     passes->add(llvm::createInstructionCombiningPass());
     // Re-associate expressions.
     passes->add(llvm::createReassociatePass());
@@ -82,26 +90,17 @@ void unit_llvm_ir_gen::optimize_functions() {
 
     passes->doInitialization();
 
-    for(auto& func : *_module) {
+    for(auto& func : _context->module()) {
         passes->run(func);
     }
 }
-
-
-std::unique_ptr<unit_llvm_jit> unit_llvm_ir_gen::to_jit() {
-    auto jit = unit_llvm_jit::create();
-    if(jit) {
-        jit.get()->add_module(llvm::orc::ThreadSafeModule(std::move(_module), _context->move_llvm_context()));
-    }
-    return jit;
-}
-
 
 //
 // LLVM JIT
 //
 
-unit_llvm_jit::unit_llvm_jit(std::unique_ptr<llvm::orc::ExecutionSession> session, llvm::orc::JITTargetMachineBuilder jtmb, llvm::DataLayout layout) :
+unit_llvm_jit::unit_llvm_jit(std::shared_ptr<compiler> compiler, std::unique_ptr<llvm::orc::ExecutionSession> session, llvm::orc::JITTargetMachineBuilder jtmb, llvm::DataLayout layout) :
+        _compiler(compiler),
         _session(std::move(session)),
         _layout(std::move(layout)),
         _mangle(*this->_session, this->_layout),
@@ -120,7 +119,7 @@ unit_llvm_jit::~unit_llvm_jit() {
         _session->reportError(std::move(Err));
 }
 
-std::unique_ptr<unit_llvm_jit> unit_llvm_jit::create() {
+std::unique_ptr<unit_llvm_jit> unit_llvm_jit::create(std::shared_ptr<compiler> compiler) {
     auto epc = llvm::orc::SelfExecutorProcessControl::Create();
     if (!epc) {
         // TODO throw an exception.
@@ -139,7 +138,7 @@ std::unique_ptr<unit_llvm_jit> unit_llvm_jit::create() {
         return nullptr;
     }
 
-    return std::make_unique<unit_llvm_jit>(std::move(session), std::move(jtmb), std::move(*layout));
+    return std::unique_ptr<unit_llvm_jit>(new unit_llvm_jit(compiler, std::move(session), std::move(jtmb), std::move(*layout)));
 }
 
 void unit_llvm_jit::add_module(llvm::orc::ThreadSafeModule module, llvm::orc::ResourceTrackerSP res_tracker) {
@@ -148,6 +147,13 @@ void unit_llvm_jit::add_module(llvm::orc::ThreadSafeModule module, llvm::orc::Re
     if(llvm::Error err = _compile_layer.add(res_tracker, std::move(module))) {
         std::cerr << "Failed to register module to jit." << std::endl;
     }
+}
+
+llvm::Expected<llvm::orc::ExecutorSymbolDef> unit_llvm_jit::lookup_symbol_address(const std::string& name) {
+    return _session->lookup(
+                llvm::ArrayRef<llvm::orc::JITDylib*>{&_main_dynlib},
+                _mangle(llvm::StringRef( (name.starts_with("_K") ? name : _compiler->get_element_mangled_name(name)) ))
+            );
 }
 
 } // k::model::gen

@@ -273,6 +273,10 @@ void context::resolve_types() {
     }
 }
 
+void context::init_module(const std::string& module_name) {
+    _module = std::make_unique<llvm::Module>(module_name, *_context);
+}
+
 std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     if (type->is_resolved()) {
         return type;

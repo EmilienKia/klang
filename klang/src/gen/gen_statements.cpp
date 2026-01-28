@@ -424,13 +424,13 @@ void type_reference_resolver::visit_variable_statement(variable_statement& var)
 void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
     // Create the alloca at beginning of the function ...
     auto var_func = var.get_function();
-    auto func = _functions[var_func];
+    auto func = _context->_functions[var_func];
     llvm::IRBuilder<> build(&func->getEntryBlock(),func->getEntryBlock().begin());
 
     std::shared_ptr<k::model::type> var_type = var.get_type();
     llvm::Type *  type = _context->get_llvm_type(var_type);
     llvm::AllocaInst* alloca = build.CreateAlloca(type, nullptr, var.get_short_name());
-    _variables.insert({var.shared_as<variable_statement>(), alloca});
+    _context->_variables.insert({var.shared_as<variable_statement>(), alloca});
 
     // But initialize at the decl place
     if(auto init = var.get_init_expr()) {

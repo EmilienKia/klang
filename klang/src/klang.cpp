@@ -48,9 +48,6 @@
 
 namespace po = boost::program_options;
 
-k::log::logger logger;
-
-
 static std::string read_text_file_content(const std::string& path) {
     std::ostringstream ss;
     std::ifstream input_file(path);
@@ -172,14 +169,11 @@ int main(int argc, const char** argv) {
     std::string source = read_text_file_content(input_files[0]);
 
     try {
-
-        k::compiler compiler(target_machine);
-        compiler.compile(source, true, false);
-        return compiler.gen_object_file(output_file) ? 0 : -1;
-
+        auto compiler = k::compiler::create(target_machine);
+        compiler->parse_source(source, true, false);
+        return compiler->gen_object_file(output_file) ? 0 : -1;
     } catch(...) {
     }
-    logger.print();
 
     return 0;
 }

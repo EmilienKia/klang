@@ -49,6 +49,12 @@
 #include "../common/logger.hpp"
 #include "../lex/lexer.hpp"
 
+#include "../compiler.hpp"
+
+
+namespace k {
+class compiler;
+}
 
 namespace k::model::gen {
 
@@ -69,17 +75,10 @@ protected:
     std::shared_ptr<context> _context;
 
     std::unique_ptr<llvm::IRBuilder<>> _builder;
-    std::unique_ptr<llvm::Module> _module;
 
     llvm::Value* _value;
 
     std::stack<std::shared_ptr<structure>> _struct_stack;
-
-    std::map<std::shared_ptr<global_variable_definition>, llvm::GlobalVariable*> _global_vars;
-    std::map<std::shared_ptr<function>, llvm::Function*> _functions;
-    std::map<std::shared_ptr<parameter>, llvm::AllocaInst*> _parameter_variables;
-    std::map<std::shared_ptr<function>, llvm::AllocaInst*> _function_this_variables;
-    std::map<std::shared_ptr<variable_statement>, llvm::AllocaInst*> _variables;
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         error(code, lexeme, message, args);
@@ -89,9 +88,7 @@ protected:
 public:
     unit_llvm_ir_gen(k::log::logger& logger, std::shared_ptr<context> context, unit& unit);
 
-    llvm::Module& get_module() {
-        return *_module;
-    }
+    llvm::Module& get_module();
 
     void visit_unit(unit &) override;
 
@@ -168,8 +165,6 @@ public:
     void verify();
     void optimize_functions();
 
-    std::unique_ptr<unit_llvm_jit> to_jit();
-
 protected:
     void optimize_function_dead_inst_elimination(llvm::Function& func);
 };
@@ -177,7 +172,8 @@ protected:
 
 
 class unit_llvm_jit {
-private:
+protected:
+    std::shared_ptr<compiler> _compiler;
     std::unique_ptr<llvm::orc::ExecutionSession> _session;
     llvm::DataLayout _layout;
     llvm::orc::MangleAndInterner _mangle;
@@ -185,23 +181,28 @@ private:
     llvm::orc::IRCompileLayer _compile_layer;
     llvm::orc::JITDylib &_main_dynlib;
 
+    unit_llvm_jit(std::shared_ptr<compiler> compiler, std::unique_ptr<llvm::orc::ExecutionSession> session, llvm::orc::JITTargetMachineBuilder jtmb, llvm::DataLayout layout);
+
+    friend class k::compiler;
+    static std::unique_ptr<unit_llvm_jit> create(std::shared_ptr<compiler> compiler);
+
+    llvm::Expected<llvm::orc::ExecutorSymbolDef> lookup_symbol_address(const std::string& name);
+
 public:
-
-    unit_llvm_jit(std::unique_ptr<llvm::orc::ExecutionSession> session, llvm::orc::JITTargetMachineBuilder jtmb, llvm::DataLayout layout);
     ~unit_llvm_jit();
-
-    static std::unique_ptr<unit_llvm_jit> create();
 
     void add_module(llvm::orc::ThreadSafeModule module, llvm::orc::ResourceTrackerSP res_tracker = nullptr);
 
     template<typename T>
-    T lookup_symbol(llvm::StringRef name) {
-        return _session->lookup(llvm::ArrayRef<llvm::orc::JITDylib*>{&_main_dynlib}, _mangle(name.str()))->getAddress().toPtr<T>();
+    T lookup_symbol(const std::string& name) {
+        auto symb = lookup_symbol_address(name);
+        if (symb) {
+            return lookup_symbol_address(name)->getAddress().toPtr<T>();
+        } else {
+            return nullptr;
+        }
     }
-
 };
-
-
 
 } // k::model::gen
 

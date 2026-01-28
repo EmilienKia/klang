@@ -29,19 +29,24 @@
 namespace k {
 
 compiler::compiler(llvm::TargetMachine* target):
-    _parser(_log),
     _context(k::model::context::create()),
+    _model_unit(k::model::unit::create(_context)),
     _target(target)
-{}
+{
+}
+
+std::shared_ptr<compiler> compiler::create(llvm::TargetMachine* target) {
+    return std::shared_ptr<compiler>{new compiler(target)};
+}
 
 std::vector<std::shared_ptr<model::element>> compiler::find_elements(const name& name) const {
     std::vector<std::shared_ptr<model::element>> results;
 
-    if (!_unit || name.empty()) {
+    if (!_model_unit || name.empty()) {
         return results;
     }
 
-    auto root_ns = _unit->get_root_namespace();
+    auto root_ns = _model_unit->get_root_namespace();
     if (!root_ns) {
         return results;
     }
@@ -130,10 +135,13 @@ std::string compiler::get_element_mangled_name(const name& name) const {
     }
 }
 
-void compiler::compile(std::string_view src, bool optimize, bool dump) {
+void compiler::parse_source(const std::string_view& src, bool optimize, bool dump) {
+    // TODO : what to do if _source, _ast_unit and so on are already filled (by previous call)
+    _source = src;
     try {
-        _parser.parse(src);
-        _ast_unit = _parser.parse_unit();
+        k::parse::parser parser(_log);
+        parser.parse(_source);
+        _ast_unit = parser.parse_unit();
 
         if(dump) {
             std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
@@ -141,18 +149,17 @@ void compiler::compile(std::string_view src, bool optimize, bool dump) {
             visit.visit_unit(*_ast_unit);
         }
 
-        _unit = k::model::unit::create(_context);
         if(dump) {
             std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
         }
-        k::model::model_builder::visit(_log, _context, *_ast_unit, *_unit);
+        k::model::model_builder::visit(_log, _context, *_ast_unit, *_model_unit);
 
         if(dump) {
             k::model::dump::unit_dump unit_dump(std::cout);
-            unit_dump.dump(*_unit);
+            unit_dump.dump(*_model_unit);
         }
 
-        k::model::gen::symbol_resolver var_resolver(_log, _context, *_unit);
+        k::model::gen::symbol_resolver var_resolver(_log, _context, *_model_unit);
         if(dump) {
             std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
         }
@@ -160,18 +167,18 @@ void compiler::compile(std::string_view src, bool optimize, bool dump) {
 
         if(dump) {
             k::model::dump::unit_dump unit_dump(std::cout);
-            unit_dump.dump(*_unit);
+            unit_dump.dump(*_model_unit);
         }
 
         _context->resolve_types();
 
-        k::model::gen::type_reference_resolver type_ref_resolver(_log, _context, *_unit);
+        k::model::gen::type_reference_resolver type_ref_resolver(_log, _context, *_model_unit);
         type_ref_resolver.resolve();
 
         if(dump) {
             k::model::dump::unit_dump unit_dump(std::cout);
             std::cout << "#" << std::endl << "# Type resolution" << std::endl << "#" << std::endl;
-            unit_dump.dump(*_unit);
+            unit_dump.dump(*_model_unit);
         }
 
         process_gen(optimize, dump);
@@ -182,7 +189,7 @@ void compiler::compile(std::string_view src, bool optimize, bool dump) {
 
 void compiler::process_gen(bool optimize, bool dump) {
 
-    auto gen = std::make_unique<k::model::gen::unit_llvm_ir_gen>(_log, _context, *_unit);
+    auto gen = std::make_unique<k::model::gen::unit_llvm_ir_gen>(_log, _context, *_model_unit);
 
     if (_target) {
         gen->get_module().setDataLayout(_target->createDataLayout());
@@ -192,7 +199,7 @@ void compiler::process_gen(bool optimize, bool dump) {
     if(dump) {
         std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
     }
-    _unit->accept(*gen);
+    _model_unit->accept(*gen);
     gen->verify();
 
     if(dump) {
@@ -218,7 +225,12 @@ std::unique_ptr<k::model::gen::unit_llvm_jit> compiler::to_jit() {
         process_gen();
     }
     if (_gen) {
-        auto jit = _gen->to_jit();
+        auto jit = model::gen::unit_llvm_jit::create(shared_from_this());
+        if (!jit) {
+            std::cerr << "Error instantiating jit engine." << std::endl;
+            return nullptr;
+        }
+        jit.get()->add_module(llvm::orc::ThreadSafeModule(std::move(_context->_module), _context->move_llvm_context()));
         _gen.reset();
         return jit;
     } else {

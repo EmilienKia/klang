@@ -112,7 +112,8 @@ void symbol_resolver::visit_structure(structure& st) {
     visit_named_element(st);
 
     // Pre declare type
-    std::shared_ptr<struct_type> st_type{new struct_type(st.get_short_name(), st.shared_as<structure>())};
+    // TODO Mangle struct name to avoid collisions
+    std::shared_ptr<struct_type> st_type{new struct_type(st.get_short_name()/*st.get_mangled_name()*/, st.shared_as<structure>())};
     _context->add_struct(st_type);
     st.set_struct_type(st_type);
 
@@ -252,8 +253,8 @@ void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definiti
     //std::string mangledName;
     //Mangler::getNameWithPrefix(mangledName, "test::toto", Mangler::ManglingMode::Default);
 
-    auto variable = new llvm::GlobalVariable(*_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, constInitValue, var.get_short_name());
-    _global_vars.insert({var.shared_as<global_variable_definition>(), variable});
+    auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, constInitValue, var.get_mangled_name());
+    _context->_global_vars.insert({var.shared_as<global_variable_definition>(), variable});
 }
 
 //
@@ -352,9 +353,9 @@ void unit_llvm_ir_gen::visit_function(function &function) {
 
     // create the function:
     llvm::FunctionType *func_type = llvm::FunctionType::get(ret_type, param_types, false);
-    llvm::Function *func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage, function.get_short_name(), *_module);
+    llvm::Function *func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage, function.get_mangled_name(), *_context->_module);
 
-    _functions.insert({function.shared_as<k::model::function>(), func});
+    _context->_functions.insert({function.shared_as<k::model::function>(), func});
 
     // create the function content:
     llvm::BasicBlock *block = llvm::BasicBlock::Create(**_context, "entry", func);
@@ -368,8 +369,8 @@ void unit_llvm_ir_gen::visit_function(function &function) {
         arg->setName("this");
         // Create dedicated local storage for "this" argument
         llvm::AllocaInst* alloca = _builder->CreateAlloca(llvm::PointerType::get(_context->llvm_context(), 0), nullptr, "this");
-        _function_this_variables.insert({function.shared_as<model::function>(), alloca});
-        _parameter_variables.insert({function.get_this_parameter(), alloca});
+        _context->_function_this_variables.insert({function.shared_as<model::function>(), alloca});
+        _context->_parameter_variables.insert({function.get_this_parameter(), alloca});
         // Read "this" param value and store it in dedicated local var
         _builder->CreateStore(arg, alloca);
     }
@@ -379,7 +380,7 @@ void unit_llvm_ir_gen::visit_function(function &function) {
         arg->setName(param->get_short_name());
         // Create dedicated local storage for argument
         llvm::AllocaInst* alloca = _builder->CreateAlloca(_context->get_llvm_type(param->get_type()), nullptr, param->get_short_name());
-        _parameter_variables.insert({param, alloca});
+        _context->_parameter_variables.insert({param, alloca});
         // Read param value and store it in dedicated local var
         _builder->CreateStore(arg, alloca);
     }

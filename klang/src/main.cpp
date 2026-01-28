@@ -32,16 +32,6 @@
 
 using namespace k;
 
-k::log::logger logger;
-
-std::unique_ptr<k::model::gen::unit_llvm_jit> gen(std::string_view src, bool optimize = true, bool dump = true) {
-    k::compiler comp;
-    comp.compile(src, false, dump);
-    return comp.to_jit();
-}
-
-
-
 #if 1
 int main() {
     std::cout << "Hello, World!" << std::endl;
@@ -91,8 +81,11 @@ int main() {
         int b;
     };
 
+    auto comp = k::compiler::create();
+
     try {
-        auto jit = gen(source, true, true);
+        comp->parse_source(source, true, true);
+        auto jit = comp->to_jit();
         if (!jit) {
             std::cerr << "JIT instantiation error." << std::endl;
             return -1;
@@ -130,7 +123,6 @@ int main() {
     } catch(...) {
         std::cerr << "Error" << std::endl;
     }
-    logger.print();
 
     return 0;
 }
