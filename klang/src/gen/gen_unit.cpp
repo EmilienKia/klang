@@ -19,6 +19,7 @@
 #include "unit_llvm_ir_gen.hpp"
 
 #include <llvm/IR/Verifier.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
 
 namespace k::model::gen {
 
@@ -40,7 +41,6 @@ void symbol_resolver::visit_named_element(named_element& named) {
     }
 }
 
-
 //
 // Unit
 //
@@ -48,15 +48,24 @@ void symbol_resolver::visit_named_element(named_element& named) {
 void symbol_resolver::visit_unit(unit& unit)
 {
     visit_namespace(*_unit.get_root_namespace());
+
+    visit_global_constructor_function(_unit.get_global_constructor_function());
+    visit_global_destructor_function(_unit.get_global_destructor_function());
 }
 
 void type_reference_resolver::visit_unit(unit& unit)
 {
     visit_namespace(*_unit.get_root_namespace());
+
+    visit_global_constructor_function(_unit.get_global_constructor_function());
+    visit_global_destructor_function(_unit.get_global_destructor_function());
 }
 
 void unit_llvm_ir_gen::visit_unit(unit &unit) {
     visit_namespace(*_unit.get_root_namespace());
+
+    visit_global_constructor_function(_unit.get_global_constructor_function());
+    visit_global_destructor_function(_unit.get_global_destructor_function());
 }
 
 //
@@ -208,6 +217,7 @@ void type_reference_resolver::visit_global_variable_definition(global_variable_d
     if(auto expr = var.get_init_expr()) {
         expr->accept(*this);
 
+        // Align init expr type to variable type
         auto cast = adapt_type(expr, var.get_type());
         if(!cast) {
             // TODO            throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
@@ -217,6 +227,14 @@ void type_reference_resolver::visit_global_variable_definition(global_variable_d
         } else {
             // Compatible type, no need to cast.
         }
+
+        if (!std::dynamic_pointer_cast<value_expression>(expr)) {
+            // If variable initialization is not constant
+            // TODO Support casted constant expression (and any other resolvable complex constant init expression)
+            var.ancestor<unit>()->get_global_constructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
+        }
+
+
     }
 }
 
@@ -233,25 +251,15 @@ void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definiti
             if (auto constant = get_llvm_constant_from_value_expr(*valueExpr)) {
                 // TODO Implement type conversion
                 constInitValue = constant;
-            } else {
-                // TODO Support casted constant expression (and any other resolvable complex constant init expression)
-                constInitValue = type->generate_default_value_initializer();
             }
-        } else {
-            // Complex init expression
-            // TODO Support complex init expression
-            // Use 0-filled instead
-            constInitValue = type->generate_default_value_initializer();
         }
-    } else {
-        // No explicit initialization
-        // Here is the 0-filled initialization:
+    }
+
+    if (!constInitValue) {
+        // If no explicit initialization, or complex initialization, lets have 0-filled initialization:
         constInitValue = type->generate_default_value_initializer();
     }
 
-    // TODO use the real mangled name
-    //std::string mangledName;
-    //Mangler::getNameWithPrefix(mangledName, "test::toto", Mangler::ManglingMode::Default);
 
     auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, constInitValue, var.get_mangled_name());
     _context->_global_vars.insert({var.shared_as<global_variable_definition>(), variable});
@@ -409,6 +417,63 @@ void unit_llvm_ir_gen::optimize_function_dead_inst_elimination(llvm::Function& f
             }
         }
     }
+}
+
+
+//
+// Global constructor function
+// This generate the unique global constructor function (if needed) and register it to llvm.global_ctors
+// Note: Global constructor is processed at the end of the unit (but before global destructor)
+//
+void type_reference_resolver::visit_global_constructor_function(global_constructor_function& func) {
+
+    auto vars = func.get_sorted_global_variables();
+    if (!vars.empty()) {
+
+        auto blck = func.get_block();
+        for (auto var : vars) {
+            auto stmt = std::make_shared<expression_statement>(blck);
+            auto symbol = symbol_expression::from_variable(var);
+            auto assign = simple_assignation_expression::make_shared(
+                    symbol,
+                    var->get_init_expr()
+                );
+            stmt->set_expression(assign);
+            blck->append_statement(stmt);
+        }
+
+        visit_function(func);
+    }
+}
+
+void unit_llvm_ir_gen::visit_global_constructor_function(global_constructor_function& func) {
+    auto vars = func.get_sorted_global_variables();
+    if (!vars.empty()) {
+        // Really generate the function
+        visit_function(func);
+
+        auto it_func = _context->_functions.find(func.shared_as<function>());
+        if (it_func==_context->_functions.end()) {
+            // TODO throw an exception
+            std::cerr << "Cannot find the global constructor function, something wrong occured." << std::endl;
+        }
+
+        // Register the function
+        llvm::appendToGlobalCtors(get_module(), it_func->second, 65535);
+    }
+}
+
+
+//
+// Global destructor function
+// This generate the unique global destructor function (if needed) and register it to llvm.global_dtors
+// Note: Global destructor is processed at the end of the unit and after global constructor)
+//
+void type_reference_resolver::visit_global_destructor_function(global_destructor_function& func) {
+}
+
+void unit_llvm_ir_gen::visit_global_destructor_function(global_destructor_function& func) {
+    // TODO
 }
 
 

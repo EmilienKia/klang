@@ -89,6 +89,10 @@ std::shared_ptr<symbol_expression> symbol_expression::from_identifier(const name
     return std::shared_ptr<symbol_expression>(new symbol_expression(name));
 }
 
+std::shared_ptr<symbol_expression> symbol_expression::from_variable(const std::shared_ptr<variable_definition>& var) {
+    return std::shared_ptr<symbol_expression>(new symbol_expression(var));
+}
+
 void symbol_expression::set_target(std::shared_ptr<variable_definition> var) {
     _target = var;
 }

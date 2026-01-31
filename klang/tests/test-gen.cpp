@@ -3012,4 +3012,36 @@ TEST_CASE("Absolute mangled name lookup", "[gen][name_lookup]") {
     REQUIRE_THROWS_AS(comp->get_element_mangled_name("::the::test::blahblah::blah"), std::runtime_error);
 }
 
+TEST_CASE("Global primitive variable non-trivial initialization", "[gen]") {
+    auto jit = gen_jit(R"SRC(
+        module __global__;
+
+        a : int = 30 + 12;
+        b : int = init();
+
+        init() : int {
+            return 25;
+        }
+
+        test_a() : int {
+            return a;
+        }
+
+        test_b() : int {
+            return b;
+        }
+
+        )SRC");
+    REQUIRE(jit);
+
+    auto test_a = jit->lookup_symbol < int(*)() > ("test_a");
+    auto res_test_a = test_a();
+    REQUIRE( res_test_a == (30 + 12) );
+
+    auto test_b = jit->lookup_symbol < int(*)() > ("test_b");
+    auto res_test_b = test_b();
+    REQUIRE( res_test_b == 25 );
+}
+
+
 

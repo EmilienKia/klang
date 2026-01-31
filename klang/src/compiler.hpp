@@ -95,7 +95,7 @@ public:
 
     void parse_source(const std::string_view& src, bool optimize = true, bool dump = false);
 
-    std::unique_ptr<k::model::gen::unit_llvm_jit> to_jit();
+    std::unique_ptr<k::model::gen::unit_llvm_jit> to_jit(bool init_runtime = true);
 
     bool gen_object_file(const std::string& output_file);
 

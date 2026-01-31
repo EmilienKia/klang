@@ -195,6 +195,9 @@ variable_definition& variable_definition::set_type(std::shared_ptr<type> type) {
 
 variable_definition& variable_definition::set_init_expr(std::shared_ptr<expression> init_expr) {
     _expression = init_expr;
+    if (auto elem = dynamic_cast<element*>(this)) {
+        init_expr->set_parent(elem->shared_as<element>());
+    }
     return *this;
 }
 
@@ -376,6 +379,88 @@ std::shared_ptr<const parameter> function::get_parameter(const std::string &name
     return {};
 }
 
+//
+// Global tool function
+//
+
+void global_tool_function::accept(model_visitor &visitor) {
+    visitor.visit_global_tool_function(*this);
+}
+
+void global_tool_function::update_mangled_name() {
+    // No mangle for this special functions
+    _mangled_name = get_short_name();
+}
+
+void global_tool_function::add_global_variable_definition(const std::shared_ptr<global_variable_definition>& gv) {
+    // TODO Look at dependencies
+    _global_vars.insert({gv, {}});
+}
+
+std::vector<std::shared_ptr<global_variable_definition>> global_tool_function::get_sorted_global_variables() const {
+    std::vector<std::shared_ptr<global_variable_definition>> res;
+
+    enum class mark { Unvisited, Visiting, Done };
+    std::map<std::shared_ptr<global_variable_definition>, mark> state;
+
+    auto visit = [&](auto &self, const std::shared_ptr<global_variable_definition> &node) -> void {
+        auto it = state.find(node);
+        if (it != state.end()) {
+            if (it->second == mark::Visiting) {
+                // TODO Add more details in the error message
+                throw std::runtime_error("Cycle detected in global variable initialization order");
+            }
+            if (it->second == mark::Done) {
+                return;
+            }
+        }
+        state[node] = mark::Visiting;
+
+        auto dep_it = _global_vars.find(node);
+        if (dep_it != _global_vars.end()) {
+            for (const auto &dep: dep_it->second) {
+                if (_global_vars.find(dep) == _global_vars.end()) {
+                    continue; // ignore dependencies not in the list
+                }
+                self(self, dep);
+            }
+        }
+
+        state[node] = mark::Done;
+        res.push_back(node);
+    };
+
+    for (const auto &entry: _global_vars) {
+        if (state.find(entry.first) == state.end()) {
+            visit(visit, entry.first);
+        }
+    }
+
+    return res;
+}
+
+//
+// Global constructor function
+//
+global_constructor_function::global_constructor_function(std::shared_ptr<element> parent) :
+global_tool_function(parent)
+{}
+
+
+void global_constructor_function::accept(model_visitor &visitor) {
+    visitor.visit_global_constructor_function(*this);
+}
+
+//
+// Global destructor function
+//
+global_destructor_function::global_destructor_function(std::shared_ptr<element> parent) :
+global_tool_function(parent)
+{}
+
+void global_destructor_function::accept(model_visitor &visitor) {
+    visitor.visit_global_destructor_function(*this);
+}
 
 //
 // Member variable definition
@@ -609,7 +694,6 @@ unit::unit(std::shared_ptr<context> context):
 element(nullptr),
 _context(context)
 {
-//    _root_ns = ns::create(shared_as<unit>(), "");
 }
 
 void unit::accept(model_visitor &visitor) {
@@ -624,6 +708,10 @@ void unit::set_unit_name(const name& unit_name) {
 std::shared_ptr<ns> unit::get_root_namespace() {
     if(!_root_ns) {
         _root_ns = ns::make_shared(shared_as<unit>(), "");
+        _global_constructor_func = std::shared_ptr<global_constructor_function>( new global_constructor_function(_root_ns) );
+        _global_constructor_func->assign_name(name(true, "__K_global_init"));
+        _global_destructor_func = std::shared_ptr<global_destructor_function>( new global_destructor_function(_root_ns) );
+        _global_destructor_func->assign_name(name(true, "__K_global_finit"));
     }
     return _root_ns;
 }

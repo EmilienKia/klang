@@ -43,6 +43,18 @@ void default_model_visitor::visit_function(function &func) {
     visit_element(func);
 }
 
+void default_model_visitor::visit_global_tool_function(global_tool_function& func) {
+    visit_function(func);
+}
+
+void default_model_visitor::visit_global_constructor_function(global_constructor_function& func) {
+    visit_global_tool_function(func);
+}
+
+void default_model_visitor::visit_global_destructor_function(global_destructor_function& func) {
+    visit_global_tool_function(func);
+}
+
 void default_model_visitor::visit_parameter(parameter& param) {
     visit_element(param);
 }

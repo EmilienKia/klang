@@ -198,6 +198,8 @@ public:
 
     static std::shared_ptr<symbol_expression> from_identifier(const name &type_id);
 
+    static std::shared_ptr<symbol_expression> from_variable(const std::shared_ptr<variable_definition>& var);
+
     const name &get_name() const {
         return _name;
     }

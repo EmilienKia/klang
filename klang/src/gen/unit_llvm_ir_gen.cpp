@@ -99,61 +99,64 @@ void unit_llvm_ir_gen::optimize_functions() {
 // LLVM JIT
 //
 
-unit_llvm_jit::unit_llvm_jit(std::shared_ptr<compiler> compiler, std::unique_ptr<llvm::orc::ExecutionSession> session, llvm::orc::JITTargetMachineBuilder jtmb, llvm::DataLayout layout) :
+unit_llvm_jit::unit_llvm_jit(std::shared_ptr<compiler> compiler) :
         _compiler(compiler),
-        _session(std::move(session)),
-        _layout(std::move(layout)),
-        _mangle(*this->_session, this->_layout),
-        _object_layer(*this->_session, []() { return std::make_unique<llvm::SectionMemoryManager>(); }),
-        _compile_layer(*this->_session, _object_layer, std::make_unique<llvm::orc::ConcurrentIRCompiler>(std::move(jtmb))),
-        _main_dynlib(this->_session->createBareJITDylib("<main>")) {
-    _main_dynlib.addGenerator(llvm::cantFail(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(layout.getGlobalPrefix())));
-    if (jtmb.getTargetTriple().isOSBinFormatCOFF()) {
-        _object_layer.setOverrideObjectFlagsWithResponsibilityFlags(true);
-        _object_layer.setAutoClaimResponsibilityForObjectSymbols(true);
-    }
+        _lljit(llvm::cantFail(llvm::orc::LLJITBuilder().create(), "Cannot instantiate JIT stack")),
+        _main_dynlib(_lljit->getMainJITDylib())
+ {
+    _main_dynlib.addGenerator(llvm::cantFail(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(_lljit->getDataLayout().getGlobalPrefix())));
 }
 
 unit_llvm_jit::~unit_llvm_jit() {
-    if (auto Err = _session->endSession())
-        _session->reportError(std::move(Err));
+    finalize_runtime();
 }
 
 std::unique_ptr<unit_llvm_jit> unit_llvm_jit::create(std::shared_ptr<compiler> compiler) {
-    auto epc = llvm::orc::SelfExecutorProcessControl::Create();
-    if (!epc) {
-        // TODO throw an exception.
-        std::cerr << "Failed to instantiate ORC SelfExecutorProcessControl" << std::endl;
-        return nullptr;
-    }
-
-    auto session = std::make_unique<llvm::orc::ExecutionSession>(std::move(*epc));
-
-    llvm::orc::JITTargetMachineBuilder jtmb(session->getExecutorProcessControl().getTargetTriple());
-
-    auto layout = jtmb.getDefaultDataLayoutForTarget();
-    if (!layout) {
-        // TODO throw an exception.
-        std::cerr << "Failed to retrieve default data layout for current target." << std::endl;
-        return nullptr;
-    }
-
-    return std::unique_ptr<unit_llvm_jit>(new unit_llvm_jit(compiler, std::move(session), std::move(jtmb), std::move(*layout)));
+    return std::unique_ptr<unit_llvm_jit>(new unit_llvm_jit(compiler));
 }
 
-void unit_llvm_jit::add_module(llvm::orc::ThreadSafeModule module, llvm::orc::ResourceTrackerSP res_tracker) {
-    if (!res_tracker)
-        res_tracker = _main_dynlib.getDefaultResourceTracker();
-    if(llvm::Error err = _compile_layer.add(res_tracker, std::move(module))) {
-        std::cerr << "Failed to register module to jit." << std::endl;
+void unit_llvm_jit::add_module(llvm::orc::ThreadSafeModule module) {
+    if (_lljit->addIRModule(std::move(module))) {
+        std::cerr << "Cannot register module in JIT instance." << std::endl;
     }
 }
 
-llvm::Expected<llvm::orc::ExecutorSymbolDef> unit_llvm_jit::lookup_symbol_address(const std::string& name) {
-    return _session->lookup(
-                llvm::ArrayRef<llvm::orc::JITDylib*>{&_main_dynlib},
-                _mangle(llvm::StringRef( (name.starts_with("_K") ? name : _compiler->get_element_mangled_name(name)) ))
-            );
+llvm::Expected<llvm::orc::ExecutorAddr> unit_llvm_jit::lookup_symbol_address(const std::string& name) {
+    return _lljit->lookup(_main_dynlib, llvm::StringRef( (name.starts_with("_K") ? name : _compiler->get_element_mangled_name(name)) ));
+}
+
+void unit_llvm_jit::initialize_runtime() {
+    switch (_state) {
+        case DEFAULT:
+            if(_lljit->initialize(_main_dynlib)) {
+                std::cerr << "Error during JIT module initialization." << std::endl;
+            }
+            _state = INITIALIZED;
+            break;
+        case INITIALIZED:
+            std::clog << "Initialize JIT module again is useless." << std::endl;
+            break;
+        case FINALIZED:
+            std::cerr << "Cannot initialize JIT module after finalization." << std::endl;
+            break;
+    }
+}
+
+void unit_llvm_jit::finalize_runtime() {
+    switch (_state) {
+        case DEFAULT:
+            std::cerr << "Cannot finalize JIT module before initialization." << std::endl;
+            break;
+        case INITIALIZED:
+            if(_lljit->deinitialize(_main_dynlib)) {
+                std::cerr << "Error during JIT module finalization." << std::endl;
+            }
+            _state = FINALIZED;
+            break;
+        case FINALIZED:
+            std::clog << "Finalize JIT module again is useless." << std::endl;
+            break;
+    }
 }
 
 } // k::model::gen

@@ -38,6 +38,7 @@
 
 
 namespace k::model {
+class global_variable_definition;
 
 class context;
 
@@ -51,6 +52,10 @@ class function;
 class structure;
 class ns;
 class unit;
+
+class global_tool_function;
+class global_constructor_function;
+class global_destructor_function;
 
 
 namespace gen {
@@ -79,7 +84,8 @@ protected:
 
     element(std::shared_ptr<element> parent = nullptr) : _parent(parent) {}
 
-    friend statement;
+    friend class statement;
+    friend class variable_definition;
     void set_parent(const std::shared_ptr<element> &parent_element) {
         _parent = parent_element;
     }
@@ -458,6 +464,48 @@ public:
 };
 
 
+class global_tool_function : public function {
+protected:
+    /** Map of global variables to initialize globally, with their dependencies (to be initialized before them) */
+    std::map<std::shared_ptr<global_variable_definition>, std::vector<std::shared_ptr<global_variable_definition>>> _global_vars;
+
+    global_tool_function(std::shared_ptr<element> parent) : function(parent) {
+    }
+
+public:
+
+    void accept(model_visitor& visitor) override;
+
+    void update_mangled_name() override;
+
+    void add_global_variable_definition(const std::shared_ptr<global_variable_definition>& gv);
+
+    /**
+     * Return the list of global variables sorted in their initialization order.
+     * The initialization of a variable must occur after all their dependencies initialization
+     * @return The list of variables to initialize, in the global correct initialization order (dependencies before dependents).
+     */
+    std::vector<std::shared_ptr<global_variable_definition>> get_sorted_global_variables() const;
+
+};
+
+class global_constructor_function : public global_tool_function {
+protected:
+    friend class unit;
+    global_constructor_function(std::shared_ptr<element> parent);
+
+public:
+    void accept(model_visitor& visitor) override;
+};
+
+class global_destructor_function : public global_tool_function {
+protected:
+    friend class unit;
+    global_destructor_function(std::shared_ptr<element> parent);
+public:
+    void accept(model_visitor& visitor) override;
+};
+
 class global_variable_definition : public element, public variable_definition {
 protected:
 
@@ -566,6 +614,16 @@ protected:
 
     /** Root namespace.*/
     std::shared_ptr<ns> _root_ns;
+
+    std::shared_ptr<global_constructor_function> _global_constructor_func;
+    std::shared_ptr<global_destructor_function> _global_destructor_func;
+
+    friend class k::model::gen::symbol_resolver;
+    friend class k::model::gen::type_reference_resolver;
+    friend class k::model::gen::unit_llvm_ir_gen;
+
+    global_constructor_function& get_global_constructor_function() {return *_global_constructor_func;}
+    global_destructor_function& get_global_destructor_function() {return *_global_destructor_func;}
 
     unit() = delete;
     unit(std::shared_ptr<context> context);

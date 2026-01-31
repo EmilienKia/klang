@@ -40,7 +40,7 @@
 #include <llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
 #include <llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h>
 #include <llvm/ExecutionEngine/SectionMemoryManager.h>
-
+#include <llvm/ExecutionEngine/Orc/LLJIT.h>
 
 
 #include "../model/model.hpp"
@@ -94,6 +94,8 @@ public:
 
     void visit_namespace(ns &) override;
     void visit_function(function &) override;
+    void visit_global_constructor_function(global_constructor_function&) override;
+    void visit_global_destructor_function(global_destructor_function&) override;
     void visit_structure(structure&) override;
     void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition &) override;
@@ -174,30 +176,35 @@ protected:
 class unit_llvm_jit {
 protected:
     std::shared_ptr<compiler> _compiler;
-    std::unique_ptr<llvm::orc::ExecutionSession> _session;
-    llvm::DataLayout _layout;
-    llvm::orc::MangleAndInterner _mangle;
-    llvm::orc::RTDyldObjectLinkingLayer _object_layer;
-    llvm::orc::IRCompileLayer _compile_layer;
+    std::unique_ptr<llvm::orc::LLJIT> _lljit;
     llvm::orc::JITDylib &_main_dynlib;
 
-    unit_llvm_jit(std::shared_ptr<compiler> compiler, std::unique_ptr<llvm::orc::ExecutionSession> session, llvm::orc::JITTargetMachineBuilder jtmb, llvm::DataLayout layout);
+    enum {
+        DEFAULT,
+        INITIALIZED,
+        FINALIZED
+    } _state = DEFAULT;
+
+    unit_llvm_jit(std::shared_ptr<compiler> compiler);
 
     friend class k::compiler;
     static std::unique_ptr<unit_llvm_jit> create(std::shared_ptr<compiler> compiler);
 
-    llvm::Expected<llvm::orc::ExecutorSymbolDef> lookup_symbol_address(const std::string& name);
+    llvm::Expected<llvm::orc::ExecutorAddr> lookup_symbol_address(const std::string& name);
+
+    void add_module(llvm::orc::ThreadSafeModule module);
 
 public:
     ~unit_llvm_jit();
 
-    void add_module(llvm::orc::ThreadSafeModule module, llvm::orc::ResourceTrackerSP res_tracker = nullptr);
+    void initialize_runtime();
+    void finalize_runtime();
 
     template<typename T>
     T lookup_symbol(const std::string& name) {
         auto symb = lookup_symbol_address(name);
         if (symb) {
-            return lookup_symbol_address(name)->getAddress().toPtr<T>();
+            return lookup_symbol_address(name)->toPtr<T>();
         } else {
             return nullptr;
         }

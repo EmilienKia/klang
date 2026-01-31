@@ -220,7 +220,7 @@ void compiler::process_gen(bool optimize, bool dump) {
     _gen = std::move(gen);
 }
 
-std::unique_ptr<k::model::gen::unit_llvm_jit> compiler::to_jit() {
+std::unique_ptr<k::model::gen::unit_llvm_jit> compiler::to_jit(bool init_runtime) {
     if (!_gen) {
         process_gen();
     }
@@ -230,8 +230,13 @@ std::unique_ptr<k::model::gen::unit_llvm_jit> compiler::to_jit() {
             std::cerr << "Error instantiating jit engine." << std::endl;
             return nullptr;
         }
-        jit.get()->add_module(llvm::orc::ThreadSafeModule(std::move(_context->_module), _context->move_llvm_context()));
+        jit->add_module(llvm::orc::ThreadSafeModule(std::move(_context->_module), _context->move_llvm_context()));
         _gen.reset();
+
+        if (init_runtime) {
+            jit->initialize_runtime();
+        }
+
         return jit;
     } else {
         std::cerr << "Error : Failed to generate code for JIT." << std::endl;
