@@ -161,6 +161,10 @@ public:
         _value = value;
     }
 
+    const k::value_type& get_value() const {
+        return _value;
+    }
+
     static std::shared_ptr<value_expression> from_literal(const k::lex::any_literal &literal);
 
     template<typename T>
@@ -199,6 +203,8 @@ public:
     static std::shared_ptr<symbol_expression> from_identifier(const name &type_id);
 
     static std::shared_ptr<symbol_expression> from_variable(const std::shared_ptr<variable_definition>& var);
+
+    static std::shared_ptr<symbol_expression> from_function(const std::shared_ptr<function>& func);
 
     const name &get_name() const {
         return _name;
@@ -1076,30 +1082,13 @@ public:
         _arguments = arguments;
     }
 
-    void assign(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args) {
-        _callee_expr = callee_expr;
-        _arguments = args;
-        _callee_expr->set_parent_expression(shared_as<expression>());
-        for (auto &arg: _arguments) {
-            arg->set_parent_expression(shared_as<expression>());
-        }
-    }
+    void assign(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args);
 
-    void assign_argument(size_t index, const std::shared_ptr<expression> &arg) {
-        if (index >= _arguments.size()) {
-            // Cannot assign aan argument out of existing arguments bound.
-        } else {
-            _arguments[index] = arg;
-            arg->set_parent_expression(shared_as<expression>());
-        }
-    }
+    void assign_argument(size_t index, const std::shared_ptr<expression> &arg);
 
-    static std::shared_ptr<expression>
-    make_shared(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args) {
-        std::shared_ptr<function_invocation_expression> expr{new function_invocation_expression()};
-        expr->assign(callee_expr, args);
-        return std::shared_ptr<expression>{expr};
-    }
+    static std::shared_ptr<function_invocation_expression> make_shared(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args);
+
+    static std::shared_ptr<function_invocation_expression> make_shared(const std::shared_ptr<function> &callee_func, const std::vector<std::shared_ptr<expression>> &args);
 
 public:
     void accept(model_visitor &visitor) override;

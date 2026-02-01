@@ -43,6 +43,8 @@ void symbol_resolver::visit_named_element(named_element& named) {
 
 //
 // Unit
+// Note : Global constructor and destructor method objects are always created but generated and registered only if needed.
+// But Global main method is
 //
 
 void symbol_resolver::visit_unit(unit& unit)
@@ -59,6 +61,12 @@ void type_reference_resolver::visit_unit(unit& unit)
 
     visit_global_constructor_function(_unit.get_global_constructor_function());
     visit_global_destructor_function(_unit.get_global_destructor_function());
+
+    if (auto func = unit.get_root_namespace()->get_function("main")) {
+        if (auto main_func = unit.generate_main_function(func)) {
+            visit_global_main_function(*main_func);
+        }
+    }
 }
 
 void unit_llvm_ir_gen::visit_unit(unit &unit) {
@@ -66,6 +74,10 @@ void unit_llvm_ir_gen::visit_unit(unit &unit) {
 
     visit_global_constructor_function(_unit.get_global_constructor_function());
     visit_global_destructor_function(_unit.get_global_destructor_function());
+
+    if (unit._global_main_func) {
+        visit_global_main_function(*unit._global_main_func);
+    }
 }
 
 //
@@ -233,8 +245,6 @@ void type_reference_resolver::visit_global_variable_definition(global_variable_d
             // TODO Support casted constant expression (and any other resolvable complex constant init expression)
             var.ancestor<unit>()->get_global_constructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
         }
-
-
     }
 }
 
@@ -361,6 +371,7 @@ void unit_llvm_ir_gen::visit_function(function &function) {
 
     // create the function:
     llvm::FunctionType *func_type = llvm::FunctionType::get(ret_type, param_types, false);
+std::cout << "!!! Generate method : " << function.get_mangled_name() << "(...)" << std::endl;
     llvm::Function *func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage, function.get_mangled_name(), *_context->_module);
 
     _context->_functions.insert({function.shared_as<k::model::function>(), func});
@@ -474,6 +485,60 @@ void type_reference_resolver::visit_global_destructor_function(global_destructor
 
 void unit_llvm_ir_gen::visit_global_destructor_function(global_destructor_function& func) {
     // TODO
+}
+
+//
+// Global main function
+// This generate the main entry point proxy code
+//
+void type_reference_resolver::visit_global_main_function(global_main_function& main_func) {
+
+    std::vector<std::shared_ptr<expression>> args;
+
+    // Look at the compatible prototypes
+    // TODO Add a better method prototype compatibility checking/searching
+    if (main_func.get_real_func().has_parameter()) {
+        // TODO Support some parameters (and some cast/adaptation)
+        std::cerr << "Main method doesn't support parameters yet." << std::endl;
+        // TODO throw exception
+    }
+
+    auto int_type = _context->from_type(primitive_type::INT);
+
+    main_func.assign_name(name(true, "main"));
+    main_func.set_return_type(int_type);
+    main_func.append_parameter("argc", int_type);
+    main_func.append_parameter("argv", _context->from_type(primitive_type::UNSIGNED_CHAR)->get_pointer()->get_pointer());
+
+    auto main_block = main_func.get_block();
+    auto ret_stmt = std::make_shared<model::return_statement>(main_block);
+
+    std::shared_ptr<expression> invoke = function_invocation_expression::make_shared(main_func.get_real_func().shared_as<function>(), args);
+
+    if (main_func.get_real_func().has_return_type()) {
+        // Cast invocation result to int
+        auto cast = adapt_type(invoke, int_type);
+        if(!cast) {
+            // TODO throw exception
+            std::cerr << "Main function can only return a value which can be cast to int, or void." << std::endl;
+        } else if(cast != invoke) {
+            // Casted, assign casted expression as return expr.
+            invoke = cast;
+        } else {
+            // Compatible type, no need to cast.
+        }
+        // Return casted result
+        ret_stmt->set_expression(invoke);
+        main_func.get_block()->append_statement(ret_stmt);
+    } else {
+        // Create statement for this invocation
+        auto call_stmt = std::make_shared<model::expression_statement>(main_block);
+        call_stmt->set_expression(invoke);
+        main_func.get_block()->append_statement(call_stmt);
+        // Create return statement with returning 0
+        ret_stmt->set_expression(value_expression::from_value(0));
+        main_func.get_block()->append_statement(ret_stmt);
+    }
 }
 
 

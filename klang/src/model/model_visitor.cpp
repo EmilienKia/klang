@@ -55,6 +55,10 @@ void default_model_visitor::visit_global_destructor_function(global_destructor_f
     visit_global_tool_function(func);
 }
 
+void default_model_visitor::visit_global_main_function(global_main_function& func) {
+    visit_function(func);
+}
+
 void default_model_visitor::visit_parameter(parameter& param) {
     visit_element(param);
 }

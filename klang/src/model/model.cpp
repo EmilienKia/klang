@@ -463,6 +463,24 @@ void global_destructor_function::accept(model_visitor &visitor) {
 }
 
 //
+// Global main function
+//
+global_main_function::global_main_function(std::shared_ptr<element> parent, std::shared_ptr<function> real_main_func) :
+function(parent),
+_real_main_func(real_main_func)
+{
+}
+
+void global_main_function::update_mangled_name() {
+    // No mangle for this special functions
+    _mangled_name = get_short_name(); // Must be "main"
+}
+
+void global_main_function::accept(model_visitor& visitor) {
+    visitor.visit_function(*this);
+}
+
+//
 // Member variable definition
 //
 member_variable_definition::member_variable_definition(std::shared_ptr<structure> st) :
@@ -716,18 +734,9 @@ std::shared_ptr<ns> unit::get_root_namespace() {
     return _root_ns;
 }
 
-std::shared_ptr<ns> unit::find_namespace(std::string_view name) {
-
-    // TODO
-
-    return std::shared_ptr<ns>();
-}
-
-
-std::shared_ptr<const ns> unit::find_namespace(std::string_view name) const {
-    // TODO
-
-    return {};
+std::shared_ptr<global_main_function> unit::generate_main_function(std::shared_ptr<function> func) {
+    _global_main_func = std::shared_ptr<global_main_function>(new global_main_function(shared_as<element>(), func));
+    return _global_main_func;
 }
 
 //void model::add_import(const std::string &import_name) {

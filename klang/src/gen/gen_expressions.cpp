@@ -53,9 +53,8 @@ llvm::Constant* unit_llvm_ir_gen::get_llvm_constant_from_value_expr(const value_
     if(expr.is_literal()) {
         return _context->get_llvm_constant_from_literal(expr.any_literal());
     } else {
-        // TODO
+        return _context->get_llvm_constant_from_value(expr.get_value());
     }
-    return nullptr;
 }
 
 void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {

@@ -432,6 +432,7 @@ public:
     void accept(model_visitor& visitor) override;
 
     void set_return_type(std::shared_ptr<type> return_type);
+    bool has_return_type() const {return _return_type != nullptr;}
     std::shared_ptr<type> get_return_type() {return _return_type;}
     std::shared_ptr<const type> get_return_type() const {return _return_type;}
 
@@ -445,6 +446,7 @@ public:
     std::shared_ptr<parameter> insert_parameter(const std::string& name, std::shared_ptr<type> type, size_t pos);
 
     size_t get_parameter_size() const {return _parameters.size();}
+    bool has_parameter()const {return !_parameters.empty();}
     std::shared_ptr<parameter> get_parameter(size_t index);
     std::shared_ptr<const parameter> get_parameter(size_t index)const;
 
@@ -506,6 +508,23 @@ public:
     void accept(model_visitor& visitor) override;
 };
 
+class global_main_function : public function {
+protected:
+
+    std::shared_ptr<function> _real_main_func;
+
+    friend class unit;
+    global_main_function(std::shared_ptr<element> parent, std::shared_ptr<function> real_main_func);
+
+public:
+    void accept(model_visitor& visitor) override;
+
+    void update_mangled_name() override;
+
+    function& get_real_func() {return *_real_main_func;}
+};
+
+
 class global_variable_definition : public element, public variable_definition {
 protected:
 
@@ -523,7 +542,6 @@ public:
     void accept(model_visitor& visitor) override;
 
 };
-
 
 class ns : public element, public named_element, public variable_holder, public function_holder, public structure_holder {
 protected:
@@ -618,12 +636,17 @@ protected:
     std::shared_ptr<global_constructor_function> _global_constructor_func;
     std::shared_ptr<global_destructor_function> _global_destructor_func;
 
+    std::shared_ptr<global_main_function> _global_main_func;
+
     friend class k::model::gen::symbol_resolver;
     friend class k::model::gen::type_reference_resolver;
     friend class k::model::gen::unit_llvm_ir_gen;
 
     global_constructor_function& get_global_constructor_function() {return *_global_constructor_func;}
     global_destructor_function& get_global_destructor_function() {return *_global_destructor_func;}
+
+    std::shared_ptr<global_main_function> generate_main_function(std::shared_ptr<function> func);
+
 
     unit() = delete;
     unit(std::shared_ptr<context> context);
@@ -665,21 +688,6 @@ public:
     std::shared_ptr<const ns> get_root_namespace() const {
         return _root_ns;
     }
-
-    /**
-     * Find a namespace, declaring it if needed.
-     * @param name Full name of the namespace. Empty or '::' will return the global namespace.
-     * @return Namespace.
-     */
-    std::shared_ptr<ns> find_namespace(std::string_view name);
-
-    /**
-     * Find a namespace.
-     * @param name Full name of the namespace. Empty or '::' will return the global namespace.
-     * @return Namespace, null if not found
-     */
-    std::shared_ptr<const ns> find_namespace(std::string_view name) const;
-
 };
 
 

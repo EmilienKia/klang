@@ -222,6 +222,35 @@ llvm::Constant* context::get_llvm_constant_from_literal(const k::lex::any_litera
     }
 }
 
+llvm::Constant* context::get_llvm_constant_from_value(const k::value_type &value) {
+    if (std::holds_alternative<bool>(value)) {
+        return std::get<bool>(value) ? llvm::ConstantInt::getTrue(**this) : llvm::ConstantInt::getFalse(**this);
+    } else if (std::holds_alternative<char>(value)) {
+        return llvm::ConstantInt::get(**this, llvm::APInt(8, std::get<char>(value), true));
+    } else if (std::holds_alternative<unsigned char>(value)) {
+        return llvm::ConstantInt::get(**this, llvm::APInt(8, std::get<unsigned char>(value), false));
+    } else if (std::holds_alternative<short>(value)) {
+        return llvm::ConstantInt::get(**this, llvm::APInt(16, std::get<short>(value), true));
+    } else if (std::holds_alternative<unsigned short>(value)) {
+        return llvm::ConstantInt::get(**this, llvm::APInt(16, std::get<unsigned short>(value), false));
+    } else if (std::holds_alternative<int>(value)) {
+        return llvm::ConstantInt::get(**this, llvm::APInt(32, std::get<int>(value), true));
+    } else if (std::holds_alternative<unsigned int>(value)) {
+        return llvm::ConstantInt::get(**this, llvm::APInt(32, std::get<unsigned int>(value), false));
+    } else if (std::holds_alternative<long long>(value)) {
+        return llvm::ConstantInt::get(**this, llvm::APInt(64, std::get<long long>(value), true));
+    } else if (std::holds_alternative<unsigned long long>(value)) {
+        return llvm::ConstantInt::get(**this, llvm::APInt(64, std::get<unsigned long long>(value), false));
+    } else if (std::holds_alternative<float>(value)) {
+        return llvm::ConstantFP::get(llvm::Type::getFloatTy(**this), std::get<float>(value));
+    } else if (std::holds_alternative<double>(value)) {
+        return llvm::ConstantFP::get(llvm::Type::getDoubleTy(**this), std::get<double>(value));
+    } else {
+        // TODO handle other literal types
+        return nullptr;
+    }
+}
+
 std::shared_ptr<unresolved_type> context::create_unresolved(const name& type_id) {
     std::shared_ptr<unresolved_type> res{new unresolved_type(type_id)};
     _unresolved.push_back(res);
@@ -253,7 +282,6 @@ void context::resolve_types() {
                     throw std::runtime_error("Cannot resolve structure field type: " + type->to_string());
                 }
                 if (auto value_init = std::dynamic_pointer_cast<value_expression>(var->get_init_expr())) {
-                    // TODO HERE EKI !!!
                     llvm::Constant* init_value = value_init->is_literal() ? get_llvm_constant_from_literal(value_init->any_literal()) : nullptr;
                     if (init_value == nullptr) {
                         // Cant generate constant initializer, use 0-based initializer instead

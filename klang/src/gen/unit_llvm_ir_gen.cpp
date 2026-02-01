@@ -125,6 +125,10 @@ llvm::Expected<llvm::orc::ExecutorAddr> unit_llvm_jit::lookup_symbol_address(con
     return _lljit->lookup(_main_dynlib, llvm::StringRef( (name.starts_with("_K") ? name : _compiler->get_element_mangled_name(name)) ));
 }
 
+llvm::Expected<llvm::orc::ExecutorAddr> unit_llvm_jit::lookup_main_entry_symbol_address() {
+    return _lljit->lookup(_main_dynlib, llvm::StringRef("main"));
+}
+
 void unit_llvm_jit::initialize_runtime() {
     switch (_state) {
         case DEFAULT:

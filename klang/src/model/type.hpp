@@ -201,12 +201,7 @@ public:
     llvm::Constant* generate_default_value_initializer() const override;
 
     std::string to_string()const override;
-
-    static std::shared_ptr<primitive_type> from_type(PRIMITIVE_TYPE type);
-    static std::shared_ptr<type> from_string(const std::string& type_name);
-    static std::shared_ptr<type> from_keyword(const lex::keyword& kw, bool is_unsigned = false);
 };
-
 
 inline bool type::is_resolved(const std::shared_ptr<type>& type) {
     return type!=nullptr && type->is_resolved();

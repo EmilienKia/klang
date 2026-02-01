@@ -3043,5 +3043,46 @@ TEST_CASE("Global primitive variable non-trivial initialization", "[gen]") {
     REQUIRE( res_test_b == 25 );
 }
 
+TEST_CASE("Main entry point method returning int", "[gen]") {
+    auto jit = gen_jit(R"SRC(
+        module __main__;
 
+        test() : int {
+            return 42;
+        }
 
+        main() : int {
+            return test();
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    static const int argc = 3;
+    static const char* argv[] = {"test", "my", "prog", nullptr};
+
+    auto main = jit->lookup_main_entry_symbol< int(*)(int, char**) > ();
+    auto res_main = main(argc, (char**)argv);
+    REQUIRE( res_main == 42 );
+}
+
+TEST_CASE("Main entry point method returning nothing", "[gen]") {
+    auto jit = gen_jit(R"SRC(
+        module __main__;
+
+        test() : int {
+            return 42;
+        }
+
+        main() {
+            test();
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    static const int argc = 3;
+    static const char* argv[] = {"test", "my", "prog", nullptr};
+
+    auto main = jit->lookup_main_entry_symbol< int(*)(int, char**) > ();
+    auto res_main = main(argc, (char**)argv);
+    REQUIRE( res_main == 0 );
+}

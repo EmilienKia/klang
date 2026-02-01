@@ -191,6 +191,7 @@ protected:
     static std::unique_ptr<unit_llvm_jit> create(std::shared_ptr<compiler> compiler);
 
     llvm::Expected<llvm::orc::ExecutorAddr> lookup_symbol_address(const std::string& name);
+    llvm::Expected<llvm::orc::ExecutorAddr> lookup_main_entry_symbol_address();
 
     void add_module(llvm::orc::ThreadSafeModule module);
 
@@ -209,6 +210,12 @@ public:
             return nullptr;
         }
     }
+
+    template<typename T>
+    T lookup_main_entry_symbol() {
+        return lookup_main_entry_symbol_address()->toPtr<T>();
+    }
+
 };
 
 } // k::model::gen

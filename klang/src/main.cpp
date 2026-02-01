@@ -74,6 +74,9 @@ int main() {
             return p.add();
         }
 
+        main() : int {
+            return test();
+        }
     )SRC";
 
     struct plop {

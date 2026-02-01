@@ -93,6 +93,10 @@ std::shared_ptr<symbol_expression> symbol_expression::from_variable(const std::s
     return std::shared_ptr<symbol_expression>(new symbol_expression(var));
 }
 
+std::shared_ptr<symbol_expression> symbol_expression::from_function(const std::shared_ptr<function>& func) {
+    return std::shared_ptr<symbol_expression>(new symbol_expression(func));
+}
+
 void symbol_expression::set_target(std::shared_ptr<variable_definition> var) {
     _target = var;
 }
@@ -451,5 +455,36 @@ void subscript_expression::accept(model_visitor &visitor) {
 void function_invocation_expression::accept(model_visitor &visitor) {
     visitor.visit_function_invocation_expression(*this);
 }
+
+void function_invocation_expression::assign(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args) {
+    _callee_expr = callee_expr;
+    _arguments = args;
+    _callee_expr->set_parent_expression(shared_as<expression>());
+    for (auto &arg: _arguments) {
+        arg->set_parent_expression(shared_as<expression>());
+    }
+}
+
+void function_invocation_expression::assign_argument(size_t index, const std::shared_ptr<expression> &arg) {
+    if (index >= _arguments.size()) {
+        // Cannot assign aan argument out of existing arguments bound.
+    } else {
+        _arguments[index] = arg;
+        arg->set_parent_expression(shared_as<expression>());
+    }
+}
+
+std::shared_ptr<function_invocation_expression> function_invocation_expression::make_shared(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args) {
+    std::shared_ptr<function_invocation_expression> expr{new function_invocation_expression()};
+    expr->assign(callee_expr, args);
+    return std::shared_ptr<function_invocation_expression>{expr};
+}
+
+std::shared_ptr<function_invocation_expression> function_invocation_expression::make_shared(const std::shared_ptr<function> &callee_func, const std::vector<std::shared_ptr<expression>> &args) {
+    auto func = make_shared(symbol_expression::from_function(callee_func), args);
+    func->set_type(callee_func->get_return_type());
+    return func;
+}
+
 
 } // namespace k::model

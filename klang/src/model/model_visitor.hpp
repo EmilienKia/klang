@@ -42,6 +42,7 @@ public:
     virtual void visit_global_tool_function(global_tool_function&) =0;
     virtual void visit_global_constructor_function(global_constructor_function&) =0;
     virtual void visit_global_destructor_function(global_destructor_function&) =0;
+    virtual void visit_global_main_function(global_main_function&) =0;
     virtual void visit_parameter(parameter&) =0;
     virtual void visit_global_variable_definition(global_variable_definition&) =0;
     virtual void visit_member_variable_definition(member_variable_definition&) =0;
@@ -131,6 +132,7 @@ public:
     void visit_global_tool_function(global_tool_function&) override;
     void visit_global_constructor_function(global_constructor_function&) override;
     void visit_global_destructor_function(global_destructor_function&) override;
+    void visit_global_main_function(global_main_function&) override;
     void visit_parameter(parameter&) override;
     void visit_global_variable_definition(global_variable_definition&) override;
     void visit_member_variable_definition(member_variable_definition&) override;
