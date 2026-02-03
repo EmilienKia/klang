@@ -41,6 +41,8 @@ class context;
 
 class compiler : public std::enable_shared_from_this<compiler> {
 protected:
+    static bool _compiler_class_init;
+
     k::log::logger _log;
     std::string _source;
     std::shared_ptr<k::parse::ast::unit> _ast_unit;
@@ -56,10 +58,15 @@ protected:
     compiler(llvm::TargetMachine* target = nullptr);
 
 public:
+    static void initialize();
 
-    static std::shared_ptr<compiler> create(llvm::TargetMachine* target = nullptr);
+    static std::shared_ptr<compiler> create(llvm::TargetMachine* target_machine = nullptr);
 
     std::shared_ptr<model::unit> get_unit() {
+        return _model_unit;
+    }
+
+    std::shared_ptr<const model::unit> get_unit() const {
         return _model_unit;
     }
 
@@ -95,9 +102,13 @@ public:
 
     void parse_source(const std::string_view& src, bool optimize = true, bool dump = false);
 
+    bool has_main_method() const;
+
     std::unique_ptr<k::model::gen::unit_llvm_jit> to_jit(bool init_runtime = true);
 
     bool gen_object_file(const std::string& output_file);
+
+    bool gen_executable(const std::string& output_file);
 
 protected:
     void find_elements_from(const name& name, const std::shared_ptr<model::element>& element, std::vector<std::shared_ptr<model::element>>& res) const;

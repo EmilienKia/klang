@@ -18,7 +18,7 @@ llvm_map_components_to_libnames(LLVM_LIBRARIES core irreader native orcjit suppo
 message(STATUS "LLVM libs (by cmake): ${LLVM_LIBRARIES}")
 
 find_package(Boost 1.74 REQUIRED
-        COMPONENTS program_options
+        COMPONENTS program_options system filesystem
 )
 include_directories(${Boost_INCLUDE_DIRS})
 
@@ -54,19 +54,22 @@ add_library(klangcomp
         src/gen/gen_unit.cpp
         src/compiler.hpp
         src/compiler.cpp
+        src/common/process.cpp
 )
+target_link_libraries(klangcomp ${LLVM_LIBRARIES} ${Boost_LIBRARIES})
 
 add_executable(klangc
         src/klang.cpp
 )
 
 target_include_directories(klangc PUBLIC ${PROJECT_BINARY_DIR})
-target_link_libraries(klangc klangcomp ${LLVM_LIBRARIES} fmt::fmt Boost::program_options)
+target_link_libraries(klangc klangcomp ${LLVM_LIBRARIES} fmt::fmt ${Boost_LIBRARIES})
 
 add_executable(tests
         tests/test-lexer.cpp
         tests/test-parser.cpp
         tests/test-gen.cpp
+        tests/test-run.cpp
 )
 target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain)
 

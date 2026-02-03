@@ -371,7 +371,6 @@ void unit_llvm_ir_gen::visit_function(function &function) {
 
     // create the function:
     llvm::FunctionType *func_type = llvm::FunctionType::get(ret_type, param_types, false);
-std::cout << "!!! Generate method : " << function.get_mangled_name() << "(...)" << std::endl;
     llvm::Function *func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage, function.get_mangled_name(), *_context->_module);
 
     _context->_functions.insert({function.shared_as<k::model::function>(), func});

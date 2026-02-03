@@ -688,6 +688,10 @@ public:
     std::shared_ptr<const ns> get_root_namespace() const {
         return _root_ns;
     }
+
+    bool has_main_method() const {
+        return _global_main_func !=  nullptr;
+    }
 };
 
 

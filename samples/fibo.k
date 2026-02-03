@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,14 @@
  * limitations under the License.
  */
 
+module fibo;
+
 fibo(i: unsigned short) : unsigned int {
     if(i==0) return 1;
     else if(i==1) return 1;
     return fibo(i-1) + fibo(i-2);
+}
+
+main() : int {
+    return fibo(8);
 }

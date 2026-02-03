@@ -18,8 +18,13 @@
 
 #include "compiler.hpp"
 
+#include <filesystem>
 #include <iostream>
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/TargetParser/Host.h>
 
+#include "common/process.hpp"
 #include "gen/resolvers.hpp"
 #include "gen/unit_llvm_ir_gen.hpp"
 #include "parse/ast_dump.hpp"
@@ -28,6 +33,19 @@
 
 namespace k {
 
+bool compiler::_compiler_class_init = false;
+
+void compiler::initialize() {
+    if (!_compiler_class_init) {
+        llvm::InitializeAllTargetInfos();
+        llvm::InitializeAllTargets();
+        llvm::InitializeAllTargetMCs();
+        llvm::InitializeAllAsmParsers();
+        llvm::InitializeAllAsmPrinters();
+        _compiler_class_init = true;
+    }
+}
+
 compiler::compiler(llvm::TargetMachine* target):
     _context(k::model::context::create()),
     _model_unit(k::model::unit::create(_context)),
@@ -35,8 +53,29 @@ compiler::compiler(llvm::TargetMachine* target):
 {
 }
 
-std::shared_ptr<compiler> compiler::create(llvm::TargetMachine* target) {
-    return std::shared_ptr<compiler>{new compiler(target)};
+std::shared_ptr<compiler> compiler::create(llvm::TargetMachine* target_machine) {
+    initialize();
+
+    if (target_machine == nullptr) {
+        std::string target_triple = llvm::sys::getDefaultTargetTriple();
+        std::string error;
+        auto target = llvm::TargetRegistry::lookupTarget(target_triple, error);
+        if(!target) {
+            std::cerr << "Problem to find target: " << error << std::endl;
+        }
+
+        std::string cpu = "generic";
+        std::string features = "";
+
+        llvm::TargetOptions target_options;
+        std::optional<llvm::Reloc::Model> reloc_model;
+        target_machine = target->createTargetMachine(
+                target_triple, cpu,
+                features,
+                target_options,
+                reloc_model);
+    }
+    return std::shared_ptr<compiler>{new compiler(target_machine)};
 }
 
 std::vector<std::shared_ptr<model::element>> compiler::find_elements(const name& name) const {
@@ -187,6 +226,10 @@ void compiler::parse_source(const std::string_view& src, bool optimize, bool dum
     }
 }
 
+bool compiler::has_main_method() const {
+    return get_unit()!=nullptr && get_unit()->has_main_method();
+}
+
 void compiler::process_gen(bool optimize, bool dump) {
 
     auto gen = std::make_unique<k::model::gen::unit_llvm_ir_gen>(_log, _context, *_model_unit);
@@ -272,6 +315,35 @@ bool compiler::gen_object_file(const std::string& output_file) {
         std::cerr << "Error : Failed to generate code for object file." << std::endl;
         return false;
     }
+}
+
+bool compiler::gen_executable(const std::string& output_file) {
+    if (!has_main_method()) {
+        std::cerr << "Cannot generate executable : no main function." << std::endl;
+        return false;
+    }
+
+    std::filesystem::path output_path(output_file.empty() ? get_unit()->get_unit_name().to_string() : output_file);
+
+    auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
+
+    std::cout << "Generating object: " << object_path << std::endl;
+
+    gen_object_file(object_path);
+
+    std::cout << "Generating executable: " << output_path << std::endl;
+
+    auto exec_res = tools::lookup_run_process("clang", {"-pie", "-o", output_path, object_path});
+
+    std::filesystem::remove(object_path);
+
+    if (!exec_res.out.empty()) {
+        std::cout << exec_res.out << std::endl;
+    }
+    if (!exec_res.err.empty()) {
+        std::cerr << exec_res.err << std::endl;
+    }
+    return exec_res.exit_code == 0;
 }
 
 

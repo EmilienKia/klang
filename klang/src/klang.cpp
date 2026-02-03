@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+#include <filesystem>
 #include <iostream>
 
 #include <string_view>
@@ -59,23 +60,19 @@ static std::string read_text_file_content(const std::string& path) {
     return ss.str();
 }
 
-
 int main(int argc, const char** argv) {
 
     std::string output_file;
     std::vector<std::string> input_files;
     std::string target_triple;
 
-    llvm::InitializeAllTargetInfos();
-    llvm::InitializeAllTargets();
-    llvm::InitializeAllTargetMCs();
-    llvm::InitializeAllAsmParsers();
-    llvm::InitializeAllAsmPrinters();
+    k::compiler::initialize();
 
     po::options_description cli_gobal_options("Global options");
     cli_gobal_options.add_options()
             ("help,h", "Display this information.")
             ("version,v", "Display version information.")
+            ("compile,c", "Compile the source files, but do not link")
             ("output,o", po::value<std::string>(&output_file), "Place the output into <arg> file.")
             ("input-file", po::value<std::vector<std::string>>(&input_files), "input file")
             ;
@@ -103,7 +100,7 @@ int main(int argc, const char** argv) {
     po::store(parser, vm);
     po::notify(vm);
 
-    std::vector<std::string> unrecognized = po::collect_unrecognized(parser.options, po::include_positional);
+    std::vector<std::string> unrecognized = po::collect_unrecognized(parser.options, po::exclude_positional);
     if(!unrecognized.empty()) {
         std::cout << "Unrecognized option : " << unrecognized[0] << std::endl << std::endl;
     }
@@ -166,12 +163,26 @@ int main(int argc, const char** argv) {
         std::cout << "klangc is supporting only one input file yet. Additional files will be ignored." << std::endl;
     }
 
+    std::cout << "Parsing : " << input_files[0] << std::endl;
     std::string source = read_text_file_content(input_files[0]);
 
     try {
+
         auto compiler = k::compiler::create(target_machine);
         compiler->parse_source(source, true, false);
-        return compiler->gen_object_file(output_file) ? 0 : -1;
+
+        if (vm.count("compile")) {
+            // Just compile to object file (.o)
+            if (output_file.empty()) {
+                output_file = std::filesystem::path(input_files[0]).replace_extension(".o").string();
+            }
+            return compiler->gen_object_file(output_file) ? 0 : -1;
+        } else {
+            // Compile and link
+            return compiler->gen_executable(output_file);
+        }
+
+
     } catch(...) {
     }
 
