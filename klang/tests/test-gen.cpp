@@ -3157,3 +3157,40 @@ TEST_CASE("Static local variable", "[gen][var]") {
     res_test_non_static = test_non_static();
     REQUIRE( res_test_non_static == (12 + 1) );
 }
+
+TEST_CASE("Static method", "[gen]") {
+    auto jit = gen_jit(R"SRC(
+        module __func__;
+
+        struct plop {
+            static s : int = 12;
+
+            add(a : int) : int {
+                return a + s;
+            }
+
+            static sub(b : int) : int {
+                return b - s;
+            }
+        }
+
+        test_add() : int {
+            p : plop;
+            return p.add(19);
+        }
+
+        test_sub() : int {
+            return plop::sub(43);
+        }
+
+        )SRC", true);
+    REQUIRE(jit);
+
+    auto test_add = jit->lookup_symbol < int(*)() > ("test_add");
+    auto res_test_add = test_add();
+    REQUIRE( res_test_add == (19 + 12) );
+
+    auto test_sub = jit->lookup_symbol < int(*)() > ("test_sub");
+    auto res_test_sub = test_sub();
+    REQUIRE( res_test_sub == (43 - 12) );
+}

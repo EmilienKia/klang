@@ -116,8 +116,8 @@ variable_holder::variable_map_t::const_iterator variable_holder::variable_end() 
 // Abstract function holder
 //
 
-std::shared_ptr<function> function_holder::define_function(const std::string &name) {
-    std::shared_ptr<function> func = do_create_function(name);
+std::shared_ptr<function> function_holder::define_function(const std::string &name, bool is_static) {
+    std::shared_ptr<function> func = do_create_function(name, is_static);
     _functions.push_back(func);
     on_function_defined(func);
     return func;
@@ -249,8 +249,10 @@ void parameter::accept(model_visitor& visitor) {
 // Function
 //
 
-std::shared_ptr<function> function::make_shared(std::shared_ptr<element> parent, const std::string& name) {
-    auto fn = std::shared_ptr<function>(new function(std::move(parent)));
+std::shared_ptr<function> function::make_shared(std::shared_ptr<element> parent, const std::string& name, bool is_static) {
+    // Is static is only supported for structure members (not global methods)
+    is_static = std::dynamic_pointer_cast<structure>(parent)!=nullptr ? is_static : false;
+    auto fn = std::shared_ptr<function>(new function(std::move(parent), is_static));
     fn->assign_name(name);
     return fn;
 }
@@ -523,9 +525,9 @@ void structure::accept(model_visitor& visitor) {
     visitor.visit_structure(*this);
 }
 
-std::shared_ptr<function> structure::do_create_function(const std::string &name) {
+std::shared_ptr<function> structure::do_create_function(const std::string &name, bool is_static) {
     std::shared_ptr<structure> this_st = shared_as<structure>();
-    return std::shared_ptr<function>{function::make_shared(this_st, name)};
+    return std::shared_ptr<function>{function::make_shared(this_st, name, is_static)};
 }
 
 void structure::on_function_defined(std::shared_ptr<function> func) {
@@ -649,7 +651,10 @@ void ns::on_variable_defined(std::shared_ptr<variable_definition> var) {
     }
 }
 
-std::shared_ptr<function> ns::do_create_function(const std::string &name) {
+std::shared_ptr<function> ns::do_create_function(const std::string &name, bool is_static) {
+    if (is_static) {
+        std::clog << "A global function cannot be declared static : " << get_fq_name() << "::" << name << ", ignore it" << std::endl;
+    }
     std::shared_ptr<ns> this_ns = shared_as<ns>();
     return std::shared_ptr<function>{function::make_shared(this_ns, name)};
 }

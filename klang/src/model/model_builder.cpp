@@ -150,7 +150,12 @@ namespace k::model {
         if(!parent_scope) {
             throw_error(0x0005, func.name, "Current context doesnt support function declaration");
         }
-        std::shared_ptr<model::function> function = parent_scope->define_function(func.name.content);
+
+        bool is_static = lex::keyword::has(func.specifiers, lex::keyword::STATIC);
+
+        std::shared_ptr<model::function> function = parent_scope->define_function(func.name.content, is_static
+
+        );
 
         // Push function context
         stack<func_context> push(_contexts, function);

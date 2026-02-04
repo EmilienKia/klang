@@ -273,7 +273,7 @@ public:
 class function_holder
 {
 public:
-    virtual std::shared_ptr<function> define_function(const std::string& name);
+    virtual std::shared_ptr<function> define_function(const std::string& name, bool is_static);
     virtual std::shared_ptr<function> get_function(const std::string& name) const;
     virtual std::shared_ptr<function> lookup_function(const std::string& name) const;
 
@@ -283,7 +283,7 @@ protected:
     /** List of all defined functions. */
     std::vector<std::shared_ptr<function>> _functions;
 
-    virtual std::shared_ptr<function> do_create_function(const std::string &name) =0;
+    virtual std::shared_ptr<function> do_create_function(const std::string &name, bool is_static) =0;
     virtual void on_function_defined(std::shared_ptr<function>) =0;
 };
 
@@ -343,7 +343,7 @@ protected:
     std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
-    std::shared_ptr<function> do_create_function(const std::string &name) override;
+    std::shared_ptr<function> do_create_function(const std::string &name, bool is_static) override;
     void on_function_defined(std::shared_ptr<function>) override;
 
     void set_struct_type(const std::shared_ptr<struct_type>& st_type) {
@@ -410,15 +410,17 @@ protected:
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
 
+    bool _is_static = false;
+
     std::shared_ptr<type> _return_type;
     std::vector<std::shared_ptr<parameter>> _parameters;
     std::shared_ptr<parameter> _this_param;
     std::shared_ptr<block> _block;
 
-    function(std::shared_ptr<element> parent) :
-        element(parent) {}
+    function(std::shared_ptr<element> parent, bool is_static = false) :
+        element(parent), _is_static(is_static) {}
 
-    static std::shared_ptr<function> make_shared(std::shared_ptr<element> parent, const std::string& name);
+    static std::shared_ptr<function> make_shared(std::shared_ptr<element> parent, const std::string& name, bool is_static = false);
 
     std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
@@ -459,6 +461,7 @@ public:
     void set_block(const std::shared_ptr<block>& block);
     std::shared_ptr<block> get_block();
 
+    bool is_static() const { return _is_static; }
     bool is_member() const;
     std::shared_ptr<const structure> get_owner() const;
     std::shared_ptr<structure> get_owner();
@@ -565,7 +568,7 @@ protected:
     std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
-    std::shared_ptr<function> do_create_function(const std::string &name) override;
+    std::shared_ptr<function> do_create_function(const std::string &name, bool is_static) override;
     void on_function_defined(std::shared_ptr<function> func) override;
 
     std::shared_ptr<structure> do_create_structure(const std::string &name) override;

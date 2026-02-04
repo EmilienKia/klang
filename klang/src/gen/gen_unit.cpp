@@ -317,7 +317,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
 
         auto cast = adapt_type(expr, param.get_type());
         if(!cast) {
-            // TODO            throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
+            // TODO throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
         } else if(cast != expr) {
             // Casted, assign casted expression as return expr.
             param.set_init_expr(cast);
@@ -334,7 +334,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
 void symbol_resolver::visit_function(function& fn) {
     visit_named_element(fn);
 
-    if (fn.is_member()) {
+    if (fn.is_member() && !fn.is_static()) {
         fn.create_this_parameter();
     }
 
@@ -350,7 +350,7 @@ void symbol_resolver::visit_function(function& fn) {
 
 void type_reference_resolver::visit_function(function& fn) {
 
-    if (fn.is_member()) {
+    if (fn.is_member() && !fn.is_static()) {
         fn.get_this_parameter()->accept(*this);
     }
 
@@ -369,7 +369,7 @@ void type_reference_resolver::visit_function(function& fn) {
 void unit_llvm_ir_gen::visit_function(function &function) {
     // Parameter types:
     std::vector<llvm::Type*> param_types;
-    if (function.is_member() /* TODO and is not static */) {
+    if (function.is_member()  && !function.is_static()) {
         // First parameter is the 'this' pointer
         param_types.push_back(_context->get_llvm_type(function.get_this_parameter()->get_type()));
     }
@@ -397,7 +397,7 @@ void unit_llvm_ir_gen::visit_function(function &function) {
 
     // Capture arguments
     auto arg_it = func->arg_begin();
-    if (function.is_member() /* TODO and is not static */) {
+    if (function.is_member() && !function.is_static()) {
         // First parameter is the 'this' pointer
         llvm::Argument *arg = &*(arg_it++);
         arg->setName("this");

@@ -100,8 +100,7 @@ std::string mangler::mangle_function(const function& func) const {
     std::ostringstream mangled;
     mangled << K_LANG_SYMBOL_PREFIX SYMBOL_TYPE_FUNCTION;
 
-    if (func.is_member()) {
-        // TODO test if static methof
+    if (func.is_member() && ! func.is_static()) {
         mangled << SYMBOL_MEMBER;
     }
     mangled << mangle_fq_name(name, false);
