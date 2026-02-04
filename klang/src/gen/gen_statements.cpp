@@ -28,6 +28,13 @@ using namespace k::model;
 
 void symbol_resolver::visit_block(block& block)
 {
+    // Look at static/global var definitions
+    for (auto var_entry : block.variables()) {
+        if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_entry.second)) {
+            global_var->accept(*this);
+        }
+    }
+    // Statements
     for(auto& stmt : block.get_statements()) {
         stmt->accept(*this);
     }
@@ -35,12 +42,26 @@ void symbol_resolver::visit_block(block& block)
 
 void type_reference_resolver::visit_block(block& block)
 {
+    // Look at static/global var definitions
+    for (auto var_entry : block.variables()) {
+        if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_entry.second)) {
+            global_var->accept(*this);
+        }
+    }
+    // Statements
     for(auto& stmt : block.get_statements()) {
         stmt->accept(*this);
     }
 }
 
 void unit_llvm_ir_gen::visit_block(block& block) {
+    // Look at static/global var definitions
+    for (auto var_entry : block.variables()) {
+        if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_entry.second)) {
+            global_var->accept(*this);
+        }
+    }
+    // Statements
     for(auto stmt : block.get_statements()) {
         stmt->accept(*this);
     }

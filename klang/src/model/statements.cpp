@@ -245,14 +245,17 @@ void block::append_statement(std::shared_ptr<statement> stmt) {
 
 std::shared_ptr<variable_definition> block::do_create_variable(const std::string &name, bool is_static) {
     if (is_static) {
-        // TODO Support local static variables
-        std::clog << "A local variable cannot be declared static yes : " << name << ", ignore it" << std::endl;
+        return std::shared_ptr<variable_definition>(global_variable_definition::make_shared(shared_as<block>(), name));
+    } else {
+        return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<block>(), name));
     }
-    return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<block>(), name));
 }
 
 void block::on_variable_defined(std::shared_ptr<variable_definition> var) {
-    _statements.push_back(std::dynamic_pointer_cast<variable_statement>(var));
+    if (auto stmt = std::dynamic_pointer_cast<variable_statement>(var)) {
+        // Only save variable_statement in list of statements, static variables are not referenced here
+        _statements.push_back(stmt);
+    }
 }
 
 std::shared_ptr<variable_definition> block::lookup_variable(const std::string &name) const {

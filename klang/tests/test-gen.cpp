@@ -3117,3 +3117,43 @@ TEST_CASE("Static struct member", "[gen][var]") {
     auto res_test = test();
     REQUIRE( res_test == (6 + 13 + 28 + 7) );
 }
+
+TEST_CASE("Static local variable", "[gen][var]") {
+    auto jit = gen_jit(R"SRC(
+        module __static__;
+
+        init() : int {
+            return 12;
+        }
+
+        test_static() : int {
+            static i : int = init();
+            i += 1;
+            return i;
+        }
+
+        test_non_static() : int {
+            j : int = 12;
+            j += 1;
+            return j;
+        }
+
+        )SRC", true);
+    REQUIRE(jit);
+
+    auto test_static = jit->lookup_symbol < int(*)() > ("test_static");
+    auto res_test_static = test_static();
+    REQUIRE( res_test_static == (12 + 1) );
+    res_test_static = test_static();
+    REQUIRE( res_test_static == (12 + 2) );
+    res_test_static = test_static();
+    REQUIRE( res_test_static == (12 + 3) );
+
+    auto test_non_static = jit->lookup_symbol < int(*)() > ("test_non_static");
+    auto res_test_non_static = test_non_static();
+    REQUIRE( res_test_non_static == (12 + 1) );
+    res_test_non_static = test_non_static();
+    REQUIRE( res_test_non_static == (12 + 1) );
+    res_test_non_static = test_non_static();
+    REQUIRE( res_test_non_static == (12 + 1) );
+}

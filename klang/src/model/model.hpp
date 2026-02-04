@@ -529,6 +529,7 @@ protected:
 
     friend class ns;
     friend class structure;
+    friend class block;
     friend class gen::unit_llvm_ir_gen;
 
     global_variable_definition(std::shared_ptr<variable_holder> parent);
