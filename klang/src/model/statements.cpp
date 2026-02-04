@@ -151,7 +151,10 @@ std::shared_ptr<const variable_holder> for_statement::get_variable_holder() cons
     return shared_as<const variable_holder>();
 }
 
-std::shared_ptr<variable_definition> for_statement::do_create_variable(const std::string &name) {
+std::shared_ptr<variable_definition> for_statement::do_create_variable(const std::string &name, bool is_static) {
+    if (is_static) {
+        std::clog << "A for-declared variable cannot be declared static : " << name << ", ignore it" << std::endl;
+    }
     return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<statement>(), name));
 }
 
@@ -240,7 +243,11 @@ void block::append_statement(std::shared_ptr<statement> stmt) {
     // TODO add specific process for variables
 }
 
-std::shared_ptr<variable_definition> block::do_create_variable(const std::string &name) {
+std::shared_ptr<variable_definition> block::do_create_variable(const std::string &name, bool is_static) {
+    if (is_static) {
+        // TODO Support local static variables
+        std::clog << "A local variable cannot be declared static yes : " << name << ", ignore it" << std::endl;
+    }
     return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<block>(), name));
 }
 

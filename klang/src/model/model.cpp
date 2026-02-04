@@ -73,11 +73,11 @@ void named_element::update_names() {
 // Abstract variable holder
 //
 
-std::shared_ptr<variable_definition> variable_holder::append_variable(const std::string& name) {
+std::shared_ptr<variable_definition> variable_holder::append_variable(const std::string& name, bool is_static) {
     if (_vars.contains(name)) {
         // TODO throw exception : var is already defined.
     }
-    std::shared_ptr<variable_definition> var = do_create_variable(name);
+    std::shared_ptr<variable_definition> var = do_create_variable(name, is_static);
     _vars[name] = var;
     on_variable_defined(var);
     return var;
@@ -153,7 +153,7 @@ std::shared_ptr<structure> structure_holder::define_structure(const std::string 
     return st;
 }
 
-std::shared_ptr<structure> structure_holder::get_structure(const std::string &name) {
+std::shared_ptr<structure> structure_holder::get_structure(const std::string &name) const {
     auto it = _structs.find(name);
     if (it != _structs.end()) {
         return it->second;
@@ -162,7 +162,7 @@ std::shared_ptr<structure> structure_holder::get_structure(const std::string &na
     }
 }
 
-std::shared_ptr<structure> structure_holder::lookup_structure(const std::string &name) {
+std::shared_ptr<structure> structure_holder::lookup_structure(const std::string &name) const{
     if (auto st = get_structure(name)) {
         return st;
     } else {
@@ -299,14 +299,17 @@ void function::set_return_type(std::shared_ptr<type> return_type) {
     _return_type = return_type;
 }
 
-std::shared_ptr<variable_definition> function::append_variable(const std::string& name) {
+std::shared_ptr<variable_definition> function::append_variable(const std::string& name, bool is_static) {
     // DO NOT USE METHOD, USE append_parameter instead
     // TODO throw exception
     std::cerr << "Error: function::append_variable is not supported, use append_parameter instead." << std::endl;
     return nullptr;
 }
 
-std::shared_ptr<variable_definition> function::do_create_variable(const std::string &name) {
+std::shared_ptr<variable_definition> function::do_create_variable(const std::string &name, bool is_static) {
+    if (is_static) {
+        std::clog << "A function parameter cannot be declared static : " << get_fq_name() << "::" << name << ", ignore it" << std::endl;
+    }
     return _parameters.emplace_back(parameter::make_shared(shared_as<function>(), name, _parameters.size()));
 }
 
@@ -484,11 +487,7 @@ void global_main_function::accept(model_visitor& visitor) {
 // Member variable definition
 //
 member_variable_definition::member_variable_definition(std::shared_ptr<structure> st) :
-        element(st) {}
-
-std::shared_ptr<member_variable_definition> member_variable_definition::make_shared(std::shared_ptr<structure> st) {
-    return std::shared_ptr<member_variable_definition>(new member_variable_definition(std::move(st)));
-}
+        element(st){}
 
 std::shared_ptr<member_variable_definition> member_variable_definition::make_shared(std::shared_ptr<structure> st, const std::string &name) {
     auto var_def =  std::shared_ptr<member_variable_definition>(new member_variable_definition(std::move(st)));
@@ -546,13 +545,19 @@ std::shared_ptr<function> structure::lookup_function(const std::string& name) co
 }
 
 
-std::shared_ptr<variable_definition> structure::do_create_variable(const std::string &name) {
-    return std::shared_ptr<variable_definition>(member_variable_definition::make_shared(shared_as<structure>(), name));
+std::shared_ptr<variable_definition> structure::do_create_variable(const std::string &name, bool is_static) {
+    if (is_static) {
+        return std::shared_ptr<variable_definition>(global_variable_definition::make_shared(shared_as<structure>(), name));
+    } else {
+        return std::shared_ptr<variable_definition>(member_variable_definition::make_shared(shared_as<structure>(), name));
+    }
 }
 
 void structure::on_variable_defined(std::shared_ptr<variable_definition> var) {
-    if(auto v = std::dynamic_pointer_cast<member_variable_definition>(var)) {
-        _children.push_back(v);
+    if(std::dynamic_pointer_cast<member_variable_definition>(var) != nullptr || std::dynamic_pointer_cast<global_variable_definition>(var) != nullptr ) {
+        _children.push_back(std::dynamic_pointer_cast<element>(var));
+    } else {
+        std::cerr << "Try to register an unsupported type of variable as member of struct" << std::endl;
     }
 }
 
@@ -572,14 +577,11 @@ std::shared_ptr<variable_definition> structure::lookup_variable(const std::strin
 //
 // Global variable definition
 //
-global_variable_definition::global_variable_definition(std::shared_ptr<ns> ns) :
-        element(ns) {}
+global_variable_definition::global_variable_definition(std::shared_ptr<variable_holder> parent) :
+        element(std::dynamic_pointer_cast<element>(parent)) {}
 
-std::shared_ptr<global_variable_definition> global_variable_definition::make_shared(std::shared_ptr<ns> ns) {
-    return std::shared_ptr<global_variable_definition>(new global_variable_definition(std::move(ns)));
-}
-std::shared_ptr<global_variable_definition> global_variable_definition::make_shared(std::shared_ptr<ns> ns, const std::string& name) {
-    auto var_def = std::shared_ptr<global_variable_definition>(new global_variable_definition(std::move(ns)));
+std::shared_ptr<global_variable_definition> global_variable_definition::make_shared(std::shared_ptr<variable_holder> parent, const std::string& name) {
+    auto var_def = std::shared_ptr<global_variable_definition>(new global_variable_definition(std::move(parent)));
     var_def->init(name);
     return var_def;
 }
@@ -634,7 +636,10 @@ std::shared_ptr<const ns> ns::get_child_namespace(const std::string &child_name)
     }
 }
 
-std::shared_ptr<variable_definition> ns::do_create_variable(const std::string &name) {
+std::shared_ptr<variable_definition> ns::do_create_variable(const std::string &name, bool is_static) {
+    if (is_static) {
+        std::clog << "A global variable cannot be declared static : " << get_fq_name() << "::" << name << ", ignore it" << std::endl;
+    }
     return std::shared_ptr<variable_definition>(global_variable_definition::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name));
 }
 
@@ -687,7 +692,7 @@ std::shared_ptr<variable_definition> ns::lookup_variable(const std::string &name
     }
 }
 
-std::shared_ptr<structure> ns::lookup_structure(const std::string& name) {
+std::shared_ptr<structure> ns::lookup_structure(const std::string& name) const {
     // TODO add qualified name lookup
     if(auto st = structure_holder::lookup_structure(name)){
         return st;

@@ -3086,3 +3086,34 @@ TEST_CASE("Main entry point method returning nothing", "[gen]") {
     auto res_main = main(argc, (char**)argv);
     REQUIRE( res_main == 0 );
 }
+
+
+TEST_CASE("Static struct member", "[gen][var]") {
+    auto jit = gen_jit(R"SRC(
+        module __static__;
+
+        static g : int = 7;
+
+        struct titi {
+            a : int = 5;
+            static b : int = 12;
+            add() : int {
+                l : int = 28;
+                return a + b + l + g;
+            }
+        }
+
+        test() : int {
+            t : titi;
+            t.a = 6;
+            titi::b = 13;
+            return t.add();
+        }
+
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol < int(*)() > ("test");
+    auto res_test = test();
+    REQUIRE( res_test == (6 + 13 + 28 + 7) );
+}

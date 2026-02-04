@@ -68,8 +68,26 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
         // Invalid name, must have at least one part
         return std::monostate{};
     } else if(name.size() > 1) {
-        // TODO support qualified names
-        std::clog << "Try to resolve symbol with qualified name: " << name.to_string() << std::endl;
+        // Qualified name
+
+        // Look at structures
+        if (auto st_holder = dynamic_cast<const structure_holder*>(&elem)) {
+            if (auto st = st_holder->get_structure(name.front())) {
+                if (auto res = resolve_symbol(*st, name.without_front()); res.index()!=0) {
+                    return res;
+                }
+            }
+        }
+
+        // Look at namespace
+        if (auto nspc = dynamic_cast<const ns*>(&elem)) {
+            if (auto child = nspc->get_child_namespace(name.front())) {
+                if (auto res = resolve_symbol(*child, name.without_front()); res.index()!=0) {
+                    return res;
+                }
+            }
+        }
+
     } else /*(name.size() == 1)*/ {
         // Simple name, try to resolve it directly
 

@@ -134,7 +134,8 @@ namespace k::model {
             throw_error(0x0004, decl.name, "Current context doesnt support variable declaration");
         }
 
-        std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(decl.name.content);
+        bool is_static = lex::keyword::has(decl.specifiers, lex::keyword::STATIC);
+        std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(decl.name.content, is_static);
         var->set_type(_context->from_type_specifier(*decl.type));
 
         if(decl.init) {

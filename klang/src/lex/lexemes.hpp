@@ -22,6 +22,7 @@
 #include "../common/any_of.hpp"
 #include "../common/common.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <memory>
@@ -181,6 +182,11 @@ struct keyword : public lexeme {
     keyword& operator=(const keyword& other) = default;
     keyword& operator=(keyword&& other) = default;
     keyword(char_coord start, char_coord end, const std::string& content, type_t type) : lexeme(start, end, content), type(type) {}
+
+    template<typename Coll>
+    static bool has(const Coll& coll, type_t kw) {
+        return std::find(coll.begin(), coll.end(), kw) != coll.end();
+    }
 protected:
     keyword() = default;
 };

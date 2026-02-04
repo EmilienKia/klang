@@ -138,9 +138,16 @@ void symbol_resolver::visit_structure(structure& st) {
     _context->add_struct(st_type);
     st.set_struct_type(st_type);
 
-    // Visit variable children
+    // Visit member variable children
     for(auto& child : st.get_children()) {
         if(auto var = std::dynamic_pointer_cast<member_variable_definition>(child)) {
+            var->accept(*this);
+        }
+    }
+
+    // Visit global/static variable children
+    for(auto& child : st.get_children()) {
+        if(auto var = std::dynamic_pointer_cast<global_variable_definition>(child)) {
             var->accept(*this);
         }
     }
@@ -166,9 +173,18 @@ void unit_llvm_ir_gen::visit_structure(structure& st) {
     // TODO
     // Add constructors and destructors.
 
+    // Add global/static vars
+    for(auto& child : st.get_children()) {
+        if (auto var = std::dynamic_pointer_cast<global_variable_definition>(child)) {
+            var->accept(*this);
+        }
+    }
+
     // Add methods:
     for(auto& child : st.get_children()) {
-        child->accept(*this);
+        if (auto func = std::dynamic_pointer_cast<function>(child)) {
+            func->accept(*this);
+        }
     }
 
     _struct_stack.pop();

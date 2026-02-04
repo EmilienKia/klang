@@ -247,7 +247,7 @@ public:
 class variable_holder
 {
 public:
-    virtual std::shared_ptr<variable_definition> append_variable(const std::string& name);
+    virtual std::shared_ptr<variable_definition> append_variable(const std::string& name, bool is_static = false);
     virtual std::shared_ptr<variable_definition> get_variable(const std::string& name) const;
     virtual std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const;
 
@@ -257,7 +257,7 @@ protected:
     /** Map of all defined vars. */
     variable_map_t _vars;
 
-    virtual std::shared_ptr<variable_definition> do_create_variable(const std::string &name) =0;
+    virtual std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) =0;
     virtual void on_variable_defined(std::shared_ptr<variable_definition>) =0;
 
 public:
@@ -294,8 +294,8 @@ class structure_holder
 {
 public:
     virtual std::shared_ptr<structure> define_structure(const std::string& name);
-    virtual std::shared_ptr<structure> get_structure(const std::string& name);
-    virtual std::shared_ptr<structure> lookup_structure(const std::string& name);
+    virtual std::shared_ptr<structure> get_structure(const std::string& name) const;
+    virtual std::shared_ptr<structure> lookup_structure(const std::string& name) const;
 
 protected:
     /** Map of all defined structures. */
@@ -314,7 +314,6 @@ protected:
 
     member_variable_definition(std::shared_ptr<structure> st);
 
-    static std::shared_ptr<member_variable_definition> make_shared(std::shared_ptr<structure> st);
     static std::shared_ptr<member_variable_definition> make_shared(std::shared_ptr<structure> st, const std::string &name);
 
     void update_mangled_name() override;
@@ -341,7 +340,7 @@ protected:
 
     static std::shared_ptr<structure> make_shared(std::shared_ptr<element> parent, const std::string &name);
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
     std::shared_ptr<function> do_create_function(const std::string &name) override;
@@ -421,7 +420,7 @@ protected:
 
     static std::shared_ptr<function> make_shared(std::shared_ptr<element> parent, const std::string& name);
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
     void update_mangled_name() override;
@@ -440,7 +439,7 @@ public:
         return _parameters;
     }
 
-    std::shared_ptr<variable_definition> append_variable(const std::string& name) override;
+    std::shared_ptr<variable_definition> append_variable(const std::string& name, bool is_static) override;
 
     std::shared_ptr<parameter> append_parameter(const std::string& name, std::shared_ptr<type> type);
     std::shared_ptr<parameter> insert_parameter(const std::string& name, std::shared_ptr<type> type, size_t pos);
@@ -529,12 +528,12 @@ class global_variable_definition : public element, public variable_definition {
 protected:
 
     friend class ns;
+    friend class structure;
     friend class gen::unit_llvm_ir_gen;
 
-    global_variable_definition(std::shared_ptr<ns> ns);
+    global_variable_definition(std::shared_ptr<variable_holder> parent);
 
-    static std::shared_ptr<global_variable_definition> make_shared(std::shared_ptr<ns> ns);
-    static std::shared_ptr<global_variable_definition> make_shared(std::shared_ptr<ns> ns, const std::string& name);
+    static std::shared_ptr<global_variable_definition> make_shared(std::shared_ptr<variable_holder> parent, const std::string& name);
 
     void update_mangled_name() override;
 
@@ -562,7 +561,7 @@ protected:
 
     static std::shared_ptr<ns> make_shared(std::shared_ptr<element> parent, const std::string& name);
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
     std::shared_ptr<function> do_create_function(const std::string &name) override;
@@ -616,7 +615,7 @@ public:
 
     std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const override;
 
-    std::shared_ptr<structure> lookup_structure(const std::string& name) override;
+    std::shared_ptr<structure> lookup_structure(const std::string& name) const override;
 };
 
 

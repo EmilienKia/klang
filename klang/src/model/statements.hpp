@@ -218,7 +218,7 @@ protected:
     std::shared_ptr<statement> _nested_stmt;
 
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
 public:
@@ -362,7 +362,7 @@ protected:
         _function = func;
     }
 
-    std::shared_ptr<variable_definition> do_create_variable(const std::string &name) override;
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
 public:
