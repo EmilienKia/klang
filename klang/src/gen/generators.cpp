@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-#include "unit_llvm_ir_gen.hpp"
+#include "implementation_generator.hpp"
 
 #include "../model/context.hpp"
 
@@ -49,7 +49,7 @@ generation_error::generation_error(const char *string) :
 // LLVM model generator
 //
 
-unit_llvm_ir_gen::unit_llvm_ir_gen(k::log::logger& logger, std::shared_ptr<context> context, unit& unit):
+implementation_generator::implementation_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit):
 lexeme_logger(logger, 0x40000),
 _context(context),
 _unit(unit)
@@ -58,20 +58,20 @@ _unit(unit)
     context->init_module(unit.get_unit_name());
 }
 
-llvm::Module& unit_llvm_ir_gen::get_module() {
+llvm::Module& implementation_generator::get_module() {
     return _context->module();
 }
 
-void unit_llvm_ir_gen::dump() {
+void implementation_generator::dump() {
     _context->module().print(llvm::outs(), nullptr);
 }
 
-void unit_llvm_ir_gen::verify() {
+void implementation_generator::verify() {
     llvm::verifyModule(_context->module(), &llvm::outs());
 }
 
 
-void unit_llvm_ir_gen::optimize_functions() {
+void implementation_generator::optimize_functions() {
     // TODO switch to new pass manager
     std::shared_ptr<llvm::legacy::FunctionPassManager> passes;
 
@@ -99,7 +99,7 @@ void unit_llvm_ir_gen::optimize_functions() {
 // LLVM JIT
 //
 
-unit_llvm_jit::unit_llvm_jit(std::shared_ptr<compiler> compiler) :
+jit::jit(std::shared_ptr<compiler> compiler) :
         _compiler(compiler),
         _lljit(llvm::cantFail(llvm::orc::LLJITBuilder().create(), "Cannot instantiate JIT stack")),
         _main_dynlib(_lljit->getMainJITDylib())
@@ -107,29 +107,29 @@ unit_llvm_jit::unit_llvm_jit(std::shared_ptr<compiler> compiler) :
     _main_dynlib.addGenerator(llvm::cantFail(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(_lljit->getDataLayout().getGlobalPrefix())));
 }
 
-unit_llvm_jit::~unit_llvm_jit() {
+jit::~jit() {
     finalize_runtime();
 }
 
-std::unique_ptr<unit_llvm_jit> unit_llvm_jit::create(std::shared_ptr<compiler> compiler) {
-    return std::unique_ptr<unit_llvm_jit>(new unit_llvm_jit(compiler));
+std::unique_ptr<jit> jit::create(std::shared_ptr<compiler> compiler) {
+    return std::unique_ptr<jit>(new jit(compiler));
 }
 
-void unit_llvm_jit::add_module(llvm::orc::ThreadSafeModule module) {
+void jit::add_module(llvm::orc::ThreadSafeModule module) {
     if (_lljit->addIRModule(std::move(module))) {
         std::cerr << "Cannot register module in JIT instance." << std::endl;
     }
 }
 
-llvm::Expected<llvm::orc::ExecutorAddr> unit_llvm_jit::lookup_symbol_address(const std::string& name) {
+llvm::Expected<llvm::orc::ExecutorAddr> jit::lookup_symbol_address(const std::string& name) {
     return _lljit->lookup(_main_dynlib, llvm::StringRef( (name.starts_with("_K") ? name : _compiler->get_element_mangled_name(name)) ));
 }
 
-llvm::Expected<llvm::orc::ExecutorAddr> unit_llvm_jit::lookup_main_entry_symbol_address() {
+llvm::Expected<llvm::orc::ExecutorAddr> jit::lookup_main_entry_symbol_address() {
     return _lljit->lookup(_main_dynlib, llvm::StringRef("main"));
 }
 
-void unit_llvm_jit::initialize_runtime() {
+void jit::initialize_runtime() {
     switch (_state) {
         case DEFAULT:
             if(_lljit->initialize(_main_dynlib)) {
@@ -146,7 +146,7 @@ void unit_llvm_jit::initialize_runtime() {
     }
 }
 
-void unit_llvm_jit::finalize_runtime() {
+void jit::finalize_runtime() {
     switch (_state) {
         case DEFAULT:
             std::cerr << "Cannot finalize JIT module before initialization." << std::endl;

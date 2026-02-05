@@ -362,9 +362,7 @@ void type_reference_resolver::visit_function(function& fn) {
     if(auto block = fn.get_block()) {
         visit_block(*block);
     }
-
 }
-
 
 void unit_llvm_ir_gen::visit_function(function &function) {
     // Parameter types:

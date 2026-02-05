@@ -16,8 +16,8 @@
  * limitations under the License.
  */
 
-#ifndef KLANG_UNIT_LLVM_IR_GEN_HPP
-#define KLANG_UNIT_LLVM_IR_GEN_HPP
+#ifndef KLANG_GENERATORS_HPP
+#define KLANG_GENERATORS_HPP
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/IR/BasicBlock.h>
@@ -58,7 +58,7 @@ class compiler;
 
 namespace k::model::gen {
 
-class unit_llvm_jit;
+class jit;
 
 class generation_error : public std::runtime_error {
 public:
@@ -68,7 +68,7 @@ public:
 
 
 
-class unit_llvm_ir_gen : public default_model_visitor, protected k::lex::lexeme_logger {
+class implementation_generator : public default_model_visitor, protected k::lex::lexeme_logger {
 protected:
     unit& _unit;
 
@@ -86,7 +86,7 @@ protected:
     }
 
 public:
-    unit_llvm_ir_gen(k::log::logger& logger, std::shared_ptr<context> context, unit& unit);
+    implementation_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit);
 
     llvm::Module& get_module();
 
@@ -173,7 +173,7 @@ protected:
 
 
 
-class unit_llvm_jit {
+class jit {
 protected:
     std::shared_ptr<compiler> _compiler;
     std::unique_ptr<llvm::orc::LLJIT> _lljit;
@@ -185,10 +185,10 @@ protected:
         FINALIZED
     } _state = DEFAULT;
 
-    unit_llvm_jit(std::shared_ptr<compiler> compiler);
+    jit(std::shared_ptr<compiler> compiler);
 
     friend class k::compiler;
-    static std::unique_ptr<unit_llvm_jit> create(std::shared_ptr<compiler> compiler);
+    static std::unique_ptr<jit> create(std::shared_ptr<compiler> compiler);
 
     llvm::Expected<llvm::orc::ExecutorAddr> lookup_symbol_address(const std::string& name);
     llvm::Expected<llvm::orc::ExecutorAddr> lookup_main_entry_symbol_address();
@@ -196,7 +196,7 @@ protected:
     void add_module(llvm::orc::ThreadSafeModule module);
 
 public:
-    ~unit_llvm_jit();
+    ~jit();
 
     void initialize_runtime();
     void finalize_runtime();
@@ -220,4 +220,4 @@ public:
 
 } // k::model::gen
 
-#endif //KLANG_UNIT_LLVM_IR_GEN_HPP
+#endif //KLANG_GENERATORS_HPP

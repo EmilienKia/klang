@@ -25,6 +25,10 @@ include_directories(${Boost_INCLUDE_DIRS})
 configure_file(src/config.h.in config.h)
 include_directories(${PROJECT_BINARY_DIR}/klang)
 
+#
+# K lang compiler library and executable
+#
+
 add_library(klangcomp
         src/lex/lexemes.cpp
         src/lex/lexer.cpp
@@ -65,6 +69,10 @@ add_executable(klangc
 target_include_directories(klangc PUBLIC ${PROJECT_BINARY_DIR})
 target_link_libraries(klangc klangcomp ${LLVM_LIBRARIES} fmt::fmt ${Boost_LIBRARIES})
 
+#
+# Tests
+#
+
 add_executable(tests
         tests/test-lexer.cpp
         tests/test-parser.cpp
@@ -73,6 +81,10 @@ add_executable(tests
 )
 target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain)
 
+
+#
+# Dev and test tools
+#
 
 add_executable(klang
         src/main.cpp

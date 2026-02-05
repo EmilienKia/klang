@@ -3138,7 +3138,7 @@ TEST_CASE("Static local variable", "[gen][var]") {
             return j;
         }
 
-        )SRC", true);
+        )SRC");
     REQUIRE(jit);
 
     auto test_static = jit->lookup_symbol < int(*)() > ("test_static");
@@ -3183,7 +3183,7 @@ TEST_CASE("Static method", "[gen]") {
             return plop::sub(43);
         }
 
-        )SRC", true);
+        )SRC");
     REQUIRE(jit);
 
     auto test_add = jit->lookup_symbol < int(*)() > ("test_add");
@@ -3193,4 +3193,37 @@ TEST_CASE("Static method", "[gen]") {
     auto test_sub = jit->lookup_symbol < int(*)() > ("test_sub");
     auto res_test_sub = test_sub();
     REQUIRE( res_test_sub == (43 - 12) );
+}
+
+TEST_CASE("Aggregated structs", "[gen][structs]") {
+    auto jit = gen_jit(R"SRC(
+        module __structs__;
+
+        struct plop {
+            a : int = 3;
+            add(c : int) : int {
+                return a + c;
+            }
+        }
+
+        struct titi {
+            b : int = 5;
+            p : plop;
+            add() : int {
+                return p.add(b);
+            }
+        }
+
+        test() : int {
+            t : titi;
+            t.p.a = 7;
+            return t.add();
+        }
+
+        )SRC", true);
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol < int(*)() > ("test");
+    auto res_test = test();
+    REQUIRE( res_test == (7 + 5) );
 }

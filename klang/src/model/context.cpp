@@ -277,9 +277,14 @@ void context::resolve_types() {
             for(auto [var_name,var] : st->variables()) {
                 auto type = var->get_type();
                 if (!type->is_resolved()) {
-                    // TODO Structure only support primitive types or derivative yet (implicitly resolved)
-                    // So this shall not happen.
-                    throw std::runtime_error("Cannot resolve structure field type: " + type->to_string());
+                    // Not resolved, try to resolve it.
+                    auto res_type = resolve_type(type);
+                    if (!res_type) {
+                        // So this shall not happen.
+                        throw std::runtime_error("Cannot resolve structure field type: " + type->to_string());
+                    }
+                    var->set_type(res_type);
+                    type = res_type;
                 }
                 if (auto value_init = std::dynamic_pointer_cast<value_expression>(var->get_init_expr())) {
                     llvm::Constant* init_value = value_init->is_literal() ? get_llvm_constant_from_literal(value_init->any_literal()) : nullptr;
