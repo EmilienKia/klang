@@ -28,7 +28,7 @@
 #include "../src/model/model_builder.hpp"
 #include "../src/model/model_dump.hpp"
 #include "../src/gen/resolvers.hpp"
-#include "../src/gen/unit_llvm_ir_gen.hpp"
+#include "../src/gen/generators.hpp"
 #include "../src/compiler.hpp"
 #include "../src/common/process.hpp"
 
@@ -75,7 +75,6 @@ k::tools::exec_result build_and_exec(const std::string_view& src) {
 
 
 TEST_CASE( "Fibonacci 8", "[gen]" ) {
-
     auto res = build_and_exec(R"SRC(
         module fibo;
 

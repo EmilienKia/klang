@@ -31,8 +31,8 @@ namespace model {
 class element;
 
 namespace gen {
-class unit_llvm_ir_gen;
-class unit_llvm_jit;
+class implementation_generator;
+class jit;
 }
 
 class unit;
@@ -49,11 +49,9 @@ protected:
     std::shared_ptr<model::context> _context;
     std::shared_ptr<model::unit> _model_unit;
 
-    std::unique_ptr<model::gen::unit_llvm_ir_gen> _gen;
-
     llvm::TargetMachine* _target;
 
-    void process_gen(bool optimize = true, bool dump = true);
+    void process_generation(bool optimize = true, bool dump = true);
 
     compiler(llvm::TargetMachine* target = nullptr);
 
@@ -104,7 +102,11 @@ public:
 
     bool has_main_method() const;
 
-    std::unique_ptr<k::model::gen::unit_llvm_jit> to_jit(bool init_runtime = true);
+    void dump_gen_code();
+    bool verify_gen_code();
+    void optimize_gen_code();
+
+    std::unique_ptr<k::model::gen::jit> to_jit(bool init_runtime = true);
 
     bool gen_object_file(const std::string& output_file);
 

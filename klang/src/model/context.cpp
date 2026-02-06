@@ -46,18 +46,26 @@ context::context()
     llvm::InitializeAllAsmPrinters();
     llvm::InitializeAllAsmParsers();
 
-    _context = std::make_unique<llvm::LLVMContext>();
-    init();
+    reset();
 }
 
 std::unique_ptr<llvm::LLVMContext> context::move_llvm_context() {
     std::unique_ptr<llvm::LLVMContext> res = std::make_unique<llvm::LLVMContext>();
     std::swap(res, _context);
-    init();
+    reset();
     return res;
 }
 
-void context::init() {
+void context::reset() {
+    _context = std::make_unique<llvm::LLVMContext>();
+    _primitive_types.clear();
+    _struct_types.clear();
+    _unresolved.clear();
+    _global_vars.clear();
+    _functions.clear();
+    _parameter_variables.clear();
+    _function_this_variables.clear();
+    _variables.clear();
     init_primitive_types();
 }
 

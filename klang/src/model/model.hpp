@@ -60,7 +60,8 @@ class global_destructor_function;
 
 namespace gen {
 class type_reference_resolver;
-class unit_llvm_ir_gen;
+class declaration_generator;
+class implementation_generator;
 }
 
 enum visibility {
@@ -310,7 +311,7 @@ class member_variable_definition : public element, public variable_definition {
 protected:
 
     friend class structure;
-    friend class gen::unit_llvm_ir_gen;
+    friend class gen::implementation_generator;
 
     member_variable_definition(std::shared_ptr<structure> st);
 
@@ -327,7 +328,7 @@ public:
 class structure : public element, public named_element, public variable_holder, public function_holder {
 protected:
     friend class ns;
-    friend class gen::unit_llvm_ir_gen;
+    friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
 
     /** Collection of all children of this namespace. */
@@ -377,7 +378,7 @@ class parameter : public element, public variable_definition {
 protected:
 
     friend class function;
-    friend class gen::unit_llvm_ir_gen;
+    friend class gen::implementation_generator;
 
     std::shared_ptr<function> _function;
 
@@ -406,7 +407,7 @@ class function : public element, public named_element, public variable_holder {
 protected:
     friend class ns;
     friend class structure;
-    friend class gen::unit_llvm_ir_gen;
+    friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
 
@@ -533,7 +534,7 @@ protected:
     friend class ns;
     friend class structure;
     friend class block;
-    friend class gen::unit_llvm_ir_gen;
+    friend class gen::implementation_generator;
 
     global_variable_definition(std::shared_ptr<variable_holder> parent);
 
@@ -643,7 +644,8 @@ protected:
 
     friend class k::model::gen::symbol_resolver;
     friend class k::model::gen::type_reference_resolver;
-    friend class k::model::gen::unit_llvm_ir_gen;
+    friend class k::model::gen::declaration_generator;
+    friend class k::model::gen::implementation_generator;
 
     global_constructor_function& get_global_constructor_function() {return *_global_constructor_func;}
     global_destructor_function& get_global_destructor_function() {return *_global_destructor_func;}

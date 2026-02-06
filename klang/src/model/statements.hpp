@@ -306,7 +306,7 @@ class variable_statement : public statement, public variable_definition
 protected:
     friend class block;
     friend class for_statement;
-    friend class gen::unit_llvm_ir_gen;
+    friend class gen::implementation_generator;
 
     std::shared_ptr<parameter> _func_param;
 

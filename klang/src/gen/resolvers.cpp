@@ -44,7 +44,7 @@ void symbol_resolver::resolve()
     visit_unit(_unit);
 }
 
-std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>> // TODO Add traversal direction flag
 symbol_resolver::resolve_symbol(const element& elem, const name& name) {
 
     // Specifically look at the "this" symbol (non-static function specific parameter)

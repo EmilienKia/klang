@@ -20,13 +20,17 @@
 
 #include <filesystem>
 #include <iostream>
+#include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/TargetParser/Host.h>
+#include <llvm/Transforms/Scalar.h>
+#include <llvm/Transforms/InstCombine/InstCombine.h>
+#include <llvm/Transforms/Scalar/GVN.h>
 
 #include "common/process.hpp"
 #include "gen/resolvers.hpp"
-#include "gen/unit_llvm_ir_gen.hpp"
+#include "gen/generators.hpp"
 #include "parse/ast_dump.hpp"
 #include "model/model_builder.hpp"
 #include "model/model_dump.hpp"
@@ -220,7 +224,7 @@ void compiler::parse_source(const std::string_view& src, bool optimize, bool dum
             unit_dump.dump(*_model_unit);
         }
 
-        process_gen(optimize, dump);
+        process_generation(optimize, dump);
     } catch (std::exception e) {
         std::cerr << "Exception : " << e.what() << std::endl;
     }
@@ -230,91 +234,116 @@ bool compiler::has_main_method() const {
     return get_unit()!=nullptr && get_unit()->has_main_method();
 }
 
-void compiler::process_gen(bool optimize, bool dump) {
+void compiler::process_generation(bool optimize, bool dump) {
 
-    auto gen = std::make_unique<k::model::gen::unit_llvm_ir_gen>(_log, _context, *_model_unit);
+    _context->init_module(_model_unit->get_unit_name());
 
     if (_target) {
-        gen->get_module().setDataLayout(_target->createDataLayout());
-        gen->get_module().setTargetTriple(_target->getTargetTriple().getTriple());
+        _context->module().setDataLayout(_target->createDataLayout());
+        _context->module().setTargetTriple(_target->getTargetTriple().getTriple());
     }
 
     if(dump) {
-        std::cout << "#" << std::endl << "# LLVM Module" << std::endl << "#" << std::endl;
+        std::cout << "#" << std::endl << "# Generate declarations in LLVM module" << std::endl << "#" << std::endl;
     }
-    _model_unit->accept(*gen);
-    gen->verify();
+    k::model::gen::declaration_generator gen_decl(_log, _context, *_model_unit);
+
+    _model_unit->accept(gen_decl);
 
     if(dump) {
-        gen->dump();
+        std::cout << "#" << std::endl << "# Generate implementation in LLVM module" << std::endl << "#" << std::endl;
+    }
+    k::model::gen::implementation_generator gen_impl(_log, _context, *_model_unit);
+
+    _model_unit->accept(gen_impl);
+    verify_gen_code();
+    if(dump) {
+        dump_gen_code();
     }
 
     if (optimize) {
         if(dump) {
-            std::cout << "#" << std::endl << "# LLVM Optimize Module" << std::endl << "#" << std::endl;
+            std::cout << "#" << std::endl << "# Optimize LLVM module" << std::endl << "#" << std::endl;
         }
-        gen->optimize_functions();
-        gen->verify();
+        optimize_gen_code();
+        verify_gen_code();
         if(dump) {
-            gen->dump();
+            dump_gen_code();
         }
     }
-
-    _gen = std::move(gen);
 }
 
-std::unique_ptr<k::model::gen::unit_llvm_jit> compiler::to_jit(bool init_runtime) {
-    if (!_gen) {
-        process_gen();
+void compiler::dump_gen_code() {
+    _context->module().print(llvm::outs(), nullptr);
+}
+
+bool compiler::verify_gen_code() {
+    // TODO Better log check errors
+    return !llvm::verifyModule(_context->module(), &llvm::outs());
+}
+
+void compiler::optimize_gen_code() {
+    // TODO switch to new pass manager
+    std::shared_ptr<llvm::legacy::FunctionPassManager> passes;
+
+    // Initialize Function pass manager
+    passes = std::make_shared<llvm::legacy::FunctionPassManager>(&_context->module());
+    // Do simple "peephole" optimizations and bit-twiddling options.
+    passes->add(llvm::createInstructionCombiningPass());
+    // Re-associate expressions.
+    passes->add(llvm::createReassociatePass());
+    // Eliminate Common SubExpressions.
+    passes->add(llvm::createGVNPass());
+    // Eliminate chains of dead computations.
+    passes->add(llvm::createDeadCodeEliminationPass());
+    // Simplify the control flow graph (deleting unreachable blocks, etc).
+    passes->add(llvm::createCFGSimplificationPass());
+
+    passes->doInitialization();
+
+    for(auto& func : _context->module()) {
+        passes->run(func);
     }
-    if (_gen) {
-        auto jit = model::gen::unit_llvm_jit::create(shared_from_this());
-        if (!jit) {
-            std::cerr << "Error instantiating jit engine." << std::endl;
-            return nullptr;
-        }
-        jit->add_module(llvm::orc::ThreadSafeModule(std::move(_context->_module), _context->move_llvm_context()));
-        _gen.reset();
+}
 
-        if (init_runtime) {
-            jit->initialize_runtime();
-        }
+std::unique_ptr<k::model::gen::jit> compiler::to_jit(bool init_runtime) {
 
-        return jit;
-    } else {
-        std::cerr << "Error : Failed to generate code for JIT." << std::endl;
+    auto jit = model::gen::jit::create(shared_from_this());
+    if (!jit) {
+        std::cerr << "Error instantiating jit engine." << std::endl;
         return nullptr;
     }
+    std::unique_ptr<llvm::Module> module = std::move(_context->_module);
+    std::unique_ptr<llvm::LLVMContext> context = _context->move_llvm_context();
+    jit->add_module(llvm::orc::ThreadSafeModule(std::move(module), std::move(context)));
+
+    if (init_runtime) {
+        jit->initialize_runtime();
+    }
+
+    return jit;
 }
 
 bool compiler::gen_object_file(const std::string& output_file) {
-    if (!_gen) {
-        process_gen();
-    }
-    if (_gen) {
-        std::error_code EC;
-        llvm::raw_fd_ostream dest(output_file, EC, llvm::sys::fs::OF_None);
-        if (EC) {
-            llvm::errs() << "Could not open file: " << EC.message();
-            return false;
-        }
-
-        llvm::legacy::PassManager pass;
-        auto FileType = llvm::CodeGenFileType::ObjectFile;
-
-        if (_target->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
-            llvm::errs() << "TargetMachine can't emit a file of this type";
-            return false;
-        }
-
-        pass.run(_gen->get_module());
-        dest.flush();
-        return true;
-
-    } else {
-        std::cerr << "Error : Failed to generate code for object file." << std::endl;
+    std::error_code EC;
+    llvm::raw_fd_ostream dest(output_file, EC, llvm::sys::fs::OF_None);
+    if (EC) {
+        llvm::errs() << "Could not open file: " << EC.message();
         return false;
     }
+
+    llvm::legacy::PassManager pass;
+    auto FileType = llvm::CodeGenFileType::ObjectFile;
+
+    if (_target->addPassesToEmitFile(pass, dest, nullptr, FileType)) {
+        llvm::errs() << "TargetMachine can't emit a file of this type";
+        return false;
+    }
+
+    pass.run(_context->module());
+    dest.flush();
+    return true;
+
 }
 
 bool compiler::gen_executable(const std::string& output_file) {

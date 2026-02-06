@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 #include "resolvers.hpp"
-#include "unit_llvm_ir_gen.hpp"
+#include "generators.hpp"
 
 #include "llvm/Support/raw_os_ostream.h"
 template<typename STM>
@@ -49,7 +49,7 @@ void type_reference_resolver::visit_value_expression(value_expression& expr)
     expr.set_type(type);
 }
 
-llvm::Constant* unit_llvm_ir_gen::get_llvm_constant_from_value_expr(const value_expression& expr) const {
+llvm::Constant* implementation_generator::get_llvm_constant_from_value_expr(const value_expression& expr) const {
     if(expr.is_literal()) {
         return _context->get_llvm_constant_from_literal(expr.any_literal());
     } else {
@@ -57,7 +57,7 @@ llvm::Constant* unit_llvm_ir_gen::get_llvm_constant_from_value_expr(const value_
     }
 }
 
-void unit_llvm_ir_gen::visit_value_expression(value_expression &expr) {
+void implementation_generator::visit_value_expression(value_expression &expr) {
     _value = get_llvm_constant_from_value_expr(expr);
 }
 
@@ -118,7 +118,7 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
     // TODO resolve other types of symbols
 }
 
-void unit_llvm_ir_gen::visit_symbol_expression(symbol_expression &symbol) {
+void implementation_generator::visit_symbol_expression(symbol_expression &symbol) {
     if(symbol.is_variable_def()) {
         auto var_def = symbol.get_variable_def();
         llvm::Value* ptr = nullptr;
@@ -253,7 +253,7 @@ void type_reference_resolver::visit_unary_expression(unary_expression& expr)
     }
 }
 
-llvm::Value* unit_llvm_ir_gen::process_unary_expression(unary_expression& expr) {
+llvm::Value* implementation_generator::process_unary_expression(unary_expression& expr) {
     llvm::Value* res = nullptr;
     _value = nullptr;
     expr.sub_expr()->accept(*this);
@@ -309,7 +309,7 @@ void type_reference_resolver::visit_binary_expression(binary_expression& expr)
 }
 
 
-std::pair<llvm::Value*,llvm::Value*> unit_llvm_ir_gen::process_binary_expression(binary_expression & expr) {
+std::pair<llvm::Value*,llvm::Value*> implementation_generator::process_binary_expression(binary_expression & expr) {
     std::pair<llvm::Value*,llvm::Value*> res;
     _value = nullptr;
     expr.left()->accept(*this);
@@ -395,7 +395,7 @@ void type_reference_resolver::visit_arithmetic_binary_expression(arithmetic_bina
 // Addition expression (+)
 //
 
-void unit_llvm_ir_gen::visit_addition_expression(addition_expression &expr) {
+void implementation_generator::visit_addition_expression(addition_expression &expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -424,7 +424,7 @@ void unit_llvm_ir_gen::visit_addition_expression(addition_expression &expr) {
 // Substraction expression (-)
 //
 
-void unit_llvm_ir_gen::visit_substraction_expression(substraction_expression &expr) {
+void implementation_generator::visit_substraction_expression(substraction_expression &expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -453,7 +453,7 @@ void unit_llvm_ir_gen::visit_substraction_expression(substraction_expression &ex
 // Multiplication expression (*)
 //
 
-void unit_llvm_ir_gen::visit_multiplication_expression(multiplication_expression &expr) {
+void implementation_generator::visit_multiplication_expression(multiplication_expression &expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -484,7 +484,7 @@ void unit_llvm_ir_gen::visit_multiplication_expression(multiplication_expression
 // Division expression (/)
 //
 
-void unit_llvm_ir_gen::visit_division_expression(division_expression &expr) {
+void implementation_generator::visit_division_expression(division_expression &expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -519,7 +519,7 @@ void unit_llvm_ir_gen::visit_division_expression(division_expression &expr) {
 // Modulo expression (%)
 //
 
-void unit_llvm_ir_gen::visit_modulo_expression(modulo_expression &expr) {
+void implementation_generator::visit_modulo_expression(modulo_expression &expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -554,7 +554,7 @@ void unit_llvm_ir_gen::visit_modulo_expression(modulo_expression &expr) {
 // Bitwise and expression
 //
 
-void unit_llvm_ir_gen::visit_bitwise_and_expression(bitwise_and_expression& expr) {
+void implementation_generator::visit_bitwise_and_expression(bitwise_and_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -587,7 +587,7 @@ void unit_llvm_ir_gen::visit_bitwise_and_expression(bitwise_and_expression& expr
 // Bitwise or expression
 //
 
-void unit_llvm_ir_gen::visit_bitwise_or_expression(bitwise_or_expression& expr) {
+void implementation_generator::visit_bitwise_or_expression(bitwise_or_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -620,7 +620,7 @@ void unit_llvm_ir_gen::visit_bitwise_or_expression(bitwise_or_expression& expr) 
 // Bitwise xor expression
 //
 
-void unit_llvm_ir_gen::visit_bitwise_xor_expression(bitwise_xor_expression& expr) {
+void implementation_generator::visit_bitwise_xor_expression(bitwise_xor_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -653,7 +653,7 @@ void unit_llvm_ir_gen::visit_bitwise_xor_expression(bitwise_xor_expression& expr
 // Left shift expression
 //
 
-void unit_llvm_ir_gen::visit_left_shift_expression(left_shift_expression& expr) {
+void implementation_generator::visit_left_shift_expression(left_shift_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -687,7 +687,7 @@ void unit_llvm_ir_gen::visit_left_shift_expression(left_shift_expression& expr) 
 // Right shift expression
 //
 
-void unit_llvm_ir_gen::visit_right_shift_expression(right_shift_expression& expr) {
+void implementation_generator::visit_right_shift_expression(right_shift_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -807,7 +807,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
 // Simple assignment expression (=)
 //
 
-void unit_llvm_ir_gen::visit_simple_assignation_expression(simple_assignation_expression& expr) {
+void implementation_generator::visit_simple_assignation_expression(simple_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw an exception
@@ -856,7 +856,7 @@ void type_reference_resolver::visit_arithmetic_assignation_expression(arithmetic
 // Addition assignment expression (+=)
 //
 
-void unit_llvm_ir_gen::visit_addition_assignation_expression(additition_assignation_expression& expr) {
+void implementation_generator::visit_addition_assignation_expression(additition_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -887,7 +887,7 @@ void unit_llvm_ir_gen::visit_addition_assignation_expression(additition_assignat
 // Substraction assignment expression (-=)
 //
 
-void unit_llvm_ir_gen::visit_substraction_assignation_expression(substraction_assignation_expression& expr) {
+void implementation_generator::visit_substraction_assignation_expression(substraction_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -918,7 +918,7 @@ void unit_llvm_ir_gen::visit_substraction_assignation_expression(substraction_as
 // Multiplication assignment expression (*=)
 //
 
-void unit_llvm_ir_gen::visit_multiplication_assignation_expression(multiplication_assignation_expression& expr) {
+void implementation_generator::visit_multiplication_assignation_expression(multiplication_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -949,7 +949,7 @@ void unit_llvm_ir_gen::visit_multiplication_assignation_expression(multiplicatio
 // Division assignment expression (/=)
 //
 
-void unit_llvm_ir_gen::visit_division_assignation_expression(division_assignation_expression& expr) {
+void implementation_generator::visit_division_assignation_expression(division_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -986,7 +986,7 @@ void unit_llvm_ir_gen::visit_division_assignation_expression(division_assignatio
 // Modulo assignment expression (%=)
 //
 
-void unit_llvm_ir_gen::visit_modulo_assignation_expression(modulo_assignation_expression& expr) {
+void implementation_generator::visit_modulo_assignation_expression(modulo_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1023,7 +1023,7 @@ void unit_llvm_ir_gen::visit_modulo_assignation_expression(modulo_assignation_ex
 // Bitwise and assignment expression
 //
 
-void unit_llvm_ir_gen::visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression& expr) {
+void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1058,7 +1058,7 @@ void unit_llvm_ir_gen::visit_bitwise_and_assignation_expression(bitwise_and_assi
 // Bitwise or assignment expression
 //
 
-void unit_llvm_ir_gen::visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression& expr) {
+void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1093,7 +1093,7 @@ void unit_llvm_ir_gen::visit_bitwise_or_assignation_expression(bitwise_or_assign
 // Bitwise xor assignment expression
 //
 
-void unit_llvm_ir_gen::visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression& expr) {
+void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1128,7 +1128,7 @@ void unit_llvm_ir_gen::visit_bitwise_xor_assignation_expression(bitwise_xor_assi
 // Left shift assignment expression
 //
 
-void unit_llvm_ir_gen::visit_left_shift_assignation_expression(left_shift_assignation_expression& expr) {
+void implementation_generator::visit_left_shift_assignation_expression(left_shift_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1164,7 +1164,7 @@ void unit_llvm_ir_gen::visit_left_shift_assignation_expression(left_shift_assign
 // Right shift assignment expression
 //
 
-void unit_llvm_ir_gen::visit_right_shift_assignation_expression(right_shift_assignation_expression& expr) {
+void implementation_generator::visit_right_shift_assignation_expression(right_shift_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1235,7 +1235,7 @@ void type_reference_resolver::visit_arithmetic_unary_expression(arithmetic_unary
 // Unary plus expression
 //
 
-void unit_llvm_ir_gen::visit_unary_plus_expression(unary_plus_expression& expr) {
+void implementation_generator::visit_unary_plus_expression(unary_plus_expression& expr) {
     auto val = process_unary_expression(expr);
     if(!val) {
         // TODO throw exception ?
@@ -1262,7 +1262,7 @@ void unit_llvm_ir_gen::visit_unary_plus_expression(unary_plus_expression& expr) 
 // Unary minus expression
 //
 
-void unit_llvm_ir_gen::visit_unary_minus_expression(unary_minus_expression& expr) {
+void implementation_generator::visit_unary_minus_expression(unary_minus_expression& expr) {
     auto val = process_unary_expression(expr);
     if(!val) {
         // TODO throw exception ?
@@ -1297,7 +1297,7 @@ void unit_llvm_ir_gen::visit_unary_minus_expression(unary_minus_expression& expr
 // Bitwise not expression
 //
 
-void unit_llvm_ir_gen::visit_bitwise_not_expression(bitwise_not_expression& expr) {
+void implementation_generator::visit_bitwise_not_expression(bitwise_not_expression& expr) {
     auto val = process_unary_expression(expr);
     if(!val) {
         // TODO throw exception ?
@@ -1393,7 +1393,7 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
 // Logical and expression (&&)
 //
 
-void unit_llvm_ir_gen::visit_logical_and_expression(logical_and_expression& expr) {
+void implementation_generator::visit_logical_and_expression(logical_and_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1421,7 +1421,7 @@ void unit_llvm_ir_gen::visit_logical_and_expression(logical_and_expression& expr
 // Logical or expression (||)
 //
 
-void unit_llvm_ir_gen::visit_logical_or_expression(logical_or_expression& expr) {
+void implementation_generator::visit_logical_or_expression(logical_or_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1483,7 +1483,7 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
     expr.set_type(bool_type);
 }
 
-void unit_llvm_ir_gen::visit_logical_not_expression(logical_not_expression& expr) {
+void implementation_generator::visit_logical_not_expression(logical_not_expression& expr) {
     auto value = process_unary_expression(expr);
 
     if(!value) {
@@ -1530,7 +1530,7 @@ void type_reference_resolver::visit_address_of_expression(address_of_expression&
     expr.set_type(sub_type->get_subtype()->get_pointer());
 }
 
-void unit_llvm_ir_gen::visit_address_of_expression(address_of_expression& expr) {
+void implementation_generator::visit_address_of_expression(address_of_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
 
@@ -1559,7 +1559,7 @@ void type_reference_resolver::visit_load_value_expression(load_value_expression&
     }
 }
 
-void unit_llvm_ir_gen::visit_load_value_expression(load_value_expression& expr) {
+void implementation_generator::visit_load_value_expression(load_value_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
     _value = _builder->CreateLoad(_context->get_llvm_type(expr.get_type()), _value);
@@ -1593,7 +1593,7 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
     }
 }
 
-void unit_llvm_ir_gen::visit_dereference_expression(dereference_expression& expr) {
+void implementation_generator::visit_dereference_expression(dereference_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
     // Just keep the returned address : internally, a reference is a pointer
@@ -1609,6 +1609,12 @@ void unit_llvm_ir_gen::visit_dereference_expression(dereference_expression& expr
 //
 // Member of object expression
 //
+void symbol_resolver::visit_member_of_expression(member_of_expression& expr) {
+    // Explicitly only resolve sub expression.
+    // Symbol can only be resolved afterward, cause it will depend on the type of subexpression.
+    visit_unary_expression(expr);
+}
+
 void type_reference_resolver::visit_member_of_object_expression(member_of_object_expression& expr) {
     expr.sub_expr()->accept(*this);
     auto type = expr.sub_expr()->get_type();
@@ -1644,7 +1650,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
 // If the member is a field, return the address of the field within the struct.
 // If the member is a function, return the address of the object onto which the function will be called (the future this ref).
 //
-void unit_llvm_ir_gen::visit_member_of_object_expression(member_of_object_expression& expr) {
+void implementation_generator::visit_member_of_object_expression(member_of_object_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
     auto struct_ref = _value;
@@ -1674,7 +1680,7 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
     // TODO
 }
 
-void unit_llvm_ir_gen::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
+void implementation_generator::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
     // TODO
 }
 
@@ -1748,7 +1754,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
 // Equal expression (==)
 //
 
-void unit_llvm_ir_gen::visit_equal_expression(equal_expression& expr) {
+void implementation_generator::visit_equal_expression(equal_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1788,7 +1794,7 @@ void unit_llvm_ir_gen::visit_equal_expression(equal_expression& expr) {
 // Different expression (!=)
 //
 
-void unit_llvm_ir_gen::visit_different_expression(different_expression& expr) {
+void implementation_generator::visit_different_expression(different_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1828,7 +1834,7 @@ void unit_llvm_ir_gen::visit_different_expression(different_expression& expr) {
 // Lesser than expression (<)
 //
 
-void unit_llvm_ir_gen::visit_lesser_expression(lesser_expression& expr) {
+void implementation_generator::visit_lesser_expression(lesser_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1872,7 +1878,7 @@ void unit_llvm_ir_gen::visit_lesser_expression(lesser_expression& expr) {
 // Greater than expression (>)
 //
 
-void unit_llvm_ir_gen::visit_greater_expression(greater_expression& expr) {
+void implementation_generator::visit_greater_expression(greater_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1916,7 +1922,7 @@ void unit_llvm_ir_gen::visit_greater_expression(greater_expression& expr) {
 // Lesser than or equal expression (<=)
 //
 
-void unit_llvm_ir_gen::visit_lesser_equal_expression(lesser_equal_expression& expr) {
+void implementation_generator::visit_lesser_equal_expression(lesser_equal_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -1960,7 +1966,7 @@ void unit_llvm_ir_gen::visit_lesser_equal_expression(lesser_equal_expression& ex
 // Greater than or equal expression (>=)
 //
 
-void unit_llvm_ir_gen::visit_greater_equal_expression(greater_equal_expression& expr) {
+void implementation_generator::visit_greater_equal_expression(greater_equal_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -2018,7 +2024,7 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
     if(!type::is_reference(left_type)) {
         // TODO throw an exception
         // Subscript expression is supported only for references to arrays.
-        std::cerr << "Error: Subscript expression is supported only for reference to arrays." << std::endl;        
+        std::cerr << "Error: Subscript expression is supported only for reference to arrays." << std::endl;
     }
     if(type::is_double_reference(left_type)) {
         // Deref first ref
@@ -2048,7 +2054,7 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
     }
 }
 
-void unit_llvm_ir_gen::visit_subscript_expression(subscript_expression& expr) {
+void implementation_generator::visit_subscript_expression(subscript_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -2111,55 +2117,59 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         arg->accept(*this);
     }
 
-    // Resolve function to call
-    if(member_callee) {
-        // Resolve member function to call
-        if (auto sub_expr_ref_type = std::dynamic_pointer_cast<reference_type>(member_callee->sub_expr()->get_type()); sub_expr_ref_type) {
-            if (auto sub_expr_type = std::dynamic_pointer_cast<struct_type>(sub_expr_ref_type->get_subtype()); sub_expr_type) {
-                if (auto st = sub_expr_type->get_struct(); st)  {
-                    // Found struct type
-                    if (auto func = st->lookup_function(callee->get_name()); func) {
-                        if(!func->is_member()) {
+    if (!callee->is_function()) {
+        // Last chance to resolve to call
+        // TODO is it really usefull now ?
+
+        // Resolve function to call
+        if(member_callee) {
+            // Resolve member function to call
+            if (auto sub_expr_ref_type = std::dynamic_pointer_cast<reference_type>(member_callee->sub_expr()->get_type()); sub_expr_ref_type) {
+                if (auto sub_expr_type = std::dynamic_pointer_cast<struct_type>(sub_expr_ref_type->get_subtype()); sub_expr_type) {
+                    if (auto st = sub_expr_type->get_struct(); st)  {
+                        // Found struct type
+                        if (auto func = st->lookup_function(callee->get_name())) {
+                            if(!func->is_member()) {
+                                // TODO throw an exception
+                                std::cerr << "Error : function '" << callee->get_name().to_string() << "' is not a member function of struct '" << st->get_short_name() << "'" << std::endl;
+                                return;
+                            }
+                            // TODO Check the found function own is of compatible type
+                            // TODO support overloading
+                            // TODO enforce prototype matching
+                            // Function prototype and expression type are set at resolution
+                            callee->set_target(func);
+                            expr.set_type(func->get_return_type());
+                        } else {
                             // TODO throw an exception
-                            std::cerr << "Error : function '" << callee->get_name().to_string() << "' is not a member function of struct '" << st->get_short_name() << "'" << std::endl;
+                            std::cerr << "Error : cannot find member function '" << callee->get_name().to_string() << "' in struct '" << st->get_short_name() << "'" << std::endl;
                             return;
                         }
-                        // TODO Check the found function own is of compatible type
-                        // TODO support overloading
-                        // TODO enforce prototype matching
-                        // Function prototype and expression type are set at resolution
-                        callee->set_target(func);
-                        expr.set_type(func->get_return_type());
                     } else {
                         // TODO throw an exception
-                        std::cerr << "Error : cannot find member function '" << callee->get_name().to_string() << "' in struct '" << st->get_short_name() << "'" << std::endl;
+                        std::cerr << "Error : object-member call only support struct callee type" << std::endl;
                         return;
                     }
                 } else {
                     // TODO throw an exception
-                    std::cerr << "Error : object-member call only support struct callee type" << std::endl;
-                    return;
+                    std::cerr << "Error : object-member call only support reference to struct callee type" << std::endl;
                 }
             } else {
                 // TODO throw an exception
-                std::cerr << "Error : object-member call only support reference to struct callee type" << std::endl;
+                std::cerr << "Error : object-member call only support reference (to struct) callee type" << std::endl;
             }
         } else {
-            // TODO throw an exception
-            std::cerr << "Error : object-member call only support reference (to struct) callee type" << std::endl;
-        }
-    } else {
-        // Resolve global function
-        if(auto stmt = callee->find_statement()) {
-            if(auto block = stmt->get_block()) {
-                if(auto func = block->get_function()) {
-                    if(auto nsp = func->parent<ns>()) {
-                        if(auto function = nsp->lookup_function(callee->get_name())) {
-                            // TODO support overloading
-                            // TODO enforce prototype matching
-                            // Function prototype and expression type are set at resolution
-                            callee->set_target(function);
-                            expr.set_type(function->get_return_type());
+            // Resolve global function
+            if(auto stmt = callee->find_statement()) {
+                if(auto block = stmt->get_block()) {
+                    if(auto func = block->get_function()) {
+                        if(auto nsp = func->parent<ns>()) {
+                            if(auto function = nsp->lookup_function(callee->get_name())) {
+                                // TODO support overloading
+                                // TODO enforce prototype matching
+                                // Function prototype and expression type are set at resolution
+                                callee->set_target(function);
+                            }
                         }
                     }
                 }
@@ -2167,14 +2177,17 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         }
     }
 
-    if(!callee->is_resolved() || !callee->is_function()) {
-        // Error: cannot resolve function.
-        // TODO throw an exception
-        std::cerr << "Cannot resolve function '" << callee->get_name().to_string() << "'" << std::endl;
+    if (!callee->is_function()) {
+        // TODO throw exception
+        std::cerr << "Cannot resolve function to invoke " << callee->get_name().to_string() << std::endl;
     }
 
-    auto params = callee->get_function()->parameters();
-    if(expr.arguments().size() != params.size()) {
+    auto func = callee->get_function();
+    expr.set_type(func->get_return_type());
+
+    auto params = func->parameters();
+    // Check arguments number corresponds to the expected function arguments (this is not taken in account here)
+    if(params.size() != expr.arguments().size()) {
         // Error : callee and function have not the same argument count.
         // TODO throw an exception
         std::cerr << "Error : callee and function '" << callee->get_name().to_string() << "' have not the same argument count" << std::endl;
@@ -2182,7 +2195,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
     for(size_t n=0; n<expr.arguments().size(); ++n) {
         auto arg = expr.arguments().at(n);
-        auto param = callee->get_function()->parameters().at(n);
+        auto param = func->parameters().at(n);
 
         if(!param->get_type() || !param->get_type()->is_resolved() ||
            !arg->get_type() || !arg->get_type()->is_resolved()) {
@@ -2205,7 +2218,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     }
 }
 
-void unit_llvm_ir_gen::visit_function_invocation_expression(function_invocation_expression &expr) {
+void implementation_generator::visit_function_invocation_expression(function_invocation_expression &expr) {
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
 
@@ -2301,7 +2314,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
 }
 
 
-void unit_llvm_ir_gen::visit_cast_expression(cast_expression& expr) {
+void implementation_generator::visit_cast_expression(cast_expression& expr) {
     auto source_type = expr.sub_expr()->get_type();
     auto target_type = expr.get_cast_type();
 

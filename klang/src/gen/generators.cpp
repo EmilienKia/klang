@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-#include "implementation_generator.hpp"
+#include "generators.hpp"
 
 #include "../model/context.hpp"
 
@@ -46,7 +46,29 @@ generation_error::generation_error(const char *string) :
 {}
 
 //
-// LLVM model generator
+// LLVM model declaration generator
+//
+
+declaration_generator::declaration_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit):
+lexeme_logger(logger, 0x40000),
+_context(context),
+_unit(unit)
+{
+    _builder = std::make_unique<llvm::IRBuilder<>>(**_context);
+}
+
+llvm::Module& declaration_generator::get_module() {
+    return _context->module();
+}
+
+void declaration_generator::generate() {
+    _unit.accept(*this);
+}
+
+
+
+//
+// LLVM model implementation generator
 //
 
 implementation_generator::implementation_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit):
@@ -55,44 +77,14 @@ _context(context),
 _unit(unit)
 {
     _builder = std::make_unique<llvm::IRBuilder<>>(**_context);
-    context->init_module(unit.get_unit_name());
 }
 
 llvm::Module& implementation_generator::get_module() {
     return _context->module();
 }
 
-void implementation_generator::dump() {
-    _context->module().print(llvm::outs(), nullptr);
-}
-
-void implementation_generator::verify() {
-    llvm::verifyModule(_context->module(), &llvm::outs());
-}
-
-
-void implementation_generator::optimize_functions() {
-    // TODO switch to new pass manager
-    std::shared_ptr<llvm::legacy::FunctionPassManager> passes;
-
-    // Initialize Function pass manager
-    passes = std::make_shared<llvm::legacy::FunctionPassManager>(&_context->module());
-    // Do simple "peephole" optimizations and bit-twiddling options.
-    passes->add(llvm::createInstructionCombiningPass());
-    // Re-associate expressions.
-    passes->add(llvm::createReassociatePass());
-    // Eliminate Common SubExpressions.
-    passes->add(llvm::createGVNPass());
-    // Eliminate chains of dead computations.
-    passes->add(llvm::createDeadCodeEliminationPass());
-    // Simplify the control flow graph (deleting unreachable blocks, etc).
-    passes->add(llvm::createCFGSimplificationPass());
-
-    passes->doInitialization();
-
-    for(auto& func : _context->module()) {
-        passes->run(func);
-    }
+void implementation_generator::generate() {
+    _unit.accept(*this);
 }
 
 //

@@ -48,13 +48,15 @@ class function;
 class global_variable_definition;
 
 namespace gen {
-    class unit_llvm_ir_gen;
+    class declaration_generator;
+    class implementation_generator;
 }
 
 
 class context {
 protected:
-    friend class k::model::gen::unit_llvm_ir_gen;
+    friend class k::model::gen::declaration_generator;
+    friend class k::model::gen::implementation_generator;
 
     std::unique_ptr<llvm::LLVMContext> _context;
 
@@ -114,7 +116,7 @@ protected:
     std::unique_ptr<llvm::LLVMContext> move_llvm_context();
 
 private:
-    void init();
+    void reset();
     void init_primitive_types();
 };
 

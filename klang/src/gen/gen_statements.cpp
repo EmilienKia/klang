@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 #include "resolvers.hpp"
-#include "unit_llvm_ir_gen.hpp"
+#include "generators.hpp"
 
 namespace k::model::gen {
 
@@ -54,7 +54,20 @@ void type_reference_resolver::visit_block(block& block)
     }
 }
 
-void unit_llvm_ir_gen::visit_block(block& block) {
+void declaration_generator::visit_block(block& block) {
+    // Look at static/global var definitions
+    for (auto var_entry : block.variables()) {
+        if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_entry.second)) {
+            global_var->accept(*this);
+        }
+    }
+    // Statements
+    for(auto stmt : block.get_statements()) {
+        stmt->accept(*this);
+    }
+}
+
+void implementation_generator::visit_block(block& block) {
     // Look at static/global var definitions
     for (auto var_entry : block.variables()) {
         if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_entry.second)) {
@@ -98,8 +111,11 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
     }
 }
 
+void declaration_generator::visit_return_statement(return_statement& stmt) {
+    // Nothing to do here (nothing in expressions)
+}
 
-void unit_llvm_ir_gen::visit_return_statement(return_statement& stmt) {
+void implementation_generator::visit_return_statement(return_statement& stmt) {
 
     if(auto expr = stmt.get_expression()) {
         _value = nullptr;
@@ -158,7 +174,14 @@ void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
     }
 }
 
-void unit_llvm_ir_gen::visit_if_else_statement(if_else_statement& stmt) {
+void declaration_generator::visit_if_else_statement(if_else_statement& stmt) {
+    stmt.get_then_stmt()->accept(*this);
+    if(stmt.get_else_stmt()) {
+        stmt.get_else_stmt()->accept(*this);
+    }
+}
+
+void implementation_generator::visit_if_else_statement(if_else_statement& stmt) {
 
     // Condition expression
     _value = nullptr;
@@ -230,7 +253,11 @@ void type_reference_resolver::visit_while_statement(while_statement& stmt)
     stmt.get_nested_stmt()->accept(*this);
 }
 
-void unit_llvm_ir_gen::visit_while_statement(while_statement& stmt) {
+void declaration_generator::visit_while_statement(while_statement& stmt) {
+    stmt.get_nested_stmt()->accept(*this);
+}
+
+void implementation_generator::visit_while_statement(while_statement& stmt) {
 
     // Retrieve current block and create nested and continue blocks
     llvm::Function* func = _builder->GetInsertBlock()->getParent();
@@ -320,7 +347,11 @@ void type_reference_resolver::visit_for_statement(for_statement& stmt)
     stmt.get_nested_stmt()->accept(*this);
 }
 
-void unit_llvm_ir_gen::visit_for_statement(for_statement& stmt) {
+void declaration_generator::visit_for_statement(for_statement& stmt) {
+    stmt.get_nested_stmt()->accept(*this);
+}
+
+void implementation_generator::visit_for_statement(for_statement& stmt) {
 
     // Retrieve current block and create nested and continue blocks
     llvm::Function* func = _builder->GetInsertBlock()->getParent();
@@ -391,7 +422,11 @@ void type_reference_resolver::visit_expression_statement(expression_statement& s
     }
 }
 
-void unit_llvm_ir_gen::visit_expression_statement(expression_statement& stmt) {
+void declaration_generator::visit_expression_statement(expression_statement& stmt) {
+    // Nothing to do here (nothing in expressions)
+}
+
+void implementation_generator::visit_expression_statement(expression_statement& stmt) {
     if(auto expr = stmt.get_expression()) {
         expr->accept(*this);
     }
@@ -441,8 +476,11 @@ void type_reference_resolver::visit_variable_statement(variable_statement& var)
     }
 }
 
+void declaration_generator::visit_variable_statement(variable_statement& stmt) {
+    // Nothing to do here (nothing in expressions)
+}
 
-void unit_llvm_ir_gen::visit_variable_statement(variable_statement& var) {
+void implementation_generator::visit_variable_statement(variable_statement& var) {
     // Create the alloca at beginning of the function ...
     auto var_func = var.get_function();
     auto func = _context->_functions[var_func];

@@ -25,13 +25,13 @@
 #include "../src/model/model_builder.hpp"
 #include "../src/model/model_dump.hpp"
 #include "../src/gen/resolvers.hpp"
-#include "../src/gen/unit_llvm_ir_gen.hpp"
+#include "../src/gen/generators.hpp"
 #include "../src/compiler.hpp"
 
 
-std::unique_ptr<k::model::gen::unit_llvm_jit> gen_jit(std::string_view src, bool dump = false) {
+std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = false) {
     auto comp = k::compiler::create();
-    comp->parse_source(src, false, dump);
+    comp->parse_source(src, true, dump);
     return comp->to_jit();
 }
 
@@ -3199,18 +3199,18 @@ TEST_CASE("Aggregated structs", "[gen][structs]") {
     auto jit = gen_jit(R"SRC(
         module __structs__;
 
-        struct plop {
-            a : int = 3;
-            add(c : int) : int {
-                return a + c;
-            }
-        }
-
         struct titi {
             b : int = 5;
             p : plop;
             add() : int {
                 return p.add(b);
+            }
+        }
+
+        struct plop {
+            a : int = 3;
+            add(c : int) : int {
+                return a + c;
             }
         }
 
@@ -3220,7 +3220,7 @@ TEST_CASE("Aggregated structs", "[gen][structs]") {
             return t.add();
         }
 
-        )SRC", true);
+        )SRC");
     REQUIRE(jit);
 
     auto test = jit->lookup_symbol < int(*)() > ("test");

@@ -109,6 +109,7 @@ protected:
     void visit_arithmetic_binary_expression(arithmetic_binary_expression &expression) override;
     void visit_arithmetic_assignation_expression(arithmetic_assignation_expression &expression) override;
 
+    void visit_member_of_expression(member_of_expression &) override;
     void visit_function_invocation_expression(function_invocation_expression &) override;
 
     /**

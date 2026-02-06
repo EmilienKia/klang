@@ -67,7 +67,57 @@ public:
 };
 
 
+/**
+ * First pass of IR generation.
+ * Will generate global variables and function declarations.
+ * Function impemenaation and global variable initialization will be done later with implementation_generator.
+ * Used to ensure all declarations are done and accessible, usefull for nesting and out-of-order declaration.
+ */
+class declaration_generator : public default_model_visitor, protected k::lex::lexeme_logger {
+protected:
+    unit& _unit;
 
+    std::shared_ptr<context> _context;
+
+    std::unique_ptr<llvm::IRBuilder<>> _builder;
+
+    llvm::Value* _value;
+
+    std::stack<std::shared_ptr<structure>> _struct_stack;
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        error(code, lexeme, message, args);
+        throw generation_error(message);
+    }
+
+public:
+    declaration_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit);
+
+    llvm::Module& get_module();
+
+    void visit_unit(unit &) override;
+
+    void visit_namespace(ns &) override;
+    void visit_function(function &) override;
+    void visit_structure(structure&) override;
+    void visit_member_variable_definition(member_variable_definition&) override;
+    void visit_global_variable_definition(global_variable_definition &) override;
+
+    void visit_block(block&) override;
+    void visit_return_statement(return_statement&) override;
+    void visit_if_else_statement(if_else_statement&) override;
+    void visit_while_statement(while_statement&) override;
+    void visit_for_statement(for_statement&) override;
+    void visit_expression_statement(expression_statement&) override;
+    void visit_variable_statement(variable_statement&) override;
+
+    void generate();
+};
+
+/**
+ * Really achieve function implementations and global variable initialization.
+ * Must be run after declaration_generator.
+ */
 class implementation_generator : public default_model_visitor, protected k::lex::lexeme_logger {
 protected:
     unit& _unit;
@@ -163,9 +213,7 @@ public:
 
     void visit_cast_expression(cast_expression&) override;
 
-    void dump();
-    void verify();
-    void optimize_functions();
+    void generate();
 
 protected:
     void optimize_function_dead_inst_elimination(llvm::Function& func);

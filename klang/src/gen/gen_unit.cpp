@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 #include "resolvers.hpp"
-#include "unit_llvm_ir_gen.hpp"
+#include "generators.hpp"
 
 #include <llvm/IR/Verifier.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
@@ -69,7 +69,18 @@ void type_reference_resolver::visit_unit(unit& unit)
     }
 }
 
-void unit_llvm_ir_gen::visit_unit(unit &unit) {
+void declaration_generator::visit_unit(unit &unit) {
+    visit_namespace(*_unit.get_root_namespace());
+
+    visit_global_constructor_function(_unit.get_global_constructor_function());
+    visit_global_destructor_function(_unit.get_global_destructor_function());
+
+    if (unit._global_main_func) {
+        visit_global_main_function(*unit._global_main_func);
+    }
+}
+
+void implementation_generator::visit_unit(unit &unit) {
     visit_namespace(*_unit.get_root_namespace());
 
     visit_global_constructor_function(_unit.get_global_constructor_function());
@@ -119,8 +130,13 @@ void type_reference_resolver::visit_namespace(ns& ns)
     }
 }
 
+void declaration_generator::visit_namespace(ns &ns) {
+    for(auto child : ns.get_children()) {
+        child->accept(*this);
+    }
+}
 
-void unit_llvm_ir_gen::visit_namespace(ns &ns) {
+void implementation_generator::visit_namespace(ns &ns) {
     for(auto child : ns.get_children()) {
         child->accept(*this);
     }
@@ -166,7 +182,31 @@ void type_reference_resolver::visit_structure(structure& st) {
     }
 }
 
-void unit_llvm_ir_gen::visit_structure(structure& st) {
+void declaration_generator::visit_structure(structure& st) {
+    _struct_stack.push(st.shared_as<structure>());
+
+    // There is nothing yet.
+    // TODO
+    // Add constructors and destructors.
+
+    // Add global/static vars
+    for(auto& child : st.get_children()) {
+        if (auto var = std::dynamic_pointer_cast<global_variable_definition>(child)) {
+            var->accept(*this);
+        }
+    }
+
+    // Add methods:
+    for(auto& child : st.get_children()) {
+        if (auto func = std::dynamic_pointer_cast<function>(child)) {
+            func->accept(*this);
+        }
+    }
+
+    _struct_stack.pop();
+}
+
+void implementation_generator::visit_structure(structure& st) {
     _struct_stack.push(st.shared_as<structure>());
 
     // There is nothing yet.
@@ -202,11 +242,16 @@ void symbol_resolver::visit_member_variable_definition(member_variable_definitio
 }
 
 void type_reference_resolver::visit_member_variable_definition(member_variable_definition& var) {
-    // No type resolution today, because only primitive types are supported today.
-    // TODO Add complex member resolution.
+    // Do nothing for now
+    // Everything is done at structure level
 }
 
-void unit_llvm_ir_gen::visit_member_variable_definition(member_variable_definition&) {
+void declaration_generator::visit_member_variable_definition(member_variable_definition&) {
+    // Do nothing for now
+    // Everything is done at structure level
+}
+
+void implementation_generator::visit_member_variable_definition(member_variable_definition&) {
     // Do nothing for now
     // Everything is done at structure level
 }
@@ -264,7 +309,16 @@ void type_reference_resolver::visit_global_variable_definition(global_variable_d
     }
 }
 
-void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definition& var) {
+void declaration_generator::visit_global_variable_definition(global_variable_definition& var) {
+    auto type = var.get_type();
+    llvm::Type *llvm_type = _context->get_llvm_type(type);
+
+    auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, nullptr, var.get_mangled_name());
+    _context->_global_vars.insert({var.shared_as<global_variable_definition>(), variable});
+}
+
+
+void implementation_generator::visit_global_variable_definition(global_variable_definition& var) {
     auto type = var.get_type();
     llvm::Type *llvm_type = _context->get_llvm_type(type);
 
@@ -286,9 +340,15 @@ void unit_llvm_ir_gen::visit_global_variable_definition(global_variable_definiti
         constInitValue = type->generate_default_value_initializer();
     }
 
-
-    auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, constInitValue, var.get_mangled_name());
-    _context->_global_vars.insert({var.shared_as<global_variable_definition>(), variable});
+    auto variable_it = _context->_global_vars.find(var.shared_as<global_variable_definition>());
+    if (variable_it == _context->_global_vars.end()) {
+        // Not declared yet, should not append, but let's create it lazily anyway
+        auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, constInitValue, var.get_mangled_name());
+        _context->_global_vars.insert({var.shared_as<global_variable_definition>(), variable});
+    } else {
+        // Already declared, just add initializer
+        variable_it->second->setInitializer(constInitValue);
+    }
 }
 
 //
@@ -364,7 +424,8 @@ void type_reference_resolver::visit_function(function& fn) {
     }
 }
 
-void unit_llvm_ir_gen::visit_function(function &function) {
+
+void declaration_generator::visit_function(function &function) {
     // Parameter types:
     std::vector<llvm::Type*> param_types;
     if (function.is_member()  && !function.is_static()) {
@@ -388,6 +449,20 @@ void unit_llvm_ir_gen::visit_function(function &function) {
     llvm::Function *func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage, function.get_mangled_name(), *_context->_module);
 
     _context->_functions.insert({function.shared_as<k::model::function>(), func});
+
+    // Declare content
+    function.get_block()->accept(*this);
+}
+
+void implementation_generator::visit_function(function &function) {
+
+    auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
+    if (func_it==_context->_functions.end()) {
+        // TODO throw exception : the function must exist (be declared) at this stage
+        std::cerr << "Function declaration is not found : " << function.get_fq_name() << std::endl;
+    }
+
+    llvm::Function* func = func_it->second;
 
     // create the function content:
     llvm::BasicBlock *block = llvm::BasicBlock::Create(**_context, "entry", func);
@@ -430,7 +505,7 @@ void unit_llvm_ir_gen::visit_function(function &function) {
     llvm::verifyFunction(*func);
 }
 
-void unit_llvm_ir_gen::optimize_function_dead_inst_elimination(llvm::Function& func) {
+void implementation_generator::optimize_function_dead_inst_elimination(llvm::Function& func) {
     for(auto& block : func) {
         llvm::BasicBlock *bb;
         // Find first terminator instruction
@@ -470,7 +545,7 @@ void type_reference_resolver::visit_global_constructor_function(global_construct
     }
 }
 
-void unit_llvm_ir_gen::visit_global_constructor_function(global_constructor_function& func) {
+void implementation_generator::visit_global_constructor_function(global_constructor_function& func) {
     auto vars = func.get_sorted_global_variables();
     if (!vars.empty()) {
         // Really generate the function
@@ -496,7 +571,7 @@ void unit_llvm_ir_gen::visit_global_constructor_function(global_constructor_func
 void type_reference_resolver::visit_global_destructor_function(global_destructor_function& func) {
 }
 
-void unit_llvm_ir_gen::visit_global_destructor_function(global_destructor_function& func) {
+void implementation_generator::visit_global_destructor_function(global_destructor_function& func) {
     // TODO
 }
 

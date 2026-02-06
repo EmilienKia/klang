@@ -42,7 +42,7 @@ add_library(klangcomp
         src/model/type.cpp
         src/model/model_builder.cpp
         src/gen/resolvers.cpp
-        src/gen/unit_llvm_ir_gen.cpp
+        src/gen/generators.cpp
         src/common/logger.cpp
         src/common/logger.hpp
         src/model/mangler.hpp

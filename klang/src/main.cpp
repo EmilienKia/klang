@@ -28,7 +28,7 @@
 #include "model/model_builder.hpp"
 #include "model/model_dump.hpp"
 #include "gen/resolvers.hpp"
-#include  "gen/unit_llvm_ir_gen.hpp"
+#include  "gen/generators.hpp"
 
 using namespace k;
 
