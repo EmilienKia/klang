@@ -39,11 +39,10 @@ class unit;
 class context;
 }
 
-class compiler : public std::enable_shared_from_this<compiler> {
+class compiler : protected log::logger,  public std::enable_shared_from_this<compiler> {
 protected:
     static bool _compiler_class_init;
 
-    k::log::logger _log;
     std::string _source;
     std::shared_ptr<k::parse::ast::unit> _ast_unit;
     std::shared_ptr<model::context> _context;
@@ -114,6 +113,9 @@ public:
 
 protected:
     void find_elements_from(const name& name, const std::shared_ptr<model::element>& element, std::vector<std::shared_ptr<model::element>>& res) const;
+
+    void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) override;
+
 };
 
 } // k

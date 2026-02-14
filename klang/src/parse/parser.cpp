@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,6 +40,7 @@ parsing_error::parsing_error(const char *string) :
 //
 // Parser
 //
+
 parser::parser(k::log::logger& logger):
     lexeme_logger(logger, 0x10000),
     _lexer(logger)
@@ -51,6 +52,7 @@ parser::parser(k::log::logger& logger, std::string_view src):
 {
     _lexer.parse(src);
 }
+
 
 void parser::parse(std::string_view src) {
     _lexer.parse(src);

@@ -37,6 +37,13 @@ namespace k::model {
         return oss.str();
     }
 
+    /*
+    void model_builder::visit(k::log::legacy_logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit) {
+        model_builder visitor(logger, context, unit);
+        visitor.visit_unit(src);
+    }
+    */
+
     void model_builder::visit(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit) {
         model_builder visitor(logger, context, unit);
         visitor.visit_unit(src);

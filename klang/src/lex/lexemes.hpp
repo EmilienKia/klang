@@ -33,7 +33,7 @@
 #include <vector>
 
 namespace k::log {
-class logger;
+class legacy_logger;
 }
 
 namespace k::lex {

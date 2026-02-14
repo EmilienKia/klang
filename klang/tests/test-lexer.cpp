@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,10 @@
  */
 #include <catch2/catch_all.hpp>
 
+#include <fmt/core.h>
+#include <fmt/format.h>
+#include <fmt/args.h>
+
 #include "../src/lex/lexer.hpp"
 #include "../src/common/logger.hpp"
 #include "../src/common/common.hpp"
@@ -24,15 +28,50 @@
 using namespace k::lex;
 using namespace k::log;
 
+class test_logger : public logger {
+    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) override {
+        static constexpr auto FORMAT = "({},{}) - {:0>5X} : {}\n";
+
+        std::string str;
+        if(args.size()>0) {
+            fmt::dynamic_format_arg_store<fmt::format_context> store;
+            for(const auto& arg : args) {
+                store.push_back(arg);
+            }
+            std::string msg = fmt::vformat(message, store);
+            str = fmt::format(FORMAT, start.line, start.col, code,  msg);
+        } else {
+            str = fmt::format(FORMAT, start.line, start.col, code, message);
+        }
+
+        switch (criticality) {
+            case (log_entry::info): {
+                INFO("INFO " << str);
+                break;
+            }
+            case (log_entry::warning): {
+                INFO("WARN " << str);
+                break;
+            }
+            case (log_entry::error): {
+                WARN("ERR   " << str);
+                break;
+            }
+        }
+    }
+
+};
+
+
 TEST_CASE( "Lex empty source", "[lexer]" ) {
-    logger log;
+    test_logger log;
     lexer lex(log);
     auto lexemes = lex.parse_all("");
     REQUIRE( lexemes.empty() );
 }
 
 TEST_CASE( "Lex one identifier", "[lexer]" ) {
-    logger log;
+    test_logger log;
     lexer lex(log);
 
     SECTION("Lex char-only identifier") {
@@ -62,7 +101,7 @@ TEST_CASE( "Lex one identifier", "[lexer]" ) {
 
 
 TEST_CASE( "Lex one keyword", "[lexer]" ) {
-    logger log;
+    test_logger log;
     lexer lex(log);
 /*
     SECTION("Lex true keyword") {
@@ -104,7 +143,7 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
     // TODO Add lexing and tests for l64, l128 suffices
     // TODO Add lexing and tests for bi suffices
     // TODO Add lexing, tests and spec for i8, i16, i32, i64, i128, u8, u16, u32, u64 and u128 suffices
-    logger log;
+    test_logger log;
     lexer lex(log);
 
     SECTION("Lex decimal", "[decimal]") {
@@ -1140,7 +1179,7 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
 }
 
 TEST_CASE( "Lex one float", "[lexer][float]" ) {
-    logger log;
+    test_logger log;
     lexer lex(log);
 
     SECTION("Lex implicit float") {
@@ -1323,7 +1362,7 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
 
 
 TEST_CASE( "Lex one char", "[lexer]" ) {
-    logger log;
+    test_logger log;
     lexer lex(log);
 
     SECTION("Lex char char") {
@@ -1408,7 +1447,7 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
 
 
 TEST_CASE( "Lex one string", "[lexer]" ) {
-    logger log;
+    test_logger log;
     lexer lex(log);
 
     SECTION("Lex string") {
@@ -1432,7 +1471,7 @@ TEST_CASE( "Lex one string", "[lexer]" ) {
 
 
 TEST_CASE( "Lex one boolean", "[lexer]" ) {
-    logger log;
+    test_logger log;
     lexer lex(log);
 
     SECTION("Lex true boolean") {
@@ -1468,7 +1507,7 @@ TEST_CASE( "Lex one boolean", "[lexer]" ) {
 
 
 TEST_CASE( "Lex null", "[lexer]" ) {
-    logger log;
+    test_logger log;
     lexer lex(log);
 
     SECTION("Lex one null") {
@@ -1488,7 +1527,7 @@ TEST_CASE( "Lex null", "[lexer]" ) {
 }
 
 TEST_CASE( "Lex one comment", "[lexer]" ) {
-    logger log;
+    test_logger log;
     lexer lex(log);
 
     SECTION("Lex end-of-line comment") {
@@ -1527,7 +1566,7 @@ TEST_CASE( "Lex one comment", "[lexer]" ) {
 }
 
 TEST_CASE( "Lex one punctuator", "[lexer]" ) {
-    logger log;
+    test_logger log;
     lexer lex(log);
 
     SECTION("Lex parenthesis") {
@@ -1576,7 +1615,7 @@ TEST_CASE( "Lex one punctuator", "[lexer]" ) {
 }
 
 TEST_CASE( "Lex one operator", "[lexer]" ) {
-    logger log;
+    test_logger log;
     lexer lex(log);
 
     SECTION("Lex dot") {
@@ -1599,7 +1638,7 @@ TEST_CASE( "Lex one operator", "[lexer]" ) {
 }
 
 TEST_CASE("Additional lexer tests", "[lexer]") {
-    logger log;
+    test_logger log;
     lexer lex(log);
 
     SECTION("Lex \"ident(0)\"") {

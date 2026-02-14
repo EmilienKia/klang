@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,13 +51,11 @@ protected:
     unit& _unit;
 
 public:
-
     symbol_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
     lexeme_logger(logger, 0x30000),
     _context(context),
     _unit(unit)  {
     }
-
     void resolve();
 
 protected:

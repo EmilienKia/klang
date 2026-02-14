@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,70 +24,70 @@
 #include <fmt/format.h>
 #include <fmt/args.h>
 
-namespace k {
-namespace log {
+namespace k::log {
+//
+// Logger
+//
 
-void logger::info(unsigned int code, const k::lex::char_coord& coord, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::info, code, coord, coord, coord, message, args});
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message) {
+    do_log(criticality, code, {}, {}, {}, message, {});
 }
 
-void logger::warning(unsigned int code, const k::lex::char_coord& coord, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::warning, code, coord, coord, coord, message, args});
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message, const std::vector<std::string>& args) {
+    do_log(criticality, code, {}, {}, {}, message, args);
 }
 
-void logger::error(unsigned int code, const k::lex::char_coord& coord, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::error, code, coord, coord, coord, message, args});
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& pos, const std::string_view& message) {
+    do_log(criticality, code, {}, {}, pos, message, {});
 }
 
-void logger::info(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::info, code, start, end, start, message, args});
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) {
+    do_log(criticality, code, {}, {}, pos, message, args);
 }
 
-void logger::warning(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::warning, code, start, end, start, message, args});
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string_view& message) {
+    do_log(criticality, code, start, end, {}, message, {});
+}
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string_view& message, const std::vector<std::string>& args) {
+    do_log(criticality, code, start, end, {}, message, args);
 }
 
-void logger::error(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::error, code, start, end, start, message, args});
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message) {
+    do_log(criticality, code, start, end, pos, message, {});
 }
 
-void logger::info(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::info, code, start, end, pos, message, args});
+//
+// Logger relay
+//
+
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message) {
+    _log.do_log(criticality, code, message);
+}
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message, const std::vector<std::string>& args) {
+    _log.do_log(criticality, code, message, args);
 }
 
-void logger::warning(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::warning, code, start, end, pos, message, args});
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& pos, const std::string_view& message) {
+    _log.do_log(criticality, code, pos, message);
+}
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) {
+    _log.do_log(criticality, code, pos, message, args);
 }
 
-void logger::error(unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string& message, const std::vector<std::string>& args) {
-    push_back(log_entry{log_entry::CRITICALITY::error, code, start, end, pos, message, args});
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string_view& message) {
+    _log.do_log(criticality, code, start, end, message);
 }
 
-
-void logger::print() const {
-    for(const auto& log : *this) {
-        print(log);
-    }
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string_view& message, const std::vector<std::string>& args) {
+    _log.do_log(criticality, code, start, end, message, args);
 }
 
-void logger::print(const log_entry& entry) {
-    static const char* criticality_str[] = {
-            "Info   ",
-            "Warning",
-            "Error  "
-    };
-
-    if(entry.args.size()>0) {
-        fmt::dynamic_format_arg_store<fmt::format_context> store;
-        for(const auto& arg : entry.args) {
-            store.push_back(arg);
-        }
-        std::string msg = fmt::vformat(entry.message, store);
-        fmt::print("{},{} - {} {:0>5X} : {}\n", entry.start.line, entry.start.col, criticality_str[entry.criticality], entry.code, msg);
-    } else {
-        fmt::print("{},{} - {} {:0>5X} : {}\n", entry.start.line, entry.start.col, criticality_str[entry.criticality], entry.code, entry.message);
-    }
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message) {
+    _log.do_log(criticality, code, start, end, pos, message);
 }
 
-} // k
-} // log
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) {
+    _log.do_log(criticality, code, start, end, pos, message, args);
+}
+
+} // k::log

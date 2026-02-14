@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 #include "../common/any_of.hpp"
 #include "../lex/lexer.hpp"
 #include "ast.hpp"
+#include "../common/logger.hpp"
 
 #include <iostream>
 #include <optional>
@@ -58,6 +59,7 @@ public:
     parser(k::log::logger& logger);
 
     parser(k::log::logger& logger, std::string_view src);
+
 
     void parse(std::string_view src);
 

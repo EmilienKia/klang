@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -160,7 +160,7 @@ namespace k::lex {
     }
 
     lexer::lexer(k::log::logger& logger):
-        _logger(logger)
+    logger_relay(logger)
     {
         init();
     }
@@ -325,7 +325,8 @@ namespace k::lex {
                             }
                             if(!found) {
                                 /* Error, unknown punctuator nor operator. */
-                                _logger.error(0x0001, begin, pos, "Unknown operator '{}'", {content});
+                                //_logger.error(0x0001, begin, pos, "Unknown operator '{}'", {content});
+                                error(0x0001, begin, pos, "Unknown operator '{}'", {content});
                                 // TODO throw exception
                             }
                         }
@@ -386,7 +387,8 @@ namespace k::lex {
                                || c >= 'a' && c <= 'f'
                                || c >= 'A' && c <= 'F') {
                         /* Error : no Hexadec digit for octal number. */
-                        _logger.error(0x0002, begin, pos, "Forbiden hexadigital character in octal number '{}'", {content + c});
+                        //_logger.error(0x0002, begin, pos, "Forbiden hexadigital character in octal number '{}'", {content + c});
+                        error(0x0002, begin, pos, "Forbiden hexadigital character in octal number '{}'", {content + c});
                         // TODO throw exception
                     } else if (c == 'u' || c == 'U') {
                         content += c;
@@ -432,7 +434,8 @@ namespace k::lex {
                         num_content_size++;
                         lex_state = HEXADECIMAL;
                     } else if (c == 'u' || c == 'U') {
-                        _logger.warning(0x0003, pos, "Hexadecimal number should have at least one digit before unsigned suffix '{}'", {content + c});
+//                        _logger.warning(0x0003, pos, "Hexadecimal number should have at least one digit before unsigned suffix '{}'", {content + c});
+                        warn(0x0003, pos, "Hexadecimal number should have at least one digit before unsigned suffix '{}'", {content + c});
                         // WARN should have at least one digit after prefix
                         content += c;
                         saved_state = lex_state;
@@ -440,7 +443,8 @@ namespace k::lex {
                         lex_state = INT_UNSIGNED_SUFFIX;
                     } else {
                         // TODO also add size suffix handling
-                        _logger.warning(0x0004, pos, "Hexadecimal number should have at least one digit before size suffix '{}'", {content + c});
+//                        _logger.warning(0x0004, pos, "Hexadecimal number should have at least one digit before size suffix '{}'", {content + c});
+                        warn(0x0004, pos, "Hexadecimal number should have at least one digit before size suffix '{}'", {content + c});
                         // WARN should have at least one digit after prefix
                     }
                     break;
@@ -452,7 +456,8 @@ namespace k::lex {
                     } else {
                         // TODO also add unsigned suffix handling
                         // TODO also add size suffix handling
-                        _logger.warning(0x0005 /* and 0x0006 */, pos, "Binary number should have at least one digit before suffix '{}'", {content + c});
+//                        _logger.warning(0x0005 /* and 0x0006 */, pos, "Binary number should have at least one digit before suffix '{}'", {content + c});
+                        warn(0x0005 /* and 0x0006 */, pos, "Binary number should have at least one digit before suffix '{}'", {content + c});
                         // WARN should have at least one digit after prefix
                         /* Error, binary number must have at least one digit. */
                     }
@@ -466,7 +471,8 @@ namespace k::lex {
                         // TODO also add unsigned suffix handling
                         // TODO also add size suffix handling
                         // WARN should have at least one digit after prefix
-                        _logger.warning(0x0007 /* and 0x0008 */, pos, "Octal number should have at least one digit before suffix '{}'", {content + c});
+//                        _logger.warning(0x0007 /* and 0x0008 */, pos, "Octal number should have at least one digit before suffix '{}'", {content + c});
+                        warn(0x0007 /* and 0x0008 */, pos, "Octal number should have at least one digit before suffix '{}'", {content + c});
                         /* Error, octal number must have at least one digit. */
                     }
                     break;
@@ -853,7 +859,8 @@ namespace k::lex {
                         lex_temp_count = 0;
                         lex_state = ESCAPE_UNIVERSAL_LONG;
                     } else {
-                        _logger.error(0x0009, pos, "Bad escape sequence '{}'", {content + c});
+//                        _logger.error(0x0009, pos, "Bad escape sequence '{}'", {content + c});
+                        error(0x0009, pos, "Bad escape sequence '{}'", {content + c});
                         /* error : bad escape sequence character. */
                         // TODO throw exception
                     }
@@ -888,7 +895,8 @@ namespace k::lex {
                             saved_state = START;
                         }
                     } else {
-                        _logger.warning(0x000A, pos, "Incomplete hexa escape sequence '{}'", {content + c});
+//                        _logger.warning(0x000A, pos, "Incomplete hexa escape sequence '{}'", {content + c});
+                        warn(0x000A, pos, "Incomplete hexa escape sequence '{}'", {content + c});
                         // WARN/TODO : not a complete hexa escape.
                         lex_state = saved_state;
                         saved_state = START;
@@ -908,7 +916,8 @@ namespace k::lex {
                             saved_state = START;
                         }
                     } else {
-                        _logger.warning(0x000B, pos, "Incomplete universal escape sequence '{}'", {content + c});
+//                        _logger.warning(0x000B, pos, "Incomplete universal escape sequence '{}'", {content + c});
+                        warn(0x000B, pos, "Incomplete universal escape sequence '{}'", {content + c});
                         // WARN/TODO : not a complete universal escape.
                         lex_state = saved_state;
                         saved_state = START;
@@ -928,7 +937,8 @@ namespace k::lex {
                             saved_state = START;
                         }
                     } else {
-                        _logger.warning(0x000C, pos, "Incomplete long universal escape sequence '{}'", {content + c});
+//                        _logger.warning(0x000C, pos, "Incomplete long universal escape sequence '{}'", {content + c});
+                        warn(0x000C, pos, "Incomplete long universal escape sequence '{}'", {content + c});
                         // WARN/TODO : not a complete long universal escape.
                         lex_state = saved_state;
                         saved_state = START;
@@ -983,7 +993,8 @@ namespace k::lex {
                         push_integer_and_reset();
                         lex_state = START;
                     } else {
-                        _logger.warning(0x000D, pos, "Bad integer suffix '{}', expect character '4'", {content + c});
+//                        _logger.warning(0x000D, pos, "Bad integer suffix '{}', expect character '4'", {content + c});
+                        warn(0x000D, pos, "Bad integer suffix '{}', expect character '4'", {content + c});
                         // TODO/ERROR Bad integer suffix, expect character '4'.
                         size = LONG;
                         push_integer_and_reset();
@@ -996,7 +1007,8 @@ namespace k::lex {
                         content += c;
                         lex_state = INT_LONG128B_SUFFIX;
                     } else {
-                        _logger.warning(0x000E, pos, "Bad integer suffix '{}', expect character '2'", {content + c});
+//                        _logger.warning(0x000E, pos, "Bad integer suffix '{}', expect character '2'", {content + c});
+                        warn(0x000E, pos, "Bad integer suffix '{}', expect character '2'", {content + c});
                         // TODO/ERROR Bad integer suffix, expect character '2'.
                         size = LONGLONG;
                         push_integer_and_reset();
@@ -1011,7 +1023,8 @@ namespace k::lex {
                         push_integer_and_reset();
                         lex_state = START;
                     } else {
-                        _logger.warning(0x000F, pos, "Bad integer suffix '{}', expect character '8'", {content + c});
+//                        _logger.warning(0x000F, pos, "Bad integer suffix '{}', expect character '8'", {content + c});
+                        warn(0x000F, pos, "Bad integer suffix '{}', expect character '8'", {content + c});
                         // TODO/ERROR Bad integer suffix, expect character '8'.
                         size = LONGLONG;
                         push_integer_and_reset();
@@ -1027,7 +1040,8 @@ namespace k::lex {
                         lex_state = START;
                     } else {
                         // TODO handle byte size here
-                        _logger.warning(0x0010, pos, "Bad big integer suffix '{}', expect character 'B'", {content + c});
+//                        _logger.warning(0x0010, pos, "Bad big integer suffix '{}', expect character 'B'", {content + c});
+                        warn(0x0010, pos, "Bad big integer suffix '{}', expect character 'B'", {content + c});
                         // TODO/ERROR Bad integer suffix, expect character 'B'.
                         size = LONGLONG;
                         push_integer_and_reset();
@@ -1119,41 +1133,41 @@ namespace k::lex {
     // Lexeme logger facility
     //
     void lexeme_logger::info(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
-        _logger.info(_error_class|code, lexeme.start, lexeme.end, message, args);
+        logger_relay::info(_error_class|code, lexeme.start, lexeme.end, message, args);
     }
 
     void lexeme_logger::warning(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
-        _logger.warning(_error_class|code, lexeme.start, lexeme.end, message, args);
+        logger_relay::warn(_error_class|code, lexeme.start, lexeme.end, message, args);
     }
 
     void lexeme_logger::error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
-        _logger.error(_error_class|code, lexeme.start, lexeme.end, message, args);
+        logger_relay::error(_error_class|code, lexeme.start, lexeme.end, message, args);
     }
 
     void lexeme_logger::info(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
         if(lexeme) {
             const auto& lex = as_lexeme(lexeme);
-            _logger.info(_error_class|code, lex.start, lex.end, message, args);
+            logger_relay::info(_error_class|code, lex.start, lex.end, message, args);
         } else {
-            _logger.info(_error_class|code, /*_lexer.end_coord()*/ {}, message, args);
+            logger_relay::info(_error_class|code, /*_lexer.end_coord()*/ {}, message, args);
         }
     }
 
     void lexeme_logger::warning(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
         if(lexeme) {
             const auto& lex = as_lexeme(lexeme);
-            _logger.warning(_error_class|code, lex.start, lex.end, message, args);
+            logger_relay::warn(_error_class|code, lex.start, lex.end, message, args);
         } else {
-            _logger.warning(_error_class|code, /*_lexer.end_coord()*/ {}, message, args);
+            logger_relay::warn(_error_class|code, /*_lexer.end_coord()*/ {}, message, args);
         }
     }
 
     void lexeme_logger::error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
         if(lexeme) {
             const auto& lex = as_lexeme(lexeme);
-            _logger.error(_error_class|code, lex.start, lex.end, message, args);
+            logger_relay::error(_error_class|code, lex.start, lex.end, message, args);
         } else {
-            _logger.error(_error_class|code, /*_lexer.end_coord()*/ {}, message, args);
+            logger_relay::error(_error_class|code, /*_lexer.end_coord()*/ {}, message, args);
         }
     }
 

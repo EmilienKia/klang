@@ -28,6 +28,10 @@
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar/GVN.h>
 
+#include <fmt/core.h>
+#include <fmt/format.h>
+#include <fmt/args.h>
+
 #include "common/process.hpp"
 #include "gen/resolvers.hpp"
 #include "gen/generators.hpp"
@@ -182,7 +186,7 @@ void compiler::parse_source(const std::string_view& src, bool optimize, bool dum
     // TODO : what to do if _source, _ast_unit and so on are already filled (by previous call)
     _source = src;
     try {
-        k::parse::parser parser(_log);
+        k::parse::parser parser(*this);
         parser.parse(_source);
         _ast_unit = parser.parse_unit();
 
@@ -195,14 +199,14 @@ void compiler::parse_source(const std::string_view& src, bool optimize, bool dum
         if(dump) {
             std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
         }
-        k::model::model_builder::visit(_log, _context, *_ast_unit, *_model_unit);
+        k::model::model_builder::visit(*this, _context, *_ast_unit, *_model_unit);
 
         if(dump) {
             k::model::dump::unit_dump unit_dump(std::cout);
             unit_dump.dump(*_model_unit);
         }
 
-        k::model::gen::symbol_resolver var_resolver(_log, _context, *_model_unit);
+        k::model::gen::symbol_resolver var_resolver(*this, _context, *_model_unit);
         if(dump) {
             std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
         }
@@ -215,7 +219,7 @@ void compiler::parse_source(const std::string_view& src, bool optimize, bool dum
 
         _context->resolve_types();
 
-        k::model::gen::type_reference_resolver type_ref_resolver(_log, _context, *_model_unit);
+        k::model::gen::type_reference_resolver type_ref_resolver(*this, _context, *_model_unit);
         type_ref_resolver.resolve();
 
         if(dump) {
@@ -246,14 +250,14 @@ void compiler::process_generation(bool optimize, bool dump) {
     if(dump) {
         std::cout << "#" << std::endl << "# Generate declarations in LLVM module" << std::endl << "#" << std::endl;
     }
-    k::model::gen::declaration_generator gen_decl(_log, _context, *_model_unit);
+    k::model::gen::declaration_generator gen_decl(*this, _context, *_model_unit);
 
     _model_unit->accept(gen_decl);
 
     if(dump) {
         std::cout << "#" << std::endl << "# Generate implementation in LLVM module" << std::endl << "#" << std::endl;
     }
-    k::model::gen::implementation_generator gen_impl(_log, _context, *_model_unit);
+    k::model::gen::implementation_generator gen_impl(*this, _context, *_model_unit);
 
     _model_unit->accept(gen_impl);
     verify_gen_code();
@@ -375,5 +379,25 @@ bool compiler::gen_executable(const std::string& output_file) {
     return exec_res.exit_code == 0;
 }
 
+void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) {
+    // TODO dump coords
+    static const char* criticality_str[] = {
+        "Info   ",
+        "Warning",
+        "Error  "
+    };
+
+    static constexpr auto FORMAT = "{},{} - {} {:0>5X} : {}\n";
+    if(args.size()>0) {
+        fmt::dynamic_format_arg_store<fmt::format_context> store;
+        for(const auto& arg : args) {
+            store.push_back(arg);
+        }
+        std::string msg = fmt::vformat(message, store);
+        fmt::print(FORMAT, start.line, start.col, criticality_str[criticality], code,  msg);
+    } else {
+        fmt::print(FORMAT, start.line, start.col, criticality_str[criticality], code, message);
+    }
+}
 
 } // k

@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@
 
 #include "../common/any_of.hpp"
 #include "../common/common.hpp"
+#include "../common/logger.hpp"
 #include "lexemes.hpp"
 
 #include <functional>
@@ -33,12 +34,12 @@
 #include <vector>
 
 namespace k::log {
-class logger;
+class legacy_logger;
 }
 
 namespace k::lex {
 
-    class lexer {
+    class lexer : protected k::log::logger_relay {
     public:
         enum LEX_STATE {
             START,
@@ -81,8 +82,6 @@ namespace k::lex {
             OPERATOR
         };
     protected:
-
-        k::log::logger& _logger;
 
         std::vector<any_lexeme> lexemes;
 
@@ -135,6 +134,7 @@ namespace k::lex {
 
     public:
         lexer(k::log::logger& logger);
+//        lexer(k::log::legacy_logger& logger);
 
         void parse(std::string_view src);
 
@@ -165,12 +165,11 @@ namespace k::lex {
         void rollback() { _lexer.seek(_index); }
     };
 
-    class lexeme_logger {
+    class lexeme_logger : public log::logger_relay {
     protected:
-        k::log::logger& _logger;
         unsigned long _error_class;
 
-        lexeme_logger(k::log::logger& logger,unsigned long error_class) : _logger(logger), _error_class(error_class) {}
+      lexeme_logger(k::log::logger& logger,unsigned long error_class) : logger_relay(logger), _error_class(error_class) {}
 
         // TODO Link it to source container to get lines and end-of-file marker.
 

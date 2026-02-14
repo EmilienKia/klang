@@ -113,6 +113,12 @@ protected:
     std::shared_ptr<model::statement> _stmt;
 
 
+    /*
+    model_builder(k::log::legacy_logger& logger, std::shared_ptr<k::model::context> context, k::model::unit& unit) :
+        lex::lexeme_logger(logger, 0x20000),
+        _context(context),
+        _unit(unit) {}
+    */
     model_builder(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::model::unit& unit) :
         lex::lexeme_logger(logger, 0x20000),
         _context(context),
@@ -171,6 +177,7 @@ protected:
     }
 
 public:
+//    static void visit(k::log::legacy_logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit);
     static void visit(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit);
 
 

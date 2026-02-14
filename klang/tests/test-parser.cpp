@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,50 @@
 #include "../src/parse/parser.hpp"
 #include "../src/model/model.hpp"
 
+
+#include <fmt/core.h>
+#include <fmt/format.h>
+#include <fmt/args.h>
+
 using namespace k::parse;
+using namespace k::log;
+
+
+class test_logger : public logger {
+    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) override {
+        static constexpr auto FORMAT = "({},{}) - {:0>5X} : {}\n";
+
+        std::string str;
+        if(args.size()>0) {
+            fmt::dynamic_format_arg_store<fmt::format_context> store;
+            for(const auto& arg : args) {
+                store.push_back(arg);
+            }
+            std::string msg = fmt::vformat(message, store);
+            str = fmt::format(FORMAT, start.line, start.col, code,  msg);
+        } else {
+            str = fmt::format(FORMAT, start.line, start.col, code, message);
+        }
+
+        switch (criticality) {
+            case (log_entry::info): {
+                INFO("INFO " << str);
+                break;
+            }
+            case (log_entry::warning): {
+                INFO("WARN " << str);
+                break;
+            }
+            case (log_entry::error): {
+                WARN("ERR   " << str);
+                break;
+            }
+        }
+    }
+
+};
+
+
 
 //
 // Tooling
@@ -55,7 +98,7 @@ bool is_same(const k::parse::ast::identifier_expr& ident1, const k::name& ident2
 //
 
 TEST_CASE( "Parse empty identifier", "[parser][expression][identifier]" ) {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "");
     auto expr = parser.parse_identifier_expr();
 
@@ -64,7 +107,7 @@ TEST_CASE( "Parse empty identifier", "[parser][expression][identifier]" ) {
 }
 
 TEST_CASE( "Parse identifier without prefix", "[parser][expression][identifier]" ) {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "first");
     auto expr = parser.parse_identifier_expr();
 
@@ -77,7 +120,7 @@ TEST_CASE( "Parse identifier without prefix", "[parser][expression][identifier]"
 }
 
 TEST_CASE( "Parse identifier with prefix", "[parser][expression][identifier]" ) {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "::top");
     auto expr = parser.parse_identifier_expr();
 
@@ -90,7 +133,7 @@ TEST_CASE( "Parse identifier with prefix", "[parser][expression][identifier]" ) 
 }
 
 TEST_CASE( "Parse identifiers without prefix", "[parser][expression][identifier]" ) {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "first::second");
     auto expr = parser.parse_identifier_expr();
 
@@ -104,7 +147,7 @@ TEST_CASE( "Parse identifiers without prefix", "[parser][expression][identifier]
 }
 
 TEST_CASE( "Parse identifiers with prefix", "[parser][expression][identifier]" ) {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "::first::second");
     auto expr = parser.parse_identifier_expr();
 
@@ -122,7 +165,7 @@ TEST_CASE( "Parse identifiers with prefix", "[parser][expression][identifier]" )
 //
 
 TEST_CASE( "Parse int[4][] type spec", "[parser][type]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "int[][4]");
     auto spec = parser.parse_type_spec();
     REQUIRE( spec );
@@ -149,7 +192,7 @@ TEST_CASE( "Parse int[4][] type spec", "[parser][type]") {
 //
 
 TEST_CASE( "Parse character primary expression", "[parser][expression][primary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "'a'");
     auto expr = parser.parse_primary_expr();
     REQUIRE( expr );
@@ -163,7 +206,7 @@ TEST_CASE( "Parse character primary expression", "[parser][expression][primary_e
 }
 
 TEST_CASE( "Parse string primary expression", "[parser][expression][primary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "\"a b c\"");
     auto expr = parser.parse_primary_expr();
     REQUIRE( expr );
@@ -177,7 +220,7 @@ TEST_CASE( "Parse string primary expression", "[parser][expression][primary_expr
 }
 
 TEST_CASE( "Parse integer primary expression", "[parser][expression][primary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "1");
     auto expr = parser.parse_primary_expr();
     REQUIRE( expr );
@@ -192,7 +235,7 @@ TEST_CASE( "Parse integer primary expression", "[parser][expression][primary_exp
 }
 
 TEST_CASE( "Parse this primary expression", "[parser][expression][primary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "this");
     auto expr = parser.parse_primary_expr();
     REQUIRE( expr );
@@ -203,7 +246,7 @@ TEST_CASE( "Parse this primary expression", "[parser][expression][primary_expr]"
 }
 
 TEST_CASE( "Parse parenthesis primary expression", "[parser][expression][primary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "( 1 )");
     auto expr = parser.parse_primary_expr();
     REQUIRE( expr );
@@ -217,7 +260,7 @@ TEST_CASE( "Parse parenthesis primary expression", "[parser][expression][primary
 }
 
 TEST_CASE( "Parse identifier primary expression", "[parser][expression][primary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "( ident )");
     auto expr = parser.parse_primary_expr();
     REQUIRE( expr );
@@ -228,7 +271,7 @@ TEST_CASE( "Parse identifier primary expression", "[parser][expression][primary_
 }
 
 TEST_CASE( "Parse complex identifier primary expression", "[parser][expression][primary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "( ::ident :: ifier )");
     auto expr = parser.parse_primary_expr();
     REQUIRE( expr );
@@ -239,7 +282,7 @@ TEST_CASE( "Parse complex identifier primary expression", "[parser][expression][
 }
 
 TEST_CASE( "Parse parenthesis primary expressions", "[parser][expression][primary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "( a + b )");
     auto expr = parser.parse_expression();
     REQUIRE( expr );
@@ -258,7 +301,7 @@ TEST_CASE( "Parse parenthesis primary expressions", "[parser][expression][primar
 }
 
 TEST_CASE( "Parse parenthesis primary expressions at right of binary expr", "[parser][expression][primary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "( a + b ) * c");
     auto expr = parser.parse_expression();
     REQUIRE( expr );
@@ -285,7 +328,7 @@ TEST_CASE( "Parse parenthesis primary expressions at right of binary expr", "[pa
 }
 
 TEST_CASE( "Parse parenthesis primary expressions at left of binary expr", "[parser][expression][primary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "c * ( a + b )");
     auto expr = parser.parse_expression();
     REQUIRE( expr );
@@ -313,7 +356,7 @@ TEST_CASE( "Parse parenthesis primary expressions at left of binary expr", "[par
 
 
 TEST_CASE( "Parse parenthesis primary expressions at left and right of binary expr", "[parser][expression][primary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "( a + b ) *(c-d)");
     auto expr = parser.parse_expression();
     REQUIRE( expr );
@@ -353,7 +396,7 @@ TEST_CASE( "Parse parenthesis primary expressions at left and right of binary ex
 //
 
 TEST_CASE("Parse no postfix expression", "[parser][expression][postfix_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident");
     auto expr = parser.parse_postfix_expr();
     REQUIRE( expr );
@@ -364,7 +407,7 @@ TEST_CASE("Parse no postfix expression", "[parser][expression][postfix_expr]") {
 }
 
 TEST_CASE("Parse ++ and -- postfix expression", "[parser][expression][postfix_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident ++ --");
     auto expr = parser.parse_postfix_expr();
     REQUIRE( expr );
@@ -385,7 +428,7 @@ TEST_CASE("Parse ++ and -- postfix expression", "[parser][expression][postfix_ex
 }
 
 TEST_CASE("Parse () postfix expression with no second expr", "[parser][expression][postfix_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident()");
     auto expr = parser.parse_postfix_expr();
     REQUIRE( expr );
@@ -402,7 +445,7 @@ TEST_CASE("Parse () postfix expression with no second expr", "[parser][expressio
 }
 
 TEST_CASE("Parse () postfix expression with one second expr", "[parser][expression][postfix_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident(0)");
     auto expr = parser.parse_postfix_expr();
     REQUIRE( expr );
@@ -422,7 +465,7 @@ TEST_CASE("Parse () postfix expression with one second expr", "[parser][expressi
 }
 
 TEST_CASE("Parse () postfix expression with many second expr", "[parser][expression][postfix_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident ( 0 , a)");
 
     std::shared_ptr<ast::expression> expr;
@@ -486,7 +529,7 @@ TEST_CASE("Parse [] postfix expression", "[parser][expression][postfix_expr]") {
 //
 
 TEST_CASE("Parse no unary expression", "[parser][expression][unary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident");
     auto expr = parser.parse_unary_expr();
     REQUIRE( expr );
@@ -499,7 +542,7 @@ TEST_CASE("Parse no unary expression", "[parser][expression][unary_expr]") {
 
 
 TEST_CASE("Parse no unary expression with postfix operator expr", "[parser][expression][unary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident ++");
     auto expr = parser.parse_unary_expr();
     REQUIRE( expr );
@@ -517,7 +560,7 @@ TEST_CASE("Parse no unary expression with postfix operator expr", "[parser][expr
 
 
 TEST_CASE("Parse prefix operator unary expression", "[parser][expression][unary_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "++ -- * & + - ! ~ ident");
     auto expr = parser.parse_unary_expr();
     REQUIRE( expr );
@@ -565,7 +608,7 @@ TEST_CASE("Parse prefix operator unary expression", "[parser][expression][unary_
 //
 
 TEST_CASE("Parse no cast expression", "[parser][expression][cast_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident");
     auto expr = parser.parse_cast_expr();
     REQUIRE( expr );
@@ -576,7 +619,7 @@ TEST_CASE("Parse no cast expression", "[parser][expression][cast_expr]") {
 }
 
 TEST_CASE("Parse no cast expression with prefix and postfix operator", "[parser][expression][cast_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "++ident++");
     auto expr = parser.parse_cast_expr();
     REQUIRE( expr );
@@ -597,7 +640,7 @@ TEST_CASE("Parse no cast expression with prefix and postfix operator", "[parser]
 }
 
 TEST_CASE("Parse cast expression", "[parser][expression][cast_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "(long)ident");
     auto expr = parser.parse_cast_expr();
     REQUIRE( expr );
@@ -613,7 +656,7 @@ TEST_CASE("Parse cast expression", "[parser][expression][cast_expr]") {
 }
 
 TEST_CASE("Parse multiple cast expression", "[parser][expression][cast_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "(int)(long) ident");
     auto expr = parser.parse_cast_expr();
     REQUIRE( expr );
@@ -634,7 +677,7 @@ TEST_CASE("Parse multiple cast expression", "[parser][expression][cast_expr]") {
 }
 
 TEST_CASE("Parse cast of parenthesis expression", "[parser][expression][cast_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "(long)(a + 2)");
     auto expr = parser.parse_cast_expr();
     REQUIRE( expr );
@@ -660,7 +703,7 @@ TEST_CASE("Parse cast of parenthesis expression", "[parser][expression][cast_exp
 }
 
 TEST_CASE("Parse cast of function invocation", "[parser][expression][postfix_expr][cast_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "(int) ident(0, a)");
     auto expr = parser.parse_expression();
     REQUIRE( expr );
@@ -697,7 +740,7 @@ TEST_CASE("Parse cast of function invocation", "[parser][expression][postfix_exp
 //
 
 TEST_CASE("Parse no PM expression", "[parser][expression][pm_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident");
     auto expr = parser.parse_pm_expr();
     REQUIRE( expr );
@@ -709,7 +752,7 @@ TEST_CASE("Parse no PM expression", "[parser][expression][pm_expr]") {
 
 
 TEST_CASE("Parse dot-star PM expression", "[parser][expression][pm_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident .* ifier");
     auto expr = parser.parse_pm_expr();
     REQUIRE( expr );
@@ -728,7 +771,7 @@ TEST_CASE("Parse dot-star PM expression", "[parser][expression][pm_expr]") {
 }
 
 TEST_CASE("Parse arrow-star PM expression", "[parser][expression][pm_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident->*ifier");
     auto expr = parser.parse_pm_expr();
     REQUIRE( expr );
@@ -748,7 +791,7 @@ TEST_CASE("Parse arrow-star PM expression", "[parser][expression][pm_expr]") {
 }
 
 TEST_CASE("Parse PM expression", "[parser][expression][pm_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "ident.*ifier->*other");
     auto expr = parser.parse_pm_expr();
     REQUIRE( expr );
@@ -782,7 +825,7 @@ TEST_CASE("Parse PM expression", "[parser][expression][pm_expr]") {
 //
 
 TEST_CASE("No conditional expression", "[parser][expression][conditional_expr]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "0");
     auto expr = parser.parse_conditional_expr();
     REQUIRE( expr );
@@ -801,7 +844,7 @@ TEST_CASE("No conditional expression", "[parser][expression][conditional_expr]")
 //
 
 TEST_CASE( "Parse expression", "[parser][expression]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "a + b * c");
     auto expr = parser.parse_expression();
     REQUIRE( expr );
@@ -826,7 +869,7 @@ TEST_CASE( "Parse expression", "[parser][expression]") {
 }
 
 TEST_CASE( "Parse simple expression with additional token", "[parser][expression]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "a )");
     auto expr = parser.parse_expression();
     REQUIRE( expr );
@@ -838,7 +881,7 @@ TEST_CASE( "Parse simple expression with additional token", "[parser][expression
 
 
 TEST_CASE( "Parse simple expression list", "[parser][expression]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "a , 0");
     auto expr = parser.parse_expression();
     REQUIRE( expr );
@@ -857,7 +900,7 @@ TEST_CASE( "Parse simple expression list", "[parser][expression]") {
 }
 
 TEST_CASE( "Parse simple expression list with additional token", "[parser][expression]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "a,0)");
     auto expr = parser.parse_expression();
     REQUIRE( expr );
@@ -881,7 +924,7 @@ TEST_CASE( "Parse simple expression list with additional token", "[parser][expre
 // Parse function invocation expression
 //
 TEST_CASE( "Parse expression of simple function invocation", "[parser][expression]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "a(b)");
     auto expr = parser.parse_expression();
     REQUIRE( expr );
@@ -901,7 +944,7 @@ TEST_CASE( "Parse expression of simple function invocation", "[parser][expressio
 // Parse variable declaration
 //
 TEST_CASE( "Parse variable declaration", "[parser][variable]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "static const plic : int = 0;");
     auto var = parser.parse_variable_decl();
     REQUIRE( var );
@@ -914,7 +957,7 @@ TEST_CASE( "Parse variable declaration", "[parser][variable]") {
 // Parse visibility declaration
 //
 TEST_CASE( "Parse public visibility declaration", "[parser][visibility]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "public:");
     auto var = parser.parse_visibility_decl();
     REQUIRE( var );
@@ -922,7 +965,7 @@ TEST_CASE( "Parse public visibility declaration", "[parser][visibility]") {
 }
 
 TEST_CASE( "Parse protected visibility declaration", "[parser][visibility]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "  protected  :  ");
     auto var = parser.parse_visibility_decl();
     REQUIRE( var );
@@ -930,7 +973,7 @@ TEST_CASE( "Parse protected visibility declaration", "[parser][visibility]") {
 }
 
 TEST_CASE( "Parse private visibility declaration", "[parser][visibility]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "private:");
     auto var = parser.parse_visibility_decl();
     REQUIRE( var );
@@ -942,7 +985,7 @@ TEST_CASE( "Parse private visibility declaration", "[parser][visibility]") {
 // Various cases
 //
 TEST_CASE( "Parse expression : titi + (long) toto", "[parser][expression]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "titi + (long) toto");
     auto expr = parser.parse_expression();
     REQUIRE( expr );
@@ -964,7 +1007,7 @@ TEST_CASE( "Parse expression : titi + (long) toto", "[parser][expression]") {
 }
 
 TEST_CASE( "Parse return expression : return a + (long)b;", "[parser][expression]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "return a + (long)b;");
     auto stmt = parser.parse_return_statement();
     REQUIRE( stmt );
@@ -993,7 +1036,7 @@ TEST_CASE( "Parse return expression : return a + (long)b;", "[parser][expression
 //
 
 TEST_CASE( "Parse if-only statement", "[parser][if-else]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "if(a==b) { return true; } ");
     auto stmt = parser.parse_if_else_statement();
     REQUIRE( stmt );
@@ -1016,7 +1059,7 @@ TEST_CASE( "Parse if-only statement", "[parser][if-else]") {
 }
 
 TEST_CASE( "Parse if-else statement", "[parser][if-else]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "if(a!=b) { return true; } else return false; ");
     auto stmt = parser.parse_if_else_statement();
     REQUIRE( stmt );
@@ -1047,7 +1090,7 @@ TEST_CASE( "Parse if-else statement", "[parser][if-else]") {
 //
 
 TEST_CASE( "Parse while statement", "[parser][while]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "while(t != 0) { t = test_continue(); }");
     auto stmt = parser.parse_while_statement();
     REQUIRE( stmt );
@@ -1071,7 +1114,7 @@ TEST_CASE( "Parse while statement", "[parser][while]") {
 //
 
 TEST_CASE( "Parse for statement", "[parser][for]") {
-    k::log::logger log;
+    test_logger log;
     k::parse::parser parser(log, "for(i : int = 0; i < m; i += 2 ) { res += i; }");
     auto stmt = parser.parse_for_statement();
     REQUIRE( stmt );
