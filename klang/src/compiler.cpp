@@ -184,7 +184,7 @@ std::string compiler::get_element_mangled_name(const name& name) const {
 
 void compiler::parse_source(const std::string_view& src, bool optimize, bool dump) {
     // TODO : what to do if _source, _ast_unit and so on are already filled (by previous call)
-    _source = src;
+    _source.content = src;
     try {
         k::parse::parser parser(*this);
         parser.parse(_source);

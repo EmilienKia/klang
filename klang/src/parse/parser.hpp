@@ -58,10 +58,10 @@ public:
 
     parser(k::log::logger& logger);
 
-    parser(k::log::logger& logger, std::string_view src);
+    parser(k::log::logger& logger, k::source& src);
 
 
-    void parse(std::string_view src);
+    void parse(k::source& src);
 
     /**
      * UNIT := ?MODULE_DECLARATION *IMPORT DECLARATIONS

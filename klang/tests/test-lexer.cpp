@@ -70,7 +70,8 @@ class test_logger : public logger {
 TEST_CASE( "Lex empty source", "[lexer]" ) {
     test_logger log;
     lexer lex(log);
-    auto lexemes = lex.parse_all("");
+    k::source src{""};
+    auto lexemes = lex.parse(src);
     REQUIRE( lexemes.empty() );
 }
 
@@ -79,7 +80,8 @@ TEST_CASE( "Lex one identifier", "[lexer]" ) {
     lexer lex(log);
 
     SECTION("Lex char-only identifier") {
-        auto lexemes = lex.parse_all("toto");
+        k::source src{"toto"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -91,7 +93,8 @@ TEST_CASE( "Lex one identifier", "[lexer]" ) {
     }
 
     SECTION("Lex char-and-digit identifier") {
-        auto lexemes = lex.parse_all("to42to");
+        k::source src{"to42to"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -109,7 +112,8 @@ TEST_CASE( "Lex one keyword", "[lexer]" ) {
     lexer lex(log);
 /*
     SECTION("Lex true keyword") {
-        auto lexemes = lex.parse("true ");
+        k::source src{"true "};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -120,7 +124,8 @@ TEST_CASE( "Lex one keyword", "[lexer]" ) {
     }
 
     SECTION("Lex false keyword") {
-        auto lexemes = lex.parse("false ");
+        k::source src{"false "};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -131,7 +136,8 @@ TEST_CASE( "Lex one keyword", "[lexer]" ) {
     }
 
     SECTION("Lex null keyword") {
-        auto lexemes = lex.parse_all("null ");
+        k::source src{"null "};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -153,7 +159,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
     SECTION("Lex decimal", "[decimal]") {
 
         SECTION("Lex decimal 0 integer") {
-            auto lexemes = lex.parse_all("0");
+            k::source src{"0"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -168,7 +175,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 0 unsigned integer", "[unsigned]") {
-            auto lexemes = lex.parse_all("0u");
+            k::source src{"0u"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -182,7 +190,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 0 explicit integer") {
-            auto lexemes = lex.parse_all("0i");
+            k::source src{"0i"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -197,7 +206,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 0 unsigned explicit integer", "[unsigned]") {
-            auto lexemes = lex.parse_all("0ui");
+            k::source src{"0ui"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -212,7 +222,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 0 short integer", "[short]") {
-            auto lexemes = lex.parse_all("0s");
+            k::source src{"0s"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -227,7 +238,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 0 unsigned short integer", "[unsigned][short]") {
-            auto lexemes = lex.parse_all("0us");
+            k::source src{"0us"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -242,7 +254,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 0 long integer", "[long]") {
-            auto lexemes = lex.parse_all("0l");
+            k::source src{"0l"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -257,7 +270,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 0 unsigned long integer", "[unsigned][long]") {
-            auto lexemes = lex.parse_all("0ul");
+            k::source src{"0ul"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -271,7 +285,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 0 longlong integer", "[longlong]") {
-            auto lexemes = lex.parse_all("0ll");
+            k::source src{"0ll"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -286,7 +301,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 0 unsigned longlong integer", "[unsigned][longlong]") {
-            auto lexemes = lex.parse_all("0ull");
+            k::source src{"0ull"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -301,7 +317,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 1 integer") {
-            auto lexemes = lex.parse_all("1");
+            k::source src{"1"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -316,7 +333,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 1 unsigned integer", "[unsigned]") {
-            auto lexemes = lex.parse_all("1u");
+            k::source src{"1u"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -331,7 +349,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 1 explicit integer") {
-            auto lexemes = lex.parse_all("1i");
+            k::source src{"1i"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -346,7 +365,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 1 unsigned explicit integer", "[unsigned]") {
-            auto lexemes = lex.parse_all("1ui");
+            k::source src{"1ui"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -361,7 +381,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 1 short integer", "[short]") {
-            auto lexemes = lex.parse_all("1s");
+            k::source src{"1s"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -376,7 +397,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 1 unsigned short integer", "[unsigned][short]") {
-            auto lexemes = lex.parse_all("1us");
+            k::source src{"1us"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -391,7 +413,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 1 long integer", "[long]") {
-            auto lexemes = lex.parse_all("1l");
+            k::source src{"1l"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -406,7 +429,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 1 unsigned long integer", "[unsigned][long]") {
-            auto lexemes = lex.parse_all("1ul");
+            k::source src{"1ul"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -421,7 +445,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 1 longlong integer", "[longlong]") {
-            auto lexemes = lex.parse_all("1ll");
+            k::source src{"1ll"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -436,7 +461,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal 1 unsigned longlong integer", "[unsigned][longlong]") {
-            auto lexemes = lex.parse_all("1ull");
+            k::source src{"1ull"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -451,7 +477,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal integer") {
-            auto lexemes = lex.parse_all("123");
+            k::source src{"123"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -466,7 +493,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal unsigned integer", "[unsigned]") {
-            auto lexemes = lex.parse_all("123u");
+            k::source src{"123u"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -481,7 +509,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal explicit integer") {
-            auto lexemes = lex.parse_all("123i");
+            k::source src{"123i"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -496,7 +525,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal unsigned explicit integer", "[unsigned]") {
-            auto lexemes = lex.parse_all("123ui");
+            k::source src{"123ui"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -511,7 +541,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal short integer", "[short]") {
-            auto lexemes = lex.parse_all("123s");
+            k::source src{"123s"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -526,7 +557,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal unsigned short integer", "[unsigned][short]") {
-            auto lexemes = lex.parse_all("123us");
+            k::source src{"123us"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -541,7 +573,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal long integer", "[long]") {
-            auto lexemes = lex.parse_all("123l");
+            k::source src{"123l"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -556,7 +589,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal unsigned long integer", "[unsigned][long]") {
-            auto lexemes = lex.parse_all("123ul");
+            k::source src{"123ul"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -571,7 +605,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal longlong integer", "[longlong]") {
-            auto lexemes = lex.parse_all("123ll");
+            k::source src{"123ll"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -586,7 +621,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex decimal unsigned longqlong integer", "[unsigned][longlong]") {
-            auto lexemes = lex.parse_all("123ull");
+            k::source src{"123ull"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -604,7 +640,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
     SECTION("Lex hexadecimal", "[hexadecimal]") {
 
         SECTION("Lex hexadecimal identifier") {
-            auto lexemes = lex.parse_all("0x123def");
+            k::source src{"0x123def"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -619,7 +656,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex hexadecimal unsigned identifier", "[unsigned]") {
-            auto lexemes = lex.parse_all("0x123defu");
+            k::source src{"0x123defu"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -634,7 +672,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex hexadecimal explicit identifier") {
-            auto lexemes = lex.parse_all("0x123defi");
+            k::source src{"0x123defi"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -649,7 +688,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex hexadecimal unsigned explicit identifier", "[unsigned]") {
-            auto lexemes = lex.parse_all("0x123defui");
+            k::source src{"0x123defui"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -664,7 +704,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex hexadecimal short identifier", "[short]") {
-            auto lexemes = lex.parse_all("0x123defs");
+            k::source src{"0x123defs"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -679,7 +720,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex hexadecimal unsigned short identifier", "[unsigned][short]") {
-            auto lexemes = lex.parse_all("0x123defus");
+            k::source src{"0x123defus"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -694,7 +736,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex hexadecimal long identifier", "[long]") {
-            auto lexemes = lex.parse_all("0x123defl");
+            k::source src{"0x123defl"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -709,7 +752,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex hexadecimal unsigned long identifier", "[unsigned][long]") {
-            auto lexemes = lex.parse_all("0x123deful");
+            k::source src{"0x123deful"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -724,7 +768,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex hexadecimal longlong identifier", "[longlong]") {
-            auto lexemes = lex.parse_all("0x123defll");
+            k::source src{"0x123defll"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -739,7 +784,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex hexadecimal unsigned longlong identifier", "[unsigned][longlong]") {
-            auto lexemes = lex.parse_all("0x123defull");
+            k::source src{"0x123defull"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -757,7 +803,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
     SECTION("Lex octal", "[hexadecimal]") {
 
         SECTION("Lex octal identifier") {
-            auto lexemes = lex.parse_all("0123");
+            k::source src{"0123"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -772,7 +819,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal unsigned identifier", "[unsigned]") {
-            auto lexemes = lex.parse_all("0123u");
+            k::source src{"0123u"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -788,7 +836,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
 
 
         SECTION("Lex octal explicit identifier") {
-            auto lexemes = lex.parse_all("0123i");
+            k::source src{"0123i"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -803,7 +852,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal unsigned explicit identifier", "[unsigned]") {
-            auto lexemes = lex.parse_all("0123ui");
+            k::source src{"0123ui"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -818,7 +868,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal short identifier", "[short]") {
-            auto lexemes = lex.parse_all("0123s");
+            k::source src{"0123s"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -833,7 +884,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal unsigned short identifier", "[unsigned][short]") {
-            auto lexemes = lex.parse_all("0123us");
+            k::source src{"0123us"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -848,7 +900,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal long identifier", "[long]") {
-            auto lexemes = lex.parse_all("0123l");
+            k::source src{"0123l"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -863,7 +916,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal unsigned long identifier", "[unsigned][long]") {
-            auto lexemes = lex.parse_all("0123ul");
+            k::source src{"0123ul"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -878,7 +932,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal longlong identifier", "[longlong]") {
-            auto lexemes = lex.parse_all("0123ll");
+            k::source src{"0123ll"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -893,7 +948,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal unsigned longlong identifier", "[unsigned][longlong]") {
-            auto lexemes = lex.parse_all("0123ull");
+            k::source src{"0123ull"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -908,7 +964,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal identifier with long prefix") {
-            auto lexemes = lex.parse_all("0o123");
+            k::source src{"0o123"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -923,7 +980,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal unsigned identifier with long prefix", "[unsigned]") {
-            auto lexemes = lex.parse_all("0o123u");
+            k::source src{"0o123u"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -938,7 +996,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal short identifier with long prefix", "[short]") {
-            auto lexemes = lex.parse_all("0o123s");
+            k::source src{"0o123s"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -953,7 +1012,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal unsigned short identifier with long prefix", "[unsigned][short]") {
-            auto lexemes = lex.parse_all("0o123us");
+            k::source src{"0o123us"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -968,7 +1028,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal long identifier with long prefix", "[long]") {
-            auto lexemes = lex.parse_all("0o123l");
+            k::source src{"0o123l"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -983,7 +1044,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal unsigned long identifier with long prefix", "[unsigned][long]") {
-            auto lexemes = lex.parse_all("0o123ul");
+            k::source src{"0o123ul"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -998,7 +1060,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal longlong identifier with long prefix", "[longlong]") {
-            auto lexemes = lex.parse_all("0o123ll");
+            k::source src{"0o123ll"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1013,7 +1076,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex octal unsigned longlong identifier with long prefix", "[unsigned][longlong]") {
-            auto lexemes = lex.parse_all("0o123ull");
+            k::source src{"0o123ull"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1031,7 +1095,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
     SECTION("Lex binary", "[binary]") {
 
         SECTION("Lex binary identifier") {
-            auto lexemes = lex.parse_all("0b1010");
+            k::source src{"0b1010"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1046,7 +1111,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex binary unsigned identifier", "[unsigned]") {
-            auto lexemes = lex.parse_all("0b1010u");
+            k::source src{"0b1010u"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1061,7 +1127,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex binary explicit identifier") {
-            auto lexemes = lex.parse_all("0b1010i");
+            k::source src{"0b1010i"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1076,7 +1143,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex binary unsigned explicit identifier", "[unsigned]") {
-            auto lexemes = lex.parse_all("0b1010ui");
+            k::source src{"0b1010ui"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1091,7 +1159,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex binary short identifier", "[short]") {
-            auto lexemes = lex.parse_all("0b1010s");
+            k::source src{"0b1010s"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1106,7 +1175,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex binary unsigned short identifier", "[unsigned][short]") {
-            auto lexemes = lex.parse_all("0b1010us");
+            k::source src{"0b1010us"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1121,7 +1191,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex binary long identifier", "[long]") {
-            auto lexemes = lex.parse_all("0b1010l");
+            k::source src{"0b1010l"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1136,7 +1207,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex binary unsigned long identifier", "[unsigned][long]") {
-            auto lexemes = lex.parse_all("0b1010ul");
+            k::source src{"0b1010ul"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1151,7 +1223,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex binary longlong identifier", "[longlong]") {
-            auto lexemes = lex.parse_all("0b1010ll");
+            k::source src{"0b1010ll"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1166,7 +1239,8 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
         }
 
         SECTION("Lex binary unsigned longlong identifier", "[unsigned][longlongggggggg]") {
-            auto lexemes = lex.parse_all("0b1010ull");
+            k::source src{"0b1010ull"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
 
             any_lexeme the_lexeme = lexemes[0];
@@ -1189,7 +1263,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
     SECTION("Lex implicit float") {
 
         SECTION("Lex float 123.45e8") {
-            auto lexemes = lex.parse_all("123.45e8");
+            k::source src{"123.45e8"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1198,7 +1273,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex float 123e8") {
-            auto lexemes = lex.parse_all("123e8");
+            k::source src{"123e8"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1207,7 +1283,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex float 123e-8") {
-            auto lexemes = lex.parse_all("123e-8");
+            k::source src{"123e-8"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1216,7 +1293,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex float .45e8") {
-            auto lexemes = lex.parse_all(".45e8");
+            k::source src{".45e8"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1225,7 +1303,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex float 123.45") {
-            auto lexemes = lex.parse_all("123.45");
+            k::source src{"123.45"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1234,7 +1313,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex float .45") {
-            auto lexemes = lex.parse_all(".45");
+            k::source src{".45"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1247,7 +1327,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
     SECTION("Lex explicit float") {
 
         SECTION("Lex float 123.45e8f") {
-            auto lexemes = lex.parse_all("123.45e8f");
+            k::source src{"123.45e8f"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1256,7 +1337,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex float 123e8f") {
-            auto lexemes = lex.parse_all("123e8f");
+            k::source src{"123e8f"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1265,7 +1347,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex float 123e-8f") {
-            auto lexemes = lex.parse_all("123e-8f");
+            k::source src{"123e-8f"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1274,7 +1357,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex float .45e8f") {
-            auto lexemes = lex.parse_all(".45e8f");
+            k::source src{".45e8f"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1283,7 +1367,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex float 123.45f") {
-            auto lexemes = lex.parse_all("123.45f");
+            k::source src{"123.45f"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1292,7 +1377,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex float .45f") {
-            auto lexemes = lex.parse_all(".45f");
+            k::source src{".45f"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1306,7 +1392,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
     SECTION("Lex explicit double") {
 
         SECTION("Lex double 123.45e8d") {
-            auto lexemes = lex.parse_all("123.45e8d");
+            k::source src{"123.45e8d"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1315,7 +1402,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex double 123e8d") {
-            auto lexemes = lex.parse_all("123e8d");
+            k::source src{"123e8d"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1324,7 +1412,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex double 123e-8d") {
-            auto lexemes = lex.parse_all("123e-8d");
+            k::source src{"123e-8d"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1333,7 +1422,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex double .45e8d") {
-            auto lexemes = lex.parse_all(".45e8d");
+            k::source src{".45e8d"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1342,7 +1432,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex double 123.45d") {
-            auto lexemes = lex.parse_all("123.45d");
+            k::source src{"123.45d"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1351,7 +1442,8 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
         }
 
         SECTION("Lex double .45d") {
-            auto lexemes = lex.parse_all(".45d");
+            k::source src{".45d"};
+            auto lexemes = lex.parse(src);
             REQUIRE(lexemes.size() == 1);
             REQUIRE(std::holds_alternative<float_num>(lexemes[0]));
             float_num l = std::get<float_num>(lexemes[0]);
@@ -1370,7 +1462,8 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
     lexer lex(log);
 
     SECTION("Lex char char") {
-        auto lexemes = lex.parse_all("'c'");
+        k::source src{"'c'"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1385,7 +1478,8 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
     }
 
     SECTION("Lex digit char") {
-        auto lexemes = lex.parse_all("'0'");
+        k::source src{"'0'"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1400,7 +1494,8 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
     }
 
     SECTION("Lex special char") {
-        auto lexemes = lex.parse_all("'&'");
+        k::source src{"'&'"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1415,7 +1510,8 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
     }
 
     SECTION("Lex anti-slash escape char") {
-        auto lexemes = lex.parse_all("'\\\\'");
+        k::source src{"'\\\\'"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1431,7 +1527,8 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
     }
 
     SECTION("Lex simple quote escape char") {
-        auto lexemes = lex.parse_all("'\\\''");
+        k::source src{"'\\\''"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1455,7 +1552,8 @@ TEST_CASE( "Lex one string", "[lexer]" ) {
     lexer lex(log);
 
     SECTION("Lex string") {
-        auto lexemes = lex.parse_all("\"Hell0\\\' world \\\\ !\"");
+        k::source src{"\"Hell0\\\' world \\\\ !\""};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1479,7 +1577,8 @@ TEST_CASE( "Lex one boolean", "[lexer]" ) {
     lexer lex(log);
 
     SECTION("Lex true boolean") {
-        auto lexemes = lex.parse_all("true");
+        k::source src{"true"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1494,7 +1593,8 @@ TEST_CASE( "Lex one boolean", "[lexer]" ) {
     }
 
     SECTION("Lex false boolean") {
-        auto lexemes = lex.parse_all("false");
+        k::source src{"false"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1515,7 +1615,8 @@ TEST_CASE( "Lex null", "[lexer]" ) {
     lexer lex(log);
 
     SECTION("Lex one null") {
-        auto lexemes = lex.parse_all("null");
+        k::source src{"null"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1535,7 +1636,8 @@ TEST_CASE( "Lex one comment", "[lexer]" ) {
     lexer lex(log);
 
     SECTION("Lex end-of-line comment") {
-        auto lexemes = lex.parse_all("// Hello my comment\n");
+        k::source src{"// Hello my comment\n"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1546,7 +1648,8 @@ TEST_CASE( "Lex one comment", "[lexer]" ) {
     }
 
     SECTION("Lex end-of-line end-of-file comment") {
-        auto lexemes = lex.parse_all("// Hello my comment");
+        k::source src{"// Hello my comment"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1557,7 +1660,8 @@ TEST_CASE( "Lex one comment", "[lexer]" ) {
     }
 
     SECTION("Lex multi-line comment") {
-        auto lexemes = lex.parse_all("/* Hello my\n comment*/");
+        k::source src{"/* Hello my\n comment*/"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1574,7 +1678,8 @@ TEST_CASE( "Lex one punctuator", "[lexer]" ) {
     lexer lex(log);
 
     SECTION("Lex parenthesis") {
-        auto lexemes = lex.parse_all("(");
+        k::source src{"("};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1583,7 +1688,8 @@ TEST_CASE( "Lex one punctuator", "[lexer]" ) {
     }
 
     SECTION("Lex two parenthesis") {
-        auto lexemes = lex.parse_all("( )");
+        k::source src{"( )"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 2 );
 
         any_lexeme lex0 = lexemes[0];
@@ -1596,7 +1702,8 @@ TEST_CASE( "Lex one punctuator", "[lexer]" ) {
     }
 
     SECTION("Lex two parenthesis without separator") {
-        auto lexemes = lex.parse_all("()");
+        k::source src{"()"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 2 );
 
         any_lexeme lex0 = lexemes[0];
@@ -1609,7 +1716,8 @@ TEST_CASE( "Lex one punctuator", "[lexer]" ) {
     }
 
     SECTION("Lex semicolon") {
-        auto lexemes = lex.parse_all(";");
+        k::source src{";"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1623,7 +1731,8 @@ TEST_CASE( "Lex one operator", "[lexer]" ) {
     lexer lex(log);
 
     SECTION("Lex dot") {
-        auto lexemes = lex.parse_all(".");
+        k::source src{"."};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1632,7 +1741,8 @@ TEST_CASE( "Lex one operator", "[lexer]" ) {
     }
 
     SECTION("Lex arrow") {
-        auto lexemes = lex.parse_all("->");
+        k::source src{"->"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 1 );
 
         any_lexeme the_lexeme = lexemes[0];
@@ -1646,7 +1756,8 @@ TEST_CASE("Additional lexer tests", "[lexer]") {
     lexer lex(log);
 
     SECTION("Lex \"ident(0)\"") {
-        auto lexemes = lex.parse_all("ident(0)");
+        k::source src{"ident(0)"};
+        auto lexemes = lex.parse(src);
         REQUIRE( lexemes.size() == 4 );
 
         any_lexeme lex0 = lexemes[0];

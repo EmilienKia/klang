@@ -134,5 +134,22 @@ typedef std::variant<std::monostate,
         std::string> value_type;
 
 
+
+struct source {
+    std::string path;
+    std::string content;
+    std::vector<unsigned int> lines;
+
+    source() = default;
+    source(const source&) = default;
+    source(source&&) = default;
+
+    explicit source(const std::string_view& content) : path(""), content(content) {}
+    source(const std::string_view& path, const std::string_view& content) : path(path), content(content) {}
+
+    std::string_view get_line(unsigned int line) const;
+};
+
+
 } // namespace k
 #endif //KLANG_COMMON_HPP

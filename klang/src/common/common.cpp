@@ -127,4 +127,14 @@ name name::from(const std::string& str) {
     return { absolute, std::move(parts) };
 }
 
+//
+// Source management
+//
+
+std::string_view source::get_line(unsigned int line) const {
+    unsigned int start = lines.size()<line ? lines.at(line) : start = content.size();;
+    unsigned int end   = lines.size()<line+1 ? lines.at(line+1) : end = content.size();
+    return {content.data() + start, content.data() + end};
+}
+
 } // namespace k

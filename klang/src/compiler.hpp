@@ -43,7 +43,8 @@ class compiler : protected log::logger,  public std::enable_shared_from_this<com
 protected:
     static bool _compiler_class_init;
 
-    std::string _source;
+    source _source;
+
     std::shared_ptr<k::parse::ast::unit> _ast_unit;
     std::shared_ptr<model::context> _context;
     std::shared_ptr<model::unit> _model_unit;

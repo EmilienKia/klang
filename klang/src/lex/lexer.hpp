@@ -89,7 +89,7 @@ namespace k::lex {
         /** Temporary counter, used for repeatable states like integer escaping.*/
         size_t lex_temp_count = 0;
 
-        std::string_view source;
+        k::source* source;
 
         size_t pos = 0;
         size_t begin = 0;
@@ -107,13 +107,13 @@ namespace k::lex {
     private:
 
         inline std::string_view get_content() {
-            return std::string_view(&source[begin], pos-begin);
+            return std::string_view(&source->content[begin], pos-begin);
         }
         inline std::string_view get_content(size_t size) {
-            return std::string_view(&source[begin], size);
+            return std::string_view(&source->content[begin], size);
         }
         inline std::string_view get_content(size_t start, size_t size) {
-            return std::string_view(&source[start], size);
+            return std::string_view(&source->content[start], size);
         }
 
         inline size_t get_current_size() const {
@@ -150,9 +150,7 @@ namespace k::lex {
     public:
         lexer(k::log::logger& logger);
 
-        void parse(std::string_view src);
-
-        std::vector<any_lexeme> parse_all(std::string_view src);
+        std::vector<any_lexeme> parse(k::source& src);
 
         opt_ref_any_lexeme get();
         void unget(size_t count = 1);

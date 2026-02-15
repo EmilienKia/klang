@@ -46,7 +46,7 @@ parser::parser(k::log::logger& logger):
     _lexer(logger)
 {}
 
-parser::parser(k::log::logger& logger, std::string_view src):
+parser::parser(k::log::logger& logger, k::source& src):
     lexeme_logger(logger, 0x10000),
     _lexer(logger)
 {
@@ -54,7 +54,7 @@ parser::parser(k::log::logger& logger, std::string_view src):
 }
 
 
-void parser::parse(std::string_view src) {
+void parser::parse(k::source& src) {
     _lexer.parse(src);
 }
 
