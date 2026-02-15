@@ -98,7 +98,7 @@ public:
     }
 
 
-    void parse_source(const std::string_view& src, bool optimize = true, bool dump = false);
+    void parse_source(const std::string_view& path, const std::string_view& src, bool optimize = true, bool dump = false);
 
     bool has_main_method() const;
 
@@ -115,9 +115,30 @@ public:
 protected:
     void find_elements_from(const name& name, const std::shared_ptr<model::element>& element, std::vector<std::shared_ptr<model::element>>& res) const;
 
-    std::pair<size_t,size_t> coordinates_from_pos(const k::lex::char_coord& coord)const;
+    char_coord coordinates_from_pos(const k::char_pos& coord) const;
+    std::pair<char_coord,char_coord> coordinates_from_lex(const lex::lexeme& lex) const;
 
-    void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) override;
+    void log_message(k::log::log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message, const std::vector<std::string>& args);
+    void log_message(k::log::log_entry::CRITICALITY criticality, unsigned int code, char_coord pos, const std::string_view& message, const std::vector<std::string>& args);
+    void log_message(k::log::log_entry::CRITICALITY criticality, const std::string_view& message, const std::vector<std::string>& args);
+    void log_message(k::log::log_entry::CRITICALITY criticality, char_coord pos, const std::string_view& message, const std::vector<std::string>& args);
+
+    void log_source_line(char_coord pos);
+    void log_source_line(unsigned int line, unsigned int col);
+
+    void log_source_line(char_coord start, char_coord end);
+    void log_source_line(unsigned int line, unsigned int start, unsigned int end);
+    void log_source_lines(unsigned int line_start, unsigned int start, unsigned int line_end, unsigned int end);
+
+    void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message, const std::vector<std::string>& args) override;
+    void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& pos, const std::string_view& message, const std::vector<std::string>& args) override;
+    void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const std::string_view& message, const std::vector<std::string>& args);
+    void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos, const std::string_view& message, const std::vector<std::string>& args) override;
+
+
+
+    void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args);
+    void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const std::string_view& message, const std::vector<std::string>& args);
     void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) override;
 
 

@@ -87,7 +87,7 @@ int main() {
     auto comp = k::compiler::create();
 
     try {
-        comp->parse_source(source, true, true);
+        comp->parse_source("", source, true, true);
         auto jit = comp->to_jit();
         if (!jit) {
             std::cerr << "JIT instantiation error." << std::endl;

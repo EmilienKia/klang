@@ -19,6 +19,7 @@
 #ifndef KLANG_LOGGER_HPP
 #define KLANG_LOGGER_HPP
 
+#include "common.hpp"
 #include "../lex/lexemes.hpp"
 
 #include <vector>
@@ -36,7 +37,7 @@ struct log_entry {
 
     unsigned int code;
 
-    k::lex::char_coord start, end, pos;
+    k::char_pos start, end, pos;
 
     std::string message;
 
@@ -51,14 +52,14 @@ public:
     virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message);
     virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message, const std::vector<std::string>& args);
 
-    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& pos, const std::string_view& message);
-    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args);
+    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& pos, const std::string_view& message);
+    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& pos, const std::string_view& message, const std::vector<std::string>& args);
 
-    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string_view& message);
-    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string_view& message, const std::vector<std::string>& args);
+    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const std::string_view& message);
+    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const std::string_view& message, const std::vector<std::string>& args);
 
-    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message);
-    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) = 0;
+    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos, const std::string_view& message);
+    virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos, const std::string_view& message, const std::vector<std::string>& args) = 0;
 
 
     virtual void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& pos, const std::string_view& message);
@@ -97,33 +98,33 @@ public:
     // Message and unique position
     //
 
-    void info(const std::string_view& msg, const k::lex::char_coord& pos) { do_log(log_entry::info, 0, pos, msg); }
-    void warn(const std::string_view& msg, const k::lex::char_coord& pos) { do_log(log_entry::warning, 0, pos, msg); }
-    void error(const std::string_view& msg, const k::lex::char_coord& pos) { do_log(log_entry::error, 0, pos, msg); }
+    void info(const std::string_view& msg, const k::char_pos& pos) { do_log(log_entry::info, 0, pos, msg); }
+    void warn(const std::string_view& msg, const k::char_pos& pos) { do_log(log_entry::warning, 0, pos, msg); }
+    void error(const std::string_view& msg, const k::char_pos& pos) { do_log(log_entry::error, 0, pos, msg); }
 
     void info(const std::string_view& msg, const k::lex::lexeme& pos) { do_log(log_entry::info, 0, pos, msg); }
     void warn(const std::string_view& msg, const k::lex::lexeme& pos) { do_log(log_entry::warning, 0, pos, msg); }
     void error(const std::string_view& msg, const k::lex::lexeme& pos) { do_log(log_entry::error, 0, pos, msg); }
 
-    void info(unsigned int code, const std::string_view& msg, const k::lex::char_coord& pos) { do_log(log_entry::info, code, pos, msg); }
-    void warn(unsigned int code, const std::string_view& msg, const k::lex::char_coord& pos) { do_log(log_entry::warning, code, pos, msg); }
-    void error(unsigned int code, const std::string_view& msg, const k::lex::char_coord& pos) { do_log(log_entry::error, code, pos, msg); }
+    void info(unsigned int code, const std::string_view& msg, const k::char_pos& pos) { do_log(log_entry::info, code, pos, msg); }
+    void warn(unsigned int code, const std::string_view& msg, const k::char_pos& pos) { do_log(log_entry::warning, code, pos, msg); }
+    void error(unsigned int code, const std::string_view& msg, const k::char_pos& pos) { do_log(log_entry::error, code, pos, msg); }
 
     void info(unsigned int code, const std::string_view& msg, const k::lex::lexeme& pos) { do_log(log_entry::info, code, pos, msg); }
     void warn(unsigned int code, const std::string_view& msg, const k::lex::lexeme& pos) { do_log(log_entry::warning, code, pos, msg); }
     void error(unsigned int code, const std::string_view& msg, const k::lex::lexeme& pos) { do_log(log_entry::error, code, pos, msg); }
 
-    void info(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& pos) { do_log(log_entry::info, 0, pos, msg); }
-    void warn(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& pos) { do_log(log_entry::warning, 0, pos, msg); }
-    void error(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& pos) { do_log(log_entry::error, 0, pos, msg); }
+    void info(const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& pos) { do_log(log_entry::info, 0, pos, msg); }
+    void warn(const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& pos) { do_log(log_entry::warning, 0, pos, msg); }
+    void error(const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& pos) { do_log(log_entry::error, 0, pos, msg); }
 
     void info(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& pos) { do_log(log_entry::info, 0, pos, msg); }
     void warn(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& pos) { do_log(log_entry::warning, 0, pos, msg); }
     void error(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& pos) { do_log(log_entry::error, 0, pos, msg); }
 
-    void info(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& pos) { do_log(log_entry::info, code, pos, msg, args); }
-    void warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& pos) { do_log(log_entry::warning, code, pos, msg, args); }
-    void error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& pos) { do_log(log_entry::error, code, pos, msg, args); }
+    void info(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& pos) { do_log(log_entry::info, code, pos, msg, args); }
+    void warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& pos) { do_log(log_entry::warning, code, pos, msg, args); }
+    void error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& pos) { do_log(log_entry::error, code, pos, msg, args); }
 
     void info(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& pos) { do_log(log_entry::info, code, pos, msg, args); }
     void warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& pos) { do_log(log_entry::warning, code, pos, msg, args); }
@@ -133,33 +134,33 @@ public:
     // Message and two positions (begin + end)
     //
 
-    void info(const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::info, 0, start, end, msg); }
-    void warn(const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::warning, 0, start, end, msg); }
-    void error(const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::error, 0, start, end, msg); }
+    void info(const std::string_view& msg, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::info, 0, start, end, msg); }
+    void warn(const std::string_view& msg, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::warning, 0, start, end, msg); }
+    void error(const std::string_view& msg, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::error, 0, start, end, msg); }
 
     void info(const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end) { do_log(log_entry::info, 0, start, end, msg); }
     void warn(const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end) { do_log(log_entry::warning, 0, start, end, msg); }
     void error(const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end) { do_log(log_entry::error, 0, start, end, msg); }
 
-    void info(unsigned int code, const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::info, code, start, end, msg); }
-    void warn(unsigned int code, const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::warning, code, start, end, msg); }
-    void error(unsigned int code, const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::error, code, start, end, msg); }
+    void info(unsigned int code, const std::string_view& msg, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::info, code, start, end, msg); }
+    void warn(unsigned int code, const std::string_view& msg, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::warning, code, start, end, msg); }
+    void error(unsigned int code, const std::string_view& msg, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::error, code, start, end, msg); }
 
     void info(unsigned int code, const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end) { do_log(log_entry::info, code, start, end, msg); }
     void warn(unsigned int code, const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end) { do_log(log_entry::warning, code, start, end, msg); }
     void error(unsigned int code, const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end) { do_log(log_entry::error, code, start, end, msg); }
 
-    void info(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::info, 0, start, end, msg, args); }
-    void warn(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::warning, 0, start, end, msg, args); }
-    void error(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::error, 0, start, end, msg, args); }
+    void info(const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::info, 0, start, end, msg, args); }
+    void warn(const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::warning, 0, start, end, msg, args); }
+    void error(const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::error, 0, start, end, msg, args); }
 
     void info(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& start, const k::lex::lexeme& end) { do_log(log_entry::info, 0, start, end, msg, args); }
     void warn(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& start, const k::lex::lexeme& end) { do_log(log_entry::warning, 0, start, end, msg, args); }
     void error(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& start, const k::lex::lexeme& end) { do_log(log_entry::error, 0, start, end, msg, args); }
 
-    void info(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::info, code, start, end, msg, args); }
-    void warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::warning, code, start, end, msg, args); }
-    void error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end) { do_log(log_entry::error, code, start, end, msg, args); }
+    void info(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::info, code, start, end, msg, args); }
+    void warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::warning, code, start, end, msg, args); }
+    void error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end) { do_log(log_entry::error, code, start, end, msg, args); }
 
     void info(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& start, const k::lex::lexeme& end) { do_log(log_entry::info, code, start, end, msg, args); }
     void warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& start, const k::lex::lexeme& end) { do_log(log_entry::warning, code, start, end, msg, args); }
@@ -169,33 +170,33 @@ public:
     // Message and three positions (begin + end + pos)
     //
 
-    void info(const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::info, 0, start, end, pos, msg); }
-    void warn(const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::warning, 0, start, end, pos, msg); }
-    void error(const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::error, 0, start, end, pos, msg); }
+    void info(const std::string_view& msg, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::info, 0, start, end, pos, msg); }
+    void warn(const std::string_view& msg, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::warning, 0, start, end, pos, msg); }
+    void error(const std::string_view& msg, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::error, 0, start, end, pos, msg); }
 
     void info(const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos) { do_log(log_entry::info, 0, start, end, pos, msg); }
     void warn(const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos) { do_log(log_entry::warning, 0, start, end, pos, msg); }
     void error(const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos) { do_log(log_entry::error, 0, start, end, pos, msg); }
 
-    void info(unsigned int code, const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::info, code, start, end, pos, msg); }
-    void warn(unsigned int code, const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::warning, code, start, end, pos, msg); }
-    void error(unsigned int code, const std::string_view& msg, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::error, code, start, end, pos, msg); }
+    void info(unsigned int code, const std::string_view& msg, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::info, code, start, end, pos, msg); }
+    void warn(unsigned int code, const std::string_view& msg, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::warning, code, start, end, pos, msg); }
+    void error(unsigned int code, const std::string_view& msg, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::error, code, start, end, pos, msg); }
 
     void info(unsigned int code, const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos) { do_log(log_entry::info, code, start, end, pos, msg); }
     void warn(unsigned int code, const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos) { do_log(log_entry::warning, code, start, end, pos, msg); }
     void error(unsigned int code, const std::string_view& msg, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos) { do_log(log_entry::error, code, start, end, pos, msg); }
 
-    void info(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::info, 0, start, end, pos, msg, args); }
-    void warn(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::warning, 0, start, end, pos, msg, args); }
-    void error(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::error, 0, start, end, pos, msg, args); }
+    void info(const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::info, 0, start, end, pos, msg, args); }
+    void warn(const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::warning, 0, start, end, pos, msg, args); }
+    void error(const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::error, 0, start, end, pos, msg, args); }
 
     void info(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos) { do_log(log_entry::info, 0, start, end, pos, msg, args); }
     void warn(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos) { do_log(log_entry::warning, 0, start, end, pos, msg, args); }
     void error(const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos) { do_log(log_entry::error, 0, start, end, pos, msg, args); }
 
-    void info(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::info, code, start, end, pos, msg, args); }
-    void warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::warning, code, start, end, pos, msg, args); }
-    void error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos) { do_log(log_entry::error, code, start, end, pos, msg, args); }
+    void info(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::info, code, start, end, pos, msg, args); }
+    void warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::warning, code, start, end, pos, msg, args); }
+    void error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos) { do_log(log_entry::error, code, start, end, pos, msg, args); }
 
     void info(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos) { do_log(log_entry::info, code, start, end, pos, msg, args); }
     void warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos) { do_log(log_entry::warning, code, start, end, pos, msg, args); }
@@ -220,14 +221,14 @@ public:
     void do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message) override;
     void do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message, const std::vector<std::string>& args) override;
 
-    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& pos, const std::string_view& message) override;
-    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) override;
+    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& pos, const std::string_view& message) override;
+    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& pos, const std::string_view& message, const std::vector<std::string>& args) override;
 
-    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string_view& message) override;
-    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string_view& message, const std::vector<std::string>& args) override;
+    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const std::string_view& message) override;
+    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const std::string_view& message, const std::vector<std::string>& args) override;
 
-    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message) override;
-    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) override;
+    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos, const std::string_view& message) override;
+    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos, const std::string_view& message, const std::vector<std::string>& args) override;
 
 
     void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& pos, const std::string_view& message) override;

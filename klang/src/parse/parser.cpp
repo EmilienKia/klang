@@ -92,12 +92,12 @@ std::shared_ptr<ast::module_name> parser::parse_module_declaration()
     // Expect a module identifier:
     std::shared_ptr<ast::qualified_identifier> ident = parse_qualified_identifier();
     if(!ident) {
-        throw_error(0x0001, _lexer.pick(), "Module name is missing");
+        throw_error(0x0001, _lexer.pick_current(), "Module name is missing");
     }
 
     // Expect a semicolon to end module declaration
     if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
-        throw_error(0x0002, _lexer.pick(), "Semicolon is missing after module name at end of module declaration");
+        throw_error(0x0002, _lexer.pick_previous(), "Semicolon is missing after module name at end of module declaration");
     }
     return std::make_shared<ast::module_name>(lex::as<lex::keyword>(lmod), ident);
 }
@@ -116,12 +116,12 @@ std::shared_ptr<ast::import> parser::parse_import()
     // Expect an import identifier:
     auto lname= _lexer.get();
     if(lex::is_not<lex::identifier>(lname)) {
-        throw_error(0x0003, _lexer.pick(), "Import name identifier is missing");
+        throw_error(0x0003, _lexer.pick_current(), "Import name identifier is missing");
     }
 
     // Expect a semicolon to end import declaration
     if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
-        throw_error(0x0004, _lexer.pick(), "Semicolon is missing after module name at end of import declaration");
+        throw_error(0x0004, _lexer.pick_current(), "Semicolon is missing after module name at end of import declaration");
     }
 
     return std::make_shared<ast::import>(lex::as<lex::keyword>(limport), lex::as<lex::identifier>(lname));
@@ -214,7 +214,7 @@ std::shared_ptr<ast::namespace_decl> parser::parse_namespace_decl()
     if(lex::opt_ref_any_lexeme lopenbrace= _lexer.get(); lopenbrace==lex::punctuator::BRACE_OPEN) {
         open_par = lex::as<lex::punctuator>(lopenbrace);
     } else {
-        throw_error(0x0005, _lexer.pick(), "Namespace open brace is missing");
+        throw_error(0x0005, _lexer.pick_current(), "Namespace open brace is missing");
     }
 
     std::vector<ast::decl_ptr> declarations = parse_declarations();
@@ -223,7 +223,7 @@ std::shared_ptr<ast::namespace_decl> parser::parse_namespace_decl()
     if(lex::opt_ref_any_lexeme lclosingbrace= _lexer.get(); lclosingbrace==lex::punctuator::BRACE_CLOSE) {
         close_par = lex::as<lex::punctuator>(lclosingbrace);
     } else {
-        throw_error(0x0006, _lexer.pick(), "Namespace closing brace is expected");
+        throw_error(0x0006, _lexer.pick_current(), "Namespace closing brace is expected");
     }
 
     return std::make_shared<ast::namespace_decl>(*ns, *open_par, *close_par, name, declarations);
@@ -257,7 +257,7 @@ std::shared_ptr<ast::struct_decl> parser::parse_struct_decl()
     if(lex::opt_ref_any_lexeme lopenbrace= _lexer.get(); lopenbrace==lex::punctuator::BRACE_OPEN) {
         open_brace = lex::as<lex::punctuator>(lopenbrace);
     } else {
-        throw_error(0x003B, _lexer.pick(), "Struct open brace is missing");
+        throw_error(0x003B, _lexer.pick_current(), "Struct open brace is missing");
     }
 
     std::vector<ast::decl_ptr> declarations = parse_declarations();
@@ -266,7 +266,7 @@ std::shared_ptr<ast::struct_decl> parser::parse_struct_decl()
     if(lex::opt_ref_any_lexeme lclosingbrace= _lexer.get(); lclosingbrace==lex::punctuator::BRACE_CLOSE) {
         close_brace = lex::as<lex::punctuator>(lclosingbrace);
     } else {
-        throw_error(0x003C, _lexer.pick(), "Struct closing brace is expected");
+        throw_error(0x003C, _lexer.pick_current(), "Struct closing brace is expected");
     }
 
     return std::make_shared<ast::struct_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), declarations);
@@ -317,7 +317,7 @@ std::shared_ptr<ast::qualified_identifier> parser::parse_qualified_identifier()
             holder.rollback();
             return {};
         } else {
-            throw_error(0x0007, _lexer.pick(), "Qualified identifier expect an identifier after initial \"::\"");
+            throw_error(0x0007, _lexer.pick_current(), "Qualified identifier expect an identifier after initial \"::\"");
         }
     }
 
@@ -333,7 +333,7 @@ std::shared_ptr<ast::qualified_identifier> parser::parse_qualified_identifier()
             names.push_back(lex::as<lex::identifier>(lname));
             holder.sync();
         } else {
-            throw_error(0x0008, _lexer.pick(), "Qualified identifier expect an identifier after intermediate \"::\"");
+            throw_error(0x0008, _lexer.pick_current(), "Qualified identifier expect an identifier after intermediate \"::\"");
         }
     }
 
@@ -362,7 +362,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     std::vector<std::shared_ptr<ast::parameter_spec>> params;
     auto lex = _lexer.get();
     if(!lex) {
-        throw_error(0x0009, _lexer.pick(), "Function declaration expects finalizing its declaration");
+        throw_error(0x0009, _lexer.pick_current(), "Function declaration expects finalizing its declaration");
     }
     if(lex!=lex::punctuator::PARENTHESIS_CLOSE) {
         _lexer.unget();
@@ -372,19 +372,19 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         if(param) {
             params.push_back(param);
         } else {
-            throw_error(0x000A, _lexer.pick(), "Function declaration expects a first parameter declaration");
+            throw_error(0x000A, _lexer.pick_current(), "Function declaration expects a first parameter declaration");
         }
 
         while(true) {
             lex = _lexer.get();
             if(!lex) {
-                throw_error(0x000B, _lexer.pick(), "Function declaration expects finalizing its declaration");
+                throw_error(0x000B, _lexer.pick_current(), "Function declaration expects finalizing its declaration");
             }
             if(lex==lex::punctuator::PARENTHESIS_CLOSE) {
                 break;
             }
             if(lex!=lex::punctuator::COMMA){
-                throw_error(0x000C, _lexer.pick(), "Function declaration expects a closing parenthesis ')' for finalizing its prototype or a comma ',' to specify another parameter");
+                throw_error(0x000C, _lexer.pick_current(), "Function declaration expects a closing parenthesis ')' for finalizing its prototype or a comma ',' to specify another parameter");
             }
 
             // Look for next parameter_spec
@@ -392,7 +392,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             if(param) {
                 params.push_back(param);
             } else {
-                throw_error(0x000D, _lexer.pick(), "Function declaration expects a parameter specification");
+                throw_error(0x000D, _lexer.pick_current(), "Function declaration expects a parameter specification");
             }
         }
     }
@@ -403,7 +403,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
         restype = parse_type_spec();
         if(!restype) {
-            throw_error(0x000E, _lexer.pick(), "Function declaration expects a return type specifier after the colon ':'");
+            throw_error(0x000E, _lexer.pick_current(), "Function declaration expects a return type specifier after the colon ':'");
         }
     } else {
         holder.rollback();
@@ -416,7 +416,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     // Look for final semicolon
     // TODO remove function declaration-only.
     if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
-        throw_error(0x000F, _lexer.pick(), "Function declaration expects a final semicolon ';'");
+        throw_error(0x000F, _lexer.pick_current(), "Function declaration expects a final semicolon ';'");
     }
     return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params);
 }
@@ -475,7 +475,7 @@ std::shared_ptr<ast::block_statement> parser::parse_statement_block()
     if(auto lclosebrace = _lexer.get(); lclosebrace == lex::punctuator::BRACE_CLOSE) {
         close_brace = lex::as<lex::punctuator>(lclosebrace);
     } else {
-        throw_error(0x0010, _lexer.pick(), "Block is expecting a closing brace '}'");
+        throw_error(0x0010, _lexer.pick_current(), "Block is expecting a closing brace '}'");
     }
 
     return std::make_shared<ast::block_statement>(*open_brace, *close_brace, statements);
@@ -497,7 +497,7 @@ std::shared_ptr<ast::return_statement> parser::parse_return_statement()
 
     auto lsemicolon = _lexer.get();
     if(lsemicolon!=lex::punctuator::SEMICOLON) {
-        throw_error(0x0011, _lexer.pick(), "Return statement is expecting to finish by a semicolon ';'");
+        throw_error(0x0011, _lexer.pick_current(), "Return statement is expecting to finish by a semicolon ';'");
     }
 
     return std::make_shared<ast::return_statement>(*ret, expr);
@@ -520,7 +520,7 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
 
     auto test_expr = parse_expression();
     if(!test_expr) {
-        throw_error(0x002D, _lexer.pick(), "If statement expect an expression after the open parenthesis '('");
+        throw_error(0x002D, _lexer.pick_current(), "If statement expect an expression after the open parenthesis '('");
     }
 
     auto lpclose = _lexer.get();
@@ -575,7 +575,7 @@ std::shared_ptr<ast::while_statement> parser::parse_while_statement() {
 
     auto test_expr = parse_expression();
     if(!test_expr) {
-        throw_error(0x0032, _lexer.pick(), "While statement expect an expression after the open parenthesis '('");
+        throw_error(0x0032, _lexer.pick_current(), "While statement expect an expression after the open parenthesis '('");
     }
 
     auto lpclose = _lexer.get();
@@ -716,7 +716,7 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
     }
     std::shared_ptr<ast::type_specifier> type = parse_type_spec();
     if(!type) {
-        throw_error(0x0012, _lexer.pick(), "Variable declaration expects a type specifier after the semicolon ';'");
+        throw_error(0x0012, _lexer.pick_current(), "Variable declaration expects a type specifier after the semicolon ';'");
     }
 
     ast::expr_ptr expr;
@@ -724,7 +724,7 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
     if(lequal==lex::operator_::EQUAL) {
         expr = parse_conditional_expr();
         if(!expr) {
-            throw_error(0x0013, _lexer.pick(), "Variable declaration expects an initialization exppression after the equal operator '='");
+            throw_error(0x0013, _lexer.pick_current(), "Variable declaration expects an initialization exppression after the equal operator '='");
         }
     } else {
         _lexer.unget();
@@ -732,7 +732,7 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
 
     auto lsemicolon = _lexer.get();
     if(lsemicolon!=lex::punctuator::SEMICOLON) {
-        throw_error(0x0014, _lexer.pick(), "Variable declaration expects to finish by a semicolon ';'");
+        throw_error(0x0014, _lexer.pick_current(), "Variable declaration expects to finish by a semicolon ';'");
     }
 
     return std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, expr);
@@ -830,7 +830,7 @@ std::shared_ptr<ast::expression_statement> parser::parse_expression_statement()
 
     auto lsemicolon = _lexer.get();
     if(lsemicolon!=lex::punctuator::SEMICOLON) {
-        throw_error(0x0015, _lexer.pick(), "Expression statement expects to finish by a semicolon ';'");
+        throw_error(0x0015, _lexer.pick_current(), "Expression statement expects to finish by a semicolon ';'");
     }
 
     return std::make_shared<ast::expression_statement>(expr);
@@ -861,7 +861,7 @@ ast::expr_ptr parser::parse_expression()
         if(next) {
             exprs.push_back(next);
         } else {
-            throw_error(0x0016, _lexer.pick(), "Expression list is expecting a sub expression after a comma ','");
+            throw_error(0x0016, _lexer.pick_current(), "Expression list is expecting a sub expression after a comma ','");
         }
     }
 }
@@ -899,7 +899,7 @@ ast::expr_ptr parser::parse_assignment_expression()
     if(other) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(lop), cond, other);
     } else {
-        throw_error(0x0017, _lexer.pick(), "Assignment expression is expecting a sub expression after a the asssignmment operator");
+        throw_error(0x0017, _lexer.pick_current(), "Assignment expression is expecting a sub expression after a the asssignmment operator");
     }
 }
 
@@ -917,19 +917,19 @@ ast::expr_ptr parser::parse_conditional_expr() {
 
     ast::expr_ptr middle = parse_logical_or_expression();
     if(!middle) {
-        throw_error(0x0018, _lexer.pick(), "Conditional expression is expecting a sub expression after a the question-mark '?' operator");
+        throw_error(0x0018, _lexer.pick_current(), "Conditional expression is expecting a sub expression after a the question-mark '?' operator");
     }
 
     auto lcolon = _lexer.get();
     if (lqm != lex::operator_::COLON) {
-        throw_error(0x0019, _lexer.pick(), "Conditional expression is expecting a colon ':' operator after the first sub expression");
+        throw_error(0x0019, _lexer.pick_current(), "Conditional expression is expecting a colon ':' operator after the first sub expression");
         // Err: conditional expression requires a colon after sub expression.
         throw parsing_error("Colon of conditional expression is missing" /*, *lcolon */);
     }
 
     ast::expr_ptr right = parse_logical_or_expression();
     if(!right) {
-        throw_error(0x001A, _lexer.pick(), "Conditional expression is expecting a sub expression after the colon ':' operator");
+        throw_error(0x001A, _lexer.pick_current(), "Conditional expression is expecting a sub expression after the colon ':' operator");
     }
 
     return std::make_shared<ast::conditional_expr>(lex::as<lex::operator_>(lqm), lex::as<lex::operator_>(lcolon), left, middle, right);
@@ -955,7 +955,7 @@ ast::expr_ptr parser::parse_logical_or_expression()
     if(right_expr) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
     } else {
-        throw_error(0x001B, _lexer.pick(), "Logical-OR expression is expecting a sub expression after the double-pipe '||' operator");
+        throw_error(0x001B, _lexer.pick_current(), "Logical-OR expression is expecting a sub expression after the double-pipe '||' operator");
     }
 
 }
@@ -980,7 +980,7 @@ ast::expr_ptr parser::parse_logical_and_expression()
     if(right_expr) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
     } else {
-        throw_error(0x001C, _lexer.pick(), "Logical-AND expression is expecting a sub expression after the double-ampersand '&&' operator");
+        throw_error(0x001C, _lexer.pick_current(), "Logical-AND expression is expecting a sub expression after the double-ampersand '&&' operator");
     }
 
 }
@@ -1005,7 +1005,7 @@ ast::expr_ptr parser::parse_inclusive_bin_or_expr()
     if(right_expr) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
     } else {
-        throw_error(0x001D, _lexer.pick(), "Binary-OR expression is expecting a sub expression after the pipe '|' operator");
+        throw_error(0x001D, _lexer.pick_current(), "Binary-OR expression is expecting a sub expression after the pipe '|' operator");
     }
 
 }
@@ -1030,7 +1030,7 @@ ast::expr_ptr parser::parse_exclusive_bin_or_expr()
     if(right_expr) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
     } else {
-        throw_error(0x001E, _lexer.pick(), "Binary-XOR expression is expecting a sub expression after the caret '^' operator");
+        throw_error(0x001E, _lexer.pick_current(), "Binary-XOR expression is expecting a sub expression after the caret '^' operator");
     }
 
 }
@@ -1055,7 +1055,7 @@ ast::expr_ptr parser::parse_bin_and_expr()
     if(right_expr) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
     } else {
-        throw_error(0x001F, _lexer.pick(), "Binary-AND expression is expecting a sub expression after the ampersand '&' operator");
+        throw_error(0x001F, _lexer.pick_current(), "Binary-AND expression is expecting a sub expression after the ampersand '&' operator");
     }
 
 
@@ -1082,7 +1082,7 @@ ast::expr_ptr parser::parse_equality_expr()
     if(right_expr) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
     } else {
-        throw_error(0x0020, _lexer.pick(), "Equality expression is expecting a sub expression after the equality '==' or '!=' operators");
+        throw_error(0x0020, _lexer.pick_current(), "Equality expression is expecting a sub expression after the equality '==' or '!=' operators");
     }
 }
 
@@ -1110,7 +1110,7 @@ ast::expr_ptr parser::parse_relational_expr()
     if(right_expr) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
     } else {
-        throw_error(0x0021, _lexer.pick(), "Relational expression is expecting a sub expression after the relational '<', '>', '<=' or '>=' operators");
+        throw_error(0x0021, _lexer.pick_current(), "Relational expression is expecting a sub expression after the relational '<', '>', '<=' or '>=' operators");
     }
 
 
@@ -1137,7 +1137,7 @@ ast::expr_ptr parser::parse_shifting_expr()
     if(right_expr) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
     } else {
-        throw_error(0x0022, _lexer.pick(), "Shifting expression is expecting a sub expression after the shifting '<<' or '>>' operators");
+        throw_error(0x0022, _lexer.pick_current(), "Shifting expression is expecting a sub expression after the shifting '<<' or '>>' operators");
     }
 }
 
@@ -1162,7 +1162,7 @@ ast::expr_ptr parser::parse_additive_expr()
     if(right_expr) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
     } else {
-        throw_error(0x0023, _lexer.pick(), "Additive expression is expecting a sub expression after the additive '+' or '-' operators");
+        throw_error(0x0023, _lexer.pick_current(), "Additive expression is expecting a sub expression after the additive '+' or '-' operators");
     }
 }
 
@@ -1188,7 +1188,7 @@ ast::expr_ptr parser::parse_multiplicative_expr() {
     if (right_expr) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
     } else {
-        throw_error(0x0024, _lexer.pick(), "Multiplicative expression is expecting a sub expression after the multiplicative '*', '/' or '%' operators");
+        throw_error(0x0024, _lexer.pick_current(), "Multiplicative expression is expecting a sub expression after the multiplicative '*', '/' or '%' operators");
     }
 }
 
@@ -1212,7 +1212,7 @@ ast::expr_ptr parser::parse_pm_expr() {
     if (right_expr) {
         return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
     } else {
-        throw_error(0x0025, _lexer.pick(),
+        throw_error(0x0025, _lexer.pick_current(),
                     "PM expression is expecting a sub expression after the pm '.*' or '.->' operators");
     }
 }
@@ -1265,7 +1265,7 @@ ast::expr_ptr parser::parse_unary_expr()
         if(expr) {
             return std::make_shared<ast::unary_prefix_expr>(lex::as<lex::operator_>(lop), expr);
         } else {
-            throw_error(0x0026, _lexer.pick(), "Unary expression is expecting a sub expression after the unary '++', '--', '*', '&', '+', '-', '!' or '~' operators");
+            throw_error(0x0026, _lexer.pick_current(), "Unary expression is expecting a sub expression after the unary '++', '--', '*', '&', '+', '-', '!' or '~' operators");
         }
     } else {
         holder.rollback();
@@ -1290,11 +1290,11 @@ ast::expr_ptr parser::parse_postfix_expr()
         } else if(lop == lex::punctuator::BRACKET_OPEN) {
             ast::expr_ptr expr = parse_expression();
             if(!expr) {
-                throw_error(0x0027, _lexer.pick(), "Bracket postfix expression expects sub-expression");
+                throw_error(0x0027, _lexer.pick_current(), "Bracket postfix expression expects sub-expression");
             }
             auto lclose = _lexer.get();
             if(lclose != lex::punctuator::BRACKET_CLOSE) {
-                throw_error(0x0028, _lexer.pick(), "Bracket postfix expression expects closing bracket ']' after sub-expression");
+                throw_error(0x0028, _lexer.pick_current(), "Bracket postfix expression expects closing bracket ']' after sub-expression");
             }
             any = std::make_shared<ast::bracket_postifx_expr>(any, expr);
         } else if(lop == lex::punctuator::PARENTHESIS_OPEN) {
@@ -1302,14 +1302,14 @@ ast::expr_ptr parser::parse_postfix_expr()
             // expr might be null if expression list is empty
             auto lclose = _lexer.get();
             if(lclose != lex::punctuator::PARENTHESIS_CLOSE) {
-                throw_error(0x0029, _lexer.pick(), "Parenthesis postfix expression expects closing parenthesis ')'");
+                throw_error(0x0029, _lexer.pick_current(), "Parenthesis postfix expression expects closing parenthesis ')'");
             }
             any = std::make_shared<ast::parenthesis_postifx_expr>(any, expr);
         } else if(lop == lex::operator_::ARROW || lop == lex::operator_::DOT) {
             ast::expr_ptr expr = parse_identifier_expr();
             auto ident_expr = std::dynamic_pointer_cast<ast::identifier_expr>(expr);
             if(!ident_expr) {
-                throw_error(0x003B, _lexer.pick(), "Member access postfix expression expects an identifier after the '.' or '->' operator");
+                throw_error(0x003B, _lexer.pick_current(), "Member access postfix expression expects an identifier after the '.' or '->' operator");
             }
             any = std::make_shared<ast::member_access_postfix_expr>(lex::as<lex::operator_>(lop), any, ident_expr);
         } else {
@@ -1333,11 +1333,11 @@ ast::expr_ptr parser::parse_primary_expr()
     } else if( l == lex::punctuator::PARENTHESIS_OPEN) {
         ast::expr_ptr expr = parse_expression();
         if(!expr) {
-            throw_error(0x002A, _lexer.pick(), "Parenthesis expression expects a sub-expression after open-parenthesis '('");
+            throw_error(0x002A, _lexer.pick_current(), "Parenthesis expression expects a sub-expression after open-parenthesis '('");
         }
         lex::opt_ref_any_lexeme r = _lexer.get();
         if(r != lex::punctuator::PARENTHESIS_CLOSE) {
-            throw_error(0x002B, _lexer.pick(), "Parenthesis expression expects closing parenthesis ')' after sub-expression");
+            throw_error(0x002B, _lexer.pick_current(), "Parenthesis expression expects closing parenthesis ')' after sub-expression");
         }
         return expr;
     } else {

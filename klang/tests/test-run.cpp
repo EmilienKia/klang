@@ -53,7 +53,7 @@ bool compile_text(const std::string_view& source, const std::string& out_file) {
             reloc_model);
 
     auto compiler = k::compiler::create(target_machine);
-    compiler->parse_source(source, true, false);
+    compiler->parse_source("", source, true, false);
 
     return compiler->gen_executable(out_file);
 }

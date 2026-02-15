@@ -65,10 +65,6 @@ enum float_size {
     FLOAT_DEFAULT =  FLOAT
 };
 
-struct char_coord
-{
-    const char* pos = nullptr;
-};
 
 struct lexeme
 {

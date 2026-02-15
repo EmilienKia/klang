@@ -19,6 +19,7 @@
 #ifndef KLANG_COMMON_HPP
 #define KLANG_COMMON_HPP
 
+#include <limits>
 #include <string>
 #include <vector>
 #include <variant>
@@ -135,9 +136,28 @@ typedef std::variant<std::monostate,
 
 
 
+struct char_pos
+{
+    const char* pos = nullptr;
+};
+
+struct char_coord {
+    unsigned int line;
+    unsigned int col;
+
+    operator bool() const {
+        return line!=std::numeric_limits<unsigned int>().max() || col!=std::numeric_limits<unsigned int>().max();
+    }
+
+    static constexpr char_coord INVALID() {return {std::numeric_limits<unsigned int>::max(), std::numeric_limits<unsigned int>::max()};}
+};
+
 struct source {
+    /// Path from which the text content come
     std::string path;
+    /// Content text
     std::string content;
+    /// Index of the first character of each line in the 'content' text
     std::vector<unsigned int> lines;
 
     source() = default;
@@ -147,7 +167,26 @@ struct source {
     explicit source(const std::string_view& content) : path(""), content(content) {}
     source(const std::string_view& path, const std::string_view& content) : path(path), content(content) {}
 
+    /**
+     * Return a view of the expected line in the content text.
+     * @param line Line index (0-based)
+     * @return The view of the line, empty view if line is not found.
+     */
     std::string_view get_line(unsigned int line) const;
+
+    /**
+     * Compute the coordinates (line;col) of the given character.
+     * @param pos Absolute index of the character in the text content of which compute the coordinates.
+     * @return Coordinates of the given character, invalid coordinates (MAX;MAX) if out of range.
+     */
+    char_coord get_coordinates(unsigned int pos) const;
+
+    /**
+     * Compute the coordinates (line;col) of the given character.
+     * @param c Pointer to the character to look for. The pointer must look into the valid data range of the content data.
+     * @return Coordinates of the given character, invalid coordinates (MAX;MAX) if out of range.
+     */
+    char_coord get_coordinates(const char_pos& c) const;
 };
 
 

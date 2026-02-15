@@ -53,6 +53,7 @@ namespace k::lex {
             POINT,
             COMMENT_SINGLE_LINE,
             COMMENT_MULTI_LINES,
+            COMMENT_MULTI_LINES_CR,
             COMMENT_MULTI_LINES_END,
             CHAR,
             STRING,
@@ -158,7 +159,9 @@ namespace k::lex {
         size_t tell() const;
         void seek(size_t pos);
 
-        opt_ref_any_lexeme pick();
+        opt_ref_any_lexeme pick_next();
+        opt_ref_any_lexeme pick_current();
+        opt_ref_any_lexeme pick_previous();
 
         bool eof() const;
 

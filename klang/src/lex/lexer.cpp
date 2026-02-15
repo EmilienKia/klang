@@ -185,8 +185,10 @@ namespace k::lex {
                 switch (lex_state) {
                     case CR:
                         if (c == '\n') {
+                            source.lines.push_back(pos+1);
                             break;
                         } else {
+                            source.lines.push_back(pos);
                             // Not the CRLF continuation, consider as START
                             lex_state = START;
                             continue;
@@ -196,7 +198,6 @@ namespace k::lex {
                             break;
                         }
                         if (c == '\r') {
-                            source.lines.push_back(pos+1);
                             lex_state = CR;
                             continue;
                         } else if (c == '\n') {
@@ -264,19 +265,40 @@ namespace k::lex {
                     case COMMENT_SINGLE_LINE:
                         if (c == '\r' || c == '\n' || c == 0) {
                             lexemes.push_back(comment(get_content()));
+                            if (c!=0) {
+                                source.lines.push_back(pos+1);
+                            }
                             begin = 0;
-                            lex_state = START;
+                            if (c == '\r') {
+                                lex_state = CR;
+                            } else {
+                                lex_state = START;
+                            }
                             break;
                         }
                         break;
                     case COMMENT_MULTI_LINES:
                         if (c == '*') {
                             lex_state = COMMENT_MULTI_LINES_END;
+                        } else if (c == '\n') {
+                            source.lines.push_back(pos+1);
+                        } else if (c =='\r') {
+                            lex_state = COMMENT_MULTI_LINES_CR;
                         } else {
-                            // TODO Handle EOL
                             // TODO Handle EOF
                         }
                         break;
+                    case COMMENT_MULTI_LINES_CR:
+                        if (c == '\n') {
+                            source.lines.push_back(pos+1);
+                            lex_state = COMMENT_MULTI_LINES;
+                            break;
+                        } else {
+                            source.lines.push_back(pos);
+                            // Not the CRLF continuation, consider as COMMENT_MULTI_LINES
+                            lex_state = COMMENT_MULTI_LINES;
+                            continue;
+                        }
                     case COMMENT_MULTI_LINES_END:
                         if (c == '/') {
                             lexemes.push_back(comment(get_content(get_current_size()+1)));
@@ -980,9 +1002,25 @@ namespace k::lex {
         this->index = index;
     }
 
-    opt_ref_any_lexeme lexer::pick() {
+    opt_ref_any_lexeme lexer::pick_next() {
         if(!lexemes.empty() && index<lexemes.size()-1) {
             return std::ref(lexemes[index+1]);
+        }  else {
+            return {};
+        }
+    }
+
+    opt_ref_any_lexeme lexer::pick_current() {
+        if(!lexemes.empty() && index<lexemes.size()) {
+            return std::ref(lexemes[index]);
+        }  else {
+            return {};
+        }
+    }
+
+    opt_ref_any_lexeme lexer::pick_previous() {
+        if(!lexemes.empty() && index<lexemes.size() && index > 0) {
+            return std::ref(lexemes[index-1]);
         }  else {
             return {};
         }
@@ -993,15 +1031,15 @@ namespace k::lex {
     }
 
     void lexer::warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, size_t pos) {
-        k::log::logger_relay::warn(code, msg, args, char_coord{source->content.data()+pos});
+        k::log::logger_relay::warn(code, msg, args, k::char_pos{source->content.data()+pos});
     }
 
     void lexer::error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, size_t pos) {
-        k::log::logger_relay::error(code, msg, args, char_coord{source->content.data()+pos});
+        k::log::logger_relay::error(code, msg, args, k::char_pos{source->content.data()+pos});
     }
 
     void lexer::error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, size_t start, size_t end) {
-        k::log::logger_relay::error(code, msg, args, char_coord{source->content.data()+start}, char_coord{source->content.data()+end});
+        k::log::logger_relay::error(code, msg, args, k::char_pos{source->content.data()+start}, k::char_pos{source->content.data()+end});
     }
 
 

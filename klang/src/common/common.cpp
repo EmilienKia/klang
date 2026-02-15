@@ -22,6 +22,7 @@
 #include "../lex/lexer.hpp"
 #include "../parse/ast.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <regex>
 #include <sstream>
@@ -132,9 +133,34 @@ name name::from(const std::string& str) {
 //
 
 std::string_view source::get_line(unsigned int line) const {
-    unsigned int start = lines.size()<line ? lines.at(line) : start = content.size();;
-    unsigned int end   = lines.size()<line+1 ? lines.at(line+1) : end = content.size();
+    unsigned int start = lines.size()>line ? lines.at(line) : content.size();
+    unsigned int end   = lines.size()>line+1 ? lines.at(line+1) : content.size();
     return {content.data() + start, content.data() + end};
 }
+
+char_coord source::get_coordinates(unsigned int pos) const {
+    if (pos > content.size() || lines.empty()) {
+        return char_coord::INVALID();
+    }
+    auto it = std::upper_bound(lines.begin(), lines.end(), pos);
+    if (it == lines.begin()) {
+        return char_coord::INVALID();
+    }
+    --it;
+    unsigned int line = static_cast<unsigned int>(it - lines.begin());
+    unsigned int col  = pos - *it;
+    return {line, col};
+}
+
+char_coord source::get_coordinates(const char_pos& c) const {
+    if (c.pos == nullptr
+        || c.pos < content.data()
+        || c.pos > content.data() + content.size()) {
+        return char_coord::INVALID();
+    }
+    unsigned int pos = static_cast<unsigned int>(c.pos - content.data());
+    return get_coordinates(pos);
+}
+
 
 } // namespace k

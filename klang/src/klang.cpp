@@ -169,7 +169,7 @@ int main(int argc, const char** argv) {
     try {
 
         auto compiler = k::compiler::create(target_machine);
-        compiler->parse_source(source, true, false);
+        compiler->parse_source(input_files[0], source, true, false);
 
         if (vm.count("compile")) {
             // Just compile to object file (.o)

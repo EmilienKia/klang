@@ -31,7 +31,7 @@
 
 std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = false) {
     auto comp = k::compiler::create();
-    comp->parse_source(src, true, dump);
+    comp->parse_source("", src, true, dump);
     return comp->to_jit();
 }
 
@@ -2680,7 +2680,7 @@ TEST_CASE("Struct fields trivial constant default initialization", "[gen][struct
 TEST_CASE("Relative name lookup", "[gen][name_lookup]") {
 
     auto comp = k::compiler::create();
-    comp->parse_source(R"SRC(
+    comp->parse_source("", R"SRC(
         module the::test;
 
         struct plop {
@@ -2749,7 +2749,7 @@ TEST_CASE("Relative name lookup", "[gen][name_lookup]") {
 TEST_CASE("Relative mangled name lookup", "[gen][name_lookup]") {
 
     auto comp = k::compiler::create();
-    comp->parse_source(R"SRC(
+    comp->parse_source("", R"SRC(
         module the::test;
 
         struct plop {
@@ -2792,7 +2792,7 @@ TEST_CASE("Relative mangled name lookup", "[gen][name_lookup]") {
 TEST_CASE("Relative to root namespace name lookup", "[gen][name_lookup]") {
 
     auto comp = k::compiler::create();
-    comp->parse_source(R"SRC(
+    comp->parse_source("", R"SRC(
         module the::test;
 
         struct plop {
@@ -2861,7 +2861,7 @@ TEST_CASE("Relative to root namespace name lookup", "[gen][name_lookup]") {
 TEST_CASE("Relative to root namespace mangled name lookup", "[gen][name_lookup]") {
 
     auto comp = k::compiler::create();
-    comp->parse_source(R"SRC(
+    comp->parse_source("", R"SRC(
         module the::test;
 
         struct plop {
@@ -2904,7 +2904,7 @@ TEST_CASE("Relative to root namespace mangled name lookup", "[gen][name_lookup]"
 TEST_CASE("Absolute name lookup", "[gen][name_lookup]") {
 
     auto comp = k::compiler::create();
-    comp->parse_source(R"SRC(
+    comp->parse_source("", R"SRC(
         module the::test;
 
         struct plop {
@@ -2972,7 +2972,7 @@ TEST_CASE("Absolute name lookup", "[gen][name_lookup]") {
 TEST_CASE("Absolute mangled name lookup", "[gen][name_lookup]") {
 
     auto comp = k::compiler::create();
-    comp->parse_source(R"SRC(
+    comp->parse_source("", R"SRC(
         module the::test;
 
         struct plop {
