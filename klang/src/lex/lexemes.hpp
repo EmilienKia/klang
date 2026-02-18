@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@
 #include <vector>
 
 namespace k::log {
-class legacy_logger;
+class logger;
 }
 
 namespace k::lex {
@@ -67,52 +67,22 @@ enum float_size {
 
 struct char_coord
 {
-    std::size_t pos = 0;
-    std::size_t line = 0;
-    std::size_t col = 0;
+    const char* pos = nullptr;
 };
-
-/**
- * Trivial offset for char coordinate.
- * Assume this offset doesn't change the column.
- * @param coord Initial coordinates
- * @param offset Offset to apply.
- * @return New coordinates
- */
-inline char_coord operator+(const char_coord& coord, size_t offset) {
-    return {.pos = coord.pos + offset, .line = coord.line, .col = coord.line+offset};
-}
-
-/**
- * Trivial offset for char coordinate.
- * Assume this offset doesn't change the column.
- * @param coord Initial coordinates
- * @param offset Offset to apply.
- * @return Updated this coordinates
- */
-inline char_coord& operator+=(char_coord& coord, size_t offset) {
-    coord.pos += offset;
-    coord.col += offset;
-    return coord;
-}
 
 struct lexeme
 {
-    char_coord start;
-    char_coord end;
-    std::string content;
+    std::string_view content;
 
-    lexeme(const lexeme& other) : start(other.start), end(other.end), content(other.content) {}
-    lexeme(lexeme&& other) : start(std::move(other.start)), end(std::move(other.end)), content(std::move(other.content)) {}
+    lexeme() = default;
+    lexeme(const lexeme&) = default;
+    lexeme(lexeme&&) = default;
     lexeme& operator=(const lexeme& other) = default;
     lexeme& operator=(lexeme&& other) = default;
-    lexeme(char_coord start, char_coord end, const std::string& content) : start(start), end(end), content(content) {}
-
-    // For testing only
-    lexeme(const std::string& content) : content(content) {}
+    explicit lexeme(const std::string_view& str)  : content(str) {}
 
 protected:
-    lexeme() = default;
+    friend class k::log::logger;
 };
 
 /**
@@ -130,10 +100,7 @@ struct identifier : public lexeme {
     identifier(identifier&& other) = default;
     identifier& operator=(const identifier& other) = default;
     identifier& operator=(identifier&& other) = default;
-    identifier(char_coord start, char_coord end, const std::string& content) : lexeme(start, end, content) {}
-
-    // For testing only
-    identifier(const std::string& content) : lexeme(content) {}
+    explicit identifier(const std::string_view& str)  : lexeme(str) {}
 
     bool operator == (const identifier& other) const {
         return this->content == other.content;
@@ -181,7 +148,7 @@ struct keyword : public lexeme {
     keyword(keyword&& other) = default;
     keyword& operator=(const keyword& other) = default;
     keyword& operator=(keyword&& other) = default;
-    keyword(char_coord start, char_coord end, const std::string& content, type_t type) : lexeme(start, end, content), type(type) {}
+    keyword(const std::string_view& str, type_t type)  : lexeme(str), type(type) {}
 
     template<typename Coll>
     static bool has(const Coll& coll, type_t kw) {
@@ -211,12 +178,12 @@ struct integer : public literal {
     bool unsigned_num = false;
     integer_size size = INT;
 
-    integer(char_coord start, char_coord end, const std::string& content,
-            size_t num_prefix_size = 0, size_t num_content_size = 0,
-            numeric_base base = DECIMAL, bool unsigned_num = false, integer_size size = INT):
-            literal(start, end, content),
-            num_prefix_size(num_prefix_size), num_content_size(num_content_size),
-            base(base), unsigned_num(unsigned_num), size(size) {}
+    integer(const std::string_view& content,
+        size_t num_prefix_size = 0, size_t num_content_size = 0,
+        numeric_base base = DECIMAL, bool unsigned_num = false, integer_size size = INT):
+        literal(content),
+        num_prefix_size(num_prefix_size), num_content_size(num_content_size),
+        base(base), unsigned_num(unsigned_num), size(size) {}
 
     std::string_view int_content() const {
         return {content.begin()+num_prefix_size, content.begin()+num_prefix_size+num_content_size};
@@ -233,9 +200,9 @@ struct float_num : public literal {
     size_t num_content_size = 0;
     float_size size = FLOAT;
 
-    float_num(char_coord start, char_coord end, const std::string& content,
+    float_num(const std::string_view& content,
               size_t num_content_size = 0, float_size size = FLOAT):
-            literal(start, end, content),
+            literal(content),
             num_content_size(num_content_size),
             size(size) {}
 
@@ -297,7 +264,7 @@ struct punctuator : public lexeme {
     punctuator(punctuator&& other) = default;
     punctuator& operator=(const punctuator& other) = default;
     punctuator& operator=(punctuator&& other) = default;
-    punctuator(char_coord start, char_coord end, const std::string& content, type_t type) : lexeme(start, end, content), type(type) {}
+    punctuator(const std::string_view& content, type_t type) : lexeme(content), type(type) {}
 protected:
     punctuator() = default;
 };
@@ -357,7 +324,7 @@ struct operator_ : public lexeme {
     operator_(operator_&& other) = default;
     operator_& operator=(const operator_& other) = default;
     operator_& operator=(operator_&& other) = default;
-    operator_(char_coord start, char_coord end, const std::string& content, type_t type) : lexeme(start, end, content), type(type) {}
+    operator_(const std::string_view& content, type_t type) : lexeme(content), type(type) {}
 protected:
     operator_() = default;
 };

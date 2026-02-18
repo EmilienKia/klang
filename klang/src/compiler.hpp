@@ -114,7 +114,11 @@ public:
 protected:
     void find_elements_from(const name& name, const std::shared_ptr<model::element>& element, std::vector<std::shared_ptr<model::element>>& res) const;
 
+    std::pair<size_t,size_t> coordinates_from_pos(const k::lex::char_coord& coord)const;
+
     void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) override;
+    void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) override;
+
 
 };
 

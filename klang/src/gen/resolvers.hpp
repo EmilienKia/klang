@@ -69,7 +69,7 @@ protected:
     }
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        error(code, lexeme, message, args);
+        logger_relay::error(code, message, args, lexeme);
         throw resolution_error(message);
     }
 
@@ -165,7 +165,7 @@ protected:
     */
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        error(code, lexeme, message, args);
+        logger_relay::error(code, message, args, lexeme);
         throw resolution_error(message);
     }
 

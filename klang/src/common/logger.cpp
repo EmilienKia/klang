@@ -30,11 +30,11 @@ namespace k::log {
 //
 
 void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message) {
-    do_log(criticality, code, {}, {}, {}, message, {});
+    do_log(criticality, code, k::lex::char_coord{}, k::lex::char_coord{}, k::lex::char_coord{}, message, {});
 }
 
 void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message, const std::vector<std::string>& args) {
-    do_log(criticality, code, {}, {}, {}, message, args);
+    do_log(criticality, code, k::lex::char_coord{}, k::lex::char_coord{}, k::lex::char_coord{}, message, args);
 }
 
 void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& pos, const std::string_view& message) {
@@ -56,38 +56,83 @@ void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const
     do_log(criticality, code, start, end, pos, message, {});
 }
 
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& pos, const std::string_view& message) {
+    do_log(criticality, code, k::lex::lexeme{}, k::lex::lexeme{}, pos, message, {});
+}
+
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) {
+    do_log(criticality, code, k::lex::lexeme{}, k::lex::lexeme{}, pos, message, args);
+}
+
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const std::string_view& message) {
+    do_log(criticality, code, start, end, k::lex::lexeme{}, message, {});
+}
+
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const std::string_view& message, const std::vector<std::string>& args) {
+    do_log(criticality, code, start, end, k::lex::lexeme{}, message, args);
+}
+
+void logger::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos, const std::string_view& message) {
+    do_log(criticality, code, start, end, pos, message, {});
+}
+
+
 //
 // Logger relay
 //
 
 void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message) {
-    _log.do_log(criticality, code, message);
+    _log.do_log(criticality, with_flag(code), message);
 }
 void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message, const std::vector<std::string>& args) {
-    _log.do_log(criticality, code, message, args);
+    _log.do_log(criticality, with_flag(code), message, args);
 }
 
 void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& pos, const std::string_view& message) {
-    _log.do_log(criticality, code, pos, message);
+    _log.do_log(criticality, with_flag(code), pos, message);
 }
 void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) {
-    _log.do_log(criticality, code, pos, message, args);
+    _log.do_log(criticality, with_flag(code), pos, message, args);
 }
 
 void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string_view& message) {
-    _log.do_log(criticality, code, start, end, message);
+    _log.do_log(criticality, with_flag(code), start, end, message);
 }
 
 void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const std::string_view& message, const std::vector<std::string>& args) {
-    _log.do_log(criticality, code, start, end, message, args);
+    _log.do_log(criticality, with_flag(code), start, end, message, args);
 }
 
 void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message) {
-    _log.do_log(criticality, code, start, end, pos, message);
+    _log.do_log(criticality, with_flag(code), start, end, pos, message);
 }
 
 void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) {
-    _log.do_log(criticality, code, start, end, pos, message, args);
+    _log.do_log(criticality, with_flag(code), start, end, pos, message, args);
+}
+
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& pos, const std::string_view& message) {
+    _log.do_log(criticality, with_flag(code), pos, message);
+}
+
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) {
+    _log.do_log(criticality, with_flag(code), pos, message, args);
+}
+
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const std::string_view& message) {
+    _log.do_log(criticality, with_flag(code), start, end, message);
+}
+
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const std::string_view& message, const std::vector<std::string>& args) {
+    _log.do_log(criticality, with_flag(code), start, end, message, args);
+}
+
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos, const std::string_view& message) {
+    _log.do_log(criticality, with_flag(code), start, end, pos, message);
+}
+
+void logger_relay::do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) {
+    _log.do_log(criticality, with_flag(code), start, end, pos, message, args);
 }
 
 } // k::log

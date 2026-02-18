@@ -379,6 +379,11 @@ bool compiler::gen_executable(const std::string& output_file) {
     return exec_res.exit_code == 0;
 }
 
+std::pair<size_t,size_t> compiler::coordinates_from_pos(const k::lex::char_coord& coord) const {
+    // TODO
+    return {0,0};
+}
+
 void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) {
     // TODO dump coords
     static const char* criticality_str[] = {
@@ -387,6 +392,8 @@ void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int c
         "Error  "
     };
 
+    auto [start_line, start_col] = coordinates_from_pos(start);
+
     static constexpr auto FORMAT = "{},{} - {} {:0>5X} : {}\n";
     if(args.size()>0) {
         fmt::dynamic_format_arg_store<fmt::format_context> store;
@@ -394,10 +401,14 @@ void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int c
             store.push_back(arg);
         }
         std::string msg = fmt::vformat(message, store);
-        fmt::print(FORMAT, start.line, start.col, criticality_str[criticality], code,  msg);
+        fmt::print(FORMAT, start_line, start_col, criticality_str[criticality], code,  msg);
     } else {
-        fmt::print(FORMAT, start.line, start.col, criticality_str[criticality], code, message);
+        fmt::print(FORMAT, start_line, start_col, criticality_str[criticality], code, message);
     }
+}
+
+void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) {
+    do_log(criticality, code, k::lex::char_coord{start.content.empty() ? nullptr : &start.content.front()}, k::lex::char_coord{end.content.empty() ? nullptr : &end.content.front()}, k::lex::char_coord{pos.content.empty() ? nullptr : &pos.content.front()}, message, args);
 }
 
 } // k

@@ -33,10 +33,6 @@
 #include <variant>
 #include <vector>
 
-namespace k::log {
-class legacy_logger;
-}
-
 namespace k::lex {
 
     class lexer : protected k::log::logger_relay {
@@ -93,10 +89,10 @@ namespace k::lex {
         /** Temporary counter, used for repeatable states like integer escaping.*/
         size_t lex_temp_count = 0;
 
-        std::string content;
+        std::string_view source;
 
-        char_coord pos {0, 0, 0};
-        char_coord begin;
+        size_t pos = 0;
+        size_t begin = 0;
 
         size_t index = 0;
 
@@ -109,6 +105,21 @@ namespace k::lex {
         float_size fsize = FLOAT;
 
     private:
+
+        inline std::string_view get_content() {
+            return std::string_view(&source[begin], pos-begin);
+        }
+        inline std::string_view get_content(size_t size) {
+            return std::string_view(&source[begin], size);
+        }
+        inline std::string_view get_content(size_t start, size_t size) {
+            return std::string_view(&source[start], size);
+        }
+
+        inline size_t get_current_size() const {
+            return pos-begin;
+        }
+
         /// List of all chars used in operators or punctuators
         static std::set<char> operator_punctuator_chars;
         /// Test if a char can be part of an operator or a punctuator
@@ -127,14 +138,17 @@ namespace k::lex {
         /// Enable faster chained operator-punctuator parsing
         static std::map<std::string, punct_or_op_type_t, lexer::less_order_op_punct_for_lookup> puncts_or_ops;
 
-        void push_integer_and_reset();
-        void push_float_and_reset();
+        void push_integer_and_reset(bool include_last_char = true);
+        void push_float_and_reset(bool include_last_char = true);
 
         static void init();
 
+        void warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, size_t pos);
+        void error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, size_t pos);
+        void error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, size_t start, size_t end);
+
     public:
         lexer(k::log::logger& logger);
-//        lexer(k::log::legacy_logger& logger);
 
         void parse(std::string_view src);
 
@@ -147,8 +161,6 @@ namespace k::lex {
         void seek(size_t pos);
 
         opt_ref_any_lexeme pick();
-
-        char_coord end_coord() const;
 
         bool eof() const;
 
@@ -167,15 +179,9 @@ namespace k::lex {
 
     class lexeme_logger : public log::logger_relay {
     protected:
-        unsigned long _error_class;
-
-      lexeme_logger(k::log::logger& logger,unsigned long error_class) : logger_relay(logger), _error_class(error_class) {}
+      lexeme_logger(k::log::logger& logger,unsigned long error_class) : logger_relay(logger, error_class){}
 
         // TODO Link it to source container to get lines and end-of-file marker.
-
-        void info(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
-        void warning(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
-        void error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
 
         void info(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
         void warning(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});

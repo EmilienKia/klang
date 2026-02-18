@@ -104,14 +104,14 @@ namespace k::model {
                 scope->visibility = model::PRIVATE;
                 break;
             default:
-                throw_error(0x0002, visibility.scope, "Unrecognized visibility context keyword {}", {visibility.scope.content});
+                throw_error(0x0002, visibility.scope, "Unrecognized visibility context keyword {}", {std::string{visibility.scope.content}});
                 break;
         }
     }
 
     void model_builder::visit_namespace_decl(parse::ast::namespace_decl &ns) {
         auto parent_ns = current_context_content<model::ns>();
-        std::shared_ptr<k::model::ns> namesp = parent_ns->get_child_namespace(ns.name->content);
+        std::shared_ptr<k::model::ns> namesp = parent_ns->get_child_namespace(std::string{ns.name->content});
 
         // Push namespace context
         stack<ns_context> push(_contexts, namesp);
@@ -125,7 +125,7 @@ namespace k::model {
             throw_error(0x0009, st.st, "Current context doesnt support structure declaration");
         }
 
-        std::shared_ptr<model::structure> struc = parent_scope->define_structure(st.name.content);
+        std::shared_ptr<model::structure> struc = parent_scope->define_structure(std::string{st.name.content});
 
 
         // Push function context
@@ -142,7 +142,7 @@ namespace k::model {
         }
 
         bool is_static = lex::keyword::has(decl.specifiers, lex::keyword::STATIC);
-        std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(decl.name.content, is_static);
+        std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(std::string{decl.name.content}, is_static);
         var->set_type(_context->from_type_specifier(*decl.type));
 
         if(decl.init) {
@@ -160,7 +160,7 @@ namespace k::model {
 
         bool is_static = lex::keyword::has(func.specifiers, lex::keyword::STATIC);
 
-        std::shared_ptr<model::function> function = parent_scope->define_function(func.name.content, is_static
+        std::shared_ptr<model::function> function = parent_scope->define_function(std::string{func.name.content}, is_static
 
         );
 
@@ -174,7 +174,7 @@ namespace k::model {
         }
 
         for(auto param : func.params) {
-            std::shared_ptr<model::parameter> parameter = function->append_parameter(param->name->content, _context->from_type_specifier(*(param->type)));
+            std::shared_ptr<model::parameter> parameter = function->append_parameter(std::string{param->name->content}, _context->from_type_specifier(*(param->type)));
             // TODO add param specs
         }
 
@@ -529,7 +529,7 @@ namespace k::model {
                 _expr = model::greater_equal_expression::make_shared(lexpr, rexpr);
                 break;
             default: // TODO other operations
-                throw_error(0x0007, expr.op, "Binary operator '{}' not supported", {expr.op.content});
+                throw_error(0x0007, expr.op, "Binary operator '{}' not supported", {std::string{expr.op.content}});
                 break;
         }
     }
@@ -566,7 +566,7 @@ namespace k::model {
                 unary = model::dereference_expression::make_shared(sub);
                 break;
             default:
-                throw_error(0x0008, expr.op, "Unary operator '{}' not supported", {expr.op.content});
+                throw_error(0x0008, expr.op, "Unary operator '{}' not supported", {std::string{expr.op.content}});
                 break;
         }
         unary->set_ast_unary_expr(expr.shared_as<parse::ast::unary_prefix_expr>());
@@ -636,7 +636,7 @@ namespace k::model {
         bool has_prefix = expr.qident.initial_doublecolon.has_value();
         std::vector<std::string> idents;
         for(auto ident : expr.qident.names){
-            idents.push_back(ident.content);
+            idents.emplace_back(ident.content);
         }
         _expr = model::symbol_expression::from_identifier(name(has_prefix, std::move(idents)));
     }

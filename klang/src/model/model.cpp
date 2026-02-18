@@ -31,7 +31,7 @@ namespace k::model {
 static name to_name(const parse::ast::qualified_identifier &ident) {
     std::vector<std::string> idents;
     for (const auto &id: ident.names) {
-        idents.push_back(id.content);
+        idents.emplace_back(id.content);
     }
     return {ident.has_root_prefix(), idents};
 }

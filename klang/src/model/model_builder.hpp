@@ -167,7 +167,7 @@ protected:
     void visit_comma_expr(parse::ast::expr_list_expr &) override;
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        error(code, lexeme, message, args);
+        logger_relay::error(code, message, args, lexeme);
         throw parse::parsing_error(message);
     }
 

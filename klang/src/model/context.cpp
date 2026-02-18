@@ -127,7 +127,7 @@ std::shared_ptr<type> context::from_string(const std::string& type_name) {
 }
 
 std::shared_ptr<type> context::from_keyword(const lex::keyword& kw, bool is_unsigned) {
-    return from_string(is_unsigned ? ("unsigned " + kw.content) : kw.content);
+    return from_string(is_unsigned ? (std::string("unsigned ") + std::string(kw.content)) : std::string(kw.content));
     // TODO find other types by name.
 }
 
@@ -227,7 +227,7 @@ llvm::Constant* context::get_llvm_constant_from_literal(const k::lex::any_litera
     } else {
         // TODO handle other literal types
         return nullptr;
-    }
+    }/**/
 }
 
 llvm::Constant* context::get_llvm_constant_from_value(const k::value_type &value) {

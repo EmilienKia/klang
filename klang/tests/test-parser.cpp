@@ -33,7 +33,7 @@ using namespace k::log;
 
 class test_logger : public logger {
     void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::char_coord& start, const k::lex::char_coord& end, const k::lex::char_coord& pos, const std::string_view& message, const std::vector<std::string>& args) override {
-        static constexpr auto FORMAT = "({},{}) - {:0>5X} : {}\n";
+        static constexpr auto FORMAT = "{:0>5X} : {}\n";
 
         std::string str;
         if(args.size()>0) {
@@ -42,9 +42,9 @@ class test_logger : public logger {
                 store.push_back(arg);
             }
             std::string msg = fmt::vformat(message, store);
-            str = fmt::format(FORMAT, start.line, start.col, code,  msg);
+            str = fmt::format(FORMAT, code,  msg);
         } else {
-            str = fmt::format(FORMAT, start.line, start.col, code, message);
+            str = fmt::format(FORMAT, code, message);
         }
 
         switch (criticality) {
@@ -63,6 +63,9 @@ class test_logger : public logger {
         }
     }
 
+    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) override {
+        do_log(criticality, code, k::lex::char_coord{}, k::lex::char_coord{}, k::lex::char_coord{}, message, args);
+    }
 };
 
 

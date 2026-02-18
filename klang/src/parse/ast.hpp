@@ -88,13 +88,13 @@ namespace k::parse {
             }
 
             const std::string operator[](size_t index)const {
-                return names[index].content;
+                return std::string{names[index].content};
             }
 
             k::name to_name() const {
                 std::vector<std::string> idents;
                 for(const auto& id : names) {
-                    idents.push_back(id.content);
+                    idents.emplace_back(id.content);
                 }
                 return {has_root_prefix(), idents};
             }

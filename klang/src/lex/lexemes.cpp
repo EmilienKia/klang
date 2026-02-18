@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,7 +57,7 @@ k::value_type character::value()const {
 //
 k::value_type string::value()const {
     // TODO Decode unicode escape
-    return {content.substr(1, content.size()-2)};
+    return {std::string(content.substr(1, content.size()-2))};
 }
 
 //
