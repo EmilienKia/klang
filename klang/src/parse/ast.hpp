@@ -585,13 +585,14 @@ namespace k::parse {
             lex::identifier name;
             std::shared_ptr<ast::type_specifier> type;
             expr_ptr init;
+            bool is_constructor = false;
 
             variable_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
-                          const std::shared_ptr<ast::type_specifier> &type, expr_ptr init = nullptr) :
-                    specifiers(specifiers), name(name), type(type), init(init) {}
+                          const std::shared_ptr<ast::type_specifier> &type, expr_ptr init = nullptr, bool is_constructor = false) :
+                    specifiers(specifiers), name(name), type(type), init(init), is_constructor(is_constructor) {}
 
-            variable_decl(std::vector <lex::keyword> &&specifiers, lex::identifier &&name, std::shared_ptr<ast::type_specifier> &&type, expr_ptr init) :
-                    specifiers(specifiers), name(name), type(type), init(init) {}
+            variable_decl(std::vector <lex::keyword> &&specifiers, lex::identifier &&name, std::shared_ptr<ast::type_specifier> &&type, expr_ptr init, bool is_constructor) :
+                    specifiers(specifiers), name(name), type(type), init(init), is_constructor(is_constructor) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

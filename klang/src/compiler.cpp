@@ -591,4 +591,10 @@ void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int c
     }
 }
 
+void compiler::print_logs() {
+    // In the new architecture, logs are printed in real-time by do_log().
+    // Nothing to do here.
+}
+
+
 } // k

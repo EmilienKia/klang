@@ -440,40 +440,14 @@ void symbol_resolver::visit_variable_statement(variable_statement& var)
 {
     visit_named_element(var);
 
-    if(auto expr = var.get_init_expr()) {
+    if (auto expr = var.get_init_expr()) {
         expr->accept(*this);
     }
 }
 
 void type_reference_resolver::visit_variable_statement(variable_statement& var)
 {
-    if (auto var_type = var.get_type(); !type::is_resolved(var_type)) {
-        std::shared_ptr<unresolved_type> unres_type = std::dynamic_pointer_cast<unresolved_type>(var_type);
-        if (!unres_type) {
-            // TODO            throw_error(0x0005, ...);
-        }
-        // Variable type is not resolved, try to resolve it
-        std::shared_ptr<type> res_type = _context->from_string(unres_type->type_id());
-        if(!type::is_resolved(var_type)) {
-            // TODO Err : type not resolvable, unknown type, throw_error(0x0006, ...);
-        }
-
-        var.set_type(res_type);
-    }
-
-    if(auto expr = var.get_init_expr()) {
-        expr->accept(*this);
-
-        auto cast = adapt_type(expr, var.get_type());
-        if(!cast) {
-            // TODO            throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
-        } else if(cast != expr) {
-            // Casted, assign casted expression as return expr.
-            var.set_init_expr(cast);
-        } else {
-            // Compatible type, no need to cast.
-        }
-    }
+    visit_variable_definition(var);
 }
 
 void declaration_generator::visit_variable_statement(variable_statement& stmt) {
@@ -492,43 +466,15 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     _context->_variables.insert({var.shared_as<variable_statement>(), alloca});
 
     // But initialize at the decl place
-    if(auto init = var.get_init_expr()) {
+    auto init = var.get_init_expr();
+    if (init != nullptr) {
         _value = nullptr;
         init->accept(*this);
-        if (_value!=nullptr) {
-            _builder->CreateStore(_value, alloca);
-            _value = nullptr;
-        } else {
-            // TODO handle error (nullptr) in init expr generation
-        }
     } else {
-        // No explicit initialization, use default
-        if(auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
-            auto def_value_init = st_type->generate_default_value_initializer();
-            if (def_value_init) {
-                _builder->CreateStore(var_type->generate_default_value_initializer(), alloca);
-            } else {
-                // TODO Failed to generate initialization
-            }
-            // NOTE : How to handle complex initialization ?
-        } else if (type::is_primitive(var_type)) {
-            // For primitives, use default value initializer
-            llvm::Value *value = var.get_type()->generate_default_value_initializer();
-            if (value) {
-                _builder->CreateStore(var_type->generate_default_value_initializer(), alloca);
-            } else {
-                // TODO Failed to generate initialization
-            }
-        } else {
-            // TODO Correctly initialize other types (including ref/prt/arrays...)
-            llvm::Value *value = var.get_type()->generate_default_value_initializer();
-            if (value) {
-                _builder->CreateStore(var_type->generate_default_value_initializer(), alloca);
-            } else {
-                // TODO Failed to generate initialization
-            }
-        }
+        // TODO throw exception
+        std::cerr << "Variable declaration without initialization is not supported for now : " << var.get_fq_name() << std::endl;
     }
+
 }
 
 

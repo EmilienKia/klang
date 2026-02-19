@@ -259,6 +259,15 @@ llvm::Constant* context::get_llvm_constant_from_value(const k::value_type &value
     }
 }
 
+llvm::Constant* context::get_llvm_constant_from_value_expression(const value_expression& value) {
+    if (value.is_literal()) {
+        return get_llvm_constant_from_literal(value.any_literal());
+    } else {
+        return get_llvm_constant_from_value(value.get_value());
+    }
+}
+
+
 std::shared_ptr<unresolved_type> context::create_unresolved(const name& type_id) {
     std::shared_ptr<unresolved_type> res{new unresolved_type(type_id)};
     _unresolved.push_back(res);
@@ -281,7 +290,6 @@ void context::resolve_types() {
             auto st = st_type->get_struct();
             std::vector<struct_type::field> fields;
             std::vector<llvm::Type*> types;
-            std::vector<llvm::Constant*> inits;
             for(auto [var_name,var] : st->variables()) {
                 auto type = var->get_type();
                 if (!type->is_resolved()) {
@@ -294,21 +302,12 @@ void context::resolve_types() {
                     var->set_type(res_type);
                     type = res_type;
                 }
-                if (auto value_init = std::dynamic_pointer_cast<value_expression>(var->get_init_expr())) {
-                    llvm::Constant* init_value = value_init->is_literal() ? get_llvm_constant_from_literal(value_init->any_literal()) : nullptr;
-                    if (init_value == nullptr) {
-                        // Cant generate constant initializer, use 0-based initializer instead
-                        init_value = type->generate_default_value_initializer();
-                    }
-                    inits.push_back(init_value);
-                } else {
-                    inits.push_back(type->generate_default_value_initializer());
-                }
                 fields.emplace_back(fields.size(), var_name, type);
                 types.push_back(get_llvm_type(type));
             }
             auto llvm_type = llvm::StructType::create(llvm_context(), llvm::ArrayRef<llvm::Type*>(types), st_name);
-            auto default_const_value = llvm::ConstantStruct::get(llvm::cast<llvm::StructType>(llvm_type), llvm::ArrayRef<llvm::Constant*>(inits));
+            // Structure are zero-initialized by default, so we can use a zero aggregate constant as default value.
+            auto default_const_value = llvm::ConstantAggregateZero::get(llvm_type);
             st_type->set_llvm_type(std::move(fields), llvm_type, default_const_value);
         }
     }

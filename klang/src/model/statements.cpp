@@ -195,7 +195,7 @@ void variable_statement::accept(model_visitor &visitor) {
     visitor.visit_variable_statement(*this);
 }
 
-variable_definition& variable_statement::set_init_expr(std::shared_ptr<expression> init_expr) {
+variable_definition& variable_statement::set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr) {
     variable_definition::set_init_expr(init_expr);
     set_this_as_parent_to(init_expr);
     return *this;
@@ -240,7 +240,12 @@ std::shared_ptr<const function> block::get_function() const {
 void block::append_statement(std::shared_ptr<statement> stmt) {
     _statements.push_back(stmt);
     set_this_as_parent_to(stmt);
-    // TODO add specific process for variables
+}
+
+block::iterator block::insert_statement(block::const_iterator pos, std::shared_ptr<statement> stmt) {
+    auto it = _statements.insert(pos, stmt);
+    set_this_as_parent_to(stmt);
+    return it;
 }
 
 std::shared_ptr<variable_definition> block::do_create_variable(const std::string &name, bool is_static) {

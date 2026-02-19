@@ -486,5 +486,47 @@ std::shared_ptr<function_invocation_expression> function_invocation_expression::
     return func;
 }
 
+//
+// Constructor invocation
+//
+
+void constructor_invocation_expression::accept(model_visitor &visitor) {
+    visitor.visit_constructor_invocation_expression(*this);
+}
+
+void constructor_invocation_expression::assign(const std::shared_ptr<symbol_expression> &constructed_symbol, const std::vector<std::shared_ptr<expression>> &args) {
+    _constructed_symbol = constructed_symbol;
+    _arguments = args;
+    _constructed_symbol->set_parent_expression(shared_as<expression>());
+    for (auto &arg: _arguments) {
+        arg->set_parent_expression(shared_as<expression>());
+    }
+}
+
+void constructor_invocation_expression::assign_argument(size_t index, const std::shared_ptr<expression> &arg) {
+    if (index >= _arguments.size()) {
+        // Cannot assign aan argument out of existing arguments bound.
+    } else {
+        _arguments[index] = arg;
+        arg->set_parent_expression(shared_as<expression>());
+    }
+}
+
+std::shared_ptr<constructor_invocation_expression> constructor_invocation_expression::make_shared(const std::shared_ptr<symbol_expression> &constructed_symbol, const std::vector<std::shared_ptr<expression>> &args) {
+    std::shared_ptr<constructor_invocation_expression> expr{new constructor_invocation_expression()};
+    expr->assign(constructed_symbol, args);
+    return std::shared_ptr<constructor_invocation_expression>{expr};
+}
+
+std::shared_ptr<constructor_invocation_expression> constructor_invocation_expression::make_shared(const std::shared_ptr<variable_definition> &variable, const std::vector<std::shared_ptr<expression>> &args) {
+    auto expr = make_shared(symbol_expression::from_variable(variable), args);
+    if (variable->get_type()) {
+        expr->set_type(variable->get_type());
+    }
+    return expr;
+}
+
+
+
 
 } // namespace k::model

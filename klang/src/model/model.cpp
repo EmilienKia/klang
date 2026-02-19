@@ -184,23 +184,20 @@ std::shared_ptr<type> variable_definition::get_type() const {
     return _type;
 }
 
-std::shared_ptr<expression> variable_definition::get_init_expr() const {
-    return _expression;
+std::shared_ptr<constructor_invocation_expression> variable_definition::get_init_expr() const {
+    return _init_expr;
 }
+
 
 variable_definition& variable_definition::set_type(std::shared_ptr<type> type) {
     _type = type;
     return *this;
 }
 
-variable_definition& variable_definition::set_init_expr(std::shared_ptr<expression> init_expr) {
-    _expression = init_expr;
-    if (auto elem = dynamic_cast<element*>(this)) {
-        init_expr->set_parent(elem->shared_as<element>());
-    }
+variable_definition& variable_definition::set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr) {
+    _init_expr = init_expr;
     return *this;
 }
-
 
 
 //
@@ -385,6 +382,24 @@ std::shared_ptr<const parameter> function::get_parameter(const std::string &name
 }
 
 //
+// Constructor
+//
+
+void constructor::accept(model_visitor& visitor) {
+    visitor.visit_constructor(*this);
+}
+
+void constructor::update_mangled_name() {
+    _mangled_name = mangler(get_context()).mangle_constructor(*this);
+}
+
+std::shared_ptr<constructor> constructor::make_shared(std::shared_ptr<structure> parent) {
+    auto fn = std::shared_ptr<constructor>(new constructor(parent));
+    fn->assign_name(parent->get_short_name());
+    return fn;
+}
+
+//
 // Global tool function
 //
 
@@ -523,6 +538,19 @@ void structure::update_mangled_name() {
 
 void structure::accept(model_visitor& visitor) {
     visitor.visit_structure(*this);
+}
+
+std::shared_ptr<function> structure::define_function(const std::string &name, bool is_static) {
+    if (name == get_short_name()) {
+        auto construct = constructor::make_shared(shared_as<structure>());
+        if (construct) {
+            _constructors.push_back(construct);
+            _children.push_back(construct);
+        }
+        return construct;
+    } else {
+        return function_holder::define_function(name, is_static);
+    }
 }
 
 std::shared_ptr<function> structure::do_create_function(const std::string &name, bool is_static) {

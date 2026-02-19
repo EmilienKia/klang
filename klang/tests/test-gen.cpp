@@ -31,8 +31,14 @@
 
 std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = false) {
     auto comp = k::compiler::create();
-    comp->parse_source("", src, true, dump);
-    return comp->to_jit();
+    try {
+        comp->parse_source("", src, true, dump);
+        return comp->to_jit();
+    } catch (std::exception& ex) {
+        std::cerr << "Error during compilation: " << ex.what() << std::endl;
+        comp->print_logs();
+        throw ex;
+    }
 }
 
 
@@ -2634,7 +2640,7 @@ TEST_CASE("Struct fields default 0-initialization", "[gen][struct]") {
             return p.sum();
         }
 
-        )SRC");
+        )SRC", true);
     REQUIRE(jit);
 
     auto test_local = jit->lookup_symbol < int(*)() > ("test_local");
@@ -2665,7 +2671,7 @@ TEST_CASE("Struct fields trivial constant default initialization", "[gen][struct
             return g.sum();
         }
 
-        )SRC");
+        )SRC", true);
     REQUIRE(jit);
 
     auto test_local = jit->lookup_symbol < int(*)() > ("test_local");
@@ -2678,7 +2684,6 @@ TEST_CASE("Struct fields trivial constant default initialization", "[gen][struct
 }
 
 TEST_CASE("Relative name lookup", "[gen][name_lookup]") {
-
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
         module the::test;
@@ -2747,7 +2752,6 @@ TEST_CASE("Relative name lookup", "[gen][name_lookup]") {
 }
 
 TEST_CASE("Relative mangled name lookup", "[gen][name_lookup]") {
-
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
         module the::test;
@@ -2790,7 +2794,6 @@ TEST_CASE("Relative mangled name lookup", "[gen][name_lookup]") {
 }
 
 TEST_CASE("Relative to root namespace name lookup", "[gen][name_lookup]") {
-
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
         module the::test;
@@ -2859,7 +2862,6 @@ TEST_CASE("Relative to root namespace name lookup", "[gen][name_lookup]") {
 }
 
 TEST_CASE("Relative to root namespace mangled name lookup", "[gen][name_lookup]") {
-
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
         module the::test;
@@ -2902,7 +2904,6 @@ TEST_CASE("Relative to root namespace mangled name lookup", "[gen][name_lookup]"
 }
 
 TEST_CASE("Absolute name lookup", "[gen][name_lookup]") {
-
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
         module the::test;
@@ -2970,7 +2971,6 @@ TEST_CASE("Absolute name lookup", "[gen][name_lookup]") {
 }
 
 TEST_CASE("Absolute mangled name lookup", "[gen][name_lookup]") {
-
     auto comp = k::compiler::create();
     comp->parse_source("", R"SRC(
         module the::test;
@@ -3092,7 +3092,7 @@ TEST_CASE("Static struct member", "[gen][var]") {
     auto jit = gen_jit(R"SRC(
         module __static__;
 
-        static g : int = 7;
+        g : int = 7;
 
         struct titi {
             a : int = 5;
@@ -3227,3 +3227,33 @@ TEST_CASE("Aggregated structs", "[gen][structs]") {
     auto res_test = test();
     REQUIRE( res_test == (7 + 5) );
 }
+
+TEST_CASE("Struct constructor", "[gen][structs]") {
+    auto jit = gen_jit(R"SRC(
+        module __structs__;
+
+        struct plop {
+            a : int = 3;
+
+            plop(c : int) {
+                a = c + 1;
+            }
+
+            add(c : int) : int {
+                return a + c;
+            }
+        }
+
+        test() : int {
+            p : plop(5);
+            return p.add(7);
+        }
+
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol < int(*)() > ("test");
+    auto res_test = test();
+    REQUIRE( res_test == (5 + 1 + 7) );
+}
+

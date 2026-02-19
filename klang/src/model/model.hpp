@@ -38,6 +38,7 @@
 
 
 namespace k::model {
+class constructor_invocation_expression;
 class global_variable_definition;
 
 class context;
@@ -49,6 +50,7 @@ class block;
 
 class parameter;
 class function;
+class constructor;
 class structure;
 class ns;
 class unit;
@@ -224,8 +226,16 @@ protected:
     /** Type of the variable */
     std::shared_ptr<type> _type;
 
-    /** Optional initialization statement. */
-    std::shared_ptr<expression> _expression;
+    /** Optional initialization statement */
+    std::shared_ptr<constructor_invocation_expression> _init_expr;
+
+    // Not sure useful here :
+    // Real constructor is already stored in the init expression, but we need to store it here for the case of a variable definition without initialization (like "var x: MyStruct;")
+    // If no init expr, only default constructor should be stored here.
+    std::shared_ptr<constructor> _var_constructor;
+
+    friend class k::model::gen::type_reference_resolver;
+    void set_var_constructor(const std::shared_ptr<constructor>& var_constructor) { _var_constructor = var_constructor; }
 
     variable_definition() = default;
     variable_definition(const variable_definition&) = default;
@@ -235,9 +245,10 @@ public:
     virtual void init(const std::string &name, const std::shared_ptr<type> &type = nullptr);
 
     virtual std::shared_ptr<type> get_type() const;
-    virtual std::shared_ptr<expression> get_init_expr() const;
     virtual variable_definition& set_type(std::shared_ptr<type> type);
-    virtual variable_definition& set_init_expr(std::shared_ptr<expression> init_expr);
+
+    virtual std::shared_ptr<constructor_invocation_expression> get_init_expr() const;
+    virtual variable_definition& set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr);
 };
 
 
@@ -334,6 +345,8 @@ protected:
     /** Collection of all children of this namespace. */
     std::vector<std::shared_ptr<element>> _children;
 
+    std::vector<std::shared_ptr<constructor>> _constructors;
+
     std::shared_ptr<struct_type> _type;
 
     structure(std::shared_ptr<element> parent) :
@@ -365,6 +378,8 @@ public:
     // Children functions
     //
 
+    std::shared_ptr<function> define_function(const std::string& name, bool is_static) override;
+
     const std::vector<std::shared_ptr<element>>& get_children() const {
         return _children;
     }
@@ -372,6 +387,8 @@ public:
     std::shared_ptr<function> lookup_function(const std::string& name) const override;
 
     std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const override;
+
+    const std::vector<std::shared_ptr<constructor>>& constructors() const { return _constructors; }
 };
 
 class parameter : public element, public variable_definition {
@@ -466,6 +483,24 @@ public:
     bool is_member() const;
     std::shared_ptr<const structure> get_owner() const;
     std::shared_ptr<structure> get_owner();
+};
+
+
+class constructor : public function {
+protected:
+    friend class structure;
+    friend class gen::symbol_resolver;
+
+    constructor(std::shared_ptr<structure> parent) :
+        function(parent) {}
+
+    void update_mangled_name() override;
+
+    static std::shared_ptr<constructor> make_shared(std::shared_ptr<structure> parent);
+
+public:
+    void accept(model_visitor& visitor) override;
+
 };
 
 

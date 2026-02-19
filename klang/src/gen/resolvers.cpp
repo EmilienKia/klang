@@ -219,6 +219,120 @@ void type_reference_resolver::resolve()
     visit_unit(_unit);
 }
 
+void type_reference_resolver::visit_variable_definition(variable_definition& var)
+{
+    if(!type::is_resolved(var.get_type())) {
+        auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
+        if(!unres_type) {
+            // TODO throw an exception
+            std::cerr << "Error: global variable definition has an unresolvable type." << std::endl;
+        }
+        auto type = _context->from_string(unres_type->type_id());
+        if(!type || !type::is_resolved(type)) {
+            // TODO throw an exception
+            std::cerr << "Error: global variable definition has an unresolvable type." << std::endl;
+        } else {
+            var.set_type(type);
+        }
+    }
+
+    // Resolve init expressions if any
+    auto init_expr = var.get_init_expr();
+    if (init_expr) {
+        init_expr->accept(*this);
+    }
+
+    auto var_type = var.get_type();
+
+    if (type::is_primitive(var_type)) {
+        // Primitive type supports only one init expression, always try to cast it, if any.
+        if (!init_expr || init_expr->empty()) {
+            // If no explicit initialization, let's have 0-filled initialization:
+        } else if (init_expr->size() > 1) {
+            // TODO throw an exception
+            std::cerr << "Error: global variable of primitive type can only have one initialization expression" << std::endl;
+        } else if (auto expr = init_expr->argument(0)) {
+
+            // Align init expr type to variable type
+            auto cast = adapt_type(expr, var_type);
+            if(!cast) {
+                // TODO throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
+            } else if(cast != expr) {
+                // Casted, assign casted expression as return expr.
+                init_expr->assign_argument(0, cast);
+            } else {
+                // Compatible type, no need to cast.
+            }
+
+        } else {
+            // TODO throw an exception
+            std::cerr << "Error: global variable of primitive type has empty initialization expression" << std::endl;
+        }
+
+    } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var.get_type())) {
+        // Structure, try to find the right constructor
+        auto [best_constructor, adapted_args] = get_best_matching_constructor(st_type->get_struct()->constructors(), init_expr ? init_expr->arguments() : std::vector<std::shared_ptr<expression>>{});
+        if (!best_constructor) {
+            // TODO throw an exception
+            std::cerr << "Error: no matching constructor found for global variable initialization" << std::endl;
+        }
+        var.set_var_constructor(best_constructor);
+        if (init_expr) {
+            init_expr->set_constructor(best_constructor);
+            init_expr->arguments(adapted_args);
+        }
+
+    } else {
+        // Unsupported construction for other types for now
+        // TODO Support construction for other types (ref, array, etc.)
+    }
+}
+
+std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::shared_ptr<expression>>/*adapted_args*/>
+type_reference_resolver::get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args) {
+    std::shared_ptr<constructor> best_constructor;
+    std::vector<std::shared_ptr<expression>> adapted_args;
+    int best_cost = std::numeric_limits<int>::max();
+
+    for (auto& constructor : constructors) {
+        if (constructor->parameters().size() == args.size()) {
+            bool all_args_compatible = true;
+            int cost = 0;
+            std::vector<std::shared_ptr<expression>> current_adapted_args;
+            for (size_t i = 0; i < args.size(); ++i) {
+                auto param_type = constructor->parameters()[i]->get_type();
+                auto arg_expr = args[i];
+                auto adapted_arg = adapt_type(arg_expr, param_type);
+                if (!adapted_arg) {
+                    // Not compatible, don't need to look up further
+                    all_args_compatible = false;
+                    break;
+                }
+                if (adapted_arg!=arg_expr) {
+                    cost++;
+                    if (cost>=best_cost) {
+                        // Cost is higher than best cost, don't need to look up further
+                        break;
+                    }
+                }
+                current_adapted_args.push_back(adapted_arg);
+            }
+            if (all_args_compatible && cost < best_cost) {
+                if (cost==0) {
+                    // Perfect match, no need to continue checking other constructors
+                    return {std::move(constructor), std::move(current_adapted_args)};
+                }
+                best_constructor = constructor;
+                adapted_args = std::move(current_adapted_args);
+                best_cost = cost;
+            }
+        }
+    }
+
+    return {std::move(best_constructor), std::move(adapted_args)};
+}
+
+
 std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(const std::shared_ptr<expression>& expr) {
     auto type = expr->get_type();
 

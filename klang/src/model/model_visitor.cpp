@@ -43,6 +43,10 @@ void default_model_visitor::visit_function(function &func) {
     visit_element(func);
 }
 
+void default_model_visitor::visit_constructor(constructor &ctor) {
+    visit_function(ctor);
+}
+
 void default_model_visitor::visit_global_tool_function(global_tool_function& func) {
     visit_function(func);
 }
@@ -112,6 +116,10 @@ void default_model_visitor::visit_value_expression(value_expression &expr) {
 }
 
 void default_model_visitor::visit_symbol_expression(symbol_expression &expr) {
+    visit_expression(expr);
+}
+
+void default_model_visitor::visit_constructor_invocation_expression(constructor_invocation_expression& expr) {
     visit_expression(expr);
 }
 

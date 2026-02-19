@@ -100,6 +100,8 @@ public:
     inline static bool is_struct(const std::shared_ptr<type>& type);
     inline static bool is_function_reference(const std::shared_ptr<type>& type);
 
+    inline static bool are_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2);
+
     virtual std::shared_ptr<reference_type> get_reference();
     std::shared_ptr<pointer_type> get_pointer();
     std::shared_ptr<array_type> get_array();
@@ -472,6 +474,12 @@ public:
 
 inline bool type::is_function_reference(const std::shared_ptr<type>& type) {
     return std::dynamic_pointer_cast<function_reference_type>(type) != nullptr;
+}
+
+inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2) {
+    // NOTE : this is a very basic implementation, it only checks if the two types are the same instance.
+    // TODO Improve to check for structural equality of types.
+    return type1 == type2;
 }
 
 

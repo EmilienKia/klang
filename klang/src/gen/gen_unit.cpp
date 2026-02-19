@@ -174,11 +174,27 @@ void symbol_resolver::visit_structure(structure& st) {
             func->accept(*this);
         }
     }
+
+    // Add default constructor if no constructor is defined
+    if (st.constructors().empty()) {
+        auto default_constructor = constructor::make_shared(st.shared_as<structure>());
+        st._constructors.push_back(default_constructor);
+        default_constructor->accept(*this);
+    }
+    // Then visit constructors
+    for(auto& constructor : st.constructors()) {
+        constructor->accept(*this);
+    }
+
 }
 
 void type_reference_resolver::visit_structure(structure& st) {
     for(auto& child : st.get_children()) {
         child->accept(*this);
+    }
+    // Then visit constructors
+    for(auto& constructor : st.constructors()) {
+        constructor->accept(*this);
     }
 }
 
@@ -203,6 +219,11 @@ void declaration_generator::visit_structure(structure& st) {
         }
     }
 
+    // Add constructors
+    for(auto& constructor : st.constructors()) {
+        constructor->accept(*this);
+    }
+
     _struct_stack.pop();
 }
 
@@ -225,6 +246,11 @@ void implementation_generator::visit_structure(structure& st) {
         if (auto func = std::dynamic_pointer_cast<function>(child)) {
             func->accept(*this);
         }
+    }
+
+    // Add constructors
+    for(auto& constructor : st.constructors()) {
+        constructor->accept(*this);
     }
 
     _struct_stack.pop();
@@ -265,48 +291,24 @@ void symbol_resolver::visit_global_variable_definition(global_variable_definitio
 {
     visit_named_element(var);
 
-    if(auto expr = var.get_init_expr()) {
+    if (auto expr = var.get_init_expr()) {
         expr->accept(*this);
     }
 }
 
 void type_reference_resolver::visit_global_variable_definition(global_variable_definition& var)
 {
-    if(!type::is_resolved(var.get_type())) {
-        auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
-        if(!unres_type) {
-            // TODO throw an exception
-            std::cerr << "Error: global variable definition has an unresolvable type." << std::endl;
-        }
-        auto type = _context->from_string(unres_type->type_id());
-        if(!type || !type::is_resolved(type)) {
-            // TODO throw an exception
-            std::cerr << "Error: global variable definition has an unresolvable type." << std::endl;
-        } else {
-            var.set_type(type);
-        }
+    visit_variable_definition(var);
+
+    // Unconditionnally register global variable to global constructor for now, because we need to be sure it is registered before any possible use in other variable initialization expression.
+    // TODO Add registering condition for trivial primitive initialization
+    var.ancestor<unit>()->get_global_constructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
+
+    /*
+    if (!type::is_primitive(var_type) || !init_expr || init_expr->size()!=1 || !std::dynamic_pointer_cast<value_expression>(init_expr->argument(0)) ) {
+        var.ancestor<unit>()->get_global_constructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
     }
-
-    if(auto expr = var.get_init_expr()) {
-        expr->accept(*this);
-
-        // Align init expr type to variable type
-        auto cast = adapt_type(expr, var.get_type());
-        if(!cast) {
-            // TODO            throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
-        } else if(cast != expr) {
-            // Casted, assign casted expression as return expr.
-            var.set_init_expr(cast);
-        } else {
-            // Compatible type, no need to cast.
-        }
-
-        if (!std::dynamic_pointer_cast<value_expression>(expr)) {
-            // If variable initialization is not constant
-            // TODO Support casted constant expression (and any other resolvable complex constant init expression)
-            var.ancestor<unit>()->get_global_constructor_function().add_global_variable_definition(var.shared_as<global_variable_definition>());
-        }
-    }
+*/
 }
 
 void declaration_generator::visit_global_variable_definition(global_variable_definition& var) {
@@ -324,11 +326,11 @@ void implementation_generator::visit_global_variable_definition(global_variable_
 
     // Generate initialization
     llvm::Constant* constInitValue = nullptr;
-    if(auto initExpr = var.get_init_expr()) {
-        // TODO initialize the variable with the expression
-        if (auto valueExpr = std::dynamic_pointer_cast<value_expression>(initExpr)) {
+
+    if (type::is_primitive(var.get_type()) && var.get_init_expr() && var.get_init_expr()->size() == 1) {
+        if (auto value = std::dynamic_pointer_cast<value_expression>(var.get_init_expr()->argument(0))) {
             // Constant init expression
-            if (auto constant = get_llvm_constant_from_value_expr(*valueExpr)) {
+            if (auto constant = get_llvm_constant_from_value_expr(*value)) {
                 // TODO Implement type conversion
                 constInitValue = constant;
             }
@@ -375,6 +377,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
     if(auto expr = param.get_init_expr()) {
         expr->accept(*this);
 
+        /*
         auto cast = adapt_type(expr, param.get_type());
         if(!cast) {
             // TODO throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
@@ -384,6 +387,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
         } else {
             // Compatible type, no need to cast.
         }
+    */
     }
 }
 
@@ -492,6 +496,15 @@ void implementation_generator::visit_function(function &function) {
         _builder->CreateStore(arg, alloca);
     }
 
+    if (auto ctor = function.shared_as<constructor>()) {
+        // For constructor, start by initializing all members
+        auto this_param = _context->_function_this_variables.find(function.shared_as<model::function>())->second;
+        auto st = ctor->get_owner();
+        auto type = st->get_struct_type()->get_llvm_type();
+        auto zero_init = llvm::ConstantAggregateZero::get(type);
+        _builder->CreateStore(zero_init, _builder->CreateLoad(st->get_struct_type()->get_reference()->get_llvm_type(), this_param));
+    }
+
     // Produce content
     function.get_block()->accept(*this);
 
@@ -518,6 +531,34 @@ void implementation_generator::optimize_function_dead_inst_elimination(llvm::Fun
     }
 }
 
+//
+// Constructor
+//
+void type_reference_resolver::visit_constructor(constructor& ctor) {
+    auto st = ctor.get_owner();
+    if (!st) {
+        // TODO throw exception : constructor must have an owner structure
+        std::cerr << "Constructor must have an owner structure." << std::endl;
+    }
+
+    auto blck = ctor.get_block();
+    // Note : insert initialization statements at the beginning of the constructor block, to be sure they are executed before any possible use in constructor body.
+    block::iterator insert_pos = blck->begin();
+    // TODO add initialization of members in the right order
+    for (auto var_entry : st->variables()) {
+        if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
+            auto init_expr = var->get_init_expr();
+            if (init_expr) {
+                auto stmt = std::make_shared<expression_statement>(blck);
+                stmt->set_expression(init_expr);
+                insert_pos = blck->insert_statement(insert_pos, stmt);
+            }
+        }
+    }
+
+    visit_function(ctor);
+}
+
 
 //
 // Global constructor function
@@ -525,22 +566,18 @@ void implementation_generator::optimize_function_dead_inst_elimination(llvm::Fun
 // Note: Global constructor is processed at the end of the unit (but before global destructor)
 //
 void type_reference_resolver::visit_global_constructor_function(global_constructor_function& func) {
-
     auto vars = func.get_sorted_global_variables();
     if (!vars.empty()) {
 
         auto blck = func.get_block();
         for (auto var : vars) {
-            auto stmt = std::make_shared<expression_statement>(blck);
-            auto symbol = symbol_expression::from_variable(var);
-            auto assign = simple_assignation_expression::make_shared(
-                    symbol,
-                    var->get_init_expr()
-                );
-            stmt->set_expression(assign);
-            blck->append_statement(stmt);
+            auto init_expr = var->get_init_expr();
+            if (init_expr) {
+                auto stmt = std::make_shared<expression_statement>(blck);
+                stmt->set_expression(init_expr);
+                blck->append_statement(stmt);
+            }
         }
-
         visit_function(func);
     }
 }

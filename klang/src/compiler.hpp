@@ -112,6 +112,8 @@ public:
 
     bool gen_executable(const std::string& output_file);
 
+    void print_logs();
+
 protected:
     void find_elements_from(const name& name, const std::shared_ptr<model::element>& element, std::vector<std::shared_ptr<model::element>>& res) const;
 

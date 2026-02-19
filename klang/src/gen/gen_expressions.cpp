@@ -2160,19 +2160,16 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             }
         } else {
             // Resolve global function
-            if(auto stmt = callee->find_statement()) {
-                if(auto block = stmt->get_block()) {
-                    if(auto func = block->get_function()) {
-                        if(auto nsp = func->parent<ns>()) {
-                            if(auto function = nsp->lookup_function(callee->get_name())) {
-                                // TODO support overloading
-                                // TODO enforce prototype matching
-                                // Function prototype and expression type are set at resolution
-                                callee->set_target(function);
-                            }
-                        }
-                    }
-                }
+            auto nsp = callee->ancestor<ns>();
+            if (nsp == nullptr) {
+                // If global construction, it is out of namespace, so look for global namespace
+                nsp = _unit.get_root_namespace();
+            }
+            if(auto function = nsp->lookup_function(callee->get_name())) {
+                // TODO support overloading
+                // TODO enforce prototype matching
+                // Function prototype and expression type are set at resolution
+                callee->set_target(function);
             }
         }
     }
@@ -2277,6 +2274,168 @@ void implementation_generator::visit_function_invocation_expression(function_inv
 }
 
 //
+// Constructor invocation
+//
+
+void symbol_resolver::visit_constructor_invocation_expression(constructor_invocation_expression& expr) {
+    for (auto arg : expr.arguments()) {
+        arg->accept(*this);
+    }
+}
+
+void type_reference_resolver::visit_constructor_invocation_expression(constructor_invocation_expression& expr) {
+    // Just accept arguments,
+    // the rest of resolution will be done (just after) in variable definition caller
+    for(auto& arg : expr.arguments()) {
+        arg->accept(*this);
+    }
+
+    // This expression is always returning the reference to the constructed object
+    // so type is set to the reference of the constructed symbol type.
+    auto var_def = expr.constructed_symbol()->get_variable_def();
+    if(!var_def) {
+        // Must not happen, should be already checked at resolution phase.
+        // TODO throw an exception
+        std::cerr << "Error: constructor invocation only support variable definition as constructed symbol." << std::endl;
+    }
+    expr.set_type(var_def->get_type()->get_reference());
+
+    // Check if constructor is explicitly needed
+    auto var_type = var_def->get_type();
+    if (!var_type) {
+        // Must not happen, should be already checked at resolution phase.
+        // TODO throw an exception
+        std::cerr << "Error: constructor invocation cannot find type for constructed symbol." << std::endl;
+    }
+    if (type::is_primitive(var_type)) {
+        // Do nothing, direct inline construction, no constructor method, so no need to resolve a constructor function.
+    } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
+        auto st = st_type->get_struct();
+        auto [best_constructor, adapted_args] = get_best_matching_constructor(st_type->get_struct()->constructors(), expr.arguments());
+        if (!best_constructor) {
+            // TODO throw an exception
+            std::cerr << "Error: no matching constructor found for global variable initialization" << std::endl;
+        }
+        expr.set_constructor(best_constructor);
+    }
+
+}
+
+void implementation_generator::visit_constructor_invocation_expression(constructor_invocation_expression& expr) {
+    // NOTE : The IR builder must be at the right place (in method block for local variables, in global constructor for global variables)
+    auto var_def = expr.constructed_symbol()->get_variable_def();
+    if (!var_def) {
+        // Must not happen, should be already checked at resolution phase.
+        // TODO throw an exception
+        std::cerr << "Error: constructor invocation only support variable definition as constructed symbol." << std::endl;
+    }
+
+    auto var_type = var_def->get_type();
+
+    llvm::Value* object_ref = nullptr;
+    _value = nullptr;
+    expr.constructed_symbol()->accept(*this);
+    object_ref = _value;
+    _value = nullptr;
+
+    if(!object_ref) {
+        // Must not happen, should be already checked at variable definition codegen.
+        // TODO throw an exception
+        std::cerr << "Error: constructor invocation cannot find llvm reference for constructed symbol." << std::endl;
+    }
+
+    if (auto prim_type = std::dynamic_pointer_cast<primitive_type>(var_type)) {
+        // Primitive type has a direct initialization (no constructor function), so just generate the init expression if any, and store the value in the variable address.
+        llvm::Value* value = nullptr;
+        if (!expr.empty()) {
+            auto first_arg = expr.argument(0);
+            if (auto value_expr = std::dynamic_pointer_cast<value_expression>(first_arg)) {
+                if (!std::dynamic_pointer_cast<global_variable_definition>(value_expr)) {
+                    // Primitive constant, just store it
+                    llvm::Constant* constant = _context->get_llvm_constant_from_value_expression(*value_expr);
+                    if (constant == nullptr) {
+                        // TODO throw an exception
+                        std::cerr << "Error: cannot generate llvm constant from value expression for constructor invocation." << std::endl;
+                    } else {
+                        value = constant;
+                    }
+                }
+            }
+            if (value == nullptr) {
+                // No constant value, generate the expression as usual and store the result.
+                _value = nullptr;
+                first_arg->accept(*this);
+                if (!_value) {
+                    // TODO throw an exception
+                    std::cerr << "Error: cannot generate value for constructor argument." << std::endl;
+                } else {
+                    value = _value;
+                }
+            }
+        }
+        if (value != nullptr) {
+            _builder->CreateStore(value, object_ref);
+        }
+    } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
+        // For struct type, constructor function is generated, so just call it and store the result
+        auto st = st_type->get_struct();
+
+        // Generate arguments and add the to the args list
+        std::vector<llvm::Value*> args;
+
+        // First, add the address of the struct to construct as first argument (this)
+        args.push_back(object_ref);
+
+        // Then add constructor arguments if any
+        for(auto arg : expr.arguments()) {
+            _value = nullptr;
+            arg->accept(*this);
+            if(!_value) {
+                // Problem with argument generation
+                // TODO throw exception
+                std::cerr << "Problem with generation of an argument of a function call." << std::endl;
+            }
+            args.push_back(_value);
+        }
+
+        // Find the function definition
+        auto function = expr.get_constructor();
+        auto it = _context->_functions.find(function);
+        if(it==_context->_functions.end()) {
+            // Error: function definition is not found.
+            // TODO throw exception
+            std::cerr << "Error: constructor function definition is not found." << std::endl;
+        }
+        llvm::Function* llvm_func = it->second;
+        if(!llvm_func) {
+            // Error: function definition is not found.
+            // TODO throw exception
+            std::cerr << "Error: llvm function definition is not found." << std::endl;
+        }
+        _value = _builder->CreateCall(llvm_func, args);
+
+    } else {
+        // TODO This is probably a non-primitive primary type, so direct construction will be done
+
+        /*
+        if(auto init = var_def->get_init_expr()) {
+            _value = nullptr;
+            init->accept(*this);
+            if (_value!=nullptr) {
+                _builder->CreateStore(_value, alloca);
+                _value = nullptr;
+            } else {
+                // TODO handle error (nullptr) in init expr generation
+            }
+            */
+    }
+
+    // The result of a constructor invocation is the reference to the constructed object
+    _value = object_ref;
+}
+
+
+//
 // Cast expression
 //
 
@@ -2312,7 +2471,6 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
 
     expr.set_type(expr.get_cast_type());
 }
-
 
 void implementation_generator::visit_cast_expression(cast_expression& expr) {
     auto source_type = expr.sub_expr()->get_type();
@@ -2427,8 +2585,5 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         // Support other types
     }
 }
-
-
-
 
 } // namespace k::model::gen

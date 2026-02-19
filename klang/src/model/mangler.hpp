@@ -81,6 +81,7 @@ namespace k::model {
 class type;
 class context;
 class function;
+class constructor;
 
 class mangler {
 protected:
@@ -96,11 +97,13 @@ public:
     std::string mangle_type(const type& ty) const;
 
     std::string mangle_function(const function& func) const;
+    std::string mangle_constructor(const constructor& ctor) const;
 
 
     static std::string mangle_short_name(const std::string& short_name);
 
     static std::string mangle_fq_name(const name& name, bool with_k_prefix = false);
+    static std::string mangle_fq_name_with_raw_last_part(const name& name, const std::string& last_part, bool with_k_prefix = false);
 
     static std::string mangle_namespace(const name& ns_name);
     static std::string mangle_global_variable(const name& ns_name);

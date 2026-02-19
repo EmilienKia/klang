@@ -42,6 +42,7 @@ class compiler;
 }
 
 namespace k::model {
+class value_expression;
 class variable_statement;
 class parameter;
 class function;
@@ -97,6 +98,7 @@ public:
 
     llvm::Constant* get_llvm_constant_from_literal(const k::lex::any_literal &literal);
     llvm::Constant* get_llvm_constant_from_value(const k::value_type &value);
+    llvm::Constant* get_llvm_constant_from_value_expression(const value_expression& value);
 
     void resolve_types();
 

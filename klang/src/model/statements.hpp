@@ -340,7 +340,7 @@ public:
         return (bool)_func_param;
     }
 
-    virtual variable_definition& set_init_expr(std::shared_ptr<expression> init_expr) override;
+    virtual variable_definition& set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr) override;
 };
 
 
@@ -366,6 +366,9 @@ protected:
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
 public:
+    using iterator = std::vector<std::shared_ptr<statement>>::iterator;
+    using const_iterator = std::vector<std::shared_ptr<statement>>::const_iterator;
+
     block() = delete;
     block(const std::shared_ptr<element>& parent) : statement(parent) {}
 
@@ -380,6 +383,14 @@ public:
     }
 
     void append_statement(std::shared_ptr<statement> stmt);
+
+    iterator insert_statement(const_iterator pos, std::shared_ptr<statement> stmt);
+
+    iterator begin() { return _statements.begin(); }
+    iterator end() { return _statements.end(); }
+    const_iterator begin() const { return _statements.begin(); }
+    const_iterator end() const { return _statements.end(); }
+
 
     std::shared_ptr<variable_holder> get_variable_holder() override;
     std::shared_ptr<const variable_holder> get_variable_holder() const override;

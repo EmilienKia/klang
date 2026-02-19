@@ -78,6 +78,21 @@ std::string mangler::mangle_fq_name(const name& name, bool with_k_prefix) {
     return mangled.str();
 }
 
+std::string mangler::mangle_fq_name_with_raw_last_part(const name& name, const std::string& last_part, bool with_k_prefix) {
+    std::ostringstream mangled;
+    if (with_k_prefix) {
+        mangled << K_LANG_SYMBOL_PREFIX;
+    }
+    mangled << SYMBOL_QUALIFIED_PREFIX;
+    for (const auto& part : name.parts()) {
+        mangled << mangle_short_name(part);
+    }
+    mangled << last_part;
+    mangled << SYMBOL_QUALIFIED_SUFFIX;
+    return mangled.str();
+}
+
+
 std::string mangler::mangle_namespace(const name& ns_name) {
     return mangle_fq_name(ns_name, true);
 }
@@ -116,6 +131,38 @@ std::string mangler::mangle_function(const function& func) const {
 
     return mangled.str();
 }
+
+std::string mangler::mangle_constructor(const constructor& ctor) const {
+    auto name = ctor.get_name();
+    if (!name.has_root_prefix()) {
+        // Must be fully qualified name
+        return "";
+    }
+    if (name.size()<2 && name.parts().back() != *(name.parts().end()-2)) {
+        // Constructor name must be at least 2 parts : qualified struct name + constructor name
+        // And the constructor name must be the same as the struct name
+        // TODO throw an exception : invalid constructor name
+        return "";
+    }
+
+    std::ostringstream mangled;
+    mangled << K_LANG_SYMBOL_PREFIX SYMBOL_TYPE_FUNCTION SYMBOL_MEMBER;
+
+    mangled << mangle_fq_name_with_raw_last_part(name.without_back(), "C1", false);
+
+    if (ctor.get_parameter_size() == 0) {
+        mangled << TYPE_VOID; // void parameter list
+    } else {
+        for(size_t i = 0; i < ctor.get_parameter_size(); ++i) {
+            auto param = ctor.get_parameter(i);
+            mangled << mangle_type(*param->get_type());
+        }
+    }
+
+    return mangled.str();
+}
+
+
 
 std::string mangler::mangle_type(const type& ty) const {
     if (auto prim = dynamic_cast<const primitive_type*>(&ty)) {

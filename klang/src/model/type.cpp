@@ -84,6 +84,7 @@ llvm::Constant* type::generate_default_value_initializer() const {
     return nullptr;
 }
 
+
 //
 // Unresolved type
 //
@@ -384,7 +385,6 @@ std::optional<struct_type::field> struct_type::get_member(const std::string& nam
 llvm::Constant* struct_type::generate_default_value_initializer() const {
     return _default_init_constant!=nullptr ? _default_init_constant : llvm::ConstantAggregateZero::get(get_llvm_type());
 }
-
 
 
 //

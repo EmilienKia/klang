@@ -118,8 +118,8 @@ public:
     /**
      * QUALIFIED_IDENTIFIER := ?'::' identifier *( '::' identifier )
      *
-     * @return The qualified identifier, if parsed correctly completly.
-     * @throws parsing_error If a parsinng arror occurs
+     * @return The qualified identifier, if parsed correctly completely.
+     * @throws parsing_error If a parsing error occurs
      */
     std::shared_ptr<ast::qualified_identifier> parse_qualified_identifier();
 
@@ -135,8 +135,7 @@ public:
     std::shared_ptr<ast::parameter_spec> parse_parameter_spec();
 
     /**
-     * Current support : VARIABLE_DECL := SPECIFIERS identifier ':' TYPE_SPEC ?['=' CONDITIONAL_EXPR] ';'
-     * TODO VARIABLE_DECL := SPECIFIERS identifier ?[ [':' TYPE_SPEC ?[[(INITIALIZER)]|[{STRUCT_INITIALIZER}]|['=' CONDITIONAL_EXPR]] | ['=' CONDITIONAL_EXPR] ]
+     * Current support : VARIABLE_DECL := SPECIFIERS identifier ':' TYPE_SPEC ?[ ['(' EXPRESSION_LIST ')'] | ['=' CONDITIONAL_EXPR]]';'
      */
     std::shared_ptr<ast::variable_decl> parse_variable_decl();
 

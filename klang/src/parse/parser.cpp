@@ -719,13 +719,21 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
         throw_error(0x0012, _lexer.pick_current(), "Variable declaration expects a type specifier after the semicolon ';'");
     }
 
+    bool is_constructor = false;
     ast::expr_ptr expr;
-    auto lequal = _lexer.get();
-    if(lequal==lex::operator_::EQUAL) {
+    auto lequal_or_openp = _lexer.get();
+    if(lequal_or_openp==lex::operator_::EQUAL) {
         expr = parse_conditional_expr();
         if(!expr) {
-            throw_error(0x0013, _lexer.pick_current(), "Variable declaration expects an initialization exppression after the equal operator '='");
+            throw_error(0x0013, _lexer.pick_current(), "Variable declaration expects an initialization expression after the equal operator '='");
         }
+    } else if (lequal_or_openp==lex::punctuator::PARENTHESIS_OPEN) {
+        expr = parse_expression_list();
+        auto lclosep = _lexer.get();
+        if(lclosep!=lex::punctuator::PARENTHESIS_CLOSE) {
+            throw_error(0x003D, lclosep, "Variable declaration through constructor with parenthesis initialization expects a closing parenthesis ')'");
+        }
+        is_constructor = true;
     } else {
         _lexer.unget();
     }
@@ -735,7 +743,7 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
         throw_error(0x0014, _lexer.pick_current(), "Variable declaration expects to finish by a semicolon ';'");
     }
 
-    return std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, expr);
+    return std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, expr, is_constructor);
 }
 
 std::shared_ptr<ast::type_specifier> parser::parse_type_spec()

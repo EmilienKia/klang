@@ -39,6 +39,7 @@ public:
     virtual void visit_namespace(ns&) =0;
     virtual void visit_structure(structure&) =0;
     virtual void visit_function(function&) =0;
+    virtual void visit_constructor(constructor&) =0;
     virtual void visit_global_tool_function(global_tool_function&) =0;
     virtual void visit_global_constructor_function(global_constructor_function&) =0;
     virtual void visit_global_destructor_function(global_destructor_function&) =0;
@@ -59,6 +60,7 @@ public:
     virtual void visit_expression(expression&) =0;
     virtual void visit_value_expression(value_expression&) =0;
     virtual void visit_symbol_expression(symbol_expression&) =0;
+    virtual void visit_constructor_invocation_expression(constructor_invocation_expression&) =0;
 
     virtual void visit_unary_expression(unary_expression&) =0;
     virtual void visit_cast_expression(cast_expression&) =0;
@@ -129,6 +131,7 @@ public:
     void visit_namespace(ns&) override;
     void visit_structure(structure&) override;
     void visit_function(function&) override;
+    void visit_constructor(constructor&) override;
     void visit_global_tool_function(global_tool_function&) override;
     void visit_global_constructor_function(global_constructor_function&) override;
     void visit_global_destructor_function(global_destructor_function&) override;
@@ -149,6 +152,7 @@ public:
     void visit_expression(expression&) override;
     void visit_value_expression(value_expression&) override;
     void visit_symbol_expression(symbol_expression&) override;
+    void visit_constructor_invocation_expression(constructor_invocation_expression&) override;
 
     void visit_unary_expression(unary_expression&) override;
     void visit_cast_expression(cast_expression&) override;

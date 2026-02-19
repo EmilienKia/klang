@@ -135,7 +135,6 @@ namespace k::model {
     }
 
     void model_builder::visit_variable_decl(parse::ast::variable_decl &decl) {
-        // TODO refactor variable declaration to make it stack-less
         std::shared_ptr<model::variable_holder> parent_scope = current_context_content<model::variable_holder>();
         if(!parent_scope){
             throw_error(0x0004, decl.name, "Current context doesnt support variable declaration");
@@ -146,9 +145,27 @@ namespace k::model {
         var->set_type(_context->from_type_specifier(*decl.type));
 
         if(decl.init) {
-            _expr.reset();
-            decl.init->visit(*this);
-            var->set_init_expr(_expr);
+            std::vector<std::shared_ptr<model::expression>> args;
+            if (decl.is_constructor) {
+                _expr.reset();
+                if(auto list = std::dynamic_pointer_cast<parse::ast::expr_list_expr>(decl.init)) {
+                    for(auto arg : list->exprs()) {
+                        arg->visit(*this);
+                        args.push_back(_expr);
+                        _expr = nullptr;
+                    }
+                } else if(decl.init) {
+                    decl.init->visit(*this);
+                    args.push_back(_expr);
+                }
+            } else {
+                _expr.reset();
+                decl.init->visit(*this);
+                args.push_back(_expr);
+            }
+            var->set_init_expr(model::constructor_invocation_expression::make_shared(var, args));
+        } else {
+            var->set_init_expr(model::constructor_invocation_expression::make_shared(var, {}));
         }
     }
 
@@ -170,13 +187,20 @@ namespace k::model {
         // TODO add function specs
 
         if(func.type) {
-            function->set_return_type(_context->from_type_specifier(*func.type));
+            if(std::dynamic_pointer_cast<constructor>(function)) {
+                // TODO Error : Constructor cannot have a return type
+                // throw_error(0x0003, func.name, "Constructor function cannot have a return type");
+            } else {
+                function->set_return_type(_context->from_type_specifier(*func.type));
+            }
         }
 
         for(auto param : func.params) {
             std::shared_ptr<model::parameter> parameter = function->append_parameter(std::string{param->name->content}, _context->from_type_specifier(*(param->type)));
             // TODO add param specs
         }
+
+        // TODO In case of constructor, add member initializer here
 
         if(func.content) {
             visit_block_statement(*func.content);

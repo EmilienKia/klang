@@ -102,6 +102,7 @@ protected:
     friend class binary_expression;
     friend class member_of_expression;
     friend class function_invocation_expression;
+    friend class constructor_invocation_expression;
 
     void set_parent_expression(const std::shared_ptr<expression> &expression) {
         set_parent(expression);
@@ -1093,6 +1094,75 @@ public:
 public:
     void accept(model_visitor &visitor) override;
 
+};
+
+class constructor_invocation_expression : public expression {
+protected:
+    /** Object to construct. */
+    std::shared_ptr<symbol_expression> _constructed_symbol;
+
+    /** Construction argument expressions */
+    std::vector<std::shared_ptr<expression>> _arguments;
+
+    /** Constructor to call */
+    std::shared_ptr<constructor> _constructor;
+
+    constructor_invocation_expression() = default;
+
+    constructor_invocation_expression(const std::shared_ptr<symbol_expression> &constructed_symbol,
+                                   const std::vector<std::shared_ptr<expression>> &args)
+            : _constructed_symbol(constructed_symbol), _arguments(args) {
+        _constructed_symbol->set_parent_expression(shared_as<expression>());
+        for (auto &arg: args) {
+            arg->set_parent_expression(shared_as<expression>());
+        }
+    }
+
+    friend class gen::type_reference_resolver;
+    void set_constructor(const std::shared_ptr<constructor> &constructor) {
+        _constructor = constructor;
+    }
+
+public:
+
+    const std::shared_ptr<symbol_expression> &constructed_symbol() const {
+        return _constructed_symbol;
+    }
+
+    void constructed_symbol(const std::shared_ptr<symbol_expression> &constructed_symbol) {
+        _constructed_symbol = constructed_symbol;
+    }
+
+    const std::vector<std::shared_ptr<expression>> &arguments() const {
+        return _arguments;
+    }
+
+    void arguments(const std::vector<std::shared_ptr<expression>> &arguments) {
+        _arguments = arguments;
+    }
+
+    size_t size() const {
+        return _arguments.size();
+    }
+
+    bool empty() const {
+        return _arguments.empty();
+    }
+
+    std::shared_ptr<expression> argument(size_t index) {
+        return _arguments[index];
+    }
+
+    void assign(const std::shared_ptr<symbol_expression> &constructed_symbol, const std::vector<std::shared_ptr<expression>> &args);
+
+    void assign_argument(size_t index, const std::shared_ptr<expression> &arg);
+
+    std::shared_ptr<constructor> get_constructor() const { return _constructor; }
+
+    static std::shared_ptr<constructor_invocation_expression> make_shared(const std::shared_ptr<symbol_expression> &constructed_symbol, const std::vector<std::shared_ptr<expression>> &args);
+    static std::shared_ptr<constructor_invocation_expression> make_shared(const std::shared_ptr<variable_definition> &variable, const std::vector<std::shared_ptr<expression>> &args);
+
+    void accept(model_visitor &visitor) override;
 };
 
 

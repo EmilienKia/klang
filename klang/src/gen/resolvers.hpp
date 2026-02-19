@@ -109,6 +109,7 @@ protected:
 
     void visit_member_of_expression(member_of_expression &) override;
     void visit_function_invocation_expression(function_invocation_expression &) override;
+    void visit_constructor_invocation_expression(constructor_invocation_expression &) override;
 
     /**
      * Adapt a reference expression to load its value.
@@ -178,10 +179,12 @@ protected:
 
     void visit_namespace(ns&) override;
     void visit_structure(structure&) override;
+    void visit_variable_definition(variable_definition&);
     void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition&) override;
     void visit_parameter(parameter &) override;
     void visit_function(function&) override;
+    void visit_constructor(constructor &) override;
     void visit_global_constructor_function(global_constructor_function&) override;
     void visit_global_destructor_function(global_destructor_function&) override;
     void visit_global_main_function(global_main_function&) override;
@@ -221,8 +224,13 @@ protected:
 
     void visit_subscript_expression(subscript_expression&) override;
     void visit_function_invocation_expression(function_invocation_expression &) override;
+    void visit_constructor_invocation_expression(constructor_invocation_expression &) override;
 
     void visit_cast_expression(cast_expression&)override;
+
+    std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::shared_ptr<expression>>/*adapted_args*/>
+    get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args);
+
 
     /**
      * Adapt a reference expression to load its value.
