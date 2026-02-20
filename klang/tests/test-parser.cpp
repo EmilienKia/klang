@@ -22,52 +22,13 @@
 #include "../src/parse/parser.hpp"
 #include "../src/model/model.hpp"
 
+#include "helpers.hpp"
 
 #include <fmt/core.h>
 #include <fmt/format.h>
-#include <fmt/args.h>
 
 using namespace k::parse;
 using namespace k::log;
-
-
-class test_logger : public logger {
-    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos, const std::string_view& message, const std::vector<std::string>& args) override {
-        static constexpr auto FORMAT = "{:0>5X} : {}\n";
-
-        std::string str;
-        if(args.size()>0) {
-            fmt::dynamic_format_arg_store<fmt::format_context> store;
-            for(const auto& arg : args) {
-                store.push_back(arg);
-            }
-            std::string msg = fmt::vformat(message, store);
-            str = fmt::format(FORMAT, code,  msg);
-        } else {
-            str = fmt::format(FORMAT, code, message);
-        }
-
-        switch (criticality) {
-            case (log_entry::info): {
-                INFO("INFO " << str);
-                break;
-            }
-            case (log_entry::warning): {
-                INFO("WARN " << str);
-                break;
-            }
-            case (log_entry::error): {
-                WARN("ERR   " << str);
-                break;
-            }
-        }
-    }
-
-    void do_log(log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) override {
-        do_log(criticality, code, k::char_pos{}, k::char_pos{}, k::char_pos{}, message, args);
-    }
-};
-
 
 
 //

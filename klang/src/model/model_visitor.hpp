@@ -21,6 +21,7 @@
 
 #include "model.hpp"
 #include "expressions.hpp"
+#include "operators.hpp"
 #include "statements.hpp"
 
 namespace k::model {

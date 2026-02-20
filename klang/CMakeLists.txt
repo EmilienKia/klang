@@ -49,11 +49,14 @@ add_library(klangcomp
         src/model/mangler.cpp
         src/model/expressions.cpp
         src/model/expressions.hpp
+        src/model/operators.cpp
+        src/model/operators.hpp
         src/model/model_visitor.cpp
         src/model/model_visitor.hpp
         src/model/statements.cpp
         src/model/statements.hpp
         src/gen/gen_expressions.cpp
+        src/gen/gen_operators.cpp
         src/gen/gen_statements.cpp
         src/gen/gen_unit.cpp
         src/compiler.hpp
@@ -74,8 +77,12 @@ target_link_libraries(klangc klangcomp ${LLVM_LIBRARIES} fmt::fmt ${Boost_LIBRAR
 #
 
 add_executable(tests
+        tests/helpers.hpp
+        tests/helpers.cpp
         tests/test-lexer.cpp
         tests/test-parser.cpp
+        tests/test-gen-arithmetic.cpp
+        tests/test-gen-statements.cpp
         tests/test-gen.cpp
         tests/test-run.cpp
 )

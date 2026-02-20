@@ -20,6 +20,7 @@
 //
 
 #include "model_builder.hpp"
+#include "operators.hpp"
 
 #include "../common/common.hpp"
 #include <random>
