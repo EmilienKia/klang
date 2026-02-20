@@ -178,9 +178,12 @@ namespace k::model {
 
         bool is_static = lex::keyword::has(func.specifiers, lex::keyword::STATIC);
 
-        std::shared_ptr<model::function> function = parent_scope->define_function(std::string{func.name.content}, is_static
+        // For destructor, prefix the name with ~ to match structure::define_function detection
+        std::string func_name = func.is_destructor
+            ? "~" + std::string{func.name.content}
+            : std::string{func.name.content};
 
-        );
+        std::shared_ptr<model::function> function = parent_scope->define_function(func_name, is_static);
 
         // Push function context
         stack<func_context> push(_contexts, function);
@@ -191,9 +194,15 @@ namespace k::model {
             if(std::dynamic_pointer_cast<constructor>(function)) {
                 // TODO Error : Constructor cannot have a return type
                 // throw_error(0x0003, func.name, "Constructor function cannot have a return type");
+            } else if(std::dynamic_pointer_cast<destructor>(function)) {
+                throw_error(0x003E, func.name, "Destructor function cannot have a return type");
             } else {
                 function->set_return_type(_context->from_type_specifier(*func.type));
             }
+        }
+
+        if(func.is_destructor && !func.params.empty()) {
+            throw_error(0x003D, func.name, "Destructor function cannot have parameters");
         }
 
         for(auto param : func.params) {

@@ -124,7 +124,7 @@ public:
     std::shared_ptr<ast::qualified_identifier> parse_qualified_identifier();
 
     /**
-     * Current support : FUNCTION_DECL := SPECIFIERS identifier '(' [ PARAMETER *[',' PARAMETER ] ] ')' ?[':' TYPE_SPEC] (';' | STATEMENT_BLOCK )
+     * Current support : FUNCTION_DECL := SPECIFIERS ?[~] identifier '(' [ PARAMETER *[',' PARAMETER ] ] ')' ?[':' TYPE_SPEC] (';' | STATEMENT_BLOCK )
      * @return
      */
     std::shared_ptr<ast::function_decl> parse_function_decl();

@@ -51,6 +51,7 @@ class block;
 class parameter;
 class function;
 class constructor;
+class destructor;
 class structure;
 class ns;
 class unit;
@@ -335,7 +336,6 @@ public:
 
 };
 
-
 class structure : public element, public named_element, public variable_holder, public function_holder {
 protected:
     friend class ns;
@@ -346,6 +346,8 @@ protected:
     std::vector<std::shared_ptr<element>> _children;
 
     std::vector<std::shared_ptr<constructor>> _constructors;
+
+    std::shared_ptr<destructor> _destructor;
 
     std::shared_ptr<struct_type> _type;
 
@@ -389,6 +391,8 @@ public:
     std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const override;
 
     const std::vector<std::shared_ptr<constructor>>& constructors() const { return _constructors; }
+
+    std::shared_ptr<destructor> get_destructor() const { return _destructor; }
 };
 
 class parameter : public element, public variable_definition {
@@ -497,6 +501,24 @@ protected:
     void update_mangled_name() override;
 
     static std::shared_ptr<constructor> make_shared(std::shared_ptr<structure> parent);
+
+public:
+    void accept(model_visitor& visitor) override;
+
+};
+
+
+class destructor : public function {
+protected:
+    friend class structure;
+    friend class gen::symbol_resolver;
+
+    destructor(std::shared_ptr<structure> parent) :
+        function(parent) {}
+
+    void update_mangled_name() override;
+
+    static std::shared_ptr<destructor> make_shared(std::shared_ptr<structure> parent);
 
 public:
     void accept(model_visitor& visitor) override;

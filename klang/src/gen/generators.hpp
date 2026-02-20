@@ -130,6 +130,15 @@ protected:
 
     std::stack<std::shared_ptr<structure>> _struct_stack;
 
+    /** Stack of active cleanup BasicBlocks, one per block with destructible local variables. */
+    std::stack<llvm::BasicBlock*> _cleanup_blocks;
+
+    /** Parallel stack: for each cleanup block, the list of variable_statements to destroy (declaration order). */
+    std::stack<std::vector<std::shared_ptr<variable_statement>>> _cleanup_vars_stack;
+
+    /** Per-function alloca for return value (used when destructions must happen before a return). */
+    llvm::AllocaInst* _retval_alloca = nullptr;
+
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         error(code, lexeme, message, args);
         throw generation_error(message);

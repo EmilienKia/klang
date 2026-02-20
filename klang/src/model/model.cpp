@@ -400,6 +400,24 @@ std::shared_ptr<constructor> constructor::make_shared(std::shared_ptr<structure>
 }
 
 //
+// Destructor
+//
+
+void destructor::accept(model_visitor& visitor) {
+    visitor.visit_destructor(*this);
+}
+
+void destructor::update_mangled_name() {
+    _mangled_name = mangler(get_context()).mangle_destructor(*this);
+}
+
+std::shared_ptr<destructor> destructor::make_shared(std::shared_ptr<structure> parent) {
+    auto fn = std::shared_ptr<destructor>(new destructor(parent));
+    fn->assign_name("~" + parent->get_short_name());
+    return fn;
+}
+
+//
 // Global tool function
 //
 
@@ -548,6 +566,18 @@ std::shared_ptr<function> structure::define_function(const std::string &name, bo
             _children.push_back(construct);
         }
         return construct;
+    } else if (name == "~" + get_short_name()) {
+        if (_destructor) {
+            // TODO throw error: only one destructor allowed
+            std::cerr << "Error: structure " << get_short_name() << " already has a destructor." << std::endl;
+            return _destructor;
+        }
+        auto dtor = destructor::make_shared(shared_as<structure>());
+        if (dtor) {
+            _destructor = dtor;
+            _children.push_back(dtor);
+        }
+        return dtor;
     } else {
         return function_holder::define_function(name, is_static);
     }

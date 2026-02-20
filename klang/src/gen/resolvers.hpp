@@ -185,6 +185,7 @@ protected:
     void visit_parameter(parameter &) override;
     void visit_function(function&) override;
     void visit_constructor(constructor &) override;
+    void visit_destructor(destructor&) override;
     void visit_global_constructor_function(global_constructor_function&) override;
     void visit_global_destructor_function(global_destructor_function&) override;
     void visit_global_main_function(global_main_function&) override;

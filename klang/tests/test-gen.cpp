@@ -1054,3 +1054,80 @@ TEST_CASE("Struct constructor", "[gen][structs]") {
     REQUIRE( res_test == (5 + 1 + 7) );
 }
 
+//
+// Destructor tests
+//
+
+TEST_CASE("Struct destructor called on local variable at block exit", "[gen][struct][destructor]") {
+    // The destructor increments a global counter.
+    // The return value is evaluated BEFORE destruction (C++ semantics),
+    // so test_local_dtor() returns 0. After the call returns, dtor_count is 1.
+    auto jit = gen_jit(R"SRC(
+        module __dtor_local__;
+
+        dtor_count : int;
+
+        struct counter {
+            ~counter() {
+                dtor_count = dtor_count + 1;
+            }
+        }
+
+        test_local_dtor() : int {
+            c : counter;
+            return dtor_count;
+        }
+
+        get_dtor_count() : int {
+            return dtor_count;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test_local_dtor");
+    REQUIRE(test != nullptr);
+    // The return expression is evaluated BEFORE c is destroyed:
+    // so the returned value is 0 (dtor not yet called at return time).
+    REQUIRE(test() == 0);
+
+    // But after the function has returned, c has been destroyed:
+    // dtor_count must now be 1.
+    auto get_count = jit->lookup_symbol<int(*)()>("get_dtor_count");
+    REQUIRE(get_count != nullptr);
+    REQUIRE(get_count() == 1);
+}
+
+TEST_CASE("Struct destructor called on global variable via global_dtor", "[gen][struct][destructor]") {
+    auto jit = gen_jit(R"SRC(
+        module __dtor_global__;
+
+        dtor_called : int;
+
+        struct tracked {
+            ~tracked() {
+                dtor_called = 77;
+            }
+        }
+
+        g : tracked;
+
+        get_dtor_called() : int {
+            return dtor_called;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    // gen_jit already called initialize_runtime (triggers global constructors).
+    // Before finalize: destructor not yet called
+    auto get_val = jit->lookup_symbol<int(*)()>("get_dtor_called");
+    REQUIRE(get_val != nullptr);
+    REQUIRE(get_val() == 0);
+
+    // Finalize triggers global destructors (deinitialize runs llvm.global_dtors)
+    jit->finalize_runtime();
+
+    // After finalize: destructor was called, dtor_called == 77
+    auto dtor_called = jit->lookup_symbol<int*>("dtor_called");
+    REQUIRE(dtor_called != nullptr);
+    REQUIRE(*dtor_called == 77);
+}

@@ -43,6 +43,9 @@
 #define SYMBOL_MODIFIER_REF_LVAL   SYMBOL_MODIFIER_REF
 #define SYMBOL_MODIFIER_REF_RVAL   "O"
 
+#define SYMBOL_CONSTRUCTOR_C1_NAME "C1"
+#define SYMBOL_DESTRUCTOR_D1_NAME  "D1"
+
 #define TYPE_VOID           "v"
 #define TYPE_BOOL           "b"
 #define TYPE_CHAR           "c"
@@ -148,7 +151,7 @@ std::string mangler::mangle_constructor(const constructor& ctor) const {
     std::ostringstream mangled;
     mangled << K_LANG_SYMBOL_PREFIX SYMBOL_TYPE_FUNCTION SYMBOL_MEMBER;
 
-    mangled << mangle_fq_name_with_raw_last_part(name.without_back(), "C1", false);
+    mangled << mangle_fq_name_with_raw_last_part(name.without_back(), SYMBOL_CONSTRUCTOR_C1_NAME, false);
 
     if (ctor.get_parameter_size() == 0) {
         mangled << TYPE_VOID; // void parameter list
@@ -158,6 +161,30 @@ std::string mangler::mangle_constructor(const constructor& ctor) const {
             mangled << mangle_type(*param->get_type());
         }
     }
+
+    return mangled.str();
+}
+
+std::string mangler::mangle_destructor(const destructor& dtor) const {
+    auto name = dtor.get_name();
+    if (!name.has_root_prefix()) {
+        // Must be fully qualified name
+        return "";
+    }
+    if (name.size() < 2) {
+        // Destructor name must be at least 2 parts : qualified struct name + destructor name
+        // TODO throw an exception : invalid destructor name
+        return "";
+    }
+
+    std::ostringstream mangled;
+    mangled << K_LANG_SYMBOL_PREFIX SYMBOL_TYPE_FUNCTION SYMBOL_MEMBER;
+
+    // Use the parent structure name (without the last "~name" part), with D1 suffix
+    mangled << mangle_fq_name_with_raw_last_part(name.without_back(), SYMBOL_DESTRUCTOR_D1_NAME, false);
+
+    // Destructor has no parameters, encode as void
+    mangled << TYPE_VOID;
 
     return mangled.str();
 }

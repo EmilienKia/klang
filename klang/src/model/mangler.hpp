@@ -82,6 +82,7 @@ class type;
 class context;
 class function;
 class constructor;
+class destructor;
 
 class mangler {
 protected:
@@ -98,6 +99,7 @@ public:
 
     std::string mangle_function(const function& func) const;
     std::string mangle_constructor(const constructor& ctor) const;
+    std::string mangle_destructor(const destructor& dtor) const;
 
 
     static std::string mangle_short_name(const std::string& short_name);

@@ -67,16 +67,78 @@ void declaration_generator::visit_block(block& block) {
     }
 }
 
-void implementation_generator::visit_block(block& block) {
+void implementation_generator::visit_block(block& blk) {
     // Look at static/global var definitions
-    for (auto var_entry : block.variables()) {
+    for (auto var_entry : blk.variables()) {
         if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_entry.second)) {
             global_var->accept(*this);
         }
     }
-    // Statements
-    for(auto stmt : block.get_statements()) {
+
+    // Collect local variable_statements whose type is a struct with a destructor, in declaration order.
+    std::vector<std::shared_ptr<variable_statement>> dtor_vars;
+    for (auto& stmt : blk.get_statements()) {
+        if (auto var_stmt = std::dynamic_pointer_cast<variable_statement>(stmt)) {
+            if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_stmt->get_type())) {
+                if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+                    dtor_vars.push_back(var_stmt);
+                }
+            }
+        }
+    }
+
+    const bool needs_cleanup = !dtor_vars.empty();
+
+    llvm::Function* func = _builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* cleanup_block = nullptr;
+    llvm::BasicBlock* continue_block = nullptr;
+
+    if (needs_cleanup) {
+        cleanup_block  = llvm::BasicBlock::Create(**_context, "block-cleanup");
+        continue_block = llvm::BasicBlock::Create(**_context, "block-continue");
+        // Push cleanup block and variable list so visit_return_statement can use them
+        _cleanup_blocks.push(cleanup_block);
+        _cleanup_vars_stack.push(dtor_vars);
+    }
+
+    // Generate statements normally
+    for (auto& stmt : blk.get_statements()) {
         stmt->accept(*this);
+    }
+
+    if (needs_cleanup) {
+        // On the normal exit path, branch to cleanup
+        _builder->CreateBr(cleanup_block);
+
+        // Emit cleanup block: call destructors in REVERSE declaration order
+        func->insert(func->end(), cleanup_block);
+        _builder->SetInsertPoint(cleanup_block);
+
+        for (auto it = dtor_vars.rbegin(); it != dtor_vars.rend(); ++it) {
+            auto& var_stmt = *it;
+            auto st_type = std::dynamic_pointer_cast<struct_type>(var_stmt->get_type());
+            auto dtor = st_type->get_struct()->get_destructor();
+
+            auto var_it = _context->_variables.find(var_stmt);
+            if (var_it == _context->_variables.end()) continue;
+            llvm::AllocaInst* alloca = var_it->second;
+
+            auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+            if (dtor_it == _context->_functions.end()) continue;
+
+            _builder->CreateCall(dtor_it->second, {alloca});
+        }
+
+        // On normal path, branch to continue
+        _builder->CreateBr(continue_block);
+
+        // Pop cleanup entries
+        _cleanup_blocks.pop();
+        _cleanup_vars_stack.pop();
+
+        // Emit continue block and set insert point there
+        func->insert(func->end(), continue_block);
+        _builder->SetInsertPoint(continue_block);
     }
 }
 
@@ -117,14 +179,62 @@ void declaration_generator::visit_return_statement(return_statement& stmt) {
 
 void implementation_generator::visit_return_statement(return_statement& stmt) {
 
-    if(auto expr = stmt.get_expression()) {
+    // Evaluate the return expression first (before any destructor calls)
+    llvm::Value* ret_value = nullptr;
+    if (auto expr = stmt.get_expression()) {
         _value = nullptr;
         expr->accept(*this);
+        ret_value = _value;
+        _value = nullptr;
 
-        if (_value) {
-            _builder->CreateRet(_value);
+        if (ret_value && _retval_alloca) {
+            // Store the return value so we can load it after destructor calls
+            _builder->CreateStore(ret_value, _retval_alloca);
+        }
+    }
+
+    // Emit destructor calls for all active scopes, from innermost to outermost.
+    // We use a copy of the cleanup vars stack to iterate without modifying the live stack.
+    if (!_cleanup_vars_stack.empty()) {
+        // Collect all scope variable lists from innermost to outermost
+        std::vector<std::vector<std::shared_ptr<variable_statement>>> all_scopes;
+        std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
+        while (!tmp.empty()) {
+            all_scopes.push_back(tmp.top());
+            tmp.pop();
+        }
+        // Each scope: emit destructor calls in reverse declaration order
+        for (auto& scope_vars : all_scopes) {
+            for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
+                auto& var_stmt = *it;
+                auto st_type = std::dynamic_pointer_cast<struct_type>(var_stmt->get_type());
+                if (!st_type) continue;
+                auto dtor = st_type->get_struct()->get_destructor();
+                if (!dtor) continue;
+
+                auto var_it = _context->_variables.find(var_stmt);
+                if (var_it == _context->_variables.end()) continue;
+                llvm::AllocaInst* alloca = var_it->second;
+
+                auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                if (dtor_it == _context->_functions.end()) continue;
+
+                _builder->CreateCall(dtor_it->second, {alloca});
+            }
+        }
+    }
+
+    // Emit the actual ret instruction
+    if (stmt.get_expression()) {
+        if (_retval_alloca && ret_value) {
+            // Load the stored return value (after destructors)
+            llvm::Value* loaded = _builder->CreateLoad(
+                _retval_alloca->getAllocatedType(), _retval_alloca, "ret_loaded");
+            _builder->CreateRet(loaded);
+        } else if (ret_value) {
+            // No cleanup was needed, we have the value directly
+            _builder->CreateRet(ret_value);
         } else {
-            // TODO Must be an error.
             _builder->CreateRetVoid();
         }
     } else {

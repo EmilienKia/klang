@@ -345,9 +345,19 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
 
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
-    // Expect a name:
+    // Check for destructor syntax: ~identifier
+    bool is_destructor = false;
     auto lname= _lexer.get();
-    if(lex::is_not<lex::identifier>(lname)) {
+    if(lname == lex::operator_::TILDE) {
+        // Destructor: expect an identifier after the tilde
+        auto lname2 = _lexer.get();
+        if(lex::is_not<lex::identifier>(lname2)) {
+            holder.rollback();
+            return {};
+        }
+        lname = lname2;
+        is_destructor = true;
+    } else if(lex::is_not<lex::identifier>(lname)) {
         holder.rollback();
         return {};
     }
@@ -365,6 +375,9 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         throw_error(0x0009, _lexer.pick_current(), "Function declaration expects finalizing its declaration");
     }
     if(lex!=lex::punctuator::PARENTHESIS_CLOSE) {
+        if(is_destructor) {
+            throw_error(0x003D, _lexer.pick_current(), "Destructor declaration must have no parameters");
+        }
         _lexer.unget();
         holder.sync();
         // Look for first parameter_spec
@@ -401,6 +414,9 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     std::shared_ptr<ast::type_specifier> restype;
     holder.sync();
     if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
+        if(is_destructor) {
+            throw_error(0x003E, _lexer.pick_current(), "Destructor declaration must not have a return type");
+        }
         restype = parse_type_spec();
         if(!restype) {
             throw_error(0x000E, _lexer.pick_current(), "Function declaration expects a return type specifier after the colon ':'");
@@ -411,14 +427,14 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
 
     auto statements = parse_statement_block();
     if(statements) {
-        return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, statements);
+        return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, statements, is_destructor);
     } else
     // Look for final semicolon
     // TODO remove function declaration-only.
     if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
         throw_error(0x000F, _lexer.pick_current(), "Function declaration expects a final semicolon ';'");
     }
-    return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params);
+    return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, is_destructor);
 }
 
 std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()

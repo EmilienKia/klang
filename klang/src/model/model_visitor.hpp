@@ -29,6 +29,7 @@ namespace k::model {
 class global_tool_function;
 class global_constructor_function;
 class global_destructor_function;
+class destructor;
 
 
 class model_visitor {
@@ -41,6 +42,7 @@ public:
     virtual void visit_structure(structure&) =0;
     virtual void visit_function(function&) =0;
     virtual void visit_constructor(constructor&) =0;
+    virtual void visit_destructor(destructor&) =0;
     virtual void visit_global_tool_function(global_tool_function&) =0;
     virtual void visit_global_constructor_function(global_constructor_function&) =0;
     virtual void visit_global_destructor_function(global_destructor_function&) =0;
@@ -133,6 +135,7 @@ public:
     void visit_structure(structure&) override;
     void visit_function(function&) override;
     void visit_constructor(constructor&) override;
+    void visit_destructor(destructor&) override;
     void visit_global_tool_function(global_tool_function&) override;
     void visit_global_constructor_function(global_constructor_function&) override;
     void visit_global_destructor_function(global_destructor_function&) override;
