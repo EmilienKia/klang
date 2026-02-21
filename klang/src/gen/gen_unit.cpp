@@ -168,70 +168,37 @@ void symbol_resolver::visit_structure(structure& st) {
         }
     }
 
-    // Visit function children
+    // Visit function children (includes constructors and destructor)
     for(auto& child : st.get_children()) {
         if(auto func = std::dynamic_pointer_cast<function>(child)) {
             func->accept(*this);
         }
     }
 
-    // Add default constructor if no constructor is defined
+    // Add a compiler-generated default constructor if none was defined by the user.
+    // It is added to both _constructors and _children so all visitors find it uniformly.
     if (st.constructors().empty()) {
         auto default_constructor = constructor::make_shared(st.shared_as<structure>());
+        default_constructor->set_compiler_generated(true);
         st._constructors.push_back(default_constructor);
+        st._children.push_back(default_constructor);
         default_constructor->accept(*this);
     }
-    // Then visit constructors
-    for(auto& constructor : st.constructors()) {
-        constructor->accept(*this);
-    }
-
-    // Visit destructor, if any
-    if (auto dtor = st.get_destructor()) {
-        dtor->accept(*this);
-    }
-
 }
 
 void type_reference_resolver::visit_structure(structure& st) {
+    // Visit all functions (including constructors and destructors).
     for(auto& child : st.get_children()) {
         child->accept(*this);
-    }
-    // Then visit constructors
-    for(auto& constructor : st.constructors()) {
-        constructor->accept(*this);
-    }
-    // Then visit destructor, if any
-    if (auto dtor = st.get_destructor()) {
-        dtor->accept(*this);
     }
 }
 
 void declaration_generator::visit_structure(structure& st) {
     _struct_stack.push(st.shared_as<structure>());
 
-    // Add global/static vars
+    // Visit all children (variables, methods, constructors, destructor).
     for(auto& child : st.get_children()) {
-        if (auto var = std::dynamic_pointer_cast<global_variable_definition>(child)) {
-            var->accept(*this);
-        }
-    }
-
-    // Add methods:
-    for(auto& child : st.get_children()) {
-        if (auto func = std::dynamic_pointer_cast<function>(child)) {
-            func->accept(*this);
-        }
-    }
-
-    // Add constructors
-    for(auto& constructor : st.constructors()) {
-        constructor->accept(*this);
-    }
-
-    // Add destructor, if any
-    if (auto dtor = st.get_destructor()) {
-        dtor->accept(*this);
+        child->accept(*this);
     }
 
     _struct_stack.pop();
@@ -240,28 +207,9 @@ void declaration_generator::visit_structure(structure& st) {
 void implementation_generator::visit_structure(structure& st) {
     _struct_stack.push(st.shared_as<structure>());
 
-    // Add global/static vars
+    // Visit all children (variables, methods, constructors, destructor).
     for(auto& child : st.get_children()) {
-        if (auto var = std::dynamic_pointer_cast<global_variable_definition>(child)) {
-            var->accept(*this);
-        }
-    }
-
-    // Add methods:
-    for(auto& child : st.get_children()) {
-        if (auto func = std::dynamic_pointer_cast<function>(child)) {
-            func->accept(*this);
-        }
-    }
-
-    // Add constructors
-    for(auto& constructor : st.constructors()) {
-        constructor->accept(*this);
-    }
-
-    // Add destructor, if any
-    if (auto dtor = st.get_destructor()) {
-        dtor->accept(*this);
+        child->accept(*this);
     }
 
     _struct_stack.pop();

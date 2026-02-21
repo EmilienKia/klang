@@ -1025,6 +1025,10 @@ TEST_CASE("Aggregated structs", "[gen][structs]") {
     REQUIRE( res_test == (7 + 5) );
 }
 
+//
+// Struct constructors
+//
+
 TEST_CASE("Struct constructor", "[gen][structs]") {
     auto jit = gen_jit(R"SRC(
         module __structs__;

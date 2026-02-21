@@ -36,10 +36,10 @@
 #include "../src/gen/generators.hpp"
 #include "../src/compiler.hpp"
 
-std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump) {
+std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump, bool optimize) {
     auto comp = k::compiler::create();
     try {
-        comp->parse_source("", src, true, dump);
+        comp->parse_source("", src, optimize, dump);
         return comp->to_jit();
     } catch (std::exception& ex) {
         std::cerr << "Error during compilation: " << ex.what() << std::endl;

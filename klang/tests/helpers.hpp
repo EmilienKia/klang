@@ -31,7 +31,7 @@ namespace k::model::gen {
 class jit;
 }
 
-std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = false);
+std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = false, bool optimize = true);
 
 k::tools::exec_result build_and_exec(const std::string_view& src);
 
