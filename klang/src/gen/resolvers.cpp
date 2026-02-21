@@ -288,48 +288,230 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
     }
 }
 
-std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::shared_ptr<expression>>/*adapted_args*/>
-type_reference_resolver::get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args) {
-    std::shared_ptr<constructor> best_constructor;
-    std::vector<std::shared_ptr<expression>> adapted_args;
-    int best_cost = std::numeric_limits<int>::max();
+type_reference_resolver::cast_weight
+type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& expr, const std::shared_ptr<k::model::type>& tgt) {
+    if (!expr || !type::is_resolved(tgt) || !type::is_resolved(expr->get_type())) {
+        return CAST_IMPOSSIBLE;
+    }
 
-    for (auto& constructor : constructors) {
-        if (constructor->parameters().size() == args.size()) {
-            bool all_args_compatible = true;
-            int cost = 0;
-            std::vector<std::shared_ptr<expression>> current_adapted_args;
-            for (size_t i = 0; i < args.size(); ++i) {
-                auto param_type = constructor->parameters()[i]->get_type();
-                auto arg_expr = args[i];
-                auto adapted_arg = adapt_type(arg_expr, param_type);
-                if (!adapted_arg) {
-                    // Not compatible, don't need to look up further
-                    all_args_compatible = false;
-                    break;
-                }
-                if (adapted_arg!=arg_expr) {
-                    cost++;
-                    if (cost>=best_cost) {
-                        // Cost is higher than best cost, don't need to look up further
-                        break;
+    auto type_src = expr->get_type();
+
+    // --- Pointer cases ---
+    if (type::is_pointer(type_src)) {
+        if (type::is_pointer(tgt)) {
+            // Pointed types must be identical for now, no pointer conversions supported yet.
+            return (type_src == tgt) ? CAST_NONE : CAST_IMPOSSIBLE;
+        }
+        return CAST_IMPOSSIBLE;
+    }
+
+    // --- Double reference: unwrap one level ---
+    std::shared_ptr<k::model::type> effective_src = type_src;
+    if (type::is_double_reference(type_src)) {
+        effective_src = std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype();
+    }
+
+    // --- Reference cases ---
+    if (type::is_reference(effective_src)) {
+        auto ref_src = std::dynamic_pointer_cast<reference_type>(effective_src);
+        if (type::is_reference(tgt)) {
+            return (effective_src == tgt) ? CAST_NONE : CAST_IMPOSSIBLE;
+        }
+        // ref -> value: need a load
+        auto sub = ref_src->get_subtype();
+        if (sub == tgt) {
+            return CAST_REF_CONV;
+        }
+        // ref -> different primitive: load + cast
+        auto prim_sub = std::dynamic_pointer_cast<primitive_type>(sub);
+        auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(tgt);
+        if (prim_sub && prim_tgt) {
+            if (*prim_sub == *prim_tgt) return CAST_REF_CONV;
+            // Widening: same category, target is larger or same
+            if (prim_sub->is_integer() && prim_tgt->is_integer() &&
+                prim_sub->is_unsigned() == prim_tgt->is_unsigned() &&
+                prim_tgt->type_size() >= prim_sub->type_size()) {
+                return CAST_WIDENING;
+            }
+            if (prim_sub->is_float() && prim_tgt->is_float() &&
+                prim_tgt->type_size() >= prim_sub->type_size()) {
+                return CAST_WIDENING;
+            }
+            // Everything else between primitives is narrowing
+            return CAST_NARROWING;
+        }
+        return CAST_IMPOSSIBLE;
+    }
+
+    // --- Both primitive ---
+    auto prim_src = std::dynamic_pointer_cast<primitive_type>(effective_src);
+    auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(tgt);
+    if (prim_src && prim_tgt) {
+        if (*prim_src == *prim_tgt) return CAST_NONE;
+        // Widening: integers same signedness, target wider or equal; or float widening
+        if (prim_src->is_integer() && prim_tgt->is_integer() &&
+            prim_src->is_unsigned() == prim_tgt->is_unsigned() &&
+            prim_tgt->type_size() >= prim_src->type_size()) {
+            return CAST_WIDENING;
+        }
+        if (prim_src->is_float() && prim_tgt->is_float() &&
+            prim_tgt->type_size() >= prim_src->type_size()) {
+            return CAST_WIDENING;
+        }
+        // All other primitive conversions (int<->float, narrowing int, bool<->int, etc.)
+        return CAST_NARROWING;
+    }
+
+    // --- Struct construction via single-arg constructor ---
+    if (auto st_tgt = std::dynamic_pointer_cast<struct_type>(tgt)) {
+        auto st = st_tgt->get_struct();
+        if (st) {
+            for (auto& ctor : st->constructors()) {
+                if (ctor->parameters().size() == 1) {
+                    auto param_type = ctor->parameters()[0]->get_type();
+                    // Recursively check if expr can be passed to the constructor parameter
+                    auto sub_weight = compute_cast_weight(expr, param_type);
+                    if (sub_weight != CAST_IMPOSSIBLE) {
+                        return CAST_CONSTRUCT;
                     }
                 }
-                current_adapted_args.push_back(adapted_arg);
-            }
-            if (all_args_compatible && cost < best_cost) {
-                if (cost==0) {
-                    // Perfect match, no need to continue checking other constructors
-                    return {std::move(constructor), std::move(current_adapted_args)};
-                }
-                best_constructor = constructor;
-                adapted_args = std::move(current_adapted_args);
-                best_cost = cost;
             }
         }
     }
 
-    return {std::move(best_constructor), std::move(adapted_args)};
+    return CAST_IMPOSSIBLE;
+}
+
+std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::shared_ptr<expression>>/*adapted_args*/>
+type_reference_resolver::get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args) {
+    const size_t arg_count = args.size();
+
+    // --- Step 1: filter by arity ---
+    std::vector<std::shared_ptr<constructor>> arity_matched;
+    for (auto& ctor : constructors) {
+        if (ctor->parameters().size() == arg_count) {
+            arity_matched.push_back(ctor);
+        }
+    }
+
+    if (arity_matched.empty()) {
+        std::cerr << "Error: no constructor found with " << arg_count << " argument(s).";
+        if (!constructors.empty()) {
+            std::cerr << " Available constructors have " ;
+            bool first = true;
+            for (auto& ctor : constructors) {
+                if (!first) std::cerr << ", ";
+                std::cerr << ctor->parameters().size() << " parameter(s)";
+                first = false;
+            }
+        }
+        std::cerr << "." << std::endl;
+        return {nullptr, {}};
+    }
+
+    // --- Step 2: compute per-candidate score (max of per-param weights) ---
+    struct Candidate {
+        std::shared_ptr<constructor> ctor;
+        std::vector<std::shared_ptr<expression>> adapted_args;
+        cast_weight score; // worst (max) cast weight across all parameters
+    };
+
+    // Candidates that fail because of at least one IMPOSSIBLE cast
+    struct FailedCandidate {
+        std::shared_ptr<constructor> ctor;
+        std::vector<size_t> failed_param_indices; // 0-based indices with IMPOSSIBLE weight
+    };
+
+    std::vector<Candidate> valid_candidates;
+    std::vector<FailedCandidate> failed_candidates;
+
+    for (auto& ctor : arity_matched) {
+        cast_weight max_weight = CAST_NONE;
+        bool has_impossible = false;
+        std::vector<size_t> failed_indices;
+        std::vector<std::shared_ptr<expression>> adapted_args;
+
+        for (size_t i = 0; i < arg_count; ++i) {
+            auto param_type = ctor->parameters()[i]->get_type();
+            cast_weight w = compute_cast_weight(args[i], param_type);
+            if (w == CAST_IMPOSSIBLE) {
+                has_impossible = true;
+                failed_indices.push_back(i);
+            } else {
+                if (w > max_weight) max_weight = w;
+                auto adapted = adapt_type(args[i], param_type);
+                adapted_args.push_back(adapted ? adapted : args[i]);
+            }
+        }
+
+        if (has_impossible) {
+            failed_candidates.push_back({ctor, std::move(failed_indices)});
+        } else {
+            valid_candidates.push_back({ctor, std::move(adapted_args), max_weight});
+        }
+    }
+
+    // --- Step 3: no valid candidates ---
+    if (valid_candidates.empty()) {
+        std::cerr << "Error: no viable constructor found (impossible implicit cast(s)). Candidates:" << std::endl;
+        for (auto& fc : failed_candidates) {
+            std::cerr << "  constructor(";
+            bool first = true;
+            for (auto& param : fc.ctor->parameters()) {
+                if (!first) std::cerr << ", ";
+                if (auto pt = param->get_type()) std::cerr << pt->to_string();
+                else std::cerr << "?";
+                first = false;
+            }
+            std::cerr << ") — impossible cast for argument index(es):";
+            for (size_t idx : fc.failed_param_indices) std::cerr << " " << idx;
+            std::cerr << std::endl;
+        }
+        return {nullptr, {}};
+    }
+
+    // --- Step 4: find minimum score ---
+    cast_weight best_score = CAST_IMPOSSIBLE;
+    for (auto& cand : valid_candidates) {
+        if (cand.score < best_score) best_score = cand.score;
+    }
+
+    // Perfect match short-circuit (score == CAST_NONE)
+    if (best_score == CAST_NONE) {
+        for (auto& cand : valid_candidates) {
+            if (cand.score == CAST_NONE) {
+                return {cand.ctor, cand.adapted_args};
+            }
+        }
+    }
+
+    // --- Step 5: collect all candidates with best score ---
+    std::vector<Candidate*> best_candidates;
+    for (auto& cand : valid_candidates) {
+        if (cand.score == best_score) {
+            best_candidates.push_back(&cand);
+        }
+    }
+
+    // --- Step 6: ambiguity check ---
+    if (best_candidates.size() > 1) {
+        std::cerr << "Error: ambiguous constructor call (cast score=" << best_score << "). Equally viable candidates:" << std::endl;
+        for (auto* cand : best_candidates) {
+            std::cerr << "  constructor(";
+            bool first = true;
+            for (auto& param : cand->ctor->parameters()) {
+                if (!first) std::cerr << ", ";
+                if (auto pt = param->get_type()) std::cerr << pt->to_string();
+                else std::cerr << "?";
+                first = false;
+            }
+            std::cerr << ")" << std::endl;
+        }
+        return {nullptr, {}};
+    }
+
+    // --- Step 7: unique best candidate ---
+    return {best_candidates[0]->ctor, best_candidates[0]->adapted_args};
 }
 
 
@@ -394,9 +576,25 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             }
         }
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
-        if(ref_src->get_subtype() == type) {
+        auto ref_subtype = ref_src->get_subtype();
+        if(ref_subtype == type) {
+            // ref<T> -> T : simple load
             return adapt_reference_load_value(expr);
         }
+        // ref<primA> -> primB : load first, then cast between primitives
+        auto prim_sub = std::dynamic_pointer_cast<primitive_type>(ref_subtype);
+        auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type);
+        if (prim_sub && prim_tgt) {
+            // Load the reference to get the value
+            auto loaded = adapt_reference_load_value(expr);
+            if (!loaded) return {};
+            if (*prim_sub == *prim_tgt) return loaded;
+            // Cast the loaded value to the target primitive type
+            auto cast = cast_expression::make_shared(loaded, prim_tgt);
+            cast->set_type(prim_tgt);
+            return cast;
+        }
+        return {};
     }
 
     auto prim_src = std::dynamic_pointer_cast<primitive_type>(expr->get_type());

@@ -690,16 +690,21 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             std::cerr << "Error: function invocation must have defined types" << std::endl;
         }
 
-        auto cast = adapt_type(arg, param->get_type());
-        if(!cast) {
+        auto w = compute_cast_weight(arg, param->get_type());
+        if (w == CAST_IMPOSSIBLE) {
             // TODO throw an exception
-            // Error: function parameter is not compatible (cannot be cast).
-            std::cerr << "Error: function argument must be compatible to parameter" << std::endl;
-        } else if(cast != arg ) {
-            // Casted, assign casted expression instead of right source.
-            expr.assign_argument(n, cast);
+            std::cerr << "Error: function argument " << n << " cannot be implicitly converted to parameter type '"
+                      << param->get_type()->to_string() << "' for function '"
+                      << callee->get_name().to_string() << "'" << std::endl;
         } else {
-            // Compatible type, no need to cast.
+            auto cast = adapt_type(arg, param->get_type());
+            if(!cast) {
+                std::cerr << "Error: function argument must be compatible to parameter" << std::endl;
+            } else if(cast != arg ) {
+                // Casted, assign casted expression instead of right source.
+                expr.assign_argument(n, cast);
+            }
+            // else: compatible type, no need to cast.
         }
     }
 }
@@ -1036,13 +1041,13 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             if(src->is_unsigned()) {
                 if(*tgt == primitive_type::FLOAT) {
                     _value = _builder->CreateUIToFP(_value, _builder->getFloatTy());
-                } else if(*tgt == primitive_type::FLOAT) {
+                } else if(*tgt == primitive_type::DOUBLE) {
                     _value = _builder->CreateUIToFP(_value, _builder->getDoubleTy());
                 } /* else must not happen */
             } else {
                 if(*tgt == primitive_type::FLOAT) {
                     _value = _builder->CreateSIToFP(_value, _builder->getFloatTy());
-                } else if(*tgt == primitive_type::FLOAT) {
+                } else if(*tgt == primitive_type::DOUBLE) {
                     _value = _builder->CreateSIToFP(_value, _builder->getDoubleTy());
                 } /* else must not happen */
             }

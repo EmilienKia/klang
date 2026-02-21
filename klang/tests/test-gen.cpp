@@ -1173,3 +1173,147 @@ TEST_CASE("Struct destructor called on global variable via global_dtor", "[gen][
     REQUIRE(dtor_called != nullptr);
     REQUIRE(*dtor_called == 77);
 }
+
+//
+// Implicit cast on function invocation
+//
+
+TEST_CASE("Function call with primitive widening cast", "[gen][cast][widening]") {
+    // short argument passed to int parameter: widening, no data loss
+    auto jit = gen_jit(R"SRC(
+        module __cast_widening__;
+
+        add(a : int, b : int) : int {
+            return a + b;
+        }
+
+        test() : int {
+            s : short = 10s;
+            return add(s, 32);
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Function call with primitive narrowing cast", "[gen][cast][narrowing]") {
+    // int argument passed to short parameter: narrowing, possible overflow
+    auto jit = gen_jit(R"SRC(
+        module __cast_narrowing__;
+
+        identity(x : short) : int {
+            return x;
+        }
+
+        test() : int {
+            i : int = 100;
+            return identity(i);
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 100);
+}
+
+TEST_CASE("Function call with int-to-double widening cast", "[gen][cast][widening]") {
+    auto jit = gen_jit(R"SRC(
+        module __cast_int_double__;
+
+        half(x : double) : double {
+            return x / 2.0d;
+        }
+
+        test() : int {
+            return half(84);
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Constructor call with primitive widening cast", "[gen][cast][structs][widening]") {
+    // Constructor expects int but we pass a short: widening cast
+    auto jit = gen_jit(R"SRC(
+        module __ctor_widening__;
+
+        struct box {
+            val : int = 0;
+
+            box(v : int) {
+                val = v + 1;
+            }
+        }
+
+        test() : int {
+            s : short = 41s;
+            b : box(s);
+            return b.val;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Constructor overload resolution preferring widening over narrowing", "[gen][cast][structs][widening]") {
+    // plop(int) and plop(short): passing an int literal should select plop(int) (CAST_NONE),
+    // and passing a short should prefer plop(short) (CAST_NONE) over plop(int) (CAST_WIDENING).
+    auto jit = gen_jit(R"SRC(
+        module __ctor_overload_weight__;
+
+        struct plop {
+            a : int = 0;
+
+            plop(c : int) {
+                a = 10;
+            }
+
+            plop(d : double) {
+                a = 20;
+            }
+        }
+
+        test_exact_int() : int {
+            p : plop(5);
+            return p.a;
+        }
+
+        test_exact_double() : int {
+            p : plop(5.0d);
+            return p.a;
+        }
+
+        test_widening_short_to_int() : int {
+            s : short = 5s;
+            p : plop(s);
+            return p.a;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    // Exact match → int constructor
+    auto test_exact_int = jit->lookup_symbol<int(*)()>("test_exact_int");
+    REQUIRE(test_exact_int != nullptr);
+    REQUIRE(test_exact_int() == 10);
+
+    // Exact match → double constructor
+    auto test_exact_double = jit->lookup_symbol<int(*)()>("test_exact_double");
+    REQUIRE(test_exact_double != nullptr);
+    REQUIRE(test_exact_double() == 20);
+
+    // short widened to int → int constructor (widening, score=WIDENING < NARROWING)
+    auto test_widening = jit->lookup_symbol<int(*)()>("test_widening_short_to_int");
+    REQUIRE(test_widening != nullptr);
+    REQUIRE(test_widening() == 10);
+}
+

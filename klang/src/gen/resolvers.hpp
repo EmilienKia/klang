@@ -19,6 +19,8 @@
 #ifndef KLANG_RESOLVERS_HPP
 #define KLANG_RESOLVERS_HPP
 
+#include <limits>
+
 #include "../model/model.hpp"
 #include "../model/model_visitor.hpp"
 
@@ -229,6 +231,43 @@ protected:
 
     void visit_cast_expression(cast_expression&)override;
 
+    /**
+     * Cast weight values, representing the cost of an implicit conversion.
+     * NONE      (0)          : no conversion needed, types are identical.
+     * REF_CONV  (1)          : reference/pointer load (ref -> value).
+     * WIDENING  (2)          : lossless primitive widening (e.g. short -> int).
+     * NARROWING (3)          : lossy primitive narrowing (e.g. int -> short, possible overflow).
+     * CONSTRUCT (4)          : construction of an intermediate object via a 1-arg constructor.
+     * IMPOSSIBLE(UINT32_MAX) : conversion is not possible.
+     */
+    enum cast_weight : unsigned int {
+        CAST_NONE      = 0,
+        CAST_REF_CONV  = 1,
+        CAST_WIDENING  = 2,
+        CAST_NARROWING = 3,
+        CAST_CONSTRUCT = 4,
+        CAST_IMPOSSIBLE = std::numeric_limits<unsigned int>::max()
+    };
+
+    /**
+     * Compute the cost (weight) of an implicit conversion from expr's type to target type,
+     * without actually building any new expression node.
+     * @param expr   Source expression (must have a resolved type).
+     * @param type   Target type (must be resolved).
+     * @return The cast_weight value for this conversion.
+     */
+    cast_weight compute_cast_weight(const std::shared_ptr<expression>& expr, const std::shared_ptr<type>& type);
+
+    /**
+     * Choose the best-matching constructor among a list of candidates given a set of arguments.
+     * Scoring: score of a candidate = max cast_weight over all its parameters.
+     * If no candidate has the right parameter count, emits a specific message.
+     * If all arity-matching candidates have at least one impossible cast, lists them with details.
+     * If multiple candidates share the same (lowest) score, emits an ambiguity error.
+     * @param constructors  List of constructor candidates.
+     * @param args          Argument expressions.
+     * @return {best_constructor, adapted_args} or {nullptr, {}} on failure.
+     */
     std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::shared_ptr<expression>>/*adapted_args*/>
     get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args);
 
