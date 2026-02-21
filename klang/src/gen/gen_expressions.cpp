@@ -440,7 +440,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         subtype = subtype->get_subtype();
     }*/
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(subtype)) {
-        auto member_name =  expr.symbol();
+        const auto& member_name =  expr.symbol();
         if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
             expr.set_type(field->field_type.lock()->get_reference());
         } else if(auto method = struct_subtype->get_struct()->get_function(member_name.get_name())) {
@@ -468,7 +468,7 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
 
     auto type = expr.sub_expr()->get_type(); // Is a reference
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(type->get_subtype())) {
-        auto member_name =  expr.symbol();
+        const auto& member_name =  expr.symbol();
         if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
             _value = _builder->CreateStructGEP(type->get_subtype()->get_llvm_type(), _value, field->index);
         } else if(auto method = struct_subtype->get_struct()->get_function(member_name.get_name())) {

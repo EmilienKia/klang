@@ -61,6 +61,8 @@ protected:
 
     expression() = default;
     expression(std::shared_ptr<type> type) : _type(type) {}
+    // Copy constructor: copies type only, parent is NOT copied (clone is orphan).
+    expression(const expression& other) : _type(other._type) {}
 
     friend class unary_expression;
     friend class binary_expression;
@@ -88,6 +90,9 @@ public:
 
     std::shared_ptr<expression> get_parent_expression() { return parent<expression>(); };
     std::shared_ptr<const expression> get_parent_expression() const { return parent<expression>(); };
+
+    /** Return a deep copy of this expression, without parent (orphan). */
+    virtual std::shared_ptr<expression> clone() const = 0;
 };
 
 class value_expression : public expression {
@@ -101,6 +106,9 @@ protected:
     value_expression() = delete;
 
     value_expression(const k::lex::any_literal &literal);
+
+    // Copy constructor
+    value_expression(const value_expression& other) : expression(other), _value(other._value), _literal(other._literal) {}
 
 public:
     void accept(model_visitor &visitor) override;
@@ -141,6 +149,9 @@ public:
         return std::make_shared<value_expression>(str);
     }
 
+    std::shared_ptr<expression> clone() const override {
+        return std::shared_ptr<value_expression>(new value_expression(*this));
+    }
 };
 
 class symbol_expression : public expression {
@@ -159,6 +170,9 @@ protected:
     symbol_expression(const std::shared_ptr<variable_definition> &var);
 
     symbol_expression(const std::shared_ptr<function> &func);
+
+    // Copy constructor
+    symbol_expression(const symbol_expression& other) : expression(other), _name(other._name), _target(other._target) {}
 
 public:
     void accept(model_visitor &visitor) override;
@@ -206,6 +220,10 @@ public:
     void set_target(std::shared_ptr<variable_definition> var);
 
     void set_target(std::shared_ptr<function> func);
+
+    std::shared_ptr<expression> clone() const override {
+        return std::shared_ptr<symbol_expression>(new symbol_expression(*this));
+    }
 };
 
 class unary_expression : public expression {
@@ -215,6 +233,7 @@ protected:
     std::shared_ptr<k::parse::ast::unary_expression> _ast_unary_expr;
 
     unary_expression() = default;
+    unary_expression(const unary_expression&) = delete;
     unary_expression(const std::shared_ptr<expression> &sub_expr)
             : _sub_expr(sub_expr) {
         _sub_expr->set_parent_expression(shared_as<expression>());
@@ -247,7 +266,7 @@ public:
         return _ast_unary_expr;
     }
 
-
+    std::shared_ptr<expression> clone() const override = 0;
 };
 
 class binary_expression : public expression {
@@ -258,6 +277,7 @@ protected:
     std::shared_ptr<expression> _right_expr;
 
     binary_expression() = default;
+    binary_expression(const binary_expression&) = delete;
     binary_expression(const std::shared_ptr<expression> &leftExpr, const std::shared_ptr<expression> &rightExpr)
             : _left_expr(leftExpr), _right_expr(rightExpr) {
         _left_expr->set_parent_expression(shared_as<expression>());
@@ -301,6 +321,8 @@ public:
     std::shared_ptr<expression> &right() {
         return _right_expr;
     }
+
+    std::shared_ptr<expression> clone() const override = 0;
 };
 
 /**
@@ -311,42 +333,57 @@ public:
 class load_value_expression : public unary_expression {
 protected:
     load_value_expression() = default;
-
 public:
     void accept(model_visitor &visitor) override;
-
     static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
         std::shared_ptr<load_value_expression> expr{new load_value_expression()};
         expr->assign(sub_expr);
         return std::shared_ptr<unary_expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<load_value_expression> c{new load_value_expression()};
+        c->_type = _type;
+        c->_ast_unary_expr = _ast_unary_expr;
+        if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
     }
 };
 
 class address_of_expression : public unary_expression {
 protected:
     address_of_expression() = default;
-
 public:
     void accept(model_visitor &visitor) override;
-
     static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
         std::shared_ptr<address_of_expression> expr{new address_of_expression()};
         expr->assign(sub_expr);
         return std::shared_ptr<unary_expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<address_of_expression> c{new address_of_expression()};
+        c->_type = _type;
+        c->_ast_unary_expr = _ast_unary_expr;
+        if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
     }
 };
 
 class dereference_expression : public unary_expression {
 protected:
     dereference_expression() = default;
-
 public:
     void accept(model_visitor &visitor) override;
-
     static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
         std::shared_ptr<dereference_expression> expr{new dereference_expression()};
         expr->assign(sub_expr);
         return std::shared_ptr<unary_expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<dereference_expression> c{new dereference_expression()};
+        c->_type = _type;
+        c->_ast_unary_expr = _ast_unary_expr;
+        if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
     }
 };
 
@@ -374,81 +411,92 @@ public:
     symbol_expression& symbol() {
         return *_symbol;
     }
+
+    std::shared_ptr<expression> clone() const override = 0;
 };
 
 class member_of_object_expression : public member_of_expression {
 protected:
     member_of_object_expression() = default;
-
 public:
     void accept(model_visitor &visitor) override;
-
     static std::shared_ptr<member_of_object_expression> make_shared(const std::shared_ptr<expression> &sub_expr, const std::shared_ptr<symbol_expression>& symbol) {
         std::shared_ptr<member_of_object_expression> expr{new member_of_object_expression()};
         expr->assign(sub_expr, symbol);
         return std::shared_ptr<member_of_object_expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<member_of_object_expression> c{new member_of_object_expression()};
+        c->_type = _type;
+        c->_ast_unary_expr = _ast_unary_expr;
+        auto sym = _symbol ? std::dynamic_pointer_cast<symbol_expression>(_symbol->clone()) : nullptr;
+        if (_sub_expr && sym) c->assign(_sub_expr->clone(), sym);
+        return c;
     }
 };
 
 class member_of_pointer_expression : public member_of_expression {
 protected:
     member_of_pointer_expression() = default;
-
 public:
     void accept(model_visitor &visitor) override;
-
     static std::shared_ptr<member_of_pointer_expression> make_shared(const std::shared_ptr<expression> &sub_expr, const std::shared_ptr<symbol_expression>& symbol) {
         std::shared_ptr<member_of_pointer_expression> expr{new member_of_pointer_expression()};
         expr->assign(sub_expr, symbol);
         return std::shared_ptr<member_of_pointer_expression>{expr};
     }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<member_of_pointer_expression> c{new member_of_pointer_expression()};
+        c->_type = _type;
+        c->_ast_unary_expr = _ast_unary_expr;
+        auto sym = _symbol ? std::dynamic_pointer_cast<symbol_expression>(_symbol->clone()) : nullptr;
+        if (_sub_expr && sym) c->assign(_sub_expr->clone(), sym);
+        return c;
+    }
 };
 
 class cast_expression : public unary_expression {
 protected:
-    // Casting type
     std::shared_ptr<type> _cast_type;
-
     cast_expression() = default;
-
 public:
     void accept(model_visitor &visitor) override;
-
-    static std::shared_ptr<expression>
-    make_shared(const std::shared_ptr<expression> &expr, const std::shared_ptr<type> &type) {
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &expr, const std::shared_ptr<type> &type) {
         std::shared_ptr<cast_expression> rexpr{new cast_expression()};
         rexpr->assign(expr);
         rexpr->_cast_type = type;
         return std::shared_ptr<expression>{rexpr};
     }
-
-    std::shared_ptr<type> get_cast_type() {
-        return _cast_type;
-    }
-
-    std::shared_ptr<const type> get_cast_type() const {
-        return _cast_type;
+    std::shared_ptr<type> get_cast_type() { return _cast_type; }
+    std::shared_ptr<const type> get_cast_type() const { return _cast_type; }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<cast_expression> c{new cast_expression()};
+        c->_type = _type;
+        c->_ast_unary_expr = _ast_unary_expr;
+        c->_cast_type = _cast_type;
+        if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
     }
 };
 
 class subscript_expression : public binary_expression {
 protected:
     subscript_expression() = default;
-
     subscript_expression(const std::shared_ptr<expression> &callee_expr,
                          const std::shared_ptr<expression> &index_expr) :
-                         binary_expression(callee_expr, index_expr)
-    {
-    }
-
+                         binary_expression(callee_expr, index_expr) {}
 public:
     void accept(model_visitor &visitor) override;
-
-    static std::shared_ptr<expression>
-    make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
+    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &left_expr, const std::shared_ptr<expression> &right_expr) {
         std::shared_ptr<subscript_expression> expr{new subscript_expression()};
         expr->assign(left_expr, right_expr);
         return std::shared_ptr<expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<subscript_expression> c{new subscript_expression()};
+        c->_type = _type;
+        if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
+        return c;
     }
 };
 
@@ -461,6 +509,7 @@ protected:
 
 
     function_invocation_expression() = default;
+    function_invocation_expression(const function_invocation_expression&) = delete;
 
     function_invocation_expression(const std::shared_ptr<expression> &callee_expr)
             : _callee_expr(callee_expr) {
@@ -513,6 +562,15 @@ public:
 public:
     void accept(model_visitor &visitor) override;
 
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<function_invocation_expression> c{new function_invocation_expression()};
+        c->_type = _type;
+        std::vector<std::shared_ptr<expression>> args;
+        for (auto& a : _arguments) args.push_back(a->clone());
+        auto callee = _callee_expr ? _callee_expr->clone() : nullptr;
+        if (callee) c->assign(callee, args);
+        return c;
+    }
 };
 
 class constructor_invocation_expression : public expression {
@@ -527,6 +585,7 @@ protected:
     std::shared_ptr<constructor> _constructor;
 
     constructor_invocation_expression() = default;
+    constructor_invocation_expression(const constructor_invocation_expression&) = delete;
 
     constructor_invocation_expression(const std::shared_ptr<symbol_expression> &constructed_symbol,
                                    const std::vector<std::shared_ptr<expression>> &args)
@@ -582,6 +641,19 @@ public:
     static std::shared_ptr<constructor_invocation_expression> make_shared(const std::shared_ptr<variable_definition> &variable, const std::vector<std::shared_ptr<expression>> &args);
 
     void accept(model_visitor &visitor) override;
+
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<constructor_invocation_expression> c{new constructor_invocation_expression()};
+        c->_type = _type;
+        c->_constructor = _constructor;
+        auto sym = _constructed_symbol
+            ? std::dynamic_pointer_cast<symbol_expression>(_constructed_symbol->clone())
+            : nullptr;
+        std::vector<std::shared_ptr<expression>> args;
+        for (auto& a : _arguments) args.push_back(a->clone());
+        if (sym) c->assign(sym, args);
+        return c;
+    }
 };
 
 

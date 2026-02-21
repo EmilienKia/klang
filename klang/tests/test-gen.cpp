@@ -1058,6 +1058,44 @@ TEST_CASE("Struct constructor", "[gen][structs]") {
     REQUIRE( res_test == (5 + 1 + 7) );
 }
 
+TEST_CASE("Struct constructor overload resolution", "[gen][structs]") {
+    auto jit = gen_jit(R"SRC(
+        module __structs__;
+
+        struct plop {
+            a : int = 1;
+
+            plop(c : int) {
+                a = 3;
+            }
+
+            plop(d : double) {
+                a = 5;
+            }
+        }
+
+        test_int() : int {
+            p : plop(2);
+            return p.a;
+        }
+
+        test_double() : int {
+            p : plop(2.0d);
+            return p.a;
+        }
+
+        )SRC");
+    REQUIRE(jit);
+
+    auto test_int = jit->lookup_symbol<int(*)()>("test_int");
+    REQUIRE(test_int != nullptr);
+    REQUIRE(test_int() == 3);
+
+    auto test_double = jit->lookup_symbol<int(*)()>("test_double");
+    REQUIRE(test_double != nullptr);
+    REQUIRE(test_double() == 5);
+}
+
 //
 // Destructor tests
 //

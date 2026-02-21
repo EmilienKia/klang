@@ -526,8 +526,11 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
         if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
             auto init_expr = var->get_init_expr();
             if (init_expr) {
+                // Clone the init expression so each constructor gets its own independent copy.
+                // Without cloning, all constructors would share the same expression objects,
+                // causing type-resolution of one constructor to corrupt the others.
                 auto stmt = std::make_shared<expression_statement>(blck);
-                stmt->set_expression(init_expr);
+                stmt->set_expression(init_expr->clone());
                 insert_pos = blck->insert_statement(insert_pos, stmt);
             }
         }

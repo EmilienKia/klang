@@ -200,7 +200,7 @@ std::shared_ptr<expression> symbol_resolver::adapt_type(std::shared_ptr<expressi
         return {};
     }
 
-    if(prim_src==prim_tgt) {
+    if(prim_src && prim_tgt && *prim_src==*prim_tgt) {
         // Trivially agree for same types
         return expr;
     }
@@ -408,7 +408,7 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
         return {};
     }
 
-    if(prim_src==prim_tgt) {
+    if(*prim_src==*prim_tgt) {
         // Trivially agree for same types
         return expr;
     }
