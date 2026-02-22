@@ -39,6 +39,51 @@ public:
 };
 
 
+/**
+ * Scope lookup utility: all symbol search algorithms with scope-chain traversal.
+ * Kept entirely in the resolver layer; the model is unaware of resolution strategies.
+ *
+ * The three entry points are:
+ *   - lookup_variable  : find a variable definition by name, walking up the scope chain.
+ *   - lookup_function  : find the first function matching a name, walking up the scope chain.
+ *   - lookup_functions : collect ALL overloads matching a name across the full scope chain.
+ *   - lookup_structure : find a structure by name, walking up the scope chain.
+ *
+ * Each function accepts a std::shared_ptr<element> as the starting point and climbs the parent tree.
+ */
+class scope_lookup {
+public:
+    /**
+     * Look up a variable by simple name, starting from elem and walking up the scope chain.
+     * Checks variable_holder scopes (block, for_statement, ns, structure) and function parameters.
+     */
+    static std::shared_ptr<variable_definition>
+    lookup_variable(std::shared_ptr<element> elem, const std::string& name);
+
+    /**
+     * Look up the first function matching name, starting from elem and walking up the scope chain.
+     * Searches function_holder scopes (structure member functions, then enclosing namespaces).
+     */
+    static std::shared_ptr<function>
+    lookup_function(std::shared_ptr<element> elem, const std::string& name);
+
+    /**
+     * Collect ALL functions (overloads) matching name, starting from elem and walking up the
+     * full scope chain (structure members first, then all enclosing namespaces).
+     */
+    static std::vector<std::shared_ptr<function>>
+    lookup_functions(std::shared_ptr<element> elem, const std::string& name);
+
+    /**
+     * Look up a structure by name, starting from elem and walking up the scope chain.
+     */
+    static std::shared_ptr<structure>
+    lookup_structure(std::shared_ptr<element> elem, const std::string& name);
+
+private:
+    scope_lookup() = delete; // static-only utility class
+};
+
 
 /**
  * Unit symbol resolver
@@ -270,6 +315,38 @@ protected:
      */
     std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::shared_ptr<expression>>/*adapted_args*/>
     get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args);
+
+
+    /**
+     * Result of function overload resolution.
+     * When 'is_unified_call' is true, the function is a free function called via unified call syntax,
+     * and 'this_expr' contains the object expression that will be passed as the first argument.
+     */
+    struct FunctionCandidate {
+        std::shared_ptr<function> func;
+        std::vector<std::shared_ptr<expression>> adapted_args;
+        /** If true, the match is via unified-call syntax (free fn with first param = ref to struct). */
+        bool is_unified_call = false;
+        /** The object expression used as 'this' when is_unified_call is true. */
+        std::shared_ptr<expression> this_expr;
+    };
+
+    /**
+     * Choose the best-matching function among a list of candidates given a set of arguments.
+     * Supports both regular calls and unified-call syntax.
+     * @param candidates     List of function candidates (member or free).
+     * @param args           For Mode A/C: explicit args after 'this'. For Mode B: ignored if direct_args set.
+     * @param this_expr      Optional object expression for member (Mode A) / unified (Mode C) calls.
+     * @param direct_args    Optional full args for Mode B (free/static direct call). If null, uses args.
+     *                       Pass full args (including obj) here to enable direct matching of free functions
+     *                       alongside member/unified matching in the same scorer invocation.
+     * @return FunctionCandidate with the best match, or {nullptr,...} on failure.
+     */
+    FunctionCandidate
+    get_best_matching_function(const std::vector<std::shared_ptr<function>>& candidates,
+                               const std::vector<std::shared_ptr<expression>>& args,
+                               const std::shared_ptr<expression>& this_expr = nullptr,
+                               const std::vector<std::shared_ptr<expression>>* direct_args = nullptr);
 
 
     /**

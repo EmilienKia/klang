@@ -251,8 +251,6 @@ public:
 
     std::shared_ptr<variable_holder> get_variable_holder() override;
     std::shared_ptr<const variable_holder> get_variable_holder() const override;
-
-    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const override;
 };
 
 
@@ -391,7 +389,6 @@ public:
     const_iterator begin() const { return _statements.begin(); }
     const_iterator end() const { return _statements.end(); }
 
-
     std::shared_ptr<variable_holder> get_variable_holder() override;
     std::shared_ptr<const variable_holder> get_variable_holder() const override;
 
@@ -400,9 +397,6 @@ public:
 
     std::shared_ptr<function> get_direct_function() {return _function;}
     std::shared_ptr<const function> get_direct_function() const {return _function;}
-
-
-    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const override;
 };
 
 

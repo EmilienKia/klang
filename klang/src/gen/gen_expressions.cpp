@@ -592,120 +592,179 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
     if(!callee && !member_callee) {
         std::cerr << "Error : only support global or object-member method call" << std::endl;
+        return;
     }
 
-    if (member_callee) {
-        member_callee->accept(*this);
-        callee = std::dynamic_pointer_cast<symbol_expression>(member_callee->symbol().shared_as<symbol_expression>());
-        if (!callee) {
-            std::cerr << "Error : only support object-member method call with symbol expression" << std::endl;
-        }
-    }
-
+    // Resolve and type-check all arguments first
     for(auto& arg : expr.arguments()) {
         arg->accept(*this);
     }
 
-    if (!callee->is_function()) {
-        // Last chance to resolve to call
-        // TODO is it really usefull now ?
+    // ----------------------------------------------------------------
+    // Case 1 : member-of-object call  "obj.method(args)"
+    // ----------------------------------------------------------------
+    if (member_callee) {
+        member_callee->sub_expr()->accept(*this);
 
-        // Resolve function to call
-        if(member_callee) {
-            // Resolve member function to call
-            if (auto sub_expr_ref_type = std::dynamic_pointer_cast<reference_type>(member_callee->sub_expr()->get_type()); sub_expr_ref_type) {
-                if (auto sub_expr_type = std::dynamic_pointer_cast<struct_type>(sub_expr_ref_type->get_subtype()); sub_expr_type) {
-                    if (auto st = sub_expr_type->get_struct(); st)  {
-                        // Found struct type
-                        if (auto func = st->lookup_function(callee->get_name())) {
-                            if(!func->is_member()) {
-                                // TODO throw an exception
-                                std::cerr << "Error : function '" << callee->get_name().to_string() << "' is not a member function of struct '" << st->get_short_name() << "'" << std::endl;
-                                return;
-                            }
-                            // TODO Check the found function own is of compatible type
-                            // TODO support overloading
-                            // TODO enforce prototype matching
-                            // Function prototype and expression type are set at resolution
-                            callee->set_target(func);
-                            expr.set_type(func->get_return_type());
-                        } else {
-                            // TODO throw an exception
-                            std::cerr << "Error : cannot find member function '" << callee->get_name().to_string() << "' in struct '" << st->get_short_name() << "'" << std::endl;
-                            return;
+        callee = std::dynamic_pointer_cast<symbol_expression>(
+                member_callee->symbol().shared_as<symbol_expression>());
+        if (!callee) {
+            std::cerr << "Error : only support object-member method call with symbol expression" << std::endl;
+            return;
+        }
+
+        // sub_expr of member_callee gives the object reference
+        auto this_expr = member_callee->sub_expr();
+        auto this_type = this_expr->get_type(); // should be ref<struct>
+
+        if (!type::is_reference(this_type)) {
+            std::cerr << "Error : member-of-object call requires a reference type." << std::endl;
+            return;
+        }
+        auto subtype = type::is_reference(this_type) ? this_type->get_subtype() : this_type;
+        auto struct_subtype = std::dynamic_pointer_cast<struct_type>(subtype);
+        if (!struct_subtype) {
+            std::cerr << "Error : member-of-object call only supports struct types." << std::endl;
+            return;
+        }
+        auto st = struct_subtype->get_struct();
+
+        // Use the short (unqualified) name for function lookup
+        std::string func_short_name = callee->get_name().back();
+
+        // Collect all candidate functions (member + free/static from parent scopes)
+        std::vector<std::shared_ptr<function>> candidates = scope_lookup::lookup_functions(st, func_short_name);
+
+        if (candidates.empty()) {
+            std::cerr << "Error : cannot find any function named '"
+                      << callee->get_name().to_string()
+                      << "' accessible from struct '" << st->get_short_name() << "'" << std::endl;
+            return;
+        }
+
+        auto best = get_best_matching_function(candidates, expr.arguments(), this_expr);
+        if (!best.func) {
+            std::cerr << "Error : no viable overload for '"
+                      << callee->get_name().to_string() << "'." << std::endl;
+            return;
+        }
+
+        callee->set_target(best.func);
+        expr.set_type(best.func->get_return_type());
+
+        // Apply adapted arguments
+        for (size_t i = 0; i < best.adapted_args.size(); ++i) {
+            expr.assign_argument(i, best.adapted_args[i]);
+        }
+        // Note: if best.is_unified_call, the callee stays as member_of_object_expression
+        // but the resolved function is free/static. impl_gen handles this by passing
+        // sub_expr() value as first argument when the function is not a member.
+        return;
+    }
+
+    // ----------------------------------------------------------------
+    // Case 2 : plain symbol call  "func(args)"
+    // ----------------------------------------------------------------
+    // Always perform overload resolution even if symbol_resolver already resolved
+    // a candidate (it may have picked the wrong overload without type info).
+    // We collect ALL candidates (from scope chain + struct members of first arg)
+    // and score them in a single pass that handles:
+    //   Mode A: member call with this_expr + rest_args
+    //   Mode B: free/static direct call with all args (even when this_expr is set)
+    //   Mode C: unified call (free/static with first param = ref<struct of this_expr>)
+    {
+        // Use the short (unqualified) name for function lookup
+        std::string func_name = callee->get_name().back();
+        const auto& args = expr.arguments();
+
+        // --- Collect candidates from the scope chain ---
+        std::vector<std::shared_ptr<function>> all_candidates = scope_lookup::lookup_functions(callee, func_name);
+
+        // --- If first arg is ref<struct>, also collect candidates from that struct ---
+        std::shared_ptr<expression> this_candidate;
+        std::vector<std::shared_ptr<expression>> rest_args;
+        if (!args.empty()) {
+            auto first_arg_type = args[0]->get_type();
+            if (type::is_reference(first_arg_type)) {
+                if (auto first_struct = std::dynamic_pointer_cast<struct_type>(first_arg_type->get_subtype())) {
+                    auto st = first_struct->get_struct();
+                    this_candidate = args[0];
+                    rest_args = std::vector<std::shared_ptr<expression>>(args.begin() + 1, args.end());
+                    for (auto& f : scope_lookup::lookup_functions(st, func_name)) {
+                        if (std::find(all_candidates.begin(), all_candidates.end(), f) == all_candidates.end()) {
+                            all_candidates.push_back(f);
                         }
-                    } else {
-                        // TODO throw an exception
-                        std::cerr << "Error : object-member call only support struct callee type" << std::endl;
-                        return;
                     }
-                } else {
-                    // TODO throw an exception
-                    std::cerr << "Error : object-member call only support reference to struct callee type" << std::endl;
                 }
-            } else {
-                // TODO throw an exception
-                std::cerr << "Error : object-member call only support reference (to struct) callee type" << std::endl;
+            }
+        }
+
+        if (all_candidates.empty()) {
+            // Fallback: if callee was already resolved by symbol_resolver, use it directly.
+            if (callee->is_function()) {
+                auto already_func = callee->get_function();
+                expr.set_type(already_func->get_return_type());
+                const auto& params = already_func->parameters();
+                for (size_t n = 0; n < expr.arguments().size() && n < params.size(); ++n) {
+                    auto arg = expr.arguments().at(n);
+                    auto w = compute_cast_weight(arg, params[n]->get_type());
+                    if (w != CAST_IMPOSSIBLE) {
+                        auto cast = adapt_type(arg, params[n]->get_type());
+                        if (cast && cast != arg) expr.assign_argument(n, cast);
+                    }
+                }
+                return;
+            }
+            std::cerr << "Error : no viable overload for '" << func_name << "'." << std::endl;
+            return;
+        }
+
+        // --- Single scoring pass: Mode A/C use rest_args+this_candidate; Mode B uses full args ---
+        // Mode A: member func, this_candidate provides 'this', rest_args are the explicit params
+        // Mode B: free/static, full args passed directly via direct_args (may include obj as first)
+        // Mode C: free/static, this_candidate + rest_args as the rest (params.size()==rest_args.size()+1)
+        FunctionCandidate best = get_best_matching_function(all_candidates,
+                                                            this_candidate ? rest_args : args,
+                                                            this_candidate,
+                                                            this_candidate ? &args : nullptr);
+        bool is_free_to_member_call = false;
+
+        if (!best.func) {
+            std::cerr << "Error : no viable overload for '" << func_name << "'." << std::endl;
+            return;
+        }
+
+        // Determine if this is a free-function-called-as-member transformation
+        if (this_candidate && best.func->is_member() && !best.func->is_static() && !best.is_unified_call) {
+            is_free_to_member_call = true;
+        }
+
+        callee->set_target(best.func);
+        expr.set_type(best.func->get_return_type());
+
+        if (best.is_unified_call) {
+            for (size_t i = 0; i < best.adapted_args.size(); ++i) {
+                expr.assign_argument(i, best.adapted_args[i]);
+            }
+        } else if (is_free_to_member_call) {
+            // Member function found via free-function syntax: func(obj, args...)
+            auto obj_expr = expr.arguments()[0];
+            auto sym_for_member = symbol_expression::from_function(best.func);
+            sym_for_member->set_target(best.func);
+            auto member_expr = member_of_object_expression::make_shared(obj_expr, sym_for_member);
+            expr.assign(member_expr, best.adapted_args);
+        } else if (this_candidate && best.adapted_args.size() == args.size()) {
+            // Mode B was selected (free/static direct with all args including first)
+            for (size_t i = 0; i < best.adapted_args.size(); ++i) {
+                expr.assign_argument(i, best.adapted_args[i]);
             }
         } else {
-            // Resolve global function
-            auto nsp = callee->ancestor<ns>();
-            if (nsp == nullptr) {
-                // If global construction, it is out of namespace, so look for global namespace
-                nsp = _unit.get_root_namespace();
-            }
-            if(auto function = nsp->lookup_function(callee->get_name())) {
-                // TODO support overloading
-                // TODO enforce prototype matching
-                // Function prototype and expression type are set at resolution
-                callee->set_target(function);
+            // Regular free/static function call (no this_expr involved)
+            for (size_t i = 0; i < best.adapted_args.size(); ++i) {
+                expr.assign_argument(i, best.adapted_args[i]);
             }
         }
-    }
-
-    if (!callee->is_function()) {
-        // TODO throw exception
-        std::cerr << "Cannot resolve function to invoke " << callee->get_name().to_string() << std::endl;
-    }
-
-    auto func = callee->get_function();
-    expr.set_type(func->get_return_type());
-
-    auto params = func->parameters();
-    // Check arguments number corresponds to the expected function arguments (this is not taken in account here)
-    if(params.size() != expr.arguments().size()) {
-        // Error : callee and function have not the same argument count.
-        // TODO throw an exception
-        std::cerr << "Error : callee and function '" << callee->get_name().to_string() << "' have not the same argument count" << std::endl;
-    }
-
-    for(size_t n=0; n<expr.arguments().size(); ++n) {
-        auto arg = expr.arguments().at(n);
-        auto param = func->parameters().at(n);
-
-        if(!param->get_type() || !param->get_type()->is_resolved() ||
-           !arg->get_type() || !arg->get_type()->is_resolved()) {
-            // TODO throw an exception
-            // Error: function argument or function invocation parameter have undefined type
-            std::cerr << "Error: function invocation must have defined types" << std::endl;
-        }
-
-        auto w = compute_cast_weight(arg, param->get_type());
-        if (w == CAST_IMPOSSIBLE) {
-            // TODO throw an exception
-            std::cerr << "Error: function argument " << n << " cannot be implicitly converted to parameter type '"
-                      << param->get_type()->to_string() << "' for function '"
-                      << callee->get_name().to_string() << "'" << std::endl;
-        } else {
-            auto cast = adapt_type(arg, param->get_type());
-            if(!cast) {
-                std::cerr << "Error: function argument must be compatible to parameter" << std::endl;
-            } else if(cast != arg ) {
-                // Casted, assign casted expression instead of right source.
-                expr.assign_argument(n, cast);
-            }
-            // else: compatible type, no need to cast.
-        }
+        return;
     }
 }
 
@@ -754,13 +813,17 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     if(it==_context->_functions.end()) {
         // Error: function definition is not found.
         // TODO throw exception
-        std::cerr << "Error: function definition is not found." << std::endl;
+        std::cerr << "Error: function definition is not found: " << (function ? function->get_fq_name() : "<null>") << std::endl;
+        _value = nullptr;
+        return;
     }
     llvm::Function* llvm_func = it->second;
     if(!llvm_func) {
         // Error: function definition is not found.
         // TODO throw exception
         std::cerr << "Error: llvm function definition is not found." << std::endl;
+        _value = nullptr;
+        return;
     }
     // TODO look for external functions.
 

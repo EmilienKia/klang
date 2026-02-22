@@ -262,7 +262,6 @@ class variable_holder
 public:
     virtual std::shared_ptr<variable_definition> append_variable(const std::string& name, bool is_static = false);
     virtual std::shared_ptr<variable_definition> get_variable(const std::string& name) const;
-    virtual std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const;
 
     typedef std::map<std::string, std::shared_ptr<variable_definition>> variable_map_t;
         
@@ -287,8 +286,10 @@ class function_holder
 {
 public:
     virtual std::shared_ptr<function> define_function(const std::string& name, bool is_static);
+    /** Return the first function matching name (legacy, single-overload). */
     virtual std::shared_ptr<function> get_function(const std::string& name) const;
-    virtual std::shared_ptr<function> lookup_function(const std::string& name) const;
+    /** Return ALL functions matching name (for overload resolution). */
+    virtual std::vector<std::shared_ptr<function>> get_functions(const std::string& name) const;
 
     std::vector<std::shared_ptr<function>> functions() {return _functions;}
 
@@ -308,7 +309,6 @@ class structure_holder
 public:
     virtual std::shared_ptr<structure> define_structure(const std::string& name);
     virtual std::shared_ptr<structure> get_structure(const std::string& name) const;
-    virtual std::shared_ptr<structure> lookup_structure(const std::string& name) const;
 
 protected:
     /** Map of all defined structures. */
@@ -385,10 +385,6 @@ public:
     const std::vector<std::shared_ptr<element>>& get_children() const {
         return _children;
     }
-
-    std::shared_ptr<function> lookup_function(const std::string& name) const override;
-
-    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const override;
 
     const std::vector<std::shared_ptr<constructor>>& constructors() const { return _constructors; }
 
@@ -677,12 +673,6 @@ public:
     const std::vector<std::shared_ptr</*ns_element*/element>>& get_children() const {
         return _children;
     }
-
-    std::shared_ptr<function> lookup_function(const std::string& name) const override;
-
-    std::shared_ptr<variable_definition> lookup_variable(const std::string& name) const override;
-
-    std::shared_ptr<structure> lookup_structure(const std::string& name) const override;
 };
 
 

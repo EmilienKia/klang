@@ -142,7 +142,6 @@ void for_statement::set_nested_stmt(const std::shared_ptr<statement> &nested_stm
     set_this_as_parent_to(_nested_stmt);
 }
 
-
 std::shared_ptr<variable_holder> for_statement::get_variable_holder() {
     return shared_as<variable_holder>();
 }
@@ -159,20 +158,7 @@ std::shared_ptr<variable_definition> for_statement::do_create_variable(const std
 }
 
 void for_statement::on_variable_defined(std::shared_ptr<variable_definition> var) {
-    _decl_stmt = std::dynamic_pointer_cast<variable_statement>(var); // Supposed to have only one var declaration for now
-}
-
-std::shared_ptr<variable_definition> for_statement::lookup_variable(const std::string &name) const {
-    // TODO add qualified name lookup
-    if (auto var = variable_holder::lookup_variable(name)) {
-        return var;
-    } else if (auto parent = get_parent_stmt()->get_variable_holder()) {
-        // Has a parent variable holder, look at it
-        return parent->lookup_variable(name);
-    } else {
-        // For statement is necessarily on a block (direct or indirect)
-        return {};
-    }
+    _decl_stmt = std::dynamic_pointer_cast<variable_statement>(var);
 }
 
 
@@ -263,29 +249,6 @@ void block::on_variable_defined(std::shared_ptr<variable_definition> var) {
     }
 }
 
-std::shared_ptr<variable_definition> block::lookup_variable(const std::string &name) const {
-    // TODO add qualified name lookup
-    if (auto var = variable_holder::lookup_variable(name)) {
-        return var;
-    }
-
-    if (auto parent = get_parent_stmt()) {
-        if(auto var_holder = parent->get_variable_holder()) {
-            // Has a parent variable holder, look at it
-            return var_holder->lookup_variable(name);
-        }
-    }
-    if(_function) {
-        if (auto param = _function->get_parameter(name)) {
-            // Has a parameter of same name
-            return param;
-        } else if (auto ns = _function->parent<variable_holder>()) {
-            // Else base block of a function, look at the enclosing scope (ns)
-            return ns->lookup_variable(name);
-        }
-    }
-    return {}; // Must not happen
-}
 
 
 } // namespace k::model

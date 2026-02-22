@@ -93,15 +93,6 @@ std::shared_ptr<variable_definition> variable_holder::get_variable(const std::st
     }
 }
 
-std::shared_ptr<variable_definition> variable_holder::lookup_variable(const std::string& name) const {
-    // TODO add type checking
-    // TODO add qualified name lookup
-    if (auto var = get_variable(name)) {
-        return var;
-    } else {
-        return {};
-    }
-}
 
 variable_holder::variable_map_t::const_iterator variable_holder::variable_begin() const {
     return _vars.begin();
@@ -133,14 +124,16 @@ std::shared_ptr<function> function_holder::get_function(const std::string &name)
     return nullptr;
 }
 
-std::shared_ptr<function> function_holder::lookup_function(const std::string &name) const {
-    // TODO add prototype checking
-    if (auto func = get_function(name)) {
-        return func;
-    } else {
-        return nullptr;
+std::vector<std::shared_ptr<function>> function_holder::get_functions(const std::string &name) const {
+    std::vector<std::shared_ptr<function>> res;
+    for (auto& func: _functions) {
+        if (func->get_short_name() == name) {
+            res.push_back(func);
+        }
     }
+    return res;
 }
+
 
 //
 // Abstract structure holder
@@ -162,13 +155,6 @@ std::shared_ptr<structure> structure_holder::get_structure(const std::string &na
     }
 }
 
-std::shared_ptr<structure> structure_holder::lookup_structure(const std::string &name) const{
-    if (auto st = get_structure(name)) {
-        return st;
-    } else {
-        return nullptr;
-    }
-}
 
 
 //
@@ -592,18 +578,6 @@ void structure::on_function_defined(std::shared_ptr<function> func) {
     _children.push_back(func);
 }
 
-std::shared_ptr<function> structure::lookup_function(const std::string& name) const {
-    // TODO add prototype checking
-    if(auto func = function_holder::lookup_function(name)){
-        return func;
-    } else if (auto fh = ancestor<function_holder>()) {
-        // If has a parent namespace, look at it
-        return fh->lookup_function(name);
-    } else {
-        return nullptr;
-    }
-}
-
 
 std::shared_ptr<variable_definition> structure::do_create_variable(const std::string &name, bool is_static) {
     if (is_static) {
@@ -618,19 +592,6 @@ void structure::on_variable_defined(std::shared_ptr<variable_definition> var) {
         _children.push_back(std::dynamic_pointer_cast<element>(var));
     } else {
         std::cerr << "Try to register an unsupported type of variable as member of struct" << std::endl;
-    }
-}
-
-
-std::shared_ptr<variable_definition> structure::lookup_variable(const std::string& name) const {
-    // TODO add type checking
-    // TODO add qualified name lookup
-    if(auto var = variable_holder::lookup_variable(name)){
-        return var;
-    } else if (auto vh = ancestor<variable_holder>()) {
-        return vh->lookup_variable(name);
-    } else {
-        return {};
     }
 }
 
@@ -729,43 +690,6 @@ void ns::on_structure_defined(std::shared_ptr<structure> st) {
     _children.push_back(st);
 }
 
-
-std::shared_ptr<function> ns::lookup_function(const std::string &name) const {
-    // TODO add prototype checking
-    if(auto func = function_holder::lookup_function(name)){
-        return func;
-    } else if (auto fh = ancestor<function_holder>()) {
-        // If has a parent namespace, look at it
-        return fh->lookup_function(name);
-    } else {
-        return nullptr;
-    }
-}
-
-std::shared_ptr<variable_definition> ns::lookup_variable(const std::string &name) const {
-    // TODO add type checking
-    // TODO add qualified name lookup
-    if(auto var = variable_holder::lookup_variable(name)){
-        return var;
-    } else if (auto vh = ancestor<variable_holder>()) {
-        // If has a parent namespace, look at it
-        return vh->lookup_variable(name);
-    } else {
-        return {};
-    }
-}
-
-std::shared_ptr<structure> ns::lookup_structure(const std::string& name) const {
-    // TODO add qualified name lookup
-    if(auto st = structure_holder::lookup_structure(name)){
-        return st;
-    } else if (auto sh = ancestor<structure_holder>()) {
-        // If has a parent, look at it
-        return sh->lookup_structure(name);
-    } else {
-        return {};
-    }
-}
 
 
 //

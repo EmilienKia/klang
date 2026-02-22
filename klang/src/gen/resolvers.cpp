@@ -18,8 +18,44 @@
 //
 // Note: Last resolver log number: 0x30004
 //
+// How symbols are resolved:
+// A symbol is resolved by trying to match a looked name from a searched context.
+// The searched context is defined by the element from which the symbol is searched, and its ancestors or children.
+// - If the name is qualified (e.g. has multiple parts like "A::B::C"), the resolver will try to match the first part of the name (e.g. "A") in the searched context,
+// and then try to resolve the rest of the name (e.g. "B::C") from the matched element (e.g. "A").
+// If the qualified name has a root prefix (e.g. "::A::B::C"), the resolver will try to match the first part of the name (e.g. "A") in the namespace of the unit directly,
+// and then try to resolve the rest of the name (e.g. "B::C") from the matched element (e.g. "A").
+// If not found in the unit, the resolver will try to match the name from the imported modules, based on the import statements of the unit,
+// and then try to resolve the rest of the name (e.g. "C") from the matched imported module (e.g. "A::B").
+// A special case could be to explicitly specify the root namespace of the current module to avoid ambiguity with imported modules,
+// like "::my::module::A::B::C" to specify that the name must be resolved from the current module directly, and not from an imported module.
+// - If the name is simple (e.g. has only one part like "A"), the resolver will try to match the name directly in the searched context,
+// and then try to resolve the name from the matched element (e.g. "A") if found.
+// If the name is not found in the searched context, the resolver will try to resolve the name from the parent element context,
+// and then from the parent's parent element context, and so on until the name is resolved or there is no more parent element to search from.
+//
+// How implicit cast conversions are done:
+// When look for a symbol, if the symbol is found but its type is not compatible with the expected type, the resolver will try to adapt the symbol to the expected type by applying implicit cast conversions.
+// Or if many symbols sharing the same name are found, the resolver will try to adapt each symbol to the expected type by applying implicit cast conversions, and then select the best match based on the adapted types.
+// Selection is done by comparing the adapted types with the expected type, and selecting the one with the best match.
+// Matching is done following this order (most preferred to least preferred):
+// - Exact match: The adapted type is the same as the expected type.
+// - Ref conversion: The adapted type is a reference to the expected type, and the symbol can be loaded as a value (e.g. variable or function parameter).
+// - Type widening: The adapted primitive type is a type that can be implicitly converted to the expected type without losing data (e.g. int to float).
+// - Type narrowing: The adapted primitive type is a type that can be implicitly converted to the expected type but may lose data (e.g. float to int).
+// - Construction: The adapted type can be implicitly constructed to the expected type, an explicit one-argument constructor exists.
+// - No match: The adapted type cannot be converted to the expected type, or the symbol cannot be adapted to the expected type.
+// Note: The resolver will not perform implicit conversions that may have side effects (e.g. user-defined conversion operators, or constructors with side effects),
+//
+// Unified calling syntax:
+// In K language, the calling syntax is unified for functions, meaning that both member functions and free functions having a first parameter of type reference to the object can be called using the same syntaxes:
+// - Member function syntax: obj.method(args...) can be used to call both member functions and free functions with a first parameter of type reference to the object, and the resolver will resolve the method symbol and adapt it to the expected type if necessary (e.g. by adding a "this" parameter for free functions).
+// - Free function syntax: func(obj, args...) can be used to call both free functions and member functions, and the resolver will resolve the function symbol and adapt it to the expected type if necessary (e.g. by adding a "this" parameter for member functions).
+// In consequence a static or global function with a first parameter of type reference to the object can be called using the member function syntax, and a member function can be called using the free function syntax, and the resolver will adapt the symbol to the expected type if necessary (e.g. by adding a "this" parameter for member functions).
 
 #include "resolvers.hpp"
+#include "../model/statements.hpp"
+#include "../model/expressions.hpp"
 
 namespace k::model::gen {
 
@@ -34,6 +70,66 @@ resolution_error::resolution_error(const std::string &arg) :
 resolution_error::resolution_error(const char *string) :
         runtime_error(string)
 {}
+
+//
+// scope_lookup — all scope-chain resolution logic, isolated from the model
+//
+
+std::shared_ptr<variable_definition>
+scope_lookup::lookup_variable(std::shared_ptr<element> elem, const std::string& name) {
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto vh = std::dynamic_pointer_cast<variable_holder>(current)) {
+            if (auto var = vh->get_variable(name)) {
+                return var;
+            }
+        }
+        // Extra: the base block of a function exposes the function's parameters
+        if (auto blck = std::dynamic_pointer_cast<block>(current)) {
+            if (auto func = blck->get_direct_function()) {
+                if (auto param = func->get_parameter(name)) {
+                    return std::const_pointer_cast<parameter>(param);
+                }
+            }
+        }
+    }
+    return {};
+}
+
+std::shared_ptr<function>
+scope_lookup::lookup_function(std::shared_ptr<element> elem, const std::string& name) {
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto fh = std::dynamic_pointer_cast<function_holder>(current)) {
+            if (auto func = fh->get_function(name)) {
+                return func;
+            }
+        }
+    }
+    return {};
+}
+
+std::vector<std::shared_ptr<function>>
+scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string& name) {
+    std::vector<std::shared_ptr<function>> result;
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto fh = std::dynamic_pointer_cast<function_holder>(current)) {
+            auto local = fh->get_functions(name);
+            result.insert(result.end(), local.begin(), local.end());
+        }
+    }
+    return result;
+}
+
+std::shared_ptr<structure>
+scope_lookup::lookup_structure(std::shared_ptr<element> elem, const std::string& name) {
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto sh = std::dynamic_pointer_cast<structure_holder>(current)) {
+            if (auto st = sh->get_structure(name)) {
+                return st;
+            }
+        }
+    }
+    return {};
+}
 
 //
 // Symbol resolver
@@ -100,7 +196,7 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
 
         // Look at a function
         if (auto func_holder = dynamic_cast<const function_holder*>(&elem)) {
-            if (auto func = func_holder->lookup_function(name.to_string())) {
+            if (auto func = func_holder->get_function(name.to_string())) {
                 return func;
             }
         }
@@ -514,6 +610,143 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
     return {best_candidates[0]->ctor, best_candidates[0]->adapted_args};
 }
 
+
+type_reference_resolver::FunctionCandidate
+type_reference_resolver::get_best_matching_function(
+        const std::vector<std::shared_ptr<function>>& candidates,
+        const std::vector<std::shared_ptr<expression>>& args,
+        const std::shared_ptr<expression>& this_expr,
+        const std::vector<std::shared_ptr<expression>>* direct_args)
+{
+    // We consider three call modes for each candidate:
+    //   A) Member call mode: this_expr supplies 'this', args are the explicit params.
+    //      Requires: this_expr != null, func is non-static member, params.size() == args.size()
+    //   B) Free/static direct call: uses direct_args (or args if direct_args==null).
+    //      Requires: func is free or static, params.size() == direct_args->size()
+    //   C) Unified-call mode: this_expr supplies first arg, args supplies the rest.
+    //      Requires: this_expr != null, func is free/static, params.size() == args.size() + 1
+
+    struct CandInfo {
+        std::shared_ptr<function> func;
+        std::vector<std::shared_ptr<expression>> adapted_args;
+        cast_weight score;
+        bool is_unified;
+        std::shared_ptr<expression> this_for_unified;
+        // Preference: 0 = member (best), 1 = free/static direct, 2 = unified (worst)
+        int preference;
+    };
+
+    std::vector<CandInfo> valid;
+
+    // Helper: compute score for a list of (expr, param_type) pairs
+    auto score_args = [&](const std::vector<std::shared_ptr<expression>>& exprs,
+                          const std::vector<std::shared_ptr<parameter>>& params)
+            -> std::pair<cast_weight, std::vector<std::shared_ptr<expression>>>
+    {
+        if (exprs.size() != params.size()) return {CAST_IMPOSSIBLE, {}};
+        cast_weight max_w = CAST_NONE;
+        std::vector<std::shared_ptr<expression>> adapted;
+        for (size_t i = 0; i < exprs.size(); ++i) {
+            auto w = compute_cast_weight(exprs[i], params[i]->get_type());
+            if (w == CAST_IMPOSSIBLE) return {CAST_IMPOSSIBLE, {}};
+            if (w > max_w) max_w = w;
+            auto a = adapt_type(exprs[i], params[i]->get_type());
+            adapted.push_back(a ? a : exprs[i]);
+        }
+        return {max_w, adapted};
+    };
+
+    for (auto& func : candidates) {
+        const auto& params = func->parameters();
+
+        // -------- Mode A: member function called with this_expr --------
+        if (func->is_member() && !func->is_static() && this_expr) {
+            if (params.size() == args.size()) {
+                auto [w, adapted] = score_args(args, params);
+                if (w != CAST_IMPOSSIBLE) {
+                    valid.push_back({func, std::move(adapted), w, false, nullptr, 0 /*member: highest prio*/});
+                }
+            }
+        }
+
+        // -------- Mode B: free/static function called directly --------
+        // Uses direct_args if provided (full args including obj), otherwise falls back to args.
+        if (!func->is_member() || func->is_static()) {
+            const auto& b_args = direct_args ? *direct_args : args;
+            if (params.size() == b_args.size()) {
+                auto [w, adapted] = score_args(b_args, params);
+                if (w != CAST_IMPOSSIBLE) {
+                    valid.push_back({func, std::move(adapted), w, false, nullptr, 1 /*free/static direct*/});
+                }
+            }
+        }
+
+        // -------- Mode C: unified call (free/static with 1st param = ref to struct of this_expr) --------
+        if ((!func->is_member() || func->is_static()) && this_expr && params.size() == args.size() + 1) {
+            auto first_param_type = params[0]->get_type();
+            if (type::is_reference(first_param_type)) {
+                auto w_this = compute_cast_weight(this_expr, first_param_type);
+                if (w_this != CAST_IMPOSSIBLE) {
+                    std::vector<std::shared_ptr<parameter>> rest_params(params.begin() + 1, params.end());
+                    auto [w_rest, adapted_rest] = score_args(args, rest_params);
+                    if (w_rest != CAST_IMPOSSIBLE) {
+                        cast_weight total = std::max(w_this, w_rest);
+                        auto adapted_this = adapt_type(this_expr, first_param_type);
+                        valid.push_back({func, std::move(adapted_rest), total, true, adapted_this ? adapted_this : this_expr, 2 /*unified: lowest prio*/});
+                    }
+                }
+            }
+        }
+
+        // -------- Mode D: free function called directly (no this_expr) with all args --------
+        // Already handled by Mode B above for static/free.
+        // But also: member function called with explicit free-function syntax func(obj, args...)
+        // This case is: this_expr == nullptr, args.size() == params.size() + 1 (first arg is the object)
+        // This is handled in the call site by pre-computing args properly.
+    }
+
+    if (valid.empty()) {
+        std::cerr << "Error: no viable function overload found for '"
+                  << (candidates.empty() ? "<unknown>" : candidates.front()->get_short_name())
+                  << "' with " << args.size() << " argument(s)." << std::endl;
+        return {nullptr, {}, false, nullptr};
+    }
+
+    // Find best score
+    cast_weight best_score = CAST_IMPOSSIBLE;
+    for (auto& c : valid) {
+        if (c.score < best_score) best_score = c.score;
+    }
+
+    // Among candidates with best score, find best preference
+    int best_pref = 999;
+    for (auto& c : valid) {
+        if (c.score == best_score && c.preference < best_pref) best_pref = c.preference;
+    }
+
+    std::vector<CandInfo*> best;
+    for (auto& c : valid) {
+        if (c.score == best_score && c.preference == best_pref) best.push_back(&c);
+    }
+
+    if (best.size() > 1) {
+        std::cerr << "Error: ambiguous function call (score=" << best_score << ")." << std::endl;
+        for (auto* c : best) {
+            std::cerr << "  " << (c->is_unified ? "[unified] " : "") << c->func->get_fq_name() << "(";
+            bool first = true;
+            for (auto& p : c->func->parameters()) {
+                if (!first) std::cerr << ", ";
+                std::cerr << (p->get_type() ? p->get_type()->to_string() : "?");
+                first = false;
+            }
+            std::cerr << ")" << std::endl;
+        }
+        return {nullptr, {}, false, nullptr};
+    }
+
+    auto* b = best[0];
+    return {b->func, b->adapted_args, b->is_unified, b->this_for_unified};
+}
 
 std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(const std::shared_ptr<expression>& expr) {
     auto type = expr->get_type();
