@@ -601,14 +601,16 @@ namespace k::parse {
             std::vector <lex::keyword> specifiers;
             std::optional <lex::identifier> name;
             std::shared_ptr<ast::type_specifier> type;
+            /** Optional default value expression (e.g. '= 42' or '= a + 1'). */
+            expr_ptr default_expr;
 
             parameter_spec(const std::vector <lex::keyword> &specifiers, const std::optional <lex::identifier> &name,
-                           const std::shared_ptr<ast::type_specifier> &type) :
-                    specifiers(specifiers), name(name), type(type) {}
+                           const std::shared_ptr<ast::type_specifier> &type, expr_ptr default_expr = nullptr) :
+                    specifiers(specifiers), name(name), type(type), default_expr(std::move(default_expr)) {}
 
             parameter_spec(std::vector <lex::keyword> &&specifiers, std::optional <lex::identifier> &&name,
-                           std::shared_ptr<ast::type_specifier> &&type) :
-                    specifiers(specifiers), name(name), type(type) {}
+                           std::shared_ptr<ast::type_specifier> &&type, expr_ptr default_expr = nullptr) :
+                    specifiers(specifiers), name(name), type(type), default_expr(std::move(default_expr)) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

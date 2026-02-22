@@ -325,6 +325,9 @@ void symbol_resolver::visit_parameter(parameter& param) {
     if(auto expr = param.get_init_expr()) {
         expr->accept(*this);
     }
+    if(auto expr = param.get_default_expr()) {
+        expr->accept(*this);
+    }
 }
 
 void type_reference_resolver::visit_parameter(parameter& param) {
@@ -339,18 +342,15 @@ void type_reference_resolver::visit_parameter(parameter& param) {
 
     if(auto expr = param.get_init_expr()) {
         expr->accept(*this);
+    }
 
-        /*
+    if(auto expr = param.get_default_expr()) {
+        expr->accept(*this);
+        // Adapt type of default expression to parameter type
         auto cast = adapt_type(expr, param.get_type());
-        if(!cast) {
-            // TODO throw_error(0x0004, var.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
-        } else if(cast != expr) {
-            // Casted, assign casted expression as return expr.
-            param.set_init_expr(cast);
-        } else {
-            // Compatible type, no need to cast.
+        if(cast && cast != expr) {
+            param.set_default_expr(cast);
         }
-    */
     }
 }
 

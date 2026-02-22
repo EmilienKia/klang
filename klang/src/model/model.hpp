@@ -401,6 +401,9 @@ protected:
 
     size_t _pos;
 
+    /** Optional default value expression for this parameter (may be nullptr). */
+    std::shared_ptr<expression> _default_expr;
+
     parameter(std::shared_ptr<function> func, size_t pos);
 
     static std::shared_ptr<parameter> make_shared(std::shared_ptr<function> func, size_t pos);
@@ -418,6 +421,13 @@ public:
 
     std::shared_ptr<function> get_function() {return _function;}
     std::shared_ptr<const function> get_function() const {return _function;}
+
+    /** Returns the optional default expression for this parameter (nullptr if none). */
+    std::shared_ptr<expression> get_default_expr() const { return _default_expr; }
+    /** Sets the default expression for this parameter. */
+    void set_default_expr(std::shared_ptr<expression> expr) { _default_expr = std::move(expr); }
+    /** True if this parameter has a default value expression. */
+    bool has_default_expr() const { return _default_expr != nullptr; }
 };
 
 class function : public element, public named_element, public variable_holder {

@@ -551,6 +551,14 @@ public:
         _arguments = arguments;
     }
 
+    /** Replace all arguments, properly setting their parent expression. */
+    void assign_arguments(const std::vector<std::shared_ptr<expression>> &args) {
+        _arguments = args;
+        for (auto& arg : _arguments) {
+            if (arg) arg->set_parent_expression(shared_as<expression>());
+        }
+    }
+
     void assign(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args);
 
     void assign_argument(size_t index, const std::shared_ptr<expression> &arg);

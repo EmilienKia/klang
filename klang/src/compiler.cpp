@@ -230,8 +230,9 @@ void compiler::parse_source(const std::string_view& path, const std::string_view
         }
 
         process_generation(optimize, dump);
-    } catch (std::exception e) {
+    } catch (std::exception& e) {
         std::cerr << "Exception : " << e.what() << std::endl;
+        _has_compilation_error = true;
     }
 }
 
@@ -312,6 +313,10 @@ void compiler::optimize_gen_code() {
 }
 
 std::unique_ptr<k::model::gen::jit> compiler::to_jit(bool init_runtime) {
+
+    if (_has_compilation_error) {
+        return nullptr;
+    }
 
     auto jit = model::gen::jit::create(shared_from_this());
     if (!jit) {

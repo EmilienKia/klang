@@ -187,6 +187,10 @@ class ast_dump_visitor : public k::parse::ast_visitor {
                 _stm << param.name.value().content << " : ";
             }
             param.type->visit(*this);
+            if(param.default_expr) {
+                _stm << " = ";
+                param.default_expr->visit(*this);
+            }
         }
 
         void visit_specifiers(const std::vector<lex::keyword>& specifiers) {

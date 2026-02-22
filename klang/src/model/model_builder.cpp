@@ -207,7 +207,95 @@ namespace k::model {
 
         for(auto param : func.params) {
             std::shared_ptr<model::parameter> parameter = function->append_parameter(std::string{param->name->content}, _context->from_type_specifier(*(param->type)));
-            // TODO add param specs
+            // Build default expression if present
+            if(param->default_expr) {
+                _expr.reset();
+                param->default_expr->visit(*this);
+                if(_expr) {
+                    parameter->set_default_expr(_expr);
+                    _expr.reset();
+                }
+            }
+        }
+
+        // --- Arity-overlap collision check across overloads of same name ---
+        // Two overloads of the same function name collide if:
+        //   1. At least ONE of them has a default-valued parameter, AND
+        //   2. Their callable-arity ranges [min,max] overlap.
+        // [min,max] = [#required_params, #total_params].
+        // Ranges [a,b] and [c,d] overlap iff a<=d AND c<=b.
+        {
+            const auto& new_params = function->parameters();
+            size_t new_min = 0;
+            for(auto& p : new_params) if(!p->has_default_expr()) ++new_min;
+            size_t new_max = new_params.size();
+            bool new_has_default = (new_min < new_max);
+
+            bool collision_found = false;
+            auto report_collision = [&](const std::shared_ptr<model::function>& other) {
+                collision_found = true;
+                std::cerr << "Error: overload definition collision for '"
+                          << function->get_short_name()
+                          << "': both overloads are callable with the same number of arguments.\n"
+                          << "  existing: (";
+                bool first = true;
+                for(auto& p : other->parameters()) {
+                    if(!first) std::cerr << ", ";
+                    if(p->get_type()) std::cerr << p->get_type()->to_string();
+                    else std::cerr << "?";
+                    if(p->has_default_expr()) std::cerr << " = <default>";
+                    first = false;
+                }
+                std::cerr << ")\n  new:      (";
+                first = true;
+                for(auto& p : new_params) {
+                    if(!first) std::cerr << ", ";
+                    if(p->get_type()) std::cerr << p->get_type()->to_string();
+                    else std::cerr << "?";
+                    if(p->has_default_expr()) std::cerr << " = <default>";
+                    first = false;
+                }
+                std::cerr << ")" << std::endl;
+            };
+
+            if(auto ctor = std::dynamic_pointer_cast<constructor>(function)) {
+                auto owner_st = ctor->get_owner();
+                if(owner_st) {
+                    for(auto& other_ctor : owner_st->constructors()) {
+                        if(other_ctor.get() == ctor.get()) continue;
+                        const auto& op = other_ctor->parameters();
+                        size_t other_min = 0;
+                        for(auto& p : op) if(!p->has_default_expr()) ++other_min;
+                        size_t other_max = op.size();
+                        bool other_has_default = (other_min < other_max);
+                        if((new_has_default || other_has_default)
+                           && new_min <= other_max && other_min <= new_max) {
+                            report_collision(other_ctor);
+                        }
+                    }
+                }
+            } else {
+                auto parent_scope = std::dynamic_pointer_cast<function_holder>(function->parent<element>());
+                if(parent_scope) {
+                    for(auto& other_fn : parent_scope->get_functions(function->get_short_name())) {
+                        if(other_fn.get() == function.get()) continue;
+                        const auto& op = other_fn->parameters();
+                        size_t other_min = 0;
+                        for(auto& p : op) if(!p->has_default_expr()) ++other_min;
+                        size_t other_max = op.size();
+                        bool other_has_default = (other_min < other_max);
+                        if((new_has_default || other_has_default)
+                           && new_min <= other_max && other_min <= new_max) {
+                            report_collision(other_fn);
+                        }
+                    }
+                }
+            }
+            if(collision_found) {
+                throw_error(0x0045, func.name,
+                    "Overload definition collision for '" + function->get_short_name()
+                    + "': overloads have overlapping callable-arity ranges due to default parameters");
+            }
         }
 
         if(auto ctor = std::dynamic_pointer_cast<constructor>(function)) {
@@ -694,3 +782,4 @@ namespace k::model {
 
 
 } // k::parse
+

@@ -1304,4 +1304,67 @@ TEST_CASE("Parse struct with constructor mem-initializer-list", "[parser][functi
     REQUIRE( func->member_inits[1].name.content == "y" );
 }
 
+//
+// Default parameter values
+//
 
+TEST_CASE("Parse parameter with literal default value", "[parser][default-params]") {
+    test_logger log;
+    k::source src{"f(x: int, y: int = 42) : int { return x + y; }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE(decl);
+    REQUIRE(decl->params.size() == 2);
+
+    auto& p0 = *decl->params[0];
+    auto& p1 = *decl->params[1];
+
+    REQUIRE(p0.name.has_value());
+    REQUIRE(p0.name->content == "x");
+    REQUIRE(p0.default_expr == nullptr);
+
+    REQUIRE(p1.name.has_value());
+    REQUIRE(p1.name->content == "y");
+    REQUIRE(p1.default_expr != nullptr);
+}
+
+TEST_CASE("Parse function with all params defaulted", "[parser][default-params]") {
+    test_logger log;
+    k::source src{"f(a: int = 1, b: int = 2) : int { return a + b; }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE(decl);
+    REQUIRE(decl->params.size() == 2);
+    REQUIRE(decl->params[0]->default_expr != nullptr);
+    REQUIRE(decl->params[1]->default_expr != nullptr);
+}
+
+TEST_CASE("Parse parameter default value expression", "[parser][default-params]") {
+    test_logger log;
+    k::source src{"f(x: int = 3 + 4) : int { return x; }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE(decl);
+    REQUIRE(decl->params.size() == 1);
+    REQUIRE(decl->params[0]->default_expr != nullptr);
+    // The default expression is a binary add expression
+    auto bin = std::dynamic_pointer_cast<ast::binary_operator_expr>(decl->params[0]->default_expr);
+    REQUIRE(bin != nullptr);
+}
+
+TEST_CASE("Parse constructor with default parameter", "[parser][default-params]") {
+    test_logger log;
+    k::source src{R"SRC(
+        struct Foo {
+            Foo(v: int = 0) {}
+        }
+    )SRC"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_struct_decl();
+    REQUIRE(decl);
+    REQUIRE(decl->declarations.size() == 1);
+    auto func = std::dynamic_pointer_cast<ast::function_decl>(decl->declarations[0]);
+    REQUIRE(func);
+    REQUIRE(func->params.size() == 1);
+    REQUIRE(func->params[0]->default_expr != nullptr);
+}

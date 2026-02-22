@@ -44,7 +44,7 @@ std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump, boo
     } catch (std::exception& ex) {
         std::cerr << "Error during compilation: " << ex.what() << std::endl;
         comp->print_logs();
-        throw ex;
+        return nullptr;
     }
 }
 

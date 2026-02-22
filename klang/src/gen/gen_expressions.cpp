@@ -652,10 +652,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         callee->set_target(best.func);
         expr.set_type(best.func->get_return_type());
 
-        // Apply adapted arguments
-        for (size_t i = 0; i < best.adapted_args.size(); ++i) {
-            expr.assign_argument(i, best.adapted_args[i]);
-        }
+        // Apply adapted arguments (may include cloned defaults for trailing params)
+        expr.assign_arguments(best.adapted_args);
         // Note: if best.is_unified_call, the callee stays as member_of_object_expression
         // but the resolved function is free/static. impl_gen handles this by passing
         // sub_expr() value as first argument when the function is not a member.
@@ -665,32 +663,17 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     // ----------------------------------------------------------------
     // Case 2 : plain symbol call  "func(args)"
     // ----------------------------------------------------------------
-    // Always perform overload resolution even if symbol_resolver already resolved
-    // a candidate (it may have picked the wrong overload without type info).
-    // We collect ALL candidates (from scope chain + struct members of first arg)
-    // and score them in a single pass that handles:
-    //   Mode A: member call with this_expr + rest_args
-    //   Mode B: free/static direct call with all args (even when this_expr is set)
-    //   Mode C: unified call (free/static with first param = ref<struct of this_expr>)
     {
-        // Use the short (unqualified) name for function lookup
         std::string func_name = callee->get_name().back();
         const auto& args = expr.arguments();
 
-        // --- Collect candidates from the scope chain ---
-        // If the callee was already resolved to a specific function by the symbol_resolver
-        // (e.g. via a qualified name like "inner::value"), respect that resolution and
-        // do not re-search by short name (which would find sibling functions with the same
-        // short name in parent scopes).
         std::vector<std::shared_ptr<function>> all_candidates;
         if (callee->is_function() && callee->get_name().size() > 1) {
-            // Qualified name: trust the symbol_resolver's resolution
             all_candidates.push_back(callee->get_function());
         } else {
             all_candidates = scope_lookup::lookup_functions(callee, func_name);
         }
 
-        // --- If first arg is ref<struct>, also collect candidates from that struct ---
         std::shared_ptr<expression> this_candidate;
         std::vector<std::shared_ptr<expression>> rest_args;
         if (!args.empty()) {
@@ -710,7 +693,6 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         }
 
         if (all_candidates.empty()) {
-            // Fallback: if callee was already resolved by symbol_resolver, use it directly.
             if (callee->is_function()) {
                 auto already_func = callee->get_function();
                 expr.set_type(already_func->get_return_type());
@@ -729,10 +711,6 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             return;
         }
 
-        // --- Single scoring pass: Mode A/C use rest_args+this_candidate; Mode B uses full args ---
-        // Mode A: member func, this_candidate provides 'this', rest_args are the explicit params
-        // Mode B: free/static, full args passed directly via direct_args (may include obj as first)
-        // Mode C: free/static, this_candidate + rest_args as the rest (params.size()==rest_args.size()+1)
         FunctionCandidate best = get_best_matching_function(all_candidates,
                                                             this_candidate ? rest_args : args,
                                                             this_candidate,
@@ -744,7 +722,6 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             return;
         }
 
-        // Determine if this is a free-function-called-as-member transformation
         if (this_candidate && best.func->is_member() && !best.func->is_static() && !best.is_unified_call) {
             is_free_to_member_call = true;
         }
@@ -752,27 +729,16 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         callee->set_target(best.func);
         expr.set_type(best.func->get_return_type());
 
-        if (best.is_unified_call) {
-            for (size_t i = 0; i < best.adapted_args.size(); ++i) {
-                expr.assign_argument(i, best.adapted_args[i]);
-            }
-        } else if (is_free_to_member_call) {
+        if (is_free_to_member_call) {
             // Member function found via free-function syntax: func(obj, args...)
             auto obj_expr = expr.arguments()[0];
             auto sym_for_member = symbol_expression::from_function(best.func);
             sym_for_member->set_target(best.func);
             auto member_expr = member_of_object_expression::make_shared(obj_expr, sym_for_member);
             expr.assign(member_expr, best.adapted_args);
-        } else if (this_candidate && best.adapted_args.size() == args.size()) {
-            // Mode B was selected (free/static direct with all args including first)
-            for (size_t i = 0; i < best.adapted_args.size(); ++i) {
-                expr.assign_argument(i, best.adapted_args[i]);
-            }
         } else {
-            // Regular free/static function call (no this_expr involved)
-            for (size_t i = 0; i < best.adapted_args.size(); ++i) {
-                expr.assign_argument(i, best.adapted_args[i]);
-            }
+            // Regular/unified call — may include default values for trailing params
+            expr.assign_arguments(best.adapted_args);
         }
         return;
     }

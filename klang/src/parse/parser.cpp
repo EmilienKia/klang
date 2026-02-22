@@ -408,6 +408,16 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 throw_error(0x000D, _lexer.pick_current(), "Function declaration expects a parameter specification");
             }
         }
+
+        // Validate: default values must only appear on trailing parameters
+        bool found_default = false;
+        for(auto& p : params) {
+            if(p->default_expr) {
+                found_default = true;
+            } else if(found_default) {
+                throw_error(0x0040, _lexer.pick_current(), "Parameter without default value cannot follow a parameter with a default value");
+            }
+        }
     }
 
     // Look for return type OR mem-initializer-list (both start with ':')
@@ -542,7 +552,21 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
         return {};
     }
 
-    return std::make_shared<ast::parameter_spec>(specifiers, name, type);
+    // Parse optional default value: '=' CONDITIONAL_EXPR
+    ast::expr_ptr default_expr;
+    {
+        lex::lex_holder holder_default(_lexer);
+        if(auto lequal = _lexer.get(); lequal == lex::operator_::EQUAL) {
+            default_expr = parse_conditional_expr();
+            if(!default_expr) {
+                throw_error(0x003F, _lexer.pick_current(), "Expected expression after '=' in parameter default value");
+            }
+        } else {
+            holder_default.rollback();
+        }
+    }
+
+    return std::make_shared<ast::parameter_spec>(specifiers, name, type, std::move(default_expr));
 }
 
 std::shared_ptr<ast::block_statement> parser::parse_statement_block()

@@ -1140,3 +1140,348 @@ TEST_CASE("Absolute name lookup: ::subns1::subns2::func() two-level without modu
     REQUIRE(test() == 42);
 }
 
+
+// =============================================================================
+// Overload resolution with default parameter values
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// COLLISION: f(int) vs f(int, int=99) — same arity range [1,1]∩[1,2] → error
+// The compiler MUST report a collision and NOT silently pick one.
+// -----------------------------------------------------------------------------
+TEST_CASE("Overload collision: f(int) and f(int,int=99) have overlapping arity", "[gen][resolution][default-params][collision]") {
+    // Both functions are callable with 1 argument → definition collision.
+    auto jit = gen_jit(R"SRC(
+        module __ovl_collision__;
+
+        compute(a: int) : int {
+            return 1;
+        }
+
+        compute(a: int, b: int = 99) : int {
+            return 2;
+        }
+
+        test() : int {
+            return compute(42);
+        }
+    )SRC");
+    // The compiler must detect the collision at definition time.
+    // Either jit==nullptr or the ambiguous call resolves to nullptr.
+    if (jit) {
+        auto test = jit->lookup_symbol<int(*)()>("test");
+        REQUIRE(test == nullptr);
+    } else {
+        REQUIRE(jit == nullptr);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// COLLISION: member run(int) vs run(int, int=99)
+// -----------------------------------------------------------------------------
+TEST_CASE("Overload collision: member f(int) and f(int,int=99) overlap", "[gen][resolution][default-params][collision]") {
+    auto jit = gen_jit(R"SRC(
+        module __member_ovl_collision__;
+
+        struct Calc {
+            run(a: int) : int {
+                return 1;
+            }
+
+            run(a: int, b: int = 99) : int {
+                return 2;
+            }
+        }
+
+        test() : int {
+            c : Calc;
+            return c.run(5);
+        }
+    )SRC");
+    if (jit) {
+        auto test = jit->lookup_symbol<int(*)()>("test");
+        REQUIRE(test == nullptr);
+    } else {
+        REQUIRE(jit == nullptr);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// COLLISION: constructor Box(int) vs Box(int, int=0)
+// -----------------------------------------------------------------------------
+TEST_CASE("Constructor overload collision: Box(int) and Box(int,int=0) overlap", "[gen][resolution][default-params][collision]") {
+    auto jit = gen_jit(R"SRC(
+        module __ctor_ovl_collision__;
+
+        struct Box {
+            kind : int = 0;
+            Box(a: int) : kind(1) {}
+            Box(a: int, b: int = 0) : kind(2) {}
+        }
+
+        test() : int {
+            b : Box(5);
+            return b.kind;
+        }
+    )SRC");
+    if (jit) {
+        auto test = jit->lookup_symbol<int(*)()>("test");
+        REQUIRE(test == nullptr);
+    } else {
+        REQUIRE(jit == nullptr);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// COLLISION: f(int=0) vs f(int=1) — both callable with 0 args
+// -----------------------------------------------------------------------------
+TEST_CASE("Overload collision: two single-default overloads with same type", "[gen][resolution][default-params][collision]") {
+    auto jit = gen_jit(R"SRC(
+        module __ovl_ambiguous__;
+
+        ambig(v: int = 0) : int {
+            return 10;
+        }
+
+        ambig(v: int = 1) : int {
+            return 20;
+        }
+
+        test() : int {
+            return ambig();
+        }
+    )SRC");
+    if (jit) {
+        auto test = jit->lookup_symbol<int(*)()>("test");
+        REQUIRE(test == nullptr);
+    } else {
+        REQUIRE(jit == nullptr);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// COLLISION: constructor Ambig() vs Ambig(int=99) — both callable with 0 args
+// -----------------------------------------------------------------------------
+TEST_CASE("Constructor overload collision: Ambig() and Ambig(int=99) overlap at arity 0", "[gen][resolution][default-params][collision]") {
+    auto jit = gen_jit(R"SRC(
+        module __ctor_ambiguous__;
+
+        struct Ambig {
+            v : int = 0;
+            Ambig() : v(1) {}
+            Ambig(x: int = 99) : v(2) {}
+        }
+
+        test() : int {
+            a : Ambig();
+            return a.v;
+        }
+    )SRC");
+    if (jit) {
+        auto test = jit->lookup_symbol<int(*)()>("test");
+        REQUIRE(test == nullptr);
+    } else {
+        REQUIRE(jit == nullptr);
+    }
+}
+
+// =============================================================================
+// Non-colliding overloads with defaults (arities don't overlap)
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// OK: f(int, int) vs f(int, int, int=5) — ranges [2,2] and [2,3]
+// overlap at arity 2 → still a collision!
+// But f(int) vs f(int, int, int=5) — ranges [1,1] and [2,3] → NO overlap → OK
+// -----------------------------------------------------------------------------
+TEST_CASE("Overload: non-overlapping arities with defaults — valid", "[gen][resolution][default-params]") {
+    auto jit = gen_jit(R"SRC(
+        module __ovl_nooverlap__;
+
+        // f(int) — callable only with 1 arg
+        describe(a: int) : int {
+            return 1;
+        }
+
+        // f(int, int, int=5) — callable with 2 or 3 args, NOT with 1
+        describe(a: int, b: int, c: int = 5) : int {
+            return 2;
+        }
+
+        test_one()   : int { return describe(42); }
+        test_two()   : int { return describe(1, 2); }
+        test_three() : int { return describe(1, 2, 3); }
+    )SRC");
+    REQUIRE(jit);
+
+    auto t1 = jit->lookup_symbol<int(*)()>("test_one");
+    REQUIRE(t1 != nullptr);
+    REQUIRE(t1() == 1);
+
+    auto t2 = jit->lookup_symbol<int(*)()>("test_two");
+    REQUIRE(t2 != nullptr);
+    REQUIRE(t2() == 2);
+
+    auto t3 = jit->lookup_symbol<int(*)()>("test_three");
+    REQUIRE(t3 != nullptr);
+    REQUIRE(t3() == 2);
+}
+
+// -----------------------------------------------------------------------------
+// OK: type distinguishes when using defaults — no arity collision
+// f(int, int=10) vs f(double, int=10) — ranges both [1,2], but types differ.
+// This is valid because arity collision is checked purely on count, not types.
+// Wait — [1,2] ∩ [1,2] ≠ ∅ → this IS a collision now.
+// So this test must now check for collision.
+// -----------------------------------------------------------------------------
+TEST_CASE("Overload collision: same arity range even with different types", "[gen][resolution][default-params][collision]") {
+    // f(int, int=10) and f(double, int=10): both callable with 1 or 2 args → collision
+    auto jit = gen_jit(R"SRC(
+        module __ovl_type_default__;
+
+        label(a: int, b: int = 10) : int {
+            return 1;
+        }
+
+        label(a: double, b: int = 10) : int {
+            return 2;
+        }
+
+        test_int()    : int { return label(5);     }
+        test_double() : int { return label(5.0d);  }
+    )SRC");
+    // Both overloads are callable with 1 argument → collision at definition time.
+    if (jit) {
+        auto t = jit->lookup_symbol<int(*)()>("test_int");
+        REQUIRE(t == nullptr);
+    } else {
+        REQUIRE(jit == nullptr);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// OK: f(int=0) vs f(double=0.0) — both [0,1] → collision
+// -----------------------------------------------------------------------------
+TEST_CASE("Overload collision: two single-default overloads with different types", "[gen][resolution][default-params][collision]") {
+    auto jit = gen_jit(R"SRC(
+        module __ovl_single_default__;
+
+        pick(v: int = 0) : int {
+            return 10;
+        }
+
+        pick(v: double = 0.0d) : int {
+            return 20;
+        }
+
+        test_int()    : int { return pick(1);     }
+        test_double() : int { return pick(1.0d);  }
+    )SRC");
+    // Both callable with 0 args → collision
+    if (jit) {
+        auto t = jit->lookup_symbol<int(*)()>("test_int");
+        REQUIRE(t == nullptr);
+    } else {
+        REQUIRE(jit == nullptr);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// OK: explicit argument always overrides default — f(int, int=99) only
+// No ambiguity when there is only ONE overload with a default.
+// -----------------------------------------------------------------------------
+TEST_CASE("Single overload with default: explicit arg overrides default", "[gen][resolution][default-params]") {
+    auto jit = gen_jit(R"SRC(
+        module __single_default__;
+
+        add(a: int, b: int = 99) : int {
+            return a + b;
+        }
+
+        test_with_explicit() : int { return add(1, 2); }
+        test_with_default()  : int { return add(1); }
+    )SRC");
+    REQUIRE(jit);
+
+    auto t1 = jit->lookup_symbol<int(*)()>("test_with_explicit");
+    REQUIRE(t1 != nullptr);
+    REQUIRE(t1() == 3);    // 1 + 2
+
+    auto t2 = jit->lookup_symbol<int(*)()>("test_with_default");
+    REQUIRE(t2 != nullptr);
+    REQUIRE(t2() == 100);  // 1 + 99
+}
+
+// -----------------------------------------------------------------------------
+// OK: non-overlapping arity — f(int) [1,1] vs f(int, int, int=5) [2,3]
+// Callable with 1 arg → first; with 2 or 3 args → second
+// -----------------------------------------------------------------------------
+TEST_CASE("Non-colliding overloads: f(int) and f(int,int,int=5) — no overlap", "[gen][resolution][default-params]") {
+    auto jit = gen_jit(R"SRC(
+        module __no_collision__;
+
+        process(a: int) : int {
+            return 10;
+        }
+
+        process(a: int, b: int, c: int = 42) : int {
+            return b + c;
+        }
+
+        test_one()   : int { return process(1); }
+        test_two()   : int { return process(1, 2); }
+        test_three() : int { return process(1, 2, 3); }
+    )SRC");
+    REQUIRE(jit);
+
+    auto t1 = jit->lookup_symbol<int(*)()>("test_one");
+    REQUIRE(t1 != nullptr);
+    REQUIRE(t1() == 10);
+
+    auto t2 = jit->lookup_symbol<int(*)()>("test_two");
+    REQUIRE(t2 != nullptr);
+    REQUIRE(t2() == 2 + 42);   // b=2, c=42 (default)
+
+    auto t3 = jit->lookup_symbol<int(*)()>("test_three");
+    REQUIRE(t3 != nullptr);
+    REQUIRE(t3() == 2 + 3);    // b=2, c=3
+}
+
+// -----------------------------------------------------------------------------
+// OK: constructor with non-overlapping arities
+// Box(int) [1,1] vs Box(int, int, int=0) [2,3] → no overlap
+// -----------------------------------------------------------------------------
+TEST_CASE("Non-colliding constructors: Box(int) and Box(int,int,int=0)", "[gen][resolution][default-params][structs]") {
+    auto jit = gen_jit(R"SRC(
+        module __ctor_no_collision__;
+
+        struct Box {
+            x : int = 0;
+            y : int = 0;
+            z : int = 0;
+
+            Box(a: int) : x(a) {}
+            Box(a: int, b: int, c: int = 0) : x(a), y(b), z(c) {}
+        }
+
+        sum(b: Box&) : int { return b.x + b.y + b.z; }
+
+        test_one()   : int { b : Box(5);       return sum(b); }
+        test_two()   : int { b : Box(1, 2);    return sum(b); }
+        test_three() : int { b : Box(1, 2, 3); return sum(b); }
+    )SRC");
+    REQUIRE(jit);
+
+    auto t1 = jit->lookup_symbol<int(*)()>("test_one");
+    REQUIRE(t1 != nullptr);
+    REQUIRE(t1() == 5);       // x=5, y=0, z=0
+
+    auto t2 = jit->lookup_symbol<int(*)()>("test_two");
+    REQUIRE(t2 != nullptr);
+    REQUIRE(t2() == 3);       // x=1, y=2, z=0
+
+    auto t3 = jit->lookup_symbol<int(*)()>("test_three");
+    REQUIRE(t3 != nullptr);
+    REQUIRE(t3() == 6);       // x=1, y=2, z=3
+}
+

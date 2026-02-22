@@ -696,10 +696,22 @@ std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::sha
 type_reference_resolver::get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args) {
     const size_t arg_count = args.size();
 
-    // --- Step 1: filter by arity ---
+    // Helper: a constructor is callable with arg_count args if it has exactly arg_count params,
+    // OR if it has more params and all trailing params (beyond arg_count) have default values.
+    auto ctor_is_callable = [&](const std::shared_ptr<constructor>& ctor) -> bool {
+        const auto& params = ctor->parameters();
+        if (params.size() == arg_count) return true;
+        if (params.size() < arg_count) return false;
+        for (size_t i = arg_count; i < params.size(); ++i) {
+            if (!params[i]->has_default_expr()) return false;
+        }
+        return true;
+    };
+
+    // --- Step 1: filter by arity (exact or using defaults for trailing params) ---
     std::vector<std::shared_ptr<constructor>> arity_matched;
     for (auto& ctor : constructors) {
-        if (ctor->parameters().size() == arg_count) {
+        if (ctor_is_callable(ctor)) {
             arity_matched.push_back(ctor);
         }
     }
@@ -724,25 +736,30 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         std::shared_ptr<constructor> ctor;
         std::vector<std::shared_ptr<expression>> adapted_args;
         cast_weight score; // worst (max) cast weight across all parameters
+        size_t defaults_used; // number of default values used (fewer = better)
     };
 
-    // Candidates that fail because of at least one IMPOSSIBLE cast
     struct FailedCandidate {
         std::shared_ptr<constructor> ctor;
-        std::vector<size_t> failed_param_indices; // 0-based indices with IMPOSSIBLE weight
+        std::vector<size_t> failed_param_indices;
     };
 
     std::vector<Candidate> valid_candidates;
     std::vector<FailedCandidate> failed_candidates;
 
     for (auto& ctor : arity_matched) {
+        const auto& params = ctor->parameters();
+        const size_t total_params = params.size();
+        const size_t defaults_used = total_params - arg_count;
+
         cast_weight max_weight = CAST_NONE;
         bool has_impossible = false;
         std::vector<size_t> failed_indices;
         std::vector<std::shared_ptr<expression>> adapted_args;
 
+        // Score provided arguments
         for (size_t i = 0; i < arg_count; ++i) {
-            auto param_type = ctor->parameters()[i]->get_type();
+            auto param_type = params[i]->get_type();
             cast_weight w = compute_cast_weight(args[i], param_type);
             if (w == CAST_IMPOSSIBLE) {
                 has_impossible = true;
@@ -754,10 +771,17 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
             }
         }
 
+        // Append cloned default expressions for trailing parameters
+        if (!has_impossible) {
+            for (size_t i = arg_count; i < total_params; ++i) {
+                adapted_args.push_back(params[i]->get_default_expr()->clone());
+            }
+        }
+
         if (has_impossible) {
             failed_candidates.push_back({ctor, std::move(failed_indices)});
         } else {
-            valid_candidates.push_back({ctor, std::move(adapted_args), max_weight});
+            valid_candidates.push_back({ctor, std::move(adapted_args), max_weight, defaults_used});
         }
     }
 
@@ -780,25 +804,29 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         return {nullptr, {}};
     }
 
-    // --- Step 4: find minimum score ---
+    // --- Step 4: find minimum score, then fewest defaults used ---
     cast_weight best_score = CAST_IMPOSSIBLE;
+    size_t best_defaults = std::numeric_limits<size_t>::max();
     for (auto& cand : valid_candidates) {
-        if (cand.score < best_score) best_score = cand.score;
+        if (cand.score < best_score || (cand.score == best_score && cand.defaults_used < best_defaults)) {
+            best_score = cand.score;
+            best_defaults = cand.defaults_used;
+        }
     }
 
-    // Perfect match short-circuit (score == CAST_NONE)
-    if (best_score == CAST_NONE) {
+    // Perfect match short-circuit
+    if (best_score == CAST_NONE && best_defaults == 0) {
         for (auto& cand : valid_candidates) {
-            if (cand.score == CAST_NONE) {
+            if (cand.score == CAST_NONE && cand.defaults_used == 0) {
                 return {cand.ctor, cand.adapted_args};
             }
         }
     }
 
-    // --- Step 5: collect all candidates with best score ---
+    // --- Step 5: collect all candidates with best score + best defaults ---
     std::vector<Candidate*> best_candidates;
     for (auto& cand : valid_candidates) {
-        if (cand.score == best_score) {
+        if (cand.score == best_score && cand.defaults_used == best_defaults) {
             best_candidates.push_back(&cand);
         }
     }
@@ -832,13 +860,10 @@ type_reference_resolver::get_best_matching_function(
         const std::shared_ptr<expression>& this_expr,
         const std::vector<std::shared_ptr<expression>>* direct_args)
 {
-    // We consider three call modes for each candidate:
-    //   A) Member call mode: this_expr supplies 'this', args are the explicit params.
-    //      Requires: this_expr != null, func is non-static member, params.size() == args.size()
-    //   B) Free/static direct call: uses direct_args (or args if direct_args==null).
-    //      Requires: func is free or static, params.size() == direct_args->size()
-    //   C) Unified-call mode: this_expr supplies first arg, args supplies the rest.
-    //      Requires: this_expr != null, func is free/static, params.size() == args.size() + 1
+    // Call modes:
+    //   A) Member call: this_expr supplies 'this', args are explicit params (with possible defaults).
+    //   B) Free/static direct call: uses direct_args or args (with possible defaults).
+    //   C) Unified call: this_expr is first arg (params[0]), args match params[1..] (with defaults).
 
     struct CandInfo {
         std::shared_ptr<function> func;
@@ -846,27 +871,36 @@ type_reference_resolver::get_best_matching_function(
         cast_weight score;
         bool is_unified;
         std::shared_ptr<expression> this_for_unified;
-        // Preference: 0 = member (best), 1 = free/static direct, 2 = unified (worst)
-        int preference;
+        int preference; // 0=member, 1=free/static direct, 2=unified
+        size_t defaults_used;
     };
 
     std::vector<CandInfo> valid;
 
-    // Helper: compute score for a list of (expr, param_type) pairs
-    auto score_args = [&](const std::vector<std::shared_ptr<expression>>& exprs,
-                          const std::vector<std::shared_ptr<parameter>>& params)
+    // Score exprs against params[offset..], filling defaults for trailing missing params.
+    auto score_with_defaults = [&](const std::vector<std::shared_ptr<expression>>& exprs,
+                                   const std::vector<std::shared_ptr<parameter>>& params,
+                                   size_t offset = 0)
             -> std::pair<cast_weight, std::vector<std::shared_ptr<expression>>>
     {
-        if (exprs.size() != params.size()) return {CAST_IMPOSSIBLE, {}};
+        const size_t n_params = params.size() - offset;
+        const size_t n_exprs  = exprs.size();
+        if (n_exprs > n_params) return {CAST_IMPOSSIBLE, {}};
+        if (n_exprs < n_params) {
+            for (size_t i = n_exprs; i < n_params; ++i)
+                if (!params[offset + i]->has_default_expr()) return {CAST_IMPOSSIBLE, {}};
+        }
         cast_weight max_w = CAST_NONE;
         std::vector<std::shared_ptr<expression>> adapted;
-        for (size_t i = 0; i < exprs.size(); ++i) {
-            auto w = compute_cast_weight(exprs[i], params[i]->get_type());
+        for (size_t i = 0; i < n_exprs; ++i) {
+            auto w = compute_cast_weight(exprs[i], params[offset + i]->get_type());
             if (w == CAST_IMPOSSIBLE) return {CAST_IMPOSSIBLE, {}};
             if (w > max_w) max_w = w;
-            auto a = adapt_type(exprs[i], params[i]->get_type());
+            auto a = adapt_type(exprs[i], params[offset + i]->get_type());
             adapted.push_back(a ? a : exprs[i]);
         }
+        for (size_t i = n_exprs; i < n_params; ++i)
+            adapted.push_back(params[offset + i]->get_default_expr()->clone());
         return {max_w, adapted};
     };
 
@@ -875,48 +909,45 @@ type_reference_resolver::get_best_matching_function(
 
         // -------- Mode A: member function called with this_expr --------
         if (func->is_member() && !func->is_static() && this_expr) {
-            if (params.size() == args.size()) {
-                auto [w, adapted] = score_args(args, params);
+            if (args.size() <= params.size()) {
+                auto [w, adapted] = score_with_defaults(args, params, 0);
                 if (w != CAST_IMPOSSIBLE) {
-                    valid.push_back({func, std::move(adapted), w, false, nullptr, 0 /*member: highest prio*/});
+                    size_t def = params.size() - args.size();
+                    valid.push_back({func, std::move(adapted), w, false, nullptr, 0, def});
                 }
             }
         }
 
         // -------- Mode B: free/static function called directly --------
-        // Uses direct_args if provided (full args including obj), otherwise falls back to args.
         if (!func->is_member() || func->is_static()) {
             const auto& b_args = direct_args ? *direct_args : args;
-            if (params.size() == b_args.size()) {
-                auto [w, adapted] = score_args(b_args, params);
+            if (b_args.size() <= params.size()) {
+                auto [w, adapted] = score_with_defaults(b_args, params, 0);
                 if (w != CAST_IMPOSSIBLE) {
-                    valid.push_back({func, std::move(adapted), w, false, nullptr, 1 /*free/static direct*/});
+                    size_t def = params.size() - b_args.size();
+                    valid.push_back({func, std::move(adapted), w, false, nullptr, 1, def});
                 }
             }
         }
 
-        // -------- Mode C: unified call (free/static with 1st param = ref to struct of this_expr) --------
-        if ((!func->is_member() || func->is_static()) && this_expr && params.size() == args.size() + 1) {
+        // -------- Mode C: unified call (free/static, params[0]=ref<struct>, args match params[1..]) --------
+        if ((!func->is_member() || func->is_static()) && this_expr && !params.empty()
+            && args.size() <= params.size() - 1) {
             auto first_param_type = params[0]->get_type();
             if (type::is_reference(first_param_type)) {
                 auto w_this = compute_cast_weight(this_expr, first_param_type);
                 if (w_this != CAST_IMPOSSIBLE) {
-                    std::vector<std::shared_ptr<parameter>> rest_params(params.begin() + 1, params.end());
-                    auto [w_rest, adapted_rest] = score_args(args, rest_params);
+                    auto [w_rest, adapted_rest] = score_with_defaults(args, params, 1);
                     if (w_rest != CAST_IMPOSSIBLE) {
                         cast_weight total = std::max(w_this, w_rest);
                         auto adapted_this = adapt_type(this_expr, first_param_type);
-                        valid.push_back({func, std::move(adapted_rest), total, true, adapted_this ? adapted_this : this_expr, 2 /*unified: lowest prio*/});
+                        size_t def = (params.size() - 1) - args.size();
+                        valid.push_back({func, std::move(adapted_rest), total, true,
+                                         adapted_this ? adapted_this : this_expr, 2, def});
                     }
                 }
             }
         }
-
-        // -------- Mode D: free function called directly (no this_expr) with all args --------
-        // Already handled by Mode B above for static/free.
-        // But also: member function called with explicit free-function syntax func(obj, args...)
-        // This case is: this_expr == nullptr, args.size() == params.size() + 1 (first arg is the object)
-        // This is handled in the call site by pre-computing args properly.
     }
 
     if (valid.empty()) {
@@ -926,21 +957,24 @@ type_reference_resolver::get_best_matching_function(
         return {nullptr, {}, false, nullptr};
     }
 
-    // Find best score
+    // Best = lowest score, then fewest defaults, then lowest preference
     cast_weight best_score = CAST_IMPOSSIBLE;
-    for (auto& c : valid) {
-        if (c.score < best_score) best_score = c.score;
-    }
-
-    // Among candidates with best score, find best preference
+    size_t best_def = std::numeric_limits<size_t>::max();
     int best_pref = 999;
     for (auto& c : valid) {
-        if (c.score == best_score && c.preference < best_pref) best_pref = c.preference;
+        if (c.score < best_score
+            || (c.score == best_score && c.defaults_used < best_def)
+            || (c.score == best_score && c.defaults_used == best_def && c.preference < best_pref)) {
+            best_score = c.score;
+            best_def = c.defaults_used;
+            best_pref = c.preference;
+        }
     }
 
     std::vector<CandInfo*> best;
     for (auto& c : valid) {
-        if (c.score == best_score && c.preference == best_pref) best.push_back(&c);
+        if (c.score == best_score && c.defaults_used == best_def && c.preference == best_pref)
+            best.push_back(&c);
     }
 
     if (best.size() > 1) {

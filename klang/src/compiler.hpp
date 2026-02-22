@@ -51,6 +51,10 @@ protected:
 
     llvm::TargetMachine* _target;
 
+    /** Set to true when a fatal compilation error occurs (e.g. overload collision).
+     *  to_jit() returns nullptr when this flag is set. */
+    bool _has_compilation_error = false;
+
     void process_generation(bool optimize = true, bool dump = true);
 
     compiler(llvm::TargetMachine* target = nullptr);

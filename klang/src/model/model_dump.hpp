@@ -195,6 +195,10 @@ public:
 
     void visit_parameter(parameter& param) override {
         visit_variable_definition(param, true);
+        if (auto init_expr = param.get_default_expr()) {
+            _stm << " = ";
+            init_expr->accept(*this);
+        }
         _stm << ", ";
     }
 

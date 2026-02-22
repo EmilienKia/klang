@@ -1254,3 +1254,145 @@ TEST_CASE("Constructor mem-initializer-list: a constructor of sub-object with mu
     REQUIRE(test_y2 != nullptr);
     REQUIRE(test_y2() == 42);
 }
+
+//
+// Default parameter values
+//
+
+TEST_CASE("Function with one default parameter - call with full args", "[gen][default-params]") {
+    auto jit = gen_jit(R"SRC(
+        module __default_params__;
+
+        add(a: int, b: int = 10) : int {
+            return a + b;
+        }
+
+        test_full() : int {
+            return add(3, 7);
+        }
+
+        test_default() : int {
+            return add(3);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_full = jit->lookup_symbol<int(*)()>("test_full");
+    REQUIRE(test_full != nullptr);
+    REQUIRE(test_full() == (3 + 7));
+
+    auto test_default = jit->lookup_symbol<int(*)()>("test_default");
+    REQUIRE(test_default != nullptr);
+    REQUIRE(test_default() == (3 + 10));
+}
+
+TEST_CASE("Function with two default parameters", "[gen][default-params]") {
+    auto jit = gen_jit(R"SRC(
+        module __default_params__;
+
+        compute(a: int, b: int = 5, c: int = 2) : int {
+            return a + b * c;
+        }
+
+        test_full() : int {
+            return compute(1, 3, 4);
+        }
+
+        test_one_default() : int {
+            return compute(1, 3);
+        }
+
+        test_two_defaults() : int {
+            return compute(1);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_full = jit->lookup_symbol<int(*)()>("test_full");
+    REQUIRE(test_full != nullptr);
+    REQUIRE(test_full() == (1 + 3*4));
+
+    auto test_one_default = jit->lookup_symbol<int(*)()>("test_one_default");
+    REQUIRE(test_one_default != nullptr);
+    REQUIRE(test_one_default() == (1 + 3*2));
+
+    auto test_two_defaults = jit->lookup_symbol<int(*)()>("test_two_defaults");
+    REQUIRE(test_two_defaults != nullptr);
+    REQUIRE(test_two_defaults() == (1 + 5*2));
+}
+
+TEST_CASE("Member function with default parameter", "[gen][default-params][structs]") {
+    auto jit = gen_jit(R"SRC(
+        module __default_params__;
+
+        struct Counter {
+            value : int = 0;
+
+            increment(by: int = 1) {
+                value = value + by;
+            }
+
+            get() : int {
+                return value;
+            }
+        }
+
+        test_increment_by_one() : int {
+            c : Counter;
+            c.increment();
+            return c.get();
+        }
+
+        test_increment_by_five() : int {
+            c : Counter;
+            c.increment(5);
+            return c.get();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_one = jit->lookup_symbol<int(*)()>("test_increment_by_one");
+    REQUIRE(test_one != nullptr);
+    REQUIRE(test_one() == 1);
+
+    auto test_five = jit->lookup_symbol<int(*)()>("test_increment_by_five");
+    REQUIRE(test_five != nullptr);
+    REQUIRE(test_five() == 5);
+}
+
+TEST_CASE("Constructor with default parameter", "[gen][default-params][structs]") {
+    auto jit = gen_jit(R"SRC(
+        module __default_params__;
+
+        struct Box {
+            width  : int = 0;
+            height : int = 0;
+
+            Box(w: int, h: int = 10) : width(w), height(h) {}
+
+            area() : int {
+                return width * height;
+            }
+        }
+
+        test_explicit() : int {
+            b : Box(3, 4);
+            return b.area();
+        }
+
+        test_default_height() : int {
+            b : Box(3);
+            return b.area();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_explicit = jit->lookup_symbol<int(*)()>("test_explicit");
+    REQUIRE(test_explicit != nullptr);
+    REQUIRE(test_explicit() == (3 * 4));
+
+    auto test_default = jit->lookup_symbol<int(*)()>("test_default_height");
+    REQUIRE(test_default != nullptr);
+    REQUIRE(test_default() == (3 * 10));
+}
+
