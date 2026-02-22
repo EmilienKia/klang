@@ -107,13 +107,21 @@ public:
 
 protected:
 
-    static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+    std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
     resolve_symbol(const element& elem, const name& name);
 
-    static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+    std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
     resolve_symbol(const symbol_expression& symbol) {
         return resolve_symbol(symbol, symbol.get_name());
     }
+
+    /** Resolve a name anchored at the root namespace of the unit (handles :: prefix). */
+    std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+    resolve_symbol_from_root(const name& name);
+
+    /** Resolve a qualified name (no root prefix) anchored at a given element, without climbing to parents. */
+    static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+    resolve_qualified_from(const element& elem, const name& qualified_name);
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         logger_relay::error(code, message, args, lexeme);
@@ -202,15 +210,19 @@ public:
 
 protected:
 
-    /*
-    static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
-    resolve_symbol(const element& elem, const name& name);
+    /**
+     * Resolve a struct type by qualified name, searching from elem upward.
+     * Handles simple names (e.g. "rect"), qualified names (e.g. "shapes::rect"),
+     * and root-prefixed names (e.g. "::shapes::rect" or "::module::shapes::rect").
+     * All resolution logic stays in the resolver, not in the model.
+     */
+    std::shared_ptr<type> resolve_type_by_name(const k::name& type_name, const element& context_elem);
 
-    static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
-    resolve_symbol(const symbol_expression& symbol) {
-        return resolve_symbol(symbol, symbol.get_name());
-    }
-    */
+    /** Resolve a struct type from a given element, without climbing to parents. */
+    static std::shared_ptr<structure> resolve_struct_from(const element& elem, const k::name& qualified_name);
+
+    /** Resolve a struct type from the root namespace of the unit. */
+    std::shared_ptr<type> resolve_type_from_root(const k::name& name_without_prefix);
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         logger_relay::error(code, message, args, lexeme);

@@ -557,6 +557,23 @@ void symbol_resolver::visit_variable_statement(variable_statement& var)
 
 void type_reference_resolver::visit_variable_statement(variable_statement& var)
 {
+    // For local variables, first try to resolve qualified types using the statement's
+    // element context (which allows walking up the scope chain).
+    if (!type::is_resolved(var.get_type())) {
+        auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
+        if (unres_type) {
+            std::shared_ptr<type> resolved;
+            if (unres_type->type_id().has_root_prefix()) {
+                resolved = resolve_type_from_root(unres_type->type_id().without_root_prefix());
+            } else {
+                // var is a statement (element), so walk up from it
+                resolved = resolve_type_by_name(unres_type->type_id(), static_cast<const element&>(var));
+            }
+            if (resolved && type::is_resolved(resolved)) {
+                var.set_type(resolved);
+            }
+        }
+    }
     visit_variable_definition(var);
 }
 

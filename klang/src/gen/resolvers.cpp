@@ -135,6 +135,93 @@ scope_lookup::lookup_structure(std::shared_ptr<element> elem, const std::string&
 // Symbol resolver
 //
 
+/**
+ * Resolve a qualified name strictly descending from elem, without climbing to parents.
+ * name must be non-empty and have no root prefix.
+ */
+std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+symbol_resolver::resolve_qualified_from(const element& elem, const name& name) {
+    if (name.empty()) return std::monostate{};
+
+    if (name.size() == 1) {
+        // Simple name: look in this element only (no parent walk)
+        if (auto var_holder = dynamic_cast<const variable_holder*>(&elem)) {
+            if (auto def = var_holder->get_variable(name)) {
+                return def;
+            }
+        }
+        if (auto func_holder = dynamic_cast<const function_holder*>(&elem)) {
+            if (auto func = func_holder->get_function(name.to_string())) {
+                return func;
+            }
+        }
+        return std::monostate{};
+    }
+
+    // Qualified: first component selects namespace or struct, rest is resolved recursively
+    const auto& first = name.front();
+    const auto rest   = name.without_front();
+
+    // Try child namespace
+    if (auto nspc = dynamic_cast<const ns*>(&elem)) {
+        if (auto child = nspc->get_child_namespace(first)) {
+            auto res = resolve_qualified_from(*child, rest);
+            if (res.index() != 0) return res;
+        }
+    }
+
+    // Try structure
+    if (auto st_holder = dynamic_cast<const structure_holder*>(&elem)) {
+        if (auto st = st_holder->get_structure(first)) {
+            auto res = resolve_qualified_from(*st, rest);
+            if (res.index() != 0) return res;
+        }
+    }
+
+    return std::monostate{};
+}
+
+/**
+ * Resolve a name from the root namespace of the unit.
+ * name must already have its root prefix stripped (call after without_root_prefix()).
+ *
+ * Strategy:
+ *  1. If the first component matches the module name, enter that namespace and resolve
+ *     the rest from there (explicit full-path: ::module::ns::func).
+ *  2. Otherwise, resolve directly from the root namespace (omitted module prefix:
+ *     ::func, ::struct::method, ::subns::func).
+ */
+std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+symbol_resolver::resolve_symbol_from_root(const name& name) {
+    if (name.empty()) return std::monostate{};
+
+    auto root_ns = _unit.get_root_namespace();
+    if (!root_ns) return std::monostate{};
+
+    // Strategy 1: first component is the module/unit namespace name
+    // The unit name may be multi-part (e.g. "the::test"), so only its last component
+    // is the immediate child namespace of the root.  But since the root_namespace IS
+    // the module namespace already (it IS the ns named by the module declaration),
+    // we just try to enter it if name.front() == the last part of the unit name.
+    const auto& unit_name = _unit.get_unit_name(); // k::name, e.g. "the::test"
+    if (!unit_name.empty() && name.front() == unit_name.back()) {
+        // The caller wrote ::module_last_part::...  — but actually root_ns IS that
+        // namespace, so we continue resolving the rest from root_ns.
+        auto rest = name.without_front();
+        if (rest.empty()) {
+            // ::module_name alone — doesn't resolve to a symbol
+            return std::monostate{};
+        }
+        auto res = resolve_qualified_from(*root_ns, rest);
+        if (res.index() != 0) return res;
+        // Fall through to strategy 2 in case name.front() happens to collide with
+        // a child namespace that has the same name as the module.
+    }
+
+    // Strategy 2: resolve directly from root namespace (omit module prefix)
+    return resolve_qualified_from(*root_ns, name);
+}
+
 void symbol_resolver::resolve()
 {
     visit_unit(_unit);
@@ -158,8 +245,7 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
     }
 
     if (name.has_root_prefix()) {
-        // TODO if name has root prefix, look at the unit directly.
-        std::clog << "Try to resolve symbol with root prefix: " << name.to_string() << std::endl;
+        return resolve_symbol_from_root(name.without_root_prefix());
     } else if (name.empty()) {
         // Invalid name, must have at least one part
         return std::monostate{};
@@ -310,6 +396,117 @@ std::shared_ptr<expression> symbol_resolver::adapt_type(std::shared_ptr<expressi
 // Type resolver
 //
 
+/**
+ * Resolve a structure by qualified name descending from elem, without climbing to parents.
+ */
+std::shared_ptr<structure>
+type_reference_resolver::resolve_struct_from(const element& elem, const k::name& qualified_name) {
+    if (qualified_name.empty()) return {};
+
+    if (qualified_name.size() == 1) {
+        // Simple name: look for structure directly in this element
+        if (auto st_holder = dynamic_cast<const structure_holder*>(&elem)) {
+            if (auto st = st_holder->get_structure(qualified_name.front())) {
+                return st;
+            }
+        }
+        return {};
+    }
+
+    // Qualified: first component is namespace or struct, rest continues recursively
+    const auto& first = qualified_name.front();
+    const auto  rest  = qualified_name.without_front();
+
+    // Try child namespace
+    if (auto nspc = dynamic_cast<const ns*>(&elem)) {
+        if (auto child = nspc->get_child_namespace(first)) {
+            if (auto st = resolve_struct_from(*child, rest)) {
+                return st;
+            }
+        }
+    }
+
+    // Try nested structure
+    if (auto st_holder = dynamic_cast<const structure_holder*>(&elem)) {
+        if (auto st = st_holder->get_structure(first)) {
+            if (auto nested = resolve_struct_from(*st, rest)) {
+                return nested;
+            }
+        }
+    }
+
+    return {};
+}
+
+/**
+ * Resolve a struct type from the root namespace of the unit.
+ * name_without_prefix must have the :: prefix already stripped.
+ *
+ * Strategy (mirrors resolve_symbol_from_root):
+ *  1. If the first component matches the last part of the module name, skip it
+ *     and continue from the root namespace.
+ *  2. Otherwise resolve directly from the root namespace (omit module prefix).
+ */
+std::shared_ptr<type>
+type_reference_resolver::resolve_type_from_root(const k::name& name_without_prefix) {
+    if (name_without_prefix.empty()) return {};
+
+    auto root_ns = _unit.get_root_namespace();
+    if (!root_ns) return {};
+
+    const auto& unit_name = _unit.get_unit_name();
+
+    // Strategy 1: first component is the module name last part
+    if (!unit_name.empty() && name_without_prefix.front() == unit_name.back()) {
+        auto rest = name_without_prefix.without_front();
+        if (!rest.empty()) {
+            if (auto st = resolve_struct_from(*root_ns, rest)) {
+                return st->get_struct_type();
+            }
+        }
+        // Fall through to strategy 2
+    }
+
+    // Strategy 2: resolve directly from root namespace (omit module prefix)
+    if (auto st = resolve_struct_from(*root_ns, name_without_prefix)) {
+        return st->get_struct_type();
+    }
+
+    return {};
+}
+
+/**
+ * Resolve a type by name from the context of context_elem.
+ * Handles simple names, qualified names, and root-prefixed names.
+ * Falls back to context->from_string for primitive types.
+ */
+std::shared_ptr<type>
+type_reference_resolver::resolve_type_by_name(const k::name& type_name, const element& context_elem) {
+    if (type_name.empty()) return {};
+
+    // Root-prefixed: anchor at unit root
+    if (type_name.has_root_prefix()) {
+        return resolve_type_from_root(type_name.without_root_prefix());
+    }
+
+    // Try primitive types first via context (for simple names only)
+    if (type_name.size() == 1) {
+        auto prim = _context->from_string(type_name.front());
+        if (prim && type::is_resolved(prim)) {
+            return prim;
+        }
+    }
+
+    // Walk up the scope chain looking for the type
+    for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
+        if (auto st = resolve_struct_from(*current, type_name)) {
+            return st->get_struct_type();
+        }
+    }
+
+    return {};
+}
+
 void type_reference_resolver::resolve()
 {
     visit_unit(_unit);
@@ -322,13 +519,30 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         if(!unres_type) {
             // TODO throw an exception
             std::cerr << "Error: global variable definition has an unresolvable type." << std::endl;
-        }
-        auto type = _context->from_string(unres_type->type_id());
-        if(!type || !type::is_resolved(type)) {
-            // TODO throw an exception
-            std::cerr << "Error: global variable definition has an unresolvable type." << std::endl;
         } else {
-            var.set_type(type);
+            // First try qualified name resolution from the unit root (handles namespaced
+            // types like shapes::rect, or root-prefixed like ::shapes::rect).
+            std::shared_ptr<type> resolved;
+            if (unres_type->type_id().has_root_prefix()) {
+                resolved = resolve_type_from_root(unres_type->type_id().without_root_prefix());
+            } else {
+                // Walk up from unit root namespace for global variables
+                // (for local variables the block context is searched via parent chain in resolve_type_by_name)
+                auto root_ns = _unit.get_root_namespace();
+                if (root_ns) {
+                    resolved = resolve_type_by_name(unres_type->type_id(), *root_ns);
+                }
+            }
+            if(!resolved || !type::is_resolved(resolved)) {
+                // Fall back to context->from_string (handles primitive types by string)
+                resolved = _context->from_string(unres_type->type_id());
+            }
+            if(!resolved || !type::is_resolved(resolved)) {
+                // TODO throw an exception
+                std::cerr << "Error: global variable definition has an unresolvable type." << std::endl;
+            } else {
+                var.set_type(resolved);
+            }
         }
     }
 

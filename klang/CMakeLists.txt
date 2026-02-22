@@ -84,6 +84,7 @@ add_executable(tests
         tests/test-gen-arithmetic.cpp
         tests/test-gen-statements.cpp
         tests/test-gen.cpp
+        tests/test-gen-resolution.cpp
         tests/test-run.cpp
 )
 target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain)

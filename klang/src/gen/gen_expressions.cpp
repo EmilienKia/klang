@@ -678,7 +678,17 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         const auto& args = expr.arguments();
 
         // --- Collect candidates from the scope chain ---
-        std::vector<std::shared_ptr<function>> all_candidates = scope_lookup::lookup_functions(callee, func_name);
+        // If the callee was already resolved to a specific function by the symbol_resolver
+        // (e.g. via a qualified name like "inner::value"), respect that resolution and
+        // do not re-search by short name (which would find sibling functions with the same
+        // short name in parent scopes).
+        std::vector<std::shared_ptr<function>> all_candidates;
+        if (callee->is_function() && callee->get_name().size() > 1) {
+            // Qualified name: trust the symbol_resolver's resolution
+            all_candidates.push_back(callee->get_function());
+        } else {
+            all_candidates = scope_lookup::lookup_functions(callee, func_name);
+        }
 
         // --- If first arg is ref<struct>, also collect candidates from that struct ---
         std::shared_ptr<expression> this_candidate;
