@@ -511,7 +511,12 @@ namespace k::lex {
                             } else if (c == 'e' || c == 'E') {
                                 num_content_size++;
                                 lex_state = FLOAT_DIGIT_EXP;
-                            } else if (c == 'f' || c == 'F' || c == 'd' || c == 'D') {
+                            } else if (c == 'f' || c == 'F') {
+                                fsize = FLOAT;
+                                push_float_and_reset();
+                                lex_state = START;
+                            } else if (c == 'd' || c == 'D') {
+                                fsize = DOUBLE;
                                 push_float_and_reset();
                                 lex_state = START;
                             } else {
