@@ -875,7 +875,15 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
         std::cerr << "Error: constructor invocation cannot find type for constructed symbol." << std::endl;
     }
     if (type::is_primitive(var_type)) {
-        // Do nothing, direct inline construction, no constructor method, so no need to resolve a constructor function.
+        // For primitive types, adapt the single argument (if any) to the target type.
+        // This handles the case where the argument is a reference (e.g. a parameter `v : int`)
+        // which must be loaded to get the actual value before storing it into the member.
+        if (!expr.empty()) {
+            auto cast = adapt_type(expr.argument(0), var_type);
+            if (cast && cast != expr.argument(0)) {
+                expr.assign_argument(0, cast);
+            }
+        }
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
         auto st = st_type->get_struct();
         auto [best_constructor, adapted_args] = get_best_matching_constructor(st_type->get_struct()->constructors(), expr.arguments());
@@ -884,6 +892,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             std::cerr << "Error: no matching constructor found for global variable initialization" << std::endl;
         }
         expr.set_constructor(best_constructor);
+        expr.arguments(adapted_args);
     }
 
 }

@@ -143,6 +143,7 @@ protected:
     void visit_global_variable_definition(global_variable_definition&) override;
     void visit_parameter(parameter &) override;
     void visit_function(function&) override;
+    void visit_constructor(constructor&) override;
 
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;

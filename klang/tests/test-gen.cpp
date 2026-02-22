@@ -437,7 +437,7 @@ TEST_CASE("Struct fields default 0-initialization", "[gen][struct]") {
             return p.sum();
         }
 
-        )SRC", true);
+        )SRC");
     REQUIRE(jit);
 
     auto test_local = jit->lookup_symbol < int(*)() > ("test_local");
@@ -468,7 +468,7 @@ TEST_CASE("Struct fields trivial constant default initialization", "[gen][struct
             return g.sum();
         }
 
-        )SRC", true);
+        )SRC");
     REQUIRE(jit);
 
     auto test_local = jit->lookup_symbol < int(*)() > ("test_local");
@@ -986,4 +986,271 @@ TEST_CASE("Constructor overload resolution preferring widening over narrowing", 
     auto test_widening = jit->lookup_symbol<int(*)()>("test_widening_short_to_int");
     REQUIRE(test_widening != nullptr);
     REQUIRE(test_widening() == 10);
+}
+
+//
+// Mem-initializer-list tests
+//
+
+TEST_CASE("Constructor mem-initializer-list: single primitive member", "[gen][structs][mem_init]") {
+    // Constructor mem-init sets a primitive field directly
+    auto jit = gen_jit(R"SRC(
+        module __mem_init_single__;
+
+        struct box {
+            val : int = 0;
+            box(v : int) : val(v) { }
+        }
+
+        test() : int {
+            b : box(42);
+            return b.val;
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Constructor mem-initializer-list: multiple primitive members", "[gen][structs][mem_init]") {
+    // Multiple members initialized via mem-init list
+    auto jit = gen_jit(R"SRC(
+        module __mem_init_multi__;
+
+        struct point {
+            x : int = 0;
+            y : int = 0;
+            point(a : int, b : int) : x(a), y(b) { }
+        }
+
+        test_x() : int {
+            p : point(10, 20);
+            return p.x;
+        }
+
+        test_y() : int {
+            p : point(10, 20);
+            return p.y;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test_x = jit->lookup_symbol<int(*)()>("test_x");
+    REQUIRE(test_x != nullptr);
+    REQUIRE(test_x() == 10);
+
+    auto test_y = jit->lookup_symbol<int(*)()>("test_y");
+    REQUIRE(test_y != nullptr);
+    REQUIRE(test_y() == 20);
+}
+
+TEST_CASE("Constructor mem-initializer-list: mem-init with expression", "[gen][structs][mem_init]") {
+    // Member initialized with an arithmetic expression
+    auto jit = gen_jit(R"SRC(
+        module __mem_init_expr__;
+
+        struct doubled {
+            val : int = 0;
+            doubled(v : int) : val(v * 2) { }
+        }
+
+        test() : int {
+            d : doubled(21);
+            return d.val;
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Constructor mem-initializer-list: mem-init overrides default member init", "[gen][structs][mem_init]") {
+    // Default member init is 99, but mem-init list overrides with 42
+    auto jit = gen_jit(R"SRC(
+        module __mem_init_override__;
+
+        struct box {
+            val : int = 99;
+            box(v : int) : val(v) { }
+        }
+
+        test() : int {
+            b : box(42);
+            return b.val;
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Constructor mem-initializer-list: unlisted member keeps its default", "[gen][structs][mem_init]") {
+    // x is initialized via mem-init, y keeps its default value
+    auto jit = gen_jit(R"SRC(
+        module __mem_init_partial__;
+
+        struct pair {
+            x : int = 0;
+            y : int = 77;
+            pair(a : int) : x(a) { }
+        }
+
+        test_x() : int {
+            p : pair(42);
+            return p.x;
+        }
+
+        test_y() : int {
+            p : pair(42);
+            return p.y;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test_x = jit->lookup_symbol<int(*)()>("test_x");
+    REQUIRE(test_x != nullptr);
+    REQUIRE(test_x() == 42);
+
+    auto test_y = jit->lookup_symbol<int(*)()>("test_y");
+    REQUIRE(test_y != nullptr);
+    REQUIRE(test_y() == 77);
+}
+
+TEST_CASE("Constructor mem-initializer-list: nested struct member", "[gen][structs][mem_init]") {
+    // Inner struct initialized via mem-init list using its own constructor
+    auto jit = gen_jit(R"SRC(
+        module __mem_init_nested__;
+
+        struct inner {
+            v : int = 0;
+            inner(x : int) : v(x) { }
+        }
+
+        struct outer {
+            a : inner;
+            outer(x : int) : a(x) { }
+        }
+
+        test() : int {
+            o : outer(42);
+            return o.a.v;
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Constructor mem-initializer-list: no mem-init uses default", "[gen][structs][mem_init]") {
+    // Constructor without mem-init list: member should use its default value
+    auto jit = gen_jit(R"SRC(
+        module __mem_init_no_list__;
+
+        struct box {
+            val : int = 42;
+            box() { }
+        }
+
+        test() : int {
+            b : box();
+            return b.val;
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Constructor mem-initializer-list: multiple ctors different mem-inits", "[gen][structs][mem_init]") {
+    // Two overloaded constructors with different mem-initializer-lists
+    auto jit = gen_jit(R"SRC(
+        module __mem_init_overload__;
+
+        struct box {
+            val : int = 0;
+            box(v : int) : val(v) { }
+            box(a : int, b : int) : val(a + b) { }
+        }
+
+        test_one() : int {
+            b : box(42);
+            return b.val;
+        }
+
+        test_two() : int {
+            b : box(20, 22);
+            return b.val;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test_one = jit->lookup_symbol<int(*)()>("test_one");
+    REQUIRE(test_one != nullptr);
+    REQUIRE(test_one() == 42);
+
+    auto test_two = jit->lookup_symbol<int(*)()>("test_two");
+    REQUIRE(test_two != nullptr);
+    REQUIRE(test_two() == 42);
+}
+
+TEST_CASE("Constructor mem-initializer-list: a constructor of sub-object with multiple arguments", "[gen][structs][mem_init]") {
+    // Constructor with mem-init list that initializes a sub-object using a constructor that takes multiple arguments
+    auto jit = gen_jit(R"SRC(
+        module __mem_init_overload__;
+
+        struct box {
+            p1 : point;
+            p2 : point;
+            box(x1 : int, y1 : int, x2 : int, y2 : int) : p1(x1, y1), p2(x2, y2) { }
+        }
+
+        struct point {
+            x : int = 0;
+            y : int = 0;
+            point(x : int, y : int) : x(x), y(y) { }
+        }
+
+        test_x1() : int {
+            b : box(7, 13, 23, 42);
+            return b.p1.x;
+        }
+
+        test_y1() : int {
+            b : box(7, 13, 23, 42);
+            return b.p1.y;
+        }
+
+        test_x2() : int {
+            b : box(7, 13, 23, 42);
+            return b.p2.x;
+        }
+
+        test_y2() : int {
+            b : box(7, 13, 23, 42);
+            return b.p2.y;
+        }
+
+        )SRC");
+    REQUIRE(jit);
+
+    auto test_x1 = jit->lookup_symbol<int(*)()>("test_x1");
+    REQUIRE(test_x1 != nullptr);
+    REQUIRE(test_x1() == 7);
+
+    auto test_y1 = jit->lookup_symbol<int(*)()>("test_y1");
+    REQUIRE(test_y1 != nullptr);
+    REQUIRE(test_y1() == 13);
+
+    auto test_x2 = jit->lookup_symbol<int(*)()>("test_x2");
+    REQUIRE(test_x2 != nullptr);
+    REQUIRE(test_x2() == 23);
+
+    auto test_y2 = jit->lookup_symbol<int(*)()>("test_y2");
+    REQUIRE(test_y2 != nullptr);
+    REQUIRE(test_y2() == 42);
 }

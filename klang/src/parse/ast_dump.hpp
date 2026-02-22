@@ -235,6 +235,23 @@ class ast_dump_visitor : public k::parse::ast_visitor {
                 function.type->visit(*this);
             }
 
+            if(!function.member_inits.empty()) {
+                _stm << " : ";
+                bool first = true;
+                for(auto& mi : function.member_inits) {
+                    if(!first) _stm << ", ";
+                    first = false;
+                    _stm << mi.name.content << "(";
+                    bool first_arg = true;
+                    for(auto& arg : mi.args) {
+                        if(!first_arg) _stm << ", ";
+                        first_arg = false;
+                        arg->visit(*this);
+                    }
+                    _stm << ")";
+                }
+            }
+
             if(function.content) {
                 _stm << std::endl;
                 function.content->visit(*this);

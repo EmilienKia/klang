@@ -410,31 +410,112 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         }
     }
 
-    // Look for return type
+    // Look for return type OR mem-initializer-list (both start with ':')
     std::shared_ptr<ast::type_specifier> restype;
+    std::vector<ast::member_initializer> member_inits;
     holder.sync();
     if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
         if(is_destructor) {
             throw_error(0x003E, _lexer.pick_current(), "Destructor declaration must not have a return type");
         }
-        restype = parse_type_spec();
+
+        // Try to parse a type specifier first (covers the 'return type' case for non-constructors).
+        // If it succeeds AND is not followed immediately by a '(' (which would be the first mem-init),
+        // it is a return-type specifier. Otherwise, we try to parse as a mem-initializer-list.
+        // Disambiguation: a type specifier always comes right before '{', so if after parsing the
+        // type spec the next token is '{', it was indeed the return type.
+        // But for mem-initializer-list the identifier is followed by '(', not ':' or '[' etc.
+        // Strategy: try type-spec; if next is '{' → return type. Else rollback and try mem-init-list.
+        {
+            lex::lex_holder type_holder(_lexer);
+            auto candidate_type = parse_type_spec();
+            if(candidate_type) {
+                // Peek the next token without consuming it
+                lex::lex_holder peek_holder(_lexer);
+                auto next = _lexer.get();
+                peek_holder.rollback();
+                if(next == lex::punctuator::BRACE_OPEN) {
+                    // It really is a return type
+                    restype = candidate_type;
+                    // type_holder stays synced (consumed)
+                } else {
+                    // The ':' was not for a return type but for a mem-initializer-list
+                    type_holder.rollback();
+                    candidate_type.reset();
+                }
+            } else {
+                type_holder.rollback();
+            }
+        }
+
         if(!restype) {
-            throw_error(0x000E, _lexer.pick_current(), "Function declaration expects a return type specifier after the colon ':'");
+            // Try to parse as mem-initializer-list: MEMBER_INIT {',' MEMBER_INIT}*
+            // MEMBER_INIT := identifier '(' [EXPRESSION_LIST] ')'
+            while(true) {
+                lex::lex_holder init_holder(_lexer);
+                auto lmname = _lexer.get();
+                if(!lex::is<lex::identifier>(lmname)) {
+                    throw_error(0x0040, _lexer.pick_current(), "Constructor mem-initializer-list expects a member name identifier");
+                }
+                auto mem_name = lex::as<lex::identifier>(lmname);
+                if(auto lopen = _lexer.get(); lopen != lex::punctuator::PARENTHESIS_OPEN) {
+                    throw_error(0x0041, _lexer.pick_current(), "Constructor mem-initializer expects '(' after member name");
+                }
+                std::vector<std::shared_ptr<ast::expression>> init_args;
+                {
+                    lex::lex_holder close_holder(_lexer);
+                    auto maybe_close = _lexer.get();
+                    if(maybe_close == lex::punctuator::PARENTHESIS_CLOSE) {
+                        // empty arg list
+                    } else {
+                        close_holder.rollback();
+                        // Parse comma-separated expression list.
+                        // Use parse_assignment_expression() (not parse_expression()) so that
+                        // the comma separating arguments is NOT consumed as the comma operator.
+                        auto first_expr = parse_assignment_expression();
+                        if(!first_expr) {
+                            throw_error(0x0042, _lexer.pick_current(), "Constructor mem-initializer expects an expression or ')'");
+                        }
+                        init_args.push_back(first_expr);
+                        while(true) {
+                            lex::lex_holder comma_holder(_lexer);
+                            auto maybe_comma = _lexer.get();
+                            if(maybe_comma == lex::punctuator::PARENTHESIS_CLOSE) {
+                                break;
+                            }
+                            if(maybe_comma != lex::punctuator::COMMA) {
+                                throw_error(0x0043, _lexer.pick_current(), "Constructor mem-initializer expects ',' or ')' after expression");
+                            }
+                            auto arg = parse_assignment_expression();
+                            if(!arg) {
+                                throw_error(0x0044, _lexer.pick_current(), "Constructor mem-initializer expects an expression after ','");
+                            }
+                            init_args.push_back(arg);
+                        }
+                    }
+                }
+                member_inits.emplace_back(mem_name, std::move(init_args));
+
+                // Look for ',' to continue or stop
+                lex::lex_holder comma_holder2(_lexer);
+                auto maybe_comma2 = _lexer.get();
+                if(maybe_comma2 == lex::punctuator::COMMA) {
+                    // continue to next member init
+                } else {
+                    comma_holder2.rollback();
+                    break;
+                }
+            }
         }
     } else {
         holder.rollback();
     }
 
     auto statements = parse_statement_block();
-    if(statements) {
-        return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, statements, is_destructor);
-    } else
-    // Look for final semicolon
-    // TODO remove function declaration-only.
-    if(auto lsemicolon = _lexer.get(); lsemicolon!=lex::punctuator::SEMICOLON) {
-        throw_error(0x000F, _lexer.pick_current(), "Function declaration expects a final semicolon ';'");
+    if(!statements) {
+        throw_error(0x000F, _lexer.pick_current(), "Function declaration expects a body block '{ ... }'");
     }
-    return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, is_destructor);
+    return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, statements, is_destructor);
 }
 
 std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()

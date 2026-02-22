@@ -1156,3 +1156,152 @@ TEST_CASE( "Parse for statement", "[parser][for]") {
     REQUIRE( block->statements.size() == 1 );
 
 }
+
+//
+// Parse function_decl with mem-initializer-list
+//
+
+TEST_CASE("Parse constructor with empty mem-initializer-list", "[parser][function_decl][mem_init]") {
+    test_logger log;
+    k::source src{"MyStruct() : x() { }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+
+    REQUIRE( decl->name.content == "MyStruct" );
+    REQUIRE( decl->params.empty() );
+    REQUIRE( !decl->type );  // No return type
+    REQUIRE( decl->member_inits.size() == 1 );
+    REQUIRE( decl->member_inits[0].name.content == "x" );
+    REQUIRE( decl->member_inits[0].args.empty() );
+    REQUIRE( decl->content );
+}
+
+TEST_CASE("Parse constructor with one mem-initializer", "[parser][function_decl][mem_init]") {
+    test_logger log;
+    k::source src{"MyStruct(v : int) : x(v) { }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+
+    REQUIRE( decl->name.content == "MyStruct" );
+    REQUIRE( decl->params.size() == 1 );
+    REQUIRE( !decl->type );
+    REQUIRE( decl->member_inits.size() == 1 );
+
+    auto& mi0 = decl->member_inits[0];
+    REQUIRE( mi0.name.content == "x" );
+    REQUIRE( mi0.args.size() == 1 );
+    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(mi0.args[0]);
+    REQUIRE( ident );
+    REQUIRE( ident->qident.names[0].content == "v" );
+
+    REQUIRE( decl->content );
+}
+
+TEST_CASE("Parse constructor with multiple mem-initializers", "[parser][function_decl][mem_init]") {
+    test_logger log;
+    k::source src{"MyStruct(a : int, b : int) : x(a), y(b) { }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+
+    REQUIRE( decl->name.content == "MyStruct" );
+    REQUIRE( decl->params.size() == 2 );
+    REQUIRE( !decl->type );
+    REQUIRE( decl->member_inits.size() == 2 );
+
+    REQUIRE( decl->member_inits[0].name.content == "x" );
+    REQUIRE( decl->member_inits[0].args.size() == 1 );
+
+    REQUIRE( decl->member_inits[1].name.content == "y" );
+    REQUIRE( decl->member_inits[1].args.size() == 1 );
+
+    REQUIRE( decl->content );
+}
+
+TEST_CASE("Parse constructor with one mem-initializers with two arguments", "[parser][function_decl][mem_init]") {
+    test_logger log;
+    k::source src{"MyStruct(a : int, b : int) : x(a, b) { }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+
+    REQUIRE( decl->name.content == "MyStruct" );
+    REQUIRE( decl->params.size() == 2 );
+    REQUIRE( !decl->type );
+    REQUIRE( decl->member_inits.size() == 1 );
+
+    REQUIRE( decl->member_inits[0].name.content == "x" );
+    REQUIRE( decl->member_inits[0].args.size() == 2 );
+
+    REQUIRE( decl->content );
+}
+
+
+TEST_CASE("Parse constructor with mem-initializer with expression", "[parser][function_decl][mem_init]") {
+    test_logger log;
+    k::source src{"MyStruct(a : int) : x(a + 1) { }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+
+    REQUIRE( decl->member_inits.size() == 1 );
+    REQUIRE( decl->member_inits[0].name.content == "x" );
+    REQUIRE( decl->member_inits[0].args.size() == 1 );
+
+    auto add = std::dynamic_pointer_cast<ast::binary_operator_expr>(decl->member_inits[0].args[0]);
+    REQUIRE( add );
+    REQUIRE( add->op == k::lex::operator_::PLUS );
+}
+
+TEST_CASE("Parse regular function with return type (no mem-init confusion)", "[parser][function_decl][mem_init]") {
+    test_logger log;
+    k::source src{"compute(a : int) : int { return a; }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+
+    REQUIRE( decl->name.content == "compute" );
+    REQUIRE( decl->type );  // Has return type
+    REQUIRE( decl->member_inits.empty() );
+    REQUIRE( decl->content );
+}
+
+TEST_CASE("Parse constructor without mem-initializer-list", "[parser][function_decl][mem_init]") {
+    test_logger log;
+    k::source src{"MyStruct() { }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+
+    REQUIRE( decl->name.content == "MyStruct" );
+    REQUIRE( decl->member_inits.empty() );
+    REQUIRE( decl->content );
+}
+
+TEST_CASE("Parse struct with constructor mem-initializer-list", "[parser][function_decl][struct][mem_init]") {
+    test_logger log;
+    k::source src{R"SRC(
+        struct Point {
+            x : int = 0;
+            y : int = 0;
+            Point(a : int, b : int) : x(a), y(b) { }
+        }
+    )SRC"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_struct_decl();
+    REQUIRE( decl );
+
+    REQUIRE( decl->declarations.size() == 3 );
+
+    // The third declaration should be the constructor
+    auto func = std::dynamic_pointer_cast<ast::function_decl>(decl->declarations[2]);
+    REQUIRE( func );
+    REQUIRE( func->name.content == "Point" );
+    REQUIRE( func->member_inits.size() == 2 );
+    REQUIRE( func->member_inits[0].name.content == "x" );
+    REQUIRE( func->member_inits[1].name.content == "y" );
+}
+
+

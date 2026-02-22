@@ -613,11 +613,27 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * A single member initializer in a constructor's mem-initializer-list.
+         * E.g. the "x(a+1)" part in "ctor() : x(a+1), y(b) { ... }"
+         */
+        struct member_initializer {
+            lex::identifier name;
+            std::vector<std::shared_ptr<ast::expression>> args;
+
+            member_initializer(const lex::identifier &name, const std::vector<std::shared_ptr<ast::expression>> &args) :
+                    name(name), args(args) {}
+            member_initializer(lex::identifier &&name, std::vector<std::shared_ptr<ast::expression>> &&args) :
+                    name(std::move(name)), args(std::move(args)) {}
+        };
+
         struct function_decl : public declaration {
             std::vector<lex::keyword> specifiers;
             lex::identifier name;
             std::shared_ptr<ast::type_specifier> type;
             std::vector<std::shared_ptr<parameter_spec>> params;
+            /** Member initializer list (only for constructors). */
+            std::vector<member_initializer> member_inits;
             std::shared_ptr<block_statement> content;
             bool is_destructor = false;
 
@@ -628,18 +644,15 @@ namespace k::parse {
 
             function_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
                           const std::shared_ptr<ast::type_specifier> &type, const std::vector<std::shared_ptr<parameter_spec>> &params,
-                          bool is_destructor = false) :
-                    specifiers(specifiers), name(name), type(type), params(params), is_destructor(is_destructor) {}
+                          const std::vector<member_initializer> &member_inits,
+                          const std::shared_ptr <block_statement> &content, bool is_destructor = false) :
+                    specifiers(specifiers), name(name), type(type), params(params), member_inits(member_inits), content(content), is_destructor(is_destructor) {}
 
             function_decl(std::vector <lex::keyword> &&specifiers, lex::identifier &&name,
                           std::shared_ptr<ast::type_specifier> &&type, std::vector<std::shared_ptr<parameter_spec>> &&params,
+                          std::vector<member_initializer> &&member_inits,
                           std::shared_ptr <block_statement> &&content, bool is_destructor = false) :
-                    specifiers(specifiers), name(name), type(type), params(params), content(content), is_destructor(is_destructor) {}
-
-            function_decl(std::vector <lex::keyword> &&specifiers, lex::identifier &&name,
-                          std::shared_ptr<ast::type_specifier> &&type, std::vector<std::shared_ptr<parameter_spec>> &&params,
-                          bool is_destructor = false) :
-                    specifiers(specifiers), name(name), type(type), params(params), is_destructor(is_destructor) {}
+                    specifiers(specifiers), name(name), type(type), params(params), member_inits(std::move(member_inits)), content(content), is_destructor(is_destructor) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

@@ -210,7 +210,20 @@ namespace k::model {
             // TODO add param specs
         }
 
-        // TODO In case of constructor, add member initializer here
+        if(auto ctor = std::dynamic_pointer_cast<constructor>(function)) {
+            for(auto& ast_mi : func.member_inits) {
+                std::vector<std::shared_ptr<model::expression>> init_args;
+                for(auto& ast_arg : ast_mi.args) {
+                    _expr.reset();
+                    ast_arg->visit(*this);
+                    if(_expr) {
+                        init_args.push_back(_expr);
+                        _expr.reset();
+                    }
+                }
+                ctor->add_member_init(std::string{ast_mi.name.content}, std::move(init_args));
+            }
+        }
 
         if(func.content) {
             visit_block_statement(*func.content);

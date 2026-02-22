@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <utility>
 
 #include "../lex/lexer.hpp"
@@ -120,6 +121,8 @@ protected:
 private:
     void reset();
     void init_primitive_types();
+    void resolve_struct_type(std::shared_ptr<struct_type> st_type,
+                             std::unordered_set<struct_type*>& in_progress);
 };
 
 

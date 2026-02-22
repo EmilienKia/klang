@@ -18,6 +18,7 @@
 
 #include "context.hpp"
 
+#include <unordered_set>
 
 #include "expressions.hpp"
 #include "model.hpp"
@@ -280,36 +281,56 @@ std::shared_ptr<unresolved_type> context::create_unresolved(name&& type_id) {
     return res;
 }
 
+void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
+                                   std::unordered_set<struct_type*>& in_progress) {
+    if (st_type->is_resolved()) return;
+
+    // Cycle detection
+    if (in_progress.count(st_type.get())) {
+        throw std::runtime_error("Cyclic dependency between struct types: " + st_type->name());
+    }
+    in_progress.insert(st_type.get());
+
+    auto st = st_type->get_struct();
+    std::vector<struct_type::field> fields;
+    std::vector<llvm::Type*> types;
+    for (auto [var_name, var] : st->variables()) {
+        auto type = var->get_type();
+        if (!type->is_resolved()) {
+            // Not resolved, try to resolve it.
+            auto res_type = resolve_type(type);
+            if (!res_type) {
+                throw std::runtime_error("Cannot resolve structure field type: " + type->to_string());
+            }
+            // If the resolved type is itself a struct_type not yet fully resolved,
+            // recursively resolve it now (handles any declaration order).
+            if (auto dep_st_type = std::dynamic_pointer_cast<struct_type>(res_type)) {
+                resolve_struct_type(dep_st_type, in_progress);
+            }
+            var->set_type(res_type);
+            type = res_type;
+        } else if (auto dep_st_type = std::dynamic_pointer_cast<struct_type>(type)) {
+            // Already a struct_type but may not have its LLVM type yet (e.g. forward reference).
+            resolve_struct_type(dep_st_type, in_progress);
+        }
+        fields.emplace_back(fields.size(), var_name, type);
+        types.push_back(get_llvm_type(type));
+    }
+    auto llvm_type = llvm::StructType::create(llvm_context(), llvm::ArrayRef<llvm::Type*>(types), st_type->name());
+    auto default_const_value = llvm::ConstantAggregateZero::get(llvm_type);
+    st_type->set_llvm_type(std::move(fields), llvm_type, default_const_value);
+
+    in_progress.erase(st_type.get());
+}
+
 void context::resolve_types() {
     // Note: primitive types (and derivative) are always resolved.
     // Note: references, pointers and arrays depend on only from their subtypes.
 
-    // Resolve structures:
-    for(auto& [st_name, st_type] : _struct_types) {
-        if (!st_type->is_resolved()) {
-            auto st = st_type->get_struct();
-            std::vector<struct_type::field> fields;
-            std::vector<llvm::Type*> types;
-            for(auto [var_name,var] : st->variables()) {
-                auto type = var->get_type();
-                if (!type->is_resolved()) {
-                    // Not resolved, try to resolve it.
-                    auto res_type = resolve_type(type);
-                    if (!res_type) {
-                        // So this shall not happen.
-                        throw std::runtime_error("Cannot resolve structure field type: " + type->to_string());
-                    }
-                    var->set_type(res_type);
-                    type = res_type;
-                }
-                fields.emplace_back(fields.size(), var_name, type);
-                types.push_back(get_llvm_type(type));
-            }
-            auto llvm_type = llvm::StructType::create(llvm_context(), llvm::ArrayRef<llvm::Type*>(types), st_name);
-            // Structure are zero-initialized by default, so we can use a zero aggregate constant as default value.
-            auto default_const_value = llvm::ConstantAggregateZero::get(llvm_type);
-            st_type->set_llvm_type(std::move(fields), llvm_type, default_const_value);
-        }
+    // Resolve structures in dependency order (recursive, handles any declaration order).
+    std::unordered_set<struct_type*> in_progress;
+    for (auto& [st_name, st_type] : _struct_types) {
+        resolve_struct_type(st_type, in_progress);
     }
 }
 
@@ -361,6 +382,13 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
             return res;
         } else {
             auto resolved_type = from_string(unres->type_id().to_string());
+            // If from_string returned a struct_type, accept it even if its LLVM type is not
+            // yet generated: resolve_struct_type will handle the LLVM materialisation
+            // recursively. An unresolved_type remaining means the name was truly unknown.
+            if (std::dynamic_pointer_cast<struct_type>(resolved_type)) {
+                unres->resolve(resolved_type);
+                return resolved_type;
+            }
             if (!resolved_type->is_resolved()) {
                 // TODO throw an exception
                 std::cerr << "Error: cannot resolve type: " << unres->type_id().to_string() << std::endl;

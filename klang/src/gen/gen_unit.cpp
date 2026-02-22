@@ -21,6 +21,9 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
+#include <unordered_map>
+#include <unordered_set>
+
 namespace k::model::gen {
 
 //
@@ -372,6 +375,48 @@ void symbol_resolver::visit_function(function& fn) {
     }
 }
 
+void symbol_resolver::visit_constructor(constructor& ctor) {
+    // Before resolving the block, inject expression_statements for each explicit member
+    // initializer into the beginning of the constructor block. This ensures that when
+    // visit_function → visit_block visits the block, the symbol expressions inside the
+    // mem-init args have a proper parent in the element hierarchy and can resolve
+    // parameter references correctly.
+    // Injected in struct member declaration order (as in C++), not in the list order.
+
+    auto blck = ctor.get_block();
+    auto st = ctor.get_owner();
+    if (blck && st && !ctor.member_inits().empty()) {
+        // Build a lookup map from member name to mem_init_spec
+        std::unordered_map<std::string, const constructor::member_init_spec*> init_by_name;
+        for (auto& mi : ctor.member_inits()) {
+            init_by_name[mi.member_name] = &mi;
+        }
+
+        auto insert_pos = blck->begin();
+        for (auto& var_entry : st->variables()) {
+            if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
+                auto it = init_by_name.find(var->get_short_name());
+                if (it == init_by_name.end()) continue;
+                const auto& mi = *it->second;
+
+                // Clone the args so each constructor gets its own independent copy
+                std::vector<std::shared_ptr<expression>> args;
+                args.reserve(mi.args.size());
+                for (auto& arg : mi.args) {
+                    args.push_back(arg->clone());
+                }
+                auto init_expr = constructor_invocation_expression::make_shared(var, args);
+                auto stmt = std::make_shared<expression_statement>(blck);
+                stmt->set_expression(init_expr);
+                insert_pos = blck->insert_statement(insert_pos, stmt);
+                ++insert_pos;
+            }
+        }
+    }
+
+    visit_function(ctor);
+}
+
 void type_reference_resolver::visit_function(function& fn) {
 
     if (fn.is_member() && !fn.is_static()) {
@@ -516,22 +561,45 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
     if (!st) {
         // TODO throw exception : constructor must have an owner structure
         std::cerr << "Constructor must have an owner structure." << std::endl;
+        return;
     }
 
     auto blck = ctor.get_block();
-    // Note : insert initialization statements at the beginning of the constructor block, to be sure they are executed before any possible use in constructor body.
+    // Note : the statements for explicit member_inits were already injected by
+    // symbol_resolver::visit_constructor (in struct member declaration order).
+    // Here we insert fallback initialization statements for members NOT listed in the
+    // mem-initializer-list, interleaved in declaration order.
+    //
+    // The first N statements in the block (where N = number of explicit mem-inits listed in
+    // declaration order) are the already-injected ones. We walk declaration order and insert
+    // missing members at the right position.
+
+    // Build the set of member names with an explicit initializer
+    std::unordered_set<std::string> explicit_init_names;
+    for (auto& mi : ctor.member_inits()) {
+        explicit_init_names.insert(mi.member_name);
+    }
+
+    // Walk member declaration order and insert fallback init for each unlisted member
+    // at the correct position (interleaved with the already-injected explicit ones).
+    // We maintain insert_pos which advances past each already-injected or newly-injected stmt.
     block::iterator insert_pos = blck->begin();
-    // TODO add initialization of members in the right order
-    for (auto var_entry : st->variables()) {
+    for (auto& var_entry : st->variables()) {
         if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
-            auto init_expr = var->get_init_expr();
-            if (init_expr) {
-                // Clone the init expression so each constructor gets its own independent copy.
-                // Without cloning, all constructors would share the same expression objects,
-                // causing type-resolution of one constructor to corrupt the others.
-                auto stmt = std::make_shared<expression_statement>(blck);
-                stmt->set_expression(init_expr->clone());
-                insert_pos = blck->insert_statement(insert_pos, stmt);
+            if (explicit_init_names.count(var->get_short_name()) > 0) {
+                // This member has an explicit initializer already in the block: skip past it
+                ++insert_pos;
+            } else {
+                // Not in the explicit list: use its own init_expr (if any)
+                auto init_expr = var->get_init_expr();
+                if (init_expr) {
+                    // Clone so each constructor gets its own independent copy.
+                    auto stmt = std::make_shared<expression_statement>(blck);
+                    stmt->set_expression(init_expr->clone());
+                    insert_pos = blck->insert_statement(insert_pos, stmt);
+                    ++insert_pos;
+                }
+                // If no init_expr, zero-initialization covers it (done at IR level).
             }
         }
     }

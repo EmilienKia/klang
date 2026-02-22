@@ -495,6 +495,20 @@ class constructor : public function {
 protected:
     friend class structure;
     friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
+
+public:
+    /**
+     * A single explicit member initializer as provided in the constructor's mem-initializer-list.
+     */
+    struct member_init_spec {
+        std::string member_name;
+        std::vector<std::shared_ptr<expression>> args;
+    };
+
+protected:
+    /** Explicit member initializers from the source mem-initializer-list (in declaration order). */
+    std::vector<member_init_spec> _member_inits;
 
     constructor(std::shared_ptr<structure> parent) :
         function(parent) {}
@@ -506,6 +520,11 @@ protected:
 public:
     void accept(model_visitor& visitor) override;
 
+    void add_member_init(const std::string& name, std::vector<std::shared_ptr<expression>> args) {
+        _member_inits.push_back({name, std::move(args)});
+    }
+
+    const std::vector<member_init_spec>& member_inits() const { return _member_inits; }
 };
 
 
