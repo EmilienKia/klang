@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 //
-// Note: Last resolver log number: 0x30004
+// Note: Last resolver log number: 0x30005
 //
 // How symbols are resolved:
 // A symbol is resolved by trying to match a looked name from a searched context.
@@ -56,6 +56,8 @@
 #include "resolvers.hpp"
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
+
+#include <set>
 
 namespace k::model::gen {
 
@@ -511,6 +513,98 @@ void type_reference_resolver::resolve()
 {
     visit_unit(_unit);
 }
+
+//
+// Overload collision helpers
+//
+
+namespace {
+    // Build a human-readable parameter list string for a function overload.
+    static std::string param_list_str(const std::vector<std::shared_ptr<model::parameter>>& params) {
+        std::string s = "(";
+        bool first = true;
+        for (auto& p : params) {
+            if (!first) s += ", ";
+            s += p->get_type() ? p->get_type()->to_string() : "?";
+            if (p->has_default_expr()) s += " = <default>";
+            first = false;
+        }
+        s += ")";
+        return s;
+    }
+
+    // Compute [min_arity, max_arity] for a function (accounting for default parameters).
+    static std::pair<size_t,size_t> arity_range(const std::shared_ptr<model::function>& fn) {
+        size_t min_a = 0, max_a = fn->parameters().size();
+        for (auto& p : fn->parameters()) if (!p->has_default_expr()) ++min_a;
+        return {min_a, max_a};
+    }
+
+    // True if ranges [a,b] and [c,d] overlap.
+    static bool ranges_overlap(size_t a, size_t b, size_t c, size_t d) {
+        return a <= d && c <= b;
+    }
+} // anonymous namespace
+
+void type_reference_resolver::check_overload_collisions(function_holder& fh)
+{
+    // Collect all unique function names.
+    std::set<std::string> names;
+    for (auto& fn : fh.functions()) {
+        names.insert(fn->get_short_name());
+    }
+
+    for (const auto& fname : names) {
+        auto overloads = fh.get_functions(fname);
+        if (overloads.size() < 2) continue;
+
+        // For each pair (i < j), check for arity-range overlap when at least one has defaults.
+        for (size_t i = 0; i < overloads.size(); ++i) {
+            auto [min_i, max_i] = arity_range(overloads[i]);
+            bool has_default_i = (min_i < max_i);
+
+            for (size_t j = i + 1; j < overloads.size(); ++j) {
+                auto [min_j, max_j] = arity_range(overloads[j]);
+                bool has_default_j = (min_j < max_j);
+
+                if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
+                    throw_error(0x30005, std::nullopt,
+                        "Ambiguous overload: '{}{}' and overload '{}{}' can both be called with the same number of arguments "
+                        "because of default parameter values; rename one overload or remove the default value(s) to resolve the ambiguity",
+                        {fname, param_list_str(overloads[i]->parameters()),
+                         fname, param_list_str(overloads[j]->parameters())});
+                }
+            }
+        }
+    }
+}
+
+void type_reference_resolver::check_constructor_overload_collisions(structure& st)
+{
+    const auto& ctors = st.constructors();
+    if (ctors.size() < 2) return;
+
+    for (size_t i = 0; i < ctors.size(); ++i) {
+        auto [min_i, max_i] = arity_range(ctors[i]);
+        bool has_default_i = (min_i < max_i);
+
+        for (size_t j = i + 1; j < ctors.size(); ++j) {
+            auto [min_j, max_j] = arity_range(ctors[j]);
+            bool has_default_j = (min_j < max_j);
+
+            if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
+                const std::string& sname = st.get_short_name();
+                throw_error(0x30005, std::nullopt,
+                    "Ambiguous constructor overload in '{}': constructor '{}{}' and constructor '{}{}' can both be called with the same number of arguments "
+                    "because of default parameter values; remove one constructor or remove the default value(s) to resolve the ambiguity",
+                    {sname,
+                     sname, param_list_str(ctors[i]->parameters()),
+                     sname, param_list_str(ctors[j]->parameters())});
+            }
+        }
+    }
+}
+
 
 void type_reference_resolver::visit_variable_definition(variable_definition& var)
 {

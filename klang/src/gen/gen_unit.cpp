@@ -131,6 +131,8 @@ void type_reference_resolver::visit_namespace(ns& ns)
     for(auto& child : ns.get_children()) {
         child->accept(*this);
     }
+    // After all children are resolved, check for overload collisions among free functions.
+    check_overload_collisions(ns);
 }
 
 void declaration_generator::visit_namespace(ns &ns) {
@@ -194,6 +196,9 @@ void type_reference_resolver::visit_structure(structure& st) {
     for(auto& child : st.get_children()) {
         child->accept(*this);
     }
+    // After all members are resolved, check for overload collisions.
+    check_overload_collisions(st);
+    check_constructor_overload_collisions(st);
 }
 
 void declaration_generator::visit_structure(structure& st) {

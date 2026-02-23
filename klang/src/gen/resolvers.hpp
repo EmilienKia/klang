@@ -361,6 +361,19 @@ protected:
                                const std::shared_ptr<expression>& this_expr = nullptr,
                                const std::vector<std::shared_ptr<expression>>* direct_args = nullptr);
 
+    /**
+     * Check all groups of same-named free functions in a function_holder for arity-overlap
+     * collisions caused by default-parameter values.
+     * Reports an error for every colliding pair found.
+     */
+    void check_overload_collisions(function_holder& fh);
+
+    /**
+     * Check all constructor overloads of a structure for arity-overlap collisions caused
+     * by default-parameter values.
+     * Reports an error for every colliding pair found.
+     */
+    void check_constructor_overload_collisions(structure& st);
 
     /**
      * Adapt a reference expression to load its value.
