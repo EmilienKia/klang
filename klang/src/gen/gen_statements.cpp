@@ -599,7 +599,7 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
         init->accept(*this);
     } else {
         // TODO throw exception
-        std::cerr << "Variable declaration without initialization is not supported for now : " << var.get_fq_name() << std::endl;
+        logger_relay::error(0x40008, "Variable '{}' has no initialization expression; uninitialized variable declarations are not supported yet", {var.get_fq_name()});
     }
 
 }

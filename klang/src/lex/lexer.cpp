@@ -1036,48 +1036,17 @@ namespace k::lex {
     }
 
     void lexer::warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, size_t pos) {
-        k::log::logger_relay::warn(code, msg, args, k::char_pos{source->content.data()+pos});
+        k::log::logger_relay::warn(code, std::string(msg), args);
     }
 
     void lexer::error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, size_t pos) {
-        k::log::logger_relay::error(code, msg, args, k::char_pos{source->content.data()+pos});
+        k::log::logger_relay::error(code, std::string(msg), args);
     }
 
     void lexer::error(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, size_t start, size_t end) {
-        k::log::logger_relay::error(code, msg, args, k::char_pos{source->content.data()+start}, k::char_pos{source->content.data()+end});
+        k::log::logger_relay::error(code, std::string(msg), args);
     }
 
-
-    //
-    // Lexeme logger facility
-    //
-
-    void lexeme_logger::info(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
-        if(lexeme) {
-            const auto& lex = as_lexeme(lexeme);
-            logger_relay::info(code, message, args, lex);
-        } else {
-            logger_relay::info(code, message, args);
-        }
-    }
-
-    void lexeme_logger::warning(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
-        if(lexeme) {
-            const auto& lex = as_lexeme(lexeme);
-            logger_relay::warn(code, message, args, lex);
-        } else {
-            logger_relay::warn(code, message, args);
-        }
-    }
-
-    void lexeme_logger::error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args) {
-        if(lexeme) {
-            const auto& lex = as_lexeme(lexeme);
-            logger_relay::error(code, message, args, lex);
-        } else {
-            logger_relay::error(code, message, args);
-        }
-    }
 
 
 } // k::lex

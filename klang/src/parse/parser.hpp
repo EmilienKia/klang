@@ -43,14 +43,15 @@ public:
 };
 
 
-class parser : protected lex::lexeme_logger {
+class parser : protected log::logger_relay {
 protected:
     lex::lexer _lexer;
 
     k::parse::ast::unit _unit;
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        error(code, lexeme, message, args);
+        k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
+        logger_relay::error(code, opt, message, args);
         throw parsing_error(message);
     }
 

@@ -178,17 +178,6 @@ namespace k::lex {
         void rollback() { _lexer.seek(_index); }
     };
 
-    class lexeme_logger : public log::logger_relay {
-    protected:
-      lexeme_logger(k::log::logger& logger,unsigned long error_class) : logger_relay(logger, error_class){}
-
-        // TODO Link it to source container to get lines and end-of-file marker.
-
-        void info(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
-        void warning(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
-        void error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {});
-    };
-
 
 } // k::lex
 #endif //KLANG_LEXER_HPP

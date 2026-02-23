@@ -31,7 +31,7 @@
 
 namespace k::model {
 
-class model_builder : public k::parse::default_ast_visitor, protected lex::lexeme_logger {
+class model_builder : public k::parse::default_ast_visitor, protected k::log::logger_relay {
 public:
     static constexpr unsigned int log_error_class = 0x20000;
 
@@ -116,7 +116,7 @@ protected:
     std::shared_ptr<model::statement> _stmt;
 
     model_builder(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::model::unit& unit) :
-        lex::lexeme_logger(logger, log_error_class),
+        k::log::logger_relay(logger, log_error_class),
         _context(context),
         _unit(unit) {}
 
@@ -163,12 +163,13 @@ protected:
     void visit_comma_expr(parse::ast::expr_list_expr &) override;
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        logger_relay::error(code, message, args, lexeme);
+        logger_relay::error(code, message, args);
         throw parse::parsing_error(message);
     }
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        error(code, lexeme, message, args);
+        k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
+        logger_relay::error(code, opt, message, args);
         throw parse::parsing_error(message);
     }
 

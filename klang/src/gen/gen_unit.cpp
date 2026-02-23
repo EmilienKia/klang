@@ -106,7 +106,7 @@ void symbol_resolver::visit_namespace(ns& ns)
             // Should not happen, supposed to be handled at model construction level
             if (ns.get_name().empty()) {
                 // TODO Root namespace cannot be unnamed at this stage
-                std::cerr << "Error: Root namespace cannot be unnamed at this stage" << std::endl;
+                logger_relay::error(0x40001, "Internal error: root namespace has no name at code generation stage; this should not happen");
                 ns.assign_name(name(true, "unnamed"));
             } else {
                 ns.assign_name(ns.get_name().with_root_prefix());
@@ -472,7 +472,7 @@ void implementation_generator::visit_function(function &function) {
     auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
     if (func_it==_context->_functions.end()) {
         // TODO throw exception : the function must exist (be declared) at this stage
-        std::cerr << "Function declaration is not found : " << function.get_fq_name() << std::endl;
+        logger_relay::error(0x40002, "Internal error: LLVM function declaration not found for '{}'; ensure the declaration pass ran before implementation", {function.get_fq_name()});
     }
 
     llvm::Function* func = func_it->second;
@@ -565,7 +565,7 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
     auto st = ctor.get_owner();
     if (!st) {
         // TODO throw exception : constructor must have an owner structure
-        std::cerr << "Constructor must have an owner structure." << std::endl;
+        logger_relay::error(0x40003, "Internal error: constructor has no owner structure; every constructor must belong to a struct");
         return;
     }
 
@@ -620,7 +620,7 @@ void type_reference_resolver::visit_destructor(destructor& dtor) {
     auto st = dtor.get_owner();
     if (!st) {
         // TODO throw exception : destructor must have an owner structure
-        std::cerr << "Destructor must have an owner structure." << std::endl;
+        logger_relay::error(0x40004, "Internal error: destructor has no owner structure; every destructor must belong to a struct");
         return;
     }
 
@@ -680,7 +680,7 @@ void implementation_generator::visit_global_constructor_function(global_construc
         auto it_func = _context->_functions.find(func.shared_as<function>());
         if (it_func==_context->_functions.end()) {
             // TODO throw an exception
-            std::cerr << "Cannot find the global constructor function, something wrong occured." << std::endl;
+            logger_relay::error(0x40005, "Internal error: global constructor function not found; the declaration pass may not have run");
         }
 
         // Register the function
@@ -776,7 +776,7 @@ void type_reference_resolver::visit_global_main_function(global_main_function& m
     // TODO Add a better method prototype compatibility checking/searching
     if (main_func.get_real_func().has_parameter()) {
         // TODO Support some parameters (and some cast/adaptation)
-        std::cerr << "Main method doesn't support parameters yet." << std::endl;
+        logger_relay::error(0x40006, "'main' function does not support parameters yet");
         // TODO throw exception
     }
 
@@ -797,7 +797,7 @@ void type_reference_resolver::visit_global_main_function(global_main_function& m
         auto cast = adapt_type(invoke, int_type);
         if(!cast) {
             // TODO throw exception
-            std::cerr << "Main function can only return a value which can be cast to int, or void." << std::endl;
+            logger_relay::error(0x40007, "'main' function return type must be castable to 'int', or 'void'");
         } else if(cast != invoke) {
             // Casted, assign casted expression as return expr.
             invoke = cast;

@@ -50,7 +50,7 @@ generation_error::generation_error(const char *string) :
 //
 
 declaration_generator::declaration_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit):
-lexeme_logger(logger, 0x40000),
+k::log::logger_relay(logger, 0x40000),
 _context(context),
 _unit(unit)
 {
@@ -72,7 +72,7 @@ void declaration_generator::generate() {
 //
 
 implementation_generator::implementation_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit):
-lexeme_logger(logger, 0x40000),
+k::log::logger_relay(logger, 0x40000),
 _context(context),
 _unit(unit)
 {

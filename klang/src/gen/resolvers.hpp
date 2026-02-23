@@ -90,7 +90,7 @@ private:
  * This helper class will resolve method and variable usages to their definitions.
  * It must be run after the model building phase and before type resolution and any code generation phase.
  */
-class symbol_resolver : public default_model_visitor, protected k::lex::lexeme_logger {
+class symbol_resolver : public default_model_visitor, protected k::log::logger_relay {
 protected:
 
     std::shared_ptr<context> _context;
@@ -99,7 +99,7 @@ protected:
 
 public:
     symbol_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
-    lexeme_logger(logger, 0x30000),
+    k::log::logger_relay(logger, 0x30000),
     _context(context),
     _unit(unit)  {
     }
@@ -124,12 +124,13 @@ protected:
     resolve_qualified_from(const element& elem, const name& qualified_name);
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        logger_relay::error(code, message, args, lexeme);
+        logger_relay::error(code, message, args);
         throw resolution_error(message);
     }
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        error(code, lexeme, message, args);
+        k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
+        logger_relay::error(code, opt, message, args);
         throw resolution_error(message);
     }
 
@@ -192,7 +193,7 @@ protected:
  * This helper class will resolve all types usages, and particularly set types for expressions and variables.
  * It must be run after symbol resolution and before any code generation phase.
  */
-class type_reference_resolver : public default_model_visitor, protected k::lex::lexeme_logger {
+class type_reference_resolver : public default_model_visitor, protected k::log::logger_relay {
 protected:
 
     std::shared_ptr<context> _context;
@@ -202,7 +203,7 @@ protected:
 public:
 
     type_reference_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
-    lexeme_logger(logger, 0x30000),
+    k::log::logger_relay(logger, 0x30000),
     _context(context),
     _unit(unit)  {
     }
@@ -226,12 +227,13 @@ protected:
     std::shared_ptr<type> resolve_type_from_root(const k::name& name_without_prefix);
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        logger_relay::error(code, message, args, lexeme);
+        logger_relay::error(code, message, args);
         throw resolution_error(message);
     }
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        error(code, lexeme, message, args);
+        k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
+        logger_relay::error(code, opt, message, args);
         throw resolution_error(message);
     }
 

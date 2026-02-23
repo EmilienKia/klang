@@ -36,8 +36,8 @@ std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = fa
 k::tools::exec_result build_and_exec(const std::string_view& src);
 
 class test_logger : public k::log::logger {
- void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos, const std::string_view& message, const std::vector<std::string>& args) override;;
- void do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) override;
+public:
+    void report(const k::log::diagnostic& diag) override;
 };
 
 

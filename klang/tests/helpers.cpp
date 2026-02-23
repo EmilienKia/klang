@@ -94,37 +94,41 @@ k::tools::exec_result build_and_exec(const std::string_view& src) {
 // test_logger
 //
 
-void test_logger::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos, const std::string_view& message, const std::vector<std::string>& args) {
+void test_logger::report(const k::log::diagnostic& diag) {
     static constexpr auto FORMAT = "{:0>5X} : {}\n";
 
-    std::string str;
-    if(!args.empty()) {
+    std::string msg = diag.message;
+    if (!diag.args.empty()) {
         fmt::dynamic_format_arg_store<fmt::format_context> store;
-        for(const auto& arg : args) {
-            store.push_back(arg);
-        }
-        std::string msg = fmt::vformat(message, store);
-        str = fmt::format(FORMAT, code,  msg);
-    } else {
-        str = fmt::format(FORMAT, code, message);
+        for (const auto& arg : diag.args) store.push_back(arg);
+        try { msg = fmt::vformat(diag.message, store); } catch(...) {}
     }
 
-    switch (criticality) {
-        case k::log::log_entry::info: {
+    std::string str = fmt::format(FORMAT, diag.code, msg);
+
+    switch (diag.level) {
+        case k::log::diagnostic::severity::info: {
             INFO("INFO " << str);
             break;
         }
-        case k::log::log_entry::warning: {
+        case k::log::diagnostic::severity::warning: {
             INFO("WARN " << str);
             break;
         }
-        case k::log::log_entry::error: {
-            WARN("ERR   " << str);
+        case k::log::diagnostic::severity::error:
+        case k::log::diagnostic::severity::fatal: {
+            WARN("ERR  " << str);
             break;
         }
     }
-}
 
-void test_logger::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) {
-    do_log(criticality, code, k::char_pos{}, k::char_pos{}, k::char_pos{}, message, args);
+    for (const auto& note : diag.notes) {
+        std::string note_msg = note.message;
+        if (!note.args.empty()) {
+            fmt::dynamic_format_arg_store<fmt::format_context> store;
+            for (const auto& arg : note.args) store.push_back(arg);
+            try { note_msg = fmt::vformat(note.message, store); } catch(...) {}
+        }
+        INFO("NOTE " << note_msg);
+    }
 }

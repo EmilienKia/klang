@@ -42,12 +42,12 @@ parsing_error::parsing_error(const char *string) :
 //
 
 parser::parser(k::log::logger& logger):
-    lexeme_logger(logger, 0x10000),
+    logger_relay(logger, 0x10000),
     _lexer(logger)
 {}
 
 parser::parser(k::log::logger& logger, k::source& src):
-    lexeme_logger(logger, 0x10000),
+    logger_relay(logger, 0x10000),
     _lexer(logger)
 {
     _lexer.parse(src);

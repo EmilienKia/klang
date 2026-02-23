@@ -612,7 +612,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
         if(!unres_type) {
             // TODO throw an exception
-            std::cerr << "Error: global variable definition has an unresolvable type." << std::endl;
+            logger_relay::error(0x30001, "Internal error: variable '{}' has an unresolvable type that is not an unresolved_type instance", {var.get_fq_name()});
         } else {
             // First try qualified name resolution from the unit root (handles namespaced
             // types like shapes::rect, or root-prefixed like ::shapes::rect).
@@ -633,7 +633,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             }
             if(!resolved || !type::is_resolved(resolved)) {
                 // TODO throw an exception
-                std::cerr << "Error: global variable definition has an unresolvable type." << std::endl;
+                logger_relay::error(0x30002, "Cannot resolve type '{}' for variable '{}'", {unres_type->type_id().to_string(), var.get_fq_name()});
             } else {
                 var.set_type(resolved);
             }
@@ -654,7 +654,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             // If no explicit initialization, let's have 0-filled initialization:
         } else if (init_expr->size() > 1) {
             // TODO throw an exception
-            std::cerr << "Error: global variable of primitive type can only have one initialization expression" << std::endl;
+            logger_relay::error(0x30003, "Variable '{}' of primitive type '{}' can only have one initialization expression, but {} were provided", {var.get_fq_name(), var_type ? var_type->to_string() : "?", std::to_string(init_expr->size())});
         } else if (auto expr = init_expr->argument(0)) {
 
             // Align init expr type to variable type
@@ -670,7 +670,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
 
         } else {
             // TODO throw an exception
-            std::cerr << "Error: global variable of primitive type has empty initialization expression" << std::endl;
+            logger_relay::error(0x30004, "Variable '{}' of primitive type '{}' has an empty initialization expression", {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
         }
 
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var.get_type())) {
@@ -678,7 +678,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         auto [best_constructor, adapted_args] = get_best_matching_constructor(st_type->get_struct()->constructors(), init_expr ? init_expr->arguments() : std::vector<std::shared_ptr<expression>>{});
         if (!best_constructor) {
             // TODO throw an exception
-            std::cerr << "Error: no matching constructor found for global variable initialization" << std::endl;
+            logger_relay::error(0x30005, "No matching constructor found for variable '{}' of type '{}'", {var.get_fq_name(), st_type->to_string()});
         }
         var.set_var_constructor(best_constructor);
         if (init_expr) {
@@ -811,17 +811,19 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
     }
 
     if (arity_matched.empty()) {
-        std::cerr << "Error: no constructor found with " << arg_count << " argument(s).";
+        std::string avail;
         if (!constructors.empty()) {
-            std::cerr << " Available constructors have " ;
             bool first = true;
             for (auto& ctor : constructors) {
-                if (!first) std::cerr << ", ";
-                std::cerr << ctor->parameters().size() << " parameter(s)";
+                if (!first) avail += ", ";
+                avail += std::to_string(ctor->parameters().size()) + " parameter(s)";
                 first = false;
             }
         }
-        std::cerr << "." << std::endl;
+        auto d = k::log::diagnostic::make_error(0x30006,
+            "No constructor found with {} argument(s){}",
+            {std::to_string(arg_count), avail.empty() ? "" : "; available constructors have: " + avail});
+        report(d);
         return {nullptr, {}};
     }
 
@@ -881,20 +883,25 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 
     // --- Step 3: no valid candidates ---
     if (valid_candidates.empty()) {
-        std::cerr << "Error: no viable constructor found (impossible implicit cast(s)). Candidates:" << std::endl;
+        auto d = k::log::diagnostic::make_error(0x30007,
+            "No viable constructor found: none of the {} candidate(s) accept the provided argument types",
+            {std::to_string(failed_candidates.size())});
         for (auto& fc : failed_candidates) {
-            std::cerr << "  constructor(";
+            std::string sig;
             bool first = true;
             for (auto& param : fc.ctor->parameters()) {
-                if (!first) std::cerr << ", ";
-                if (auto pt = param->get_type()) std::cerr << pt->to_string();
-                else std::cerr << "?";
+                if (!first) sig += ", ";
+                sig += param->get_type() ? param->get_type()->to_string() : "?";
                 first = false;
             }
-            std::cerr << ") — impossible cast for argument index(es):";
-            for (size_t idx : fc.failed_param_indices) std::cerr << " " << idx;
-            std::cerr << std::endl;
+            std::string failed_idxs;
+            for (size_t idx : fc.failed_param_indices) {
+                if (!failed_idxs.empty()) failed_idxs += ", ";
+                failed_idxs += std::to_string(idx);
+            }
+            d.add_note("candidate constructor({}) — cannot implicitly cast argument(s) at position(s): {}", {sig, failed_idxs});
         }
+        report(d);
         return {nullptr, {}};
     }
 
@@ -927,18 +934,20 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 
     // --- Step 6: ambiguity check ---
     if (best_candidates.size() > 1) {
-        std::cerr << "Error: ambiguous constructor call (cast score=" << best_score << "). Equally viable candidates:" << std::endl;
+        auto d = k::log::diagnostic::make_error(0x30008,
+            "Ambiguous constructor call: {} equally viable candidates",
+            {std::to_string(best_candidates.size())});
         for (auto* cand : best_candidates) {
-            std::cerr << "  constructor(";
+            std::string sig;
             bool first = true;
             for (auto& param : cand->ctor->parameters()) {
-                if (!first) std::cerr << ", ";
-                if (auto pt = param->get_type()) std::cerr << pt->to_string();
-                else std::cerr << "?";
+                if (!first) sig += ", ";
+                sig += param->get_type() ? param->get_type()->to_string() : "?";
                 first = false;
             }
-            std::cerr << ")" << std::endl;
+            d.add_note("candidate constructor({})", {sig});
         }
+        report(d);
         return {nullptr, {}};
     }
 
@@ -1045,9 +1054,10 @@ type_reference_resolver::get_best_matching_function(
     }
 
     if (valid.empty()) {
-        std::cerr << "Error: no viable function overload found for '"
-                  << (candidates.empty() ? "<unknown>" : candidates.front()->get_short_name())
-                  << "' with " << args.size() << " argument(s)." << std::endl;
+        std::string fname = candidates.empty() ? "<unknown>" : candidates.front()->get_short_name();
+        logger_relay::error(0x30009,
+            "No viable overload found for '{}' with {} argument(s)",
+            {fname, std::to_string(args.size())});
         return {nullptr, {}, false, nullptr};
     }
 
@@ -1072,17 +1082,21 @@ type_reference_resolver::get_best_matching_function(
     }
 
     if (best.size() > 1) {
-        std::cerr << "Error: ambiguous function call (score=" << best_score << ")." << std::endl;
+        std::string fname = best[0]->func ? best[0]->func->get_short_name() : "<unknown>";
+        auto d = k::log::diagnostic::make_error(0x3000A,
+            "Ambiguous call to '{}': {} equally viable overloads",
+            {fname, std::to_string(best.size())});
         for (auto* c : best) {
-            std::cerr << "  " << (c->is_unified ? "[unified] " : "") << c->func->get_fq_name() << "(";
+            std::string sig;
             bool first = true;
             for (auto& p : c->func->parameters()) {
-                if (!first) std::cerr << ", ";
-                std::cerr << (p->get_type() ? p->get_type()->to_string() : "?");
+                if (!first) sig += ", ";
+                sig += p->get_type() ? p->get_type()->to_string() : "?";
                 first = false;
             }
-            std::cerr << ")" << std::endl;
+            d.add_note("{} {}({})", {c->is_unified ? "[unified]" : "", c->func->get_fq_name(), sig});
         }
+        report(d);
         return {nullptr, {}, false, nullptr};
     }
 

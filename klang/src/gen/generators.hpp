@@ -70,10 +70,10 @@ public:
 /**
  * First pass of IR generation.
  * Will generate global variables and function declarations.
- * Function impemenaation and global variable initialization will be done later with implementation_generator.
- * Used to ensure all declarations are done and accessible, usefull for nesting and out-of-order declaration.
+ * Function implementation and global variable initialization will be done later with implementation_generator.
+ * Used to ensure all declarations are done and accessible, useful for nesting and out-of-order declaration.
  */
-class declaration_generator : public default_model_visitor, protected k::lex::lexeme_logger {
+class declaration_generator : public default_model_visitor, protected k::log::logger_relay {
 protected:
     unit& _unit;
 
@@ -86,7 +86,8 @@ protected:
     std::stack<std::shared_ptr<structure>> _struct_stack;
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        error(code, lexeme, message, args);
+        k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
+        logger_relay::error(code, opt, message, args);
         throw generation_error(message);
     }
 
@@ -118,7 +119,7 @@ public:
  * Really achieve function implementations and global variable initialization.
  * Must be run after declaration_generator.
  */
-class implementation_generator : public default_model_visitor, protected k::lex::lexeme_logger {
+class implementation_generator : public default_model_visitor, protected k::log::logger_relay {
 protected:
     unit& _unit;
 
@@ -140,7 +141,8 @@ protected:
     llvm::AllocaInst* _retval_alloca = nullptr;
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        error(code, lexeme, message, args);
+        k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
+        logger_relay::error(code, opt, message, args);
         throw generation_error(message);
     }
 

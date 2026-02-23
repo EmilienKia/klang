@@ -397,75 +397,101 @@ std::pair<char_coord,char_coord> compiler::coordinates_from_lex(const lex::lexem
     }
 }
 
-static const char* criticality_str[] = {
+static const char* severity_str[] = {
     "Info   ",
     "Warning",
-    "Error  "
+    "Error  ",
+    "Fatal  "
 };
 
-void compiler::log_message(k::log::log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message, const std::vector<std::string>& args) {
-    static constexpr auto FORMAT = "{}: {} {:0>5X} : {}\n";
-    if(args.size()>0) {
-        fmt::dynamic_format_arg_store<fmt::format_context> store;
-        for(const auto& arg : args) {
-            store.push_back(arg);
-        }
-        std::string msg = fmt::vformat(message, store);
-        fmt::print(FORMAT, _source.path, criticality_str[criticality], code,  msg);
-    } else {
-        fmt::print(FORMAT, _source.path, criticality_str[criticality], code, message);
-    }
-}
+void compiler::report(const k::log::diagnostic& diag) {
+    const unsigned int code = diag.code;
+    const auto sev = (int)diag.level;
+    const char* sev_str = severity_str[sev < 4 ? sev : 2];
 
-void compiler::log_message(k::log::log_entry::CRITICALITY criticality, unsigned int code, char_coord pos, const std::string_view& message, const std::vector<std::string>& args) {
-    if (pos) {
-        static constexpr auto FORMAT = "{}:{}:{}: {} {:0>5X} : {}\n";
-        if(args.size()>0) {
-            fmt::dynamic_format_arg_store<fmt::format_context> store;
-            for(const auto& arg : args) {
-                store.push_back(arg);
+    // Resolve source location from the primary lexeme (pos), then range (start/end)
+    auto lex_to_coord = [&](const k::lex::any_lexeme& lex) -> std::pair<char_coord, char_coord> {
+        return std::visit([&](const auto& l) -> std::pair<char_coord, char_coord> {
+            using T = std::decay_t<decltype(l)>;
+            if constexpr (std::is_base_of_v<k::lex::lexeme, T>) {
+                if (!l.content.empty()) {
+                    return { _source.get_coordinates({&l.content.front()}),
+                             _source.get_coordinates({&l.content.back()}) };
+                }
             }
-            std::string msg = fmt::vformat(message, store);
-            fmt::print(FORMAT, _source.path, pos.line, pos.col, criticality_str[criticality], code,  msg);
-        } else {
-            fmt::print(FORMAT, _source.path, pos.line, pos.col, criticality_str[criticality], code, message);
-        }
-    } else {
-        log_message(criticality, code, pos, message, args);
-    }
-}
+            return { char_coord::INVALID(), char_coord::INVALID() };
+        }, lex);
+    };
 
-void compiler::log_message(k::log::log_entry::CRITICALITY criticality, const std::string_view& message, const std::vector<std::string>& args) {
-    static constexpr auto FORMAT = "{}: {} : {}\n";
-    if(args.size()>0) {
+    // Format message
+    std::string formatted = diag.message;
+    if (!diag.args.empty()) {
         fmt::dynamic_format_arg_store<fmt::format_context> store;
-        for(const auto& arg : args) {
-            store.push_back(arg);
-        }
-        std::string msg = fmt::vformat(message, store);
-        fmt::print(FORMAT, _source.path, criticality_str[criticality],  msg);
+        for(const auto& arg : diag.args) store.push_back(arg);
+        try { formatted = fmt::vformat(diag.message, store); } catch(...) {}
+    }
+
+    // Determine primary display coord
+    char_coord display_coord = char_coord::INVALID();
+    if (diag.pos) {
+        auto [c1, c2] = lex_to_coord(*diag.pos);
+        display_coord = c1;
+    } else if (diag.start) {
+        auto [c1, c2] = lex_to_coord(*diag.start);
+        display_coord = c1;
+    }
+
+    // Print main message
+    if (display_coord) {
+        fmt::print("{}:{}:{}: {} {:0>5X} : {}\n",
+            _source.path, display_coord.line, display_coord.col,
+            sev_str, code, formatted);
     } else {
-        fmt::print(FORMAT, _source.path, criticality_str[criticality], message);
+        fmt::print("{}: {} {:0>5X} : {}\n",
+            _source.path, sev_str, code, formatted);
+    }
+
+    // Print source excerpt
+    if (diag.start && diag.end) {
+        auto [c1, _1] = lex_to_coord(*diag.start);
+        auto [_2, c2] = lex_to_coord(*diag.end);
+        if (c1 && c2) log_source_line(c1, c2);
+        else if (c1)  log_source_line(c1);
+    } else if (diag.pos) {
+        auto [c1, c2] = lex_to_coord(*diag.pos);
+        if (c1 && c2) log_source_line(c1, c2);
+        else if (c1)  log_source_line(c1);
+    } else if (diag.start) {
+        auto [c1, c2] = lex_to_coord(*diag.start);
+        if (c1) log_source_line(c1, c2);
+    }
+
+    // Print notes
+    for (const auto& note : diag.notes) {
+        std::string note_msg = note.message;
+        if (!note.args.empty()) {
+            fmt::dynamic_format_arg_store<fmt::format_context> store;
+            for(const auto& arg : note.args) store.push_back(arg);
+            try { note_msg = fmt::vformat(note.message, store); } catch(...) {}
+        }
+        if (note.pos) {
+            auto [nc, _] = lex_to_coord(*note.pos);
+            if (nc) {
+                fmt::print("{}:{}:{}: note: {}\n", _source.path, nc.line, nc.col, note_msg);
+                log_source_line(nc);
+            } else {
+                fmt::print("{}: note: {}\n", _source.path, note_msg);
+            }
+        } else {
+            fmt::print("{}: note: {}\n", _source.path, note_msg);
+        }
     }
 }
 
-void compiler::log_message(k::log::log_entry::CRITICALITY criticality, char_coord pos, const std::string_view& message, const std::vector<std::string>& args) {
-    if (pos) {
-        static constexpr auto FORMAT = "{}:{}:{}: {} : {}\n";
-        if(args.size()>0) {
-            fmt::dynamic_format_arg_store<fmt::format_context> store;
-            for(const auto& arg : args) {
-                store.push_back(arg);
-            }
-            std::string msg = fmt::vformat(message, store);
-            fmt::print(FORMAT, _source.path, pos.line, pos.col, criticality_str[criticality], msg);
-        } else {
-            fmt::print(FORMAT, _source.path, pos.line, pos.col, criticality_str[criticality], message);
-        }
-    } else {
-        log_message(criticality, pos, message, args);
-    }
+void compiler::print_logs() {
+    // Logs are printed in real-time by report(). Nothing to do here.
 }
+
 
 void compiler::log_source_line(unsigned int line, unsigned int col) {
     auto txt = _source.get_line(line);
@@ -532,74 +558,6 @@ void compiler::log_source_line(char_coord start, char_coord end) {
 }
 
 
-
-
-void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const std::string_view& message, const std::vector<std::string>& args) {
-    log_message(criticality, code, message, {});
-}
-
-void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& pos, const std::string_view& message, const std::vector<std::string>& args) {
-    char_coord coord = coordinates_from_pos(pos);
-    log_message(criticality, code, coord, message, args);
-    log_source_line(coord);
-}
-
-void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const std::string_view& message, const std::vector<std::string>& args) {
-    char_coord coord1 = coordinates_from_pos(start);
-    char_coord coord2 = coordinates_from_pos(end);
-    log_message(criticality, code, coord1, message, args);
-    log_source_line(coord1, coord2);
-}
-
-void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::char_pos& start, const k::char_pos& end, const k::char_pos& pos, const std::string_view& message, const std::vector<std::string>& args) {
-    char_coord coord1 = coordinates_from_pos(start);
-    char_coord coord2 = coordinates_from_pos(end);
-    char_coord coord3 = coordinates_from_pos(pos);
-    log_message(criticality, code, coord3, message, args);
-    log_source_line(coord1, coord2);
-}
-
-
-void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) {
-    if (!pos.content.empty()) {
-        do_log(criticality, code, char_pos{&pos.content.front()}, char_pos{&pos.content.back()}, message, args);
-    } else {
-        do_log(criticality, code, message, args);
-    }
-}
-
-void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const std::string_view& message, const std::vector<std::string>& args) {
-    if (!start.content.empty() && !end.content.empty()) {
-        do_log(criticality, code, char_pos{&start.content.front()}, char_pos{&end.content.back()}, message, args);
-    } else if (!start.content.empty() /* && end.content.empty()*/) {
-        do_log(criticality, code, char_pos{&start.content.front()}, char_pos{&start.content.back()}, message, args);
-    } else if (/*start.content.empty() && */ !end.content.empty()) {
-        do_log(criticality, code, char_pos{&end.content.front()}, char_pos{&start.content.back()}, message, args);
-    } else {
-        do_log(criticality, code, message, args);
-    }
-}
-
-void compiler::do_log(k::log::log_entry::CRITICALITY criticality, unsigned int code, const k::lex::lexeme& start, const k::lex::lexeme& end, const k::lex::lexeme& pos, const std::string_view& message, const std::vector<std::string>& args) {
-    if (!pos.content.empty()) {
-        if (!start.content.empty() && !end.content.empty()) {
-            do_log(criticality, code, char_pos{&start.content.front()}, char_pos{&end.content.back()}, char_pos{&pos.content.front()}, message, args);
-        } else if (!start.content.empty() /* && end.content.empty()*/) {
-            do_log(criticality, code, char_pos{&start.content.front()}, char_pos{&start.content.back()}, char_pos{&pos.content.front()}, message, args);
-        } else if (/*start.content.empty() && */ !end.content.empty()) {
-            do_log(criticality, code, char_pos{&end.content.front()}, char_pos{&start.content.back()}, char_pos{&pos.content.front()}, message, args);
-        } else {
-            do_log(criticality, code, char_pos{&pos.content.front()}, message, args);
-        }
-    } else {
-        do_log(criticality, code, start, end, message, args);
-    }
-}
-
-void compiler::print_logs() {
-    // In the new architecture, logs are printed in real-time by do_log().
-    // Nothing to do here.
-}
 
 
 } // k
