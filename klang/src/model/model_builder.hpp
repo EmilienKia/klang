@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +32,9 @@
 namespace k::model {
 
 class model_builder : public k::parse::default_ast_visitor, protected lex::lexeme_logger {
+public:
+    static constexpr unsigned int log_error_class = 0x20000;
+
 protected:
 
     typedef k::parse::default_ast_visitor super;
@@ -112,15 +115,8 @@ protected:
     /** Last generated statement. */
     std::shared_ptr<model::statement> _stmt;
 
-
-    /*
-    model_builder(k::log::legacy_logger& logger, std::shared_ptr<k::model::context> context, k::model::unit& unit) :
-        lex::lexeme_logger(logger, 0x20000),
-        _context(context),
-        _unit(unit) {}
-    */
     model_builder(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::model::unit& unit) :
-        lex::lexeme_logger(logger, 0x20000),
+        lex::lexeme_logger(logger, log_error_class),
         _context(context),
         _unit(unit) {}
 
@@ -177,7 +173,6 @@ protected:
     }
 
 public:
-//    static void visit(k::log::legacy_logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit);
     static void visit(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::parse::ast::unit& src, k::model::unit& unit);
 
 
