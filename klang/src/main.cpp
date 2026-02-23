@@ -117,11 +117,15 @@ int main() {
         std::cout << "another_test() = " << another_res << std::endl;
 
 
-    } catch(k::model::gen::resolution_error err) {
+    } catch(const k::model::gen::resolution_error& err) {
         std::cerr << "Resolution error: " << err.what() << std::endl;
-    } catch(k::model::gen::generation_error err) {
+    } catch(const k::model::gen::generation_error& err) {
         std::cerr << "Generation error: " << err.what() << std::endl;
-    } catch(std::exception err) {
+    } catch(const k::parse::parsing_error& err) {
+        std::cerr << "Parsing error: " << err.what() << std::endl;
+    } catch(const k::log::compiler_error& err) {
+        std::cerr << "Compiler error: " << err.what() << std::endl;
+    } catch(const std::exception& err) {
         std::cerr << "Other exception: " << err.what() << std::endl;
     } catch(...) {
         std::cerr << "Error" << std::endl;

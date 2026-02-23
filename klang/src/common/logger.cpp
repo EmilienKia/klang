@@ -18,7 +18,25 @@
 
 #include "logger.hpp"
 
+#include <fmt/core.h>
+#include <fmt/format.h>
+#include <fmt/args.h>
+
 namespace k::log {
 
+std::string format_diagnostic_message(const diagnostic& diag) {
+    if (diag.args.empty()) {
+        return diag.message;
+    }
+    fmt::dynamic_format_arg_store<fmt::format_context> store;
+    for (const auto& arg : diag.args) {
+        store.push_back(arg);
+    }
+    try {
+        return fmt::vformat(diag.message, store);
+    } catch (...) {
+        return diag.message;
+    }
+}
 
 } // namespace k::log

@@ -26,16 +26,6 @@
 namespace k::parse {
 
 
-//
-// Exceptions
-//
-parsing_error::parsing_error(const std::string &arg) :
-        runtime_error(arg)
-{}
-
-parsing_error::parsing_error(const char *string) :
-        runtime_error(string)
-{}
 
 //
 // Parser
@@ -1052,8 +1042,6 @@ ast::expr_ptr parser::parse_conditional_expr() {
     auto lcolon = _lexer.get();
     if (lqm != lex::operator_::COLON) {
         throw_error(0x0019, _lexer.pick_current(), "Conditional expression is expecting a colon ':' operator after the first sub expression");
-        // Err: conditional expression requires a colon after sub expression.
-        throw parsing_error("Colon of conditional expression is missing" /*, *lcolon */);
     }
 
     ast::expr_ptr right = parse_logical_or_expression();

@@ -1150,8 +1150,9 @@ TEST_CASE("Absolute name lookup: ::subns1::subns2::func() two-level without modu
 // The compiler MUST report a collision and NOT silently pick one.
 // -----------------------------------------------------------------------------
 TEST_CASE("Overload collision: f(int) and f(int,int=99) have overlapping arity", "[gen][resolution][default-params][collision]") {
-    // Both functions are callable with 1 argument → definition collision.
-    auto jit = gen_jit(R"SRC(
+    // Both functions are callable with 1 argument → the compiler must throw a resolution_error
+    // at definition time, before any call-site is reached.
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __ovl_collision__;
 
         compute(a: int) : int {
@@ -1165,22 +1166,14 @@ TEST_CASE("Overload collision: f(int) and f(int,int=99) have overlapping arity",
         test() : int {
             return compute(42);
         }
-    )SRC");
-    // The compiler must detect the collision at definition time.
-    // Either jit==nullptr or the ambiguous call resolves to nullptr.
-    if (jit) {
-        auto test = jit->lookup_symbol<int(*)()>("test");
-        REQUIRE(test == nullptr);
-    } else {
-        REQUIRE(jit == nullptr);
-    }
+    )SRC"), k::model::gen::resolution_error);
 }
 
 // -----------------------------------------------------------------------------
 // COLLISION: member run(int) vs run(int, int=99)
 // -----------------------------------------------------------------------------
 TEST_CASE("Overload collision: member f(int) and f(int,int=99) overlap", "[gen][resolution][default-params][collision]") {
-    auto jit = gen_jit(R"SRC(
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __member_ovl_collision__;
 
         struct Calc {
@@ -1197,20 +1190,14 @@ TEST_CASE("Overload collision: member f(int) and f(int,int=99) overlap", "[gen][
             c : Calc;
             return c.run(5);
         }
-    )SRC");
-    if (jit) {
-        auto test = jit->lookup_symbol<int(*)()>("test");
-        REQUIRE(test == nullptr);
-    } else {
-        REQUIRE(jit == nullptr);
-    }
+    )SRC"), k::model::gen::resolution_error);
 }
 
 // -----------------------------------------------------------------------------
 // COLLISION: constructor Box(int) vs Box(int, int=0)
 // -----------------------------------------------------------------------------
 TEST_CASE("Constructor overload collision: Box(int) and Box(int,int=0) overlap", "[gen][resolution][default-params][collision]") {
-    auto jit = gen_jit(R"SRC(
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __ctor_ovl_collision__;
 
         struct Box {
@@ -1223,20 +1210,14 @@ TEST_CASE("Constructor overload collision: Box(int) and Box(int,int=0) overlap",
             b : Box(5);
             return b.kind;
         }
-    )SRC");
-    if (jit) {
-        auto test = jit->lookup_symbol<int(*)()>("test");
-        REQUIRE(test == nullptr);
-    } else {
-        REQUIRE(jit == nullptr);
-    }
+    )SRC"), k::model::gen::resolution_error);
 }
 
 // -----------------------------------------------------------------------------
 // COLLISION: f(int=0) vs f(int=1) — both callable with 0 args
 // -----------------------------------------------------------------------------
 TEST_CASE("Overload collision: two single-default overloads with same type", "[gen][resolution][default-params][collision]") {
-    auto jit = gen_jit(R"SRC(
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __ovl_ambiguous__;
 
         ambig(v: int = 0) : int {
@@ -1250,20 +1231,14 @@ TEST_CASE("Overload collision: two single-default overloads with same type", "[g
         test() : int {
             return ambig();
         }
-    )SRC");
-    if (jit) {
-        auto test = jit->lookup_symbol<int(*)()>("test");
-        REQUIRE(test == nullptr);
-    } else {
-        REQUIRE(jit == nullptr);
-    }
+    )SRC"), k::model::gen::resolution_error);
 }
 
 // -----------------------------------------------------------------------------
 // COLLISION: constructor Ambig() vs Ambig(int=99) — both callable with 0 args
 // -----------------------------------------------------------------------------
 TEST_CASE("Constructor overload collision: Ambig() and Ambig(int=99) overlap at arity 0", "[gen][resolution][default-params][collision]") {
-    auto jit = gen_jit(R"SRC(
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __ctor_ambiguous__;
 
         struct Ambig {
@@ -1276,13 +1251,7 @@ TEST_CASE("Constructor overload collision: Ambig() and Ambig(int=99) overlap at 
             a : Ambig();
             return a.v;
         }
-    )SRC");
-    if (jit) {
-        auto test = jit->lookup_symbol<int(*)()>("test");
-        REQUIRE(test == nullptr);
-    } else {
-        REQUIRE(jit == nullptr);
-    }
+    )SRC"), k::model::gen::resolution_error);
 }
 
 // =============================================================================
@@ -1336,7 +1305,7 @@ TEST_CASE("Overload: non-overlapping arities with defaults — valid", "[gen][re
 // -----------------------------------------------------------------------------
 TEST_CASE("Overload collision: same arity range even with different types", "[gen][resolution][default-params][collision]") {
     // f(int, int=10) and f(double, int=10): both callable with 1 or 2 args → collision
-    auto jit = gen_jit(R"SRC(
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __ovl_type_default__;
 
         label(a: int, b: int = 10) : int {
@@ -1349,21 +1318,15 @@ TEST_CASE("Overload collision: same arity range even with different types", "[ge
 
         test_int()    : int { return label(5);     }
         test_double() : int { return label(5.0d);  }
-    )SRC");
-    // Both overloads are callable with 1 argument → collision at definition time.
-    if (jit) {
-        auto t = jit->lookup_symbol<int(*)()>("test_int");
-        REQUIRE(t == nullptr);
-    } else {
-        REQUIRE(jit == nullptr);
-    }
+    )SRC"), k::model::gen::resolution_error);
 }
 
 // -----------------------------------------------------------------------------
 // OK: f(int=0) vs f(double=0.0) — both [0,1] → collision
 // -----------------------------------------------------------------------------
 TEST_CASE("Overload collision: two single-default overloads with different types", "[gen][resolution][default-params][collision]") {
-    auto jit = gen_jit(R"SRC(
+    // Both callable with 0 args → collision
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __ovl_single_default__;
 
         pick(v: int = 0) : int {
@@ -1376,14 +1339,7 @@ TEST_CASE("Overload collision: two single-default overloads with different types
 
         test_int()    : int { return pick(1);     }
         test_double() : int { return pick(1.0d);  }
-    )SRC");
-    // Both callable with 0 args → collision
-    if (jit) {
-        auto t = jit->lookup_symbol<int(*)()>("test_int");
-        REQUIRE(t == nullptr);
-    } else {
-        REQUIRE(jit == nullptr);
-    }
+    )SRC"), k::model::gen::resolution_error);
 }
 
 // -----------------------------------------------------------------------------

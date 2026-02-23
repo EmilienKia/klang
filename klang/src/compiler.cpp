@@ -230,9 +230,15 @@ void compiler::parse_source(const std::string_view& path, const std::string_view
         }
 
         process_generation(optimize, dump);
-    } catch (std::exception& e) {
-        std::cerr << "Exception : " << e.what() << std::endl;
+    } catch (k::log::compiler_error&) {
+        // Diagnostic already reported via logger_relay::report() before the throw.
+        // Mark compilation as failed, then propagate to the caller.
         _has_compilation_error = true;
+        throw;
+    } catch (std::exception& e) {
+        std::cerr << "Unexpected exception : " << e.what() << std::endl;
+        _has_compilation_error = true;
+        throw;
     }
 }
 

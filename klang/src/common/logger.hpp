@@ -183,6 +183,48 @@ struct diagnostic {
 
 
 // ---------------------------------------------------------------------------
+// Exception hierarchy
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a diagnostic message by substituting {0}, {1}, … placeholders with
+ * the corresponding args.  Falls back to the raw message if substitution fails
+ * (e.g. mismatched placeholder count) or if there are no args.
+ *
+ * This intentionally does NOT include any lexeme / source-location decoration
+ * — it is meant for exception::what() which should be plain text.
+ */
+std::string format_diagnostic_message(const diagnostic& diag);
+
+/**
+ * Base class for all compiler-generated exceptions.
+ *
+ * Holds the full diagnostic (severity, code, message, args, optional source
+ * locations) so that catch sites have access to structured data rather than
+ * just a bare string.  what() returns the formatted message (placeholders
+ * substituted with args) with no source-location decoration.
+ *
+ * Derived classes (parsing_error, resolution_error, generation_error) exist
+ * only to allow catch sites to distinguish the compilation phase.
+ */
+class compiler_error : public std::runtime_error {
+protected:
+    diagnostic _diag;
+
+    /** Build the what()-string from the diagnostic at construction time. */
+    static std::string build_what(const diagnostic& d) {
+        return format_diagnostic_message(d);
+    }
+
+public:
+    explicit compiler_error(diagnostic diag)
+        : std::runtime_error(build_what(diag)), _diag(std::move(diag)) {}
+
+    /** The full structured diagnostic. */
+    const diagnostic& get_diagnostic() const noexcept { return _diag; }
+};
+
+// ---------------------------------------------------------------------------
 // logger
 // ---------------------------------------------------------------------------
 

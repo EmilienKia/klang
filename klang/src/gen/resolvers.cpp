@@ -62,16 +62,6 @@
 namespace k::model::gen {
 
 
-//
-// Exceptions
-//
-resolution_error::resolution_error(const std::string &arg) :
-        runtime_error(arg)
-{}
-
-resolution_error::resolution_error(const char *string) :
-        runtime_error(string)
-{}
 
 //
 // scope_lookup — all scope-chain resolution logic, isolated from the model
@@ -241,9 +231,8 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
             }
             func = func->ancestor<function>();
         }
-        // TODO throw exception Symbol 'this' used outside a non-static member function.
-        std::clog << "Symbol 'this' used outside a non-static member function." << std::endl;
-        return std::monostate{};
+        throw_error(0x0002, std::nullopt,
+            "'this' can only be used inside a non-static member function");
     }
 
     if (name.has_root_prefix()) {
@@ -568,7 +557,7 @@ void type_reference_resolver::check_overload_collisions(function_holder& fh)
                 bool has_default_j = (min_j < max_j);
 
                 if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
-                    throw_error(0x30005, std::nullopt,
+                    throw_error(0x0002, std::nullopt,
                         "Ambiguous overload: '{}{}' and overload '{}{}' can both be called with the same number of arguments "
                         "because of default parameter values; rename one overload or remove the default value(s) to resolve the ambiguity",
                         {fname, param_list_str(overloads[i]->parameters()),
@@ -594,7 +583,7 @@ void type_reference_resolver::check_constructor_overload_collisions(structure& s
 
             if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
                 const std::string& sname = st.get_short_name();
-                throw_error(0x30005, std::nullopt,
+                throw_error(0x0003, std::nullopt,
                     "Ambiguous constructor overload in '{}': constructor '{}{}' and constructor '{}{}' can both be called with the same number of arguments "
                     "because of default parameter values; remove one constructor or remove the default value(s) to resolve the ambiguity",
                     {sname,
@@ -611,8 +600,10 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
     if(!type::is_resolved(var.get_type())) {
         auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
         if(!unres_type) {
-            // TODO throw an exception
-            logger_relay::error(0x30001, "Internal error: variable '{}' has an unresolvable type that is not an unresolved_type instance", {var.get_fq_name()});
+            throw_error(0x0004, std::nullopt,
+                "Internal error: variable '{}' has an unresolvable type that is not an unresolved_type instance; "
+                "this indicates a compiler bug",
+                {var.get_fq_name()});
         } else {
             // First try qualified name resolution from the unit root (handles namespaced
             // types like shapes::rect, or root-prefixed like ::shapes::rect).
@@ -632,8 +623,9 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 resolved = _context->from_string(unres_type->type_id());
             }
             if(!resolved || !type::is_resolved(resolved)) {
-                // TODO throw an exception
-                logger_relay::error(0x30002, "Cannot resolve type '{}' for variable '{}'", {unres_type->type_id().to_string(), var.get_fq_name()});
+                throw_error(0x0005, std::nullopt,
+                    "Unknown type '{}' for variable '{}': no type with this name could be found in scope",
+                    {unres_type->type_id().to_string(), var.get_fq_name()});
             } else {
                 var.set_type(resolved);
             }
@@ -653,8 +645,10 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         if (!init_expr || init_expr->empty()) {
             // If no explicit initialization, let's have 0-filled initialization:
         } else if (init_expr->size() > 1) {
-            // TODO throw an exception
-            logger_relay::error(0x30003, "Variable '{}' of primitive type '{}' can only have one initialization expression, but {} were provided", {var.get_fq_name(), var_type ? var_type->to_string() : "?", std::to_string(init_expr->size())});
+            throw_error(0x0006, std::nullopt,
+                "Variable '{}' of primitive type '{}' can only be initialised with a single expression, "
+                "but {} were provided",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?", std::to_string(init_expr->size())});
         } else if (auto expr = init_expr->argument(0)) {
 
             // Align init expr type to variable type
@@ -669,16 +663,20 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             }
 
         } else {
-            // TODO throw an exception
-            logger_relay::error(0x30004, "Variable '{}' of primitive type '{}' has an empty initialization expression", {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
+            throw_error(0x0007, std::nullopt,
+                "Variable '{}' of primitive type '{}' has an empty initialisation expression list; "
+                "this is an internal inconsistency",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
         }
 
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var.get_type())) {
         // Structure, try to find the right constructor
         auto [best_constructor, adapted_args] = get_best_matching_constructor(st_type->get_struct()->constructors(), init_expr ? init_expr->arguments() : std::vector<std::shared_ptr<expression>>{});
         if (!best_constructor) {
-            // TODO throw an exception
-            logger_relay::error(0x30005, "No matching constructor found for variable '{}' of type '{}'", {var.get_fq_name(), st_type->to_string()});
+            throw_error(0x0008, std::nullopt,
+                "No matching constructor found for variable '{}' of type '{}': "
+                "none of the available constructors can be called with the provided arguments",
+                {var.get_fq_name(), st_type->to_string()});
         }
         var.set_var_constructor(best_constructor);
         if (init_expr) {
@@ -1055,10 +1053,10 @@ type_reference_resolver::get_best_matching_function(
 
     if (valid.empty()) {
         std::string fname = candidates.empty() ? "<unknown>" : candidates.front()->get_short_name();
-        logger_relay::error(0x30009,
-            "No viable overload found for '{}' with {} argument(s)",
-            {fname, std::to_string(args.size())});
-        return {nullptr, {}, false, nullptr};
+        throw_error(0x0009, std::nullopt,
+            "No viable overload found for '{}' with {} argument(s): "
+            "none of the {} candidate(s) can be called with the provided arguments",
+            {fname, std::to_string(args.size()), std::to_string(candidates.size())});
     }
 
     // Best = lowest score, then fewest defaults, then lowest preference

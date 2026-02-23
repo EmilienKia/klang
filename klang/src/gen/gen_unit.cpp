@@ -105,9 +105,9 @@ void symbol_resolver::visit_namespace(ns& ns)
             // Root namespace
             // Should not happen, supposed to be handled at model construction level
             if (ns.get_name().empty()) {
-                // TODO Root namespace cannot be unnamed at this stage
-                logger_relay::error(0x40001, "Internal error: root namespace has no name at code generation stage; this should not happen");
-                ns.assign_name(name(true, "unnamed"));
+                throw_error(0x0001, std::nullopt,
+                    "Internal error: root namespace has no name at code generation stage; "
+                    "this should not happen and indicates a compiler bug");
             } else {
                 ns.assign_name(ns.get_name().with_root_prefix());
             }
@@ -340,7 +340,9 @@ void type_reference_resolver::visit_parameter(parameter& param) {
     if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
         std::shared_ptr<type> res_type = _context->resolve_type(var_type);
         if (!type::is_resolved(res_type)) {
-            // TODO Err : type not resolvable, unknown type, throw_error(0x0006, ...);
+            throw_error(0x0001, std::nullopt,
+                "Cannot resolve type for parameter '{}': the type name is unknown",
+                {param.get_short_name()});
         }
         param.set_type(res_type);
     }
@@ -471,8 +473,10 @@ void implementation_generator::visit_function(function &function) {
 
     auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
     if (func_it==_context->_functions.end()) {
-        // TODO throw exception : the function must exist (be declared) at this stage
-        logger_relay::error(0x40002, "Internal error: LLVM function declaration not found for '{}'; ensure the declaration pass ran before implementation", {function.get_fq_name()});
+        throw_error(0x0001, std::nullopt,
+            "Internal error: LLVM function declaration not found for '{}'; "
+            "the declaration pass must be run before the implementation pass",
+            {function.get_fq_name()});
     }
 
     llvm::Function* func = func_it->second;
@@ -564,9 +568,9 @@ void implementation_generator::optimize_function_dead_inst_elimination(llvm::Fun
 void type_reference_resolver::visit_constructor(constructor& ctor) {
     auto st = ctor.get_owner();
     if (!st) {
-        // TODO throw exception : constructor must have an owner structure
-        logger_relay::error(0x40003, "Internal error: constructor has no owner structure; every constructor must belong to a struct");
-        return;
+        throw_error(0x000A, std::nullopt,
+            "Internal error: constructor has no owner structure; "
+            "every constructor must belong to a struct — this indicates a compiler bug");
     }
 
     auto blck = ctor.get_block();
@@ -619,9 +623,9 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
 void type_reference_resolver::visit_destructor(destructor& dtor) {
     auto st = dtor.get_owner();
     if (!st) {
-        // TODO throw exception : destructor must have an owner structure
-        logger_relay::error(0x40004, "Internal error: destructor has no owner structure; every destructor must belong to a struct");
-        return;
+        throw_error(0x000B, std::nullopt,
+            "Internal error: destructor has no owner structure; "
+            "every destructor must belong to a struct — this indicates a compiler bug");
     }
 
     auto blck = dtor.get_block();
@@ -679,8 +683,9 @@ void implementation_generator::visit_global_constructor_function(global_construc
 
         auto it_func = _context->_functions.find(func.shared_as<function>());
         if (it_func==_context->_functions.end()) {
-            // TODO throw an exception
-            logger_relay::error(0x40005, "Internal error: global constructor function not found; the declaration pass may not have run");
+            throw_error(0x0002, std::nullopt,
+                "Internal error: global constructor function not found in LLVM function table; "
+                "the declaration pass may not have run");
         }
 
         // Register the function
@@ -775,9 +780,9 @@ void type_reference_resolver::visit_global_main_function(global_main_function& m
     // Look at the compatible prototypes
     // TODO Add a better method prototype compatibility checking/searching
     if (main_func.get_real_func().has_parameter()) {
-        // TODO Support some parameters (and some cast/adaptation)
-        logger_relay::error(0x40006, "'main' function does not support parameters yet");
-        // TODO throw exception
+        throw_error(0x000C, std::nullopt,
+            "'main' function does not support parameters yet; "
+            "declare it as 'func main() : int' or 'func main() : void'");
     }
 
     auto int_type = _context->from_type(primitive_type::INT);
@@ -796,8 +801,10 @@ void type_reference_resolver::visit_global_main_function(global_main_function& m
         // Cast invocation result to int
         auto cast = adapt_type(invoke, int_type);
         if(!cast) {
-            // TODO throw exception
-            logger_relay::error(0x40007, "'main' function return type must be castable to 'int', or 'void'");
+            throw_error(0x000D, std::nullopt,
+                "'main' function return type '{}' cannot be implicitly cast to 'int'; "
+                "the return type must be 'int', 'void', or a type castable to 'int'",
+                {main_func.get_real_func().get_return_type() ? main_func.get_real_func().get_return_type()->to_string() : "?"});
         } else if(cast != invoke) {
             // Casted, assign casted expression as return expr.
             invoke = cast;

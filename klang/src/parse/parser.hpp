@@ -36,10 +36,10 @@
 namespace k::parse {
 
 
-class parsing_error : public std::runtime_error {
+class parsing_error : public k::log::compiler_error {
 public:
-    parsing_error(const std::string &arg);
-    parsing_error(const char *string);
+    explicit parsing_error(k::log::diagnostic diag)
+        : k::log::compiler_error(std::move(diag)) {}
 };
 
 
@@ -51,8 +51,10 @@ protected:
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
-        logger_relay::error(code, opt, message, args);
-        throw parsing_error(message);
+        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        if (opt) diag.at(*opt);
+        logger_relay::report(diag);
+        throw parsing_error(std::move(diag));
     }
 
 public:

@@ -163,7 +163,7 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
         expr->accept(*this);
         auto cast = adapt_type(expr, ret_type);
         if(!cast) {
-            throw_error(0x0001, stmt.get_ast_return_statement()->ret, "Return expression type must be compatible to the expected function return type");
+            throw_error(0x000E, stmt.get_ast_return_statement()->ret, "Return expression type must be compatible to the expected function return type");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_expression(cast);
@@ -266,7 +266,7 @@ void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
         expr->accept(*this);
         auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
         if(!cast) {
-            throw_error(0x0002, stmt.get_ast_if_else_stmt()->if_kw, "If test expression type must be convertible to bool");
+            throw_error(0x000F, stmt.get_ast_if_else_stmt()->if_kw, "If test expression type must be convertible to bool");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_test_expr(cast);
@@ -350,7 +350,7 @@ void type_reference_resolver::visit_while_statement(while_statement& stmt)
         expr->accept(*this);
         auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
         if(!cast) {
-            throw_error(0x0003, stmt.get_ast_while_stmt()->while_kw, "While test expression type must be convertible to bool");
+            throw_error(0x0010, stmt.get_ast_while_stmt()->while_kw, "While test expression type must be convertible to bool");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_test_expr(cast);
@@ -439,7 +439,7 @@ void type_reference_resolver::visit_for_statement(for_statement& stmt)
         expr->accept(*this);
         auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
         if(!cast) {
-            throw_error(0x0004, stmt.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
+            throw_error(0x0011, stmt.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_test_expr(cast);
@@ -598,8 +598,10 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
         _value = nullptr;
         init->accept(*this);
     } else {
-        // TODO throw exception
-        logger_relay::error(0x40008, "Variable '{}' has no initialization expression; uninitialized variable declarations are not supported yet", {var.get_fq_name()});
+        throw_error(0x0003, std::nullopt,
+            "Variable '{}' has no initialisation expression; "
+            "all variable declarations must have an initialiser (uninitialized variables are not yet supported)",
+            {var.get_fq_name()});
     }
 
 }

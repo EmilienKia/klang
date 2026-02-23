@@ -183,7 +183,15 @@ int main(int argc, const char** argv) {
         }
 
 
+    } catch(const k::log::compiler_error&) {
+        // Diagnostic was already reported via the compiler's logger before the throw.
+        return -1;
+    } catch(const std::exception& e) {
+        std::cerr << "Unexpected error: " << e.what() << std::endl;
+        return -1;
     } catch(...) {
+        std::cerr << "Unknown error." << std::endl;
+        return -1;
     }
 
     return 0;

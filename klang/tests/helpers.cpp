@@ -41,11 +41,21 @@ std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump, boo
     try {
         comp->parse_source("", src, optimize, dump);
         return comp->to_jit();
+    } catch (const k::log::compiler_error&) {
+        // Diagnostic already printed by the compiler's report() before the throw.
+        // Signal failure to the caller.
+        return nullptr;
     } catch (std::exception& ex) {
-        std::cerr << "Error during compilation: " << ex.what() << std::endl;
-        comp->print_logs();
+        std::cerr << "Unexpected error during compilation: " << ex.what() << std::endl;
         return nullptr;
     }
+}
+
+std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool dump, bool optimize) {
+    // parse_source always rethrows — compiler_error subclasses propagate directly to the caller.
+    auto comp = k::compiler::create();
+    comp->parse_source("", src, optimize, dump);
+    return comp->to_jit();
 }
 
 
@@ -69,8 +79,11 @@ bool compile_text(const std::string_view& source, const std::string& out_file) {
             reloc_model);
 
     auto compiler = k::compiler::create(target_machine);
-    compiler->parse_source("", source, true, false);
-
+    try {
+        compiler->parse_source("", source, true, false);
+    } catch (const k::log::compiler_error&) {
+        return false;
+    }
     return compiler->gen_executable(out_file);
 }
 

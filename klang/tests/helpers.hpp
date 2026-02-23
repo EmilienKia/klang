@@ -25,13 +25,19 @@
 #include "../src/common/logger.hpp"
 #include "../src/common/common.hpp"
 #include "../src/common/process.hpp"
-
-
-namespace k::model::gen {
-class jit;
-}
+#include "../src/gen/resolvers.hpp"
+#include "../src/gen/generators.hpp"
 
 std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = false, bool optimize = true);
+
+/**
+ * Like gen_jit() but lets k::log::compiler_error (and its subclasses) propagate
+ * to the caller instead of catching them.  Use this in tests that verify the
+ * compiler throws the expected exception for invalid input:
+ *
+ *   REQUIRE_THROWS_AS(gen_jit_throws(src), k::model::gen::resolution_error);
+ */
+std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool dump = false, bool optimize = true);
 
 k::tools::exec_result build_and_exec(const std::string_view& src);
 
