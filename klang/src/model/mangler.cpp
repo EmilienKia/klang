@@ -43,6 +43,9 @@
 #define SYMBOL_MODIFIER_REF_LVAL   SYMBOL_MODIFIER_REF
 #define SYMBOL_MODIFIER_REF_RVAL   "O"
 
+#define SYMBOL_STATIC_CONSTRUCTOR_NAME "C"
+#define SYMBOL_STATIC_DESTRUCTOR_NAME  "D"
+
 #define SYMBOL_CONSTRUCTOR_C1_NAME "C1"
 #define SYMBOL_DESTRUCTOR_D1_NAME  "D1"
 
@@ -184,6 +187,45 @@ std::string mangler::mangle_destructor(const destructor& dtor) const {
     mangled << mangle_fq_name_with_raw_last_part(name.without_back(), SYMBOL_DESTRUCTOR_D1_NAME, false);
 
     // Destructor has no parameters, encode as void
+    mangled << TYPE_VOID;
+
+    return mangled.str();
+}
+
+
+std::string mangler::mangle_static_constructor(const static_constructor& sctor) const {
+    auto name = sctor.get_name();
+    if (!name.has_root_prefix()) {
+        return "";
+    }
+    if (name.size() < 2) {
+        return "";
+    }
+
+    std::ostringstream mangled;
+    // Static constructor: 'F' (no SYMBOL_MEMBER since it is static), C suffix
+    mangled << K_LANG_SYMBOL_PREFIX SYMBOL_TYPE_FUNCTION;
+    mangled << mangle_fq_name_with_raw_last_part(name.without_back(), SYMBOL_STATIC_CONSTRUCTOR_NAME, false);
+    // No parameters: encode as void
+    mangled << TYPE_VOID;
+
+    return mangled.str();
+}
+
+std::string mangler::mangle_static_destructor(const static_destructor& sdtor) const {
+    auto name = sdtor.get_name();
+    if (!name.has_root_prefix()) {
+        return "";
+    }
+    if (name.size() < 2) {
+        return "";
+    }
+
+    std::ostringstream mangled;
+    // Static destructor: 'F' (no SYMBOL_MEMBER since it is static), D suffix
+    mangled << K_LANG_SYMBOL_PREFIX SYMBOL_TYPE_FUNCTION;
+    mangled << mangle_fq_name_with_raw_last_part(name.without_back(), SYMBOL_STATIC_DESTRUCTOR_NAME, false);
+    // No parameters: encode as void
     mangled << TYPE_VOID;
 
     return mangled.str();

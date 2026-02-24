@@ -188,6 +188,10 @@ namespace k::model {
                 throw_error(0x0006, func.name, "Constructor '{}' must not have a return type; constructors implicitly return an instance of their owning type", {func_name});
             } else if(std::dynamic_pointer_cast<destructor>(function)) {
                 throw_error(0x0007, func.name, "Destructor '~{}' must not have a return type; destructors do not return a value", {std::string{func.name.content}});
+            } else if(std::dynamic_pointer_cast<static_constructor>(function)) {
+                throw_error(0x001C, func.name, "Static constructor '{}' must not have a return type; static constructors are void by definition", {func_name});
+            } else if(std::dynamic_pointer_cast<static_destructor>(function)) {
+                throw_error(0x001D, func.name, "Static destructor '~{}' must not have a return type; static destructors are void by definition", {std::string{func.name.content}});
             } else {
                 function->set_return_type(_context->from_type_specifier(*func.type));
             }
@@ -195,6 +199,16 @@ namespace k::model {
 
         if(func.is_destructor && !func.params.empty()) {
             throw_error(0x0008, func.name, "Destructor '~{}' must not have parameters; destructors take no arguments", {std::string{func.name.content}});
+        }
+
+        // Static constructor must have no parameters
+        if(std::dynamic_pointer_cast<static_constructor>(function) && !func.params.empty()) {
+            throw_error(0x001E, func.name, "Static constructor '{}' must not have parameters; static constructors take no arguments", {func_name});
+        }
+
+        // Static destructor must have no parameters
+        if(std::dynamic_pointer_cast<static_destructor>(function) && !func.params.empty()) {
+            throw_error(0x001F, func.name, "Static destructor '~{}' must not have parameters; static destructors take no arguments", {std::string{func.name.content}});
         }
 
         for(auto param : func.params) {

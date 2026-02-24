@@ -704,6 +704,20 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             return;
         }
 
+        // Static constructors and destructors cannot be called explicitly
+        if (std::dynamic_pointer_cast<static_constructor>(best.func)) {
+            throw_error(0x002B, std::nullopt,
+                "Static constructor '{}' cannot be called explicitly; "
+                "it is automatically invoked during program initialization",
+                {best.func->get_short_name()});
+        }
+        if (std::dynamic_pointer_cast<static_destructor>(best.func)) {
+            throw_error(0x002C, std::nullopt,
+                "Static destructor '~{}' cannot be called explicitly; "
+                "it is automatically invoked during program finalization",
+                {best.func->get_short_name()});
+        }
+
         callee->set_target(best.func);
         expr.set_type(best.func->get_return_type());
 
@@ -777,6 +791,20 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         if (!best.func) {
             // get_best_matching_function already reported/threw an error
             return;
+        }
+
+        // Static constructors and destructors cannot be called explicitly
+        if (std::dynamic_pointer_cast<static_constructor>(best.func)) {
+            throw_error(0x002D, std::nullopt,
+                "Static constructor '{}' cannot be called explicitly; "
+                "it is automatically invoked during program initialization",
+                {best.func->get_short_name()});
+        }
+        if (std::dynamic_pointer_cast<static_destructor>(best.func)) {
+            throw_error(0x002E, std::nullopt,
+                "Static destructor '~{}' cannot be called explicitly; "
+                "it is automatically invoked during program finalization",
+                {best.func->get_short_name()});
         }
 
         if (this_candidate && best.func->is_member() && !best.func->is_static() && !best.is_unified_call) {

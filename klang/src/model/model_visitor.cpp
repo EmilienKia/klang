@@ -51,6 +51,14 @@ void default_model_visitor::visit_destructor(destructor &dtor) {
     visit_function(dtor);
 }
 
+void default_model_visitor::visit_static_constructor(static_constructor &sctor) {
+    visit_function(sctor);
+}
+
+void default_model_visitor::visit_static_destructor(static_destructor &sdtor) {
+    visit_function(sdtor);
+}
+
 void default_model_visitor::visit_global_tool_function(global_tool_function& func) {
     visit_function(func);
 }

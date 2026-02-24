@@ -409,6 +409,42 @@ std::shared_ptr<destructor> destructor::make_shared(std::shared_ptr<structure> p
 }
 
 //
+// Static constructor
+//
+
+void static_constructor::accept(model_visitor& visitor) {
+    visitor.visit_static_constructor(*this);
+}
+
+void static_constructor::update_mangled_name() {
+    _mangled_name = mangler(get_context()).mangle_static_constructor(*this);
+}
+
+std::shared_ptr<static_constructor> static_constructor::make_shared(std::shared_ptr<structure> parent) {
+    auto fn = std::shared_ptr<static_constructor>(new static_constructor(parent));
+    fn->assign_name(parent->get_short_name());
+    return fn;
+}
+
+//
+// Static destructor
+//
+
+void static_destructor::accept(model_visitor& visitor) {
+    visitor.visit_static_destructor(*this);
+}
+
+void static_destructor::update_mangled_name() {
+    _mangled_name = mangler(get_context()).mangle_static_destructor(*this);
+}
+
+std::shared_ptr<static_destructor> static_destructor::make_shared(std::shared_ptr<structure> parent) {
+    auto fn = std::shared_ptr<static_destructor>(new static_destructor(parent));
+    fn->assign_name("~" + parent->get_short_name());
+    return fn;
+}
+
+//
 // Global tool function
 //
 
@@ -424,6 +460,10 @@ void global_tool_function::update_mangled_name() {
 void global_tool_function::add_global_variable_definition(const std::shared_ptr<global_variable_definition>& gv) {
     // TODO Look at dependencies
     _global_vars.insert({gv, {}});
+}
+
+void global_tool_function::add_static_function(const std::shared_ptr<function>& func) {
+    _static_funcs.push_back(func);
 }
 
 std::vector<std::shared_ptr<global_variable_definition>> global_tool_function::get_sorted_global_variables() const {
@@ -551,24 +591,52 @@ void structure::accept(model_visitor& visitor) {
 
 std::shared_ptr<function> structure::define_function(const std::string &name, bool is_static) {
     if (name == get_short_name()) {
-        auto construct = constructor::make_shared(shared_as<structure>());
-        if (construct) {
-            _constructors.push_back(construct);
-            _children.push_back(construct);
+        if (is_static) {
+            // Static constructor (class initializer)
+            if (_static_constructor) {
+                std::cerr << "Error: structure " << get_short_name() << " already has a static constructor." << std::endl;
+                return _static_constructor;
+            }
+            auto sctor = static_constructor::make_shared(shared_as<structure>());
+            if (sctor) {
+                _static_constructor = sctor;
+                _children.push_back(sctor);
+            }
+            return sctor;
+        } else {
+            auto construct = constructor::make_shared(shared_as<structure>());
+            if (construct) {
+                _constructors.push_back(construct);
+                _children.push_back(construct);
+            }
+            return construct;
         }
-        return construct;
     } else if (name == "~" + get_short_name()) {
-        if (_destructor) {
-            // TODO throw error: only one destructor allowed
-            std::cerr << "Error: structure " << get_short_name() << " already has a destructor." << std::endl;
-            return _destructor;
+        if (is_static) {
+            // Static destructor (class finalizer)
+            if (_static_destructor) {
+                std::cerr << "Error: structure " << get_short_name() << " already has a static destructor." << std::endl;
+                return _static_destructor;
+            }
+            auto sdtor = static_destructor::make_shared(shared_as<structure>());
+            if (sdtor) {
+                _static_destructor = sdtor;
+                _children.push_back(sdtor);
+            }
+            return sdtor;
+        } else {
+            if (_destructor) {
+                // TODO throw error: only one destructor allowed
+                std::cerr << "Error: structure " << get_short_name() << " already has a destructor." << std::endl;
+                return _destructor;
+            }
+            auto dtor = destructor::make_shared(shared_as<structure>());
+            if (dtor) {
+                _destructor = dtor;
+                _children.push_back(dtor);
+            }
+            return dtor;
         }
-        auto dtor = destructor::make_shared(shared_as<structure>());
-        if (dtor) {
-            _destructor = dtor;
-            _children.push_back(dtor);
-        }
-        return dtor;
     } else {
         return function_holder::define_function(name, is_static);
     }

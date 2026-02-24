@@ -52,6 +52,8 @@ class parameter;
 class function;
 class constructor;
 class destructor;
+class static_constructor;
+class static_destructor;
 class structure;
 class ns;
 class unit;
@@ -349,6 +351,12 @@ protected:
 
     std::shared_ptr<destructor> _destructor;
 
+    /** Optional static constructor (class initializer), named with the struct name and static. */
+    std::shared_ptr<static_constructor> _static_constructor;
+
+    /** Optional static destructor (class finalizer), named with ~struct_name and static. */
+    std::shared_ptr<static_destructor> _static_destructor;
+
     std::shared_ptr<struct_type> _type;
 
     structure(std::shared_ptr<element> parent) :
@@ -389,6 +397,12 @@ public:
     const std::vector<std::shared_ptr<constructor>>& constructors() const { return _constructors; }
 
     std::shared_ptr<destructor> get_destructor() const { return _destructor; }
+
+    /** Returns the static constructor (class initializer) if defined, nullptr otherwise. */
+    std::shared_ptr<static_constructor> get_static_constructor() const { return _static_constructor; }
+
+    /** Returns the static destructor (class finalizer) if defined, nullptr otherwise. */
+    std::shared_ptr<static_destructor> get_static_destructor() const { return _static_destructor; }
 };
 
 class parameter : public element, public variable_definition {
@@ -556,10 +570,55 @@ public:
 };
 
 
+/**
+ * Static constructor: a static no-argument void function named exactly with the structure name.
+ * Acts as a class initializer. Its execution is registered in the global initializer function.
+ */
+class static_constructor : public function {
+protected:
+    friend class structure;
+    friend class gen::symbol_resolver;
+
+    static_constructor(std::shared_ptr<structure> parent) :
+        function(parent, true) {}
+
+    void update_mangled_name() override;
+
+    static std::shared_ptr<static_constructor> make_shared(std::shared_ptr<structure> parent);
+
+public:
+    void accept(model_visitor& visitor) override;
+};
+
+
+/**
+ * Static destructor: a static no-argument void function named with "~" + structure name.
+ * Acts as a class finalizer. Its execution is registered in the global finalizer function.
+ */
+class static_destructor : public function {
+protected:
+    friend class structure;
+    friend class gen::symbol_resolver;
+
+    static_destructor(std::shared_ptr<structure> parent) :
+        function(parent, true) {}
+
+    void update_mangled_name() override;
+
+    static std::shared_ptr<static_destructor> make_shared(std::shared_ptr<structure> parent);
+
+public:
+    void accept(model_visitor& visitor) override;
+};
+
+
 class global_tool_function : public function {
 protected:
     /** Map of global variables to initialize globally, with their dependencies (to be initialized before them) */
     std::map<std::shared_ptr<global_variable_definition>, std::vector<std::shared_ptr<global_variable_definition>>> _global_vars;
+
+    /** Ordered list of static constructors/destructors to call (in registration order). */
+    std::vector<std::shared_ptr<function>> _static_funcs;
 
     global_tool_function(std::shared_ptr<element> parent) : function(parent) {
     }
@@ -571,6 +630,12 @@ public:
     void update_mangled_name() override;
 
     void add_global_variable_definition(const std::shared_ptr<global_variable_definition>& gv);
+
+    /** Register a static constructor or destructor for invocation by this global tool function. */
+    void add_static_function(const std::shared_ptr<function>& func);
+
+    /** Returns the ordered list of static functions to call. */
+    const std::vector<std::shared_ptr<function>>& get_static_functions() const { return _static_funcs; }
 
     /**
      * Return the list of global variables sorted in their initialization order.

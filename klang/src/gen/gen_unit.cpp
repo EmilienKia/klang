@@ -191,6 +191,14 @@ void symbol_resolver::visit_structure(structure& st) {
     }
 }
 
+void symbol_resolver::visit_static_constructor(static_constructor& sctor) {
+    visit_function(sctor);
+}
+
+void symbol_resolver::visit_static_destructor(static_destructor& sdtor) {
+    visit_function(sdtor);
+}
+
 void type_reference_resolver::visit_structure(structure& st) {
     // Visit all functions (including constructors and destructors).
     for(auto& child : st.get_children()) {
@@ -654,14 +662,39 @@ void type_reference_resolver::visit_destructor(destructor& dtor) {
 }
 
 //
+// Static constructor
+// Registers the static constructor with the global initializer function.
+//
+void type_reference_resolver::visit_static_constructor(static_constructor& sctor) {
+    visit_function(sctor);
+
+    // Register this static constructor with the unit's global constructor function.
+    // It will be called after all global variable initializations.
+    sctor.ancestor<unit>()->get_global_constructor_function().add_static_function(sctor.shared_as<function>());
+}
+
+//
+// Static destructor
+// Registers the static destructor with the global finalizer function.
+//
+void type_reference_resolver::visit_static_destructor(static_destructor& sdtor) {
+    visit_function(sdtor);
+
+    // Register this static destructor with the unit's global destructor function.
+    // It will be called (in reverse order) during finalization.
+    sdtor.ancestor<unit>()->get_global_destructor_function().add_static_function(sdtor.shared_as<function>());
+}
+
+//
 // Global constructor function
 // This generate the unique global constructor function (if needed) and register it to llvm.global_ctors
 // Note: Global constructor is processed at the end of the unit (but before global destructor)
 //
 void type_reference_resolver::visit_global_constructor_function(global_constructor_function& func) {
     auto vars = func.get_sorted_global_variables();
-    if (!vars.empty()) {
+    auto& static_ctors = func.get_static_functions();
 
+    if (!vars.empty() || !static_ctors.empty()) {
         auto blck = func.get_block();
         for (auto var : vars) {
             auto init_expr = var->get_init_expr();
@@ -671,21 +704,41 @@ void type_reference_resolver::visit_global_constructor_function(global_construct
                 blck->append_statement(stmt);
             }
         }
+        // Static constructor calls are generated directly at IR level by implementation_generator.
         visit_function(func);
     }
 }
 
 void implementation_generator::visit_global_constructor_function(global_constructor_function& func) {
     auto vars = func.get_sorted_global_variables();
-    if (!vars.empty()) {
-        // Really generate the function
+    auto& static_ctors = func.get_static_functions();
+
+    if (!vars.empty() || !static_ctors.empty()) {
+        // Really generate the function (variable initializations are in the block)
         visit_function(func);
 
+        // Append static constructor calls after the block-generated code.
+        // At this point the function body has been generated; we continue in the same basic block.
         auto it_func = _context->_functions.find(func.shared_as<function>());
         if (it_func==_context->_functions.end()) {
             throw_internal_error(0x0002, std::nullopt,
                 "Internal error: global constructor function not found in LLVM function table; "
                 "the declaration pass may not have run");
+        }
+
+        if (!static_ctors.empty()) {
+            // Find the last basic block (the 'entry' block where the builder currently points)
+            llvm::Function* llvm_func = it_func->second;
+            // The builder is already positioned at the last instruction of entry after visit_function.
+            // We need to insert calls before the final RetVoid; walk back to find the terminator.
+            llvm::BasicBlock& last_bb = llvm_func->back();
+            // Insert calls just before the terminator
+            llvm::IRBuilder<> ctor_builder(&last_bb, last_bb.getTerminator()->getIterator());
+            for (auto& sctor : static_ctors) {
+                auto sctor_it = _context->_functions.find(sctor);
+                if (sctor_it == _context->_functions.end()) continue;
+                ctor_builder.CreateCall(sctor_it->second, {});
+            }
         }
 
         // Register the function
@@ -701,27 +754,20 @@ void implementation_generator::visit_global_constructor_function(global_construc
 //
 void type_reference_resolver::visit_global_destructor_function(global_destructor_function& func) {
     auto vars = func.get_sorted_global_variables();
-    if (!vars.empty()) {
+    auto& static_dtors = func.get_static_functions();
+
+    if (!vars.empty() || !static_dtors.empty()) {
         auto blck = func.get_block();
-        // Insert destructor invocation expression_statements in REVERSE construction order.
-        // We create function_invocation_expression nodes pointing to each variable's destructor.
-        for (auto it = vars.rbegin(); it != vars.rend(); ++it) {
-            auto& var = *it;
-            if (auto st_type = std::dynamic_pointer_cast<struct_type>(var->get_type())) {
-                if (auto dtor = st_type->get_struct() ? st_type->get_struct()->get_destructor() : nullptr) {
-                    // Build a function_invocation_expression for: dtor(&var)
-                    // The address of the global var acts as 'this'.
-                    // We emit this directly at IR level in implementation_generator.
-                    // For type_reference_resolver, just call visit_function to resolve types.
-                }
-            }
-        }
+        // Destructor invocations for global variables are generated at IR level.
+        // Static destructor calls are also generated at IR level.
+        // Just call visit_function to resolve types in the (empty) block.
         visit_function(func);
     }
 }
 
 void implementation_generator::visit_global_destructor_function(global_destructor_function& func) {
     auto vars = func.get_sorted_global_variables();
+    auto& static_dtors = func.get_static_functions();
 
     // Collect variables with struct types that have a destructor, in reverse construction order
     std::vector<std::shared_ptr<global_variable_definition>> dtor_vars;
@@ -734,7 +780,7 @@ void implementation_generator::visit_global_destructor_function(global_destructo
         }
     }
 
-    if (dtor_vars.empty()) {
+    if (dtor_vars.empty() && static_dtors.empty()) {
         return;
     }
 
@@ -747,6 +793,14 @@ void implementation_generator::visit_global_destructor_function(global_destructo
     llvm::BasicBlock* entry = llvm::BasicBlock::Create(**_context, "entry", llvm_func);
     llvm::IRBuilder<> dtor_builder(entry);
 
+    // First: call static destructors in REVERSE registration order (LIFO with respect to construction)
+    for (auto it = static_dtors.rbegin(); it != static_dtors.rend(); ++it) {
+        auto sdtor_it = _context->_functions.find(*it);
+        if (sdtor_it == _context->_functions.end()) continue;
+        dtor_builder.CreateCall(sdtor_it->second, {});
+    }
+
+    // Then: call instance destructors for global variables in reverse construction order
     for (auto& var : dtor_vars) {
         auto var_it = _context->_global_vars.find(var);
         if (var_it == _context->_global_vars.end()) continue;
