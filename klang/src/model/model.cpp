@@ -182,6 +182,11 @@ variable_definition& variable_definition::set_type(std::shared_ptr<type> type) {
 
 variable_definition& variable_definition::set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr) {
     _init_expr = init_expr;
+    if (_init_expr) {
+        if (auto self = dynamic_cast<element*>(this)) {
+            _init_expr->set_parent(self->shared_as<element>());
+        }
+    }
     return *this;
 }
 

@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 //
-// Note: Last resolver log number: 0x30005
+// Note: Last resolver log number: 0x4002D (type_reference_resolver)
 //
 // How symbols are resolved:
 // A symbol is resolved by trying to match a looked name from a searched context.
@@ -600,7 +600,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
     if(!type::is_resolved(var.get_type())) {
         auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
         if(!unres_type) {
-            throw_error(0x0004, std::nullopt,
+            throw_internal_error(0x0001, std::nullopt,
                 "Internal error: variable '{}' has an unresolvable type that is not an unresolved_type instance; "
                 "this indicates a compiler bug",
                 {var.get_fq_name()});
@@ -663,7 +663,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             }
 
         } else {
-            throw_error(0x0007, std::nullopt,
+            throw_internal_error(0x0002, std::nullopt,
                 "Variable '{}' of primitive type '{}' has an empty initialisation expression list; "
                 "this is an internal inconsistency",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?"});

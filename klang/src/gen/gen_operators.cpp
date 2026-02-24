@@ -57,23 +57,25 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
         target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
     }
     if(!type::is_primitive(target_type)) {
-        // TODO throw an exception
-        // Arithmetic for non-primitive types is not supported.
-        std::cerr << "Error: Arithmetic for non-primitive types is not supported yet." << std::endl;
+        throw_error(0x0001, std::nullopt,
+            "Arithmetic operators are not supported for non-primitive types: "
+            "the left operand has type '{}'; only numeric primitive types are supported",
+            {target_type ? target_type->to_string() : "?"});
     }
     if(type::is_prim_bool(target_type)) {
-        // TODO throw an exception
-        // Arithmetic for boolean is not supported.
-        std::cerr << "Error: Arithmetic for boolean is not supported." << std::endl;
+        throw_error(0x0002, std::nullopt,
+            "Arithmetic operators cannot be applied to boolean operands: "
+            "use logical operators ('&&', '||', '!') instead of arithmetic operators for boolean values");
     }
 
     expr.set_type(target_type);
 
     auto source_type = right->get_type();
     if(type::is_pointer(source_type)) {
-        // TODO throw an exception
-        // Error: Arithmetic is not supported for pointers.
-        std::cerr << "Error: Arithmetic is not supported for pointers." << std::endl;
+        throw_error(0x0003, std::nullopt,
+            "Arithmetic operators are not supported for pointer types: "
+            "the right operand has a pointer type '{}'; pointer arithmetic is not allowed",
+            {source_type ? source_type->to_string() : "?"});
     }
     // If source type is reference, deref it
     if(type::is_reference(source_type)) {
@@ -84,12 +86,15 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
         expr.assign_right(right);
     }
 
-    // TODO Promote to largest target_type instread to align to left operand.
+    // TODO Promote to largest target_type instead to align to left operand.
     auto cast = adapt_type(right, target_type);
     if(!cast) {
-        // TODO throw an exception
-        // Error: right target_type is not compatible (cannot be cast).
-        std::cerr << "Error: binary arithmetic expression must have resolved target_type at left and right sub-expression" << std::endl;
+        throw_error(0x0004, std::nullopt,
+            "Incompatible types in arithmetic expression: "
+            "the right operand of type '{}' cannot be implicitly converted to the left operand type '{}'; "
+            "use an explicit cast if a narrowing conversion is intended",
+            {right->get_type() ? right->get_type()->to_string() : "?",
+             target_type ? target_type->to_string() : "?"});
     } else if(cast != right) {
         // Casted, assign casted expression instead of right source.
         expr.assign_right(cast);
@@ -289,9 +294,11 @@ void implementation_generator::visit_bitwise_and_expression(bitwise_and_expressi
         if(prim->is_integer()) {
             _value = _builder->CreateAnd(left, right);
         } else if(prim->is_float()) {
-            // TODO throw an exception
-            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
-            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
+            throw_error(0x0005, std::nullopt,
+                "Bitwise AND ('&') cannot be applied to floating-point values: "
+                "bitwise operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
         }
     } else {
         // TODO: Support other types
@@ -322,9 +329,11 @@ void implementation_generator::visit_bitwise_or_expression(bitwise_or_expression
         if(prim->is_integer()) {
             _value = _builder->CreateOr(left, right);
         } else if(prim->is_float()) {
-            // TODO throw an exception
-            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
-            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
+            throw_error(0x0006, std::nullopt,
+                "Bitwise OR ('|') cannot be applied to floating-point values: "
+                "bitwise operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
         }
     } else {
         // TODO: Support other types
@@ -355,9 +364,11 @@ void implementation_generator::visit_bitwise_xor_expression(bitwise_xor_expressi
         if(prim->is_integer()) {
             _value = _builder->CreateXor(left, right);
         } else if(prim->is_float()) {
-            // TODO throw an exception
-            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
-            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
+            throw_error(0x0007, std::nullopt,
+                "Bitwise XOR ('^') cannot be applied to floating-point values: "
+                "bitwise operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
         }
     } else {
         // TODO: Support other types
@@ -389,9 +400,11 @@ void implementation_generator::visit_left_shift_expression(left_shift_expression
             // TODO may it poison when overflow ?
             _value = _builder->CreateShl(left, right);
         } else if(prim->is_float()) {
-            // TODO throw an exception
-            // Error : shifting operations are not meaningful for float numbers, hence not supported.
-            std::cerr << "Error : shifting operations are not meaningful for float numbers, hence not supported." << std::endl;
+            throw_error(0x0008, std::nullopt,
+                "Left shift ('<<') cannot be applied to floating-point values: "
+                "shift operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
         }
     } else {
         // TODO: Support other types
@@ -428,9 +441,11 @@ void implementation_generator::visit_right_shift_expression(right_shift_expressi
                 _value = _builder->CreateAShr(left, right);
             }
         } else if(prim->is_float()) {
-            // TODO throw an exception
-            // Error : shifting operations are not meaningful for float numbers, hence not supported.
-            std::cerr << "Error : shifting operations are not meaningful for float numbers, hence not supported." << std::endl;
+            throw_error(0x0009, std::nullopt,
+                "Right shift ('>>') cannot be applied to floating-point values: "
+                "shift operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
         }
     } else {
         // TODO: Support other types
@@ -451,9 +466,11 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     auto left_type = left->get_type();
 
     if(!type::is_reference(left_type)) {
-        // TODO throw an exception
-        // Assignment must have a reference at left hand
-        std::cerr << "Error: Assignment must have a reference at left hand." << std::endl;
+        throw_error(0x000A, std::nullopt,
+            "The left operand of an assignment must be assignable (an lvalue): "
+            "the left-hand side has type '{}' which is not a reference; "
+            "you can only assign to a variable, parameter, or array element",
+            {left_type ? left_type->to_string() : "?"});
     }
     auto ref_target_type = std::dynamic_pointer_cast<reference_type>(left_type);
     auto target_type = ref_target_type->get_subtype();
@@ -472,24 +489,29 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     if(type::is_pointer(target_type)) {
         if(type::is_pointer(source_type)) {
             if(target_type->get_subtype() != source_type->get_subtype()) {
-                // TODO handle pointer casting
-                // TODO throw an exception
-                // Error : Pointer assignation must be of the same pointer type
-                std::cerr << "Error: Pointer assignation must be of the same pointer type." << std::endl;
+                throw_error(0x000B, std::nullopt,
+                    "Pointer assignment type mismatch: "
+                    "cannot assign a '{}' to a '{}'; pointer types must match exactly",
+                    {source_type ? source_type->to_string() : "?",
+                     target_type ? target_type->to_string() : "?"});
             }
         } else {
-            // TODO throw an exception
-            // Error : Pointer assignation can only receive a pointer
-            std::cerr << "Error: Pointer assignation can only receive a pointer." << std::endl;
+            throw_error(0x000C, std::nullopt,
+                "Pointer assignment requires a pointer on the right-hand side: "
+                "cannot assign a value of type '{}' to a pointer of type '{}'",
+                {source_type ? source_type->to_string() : "?",
+                 target_type ? target_type->to_string() : "?"});
         }
     } else if(!type::is_primitive(target_type)) {
-        // TODO throw an exception
-        // Arithmetic for non-primitive types is not supported.
-        std::cerr << "Error: Arithmetic for non-primitive types is not supported yet." << std::endl;
+        throw_error(0x000D, std::nullopt,
+            "Assignment to a non-primitive, non-pointer type is not yet supported: "
+            "the target has type '{}'; only assignments to primitive types and pointers are supported",
+            {target_type ? target_type->to_string() : "?"});
     } else if(type::is_prim_bool(target_type)) {
-        // TODO throw an exception
-        // Arithmetic for boolean is not supported.
-        std::cerr << "Error: Arithmetic for boolean is not supported." << std::endl;
+        throw_error(0x000E, std::nullopt,
+            "Direct arithmetic assignment to a boolean variable is not supported: "
+            "use a comparison or logical expression to produce a boolean value for '{}'",
+            {target_type ? target_type->to_string() : "?"});
     }
 
     // Type of an assignation is a reference
@@ -507,9 +529,12 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     // TODO Promote to largest target_type instead to align to left operand.
     auto cast = adapt_type(right, target_type);
     if(!cast) {
-        // TODO throw an exception
-        // Error: right target_type is not compatible (cannot be cast).
-        std::cerr << "Error: binary arithmetic expression must have resolved target_type at left and right sub-expression" << std::endl;
+        throw_error(0x000F, std::nullopt,
+            "Incompatible types in assignment: "
+            "the right-hand side of type '{}' cannot be implicitly converted to the target type '{}'; "
+            "use an explicit cast if a narrowing conversion is intended",
+            {right->get_type() ? right->get_type()->to_string() : "?",
+             target_type ? target_type->to_string() : "?"});
     } else if(cast != right) {
         // Casted, assign casted expression instead of right source.
         expr.assign_right(cast);
@@ -525,10 +550,9 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
 void implementation_generator::visit_simple_assignation_expression(simple_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw an exception
-        std::cerr << "No reference nor value on assignation." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x001B, std::nullopt,
+            "Internal error: assignment expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type())->get_subtype();
@@ -561,9 +585,10 @@ void type_reference_resolver::visit_arithmetic_assignation_expression(arithmetic
     auto ref_target_type = std::dynamic_pointer_cast<reference_type>(left_type);
     auto target_type = ref_target_type->get_subtype();
     if(type::is_pointer(target_type)) {
-        // TODO throw exception ?
-        // Error: Arithmetic assignation is not allowed on pointers.
-        std::cerr << "Error: Arithmetic assignation is not allowed on pointers." << std::endl;
+        throw_error(0x0011, std::nullopt,
+            "Arithmetic-assignment operators (e.g. '+=', '-=') cannot be applied to pointer types: "
+            "the target has type '{}'; pointer arithmetic is not supported",
+            {target_type ? target_type->to_string() : "?"});
     }
 }
 
@@ -574,10 +599,9 @@ void type_reference_resolver::visit_arithmetic_assignation_expression(arithmetic
 void implementation_generator::visit_addition_assignation_expression(additition_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        std::cerr << "No reference nor value on addition-assignation." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x001C, std::nullopt,
+            "Internal error: '+=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
@@ -605,10 +629,9 @@ void implementation_generator::visit_addition_assignation_expression(additition_
 void implementation_generator::visit_substraction_assignation_expression(substraction_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        std::cerr << "No reference nor value on substraction-assignation." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x001D, std::nullopt,
+            "Internal error: '-=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
@@ -636,10 +659,9 @@ void implementation_generator::visit_substraction_assignation_expression(substra
 void implementation_generator::visit_multiplication_assignation_expression(multiplication_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        std::cerr << "No reference nor value on multiplication-assignation." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x001E, std::nullopt,
+            "Internal error: '*=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
@@ -667,10 +689,9 @@ void implementation_generator::visit_multiplication_assignation_expression(multi
 void implementation_generator::visit_division_assignation_expression(division_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        std::cerr << "No reference nor value on division-assignation." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x001F, std::nullopt,
+            "Internal error: '/=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
@@ -704,10 +725,9 @@ void implementation_generator::visit_division_assignation_expression(division_as
 void implementation_generator::visit_modulo_assignation_expression(modulo_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        std::cerr << "No reference nor value on modulo-assignation." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x0020, std::nullopt,
+            "Internal error: '%=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
@@ -741,10 +761,9 @@ void implementation_generator::visit_modulo_assignation_expression(modulo_assign
 void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        std::cerr << "No reference nor value on bitwise-and-assignation." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x0021, std::nullopt,
+            "Internal error: '&=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
@@ -756,9 +775,11 @@ void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_
         if(prim->is_integer()) {
             _value = _builder->CreateAnd(left_val, right);
         } else if(prim->is_float()) {
-            // TODO throw an exception
-            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
-            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
+            throw_error(0x0018, std::nullopt,
+                "Bitwise AND-assignment ('&=') cannot be applied to floating-point values: "
+                "bitwise operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
         }
     } else {
         // TODO: Support other types
@@ -776,10 +797,9 @@ void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_
 void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        std::cerr << "No reference nor value on bitwise-or-assignation." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x0022, std::nullopt,
+            "Internal error: '|=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
@@ -791,9 +811,11 @@ void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_o
         if(prim->is_integer()) {
             _value = _builder->CreateOr(left_val, right);
         } else if(prim->is_float()) {
-            // TODO throw an exception
-            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
-            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
+            throw_error(0x001A, std::nullopt,
+                "Bitwise OR-assignment ('|=') cannot be applied to floating-point values: "
+                "bitwise operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
         }
     } else {
         // TODO: Support other types
@@ -811,10 +833,9 @@ void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_o
 void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        std::cerr << "No reference nor value on bitwise-xor-assignation." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x0023, std::nullopt,
+            "Internal error: '^=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
@@ -826,9 +847,11 @@ void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_
         if(prim->is_integer()) {
             _value = _builder->CreateXor(left_val, right);
         } else if(prim->is_float()) {
-            // TODO throw an exception
-            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
-            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
+            throw_error(0x001C, std::nullopt,
+                "Bitwise XOR-assignment ('^=') cannot be applied to floating-point values: "
+                "bitwise operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
         }
     } else {
         // TODO: Support other types
@@ -846,10 +869,9 @@ void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_
 void implementation_generator::visit_left_shift_assignation_expression(left_shift_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        std::cerr << "No reference nor value on left-shift-assignation." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x0024, std::nullopt,
+            "Internal error: '<<=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
@@ -862,9 +884,11 @@ void implementation_generator::visit_left_shift_assignation_expression(left_shif
             // TODO may it poison when overflow ?
             _value = _builder->CreateShl(left_val, right);
         } else if(prim->is_float()) {
-            // TODO throw an exception
-            // Error : shifting operations are not meaningful for float numbers, hence not supported.
-            std::cerr << "Error : shifting operations are not meaningful for float numbers, hence not supported." << std::endl;
+            throw_error(0x001E, std::nullopt,
+                "Left shift-assignment ('<<=') cannot be applied to floating-point values: "
+                "shift operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
         }
     } else {
         // TODO: Support other types
@@ -882,10 +906,9 @@ void implementation_generator::visit_left_shift_assignation_expression(left_shif
 void implementation_generator::visit_right_shift_assignation_expression(right_shift_assignation_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        std::cerr << "No reference nor value on right-shift-assignation." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x0025, std::nullopt,
+            "Internal error: '>>=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
@@ -903,9 +926,11 @@ void implementation_generator::visit_right_shift_assignation_expression(right_sh
                 _value = _builder->CreateAShr(left_val, right);
             }
         } else if(prim->is_float()) {
-            // TODO throw an exception
-            // Error : shifting operations are not meaningful for float numbers, hence not supported.
-            std::cerr << "Error : shifting operations are not meaningful for float numbers, hence not supported." << std::endl;
+            throw_error(0x0020, std::nullopt,
+                "Right shift-assignment ('>>=') cannot be applied to floating-point values: "
+                "shift operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
         }
     } else {
         // TODO: Support other types
@@ -927,9 +952,10 @@ void type_reference_resolver::visit_arithmetic_unary_expression(arithmetic_unary
     auto type = sub->get_type();
 
     if(type::is_pointer(type)) {
-        // TODO throw an exception
-        // Unary arithmetic is not supported for pointers.
-        std::cerr << "Error: Unary arithmetic not supported for pointers." << std::endl;
+        throw_error(0x0021, std::nullopt,
+            "Unary arithmetic operators cannot be applied to pointer types: "
+            "the operand has type '{}'; only numeric primitive types are supported",
+            {type ? type->to_string() : "?"});
     }
 
     if(type::is_reference(type)) {
@@ -938,9 +964,10 @@ void type_reference_resolver::visit_arithmetic_unary_expression(arithmetic_unary
     }
 
     if(!type::is_primitive(type)) {
-        // TODO throw an exception
-        // Arithmetic for non-primitive types is not supported.
-        std::cerr << "Error: Arithmetic for non-primitive types is not supported yet." << std::endl;
+        throw_error(0x0022, std::nullopt,
+            "Unary arithmetic operators are not supported for non-primitive types: "
+            "the operand has type '{}'; only numeric primitive types are supported",
+            {type ? type->to_string() : "?"});
     }
 
     expr.set_type(type);
@@ -1032,9 +1059,11 @@ void implementation_generator::visit_bitwise_not_expression(bitwise_not_expressi
         if(prim->is_integer_or_bool()) {
             _value = _builder->CreateNot(val);
         } else if(prim->is_float()) {
-            // TODO throw an exception
-            // Error : bitwise operations are not meaningful for float numbers, hence not supported.
-            std::cerr << "Error : bitwise operations are not meaningful for float numbers, hence not supported." << std::endl;
+            throw_error(0x0023, std::nullopt,
+                "Bitwise NOT ('~') cannot be applied to floating-point values: "
+                "bitwise operations are only defined for integer and boolean types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
         } else {
             // TODO: Support other types
         };
@@ -1069,18 +1098,22 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
     }
 
     if(!type::is_primitive( left->get_type()) || !type::is_primitive(right->get_type())) {
-        // TODO throw an exception
-        // Logical for non-primitive types is not supported.
-        std::cerr << "Error: Arithmetic for non-primitive types is not supported yet." << std::endl;
+        throw_error(0x0024, std::nullopt,
+            "Logical operators ('&&', '||') are not supported for non-primitive types: "
+            "operands must be of a primitive type convertible to boolean, "
+            "but found '{}' and '{}'",
+            {left->get_type() ? left->get_type()->to_string() : "?",
+             right->get_type() ? right->get_type()->to_string() : "?"});
     }
 
     auto bool_type = _context->from_type(primitive_type::BOOL);
 
     auto cast_left = adapt_type(left, bool_type);
     if(!cast_left) {
-        // TODO throw an exception
-        // Error: left type is not compatible (cannot be cast).
-        std::cerr << "Error: Logical binary operand must be casted to boolean" << std::endl;
+        throw_error(0x0025, std::nullopt,
+            "The left operand of a logical operator cannot be implicitly converted to bool: "
+            "the operand has type '{}'; logical operators require boolean-compatible operands",
+            {left->get_type() ? left->get_type()->to_string() : "?"});
     } else if(cast_left != left ) {
         // Casted, assign casted expression instead of source.
         expr.assign_left(cast_left);
@@ -1090,9 +1123,10 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
 
     auto cast_right = adapt_type(right, bool_type);
     if(!cast_right) {
-        // TODO throw an exception
-        // Error: right type is not compatible (cannot be cast).
-        std::cerr << "Error: Logical binary operand must be casted to boolean" << std::endl;
+        throw_error(0x0026, std::nullopt,
+            "The right operand of a logical operator cannot be implicitly converted to bool: "
+            "the operand has type '{}'; logical operators require boolean-compatible operands",
+            {right->get_type() ? right->get_type()->to_string() : "?"});
     } else if(cast_right != right ) {
         // Casted, assign casted expression instead of source.
         expr.assign_right(cast_right);
@@ -1124,17 +1158,14 @@ void implementation_generator::visit_logical_and_expression(logical_and_expressi
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        // TODO throw an exception
-        // Logical arithmetic for non-primitive types is not supported.
-        std::cerr << "Error: Logical arithmetic for non-primitive types is not supported yet." << std::endl;
+        throw_internal_error(0x0026, std::nullopt,
+            "Internal error: '&&' operator has non-primitive operand during code generation; "
+            "this should have been rejected during type resolution");
     }
 
     _value = _builder->CreateAnd(left, right);
 }
 
-//
-// Logical or expression (||)
-//
 
 void implementation_generator::visit_logical_or_expression(logical_or_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
@@ -1152,9 +1183,9 @@ void implementation_generator::visit_logical_or_expression(logical_or_expression
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        // TODO throw an exception
-        // Logical arithmetic for non-primitive types is not supported.
-        std::cerr << "Error: Logical arithmetic for non-primitive types is not supported yet." << std::endl;
+        throw_internal_error(0x0027, std::nullopt,
+            "Internal error: '||' operator has non-primitive operand during code generation; "
+            "this should have been rejected during type resolution");
     }
 
     _value = _builder->CreateOr(left, right);
@@ -1176,17 +1207,19 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
     }
 
     if(!type::is_primitive(type)) {
-        // TODO throw an exception
-        // Logical negation for non-primitive types is not supported.
-        std::cerr << "Error: Logical negation for non-primitive types is not supported yet." << std::endl;
+        throw_error(0x0029, std::nullopt,
+            "Logical NOT ('!') is not supported for non-primitive types: "
+            "the operand has type '{}'; only primitive types convertible to boolean are supported",
+            {type ? type->to_string() : "?"});
     }
 
     static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto cast = adapt_type(sub, bool_type);
     if(!cast) {
-        // TODO throw an exception
-        // Error: right type is not compatible (cannot be cast).
-        std::cerr << "Error: Logical negation operand must be casted to boolean" << std::endl;
+        throw_error(0x002A, std::nullopt,
+            "The operand of logical NOT ('!') cannot be implicitly converted to bool: "
+            "the operand has type '{}'; logical NOT requires a boolean-compatible operand",
+            {type ? type->to_string() : "?"});
     } else if(cast != sub ) {
         // Casted, assign casted expression instead of source.
         expr.assign(cast);
@@ -1217,9 +1250,9 @@ void implementation_generator::visit_logical_not_expression(logical_not_expressi
     }
 
     if(!type::is_primitive(type)) {
-        // TODO throw an exception
-        // Logical negation for non-primitive types is not supported.
-        std::cerr << "Error: Logical negation for non-primitive types is not supported yet." << std::endl;
+        throw_internal_error(0x0028, std::nullopt,
+            "Internal error: '!' operator has a non-primitive operand during code generation; "
+            "this should have been rejected during type resolution");
     }
 
     _value = _builder->CreateNot(value);
@@ -1250,9 +1283,11 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
     }
 
     if(!type::is_primitive(left_type) || !type::is_primitive(right_type)) {
-        // TODO throw an exception
-        // Logical for non-primitive types is not supported.
-        std::cerr << "Error: Arithmetic for non-primitive types is not supported yet." << std::endl;
+        throw_error(0x002C, std::nullopt,
+            "Comparison operators are not supported for non-primitive types: "
+            "operands must be primitive types, but found '{}' and '{}'",
+            {left_type ? left_type->to_string() : "?",
+             right_type ? right_type->to_string() : "?"});
     }
 
     auto left_prim_type = std::dynamic_pointer_cast<primitive_type>(left_type);
@@ -1274,9 +1309,12 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
     }
 
     if(!adapted_left || !adapted_right) {
-        // TODO throw an exception
-        // Adaptation is not possible
-        std::cerr << "Error: Type alignment for comparison expression is not possible." << std::endl;
+        throw_error(0x002D, std::nullopt,
+            "Incompatible types in comparison: "
+            "cannot align operand types '{}' and '{}' for comparison; "
+            "use an explicit cast to make the types comparable",
+            {left_type ? left_type->to_string() : "?",
+             right_type ? right_type->to_string() : "?"});
     }
 
     if(adapted_left!=left) {
@@ -1298,9 +1336,9 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
 void implementation_generator::visit_equal_expression(equal_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        _value = nullptr;
-        return;
+        throw_internal_error(0x0029, std::nullopt,
+            "Internal error: '==' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     // If operands are references, dereference them.
@@ -1313,9 +1351,9 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        // TODO throw an exception
-        // Comparison for non-primitive types is not supported.
-        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+        throw_internal_error(0x002A, std::nullopt,
+            "Internal error: '==' operator has non-primitive operand during code generation; "
+            "this should have been rejected during type resolution");
     }
 
     // For primitives, operand types are supposed to be aligned
@@ -1338,9 +1376,9 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
 void implementation_generator::visit_different_expression(different_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        _value = nullptr;
-        return;
+        throw_internal_error(0x002B, std::nullopt,
+            "Internal error: '!=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     // If operands are references, dereference them.
@@ -1353,9 +1391,9 @@ void implementation_generator::visit_different_expression(different_expression& 
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        // TODO throw an exception
-        // Comparison for non-primitive types is not supported.
-        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+        throw_internal_error(0x002C, std::nullopt,
+            "Internal error: '!=' operator has non-primitive operand during code generation; "
+            "this should have been rejected during type resolution");
     }
 
     // For primitives, operand types are supposed to be aligned
@@ -1378,9 +1416,9 @@ void implementation_generator::visit_different_expression(different_expression& 
 void implementation_generator::visit_lesser_expression(lesser_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        _value = nullptr;
-        return;
+        throw_internal_error(0x002D, std::nullopt,
+            "Internal error: '<' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     // If operands are references, dereference them.
@@ -1393,9 +1431,9 @@ void implementation_generator::visit_lesser_expression(lesser_expression& expr) 
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        // TODO throw an exception
-        // Comparison for non-primitive types is not supported.
-        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+        throw_internal_error(0x002E, std::nullopt,
+            "Internal error: '<' operator has non-primitive operand during code generation; "
+            "this should have been rejected during type resolution");
     }
 
     // For primitives, operand types are supposed to be aligned
@@ -1422,9 +1460,9 @@ void implementation_generator::visit_lesser_expression(lesser_expression& expr) 
 void implementation_generator::visit_greater_expression(greater_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        _value = nullptr;
-        return;
+        throw_internal_error(0x002F, std::nullopt,
+            "Internal error: '>' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     // If operands are references, dereference them.
@@ -1437,9 +1475,9 @@ void implementation_generator::visit_greater_expression(greater_expression& expr
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        // TODO throw an exception
-        // Comparison for non-primitive types is not supported.
-        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+        throw_internal_error(0x0030, std::nullopt,
+            "Internal error: '>' operator has non-primitive operand during code generation; "
+            "this should have been rejected during type resolution");
     }
 
     // For primitives, operand types are supposed to be aligned
@@ -1466,9 +1504,9 @@ void implementation_generator::visit_greater_expression(greater_expression& expr
 void implementation_generator::visit_lesser_equal_expression(lesser_equal_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        _value = nullptr;
-        return;
+        throw_internal_error(0x0031, std::nullopt,
+            "Internal error: '<=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     // If operands are references, dereference them.
@@ -1481,9 +1519,9 @@ void implementation_generator::visit_lesser_equal_expression(lesser_equal_expres
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        // TODO throw an exception
-        // Comparison for non-primitive types is not supported.
-        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+        throw_internal_error(0x0032, std::nullopt,
+            "Internal error: '<=' operator has non-primitive operand during code generation; "
+            "this should have been rejected during type resolution");
     }
 
     // For primitives, operand types are supposed to be aligned
@@ -1510,9 +1548,9 @@ void implementation_generator::visit_lesser_equal_expression(lesser_equal_expres
 void implementation_generator::visit_greater_equal_expression(greater_equal_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
-        _value = nullptr;
-        return;
+        throw_internal_error(0x0033, std::nullopt,
+            "Internal error: '>=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
     }
 
     // If operands are references, dereference them.
@@ -1525,9 +1563,9 @@ void implementation_generator::visit_greater_equal_expression(greater_equal_expr
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        // TODO throw an exception
-        // Comparison for non-primitive types is not supported.
-        std::cerr << "Error: Comparison for non-primitive types is not supported yet." << std::endl;
+        throw_internal_error(0x0034, std::nullopt,
+            "Internal error: '>=' operator has non-primitive operand during code generation; "
+            "this should have been rejected during type resolution");
     }
 
     // For primitives, operand types are supposed to be aligned

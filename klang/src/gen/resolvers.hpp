@@ -123,6 +123,14 @@ protected:
     static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
     resolve_qualified_from(const element& elem, const name& qualified_name);
 
+    /**
+     * Base offset for internal-error codes.
+     * Internal errors indicate compiler bugs that cannot be triggered by any valid
+     * (or invalid) K source file.  Their diagnostic codes are 0xA000 + local_code,
+     * which keeps them visually distinct from user-facing errors (0x0001 … 0x09FF).
+     */
+    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
+
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
         logger_relay::report(diag);
@@ -135,6 +143,11 @@ protected:
         if (opt) diag.at(*opt);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
+    }
+
+    /** Throw an internal-compiler-error (should never be reachable via any K source input). */
+    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
     }
 
     void visit_named_element(named_element&);
@@ -229,6 +242,8 @@ protected:
     /** Resolve a struct type from the root namespace of the unit. */
     std::shared_ptr<type> resolve_type_from_root(const k::name& name_without_prefix);
 
+    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
+
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
         logger_relay::report(diag);
@@ -241,6 +256,11 @@ protected:
         if (opt) diag.at(*opt);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
+    }
+
+    /** Throw an internal-compiler-error (should never be reachable via any K source input). */
+    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
     }
 
     void visit_unit(unit&) override;

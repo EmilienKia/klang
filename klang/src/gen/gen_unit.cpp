@@ -105,7 +105,7 @@ void symbol_resolver::visit_namespace(ns& ns)
             // Root namespace
             // Should not happen, supposed to be handled at model construction level
             if (ns.get_name().empty()) {
-                throw_error(0x0001, std::nullopt,
+                throw_internal_error(0x0001, std::nullopt,
                     "Internal error: root namespace has no name at code generation stage; "
                     "this should not happen and indicates a compiler bug");
             } else {
@@ -473,7 +473,7 @@ void implementation_generator::visit_function(function &function) {
 
     auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
     if (func_it==_context->_functions.end()) {
-        throw_error(0x0001, std::nullopt,
+        throw_internal_error(0x0001, std::nullopt,
             "Internal error: LLVM function declaration not found for '{}'; "
             "the declaration pass must be run before the implementation pass",
             {function.get_fq_name()});
@@ -568,7 +568,7 @@ void implementation_generator::optimize_function_dead_inst_elimination(llvm::Fun
 void type_reference_resolver::visit_constructor(constructor& ctor) {
     auto st = ctor.get_owner();
     if (!st) {
-        throw_error(0x000A, std::nullopt,
+        throw_internal_error(0x0001, std::nullopt,
             "Internal error: constructor has no owner structure; "
             "every constructor must belong to a struct — this indicates a compiler bug");
     }
@@ -623,7 +623,7 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
 void type_reference_resolver::visit_destructor(destructor& dtor) {
     auto st = dtor.get_owner();
     if (!st) {
-        throw_error(0x000B, std::nullopt,
+        throw_internal_error(0x0002, std::nullopt,
             "Internal error: destructor has no owner structure; "
             "every destructor must belong to a struct — this indicates a compiler bug");
     }
@@ -683,7 +683,7 @@ void implementation_generator::visit_global_constructor_function(global_construc
 
         auto it_func = _context->_functions.find(func.shared_as<function>());
         if (it_func==_context->_functions.end()) {
-            throw_error(0x0002, std::nullopt,
+            throw_internal_error(0x0002, std::nullopt,
                 "Internal error: global constructor function not found in LLVM function table; "
                 "the declaration pass may not have run");
         }

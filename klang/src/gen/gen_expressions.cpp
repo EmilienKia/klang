@@ -89,17 +89,31 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
         auto func =  std::get<std::shared_ptr<function>>(found_symbol);
         symbol.set_target(func);
     } else {
-        // Symbol not found
-        // TODO throw an exception
-        std::cerr << "Error: Unable to resolve symbol '" << symbol.get_name().to_string() << "'." << std::endl;
+        // Symbol not found at this phase.
+        // If this symbol is the callee of a function invocation, defer resolution to
+        // type_reference_resolver which handles unified call syntax and member lookups.
+        // Otherwise throw immediately, since there is nothing further that can resolve it.
+        auto parent_expr = symbol.get_parent_expression();
+        bool is_function_callee = false;
+        if (auto parent_invoc = std::dynamic_pointer_cast<function_invocation_expression>(parent_expr)) {
+            is_function_callee = (parent_invoc->callee_expr().get() == &symbol);
+        }
+        if (!is_function_callee) {
+            throw_error(0x0003, std::nullopt,
+                "Undefined symbol '{}': no variable, parameter or function with this name is visible in the current scope",
+                {symbol.get_name().to_string()});
+        }
+        // else: leave unresolved; type_reference_resolver will report the error if still not found
     }
 }
 
 void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
 {
     if(!symbol.is_resolved()) {
-        // TODO throw an exception
-        std::cerr << "Error: symbol expression is not resolved." << std::endl;
+        throw_internal_error(0x0001, std::nullopt,
+            "Internal error: symbol '{}' reached type-resolution phase without being resolved; "
+            "symbol resolution must be run before type resolution",
+            {symbol.get_name().to_string()});
     }
     if (symbol.is_variable_def()) {
         auto var_def = symbol.get_variable_def();
@@ -141,19 +155,25 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
             llvm::Value* this_value_ref = nullptr;
             auto func = std::dynamic_pointer_cast<function>(symbol.find_statement()->get_function());
             if(!func) {
-                // TODO throw exception : no function found in context for member variable access
-                std::cerr << "Error: no function context available for member variable '" << member_var->get_fq_name() << "' access." << std::endl;
+                throw_internal_error(0x0001, std::nullopt,
+                    "Internal error: cannot find enclosing function context for member variable '{}' access; "
+                    "member variables can only be accessed from inside a method",
+                    {member_var->get_fq_name()});
             }
             this_value_ref = _context->_function_this_variables[func];
             if (!this_value_ref) {
-                // TODO throw exception : no 'this' pointer found in function for member variable access
-                std::cerr << "Error: no 'this' pointer available in function context for member variable '" << member_var->get_fq_name() << "' access." << std::endl;
+                throw_internal_error(0x0002, std::nullopt,
+                    "Internal error: no 'this' pointer found in function '{}' for member variable '{}' access; "
+                    "the function may be static or have no associated struct instance",
+                    {func->get_fq_name(), member_var->get_fq_name()});
             }
 
             // Get member variable
             if(_struct_stack.empty()) {
-                // TODO throw exception : no 'this' pointer available for member variable access
-                std::cerr << "Error: no 'this' context available for member variable '" << name << "' access." << std::endl;
+                throw_internal_error(0x0003, std::nullopt,
+                    "Internal error: no struct context on the code-generation stack when accessing member variable '{}'; "
+                    "member access code generation must be performed inside a struct method",
+                    {name});
             }
             auto struct_ref = _struct_stack.top();
             auto struct_type = struct_ref->get_struct_type();
@@ -171,17 +191,23 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                             "this_" + struct_ref->get_short_name() + "_" + name + "_ptr"
                     );
                 } else {
-                    // TODO throw an exception
-                    std::cerr << "Error: Struct type '" << struct_type->name() << "' has no member named '" << name << "'. (1)" << std::endl;
+                    throw_internal_error(0x0004, std::nullopt,
+                        "Internal error: struct '{}' has no member named '{}'; "
+                        "the model is inconsistent — the member was not found during code generation",
+                        {struct_type->name(), name});
                 }
             } else { // TODO add here the method resolution
-                // TODO throw an exception
-                std::cout << "Error: Struct type has no type information for member variable '" << name << "' access." << std::endl;
+                throw_internal_error(0x0005, std::nullopt,
+                    "Internal error: struct has no LLVM type information when accessing member '{}'; "
+                    "the declaration pass must be run before the implementation pass",
+                    {name});
             }
 
         } else {
-            // TODO Support other types of variable definitions
-            std::cout << "Error: Unsupported variable definition type in symbol expression." << std::endl;
+            throw_internal_error(0x0006, std::nullopt,
+                "Internal error: unsupported variable definition kind encountered while generating code for symbol '{}'; "
+                "only parameters, global variables, local variables and member variables are supported",
+                {var_def->get_fq_name()});
         }
 
         // Handle type of symbol
@@ -204,15 +230,17 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
         // Find the function definition
         auto it = _context->_functions.find(func);
         if(it==_context->_functions.end()) {
-            // Error: function definition is not found.
-            // TODO throw exception
-            std::cerr << "Error: function definition is not found." << std::endl;
+            throw_internal_error(0x0007, std::nullopt,
+                "Internal error: LLVM declaration not found for function '{}'; "
+                "the declaration pass must be run before the implementation pass",
+                {func ? func->get_fq_name() : "<null>"});
         }
         llvm::Function* llvm_func = it->second;
         if(!llvm_func) {
-            // Error: function definition is not found.
-            // TODO throw exception
-            std::cerr << "Error: llvm function definition is not found." << std::endl;
+            throw_internal_error(0x0008, std::nullopt,
+                "Internal error: LLVM function object is null for '{}'; "
+                "this indicates a compiler bug in the declaration pass",
+                {func ? func->get_fq_name() : "<null>"});
         }
         _value = llvm_func;
     }
@@ -227,9 +255,9 @@ void symbol_resolver::visit_unary_expression(unary_expression& expr)
 {
     auto& sub = expr.sub_expr();
     if(!sub) {
-        // TODO throw an exception
-        // Error 0x0002: unary expression must have non-null sub expresssion
-        std::cerr << "Error: unary expression must have non-null sub expresssion" << std::endl;
+        throw_internal_error(0x0001, std::nullopt,
+            "Internal error: unary expression has a null sub-expression; "
+            "this indicates a malformed AST or a compiler bug");
     }
     sub->accept(*this);
 }
@@ -239,17 +267,17 @@ void type_reference_resolver::visit_unary_expression(unary_expression& expr)
     auto& sub = expr.sub_expr();
 
     if(!sub) {
-        // TODO throw an exception
-        // Error 0x0002: unary expression must have non-null sub expresssion
-        std::cerr << "Error: unary expression must have non-null sub expresssion" << std::endl;
+        throw_internal_error(0x0002, std::nullopt,
+            "Internal error: unary expression has a null sub-expression; "
+            "this indicates a malformed AST or a compiler bug");
     }
 
     sub->accept(*this);
 
     if(!type::is_resolved(sub->get_type())) {
-        // TODO throw an exception
-        // Error 0x0003: unary expression must have resolved type for its sub-expression
-        std::cerr << "Error: unary expression must have resolved type for its sub-expression" << std::endl;
+        throw_internal_error(0x0003, std::nullopt,
+            "Internal error: sub-expression of a unary operator could not be type-resolved; "
+            "the type of the operand must be known before the unary expression can be typed");
     }
 }
 
@@ -272,9 +300,9 @@ void symbol_resolver::visit_binary_expression(binary_expression& expr)
     auto& right = expr.right();
 
     if(!left || !right) {
-        // TODO throw an exception
-        // Error 0x0004: binary expression must have non-null left and right expresssion
-        std::cerr << "Error: binary expression must have non-null left and right expresssion" << std::endl;
+        throw_internal_error(0x0002, std::nullopt,
+            "Internal error: binary expression has a null left or right operand; "
+            "this indicates a malformed AST or a compiler bug");
     }
 
     left->accept(*this);
@@ -288,23 +316,23 @@ void type_reference_resolver::visit_binary_expression(binary_expression& expr)
     auto& right = expr.right();
 
     if(!left || !right) {
-        // TODO throw an exception
-        // Error 0x0004: binary expression must have non-null left and right expresssion
-        std::cerr << "Error: binary expression must have non-null left and right expresssion" << std::endl;
+        throw_internal_error(0x0004, std::nullopt,
+            "Internal error: binary expression has a null left or right operand; "
+            "this indicates a malformed AST or a compiler bug");
     }
 
     left->accept(*this);
     right->accept(*this);
 
     if(!type::is_resolved(left->get_type())) {
-        // TODO throw an exception
-        // Error 0x0005: Error: left sub-expression of binary expression must have resolved type
-        std::cerr << "Error: left sub-expression of binary expression must have resolved type" << std::endl;
+        throw_internal_error(0x0005, std::nullopt,
+            "Internal error: the left operand of a binary operator could not be type-resolved; "
+            "the type of each operand must be known before the binary expression can be typed");
     }
     if(!type::is_resolved(right->get_type())) {
-        // TODO throw an exception
-        // Error 0x0005b: Error: right sub-expression of binary expression must have resolved type
-        std::cerr << "Error: right sub-expression of binary expression must have resolved type" << std::endl;
+        throw_internal_error(0x0006, std::nullopt,
+            "Internal error: the right operand of a binary operator could not be type-resolved; "
+            "the type of each operand must be known before the binary expression can be typed");
     }
 }
 
@@ -334,8 +362,11 @@ void type_reference_resolver::visit_address_of_expression(address_of_expression&
     // TODO support pointer to pointer.
 
     if(!type::is_reference(sub_type)) {
-        // TODO throw an exception
-        std::cerr << "Error: Address-of expression can be applied only to reference types." << std::endl;
+        throw_error(0x0018, std::nullopt,
+            "Cannot take the address of a non-reference expression: "
+            "the '&' operator requires a reference (i.e. an addressable location) as its operand, "
+            "but the operand has type '{}'",
+            {sub_type ? sub_type->to_string() : "?"});
     }
 
     expr.set_type(sub_type->get_subtype()->get_pointer());
@@ -346,8 +377,9 @@ void implementation_generator::visit_address_of_expression(address_of_expression
     expr.sub_expr()->accept(*this);
 
     if(!_value) {
-        // TODO throw an exception
-        std::cerr << "Error: Sub-expression of address-of expression must return a value." << std::endl;
+        throw_internal_error(0x0009, std::nullopt,
+            "Internal error: the sub-expression of an address-of ('&') operator produced no LLVM value; "
+            "this indicates a code-generation bug");
     }
     // The value returned by the sub expression is the desired value
     // _value = _value;
@@ -363,10 +395,13 @@ void type_reference_resolver::visit_load_value_expression(load_value_expression&
     if(auto ref_type = std::dynamic_pointer_cast<reference_type>(type)) {
         expr.set_type(ref_type->get_subtype());
     } else if(auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type)) {
-        expr.set_type(ref_type->get_subtype());
+        expr.set_type(ptr_type->get_subtype());
     } else {
-        // TODO throw an exception
-        std::cerr << "Error: Load-expression can be applied only to pointer and reference types." << std::endl;
+        throw_error(0x0019, std::nullopt,
+            "Cannot dereference a non-pointer/non-reference expression: "
+            "load ('*') requires a reference or pointer operand, "
+            "but the operand has type '{}'",
+            {type ? type->to_string() : "?"});
     }
 }
 
@@ -390,17 +425,22 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
         if(auto sub_ref_type = std::dynamic_pointer_cast<pointer_type>(ref_type->get_subtype())) {
             type = sub_ref_type;
         } else {
-            // Error : If subtype is a reference, it must ref a pointer.
-            // TODO throw an exception
-            std::cerr << "Error: Dereference can be applied only to pointer types or references to pointer types." << std::endl;
+            throw_error(0x001A, std::nullopt,
+                "Cannot dereference a reference to a non-pointer type: "
+                "the dereference operator ('*') on a reference requires the referenced type to be a pointer, "
+                "but '{}' is not a pointer type",
+                {ref_type->get_subtype() ? ref_type->get_subtype()->to_string() : "?"});
         }
     }
 
     if(auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type)) {
         expr.set_type(ptr_type->get_subtype()->get_reference());
     } else {
-        // TODO throw an exception
-        std::cerr << "Error: Dereference can be applied only to pointer types." << std::endl;
+        throw_error(0x001B, std::nullopt,
+            "Cannot dereference a non-pointer expression: "
+            "the dereference operator ('*') requires a pointer or reference-to-pointer operand, "
+            "but the operand has type '{}'",
+            {type ? type->to_string() : "?"});
     }
 }
 
@@ -431,28 +471,31 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
     auto type = expr.sub_expr()->get_type();
 
     if(!type::is_reference(type)) {
-        // TODO throw an exception
-        std::cerr << "Error: Member-of-object expression can be applied only to reference types." << std::endl;
+        throw_error(0x001C, std::nullopt,
+            "Cannot access a member on a non-reference expression: "
+            "the '.' operator requires the left-hand side to be a reference to a struct, "
+            "but the left-hand side has type '{}'",
+            {type ? type->to_string() : "?"});
     }
     auto subtype = type->get_subtype();
-    /*if(type::is_reference(subtype)) {
-        // Dereference the subreference to handle (double reference) for case like reference parameter (like 'this')
-        subtype = subtype->get_subtype();
-    }*/
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(subtype)) {
         const auto& member_name =  expr.symbol();
         if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
             expr.set_type(field->field_type.lock()->get_reference());
         } else if(auto method = struct_subtype->get_struct()->get_function(member_name.get_name())) {
-            // TODO Refactor to return the function type
-            std::clog << "Info: Looking for member of object for " << struct_subtype->name() << "::" << method->get_name().to_string() << " (1)" << std::endl;
+            // Member function: type resolution deferred to function_invocation_expression
         } else {
-            // TODO throw an exception
-            std::cerr << "Error: Struct type '" << struct_subtype->name() << "' has no member named '" << member_name.get_name().to_string() << "'. (2)" << std::endl;
+            throw_error(0x001D, std::nullopt,
+                "No member named '{}' in struct '{}': "
+                "check the spelling or verify that '{}' is declared as a field or method of '{}'",
+                {member_name.get_name().to_string(), struct_subtype->name(),
+                 member_name.get_name().to_string(), struct_subtype->name()});
         }
-    } else { // TODO add here other types of objects
-        // TODO throw an exception
-        std::cerr << "Error: Member-of-object expression can be applied only to struct types. (1)" << std::endl;
+    } else {
+        throw_error(0x001E, std::nullopt,
+            "The '.' operator can only be applied to a reference to a struct type, "
+            "but the left-hand side is a reference to '{}' which is not a struct",
+            {subtype ? subtype->to_string() : "?"});
     }
 }
 
@@ -472,15 +515,18 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
         if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
             _value = _builder->CreateStructGEP(type->get_subtype()->get_llvm_type(), _value, field->index);
         } else if(auto method = struct_subtype->get_struct()->get_function(member_name.get_name())) {
-            std::clog << "Trace: Looking for member of object for " << struct_subtype->name() << "::" << method->get_name().to_string() << " (2)"  << std::endl;
             // Note return the already-assigned address of the struct onto which the function is applied to
         } else {
-            // TODO throw an exception
-            std::cerr << "Error: Struct type '" << struct_subtype->name() << "' has no member named '" << member_name.get_name().to_string() << "'. (3)" << std::endl;
+            throw_internal_error(0x000A, std::nullopt,
+                "Internal error: struct '{}' has no member named '{}' during code generation; "
+                "the model is inconsistent — type resolution should have caught this earlier",
+                {struct_subtype->name(), member_name.get_name().to_string()});
         }
-    } else { // TODO add here the method resolution
-        // TODO throw an exception
-        std::cerr << "Error: Member-of-object expression can be applied only to struct types. (2)" << std::endl;
+    } else {
+        throw_internal_error(0x000B, std::nullopt,
+            "Internal error: the '.' operator is applied to a non-struct type during code generation; "
+            "the operand type is '{}' — type resolution should have caught this earlier",
+            {type && type->get_subtype() ? type->get_subtype()->to_string() : "?"});
     }
 }
 
@@ -511,9 +557,10 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
 
     // Dereference if needed
     if(!type::is_reference(left_type)) {
-        // TODO throw an exception
-        // Subscript expression is supported only for references to arrays.
-        std::cerr << "Error: Subscript expression is supported only for reference to arrays." << std::endl;
+        throw_error(0x001F, std::nullopt,
+            "Subscript operator '[]' requires a reference to an array as left operand, "
+            "but the left operand has type '{}' which is not a reference",
+            {left_type ? left_type->to_string() : "?"});
     }
     if(type::is_double_reference(left_type)) {
         // Deref first ref
@@ -522,9 +569,10 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
     left_type = std::dynamic_pointer_cast<reference_type>(left_type)->get_subtype();
 
     if(!type::is_array(left_type)) {
-        // TODO throw an exception
-        // Subscript expression is supported only for arrays.
-        std::cerr << "Error: Subscript expression is supported only for arrays." << std::endl;
+        throw_error(0x0020, std::nullopt,
+            "Subscript operator '[]' can only be applied to an array type, "
+            "but the dereferenced left operand has type '{}' which is not an array",
+            {left_type ? left_type->to_string() : "?"});
     }
     auto arr_type = std::dynamic_pointer_cast<array_type>(left_type);
     expr.set_type(arr_type->get_subtype()->get_reference());
@@ -534,9 +582,10 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
     // TODO is array really indexed by uint ?
     auto adapted_right = adapt_type(right, _context->from_type(primitive_type::UNSIGNED_INT));
     if(!adapted_right) {
-        // TODO thrown an exception
-        // Error: cannot cast index expression to index type
-        std::cerr << "Error: Cannot cast index expression to index type in subscript expression." << std::endl;
+        throw_error(0x0021, std::nullopt,
+            "Subscript index expression cannot be implicitly converted to an unsigned integer index type; "
+            "the index operand has type '{}' — use an explicit cast if needed",
+            {right->get_type() ? right->get_type()->to_string() : "?"});
     } else if(adapted_right!=right) {
         right = adapted_right;
         expr.assign_right(right);
@@ -591,8 +640,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
 
     if(!callee && !member_callee) {
-        std::cerr << "Error : only support global or object-member method call" << std::endl;
-        return;
+        throw_error(0x0022, std::nullopt,
+            "Unsupported call expression form: only direct function calls ('func(args)') and "
+            "member function calls ('obj.method(args)') are supported");
     }
 
     // Resolve and type-check all arguments first
@@ -609,8 +659,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         callee = std::dynamic_pointer_cast<symbol_expression>(
                 member_callee->symbol().shared_as<symbol_expression>());
         if (!callee) {
-            std::cerr << "Error : only support object-member method call with symbol expression" << std::endl;
-            return;
+            throw_error(0x0023, std::nullopt,
+                "Unsupported member call form: the right-hand side of '.' must be a simple name, "
+                "not a complex expression");
         }
 
         // sub_expr of member_callee gives the object reference
@@ -618,14 +669,18 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         auto this_type = this_expr->get_type(); // should be ref<struct>
 
         if (!type::is_reference(this_type)) {
-            std::cerr << "Error : member-of-object call requires a reference type." << std::endl;
-            return;
+            throw_error(0x0024, std::nullopt,
+                "The '.' operator requires the left-hand side to have a reference type, "
+                "but '{}' is not a reference; did you mean to use a reference parameter?",
+                {this_type ? this_type->to_string() : "?"});
         }
         auto subtype = type::is_reference(this_type) ? this_type->get_subtype() : this_type;
         auto struct_subtype = std::dynamic_pointer_cast<struct_type>(subtype);
         if (!struct_subtype) {
-            std::cerr << "Error : member-of-object call only supports struct types." << std::endl;
-            return;
+            throw_error(0x0025, std::nullopt,
+                "The '.' operator can only be applied to a struct type, "
+                "but the left-hand side has type '{}' which is not a struct",
+                {subtype ? subtype->to_string() : "?"});
         }
         auto st = struct_subtype->get_struct();
 
@@ -636,16 +691,16 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         std::vector<std::shared_ptr<function>> candidates = scope_lookup::lookup_functions(st, func_short_name);
 
         if (candidates.empty()) {
-            std::cerr << "Error : cannot find any function named '"
-                      << callee->get_name().to_string()
-                      << "' accessible from struct '" << st->get_short_name() << "'" << std::endl;
-            return;
+            throw_error(0x0026, std::nullopt,
+                "No function named '{}' found in struct '{}' or its enclosing scopes; "
+                "check the spelling or verify that '{}' is declared as a method or free function",
+                {callee->get_name().to_string(), st->get_short_name(),
+                 callee->get_name().to_string()});
         }
 
         auto best = get_best_matching_function(candidates, expr.arguments(), this_expr);
         if (!best.func) {
-            std::cerr << "Error : no viable overload for '"
-                      << callee->get_name().to_string() << "'." << std::endl;
+            // get_best_matching_function already reported/threw an error
             return;
         }
 
@@ -707,8 +762,10 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 }
                 return;
             }
-            std::cerr << "Error : no viable overload for '" << func_name << "'." << std::endl;
-            return;
+            throw_error(0x0027, std::nullopt,
+                "No function named '{}' found in the current scope; "
+                "check the spelling or add the appropriate declaration",
+                {func_name});
         }
 
         FunctionCandidate best = get_best_matching_function(all_candidates,
@@ -718,7 +775,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         bool is_free_to_member_call = false;
 
         if (!best.func) {
-            std::cerr << "Error : no viable overload for '" << func_name << "'." << std::endl;
+            // get_best_matching_function already reported/threw an error
             return;
         }
 
@@ -749,7 +806,9 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
 
     if(!callee && !member_callee) {
-        std::cerr << "Error : only support global or object-member method call" << std::endl;
+        throw_internal_error(0x000C, std::nullopt,
+            "Internal error: unsupported call expression form during code generation; "
+            "only direct and member function calls are supported");
     }
 
     // Generate arguments and add the to the args list
@@ -757,15 +816,18 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     if (member_callee) {
         callee = std::dynamic_pointer_cast<symbol_expression>(member_callee->symbol().shared_as<symbol_expression>());
         if (!callee) {
-            std::cerr << "Error : only support object-member method call with symbol expression" << std::endl;
+            throw_internal_error(0x000D, std::nullopt,
+                "Internal error: member function call has a non-symbol callee; "
+                "this should have been rejected during type resolution");
         }
 
         // First argument is the object pointer (this)
         member_callee->sub_expr()->accept(*this);
         if(!_value) {
-            // Problem with 'this' argument generation
-            // TODO throw exception
-            std::cerr << "Problem with generation of 'this' argument of a member function call." << std::endl;
+            throw_internal_error(0x000E, std::nullopt,
+                "Internal error: failed to generate the 'this' argument for member function call '{}'; "
+                "the object expression produced no LLVM value",
+                {callee ? callee->get_name().to_string() : "<unknown>"});
         }
 
         args.push_back(_value);
@@ -774,34 +836,30 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         _value = nullptr;
         arg->accept(*this);
         if(!_value) {
-            // Problem with argument generation
-            // TODO throw exception
-            std::cerr << "Problem with generation of an argument of a function call." << std::endl;
+            throw_internal_error(0x000F, std::nullopt,
+                "Internal error: a call argument for '{}' produced no LLVM value during code generation; "
+                "this indicates a bug in expression code generation",
+                {callee ? callee->get_name().to_string() : "<unknown>"});
         }
         args.push_back(_value);
     }
-
-    // TODO Check function argument count
 
     // Find the function definition
     auto function = callee->get_function();
     auto it = _context->_functions.find(function);
     if(it==_context->_functions.end()) {
-        // Error: function definition is not found.
-        // TODO throw exception
-        std::cerr << "Error: function definition is not found: " << (function ? function->get_fq_name() : "<null>") << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x0010, std::nullopt,
+            "Internal error: LLVM declaration not found for function '{}' during code generation; "
+            "the declaration pass must be run before the implementation pass",
+            {function ? function->get_fq_name() : "<null>"});
     }
     llvm::Function* llvm_func = it->second;
     if(!llvm_func) {
-        // Error: function definition is not found.
-        // TODO throw exception
-        std::cerr << "Error: llvm function definition is not found." << std::endl;
-        _value = nullptr;
-        return;
+        throw_internal_error(0x0011, std::nullopt,
+            "Internal error: LLVM function object is null for '{}'; "
+            "this indicates a compiler bug in the declaration pass",
+            {function ? function->get_fq_name() : "<null>"});
     }
-    // TODO look for external functions.
 
     _value = _builder->CreateCall(llvm_func, args);
 }
@@ -827,23 +885,21 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
     // so type is set to the reference of the constructed symbol type.
     auto var_def = expr.constructed_symbol()->get_variable_def();
     if(!var_def) {
-        // Must not happen, should be already checked at resolution phase.
-        // TODO throw an exception
-        std::cerr << "Error: constructor invocation only support variable definition as constructed symbol." << std::endl;
+        throw_internal_error(0x0007, std::nullopt,
+            "Internal error: constructor invocation expression does not refer to a variable definition; "
+            "the constructed symbol must be a variable — this indicates a compiler bug");
     }
     expr.set_type(var_def->get_type()->get_reference());
 
     // Check if constructor is explicitly needed
     auto var_type = var_def->get_type();
     if (!var_type) {
-        // Must not happen, should be already checked at resolution phase.
-        // TODO throw an exception
-        std::cerr << "Error: constructor invocation cannot find type for constructed symbol." << std::endl;
+        throw_internal_error(0x0008, std::nullopt,
+            "Internal error: constructor invocation refers to a variable '{}' with no type; "
+            "the type must be resolved before constructor invocation can be typed",
+            {var_def->get_fq_name()});
     }
     if (type::is_primitive(var_type)) {
-        // For primitive types, adapt the single argument (if any) to the target type.
-        // This handles the case where the argument is a reference (e.g. a parameter `v : int`)
-        // which must be loaded to get the actual value before storing it into the member.
         if (!expr.empty()) {
             auto cast = adapt_type(expr.argument(0), var_type);
             if (cast && cast != expr.argument(0)) {
@@ -854,22 +910,22 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
         auto st = st_type->get_struct();
         auto [best_constructor, adapted_args] = get_best_matching_constructor(st_type->get_struct()->constructors(), expr.arguments());
         if (!best_constructor) {
-            // TODO throw an exception
-            std::cerr << "Error: no matching constructor found for global variable initialization" << std::endl;
+            throw_error(0x002A, std::nullopt,
+                "No matching constructor found for member initialisation of type '{}': "
+                "none of the available constructors can be called with the provided arguments",
+                {st_type->to_string()});
         }
         expr.set_constructor(best_constructor);
         expr.arguments(adapted_args);
     }
-
 }
 
 void implementation_generator::visit_constructor_invocation_expression(constructor_invocation_expression& expr) {
-    // NOTE : The IR builder must be at the right place (in method block for local variables, in global constructor for global variables)
     auto var_def = expr.constructed_symbol()->get_variable_def();
     if (!var_def) {
-        // Must not happen, should be already checked at resolution phase.
-        // TODO throw an exception
-        std::cerr << "Error: constructor invocation only support variable definition as constructed symbol." << std::endl;
+        throw_internal_error(0x0012, std::nullopt,
+            "Internal error: constructor invocation expression does not refer to a variable definition; "
+            "this indicates a compiler bug — the constructed symbol must be a variable");
     }
 
     auto var_type = var_def->get_type();
@@ -881,35 +937,38 @@ void implementation_generator::visit_constructor_invocation_expression(construct
     _value = nullptr;
 
     if(!object_ref) {
-        // Must not happen, should be already checked at variable definition codegen.
-        // TODO throw an exception
-        std::cerr << "Error: constructor invocation cannot find llvm reference for constructed symbol." << std::endl;
+        throw_internal_error(0x0013, std::nullopt,
+            "Internal error: failed to obtain an LLVM reference for the object being constructed ('{}'); "
+            "the variable must have been allocated before constructor code generation",
+            {var_def->get_fq_name()});
     }
 
     if (auto prim_type = std::dynamic_pointer_cast<primitive_type>(var_type)) {
-        // Primitive type has a direct initialization (no constructor function), so just generate the init expression if any, and store the value in the variable address.
         llvm::Value* value = nullptr;
         if (!expr.empty()) {
             auto first_arg = expr.argument(0);
             if (auto value_expr = std::dynamic_pointer_cast<value_expression>(first_arg)) {
                 if (!std::dynamic_pointer_cast<global_variable_definition>(value_expr)) {
-                    // Primitive constant, just store it
                     llvm::Constant* constant = _context->get_llvm_constant_from_value_expression(*value_expr);
                     if (constant == nullptr) {
-                        // TODO throw an exception
-                        std::cerr << "Error: cannot generate llvm constant from value expression for constructor invocation." << std::endl;
+                        throw_internal_error(0x0014, std::nullopt,
+                            "Internal error: failed to generate an LLVM constant from a literal value expression "
+                            "during primitive constructor invocation for variable '{}'; "
+                            "this indicates a compiler bug",
+                            {var_def->get_fq_name()});
                     } else {
                         value = constant;
                     }
                 }
             }
             if (value == nullptr) {
-                // No constant value, generate the expression as usual and store the result.
                 _value = nullptr;
                 first_arg->accept(*this);
                 if (!_value) {
-                    // TODO throw an exception
-                    std::cerr << "Error: cannot generate value for constructor argument." << std::endl;
+                    throw_internal_error(0x0015, std::nullopt,
+                        "Internal error: failed to generate an LLVM value for the initialisation argument "
+                        "of variable '{}'; the argument expression produced no result",
+                        {var_def->get_fq_name()});
                 } else {
                     value = _value;
                 }
@@ -919,57 +978,39 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             _builder->CreateStore(value, object_ref);
         }
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
-        // For struct type, constructor function is generated, so just call it and store the result
         auto st = st_type->get_struct();
-
-        // Generate arguments and add the to the args list
         std::vector<llvm::Value*> args;
-
-        // First, add the address of the struct to construct as first argument (this)
         args.push_back(object_ref);
-
-        // Then add constructor arguments if any
         for(auto arg : expr.arguments()) {
             _value = nullptr;
             arg->accept(*this);
             if(!_value) {
-                // Problem with argument generation
-                // TODO throw exception
-                std::cerr << "Problem with generation of an argument of a function call." << std::endl;
+                throw_internal_error(0x0016, std::nullopt,
+                    "Internal error: a constructor argument for type '{}' produced no LLVM value; "
+                    "this indicates a code-generation bug",
+                    {st_type->to_string()});
             }
             args.push_back(_value);
         }
-
-        // Find the function definition
         auto function = expr.get_constructor();
         auto it = _context->_functions.find(function);
         if(it==_context->_functions.end()) {
-            // Error: function definition is not found.
-            // TODO throw exception
-            std::cerr << "Error: constructor function definition is not found." << std::endl;
+            throw_internal_error(0x0017, std::nullopt,
+                "Internal error: LLVM declaration not found for constructor of type '{}'; "
+                "the declaration pass must be run before the implementation pass",
+                {st_type->to_string()});
         }
         llvm::Function* llvm_func = it->second;
         if(!llvm_func) {
-            // Error: function definition is not found.
-            // TODO throw exception
-            std::cerr << "Error: llvm function definition is not found." << std::endl;
+            throw_internal_error(0x0018, std::nullopt,
+                "Internal error: LLVM constructor function object is null for type '{}'; "
+                "this indicates a compiler bug in the declaration pass",
+                {st_type->to_string()});
         }
         _value = _builder->CreateCall(llvm_func, args);
 
     } else {
         // TODO This is probably a non-primitive primary type, so direct construction will be done
-
-        /*
-        if(auto init = var_def->get_init_expr()) {
-            _value = nullptr;
-            init->accept(*this);
-            if (_value!=nullptr) {
-                _builder->CreateStore(_value, alloca);
-                _value = nullptr;
-            } else {
-                // TODO handle error (nullptr) in init expr generation
-            }
-            */
     }
 
     // The result of a constructor invocation is the reference to the constructed object
@@ -1018,9 +1059,9 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     auto target_type = expr.get_cast_type();
 
     if(!source_type->is_resolved() || !target_type->is_resolved()) {
-        // Error: source and target types must be both resolved.
-        // TODO throw exception
-        std::cerr << "Error: in casting expression, both source and target types must be resolved." << std::endl;
+        throw_internal_error(0x0019, std::nullopt,
+            "Internal error: cast expression has an unresolved source or target type; "
+            "type resolution must complete before code generation");
     }
 
     if(type::is_pointer(source_type) && type::is_prim_bool(target_type)) {
@@ -1028,8 +1069,10 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     }
 
     if(!type::is_primitive(source_type) || !type::is_primitive(target_type)) {
-        // TODO Support also non primitive type
-        std::cerr << "Error: in casting expression, only primitive types are supported yet." << std::endl;
+        throw_error(0x001A, std::nullopt,
+            "Casting between non-primitive types is not yet supported: "
+            "cannot cast from '{}' to '{}'; only casts between primitive types are currently implemented",
+            {source_type->to_string(), target_type->to_string()});
     }
     auto src = std::dynamic_pointer_cast<primitive_type>(source_type);
     auto tgt = std::dynamic_pointer_cast<primitive_type>(target_type);
@@ -1037,9 +1080,9 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
     if(!_value) {
-        // TODO throw exception
-        // Sub expression is not reporting any value.
-        std::cerr << "Error: in casting expression, expression to cast is not returning any value." << std::endl;
+        throw_internal_error(0x001A, std::nullopt,
+            "Internal error: the expression being cast produced no LLVM value; "
+            "this indicates a code-generation bug in the sub-expression");
     }
 
     if(src->is_boolean()) {
@@ -1070,19 +1113,21 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         } else if (tgt->is_integer()) {
             if (tgt->is_signed()) {
                 if (src->is_unsigned()) {
-                    // TODO Add "Unsigned to signed" overflow warning
-                    std::cerr << "Cast unsigned integer to signed integer may result on overflow" << std::endl;
+                    auto d = k::log::diagnostic::make_warning(with_flag(0x001C),
+                        "Casting an unsigned integer to a signed integer of the same size may produce "
+                        "unexpected results if the value exceeds the signed range (overflow is implementation-defined)");
+                    report(d);
                 }
                 // SExt or trunc for signed integers
                 _value = _builder->CreateSExtOrTrunc(_value, _context->get_llvm_type(tgt));
             } else /* if (tgt->is_unsigned())*/  {
-                if (src->is_unsigned()) {
-                    // TODO Add "Signed to unsigned" truncation/misunderstanding warning
-                    std::cerr
-                            << "Cast signed integer to unsigned integer may result on truncating/misinterpreting of integers"
-                            << std::endl;
+                if (src->is_signed()) {
+                    auto d = k::log::diagnostic::make_warning(with_flag(0x001D),
+                        "Casting a signed integer to an unsigned integer may reinterpret negative values "
+                        "as large positive values (two's complement wrap-around)");
+                    report(d);
                 }
-                // SExt or trunc for signed integers
+                // ZExt or trunc for unsigned integers
                 _value = _builder->CreateZExtOrTrunc(_value, _context->get_llvm_type(tgt));
             }
         } else if (tgt->is_float()) {
