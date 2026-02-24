@@ -673,7 +673,57 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
 
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var.get_type())) {
         // Structure, try to find the right constructor
-        auto [best_constructor, adapted_args] = get_best_matching_constructor(st_type->get_struct()->constructors(), init_expr ? init_expr->arguments() : std::vector<std::shared_ptr<expression>>{});
+        auto struct_model = st_type->get_struct();
+        std::vector<std::shared_ptr<expression>> ctor_args = init_expr ? init_expr->arguments() : std::vector<std::shared_ptr<expression>>{};
+
+        // For non-static inner structs: the constructor's first parameter is __parent__.
+        // If we are inside a method of the direct enclosing struct, auto-prepend 'this'.
+        // Otherwise the caller must supply the parent explicitly (it is included in ctor_args).
+        if (struct_model && struct_model->is_inner()) {
+            auto outer_struct = struct_model->get_enclosing_structure();
+            // Detect if this variable lives inside a method of the direct enclosing struct
+            auto var_elem = dynamic_cast<const element*>(&var);
+            bool in_outer_method = false;
+            if (var_elem) {
+                auto enclosing_func = var_elem->ancestor<function>();
+                if (enclosing_func && enclosing_func->is_member() && !enclosing_func->is_static()) {
+                    auto owner_st = enclosing_func->get_owner();
+                    if (owner_st == outer_struct) {
+                        in_outer_method = true;
+                    }
+                }
+            }
+            if (in_outer_method) {
+                // Prepend 'this' (as a symbol expression) to the constructor arguments
+                auto this_sym = symbol_expression::from_identifier(k::name("this"));
+                // We need the type: it should be ref<outer_struct>
+                auto func_elem = dynamic_cast<const element*>(&var);
+                if (func_elem) {
+                    auto enclosing_func = func_elem->ancestor<function>();
+                    if (enclosing_func && enclosing_func->get_this_parameter()) {
+                        this_sym->set_target(std::const_pointer_cast<parameter>(enclosing_func->get_this_parameter()));
+                        this_sym->set_type(enclosing_func->get_this_parameter()->get_type());
+                    }
+                }
+                // Auto-prepend: only if not already provided (check ctor_args count vs constructor arity)
+                // We check: if the number of args already matches a constructor with __parent__, don't prepend.
+                // Simple heuristic: prepend if ctor_args.size() < constructors[0].parameters().size()
+                // (i.e., user didn't supply parent)
+                bool needs_inject = true;
+                if (!struct_model->constructors().empty()) {
+                    size_t n_params = struct_model->constructors()[0]->parameters().size();
+                    if (ctor_args.size() == n_params) needs_inject = false; // already has parent
+                }
+                if (needs_inject) {
+                    ctor_args.insert(ctor_args.begin(), this_sym);
+                    if (init_expr) {
+                        init_expr->arguments(ctor_args);
+                    }
+                }
+            }
+        }
+
+        auto [best_constructor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
         if (!best_constructor) {
             throw_error(0x0008, std::nullopt,
                 "No matching constructor found for variable '{}' of type '{}': "

@@ -296,7 +296,29 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
     std::vector<llvm::Type*> types;
     for (auto [var_name, var] : st->variables()) {
         auto type = var->get_type();
-        if (!type->is_resolved()) {
+
+        // For pointer/reference types whose immediate subtype is a struct_type,
+        // resolve the underlying struct first so get_llvm_type() on the pointer/ref succeeds.
+        // This handles the __parent__ field (reference to outer struct).
+        auto effective_type = type;
+        if (type::is_pointer(type) || type::is_reference(type)) {
+            auto sub = type->get_subtype();
+            if (sub) {
+                if (auto dep_st = std::dynamic_pointer_cast<struct_type>(sub)) {
+                    resolve_struct_type(dep_st, in_progress);
+                } else if (!sub->is_resolved()) {
+                    // Try resolving the sub-type first
+                    auto resolved_sub = resolve_type(sub);
+                    if (resolved_sub) {
+                        if (auto dep_st = std::dynamic_pointer_cast<struct_type>(resolved_sub)) {
+                            resolve_struct_type(dep_st, in_progress);
+                        }
+                    }
+                }
+            }
+            // The pointer/reference type is now implicitly resolved (subtype has LLVM type).
+            effective_type = type;
+        } else if (!type->is_resolved()) {
             // Not resolved, try to resolve it.
             auto res_type = resolve_type(type);
             if (!res_type) {
@@ -308,13 +330,13 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
                 resolve_struct_type(dep_st_type, in_progress);
             }
             var->set_type(res_type);
-            type = res_type;
+            effective_type = res_type;
         } else if (auto dep_st_type = std::dynamic_pointer_cast<struct_type>(type)) {
             // Already a struct_type but may not have its LLVM type yet (e.g. forward reference).
             resolve_struct_type(dep_st_type, in_progress);
         }
-        fields.emplace_back(fields.size(), var_name, type);
-        types.push_back(get_llvm_type(type));
+        fields.emplace_back(fields.size(), var_name, effective_type);
+        types.push_back(get_llvm_type(effective_type));
     }
     auto llvm_type = llvm::StructType::create(llvm_context(), llvm::ArrayRef<llvm::Type*>(types), st_type->name());
     auto default_const_value = llvm::ConstantAggregateZero::get(llvm_type);
@@ -398,6 +420,10 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
                 return resolved_type;
             }
         }
+    } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(type)) {
+        // Already a struct_type (possibly not yet LLVM-resolved) — return it as-is.
+        // The LLVM type will be set when resolve_struct_type runs.
+        return st_type;
     } else {
         // Unknown type
         return nullptr;

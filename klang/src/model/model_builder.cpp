@@ -121,6 +121,9 @@ namespace k::model {
 
         std::shared_ptr<model::structure> struc = parent_scope->define_structure(std::string{st.name.content});
 
+        // Detect if declared inside an outer structure and if the static specifier is present
+        bool is_static_nested = lex::keyword::has(st.specifiers, lex::keyword::STATIC);
+        struc->set_static_nested(is_static_nested);
 
         // Push function context
         stack<struct_context> push(_contexts, struc);

@@ -18,6 +18,10 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 
+#include "../model/expressions.hpp"
+#include "../model/statements.hpp"
+#include "../model/operators.hpp"
+
 #include <llvm/IR/Verifier.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
@@ -166,6 +170,28 @@ void symbol_resolver::visit_structure(structure& st) {
     _context->add_struct(st_type);
     st.set_struct_type(st_type);
 
+    // Visit nested structure children first (they need their own types declared)
+    for(auto& child : st.get_children()) {
+        if(auto nested_st = std::dynamic_pointer_cast<structure>(child)) {
+            nested_st->accept(*this);
+        }
+    }
+
+    // For non-static inner structs, inject a synthetic __parent__ member variable
+    // (a reference to the enclosing struct). This is index-0 in the LLVM layout.
+    if (st.is_inner()) {
+        auto outer_st = st.get_enclosing_structure();
+        // __parent__ is stored as a pointer (like 'this') but typed as a reference at model level
+        auto outer_ref_type = outer_st->get_struct_type()->get_reference();
+        auto parent_field = member_variable_definition::make_shared(st.shared_as<structure>(), "__parent__");
+        parent_field->set_type(outer_ref_type);
+        // Register it as first entry in vars and children
+        st._vars.insert({"__parent__", parent_field});
+        st._children.insert(st._children.begin(), parent_field);
+        // Store reference on structure for easy access later
+        st._parent_field = parent_field;
+    }
+
     // Visit member variable children
     for(auto& child : st.get_children()) {
         if(auto var = std::dynamic_pointer_cast<member_variable_definition>(child)) {
@@ -199,8 +225,16 @@ void symbol_resolver::visit_structure(structure& st) {
 }
 
 void type_reference_resolver::visit_structure(structure& st) {
-    // Visit all functions (including constructors and destructors).
+    // Visit nested structure children first
     for(auto& child : st.get_children()) {
+        if(auto nested_st = std::dynamic_pointer_cast<structure>(child)) {
+            nested_st->accept(*this);
+        }
+    }
+
+    // Visit all other functions (including constructors and destructors), skip nested structs.
+    for(auto& child : st.get_children()) {
+        if(std::dynamic_pointer_cast<structure>(child)) continue;
         child->accept(*this);
     }
     // After all members are resolved, check for overload collisions.
@@ -211,7 +245,7 @@ void type_reference_resolver::visit_structure(structure& st) {
 void declaration_generator::visit_structure(structure& st) {
     _struct_stack.push(st.shared_as<structure>());
 
-    // Visit all children (variables, methods, constructors, destructor).
+    // Visit all children (variables, methods, constructors, destructor, nested structs).
     for(auto& child : st.get_children()) {
         child->accept(*this);
     }
@@ -222,7 +256,7 @@ void declaration_generator::visit_structure(structure& st) {
 void implementation_generator::visit_structure(structure& st) {
     _struct_stack.push(st.shared_as<structure>());
 
-    // Visit all children (variables, methods, constructors, destructor).
+    // Visit all children (variables, methods, constructors, destructor, nested structs).
     for(auto& child : st.get_children()) {
         child->accept(*this);
     }
@@ -242,6 +276,8 @@ void symbol_resolver::visit_member_variable_definition(member_variable_definitio
 }
 
 void type_reference_resolver::visit_member_variable_definition(member_variable_definition& var) {
+    // __parent__ field is already assigned a resolved pointer type by symbol_resolver; skip.
+    if (var.get_short_name() == "__parent__") return;
     // Do nothing for now
     // Everything is done at structure level
 }
@@ -489,11 +525,38 @@ void implementation_generator::visit_function(function &function) {
 
     if (auto ctor = function.shared_as<constructor>()) {
         // For constructor, start by initializing all members
-        auto this_param = _context->_function_this_variables.find(function.shared_as<model::function>())->second;
+        auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+        auto this_param = this_param_it->second;
         auto st = ctor->get_owner();
         auto type = st->get_struct_type()->get_llvm_type();
         auto zero_init = llvm::ConstantAggregateZero::get(type);
-        _builder->CreateStore(zero_init, _builder->CreateLoad(st->get_struct_type()->get_reference()->get_llvm_type(), this_param));
+        auto this_ptr = _builder->CreateLoad(st->get_struct_type()->get_reference()->get_llvm_type(), this_param);
+        _builder->CreateStore(zero_init, this_ptr);
+
+        // For non-static inner struct constructors: store the __parent__ parameter
+        // (first explicit parameter, type Outer&) into the __parent__ field (LLVM struct field index 0).
+        if (st->is_inner()) {
+            auto parent_param_model = ctor->get_parameter("__parent__");
+            if (parent_param_model) {
+                auto parent_param_alloca_it = _context->_parameter_variables.find(
+                    std::const_pointer_cast<parameter>(parent_param_model));
+                if (parent_param_alloca_it != _context->_parameter_variables.end()) {
+                    auto parent_param_alloca = parent_param_alloca_it->second;
+                    // Load the outer struct pointer (ref = opaque ptr at LLVM level)
+                    auto outer_ref_llvm_type = _context->get_llvm_type(
+                        st->get_enclosing_structure()->get_struct_type()->get_reference());
+                    auto parent_ptr_val = _builder->CreateLoad(outer_ref_llvm_type, parent_param_alloca, "parent_ref_val");
+                    // GEP to __parent__ field (field index 0)
+                    auto parent_field_ptr = _builder->CreateStructGEP(
+                        _context->get_llvm_type(st->get_struct_type()),
+                        this_ptr,
+                        0,
+                        "this_parent_field_ptr"
+                    );
+                    _builder->CreateStore(parent_ptr_val, parent_field_ptr);
+                }
+            }
+        }
     }
 
     // Produce content
@@ -532,6 +595,19 @@ void implementation_generator::optimize_function_dead_inst_elimination(llvm::Fun
 //
 
 void symbol_resolver::visit_constructor(constructor& ctor) {
+    // For non-static inner structs, inject the implicit 'parent' parameter
+    // as the first explicit parameter (position 0, after the implicit 'this').
+    // Type is Outer& (reference), consistent with 'this' parameter semantics.
+    auto st = ctor.get_owner();
+    if (st && st->is_inner()) {
+        auto outer_st = st->get_enclosing_structure();
+        auto outer_ref_type = outer_st->get_struct_type()->get_reference();
+        // Only inject if not already present (avoid double-injection if revisited)
+        if (!ctor.get_parameter("__parent__")) {
+            ctor.insert_parameter("__parent__", outer_ref_type, 0);
+        }
+    }
+
     // Before resolving the block, inject expression_statements for each explicit member
     // initializer into the beginning of the constructor block. This ensures that when
     // visit_function → visit_block visits the block, the symbol expressions inside the
@@ -540,7 +616,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
     // Injected in struct member declaration order (as in C++), not in the list order.
 
     auto blck = ctor.get_block();
-    auto st = ctor.get_owner();
+    // Note: 'st' already declared above for inner-struct check
     if (blck && st && !ctor.member_inits().empty()) {
         // Build a lookup map from member name to mem_init_spec
         std::unordered_map<std::string, const constructor::member_init_spec*> init_by_name;
@@ -569,6 +645,10 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
             }
         }
     }
+
+    // For non-static inner struct constructors, the __parent__ field is stored
+    // directly at IR level in implementation_generator::visit_function (constructor prologue).
+    // No model-level injection needed here.
 
     visit_function(ctor);
 }
@@ -603,6 +683,8 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
     block::iterator insert_pos = blck->begin();
     for (auto& var_entry : st->variables()) {
         if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
+            // Skip __parent__ field — stored directly at IR level in constructor prologue
+            if (var->get_short_name() == "__parent__") continue;
             if (explicit_init_names.count(var->get_short_name()) > 0) {
                 // This member has an explicit initializer already in the block: skip past it
                 ++insert_pos;

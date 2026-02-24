@@ -18,6 +18,10 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 
+#include "../model/expressions.hpp"
+#include "../model/statements.hpp"
+#include "../model/operators.hpp"
+
 #include "llvm/Support/raw_os_ostream.h"
 template<typename STM>
 inline STM& operator << (STM& stm, const llvm::Type& type) {
@@ -168,27 +172,69 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                     {func->get_fq_name(), member_var->get_fq_name()});
             }
 
-            // Get member variable
+            // Get member variable — potentially from an ancestor struct via __parent__ chain
             if(_struct_stack.empty()) {
                 throw_internal_error(0x0003, std::nullopt,
                     "Internal error: no struct context on the code-generation stack when accessing member variable '{}'; "
                     "member access code generation must be performed inside a struct method",
                     {name});
             }
-            auto struct_ref = _struct_stack.top();
-            auto struct_type = struct_ref->get_struct_type();
+
+            // Determine if the member belongs to the current struct or an ancestor struct.
+            // Build the chain of structs from the current (innermost) up to the owning struct.
+            auto member_owner = member_var->parent<structure>();
+            auto current_struct = _struct_stack.top();
+
+            // Walk the __parent__ chain to reach the owning struct
+            auto current_struct_type = current_struct->get_struct_type();
+            llvm::Value* this_ptr = _builder->CreateLoad(
+                    _context->get_llvm_type(current_struct_type->get_reference()),
+                    this_value_ref,
+                    "this_ref"
+            );
+
+            // Navigate __parent__ pointers until we reach the struct that owns member_var
+            auto walk_struct = current_struct;
+            while (walk_struct && walk_struct != member_owner) {
+                if (!walk_struct->is_inner()) {
+                    throw_internal_error(0x0004, std::nullopt,
+                        "Internal error: could not reach owning struct '{}' for member '{}' via __parent__ chain; "
+                        "the struct hierarchy is inconsistent",
+                        {member_owner ? member_owner->get_short_name() : "?", name});
+                }
+                // GEP to __parent__ field (always index 0 for inner structs)
+                auto walk_st_type = walk_struct->get_struct_type();
+                this_ptr = _builder->CreateStructGEP(
+                        _context->get_llvm_type(walk_st_type),
+                        this_ptr,
+                        0, // __parent__ is always field 0
+                        "parent_field_ptr"
+                );
+                // Load the parent reference (stored as opaque pointer, same as 'this')
+                auto outer_struct = walk_struct->get_enclosing_structure();
+                auto outer_ref_type = outer_struct->get_struct_type()->get_reference();
+                this_ptr = _builder->CreateLoad(
+                        _context->get_llvm_type(outer_ref_type),
+                        this_ptr,
+                        "parent_ref"
+                );
+                walk_struct = outer_struct;
+            }
+
+            if (!walk_struct) {
+                throw_internal_error(0x0005, std::nullopt,
+                    "Internal error: could not find owning struct for member variable '{}' in __parent__ chain",
+                    {name});
+            }
+
+            auto struct_type = walk_struct->get_struct_type();
             if(struct_type) {
                 if(auto field = struct_type->get_member(name); field) {
-                    auto this_ptr = _builder->CreateLoad(
-                            _context->get_llvm_type(struct_type->get_reference()),
-                            this_value_ref,
-                            "this_ref"
-                    );
                     ptr = _builder->CreateStructGEP(
                             _context->get_llvm_type(struct_type),
                             this_ptr,
                             (unsigned)field->index,
-                            "this_" + struct_ref->get_short_name() + "_" + name + "_ptr"
+                            "this_" + walk_struct->get_short_name() + "_" + name + "_ptr"
                     );
                 } else {
                     throw_internal_error(0x0004, std::nullopt,
@@ -936,7 +982,38 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
         }
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
         auto st = st_type->get_struct();
-        auto [best_constructor, adapted_args] = get_best_matching_constructor(st_type->get_struct()->constructors(), expr.arguments());
+        std::vector<std::shared_ptr<expression>> ctor_args = expr.arguments();
+
+        // For non-static inner structs: auto-inject __parent__ if constructing from the outer struct context
+        if (st && st->is_inner()) {
+            auto outer_struct = st->get_enclosing_structure();
+            auto var_elem = dynamic_cast<const element*>(var_def.get());
+            bool in_outer_method = false;
+            if (var_elem) {
+                auto enclosing_func = var_elem->ancestor<function>();
+                if (enclosing_func && enclosing_func->is_member() && !enclosing_func->is_static()) {
+                    if (enclosing_func->get_owner() == outer_struct) in_outer_method = true;
+                }
+            }
+            if (in_outer_method) {
+                bool needs_inject = true;
+                if (!st->constructors().empty()) {
+                    if (ctor_args.size() == st->constructors()[0]->parameters().size()) needs_inject = false;
+                }
+                if (needs_inject) {
+                    auto this_sym = symbol_expression::from_identifier(k::name("this"));
+                    auto enclosing_func = var_elem->ancestor<function>();
+                    if (enclosing_func && enclosing_func->get_this_parameter()) {
+                        this_sym->set_target(std::const_pointer_cast<parameter>(enclosing_func->get_this_parameter()));
+                        this_sym->set_type(enclosing_func->get_this_parameter()->get_type());
+                    }
+                    ctor_args.insert(ctor_args.begin(), this_sym);
+                    expr.arguments(ctor_args);
+                }
+            }
+        }
+
+        auto [best_constructor, adapted_args] = get_best_matching_constructor(st->constructors(), ctor_args);
         if (!best_constructor) {
             throw_error(0x002A, std::nullopt,
                 "No matching constructor found for member initialisation of type '{}': "

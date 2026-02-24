@@ -327,6 +327,7 @@ protected:
 
     friend class structure;
     friend class gen::implementation_generator;
+    friend class gen::symbol_resolver;
 
     member_variable_definition(std::shared_ptr<structure> st);
 
@@ -339,7 +340,7 @@ public:
 
 };
 
-class structure : public element, public named_element, public variable_holder, public function_holder {
+class structure : public element, public named_element, public variable_holder, public function_holder, public structure_holder {
 protected:
     friend class ns;
     friend class gen::implementation_generator;
@@ -360,6 +361,12 @@ protected:
 
     std::shared_ptr<struct_type> _type;
 
+    /** True if this structure is a static nested struct (no implicit parent reference). */
+    bool _is_static_nested = false;
+
+    /** Synthetic member variable for the implicit parent pointer (non-static nested structs only). */
+    std::shared_ptr<member_variable_definition> _parent_field;
+
     structure(std::shared_ptr<element> parent) :
         element(parent) {}
 
@@ -370,6 +377,9 @@ protected:
 
     std::shared_ptr<function> do_create_function(const std::string &name, bool is_static) override;
     void on_function_defined(std::shared_ptr<function>) override;
+
+    std::shared_ptr<structure> do_create_structure(const std::string &name) override;
+    void on_structure_defined(std::shared_ptr<structure>) override;
 
     void set_struct_type(const std::shared_ptr<struct_type>& st_type) {
         _type = st_type;
@@ -384,6 +394,26 @@ public:
     std::shared_ptr<struct_type> get_struct_type() const {
         return _type;
     }
+
+    /** True if this structure is declared inside another structure (static or non-static). */
+    bool is_nested() const { return !!parent<structure>(); }
+
+    /** True if this structure is a static nested struct (no implicit parent reference). */
+    bool is_static_nested() const { return _is_static_nested; }
+
+    /** Set whether this is a static nested struct. */
+    void set_static_nested(bool v) { _is_static_nested = v; }
+
+    /** True if this is a non-static inner struct (has an implicit parent reference). */
+    bool is_inner() const { return is_nested() && !_is_static_nested; }
+
+    /** Returns the direct enclosing structure, or nullptr if not nested. */
+    std::shared_ptr<structure> get_enclosing_structure() const {
+        return std::const_pointer_cast<structure>(parent<structure>());
+    }
+
+    /** Returns the synthetic __parent__ member variable (non-static inner structs only, set during symbol resolution). */
+    std::shared_ptr<member_variable_definition> get_parent_field() const { return _parent_field; }
 
     //
     // Children functions

@@ -653,6 +653,14 @@ void structure::on_variable_defined(std::shared_ptr<variable_definition> var) {
     }
 }
 
+std::shared_ptr<structure> structure::do_create_structure(const std::string &name) {
+    return structure::make_shared(shared_as<structure>(), name);
+}
+
+void structure::on_structure_defined(std::shared_ptr<structure> st) {
+    _children.push_back(st);
+}
+
 //
 // Global variable definition
 //
