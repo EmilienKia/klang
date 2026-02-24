@@ -238,6 +238,19 @@ namespace k::model {
                 }
                 ctor->add_member_init(std::string{ast_mi.name.content}, std::move(init_args));
             }
+        } else if (auto sctor = std::dynamic_pointer_cast<static_constructor>(function)) {
+            // For a static constructor, the mem-init list declares dependency ordering:
+            // `static S() : A(), gvar() {}` means S must be initialized after A and gvar.
+            // No initialization arguments are accepted; we validate and record the names only.
+            for (auto& ast_mi : func.member_inits) {
+                if (!ast_mi.args.empty()) {
+                    throw_error(0x0020, func.name,
+                        "Static constructor dependency '{}' must not have arguments; "
+                        "the mem-init list of a static constructor declares ordering dependencies only, not initializers",
+                        {std::string{ast_mi.name.content}});
+                }
+                sctor->add_static_dep(std::string{ast_mi.name.content});
+            }
         }
 
         if(func.content) {

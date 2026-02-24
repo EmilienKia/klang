@@ -458,50 +458,35 @@ void global_tool_function::update_mangled_name() {
 }
 
 void global_tool_function::add_global_variable_definition(const std::shared_ptr<global_variable_definition>& gv) {
-    // TODO Look at dependencies
-    _global_vars.insert({gv, {}});
+    _global_vars.push_back(gv);
+}
+
+void global_tool_function::add_static_constructor(const std::shared_ptr<static_constructor>& sctor) {
+    _static_ctors.push_back(sctor);
 }
 
 void global_tool_function::add_static_function(const std::shared_ptr<function>& func) {
-    _static_funcs.push_back(func);
+    if (auto sctor = std::dynamic_pointer_cast<static_constructor>(func)) {
+        add_static_constructor(sctor);
+    }
+    // static_destructor registration is handled separately via destructor global_tool_function
 }
 
 std::vector<std::shared_ptr<global_variable_definition>> global_tool_function::get_sorted_global_variables() const {
     std::vector<std::shared_ptr<global_variable_definition>> res;
-
-    enum class mark { Unvisited, Visiting, Done };
-    std::map<std::shared_ptr<global_variable_definition>, mark> state;
-
-    auto visit = [&](auto &self, const std::shared_ptr<global_variable_definition> &node) -> void {
-        auto it = state.find(node);
-        if (it != state.end()) {
-            if (it->second == mark::Visiting) {
-                // TODO Add more details in the error message
-                throw std::runtime_error("Cycle detected in global variable initialization order");
-            }
-            if (it->second == mark::Done) {
-                return;
-            }
+    for (auto& item : _ordered_items) {
+        if (auto gv = std::get_if<std::shared_ptr<global_variable_definition>>(&item)) {
+            res.push_back(*gv);
         }
-        state[node] = mark::Visiting;
+    }
+    return res;
+}
 
-        auto dep_it = _global_vars.find(node);
-        if (dep_it != _global_vars.end()) {
-            for (const auto &dep: dep_it->second) {
-                if (_global_vars.find(dep) == _global_vars.end()) {
-                    continue; // ignore dependencies not in the list
-                }
-                self(self, dep);
-            }
-        }
-
-        state[node] = mark::Done;
-        res.push_back(node);
-    };
-
-    for (const auto &entry: _global_vars) {
-        if (state.find(entry.first) == state.end()) {
-            visit(visit, entry.first);
+std::vector<std::shared_ptr<function>> global_tool_function::get_static_functions() const {
+    std::vector<std::shared_ptr<function>> res;
+    for (auto& item : _ordered_items) {
+        if (auto sc = std::get_if<std::shared_ptr<static_constructor>>(&item)) {
+            res.push_back(*sc);
         }
     }
 

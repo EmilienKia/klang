@@ -20,6 +20,8 @@
 #define KLANG_RESOLVERS_HPP
 
 #include <limits>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "../model/model.hpp"
 #include "../model/model_visitor.hpp"
@@ -421,6 +423,140 @@ protected:
      * @return The given arg expression if already compatible, the new wrapping casting expr if mapping, nullptr if not possible.
      */
     std::shared_ptr<expression> adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type);
+};
+
+
+/**
+ * Global initialization/finalization order resolver.
+ *
+ * This pass runs AFTER type_reference_resolver has registered all global
+ * variables and static constructors into the global_constructor_function.
+ * It computes a single unified topological ordering over all "init items"
+ * (static_constructors and global_variable_definitions) and stores it in
+ * the global_constructor_function and global_destructor_function.
+ *
+ * ─── Dependency rules ────────────────────────────────────────────────────────
+ *
+ * For every static_constructor SC of struct S:
+ *   1. Explicit deps from mem-init list:
+ *      `static S() : A(), gvar() {}`
+ *      → SC depends on:
+ *        - static_constructor(A)  (if A is a known struct)
+ *        - global_variable(gvar)  (if gvar is a known global/static var)
+ *   2. Implicit: all static members of S (global_variable_definition whose
+ *      owner is S) must be initialized AFTER SC (i.e. they depend on SC).
+ *
+ * For every global_variable_definition GV:
+ *   3. If GV has a struct type T that has a static_constructor:
+ *      → GV depends on static_constructor(T).
+ *   4. For every symbol_expression E in the init-expression of GV that
+ *      resolves to a global_variable_definition D:
+ *      → GV depends on D.
+ *   5. For every constructor_invocation_expression in the init-expression
+ *      of GV that references a constructor of struct T:
+ *      - if T has a static_constructor SC: → GV depends on SC.
+ *      - for every global referenced inside that constructor's body: → GV
+ *        depends on that global.
+ *   6. For every function_invocation_expression used in the init-expression
+ *      of GV: apply the same analysis to the callee's body.
+ *
+ * ─── Algorithm ───────────────────────────────────────────────────────────────
+ *
+ *   The resolver builds a directed graph Node → {dependencies}.
+ *   A dependency edge  A → B  means "A must be initialized before B"
+ *   (equivalently: B depends on A).
+ *
+ *   It then performs an iterative Kahn's algorithm (BFS topological sort):
+ *     1. Compute in-degree for every node.
+ *     2. Seed the queue with all nodes of in-degree 0.
+ *     3. Repeatedly dequeue a node, append it to the result, and decrement
+ *        in-degree of its successors; re-enqueue successors reaching 0.
+ *     4. If the result does not contain all nodes, a cycle exists → error.
+ *
+ *   Construction order = topological order.
+ *   Destruction order  = exact reverse.
+ *
+ * ─── Error reporting ─────────────────────────────────────────────────────────
+ *
+ *   - Cycle in dependency graph → resolution_error listing the cycle members.
+ *   - Unknown name in mem-init list → resolution_error.
+ */
+class init_order_resolver : protected k::log::logger_relay {
+protected:
+    std::shared_ptr<context> _context;
+    unit& _unit;
+
+    static constexpr unsigned int LOG_BASE = 0x60000;
+    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
+
+    [[noreturn]] void throw_error(unsigned int code,
+                                  const std::string& message,
+                                  const std::vector<std::string>& args = {}) {
+        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        logger_relay::report(diag);
+        throw resolution_error(std::move(diag));
+    }
+
+    [[noreturn]] void throw_internal_error(unsigned int code,
+                                           const std::string& message,
+                                           const std::vector<std::string>& args = {}) {
+        throw_error(INTERNAL_ERROR_BASE + code, message, args);
+    }
+
+public:
+    init_order_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& u)
+        : k::log::logger_relay(logger, LOG_BASE), _context(context), _unit(u) {}
+
+    /**
+     * Run the resolver: compute the unified ordered init/finit sequence and
+     * store it into the global_constructor_function and global_destructor_function.
+     */
+    void resolve();
+
+private:
+    /** An init node is either a static_constructor or a global_variable_definition. */
+    using node_t = init_item; // alias for clarity
+
+    /** Return a human-readable label for a node (for error messages). */
+    static std::string node_label(const node_t& n);
+
+    /**
+     * Collect all global_variable_definition and global_variable_definition-typed
+     * symbol references that appear anywhere inside an expression tree.
+     */
+    void collect_global_deps_from_expr(
+        const std::shared_ptr<expression>& expr,
+        std::vector<std::shared_ptr<global_variable_definition>>& out_globals,
+        std::vector<std::shared_ptr<struct_type>>&               out_struct_types,
+        std::unordered_set<const function*>&                     visited_funcs);
+
+    /**
+     * Collect dependencies of a global_variable_definition node:
+     * - struct type's static_constructor (rule 3)
+     * - globals referenced in init expression (rule 4)
+     * - struct type of constructor args & callee bodies (rules 5–6)
+     */
+    void collect_deps_for_global(
+        const std::shared_ptr<global_variable_definition>& gv,
+        const std::unordered_map<const static_constructor*, size_t>& sctor_index,
+        const std::unordered_map<const global_variable_definition*, size_t>& gv_index,
+        std::vector<std::vector<size_t>>& adj,   // adj[from] → list of to
+        size_t my_idx);
+
+    /**
+     * Collect dependencies of a static_constructor node:
+     * - explicit deps from mem-init list, already resolved to concrete model elements
+     *   by symbol_resolver::visit_static_constructor (rules 1–2).
+     *   Reads static_dep_spec::resolved — no name lookup is performed here.
+     * - implicit: static members of the owning struct depend ON this node
+     *   (handled during global dep collection instead, to keep this function simple).
+     */
+    void collect_deps_for_sctor(
+        const std::shared_ptr<static_constructor>& sctor,
+        const std::unordered_map<const static_constructor*, size_t>& sctor_index,
+        const std::unordered_map<const global_variable_definition*, size_t>& gv_index,
+        std::vector<std::vector<size_t>>& adj,
+        size_t my_idx);
 };
 
 

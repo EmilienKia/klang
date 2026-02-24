@@ -67,6 +67,7 @@ namespace gen {
 class type_reference_resolver;
 class declaration_generator;
 class implementation_generator;
+class init_order_resolver;
 }
 
 enum visibility {
@@ -575,9 +576,63 @@ public:
  * Acts as a class initializer. Its execution is registered in the global initializer function.
  */
 class static_constructor : public function {
+public:
+    /**
+     * A dependency declared in the static constructor's mem-init list.
+     * Syntax: `static S() : A(), gvar() {}`
+     *
+     * Each entry is initially created with only a raw name (from the parser/model_builder).
+     * During symbol resolution (symbol_resolver::visit_static_constructor), the name is
+     * resolved to either a `structure` (whose static constructor must run first) or a
+     * `global_variable_definition` (which must be initialized first).
+     * After resolution the `resolved` variant holds the concrete model element; the raw
+     * `name` string is kept for diagnostics only.
+     *
+     * Resolution is performed exclusively by gen::symbol_resolver — the model itself
+     * contains no resolution logic.
+     */
+    struct static_dep_spec {
+        /// Raw name as written in source — kept for error messages only.
+        std::string name;
+
+        /// Resolved target: monostate = not yet resolved (or resolution failed),
+        /// shared_ptr<structure> = depends on that struct's static constructor,
+        /// shared_ptr<global_variable_definition> = depends on that global variable.
+        std::variant<
+            std::monostate,
+            std::shared_ptr<structure>,
+            std::shared_ptr<global_variable_definition>
+        > resolved;
+
+        bool is_resolved() const { return resolved.index() != 0; }
+
+        /// True when the dep resolved to a structure.
+        bool is_structure() const {
+            return std::holds_alternative<std::shared_ptr<structure>>(resolved);
+        }
+        /// True when the dep resolved to a global variable.
+        bool is_global_variable() const {
+            return std::holds_alternative<std::shared_ptr<global_variable_definition>>(resolved);
+        }
+
+        /// Returns the resolved structure (nullptr if not a structure dep).
+        std::shared_ptr<structure> get_structure() const {
+            auto* p = std::get_if<std::shared_ptr<structure>>(&resolved);
+            return p ? *p : nullptr;
+        }
+        /// Returns the resolved global variable (nullptr if not a global-var dep).
+        std::shared_ptr<global_variable_definition> get_global_variable() const {
+            auto* p = std::get_if<std::shared_ptr<global_variable_definition>>(&resolved);
+            return p ? *p : nullptr;
+        }
+    };
+
 protected:
     friend class structure;
     friend class gen::symbol_resolver;
+    friend class gen::init_order_resolver;
+
+    std::vector<static_dep_spec> _static_deps;
 
     static_constructor(std::shared_ptr<structure> parent) :
         function(parent, true) {}
@@ -588,6 +643,17 @@ protected:
 
 public:
     void accept(model_visitor& visitor) override;
+
+    /// Called by model_builder: adds an unresolved dep with the given raw name.
+    void add_static_dep(const std::string& raw_name) {
+        _static_deps.push_back({raw_name, std::monostate{}});
+    }
+
+    /// Returns the full list of dependency specs (resolved or not).
+    const std::vector<static_dep_spec>& member_inits() const { return _static_deps; }
+
+    /// Returns a mutable reference used by gen::symbol_resolver to fill in resolved targets.
+    std::vector<static_dep_spec>& mutable_member_inits() { return _static_deps; }
 };
 
 
@@ -612,13 +678,51 @@ public:
 };
 
 
+/**
+ * An "init item" is one node in the global initialization/finalization graph.
+ * It is either:
+ *   - a static_constructor (class-level initializer for a structure), or
+ *   - a global_variable_definition (global or static struct member variable).
+ *
+ * This variant type is used in the unified ordered init/finit sequence produced
+ * by init_order_resolver.
+ */
+using init_item = std::variant<
+    std::shared_ptr<static_constructor>,
+    std::shared_ptr<global_variable_definition>
+>;
+
+
 class global_tool_function : public function {
 protected:
-    /** Map of global variables to initialize globally, with their dependencies (to be initialized before them) */
-    std::map<std::shared_ptr<global_variable_definition>, std::vector<std::shared_ptr<global_variable_definition>>> _global_vars;
+    /**
+     * Raw (unordered) set of global variables registered for initialization.
+     * Populated by type_reference_resolver::visit_global_variable_definition.
+     * Key = global variable, Value = set of explicit global-variable dependencies
+     * (filled later by init_order_resolver).
+     */
+    std::vector<std::shared_ptr<global_variable_definition>> _global_vars;
 
-    /** Ordered list of static constructors/destructors to call (in registration order). */
-    std::vector<std::shared_ptr<function>> _static_funcs;
+    /**
+     * Raw (unordered) set of static constructors registered for initialization.
+     * Populated by type_reference_resolver::visit_static_constructor.
+     */
+    std::vector<std::shared_ptr<static_constructor>> _static_ctors;
+
+    /**
+     * Unified ordered init sequence produced by init_order_resolver::resolve().
+     * For the constructor function this is construction order (dependencies first).
+     * For the destructor function this is the exact reverse.
+     * Each element is either a static_constructor or a global_variable_definition.
+     */
+    std::vector<init_item> _ordered_items;
+
+    /**
+     * Standalone static destructors: structs that have a static ~S() but no static S().
+     * These are only meaningful for the destructor function; stored separately since
+     * they have no corresponding init_item in the construction order.
+     */
+    std::vector<std::shared_ptr<static_destructor>> _standalone_sdtors;
 
     global_tool_function(std::shared_ptr<element> parent) : function(parent) {
     }
@@ -629,20 +733,47 @@ public:
 
     void update_mangled_name() override;
 
+    /** Register a global variable for initialization (called during type resolution). */
     void add_global_variable_definition(const std::shared_ptr<global_variable_definition>& gv);
 
-    /** Register a static constructor or destructor for invocation by this global tool function. */
+    /** Register a static constructor for initialization (called during type resolution). */
+    void add_static_constructor(const std::shared_ptr<static_constructor>& sctor);
+
+    /** (Legacy shim) register any static function — only static_constructor supported here. */
     void add_static_function(const std::shared_ptr<function>& func);
 
-    /** Returns the ordered list of static functions to call. */
-    const std::vector<std::shared_ptr<function>>& get_static_functions() const { return _static_funcs; }
+    /** Returns the raw (unordered) list of registered global variables. */
+    const std::vector<std::shared_ptr<global_variable_definition>>& get_global_variables() const { return _global_vars; }
+
+    /** Returns the raw (unordered) list of registered static constructors. */
+    const std::vector<std::shared_ptr<static_constructor>>& get_static_constructors() const { return _static_ctors; }
+
+    /** Returns the unified ordered init sequence (set by init_order_resolver). */
+    const std::vector<init_item>& get_ordered_items() const { return _ordered_items; }
+
+    /** Set the ordered sequence (called by init_order_resolver). */
+    void set_ordered_items(std::vector<init_item> items) { _ordered_items = std::move(items); }
+
+    /** Add standalone static destructors (set by init_order_resolver for destructor function). */
+    void add_standalone_static_dtors(const std::vector<std::shared_ptr<static_destructor>>& dtors) {
+        _standalone_sdtors.insert(_standalone_sdtors.end(), dtors.begin(), dtors.end());
+    }
+
+    /** Returns standalone static destructors (structs with ~S() but no S()). */
+    const std::vector<std::shared_ptr<static_destructor>>& get_standalone_static_dtors() const {
+        return _standalone_sdtors;
+    }
 
     /**
-     * Return the list of global variables sorted in their initialization order.
-     * The initialization of a variable must occur after all their dependencies initialization
-     * @return The list of variables to initialize, in the global correct initialization order (dependencies before dependents).
+     * Legacy: return sorted global variables in initialization order (from _ordered_items).
+     * Only includes global_variable_definition items from the ordered sequence.
      */
     std::vector<std::shared_ptr<global_variable_definition>> get_sorted_global_variables() const;
+
+    /**
+     * Legacy: return static constructors in initialization order (from _ordered_items).
+     */
+    std::vector<std::shared_ptr<function>> get_static_functions() const;
 
 };
 
@@ -792,6 +923,7 @@ protected:
     friend class k::model::gen::type_reference_resolver;
     friend class k::model::gen::declaration_generator;
     friend class k::model::gen::implementation_generator;
+    friend class k::model::gen::init_order_resolver;
 
     global_constructor_function& get_global_constructor_function() {return *_global_constructor_func;}
     global_destructor_function& get_global_destructor_function() {return *_global_destructor_func;}

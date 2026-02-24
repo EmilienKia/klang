@@ -86,6 +86,7 @@ add_executable(tests
         tests/test-gen.cpp
         tests/test-gen-resolution.cpp
         tests/test-gen-static-ctor-dtor.cpp
+        tests/test-gen-init-order.cpp
         tests/test-run.cpp
 )
 target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain)
