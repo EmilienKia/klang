@@ -1,0 +1,130 @@
+# Statements
+
+[← Index](../index.md)
+
+A *statement* is an executable unit of code inside a function body.
+Statements are executed sequentially within a block.
+
+---
+
+## Contents
+1. [Statement grammar overview](#1-statement-grammar-overview)
+2. [Block statement](#2-block-statement)
+3. [Expression statement](#3-expression-statement)
+4. [Variable declaration statement](#4-variable-declaration-statement)
+5. [Statement list and links](#5-statement-list-and-links)
+---
+## 1. Statement grammar overview
+```
+Statement:
+    BlockStatement
+    | ReturnStatement
+    | IfElseStatement
+    | WhileStatement
+    | ForStatement
+    | VariableDecl ';'
+    | ExpressionStatement
+BlockStatement:
+    '{' { Statement } '}'
+ExpressionStatement:
+    [ Expression ] ';'
+```
+---
+## 2. Block statement
+A block encloses a sequence of statements and introduces a new scope for local variables.  
+Variables declared inside a block are destroyed when the block exits.
+### Grammar
+```
+BlockStatement:
+    '{' { Statement } '}'
+```
+Blocks are used as the body of functions, `if`/`else` branches, `while` and `for` loops.
+**Example:**
+```k
+{
+    x : int = 5;
+    y : int = x + 1;
+    // x and y are destroyed here
+}
+```
+---
+## 3. Expression statement
+An expression followed by a semicolon.  
+Used to evaluate expressions for their side effects (assignments, function calls, increment/decrement).
+### Grammar
+```
+ExpressionStatement:
+    [ Expression ] ';'
+```
+A lone `;` is a valid empty statement.
+**Examples:**
+```k
+x = 42;
+p.add(8);
+i++;
+++counter;
+```
+---
+## 4. Variable declaration statement
+A local variable declaration introduces a named variable in the current scope.  
+The variable's lifetime begins at the point of declaration and ends when the enclosing block exits.
+### Grammar
+```
+VariableDecl:
+    { Specifier } Identifier ':' TypeSpec [ Initialiser ] ';'
+Specifier: (one of)
+    'static'
+Initialiser:
+    '=' ConditionalExpr                     -- value initialisation
+    | '(' [ ExpressionList ] ')'            -- constructor initialisation
+```
+The type specifier follows a colon (`:`) after the variable name.
+**Examples:**
+```k
+x : int;                     // uninitialized (zero for primitives)
+n : int = 42;                // value initialization
+s : short = 10s;             // typed with short literal
+result : double = 3.14d;
+flag : bool = true;
+p : plop;                    // default-constructed struct
+q : plop(5);                 // struct constructed with argument
+arr : int[4];                // array of 4 ints
+ptr : int* = &x;             // pointer initialized to address of x
+ref : int& = x;              // reference bound to x (parameter style)
+```
+### Static local variables
+A local variable declared with `static` persists across function calls.  
+Its initialiser is evaluated only the first time the declaration is reached.
+```k
+test_static() : int {
+    static i : int = init();   // init() called only once
+    i += 1;
+    return i;
+}
+// First call returns init() + 1
+// Second call returns init() + 2
+// etc.
+```
+### Variable lifetime and destruction
+For struct-typed local variables:
+- The constructor is called when the declaration is reached.
+- The destructor is called when the enclosing block exits (or a `return` is reached), in reverse declaration order.
+```k
+test_local_dtor() : int {
+    c : counter;           // constructor called here
+    return dtor_count;     // return expression evaluated BEFORE c is destroyed
+}                          // destructor called here (after return value is captured)
+```
+---
+## 5. Statement list and links
+| Statement | Page |
+|-----------|------|
+| Block     | This page |
+| Expression statement | This page |
+| Variable declaration | This page |
+| `if` / `else` | [If Statement](if.md) |
+| `while`   | [While Statement](while.md) |
+| `for`     | [For Statement](for.md) |
+| `return`  | [Return Statement](return.md) |
+---
+*See also:* [Expressions](../expressions/expressions.md) · [Functions](../functions/functions.md) · [Types](../basic/types.md)
