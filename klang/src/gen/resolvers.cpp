@@ -63,6 +63,62 @@
 
 namespace k::model::gen {
 
+//
+// Visibility helpers — implemented as scope_lookup static methods
+//
+
+std::shared_ptr<ns> scope_lookup::enclosing_namespace(const element& elem) {
+    auto cur = elem.shared_as<const element>();
+    while (cur) {
+        if (auto n = std::dynamic_pointer_cast<const ns>(cur))
+            return std::const_pointer_cast<ns>(n);
+        cur = cur->parent<element>();
+    }
+    return {};
+}
+
+std::shared_ptr<ns> scope_lookup::root_namespace(const element& elem) {
+    auto cur = elem.shared_as<const element>();
+    std::shared_ptr<ns> last_ns;
+    while (cur) {
+        if (auto n = std::dynamic_pointer_cast<const ns>(cur))
+            last_ns = std::const_pointer_cast<ns>(n);
+        cur = cur->parent<element>();
+    }
+    return last_ns;
+}
+
+bool scope_lookup::is_inside_member_function_of_or_ancestor(const element& access_site, const structure& st) {
+    auto cur = access_site.shared_as<const element>();
+    while (cur) {
+        if (auto fn = std::dynamic_pointer_cast<const function>(cur)) {
+            if (fn->is_member() && !fn->is_static()) {
+                auto check_st = fn->get_owner();
+                while (check_st) {
+                    if (check_st.get() == &st) return true;
+                    check_st = check_st->get_enclosing_structure();
+                }
+            }
+        }
+        cur = cur->parent<element>();
+    }
+    return false;
+}
+
+bool scope_lookup::is_in_same_namespace(const element& access_site, const ns& owner_ns) {
+    auto cur = access_site.shared_as<const element>();
+    while (cur) {
+        if (auto n = std::dynamic_pointer_cast<const ns>(cur))
+            if (n.get() == &owner_ns) return true;
+        cur = cur->parent<element>();
+    }
+    return false;
+}
+
+bool scope_lookup::is_in_same_module(const element& access_site, const ns& owner_root) {
+    auto access_root = root_namespace(access_site);
+    return access_root && access_root.get() == &owner_root;
+}
 
 
 //
@@ -299,6 +355,61 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
     }
 }
 
+void symbol_resolver::check_variable_visibility(const variable_definition& var, const element& /*access_site*/) {
+    // Member variable in a struct
+    if (auto mv = dynamic_cast<const member_variable_definition*>(&var)) {
+        auto owner_st = mv->parent<structure>();
+        if (!owner_st) return;
+        auto vis = mv->get_visibility();
+        if (vis == PUBLIC) return;
+        // PROTECTED and PRIVATE: only from member functions of the same struct (or nested)
+        // Use the function stack instead of expression parent-chain (which is unreliable).
+        for (auto it = _function_stack.rbegin(); it != _function_stack.rend(); ++it) {
+            const auto& fn = *it;
+            if (fn->is_member() && !fn->is_static()) {
+                auto check_st = fn->get_owner();
+                while (check_st) {
+                    if (check_st.get() == owner_st.get()) return; // accessible
+                    check_st = check_st->get_enclosing_structure();
+                }
+            }
+        }
+        throw_error(0x000F, std::nullopt,
+            "{} member variable '{}' of struct '{}' is not accessible here; "
+            "it can only be accessed from member functions of '{}'",
+            {vis == PROTECTED ? "protected" : "private",
+             mv->get_short_name(), owner_st->get_short_name(), owner_st->get_short_name()});
+    }
+
+    // Global variable in a namespace
+    if (auto gv = dynamic_cast<const global_variable_definition*>(&var)) {
+        auto vis = gv->get_visibility();
+        if (vis == PUBLIC) return;
+
+        auto owner_ns = scope_lookup::enclosing_namespace(*gv);
+        if (!owner_ns) return;
+
+        // Determine the access site: the innermost function on the stack, or the var itself
+        const element* site = gv;
+        if (!_function_stack.empty()) site = _function_stack.back().get();
+
+        if (vis == PROTECTED) {
+            auto owner_root = scope_lookup::root_namespace(*owner_ns);
+            if (!owner_root || scope_lookup::is_in_same_module(*site, *owner_root)) return;
+            throw_error(0x000E, std::nullopt,
+                "protected variable '{}' is only accessible within the same module; "
+                "it is declared in module '{}' but accessed from outside",
+                {gv->get_short_name(), owner_root->get_short_name()});
+        } else { // PRIVATE
+            if (scope_lookup::is_in_same_namespace(*site, *owner_ns)) return;
+            throw_error(0x000E, std::nullopt,
+                "private variable '{}' is only accessible within namespace '{}'; "
+                "it cannot be accessed from outside that namespace",
+                {gv->get_short_name(), owner_ns->get_short_name()});
+        }
+    }
+}
+
 std::shared_ptr<expression> symbol_resolver::adapt_reference_load_value(const std::shared_ptr<expression>& expr) {
     auto type = expr->get_type();
 
@@ -388,6 +499,85 @@ std::shared_ptr<expression> symbol_resolver::adapt_type(std::shared_ptr<expressi
 //
 // Type resolver
 //
+
+/**
+ * Check function visibility from access site.
+ * - Namespace-level functions: public = open, protected = same module, private = same ns.
+ * - Struct member functions: public = open, protected/private = member functions of same struct (or nested).
+ * Static constructors and destructors inherit the struct's own visibility — they are not
+ * individually checked (their owner struct visibility gates them).
+ */
+void type_reference_resolver::check_function_visibility(const function& func, const element& /*access_site*/) {
+    auto vis = func.get_visibility();
+    if (vis == PUBLIC) return;
+
+    auto owner_st = func.get_owner();
+    if (owner_st) {
+        // Struct member function: accessible only from member functions of the same struct (or nested)
+        for (auto it = _function_stack.rbegin(); it != _function_stack.rend(); ++it) {
+            const auto& fn = *it;
+            if (fn->is_member() && !fn->is_static()) {
+                auto check_st = fn->get_owner();
+                while (check_st) {
+                    if (check_st.get() == owner_st.get()) return;
+                    check_st = check_st->get_enclosing_structure();
+                }
+            }
+        }
+        throw_error(0x002F, std::nullopt,
+            "{} member function '{}' of struct '{}' is not accessible here; "
+            "it can only be called from member functions of '{}'",
+            {vis == PROTECTED ? "protected" : "private",
+             func.get_short_name(), owner_st->get_short_name(), owner_st->get_short_name()});
+    } else {
+        // Namespace-level function
+        auto owner_ns = scope_lookup::enclosing_namespace(func);
+        if (!owner_ns) return;
+
+        // Use the innermost function on the stack as access site, or fall back to the func itself
+        const element* site = &func;
+        if (!_function_stack.empty()) site = _function_stack.back().get();
+
+        if (vis == PROTECTED) {
+            auto owner_root = scope_lookup::root_namespace(*owner_ns);
+            if (!owner_root || scope_lookup::is_in_same_module(*site, *owner_root)) return;
+            throw_error(0x002E, std::nullopt,
+                "protected function '{}' is only accessible within the same module; "
+                "it is declared in module '{}' but accessed from outside",
+                {func.get_short_name(), owner_root->get_short_name()});
+        } else {
+            if (scope_lookup::is_in_same_namespace(*site, *owner_ns)) return;
+            throw_error(0x002E, std::nullopt,
+                "private function '{}' is only accessible within namespace '{}'; "
+                "it cannot be called from outside that namespace",
+                {func.get_short_name(), owner_ns->get_short_name()});
+        }
+    }
+}
+
+void type_reference_resolver::check_constructor_visibility(const constructor& ctor, const element& /*access_site*/) {
+    auto vis = ctor.get_visibility();
+    if (vis == PUBLIC) return;
+
+    auto owner_st = ctor.get_owner();
+    if (!owner_st) return;
+
+    for (auto it = _function_stack.rbegin(); it != _function_stack.rend(); ++it) {
+        const auto& fn = *it;
+        if (fn->is_member() && !fn->is_static()) {
+            auto check_st = fn->get_owner();
+            while (check_st) {
+                if (check_st.get() == owner_st.get()) return;
+                check_st = check_st->get_enclosing_structure();
+            }
+        }
+    }
+    throw_error(0x0030, std::nullopt,
+        "{} constructor of struct '{}' is not accessible here; "
+        "it can only be called from member functions of '{}'",
+        {vis == PROTECTED ? "protected" : "private",
+         owner_st->get_short_name(), owner_st->get_short_name()});
+}
 
 /**
  * Resolve a structure by qualified name descending from elem, without climbing to parents.
@@ -729,6 +919,10 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 "No matching constructor found for variable '{}' of type '{}': "
                 "none of the available constructors can be called with the provided arguments",
                 {var.get_fq_name(), st_type->to_string()});
+        }
+        // Check constructor visibility from the variable's declaration site
+        if (auto var_elem = dynamic_cast<const element*>(&var)) {
+            check_constructor_visibility(*best_constructor, *var_elem);
         }
         var.set_var_constructor(best_constructor);
         if (init_expr) {

@@ -19,7 +19,7 @@ Examples are included where they clarify the normative text.
 |------|-------------|
 | [Lexical Conventions](basic/lexical.md) | Source encoding, comments, tokens |
 | [Keywords](basic/keywords.md) | Reserved words of the language |
-| [Names, Namespaces and Lookup](basic/names.md) | Identifiers, qualified names, lookup rules |
+| [Names, Namespaces and Lookup](basic/names.md) | Identifiers, qualified names, lookup rules, namespace visibility |
 | [Types](basic/types.md) | Primitive types, reference, pointer, array and struct types |
 | [Module System](basic/modules.md) | Module declarations and imports |
 | [Main Function](basic/main.md) | Program entry point |
@@ -58,7 +58,7 @@ Examples are included where they clarify the normative text.
 
 | Page | Description |
 |------|-------------|
-| [Structures](structs/structs.md) | Declaration, fields, member functions |
+| [Structures](structs/structs.md) | Declaration, fields, member functions, member visibility |
 | [Constructors](structs/constructors.md) | Instance and static constructors |
 | [Destructors](structs/destructors.md) | Instance and static destructors |
 | [Nested Structures](structs/nested.md) | Static nested and non-static inner structures |

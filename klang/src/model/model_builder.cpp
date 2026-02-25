@@ -125,6 +125,22 @@ namespace k::model {
         bool is_static_nested = lex::keyword::has(st.specifiers, lex::keyword::STATIC);
         struc->set_static_nested(is_static_nested);
 
+        // Resolve visibility: per-element specifier takes precedence over group visibility
+        model::visibility vis = model::PUBLIC; // default
+        if (auto vctx = current_context<visibility_context>()) {
+            if (vctx->visibility != model::DEFAULT) {
+                vis = vctx->visibility;
+            }
+        }
+        if (lex::keyword::has(st.specifiers, lex::keyword::PUBLIC)) {
+            vis = model::PUBLIC;
+        } else if (lex::keyword::has(st.specifiers, lex::keyword::PROTECTED)) {
+            vis = model::PROTECTED;
+        } else if (lex::keyword::has(st.specifiers, lex::keyword::PRIVATE)) {
+            vis = model::PRIVATE;
+        }
+        struc->set_visibility(vis);
+
         // Push function context
         stack<struct_context> push(_contexts, struc);
 
@@ -140,6 +156,28 @@ namespace k::model {
         bool is_static = lex::keyword::has(decl.specifiers, lex::keyword::STATIC);
         std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(std::string{decl.name.content}, is_static);
         var->set_type(_context->from_type_specifier(*decl.type));
+
+        // Resolve visibility for namespace/struct-level variables (global or member)
+        // Local variables (inside functions/blocks) do not have visibility.
+        if (auto vctx = current_context<visibility_context>()) {
+            model::visibility vis = model::PUBLIC; // default for ns/struct
+            if (vctx->visibility != model::DEFAULT) {
+                vis = vctx->visibility;
+            }
+            // Per-element specifier overrides group visibility
+            if (lex::keyword::has(decl.specifiers, lex::keyword::PUBLIC)) {
+                vis = model::PUBLIC;
+            } else if (lex::keyword::has(decl.specifiers, lex::keyword::PROTECTED)) {
+                vis = model::PROTECTED;
+            } else if (lex::keyword::has(decl.specifiers, lex::keyword::PRIVATE)) {
+                vis = model::PRIVATE;
+            }
+            if (auto gv = std::dynamic_pointer_cast<model::global_variable_definition>(var)) {
+                gv->set_visibility(vis);
+            } else if (auto mv = std::dynamic_pointer_cast<model::member_variable_definition>(var)) {
+                mv->set_visibility(vis);
+            }
+        }
 
         if(decl.init) {
             std::vector<std::shared_ptr<model::expression>> args;
@@ -180,6 +218,23 @@ namespace k::model {
             : std::string{func.name.content};
 
         std::shared_ptr<model::function> function = parent_scope->define_function(func_name, is_static);
+
+        // Resolve visibility for namespace/struct-level functions
+        if (auto vctx = current_context<visibility_context>()) {
+            model::visibility vis = model::PUBLIC; // default for ns/struct
+            if (vctx->visibility != model::DEFAULT) {
+                vis = vctx->visibility;
+            }
+            // Per-element specifier overrides group visibility
+            if (lex::keyword::has(func.specifiers, lex::keyword::PUBLIC)) {
+                vis = model::PUBLIC;
+            } else if (lex::keyword::has(func.specifiers, lex::keyword::PROTECTED)) {
+                vis = model::PROTECTED;
+            } else if (lex::keyword::has(func.specifiers, lex::keyword::PRIVATE)) {
+                vis = model::PRIVATE;
+            }
+            function->set_visibility(vis);
+        }
 
         // Push function context
         stack<func_context> push(_contexts, function);

@@ -16,6 +16,7 @@ A *struct* (structure) is a user-defined composite type that aggregates fields a
 7. [Struct type in function parameters](#7-struct-type-in-function-parameters)
 8. [Aggregated structs](#8-aggregated-structs)
 9. [Struct specifiers](#9-struct-specifiers)
+10. [Member visibility](#10-member-visibility)
 ---
 ## 1. Struct declaration
 A struct is declared with the `struct` keyword, a name, and a body containing field and member function declarations.
@@ -162,11 +163,113 @@ test() : int {
 ```
 ---
 ## 9. Struct specifiers
-| Specifier  | Meaning |
-|------------|---------|
-| `static`   | Declares a static nested struct (no implicit parent reference; see [Nested Structures](nested.md)). |
-| `public`   | Visibility modifier (applies to subsequent declarations inside the struct body). |
-| `protected`| Visibility modifier. |
-| `private`  | Visibility modifier. |
+
+Specifiers appear before a declaration inside a struct body (or before the `struct` keyword itself for the struct's own visibility).
+
+| Specifier   | Applies to            | Meaning |
+|-------------|-----------------------|---------|
+| `static`    | Nested struct         | Declares a static nested struct (see [Nested Structures](nested.md)). |
+| `public`    | Any member            | Per-element visibility: public (see [§ 10](#10-member-visibility)). |
+| `protected` | Any member            | Per-element visibility: protected (see [§ 10](#10-member-visibility)). |
+| `private`   | Any member            | Per-element visibility: private (see [§ 10](#10-member-visibility)). |
+
+### Grammar
+
+```
+StructDecl:
+    { Specifier } 'struct' Identifier '{' { StructMember } '}'
+
+StructMember:
+    VisibilityDecl
+  | { Specifier } FieldDecl
+  | { Specifier } MemberFunctionDecl
+  | { Specifier } StructDecl
+
+VisibilityDecl:
+    ( 'public' | 'protected' | 'private' ) ':'
+
+Specifier: (one of)
+    'static'   'public'   'protected'   'private'
+```
+
 ---
-*See also:* [Constructors](constructors.md) · [Destructors](destructors.md) · [Nested Structures](nested.md) · [Functions](../functions/functions.md) · [Types](../basic/types.md)
+
+## 10. Member visibility
+
+Every field and member function inside a struct has a *visibility* that determines which code may access it.
+
+### Visibility levels
+
+| Keyword     | Accessible from …                                                       |
+|-------------|-------------------------------------------------------------------------|
+| `public`    | Everywhere. This is the **default**.                                    |
+| `protected` | Member functions of this struct and of its nested structs.              |
+| `private`   | Member functions of this struct only.                                   |
+
+> **Note:** For struct members, `protected` and `private` currently have the same access rules. The distinction will become meaningful when a friendship mechanism is introduced in a future language version.
+
+### Ways to specify visibility
+
+**Per-element specifier** — placed directly before a single declaration; takes precedence over any group setting:
+
+```k
+struct S {
+private:
+    x : int;          // private  (group)
+    public y : int;   // public   (per-element override)
+    z : int;          // private  (back to group)
+}
+```
+
+**Group visibility specifier** — a visibility keyword followed by `:` sets the current default for all subsequent declarations until the next group specifier or end of body:
+
+```k
+struct BankAccount {
+private:
+    balance : int = 0;
+    log(amount: int) { /* … */ }
+
+public:
+    BankAccount() : balance(0) {}
+    deposit(n: int)  { balance = balance + n; }
+    withdraw(n: int) { balance = balance - n; }
+    get() : int      { return balance; }
+}
+```
+
+Without any specifier the default visibility is **public**.
+
+### Access from member functions
+
+Private and protected members are accessible from any (non-static) member function of the same struct.
+When calling another member function of the same struct from within a method, use explicit `this.`:
+
+```k
+struct Helper {
+private:
+    compute(p: int, q: int) : int { return p + q; }
+public:
+    sum(a: int, b: int) : int { return this.compute(a, b); }
+}
+```
+
+### Access enforcement
+
+Accessing a private or protected member from outside its struct is a compile-time error:
+
+```
+Error 40030 : private member variable 'balance' of struct 'BankAccount' is not accessible here;
+              it can only be accessed from member functions of 'BankAccount'
+Error 4002F : private member function 'log' of struct 'BankAccount' is not accessible here;
+              it can only be called from member functions of 'BankAccount'
+```
+
+### Static constructors and visibility
+
+Static constructors (`static StructName() { … }`) are insensitive to per-element visibility specifiers: they inherit the visibility of the struct itself.
+If a struct is visible from another context, it may be declared as a static-initialization dependency regardless of the visibility of its individual members.
+
+---
+
+*See also:* [Constructors](constructors.md) · [Destructors](destructors.md) · [Nested Structures](nested.md) · [Namespace visibility](../basic/names.md#5-visibility-of-namespace-members) · [Functions](../functions/functions.md) · [Types](../basic/types.md)
+

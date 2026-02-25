@@ -117,31 +117,63 @@ myFunc() : int { return 0; }
 
 ---
 
-## 5. Visibility modifiers
+## 5. Visibility of namespace members
 
-Inside a namespace or struct body, a *visibility declaration* sets the default visibility for subsequent declarations.
+Every declaration inside a namespace body (function, variable, struct, nested namespace) has a *visibility* that controls which code may access it.
 
-### Grammar
+### Visibility levels
 
-```
-VisibilityDecl:
-    ( 'public' | 'protected' | 'private' ) ':'
-```
+| Keyword     | Accessible from …                                        |
+|-------------|----------------------------------------------------------|
+| `public`    | Everywhere. This is the **default**.                     |
+| `protected` | The same **module** only (same root namespace).          |
+| `private`   | The same **namespace** only.                             |
 
-**Example:**
+### Ways to specify visibility
+
+There are two mechanisms, in order of precedence (highest first):
+
+**Per-element specifier** — a visibility keyword placed directly before a single declaration:
 
 ```k
-struct Foo {
-public:
-    value : int;
-    getValue() : int { return value; }
+module mymod;
 
-private:
-    internal : int;
-}
+public  exported()  : int { return 1; }   // explicit public
+protected internal() : int { return 2; }  // module-internal only
+private  detail()   : int { return 3; }   // this namespace only
+
+private y : int = 20;                     // private variable
 ```
 
-> **Note:** Visibility modifiers are parsed but access control is not fully enforced by the current compiler. This will be refined in future versions.
+**Group visibility specifier** — a visibility keyword followed by `:` sets the current default for all subsequent declarations in the body, until another group specifier or the end of the enclosing body:
+
+```k
+module mymod;
+
+// default: public
+api1() : int { return 1; }
+
+protected:                               // switch to protected
+_cache() : int { return 2; }
+_flush() { }
+
+private:                                 // switch to private
+_state : int = 0;
+
+public:                                  // back to public
+api2() : int { return _state; }
+```
+
+Without any specifier, the default visibility is **public**.
+
+### Access enforcement
+
+Accessing a namespace member from outside its allowed scope is a compile-time error:
+
+```
+Error 3000E : private variable '_state' is only accessible within namespace 'mymod'; …
+Error 3000E : protected function '_cache' is only accessible within the same module; …
+```
 
 ---
 
@@ -208,4 +240,4 @@ Outer::Inner         // type name of nested struct
 
 ---
 
-*See also:* [Lexical Conventions](lexical.md) · [Keywords](keywords.md) · [Types](types.md) · [Module System](modules.md) · [Structures](../structs/structs.md)
+*See also:* [Lexical Conventions](lexical.md) · [Keywords](keywords.md) · [Types](types.md) · [Module System](modules.md) · [Structures](../structs/structs.md#10-member-visibility)

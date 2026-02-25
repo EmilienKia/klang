@@ -89,6 +89,8 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
     if (std::holds_alternative<std::shared_ptr<variable_definition>>(found_symbol)) {
         auto var_def = std::get<std::shared_ptr<variable_definition>>(found_symbol);
         symbol.set_target(var_def);
+        // Check visibility of member and global variables at the access site
+        check_variable_visibility(*var_def, symbol);
     } else if (std::holds_alternative<std::shared_ptr<function>>(found_symbol)) {
         auto func =  std::get<std::shared_ptr<function>>(found_symbol);
         symbol.set_target(func);
@@ -527,6 +529,32 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(subtype)) {
         const auto& member_name =  expr.symbol();
         if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
+            // Check member variable visibility
+            auto st = struct_subtype->get_struct();
+            if (st) {
+                auto mv = std::dynamic_pointer_cast<member_variable_definition>(st->get_variable(member_name.get_name().to_string()));
+                if (mv && mv->get_visibility() != PUBLIC) {
+                    bool accessible = false;
+                    for (auto it = _function_stack.rbegin(); it != _function_stack.rend(); ++it) {
+                        const auto& fn = *it;
+                        if (fn->is_member() && !fn->is_static()) {
+                            auto check_st = fn->get_owner();
+                            while (check_st) {
+                                if (check_st.get() == st.get()) { accessible = true; break; }
+                                check_st = check_st->get_enclosing_structure();
+                            }
+                        }
+                        if (accessible) break;
+                    }
+                    if (!accessible) {
+                        throw_error(0x0030, std::nullopt,
+                            "{} member variable '{}' of struct '{}' is not accessible here; "
+                            "it can only be accessed from member functions of '{}'",
+                            {mv->get_visibility() == PROTECTED ? "protected" : "private",
+                             mv->get_short_name(), st->get_short_name(), st->get_short_name()});
+                    }
+                }
+            }
             expr.set_type(field->field_type.lock()->get_reference());
         } else if(auto method = struct_subtype->get_struct()->get_function(member_name.get_name())) {
             // Member function: type resolution deferred to function_invocation_expression
@@ -764,6 +792,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 {best.func->get_short_name()});
         }
 
+        // Check visibility of the resolved function
+        check_function_visibility(*best.func, expr);
+
         callee->set_target(best.func);
         expr.set_type(best.func->get_return_type());
 
@@ -852,6 +883,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 "it is automatically invoked during program finalization",
                 {best.func->get_short_name()});
         }
+
+        // Check visibility of the resolved function
+        check_function_visibility(*best.func, expr);
 
         if (this_candidate && best.func->is_member() && !best.func->is_static() && !best.is_unified_call) {
             is_free_to_member_call = true;
@@ -1020,6 +1054,8 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
                 "none of the available constructors can be called with the provided arguments",
                 {st_type->to_string()});
         }
+        // Check constructor visibility
+        check_constructor_visibility(*best_constructor, expr);
         expr.set_constructor(best_constructor);
         expr.arguments(adapted_args);
     }

@@ -418,11 +418,12 @@ void symbol_resolver::visit_function(function& fn) {
     for(auto param : fn.parameters()) {
         param->accept(*this);
     }
-    // TODO visit parameter definition (just in case default init is referencing a variable).
 
+    _function_stack.push_back(fn.shared_as<function>());
     if(auto block = fn.get_block()) {
         visit_block(*block);
     }
+    _function_stack.pop_back();
 }
 
 void type_reference_resolver::visit_function(function& fn) {
@@ -434,11 +435,12 @@ void type_reference_resolver::visit_function(function& fn) {
     for(auto param : fn.parameters()) {
         param->accept(*this);
     }
-    // TODO visit parameter definition (just in case default init is referencing a variable).
 
+    _function_stack.push_back(fn.shared_as<function>());
     if(auto block = fn.get_block()) {
         visit_block(*block);
     }
+    _function_stack.pop_back();
 }
 
 void declaration_generator::visit_function(function &function) {

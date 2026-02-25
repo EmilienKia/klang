@@ -82,6 +82,28 @@ public:
     static std::shared_ptr<structure>
     lookup_structure(std::shared_ptr<element> elem, const std::string& name);
 
+    //
+    // Visibility helpers
+    //
+
+    /** Return the direct enclosing namespace of an element (skips functions/blocks/structs). */
+    static std::shared_ptr<ns> enclosing_namespace(const element& elem);
+
+    /** Return the root (outermost) namespace of an element. */
+    static std::shared_ptr<ns> root_namespace(const element& elem);
+
+    /**
+     * True if access_site is inside a member function of st, or any of st's nested struct
+     * ancestors (used so nested struct methods can access the parent struct's protected members).
+     */
+    static bool is_inside_member_function_of_or_ancestor(const element& access_site, const structure& st);
+
+    /** True if access_site is textually inside owner_ns (same ns pointer or any descendant). */
+    static bool is_in_same_namespace(const element& access_site, const ns& owner_ns);
+
+    /** True if access_site's root namespace is the same object as owner_root. */
+    static bool is_in_same_module(const element& access_site, const ns& owner_root);
+
 private:
     scope_lookup() = delete; // static-only utility class
 };
@@ -98,6 +120,9 @@ protected:
     std::shared_ptr<context> _context;
 
     unit& _unit;
+
+    /** Stack of functions currently being visited (for visibility access-site context). */
+    std::vector<std::shared_ptr<function>> _function_stack;
 
 public:
     symbol_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
@@ -154,6 +179,14 @@ protected:
 
     void visit_named_element(named_element&);
 
+    /**
+     * Check if a variable (member or global) is accessible from the given access-site element.
+     * Throws a resolution_error (code 0x3000E for namespace-level, 0x3000F for struct-level)
+     * if the element is not accessible.
+     * @param var   The variable definition being accessed.
+     * @param access_site  The element from which the access occurs.
+     */
+    void check_variable_visibility(const variable_definition& var, const element& access_site);
     void visit_unit(unit&) override;
 
     void visit_namespace(ns&) override;
@@ -220,6 +253,9 @@ protected:
 
     unit& _unit;
 
+    /** Stack of functions currently being visited (for visibility access-site context). */
+    std::vector<std::shared_ptr<function>> _function_stack;
+
 public:
 
     type_reference_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
@@ -283,6 +319,22 @@ protected:
     void visit_global_constructor_function(global_constructor_function&) override;
     void visit_global_destructor_function(global_destructor_function&) override;
     void visit_global_main_function(global_main_function&) override;
+
+    /**
+     * Check if a function is accessible from the given access-site element.
+     * For namespace-level functions: public = open, protected = same module, private = same namespace.
+     * For struct member functions: public = open, protected/private = member functions of the same struct only.
+     * Throws a resolution_error (code 0x002E for namespace-level, 0x002F for struct-level) if not accessible.
+     * @param func         The function being accessed.
+     * @param access_site  The element from which the access occurs.
+     */
+    void check_function_visibility(const function& func, const element& access_site);
+
+    /**
+     * Check if a constructor is accessible from the given access-site element.
+     * Throws a resolution_error (code 0x0030) if not accessible.
+     */
+    void check_constructor_visibility(const constructor& ctor, const element& access_site);
 
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;
