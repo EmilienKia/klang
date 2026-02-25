@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -256,6 +256,22 @@ void default_model_visitor::visit_unary_minus_expression(unary_minus_expression 
 }
 
 void default_model_visitor::visit_bitwise_not_expression(bitwise_not_expression &expr) {
+    visit_arithmetic_unary_expression(expr);
+}
+
+void default_model_visitor::visit_prefix_increment_expression(prefix_increment_expression &expr) {
+    visit_arithmetic_unary_expression(expr);
+}
+
+void default_model_visitor::visit_prefix_decrement_expression(prefix_decrement_expression &expr) {
+    visit_arithmetic_unary_expression(expr);
+}
+
+void default_model_visitor::visit_postfix_increment_expression(postfix_increment_expression &expr) {
+    visit_arithmetic_unary_expression(expr);
+}
+
+void default_model_visitor::visit_postfix_decrement_expression(postfix_decrement_expression &expr) {
     visit_arithmetic_unary_expression(expr);
 }
 

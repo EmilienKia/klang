@@ -220,6 +220,11 @@ public:
     void visit_unary_minus_expression(unary_minus_expression&) override;
     void visit_bitwise_not_expression(bitwise_not_expression&) override;
 
+    void visit_prefix_increment_expression(prefix_increment_expression&) override;
+    void visit_prefix_decrement_expression(prefix_decrement_expression&) override;
+    void visit_postfix_increment_expression(postfix_increment_expression&) override;
+    void visit_postfix_decrement_expression(postfix_decrement_expression&) override;
+
     void visit_logical_and_expression(logical_and_expression&) override;
     void visit_logical_or_expression(logical_or_expression&) override;
     void visit_logical_not_expression(logical_not_expression&) override;

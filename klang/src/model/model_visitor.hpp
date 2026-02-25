@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -103,6 +103,10 @@ public:
     virtual void visit_unary_plus_expression(unary_plus_expression&) =0;
     virtual void visit_unary_minus_expression(unary_minus_expression&) =0;
     virtual void visit_bitwise_not_expression(bitwise_not_expression&) =0;
+    virtual void visit_prefix_increment_expression(prefix_increment_expression&) =0;
+    virtual void visit_prefix_decrement_expression(prefix_decrement_expression&) =0;
+    virtual void visit_postfix_increment_expression(postfix_increment_expression&) =0;
+    virtual void visit_postfix_decrement_expression(postfix_decrement_expression&) =0;
 
     virtual void visit_logical_binary_expression(logical_binary_expression&) =0;
     virtual void visit_logical_and_expression(logical_and_expression&) =0;
@@ -199,6 +203,10 @@ public:
     void visit_unary_plus_expression(unary_plus_expression&) override;
     void visit_unary_minus_expression(unary_minus_expression&) override;
     void visit_bitwise_not_expression(bitwise_not_expression&) override;
+    void visit_prefix_increment_expression(prefix_increment_expression&) override;
+    void visit_prefix_decrement_expression(prefix_decrement_expression&) override;
+    void visit_postfix_increment_expression(postfix_increment_expression&) override;
+    void visit_postfix_decrement_expression(postfix_decrement_expression&) override;
 
     void visit_logical_binary_expression(logical_binary_expression&) override;
     void visit_logical_and_expression(logical_and_expression&) override;

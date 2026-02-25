@@ -644,6 +644,22 @@ public:
         _stm << "~(";  expr.sub_expr()->accept(*this);  _stm << ")";
         dump_expr_type(expr);
     }
+    void visit_prefix_increment_expression(prefix_increment_expression& expr) override {
+        _stm << "++(";  expr.sub_expr()->accept(*this);  _stm << ")";
+        dump_expr_type(expr);
+    }
+    void visit_prefix_decrement_expression(prefix_decrement_expression& expr) override {
+        _stm << "--(";  expr.sub_expr()->accept(*this);  _stm << ")";
+        dump_expr_type(expr);
+    }
+    void visit_postfix_increment_expression(postfix_increment_expression& expr) override {
+        _stm << "(";  expr.sub_expr()->accept(*this);  _stm << ")++";
+        dump_expr_type(expr);
+    }
+    void visit_postfix_decrement_expression(postfix_decrement_expression& expr) override {
+        _stm << "(";  expr.sub_expr()->accept(*this);  _stm << ")--";
+        dump_expr_type(expr);
+    }
 
     // --- Logical -------------------------------------------------------------
 

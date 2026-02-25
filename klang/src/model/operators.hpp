@@ -24,6 +24,10 @@
  * | | +- unary_plus_expression
  * | | +- unary_minus_expression
  * | | +- bitwise_not_expression
+ * | | +- prefix_increment_expression
+ * | | +- prefix_decrement_expression
+ * | | +- postfix_increment_expression
+ * | | +- postfix_decrement_expression
  * +- binary_expression
  * | +- arithmetic_binary_expression
  * | | +- addition_expression
@@ -536,6 +540,82 @@ public:
     }
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<bitwise_not_expression> c{new bitwise_not_expression()};
+        c->_type = _type;
+        c->_ast_unary_expr = _ast_unary_expr;
+        if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
+    }
+};
+
+class prefix_increment_expression : public arithmetic_unary_expression {
+protected:
+    prefix_increment_expression() = default;
+public:
+    void accept(model_visitor &visitor) override;
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<prefix_increment_expression> expr{new prefix_increment_expression()};
+        expr->assign(sub_expr);
+        return std::shared_ptr<unary_expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<prefix_increment_expression> c{new prefix_increment_expression()};
+        c->_type = _type;
+        c->_ast_unary_expr = _ast_unary_expr;
+        if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
+    }
+};
+
+class prefix_decrement_expression : public arithmetic_unary_expression {
+protected:
+    prefix_decrement_expression() = default;
+public:
+    void accept(model_visitor &visitor) override;
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<prefix_decrement_expression> expr{new prefix_decrement_expression()};
+        expr->assign(sub_expr);
+        return std::shared_ptr<unary_expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<prefix_decrement_expression> c{new prefix_decrement_expression()};
+        c->_type = _type;
+        c->_ast_unary_expr = _ast_unary_expr;
+        if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
+    }
+};
+
+class postfix_increment_expression : public arithmetic_unary_expression {
+protected:
+    postfix_increment_expression() = default;
+public:
+    void accept(model_visitor &visitor) override;
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<postfix_increment_expression> expr{new postfix_increment_expression()};
+        expr->assign(sub_expr);
+        return std::shared_ptr<unary_expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<postfix_increment_expression> c{new postfix_increment_expression()};
+        c->_type = _type;
+        c->_ast_unary_expr = _ast_unary_expr;
+        if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
+    }
+};
+
+class postfix_decrement_expression : public arithmetic_unary_expression {
+protected:
+    postfix_decrement_expression() = default;
+public:
+    void accept(model_visitor &visitor) override;
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<postfix_decrement_expression> expr{new postfix_decrement_expression()};
+        expr->assign(sub_expr);
+        return std::shared_ptr<unary_expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<postfix_decrement_expression> c{new postfix_decrement_expression()};
         c->_type = _type;
         c->_ast_unary_expr = _ast_unary_expr;
         if (_sub_expr) c->assign(_sub_expr->clone());

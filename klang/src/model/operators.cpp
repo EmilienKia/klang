@@ -221,6 +221,34 @@ void bitwise_not_expression::accept(model_visitor &visitor) {
 }
 
 //
+// Prefix increment expression
+//
+void prefix_increment_expression::accept(model_visitor &visitor) {
+    visitor.visit_prefix_increment_expression(*this);
+}
+
+//
+// Prefix decrement expression
+//
+void prefix_decrement_expression::accept(model_visitor &visitor) {
+    visitor.visit_prefix_decrement_expression(*this);
+}
+
+//
+// Postfix increment expression
+//
+void postfix_increment_expression::accept(model_visitor &visitor) {
+    visitor.visit_postfix_increment_expression(*this);
+}
+
+//
+// Postfix decrement expression
+//
+void postfix_decrement_expression::accept(model_visitor &visitor) {
+    visitor.visit_postfix_decrement_expression(*this);
+}
+
+//
 // Logical binary expression
 //
 void logical_binary_expression::accept(model_visitor &visitor) {

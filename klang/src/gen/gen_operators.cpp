@@ -974,6 +974,294 @@ void type_reference_resolver::visit_arithmetic_unary_expression(arithmetic_unary
 }
 
 //
+// Prefix increment expression (++expr)
+//
+
+void type_reference_resolver::visit_prefix_increment_expression(prefix_increment_expression& expr) {
+    visit_unary_expression(expr);
+
+    auto& sub = expr.sub_expr();
+    auto type = sub->get_type();
+
+    if(!type::is_reference(type)) {
+        throw_error(0x002F, std::nullopt,
+            "The operand of prefix '++' must be an assignable lvalue (a variable or dereferenced pointer), "
+            "but got a non-reference type '{}'",
+            {type ? type->to_string() : "?"});
+    }
+
+    auto ref_type = std::dynamic_pointer_cast<reference_type>(type);
+    auto value_type = ref_type->get_subtype();
+    if(type::is_reference(value_type)) {
+        value_type = value_type->get_subtype();
+    }
+
+    if(!type::is_primitive(value_type)) {
+        throw_error(0x0030, std::nullopt,
+            "Prefix '++' requires a numeric primitive operand, but got type '{}'",
+            {value_type ? value_type->to_string() : "?"});
+    }
+    if(type::is_prim_bool(value_type)) {
+        throw_error(0x0031, std::nullopt,
+            "Prefix '++' cannot be applied to a boolean operand");
+    }
+
+    // Prefix increment returns a reference to the (now updated) variable
+    expr.set_type(ref_type);
+}
+
+void implementation_generator::visit_prefix_increment_expression(prefix_increment_expression& expr) {
+    // Get the pointer (alloca) to the variable
+    auto ptr = process_unary_expression(expr);
+    if(!ptr) {
+        _value = nullptr;
+        return;
+    }
+
+    auto sub_type = expr.sub_expr()->get_type();
+    // sub_type is a reference; get the underlying value type
+    auto ref_type = std::dynamic_pointer_cast<reference_type>(sub_type);
+    auto value_type = ref_type->get_subtype();
+    if(type::is_reference(value_type)) {
+        // ref-to-ref: load once more to get the actual pointer
+        ptr = _builder->CreateLoad(_context->get_llvm_type(value_type), ptr);
+        value_type = std::dynamic_pointer_cast<reference_type>(value_type)->get_subtype();
+    }
+
+    auto llvm_type = _context->get_llvm_type(value_type);
+    auto old_val = _builder->CreateLoad(llvm_type, ptr);
+
+    llvm::Value* new_val = nullptr;
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(value_type)) {
+        if(prim->is_integer()) {
+            new_val = _builder->CreateAdd(old_val, llvm::ConstantInt::get(llvm_type, 1));
+        } else if(prim->is_float()) {
+            new_val = _builder->CreateFAdd(old_val, llvm::ConstantFP::get(llvm_type, 1.0));
+        }
+    }
+    if(new_val) {
+        _builder->CreateStore(new_val, ptr);
+    }
+    // Return the pointer (reference) to the updated variable
+    _value = ptr;
+}
+
+
+//
+// Prefix decrement expression (--expr)
+//
+
+void type_reference_resolver::visit_prefix_decrement_expression(prefix_decrement_expression& expr) {
+    visit_unary_expression(expr);
+
+    auto& sub = expr.sub_expr();
+    auto type = sub->get_type();
+
+    if(!type::is_reference(type)) {
+        throw_error(0x0032, std::nullopt,
+            "The operand of prefix '--' must be an assignable lvalue (a variable or dereferenced pointer), "
+            "but got a non-reference type '{}'",
+            {type ? type->to_string() : "?"});
+    }
+
+    auto ref_type = std::dynamic_pointer_cast<reference_type>(type);
+    auto value_type = ref_type->get_subtype();
+    if(type::is_reference(value_type)) {
+        value_type = value_type->get_subtype();
+    }
+
+    if(!type::is_primitive(value_type)) {
+        throw_error(0x0033, std::nullopt,
+            "Prefix '--' requires a numeric primitive operand, but got type '{}'",
+            {value_type ? value_type->to_string() : "?"});
+    }
+    if(type::is_prim_bool(value_type)) {
+        throw_error(0x0034, std::nullopt,
+            "Prefix '--' cannot be applied to a boolean operand");
+    }
+
+    // Prefix decrement returns a reference to the (now updated) variable
+    expr.set_type(ref_type);
+}
+
+void implementation_generator::visit_prefix_decrement_expression(prefix_decrement_expression& expr) {
+    auto ptr = process_unary_expression(expr);
+    if(!ptr) {
+        _value = nullptr;
+        return;
+    }
+
+    auto sub_type = expr.sub_expr()->get_type();
+    auto ref_type = std::dynamic_pointer_cast<reference_type>(sub_type);
+    auto value_type = ref_type->get_subtype();
+    if(type::is_reference(value_type)) {
+        ptr = _builder->CreateLoad(_context->get_llvm_type(value_type), ptr);
+        value_type = std::dynamic_pointer_cast<reference_type>(value_type)->get_subtype();
+    }
+
+    auto llvm_type = _context->get_llvm_type(value_type);
+    auto old_val = _builder->CreateLoad(llvm_type, ptr);
+
+    llvm::Value* new_val = nullptr;
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(value_type)) {
+        if(prim->is_integer()) {
+            new_val = _builder->CreateSub(old_val, llvm::ConstantInt::get(llvm_type, 1));
+        } else if(prim->is_float()) {
+            new_val = _builder->CreateFSub(old_val, llvm::ConstantFP::get(llvm_type, 1.0));
+        }
+    }
+    if(new_val) {
+        _builder->CreateStore(new_val, ptr);
+    }
+    // Return the pointer (reference) to the updated variable
+    _value = ptr;
+}
+
+
+//
+// Postfix increment expression (expr++)
+//
+
+void type_reference_resolver::visit_postfix_increment_expression(postfix_increment_expression& expr) {
+    visit_unary_expression(expr);
+
+    auto& sub = expr.sub_expr();
+    auto type = sub->get_type();
+
+    if(!type::is_reference(type)) {
+        throw_error(0x0035, std::nullopt,
+            "The operand of postfix '++' must be an assignable lvalue (a variable or dereferenced pointer), "
+            "but got a non-reference type '{}'",
+            {type ? type->to_string() : "?"});
+    }
+
+    auto ref_type = std::dynamic_pointer_cast<reference_type>(type);
+    auto value_type = ref_type->get_subtype();
+    if(type::is_reference(value_type)) {
+        value_type = value_type->get_subtype();
+    }
+
+    if(!type::is_primitive(value_type)) {
+        throw_error(0x0036, std::nullopt,
+            "Postfix '++' requires a numeric primitive operand, but got type '{}'",
+            {value_type ? value_type->to_string() : "?"});
+    }
+    if(type::is_prim_bool(value_type)) {
+        throw_error(0x0037, std::nullopt,
+            "Postfix '++' cannot be applied to a boolean operand");
+    }
+
+    // Postfix increment returns the old value (not a reference)
+    expr.set_type(value_type);
+}
+
+void implementation_generator::visit_postfix_increment_expression(postfix_increment_expression& expr) {
+    auto ptr = process_unary_expression(expr);
+    if(!ptr) {
+        _value = nullptr;
+        return;
+    }
+
+    auto sub_type = expr.sub_expr()->get_type();
+    auto ref_type = std::dynamic_pointer_cast<reference_type>(sub_type);
+    auto value_type = ref_type->get_subtype();
+    if(type::is_reference(value_type)) {
+        ptr = _builder->CreateLoad(_context->get_llvm_type(value_type), ptr);
+        value_type = std::dynamic_pointer_cast<reference_type>(value_type)->get_subtype();
+    }
+
+    auto llvm_type = _context->get_llvm_type(value_type);
+    // Save old value before increment
+    auto old_val = _builder->CreateLoad(llvm_type, ptr);
+
+    llvm::Value* new_val = nullptr;
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(value_type)) {
+        if(prim->is_integer()) {
+            new_val = _builder->CreateAdd(old_val, llvm::ConstantInt::get(llvm_type, 1));
+        } else if(prim->is_float()) {
+            new_val = _builder->CreateFAdd(old_val, llvm::ConstantFP::get(llvm_type, 1.0));
+        }
+    }
+    if(new_val) {
+        _builder->CreateStore(new_val, ptr);
+    }
+    // Return the old (pre-increment) value
+    _value = old_val;
+}
+
+
+//
+// Postfix decrement expression (expr--)
+//
+
+void type_reference_resolver::visit_postfix_decrement_expression(postfix_decrement_expression& expr) {
+    visit_unary_expression(expr);
+
+    auto& sub = expr.sub_expr();
+    auto type = sub->get_type();
+
+    if(!type::is_reference(type)) {
+        throw_error(0x0038, std::nullopt,
+            "The operand of postfix '--' must be an assignable lvalue (a variable or dereferenced pointer), "
+            "but got a non-reference type '{}'",
+            {type ? type->to_string() : "?"});
+    }
+
+    auto ref_type = std::dynamic_pointer_cast<reference_type>(type);
+    auto value_type = ref_type->get_subtype();
+    if(type::is_reference(value_type)) {
+        value_type = value_type->get_subtype();
+    }
+
+    if(!type::is_primitive(value_type)) {
+        throw_error(0x0039, std::nullopt,
+            "Postfix '--' requires a numeric primitive operand, but got type '{}'",
+            {value_type ? value_type->to_string() : "?"});
+    }
+    if(type::is_prim_bool(value_type)) {
+        throw_error(0x003A, std::nullopt,
+            "Postfix '--' cannot be applied to a boolean operand");
+    }
+
+    // Postfix decrement returns the old value (not a reference)
+    expr.set_type(value_type);
+}
+
+void implementation_generator::visit_postfix_decrement_expression(postfix_decrement_expression& expr) {
+    auto ptr = process_unary_expression(expr);
+    if(!ptr) {
+        _value = nullptr;
+        return;
+    }
+
+    auto sub_type = expr.sub_expr()->get_type();
+    auto ref_type = std::dynamic_pointer_cast<reference_type>(sub_type);
+    auto value_type = ref_type->get_subtype();
+    if(type::is_reference(value_type)) {
+        ptr = _builder->CreateLoad(_context->get_llvm_type(value_type), ptr);
+        value_type = std::dynamic_pointer_cast<reference_type>(value_type)->get_subtype();
+    }
+
+    auto llvm_type = _context->get_llvm_type(value_type);
+    // Save old value before decrement
+    auto old_val = _builder->CreateLoad(llvm_type, ptr);
+
+    llvm::Value* new_val = nullptr;
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(value_type)) {
+        if(prim->is_integer()) {
+            new_val = _builder->CreateSub(old_val, llvm::ConstantInt::get(llvm_type, 1));
+        } else if(prim->is_float()) {
+            new_val = _builder->CreateFSub(old_val, llvm::ConstantFP::get(llvm_type, 1.0));
+        }
+    }
+    if(new_val) {
+        _builder->CreateStore(new_val, ptr);
+    }
+    // Return the old (pre-decrement) value
+    _value = old_val;
+}
+
+//
 // Unary plus expression
 //
 

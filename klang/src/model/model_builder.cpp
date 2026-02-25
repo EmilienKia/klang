@@ -643,6 +643,12 @@ namespace k::model {
             case lex::operator_::STAR:
                 unary = model::dereference_expression::make_shared(sub);
                 break;
+            case lex::operator_::DOUBLE_PLUS:
+                unary = model::prefix_increment_expression::make_shared(sub);
+                break;
+            case lex::operator_::DOUBLE_MINUS:
+                unary = model::prefix_decrement_expression::make_shared(sub);
+                break;
             default:
                 throw_error(0x0019, expr.op, "Unary prefix operator '{}' is not supported", {std::string{expr.op.content}});
                 break;
@@ -651,8 +657,25 @@ namespace k::model {
         _expr = unary;
     }
 
-    void model_builder::visit_unary_postfix_expr(parse::ast::unary_postfix_expr &) {
+    void model_builder::visit_unary_postfix_expr(parse::ast::unary_postfix_expr &expr) {
+        _expr = nullptr;
+        expr.expr()->visit(*this);
+        auto sub = _expr;
 
+        std::shared_ptr<model::unary_expression> unary;
+        switch(expr.op.type) {
+            case lex::operator_::DOUBLE_PLUS:
+                unary = model::postfix_increment_expression::make_shared(sub);
+                break;
+            case lex::operator_::DOUBLE_MINUS:
+                unary = model::postfix_decrement_expression::make_shared(sub);
+                break;
+            default:
+                throw_error(0x001C, expr.op, "Unary postfix operator '{}' is not supported", {std::string{expr.op.content}});
+                break;
+        }
+        unary->set_ast_unary_expr(expr.shared_as<parse::ast::unary_postfix_expr>());
+        _expr = unary;
     }
 
     void model_builder::visit_bracket_postifx_expr(parse::ast::bracket_postifx_expr &expr) {

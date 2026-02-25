@@ -70,6 +70,18 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
         not(a : char) : char {
             return ~ a;
         }
+        prefix_incr_char(a : char) : char {
+            return ++a;
+        }
+        prefix_decr_char(a : char) : char {
+            return --a;
+        }
+        postfix_incr_char(a : char) : char {
+            return a++;
+        }
+        postfix_decr_char(a : char) : char {
+            return a--;
+        }
         eq(a:char, b:char) : bool { return a == b; }
         ne(a:char, b:char) : bool { return a != b; }
         lt(a:char, b:char) : bool { return a < b; }
@@ -172,10 +184,44 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
         REQUIRE( minus(42) == -42 );
     }
 
+    SECTION("prefix increment char") {
+        auto f = jit->lookup_symbol<char(*)(char)>("prefix_incr_char");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 1);
+        REQUIRE(f(41) == 42);
+        REQUIRE(f(-1) == 0);
+        REQUIRE(f(-42) == -41);
+    }
+
+    SECTION("prefix decrement char") {
+        auto f = jit->lookup_symbol<char(*)(char)>("prefix_decr_char");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1) == 0);
+        REQUIRE(f(42) == 41);
+        REQUIRE(f(0) == -1);
+    }
+
+    SECTION("postfix increment char") {
+        auto f = jit->lookup_symbol<char(*)(char)>("postfix_incr_char");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 0);    // returns old value
+        REQUIRE(f(41) == 41);  // returns old value (41, not 42)
+        REQUIRE(f(-1) == -1);
+        REQUIRE(f(-42) == -42);
+    }
+
     SECTION( "char not" ) {
         auto _not = jit->lookup_symbol<type_t(*)(type_t)>("not");
         REQUIRE(_not != nullptr);
         REQUIRE( _not(42) == -43 );
+    }
+
+    SECTION("postfix decrement char") {
+        auto f = jit->lookup_symbol<char(*)(char)>("postfix_decr_char");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1) == 1);    // returns old value
+        REQUIRE(f(42) == 42);  // returns old value (42, not 41)
+        REQUIRE(f(0) == 0);
     }
 
     SECTION("char equal") {
@@ -269,6 +315,18 @@ TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
         not(a : byte) : char {
             return ~ a;
         }
+        prefix_incr_byte(a : byte) : byte {
+            return ++a;
+        }
+        prefix_decr_byte(a : byte) : byte {
+            return --a;
+        }
+        postfix_incr_byte(a : byte) : byte {
+            return a++;
+        }
+        postfix_decr_byte(a : byte) : byte {
+            return a--;
+        }
         eq(a:byte, b:byte) : bool { return a == b; }
         ne(a:byte, b:byte) : bool { return a != b; }
         lt(a:byte, b:byte) : bool { return a < b; }
@@ -355,6 +413,38 @@ TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
         auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
         REQUIRE(minus != nullptr);
         REQUIRE( minus(42) == 214 );
+    }
+
+    SECTION("prefix increment byte") {
+        auto f = jit->lookup_symbol<unsigned char(*)(unsigned char)>("prefix_incr_byte");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 1);
+        REQUIRE(f(41) == 42);
+        REQUIRE(f(100) == 101);
+    }
+
+    SECTION("prefix decrement byte") {
+        auto f = jit->lookup_symbol<unsigned char(*)(unsigned char)>("prefix_decr_byte");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1) == 0);
+        REQUIRE(f(42) == 41);
+        REQUIRE(f(100) == 99);
+    }
+
+    SECTION("postfix increment byte") {
+        auto f = jit->lookup_symbol<unsigned char(*)(unsigned char)>("postfix_incr_byte");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(41) == 41);
+        REQUIRE(f(100) == 100);
+    }
+
+    SECTION("postfix decrement byte") {
+        auto f = jit->lookup_symbol<unsigned char(*)(unsigned char)>("postfix_decr_byte");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1) == 1);
+        REQUIRE(f(42) == 42);
+        REQUIRE(f(100) == 100);
     }
 
     SECTION( "byte not" ) {
@@ -453,6 +543,18 @@ TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
         }
         not(a : short) : short {
             return ~ a;
+        }
+        prefix_incr_short(a : short) : short {
+            return ++a;
+        }
+        prefix_decr_short(a : short) : short {
+            return --a;
+        }
+        postfix_incr_short(a : short) : short {
+            return a++;
+        }
+        postfix_decr_short(a : short) : short {
+            return a--;
         }
         eq(a:short, b:short) : bool { return a == b; }
         ne(a:short, b:short) : bool { return a != b; }
@@ -554,6 +656,38 @@ TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
         auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
         REQUIRE(minus != nullptr);
         REQUIRE( minus(42) == -42 );
+    }
+
+    SECTION("prefix increment short") {
+        auto f = jit->lookup_symbol<short(*)(short)>("prefix_incr_short");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 1);
+        REQUIRE(f(41) == 42);
+        REQUIRE(f(-1) == 0);
+    }
+
+    SECTION("prefix decrement short") {
+        auto f = jit->lookup_symbol<short(*)(short)>("prefix_decr_short");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1) == 0);
+        REQUIRE(f(42) == 41);
+        REQUIRE(f(0) == -1);
+    }
+
+    SECTION("postfix increment short") {
+        auto f = jit->lookup_symbol<short(*)(short)>("postfix_incr_short");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(41) == 41);
+        REQUIRE(f(-1) == -1);
+    }
+
+    SECTION("postfix decrement short") {
+        auto f = jit->lookup_symbol<short(*)(short)>("postfix_decr_short");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1) == 1);
+        REQUIRE(f(42) == 42);
+        REQUIRE(f(0) == 0);
     }
 
     SECTION( "int16 not" ) {
@@ -838,6 +972,56 @@ TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
         not(a : int) : int {
             return ~ a;
         }
+        prefix_incr_int(a : int) : int {
+            return ++a;
+        }
+        prefix_decr_int(a : int) : int {
+            return --a;
+        }
+        postfix_incr_int(a : int) : int {
+            return a++;
+        }
+        postfix_decr_int(a : int) : int {
+            return a--;
+        }
+        // Verify the variable is actually mutated by checking it after increment
+        prefix_incr_int_mutates(a : int) : int {
+            ++a;
+            return a;
+        }
+        // Verify prefix++ returns the new value (already incremented)
+        prefix_incr_int_result_is_new(a : int) : int {
+            b : int = ++a;
+            return b;
+        }
+
+        // Verify variable is mutated after postfix++
+        postfix_incr_int_mutates(a : int) : int {
+            a++;
+            return a;
+        }
+
+        // Verify postfix++ returns old value (before increment)
+        postfix_incr_int_result_is_old(a : int) : int {
+            b : int = a++;
+            return b;
+        }
+        prefix_decr_int_mutates(a : int) : int {
+            --a;
+            return a;
+        }
+        prefix_decr_int_result_is_new(a : int) : int {
+            b : int = --a;
+            return b;
+        }
+        postfix_decr_int_mutates(a : int) : int {
+            a--;
+            return a;
+        }
+        postfix_decr_int_result_is_old(a : int) : int {
+            b : int = a--;
+            return b;
+        }
         eq(a:int, b:int) : bool { return a == b; }
         ne(a:int, b:int) : bool { return a != b; }
         lt(a:int, b:int) : bool { return a < b; }
@@ -938,6 +1122,106 @@ TEST_CASE( "int32 arithmetic", "[gen][int32][arithmetic]" ) {
         auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
         REQUIRE(minus != nullptr);
         REQUIRE( minus(42) == -42 );
+    }
+
+    SECTION("prefix increment int") {
+        auto f = jit->lookup_symbol<int(*)(int)>("prefix_incr_int");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 1);
+        REQUIRE(f(41) == 42);
+        REQUIRE(f(-1) == 0);
+        REQUIRE(f(-42) == -41);
+    }
+
+    SECTION("prefix decrement int") {
+        auto f = jit->lookup_symbol<int(*)(int)>("prefix_decr_int");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1) == 0);
+        REQUIRE(f(42) == 41);
+        REQUIRE(f(0) == -1);
+        REQUIRE(f(-41) == -42);
+    }
+
+    SECTION("postfix increment int") {
+        auto f = jit->lookup_symbol<int(*)(int)>("postfix_incr_int");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 0);    // returns old value
+        REQUIRE(f(41) == 41);  // returns old value (41, not 42)
+        REQUIRE(f(-1) == -1);
+        REQUIRE(f(-42) == -42);
+    }
+
+    SECTION("postfix decrement int") {
+        auto f = jit->lookup_symbol<int(*)(int)>("postfix_decr_int");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1) == 1);    // returns old value
+        REQUIRE(f(42) == 42);  // returns old value (42, not 41)
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(-41) == -41);
+    }
+
+    SECTION("prefix increment mutates the variable") {
+        auto f = jit->lookup_symbol<int(*)(int)>("prefix_incr_int_mutates");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5) == 6);
+        REQUIRE(f(0) == 1);
+        REQUIRE(f(-1) == 0);
+    }
+
+    SECTION("prefix increment returns new (incremented) value") {
+        auto f = jit->lookup_symbol<int(*)(int)>("prefix_incr_int_result_is_new");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5) == 6);   // b = ++a, a was 5, so b = 6
+        REQUIRE(f(0) == 1);
+        REQUIRE(f(-1) == 0);
+    }
+
+    SECTION("prefix decrement mutates the variable") {
+        auto f = jit->lookup_symbol<int(*)(int)>("prefix_decr_int_mutates");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5) == 4);
+        REQUIRE(f(0) == -1);
+        REQUIRE(f(1) == 0);
+    }
+
+    SECTION("prefix decrement returns new (decremented) value") {
+        auto f = jit->lookup_symbol<int(*)(int)>("prefix_decr_int_result_is_new");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5) == 4);   // b = --a, a was 5, so b = 4
+        REQUIRE(f(1) == 0);
+        REQUIRE(f(0) == -1);
+    }
+
+    SECTION("postfix increment mutates the variable") {
+        auto f = jit->lookup_symbol<int(*)(int)>("postfix_incr_int_mutates");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5) == 6);   // variable was incremented
+        REQUIRE(f(0) == 1);
+        REQUIRE(f(-1) == 0);
+    }
+
+    SECTION("postfix increment returns old (pre-increment) value") {
+        auto f = jit->lookup_symbol<int(*)(int)>("postfix_incr_int_result_is_old");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5) == 5);   // b = a++, a was 5, so b = 5 (old value)
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(-1) == -1);
+    }
+
+    SECTION("postfix decrement mutates the variable") {
+        auto f = jit->lookup_symbol<int(*)(int)>("postfix_decr_int_mutates");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5) == 4);   // variable was decremented
+        REQUIRE(f(0) == -1);
+        REQUIRE(f(1) == 0);
+    }
+
+    SECTION("postfix decrement returns old (pre-decrement) value") {
+        auto f = jit->lookup_symbol<int(*)(int)>("postfix_decr_int_result_is_old");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5) == 5);   // b = a--, a was 5, so b = 5 (old value)
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(1) == 1);
     }
 
     SECTION( "int32 not" ) {
@@ -1220,6 +1504,18 @@ TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
         not(a : long) : long {
             return ~ a;
         }
+        prefix_incr_long(a : long) : long {
+            return ++a;
+        }
+        prefix_decr_long(a : long) : long {
+            return --a;
+        }
+        postfix_incr_long(a : long) : long {
+            return a++;
+        }
+        postfix_decr_long(a : long) : long {
+            return a--;
+        }
         eq(a:long, b:long) : bool { return a == b; }
         ne(a:long, b:long) : bool { return a != b; }
         lt(a:long, b:long) : bool { return a < b; }
@@ -1320,6 +1616,38 @@ TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
         auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
         REQUIRE(minus != nullptr);
         REQUIRE( minus(42) == -42 );
+    }
+
+    SECTION("prefix increment long") {
+        auto f = jit->lookup_symbol<long(*)(long)>("prefix_incr_long");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0L) == 1L);
+        REQUIRE(f(41L) == 42L);
+        REQUIRE(f(-1L) == 0L);
+    }
+
+    SECTION("prefix decrement long") {
+        auto f = jit->lookup_symbol<long(*)(long)>("prefix_decr_long");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1L) == 0L);
+        REQUIRE(f(42L) == 41L);
+        REQUIRE(f(0L) == -1L);
+    }
+
+    SECTION("postfix increment long") {
+        auto f = jit->lookup_symbol<long(*)(long)>("postfix_incr_long");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0L) == 0L);
+        REQUIRE(f(41L) == 41L);
+        REQUIRE(f(-1L) == -1L);
+    }
+
+    SECTION("postfix decrement long") {
+        auto f = jit->lookup_symbol<long(*)(long)>("postfix_decr_long");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1L) == 1L);
+        REQUIRE(f(42L) == 42L);
+        REQUIRE(f(0L) == 0L);
     }
 
     SECTION( "int64 not" ) {
@@ -1585,6 +1913,42 @@ TEST_CASE( "float arithmetic", "[gen][float][arithmetic]" ) {
         minus(a : float) : float {
             return - a;
         }
+        prefix_incr_float(a : float) : float {
+            return ++a;
+        }
+        prefix_incr_float_result_is_new(a : float) : float {
+            b : float = ++a;
+            return b;
+        }
+        prefix_decr_float(a : float) : float {
+            return --a;
+        }
+        prefix_decr_float_result_is_new(a : float) : float {
+            b : float = --a;
+            return b;
+        }
+        postfix_incr_float(a : float) : float {
+            return a++;
+        }
+        postfix_incr_float_mutates(a : float) : float {
+            a++;
+            return a;
+        }
+        postfix_incr_float_result_is_old(a : float) : float {
+            b : float = a++;
+            return b;
+        }
+        postfix_decr_float(a : float) : float {
+            return a--;
+        }
+        postfix_decr_float_mutates(a : float) : float {
+            a--;
+            return a;
+        }
+        postfix_decr_float_result_is_old(a : float) : float {
+            b : float = a--;
+            return b;
+        }
         eq(a:float, b:float) : bool { return a == b; }
         ne(a:float, b:float) : bool { return a != b; }
         lt(a:float, b:float) : bool { return a < b; }
@@ -1655,6 +2019,82 @@ TEST_CASE( "float arithmetic", "[gen][float][arithmetic]" ) {
         auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
         REQUIRE(minus != nullptr);
         REQUIRE( minus(42) == -42 );
+    }
+
+    SECTION("prefix increment float") {
+        auto f = jit->lookup_symbol<float(*)(float)>("prefix_incr_float");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0.0f) == Catch::Approx(1.0f));
+        REQUIRE(f(1.5f) == Catch::Approx(2.5f));
+        REQUIRE(f(-1.0f) == Catch::Approx(0.0f));
+        REQUIRE(f(-0.5f) == Catch::Approx(0.5f));
+    }
+
+    SECTION("prefix float increment returns new value") {
+        auto f = jit->lookup_symbol<float(*)(float)>("prefix_incr_float_result_is_new");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1.5f) == Catch::Approx(2.5f));
+        REQUIRE(f(-0.5f) == Catch::Approx(0.5f));
+    }
+
+    SECTION("prefix decrement float") {
+        auto f = jit->lookup_symbol<float(*)(float)>("prefix_decr_float");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1.0f) == Catch::Approx(0.0f));
+        REQUIRE(f(2.5f) == Catch::Approx(1.5f));
+        REQUIRE(f(0.0f) == Catch::Approx(-1.0f));
+        REQUIRE(f(0.5f) == Catch::Approx(-0.5f));
+    }
+
+    SECTION("prefix float decrement returns new value") {
+        auto f = jit->lookup_symbol<float(*)(float)>("prefix_decr_float_result_is_new");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(2.5f) == Catch::Approx(1.5f));
+        REQUIRE(f(0.5f) == Catch::Approx(-0.5f));
+    }
+
+    SECTION("postfix increment float returns old value") {
+        auto f = jit->lookup_symbol<float(*)(float)>("postfix_incr_float");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0.0f) == Catch::Approx(0.0f));    // old value returned
+        REQUIRE(f(1.5f) == Catch::Approx(1.5f));    // old value returned
+        REQUIRE(f(-1.0f) == Catch::Approx(-1.0f));
+    }
+
+    SECTION("postfix float increment mutates the variable") {
+        auto f = jit->lookup_symbol<float(*)(float)>("postfix_incr_float_mutates");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1.5f) == Catch::Approx(2.5f));
+        REQUIRE(f(-0.5f) == Catch::Approx(0.5f));
+    }
+
+    SECTION("postfix float increment result is old value") {
+        auto f = jit->lookup_symbol<float(*)(float)>("postfix_incr_float_result_is_old");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1.5f) == Catch::Approx(1.5f));
+        REQUIRE(f(-0.5f) == Catch::Approx(-0.5f));
+    }
+
+    SECTION("postfix decrement float returns old value") {
+        auto f = jit->lookup_symbol<float(*)(float)>("postfix_decr_float");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1.0f) == Catch::Approx(1.0f));    // old value returned
+        REQUIRE(f(2.5f) == Catch::Approx(2.5f));    // old value returned
+        REQUIRE(f(0.0f) == Catch::Approx(0.0f));
+    }
+
+    SECTION("postfix float decrement mutates the variable") {
+        auto f = jit->lookup_symbol<float(*)(float)>("postfix_decr_float_mutates");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(2.5f) == Catch::Approx(1.5f));
+        REQUIRE(f(0.5f) == Catch::Approx(-0.5f));
+    }
+
+    SECTION("postfix float decrement result is old value") {
+        auto f = jit->lookup_symbol<float(*)(float)>("postfix_decr_float_result_is_old");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(2.5f) == Catch::Approx(2.5f));
+        REQUIRE(f(0.5f) == Catch::Approx(0.5f));
     }
 
     SECTION("float equal") {
@@ -1731,6 +2171,42 @@ TEST_CASE( "double arithmetic", "[gen][double][arithmetic]" ) {
         minus(a : double) : double {
             return - a;
         }
+        prefix_incr_double(a : double) : double {
+            return ++a;
+        }
+        prefix_incr_double_result_is_new(a : double) : double {
+            b : double = ++a;
+            return b;
+        }
+        prefix_decr_double(a : double) : double {
+            return --a;
+        }
+        prefix_decr_double_result_is_new(a : double) : double {
+            b : double = --a;
+            return b;
+        }
+        postfix_incr_double(a : double) : double {
+            return a++;
+        }
+        postfix_incr_double_mutates(a : double) : double {
+            a++;
+            return a;
+        }
+        postfix_incr_double_result_is_old(a : double) : double {
+            b : double = a++;
+            return b;
+        }
+        postfix_decr_double(a : double) : double {
+            return a--;
+        }
+        postfix_decr_double_mutates(a : double) : double {
+            a--;
+            return a;
+        }
+        postfix_decr_double_result_is_old(a : double) : double {
+            b : double = a--;
+            return b;
+        }
         eq(a:double, b:double) : bool { return a == b; }
         ne(a:double, b:double) : bool { return a != b; }
         lt(a:double, b:double) : bool { return a < b; }
@@ -1801,6 +2277,82 @@ TEST_CASE( "double arithmetic", "[gen][double][arithmetic]" ) {
         auto minus = jit->lookup_symbol<type_t(*)(type_t)>("minus");
         REQUIRE(minus != nullptr);
         REQUIRE( minus(42) == -42 );
+    }
+
+    SECTION("prefix increment double") {
+        auto f = jit->lookup_symbol<double(*)(double)>("prefix_incr_double");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0.0) == Catch::Approx(1.0));
+        REQUIRE(f(1.5) == Catch::Approx(2.5));
+        REQUIRE(f(-1.0) == Catch::Approx(0.0));
+        REQUIRE(f(-0.5) == Catch::Approx(0.5));
+    }
+
+    SECTION("prefix double increment returns new value") {
+        auto f = jit->lookup_symbol<double(*)(double)>("prefix_incr_double_result_is_new");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1.5) == Catch::Approx(2.5));
+        REQUIRE(f(-0.5) == Catch::Approx(0.5));
+    }
+
+    SECTION("prefix decrement double") {
+        auto f = jit->lookup_symbol<double(*)(double)>("prefix_decr_double");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1.0) == Catch::Approx(0.0));
+        REQUIRE(f(2.5) == Catch::Approx(1.5));
+        REQUIRE(f(0.0) == Catch::Approx(-1.0));
+        REQUIRE(f(0.5) == Catch::Approx(-0.5));
+    }
+
+    SECTION("prefix double decrement returns new value") {
+        auto f = jit->lookup_symbol<double(*)(double)>("prefix_decr_double_result_is_new");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(2.5) == Catch::Approx(1.5));
+        REQUIRE(f(0.5) == Catch::Approx(-0.5));
+    }
+
+    SECTION("postfix increment double returns old value") {
+        auto f = jit->lookup_symbol<double(*)(double)>("postfix_incr_double");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0.0) == Catch::Approx(0.0));
+        REQUIRE(f(1.5) == Catch::Approx(1.5));
+        REQUIRE(f(-1.0) == Catch::Approx(-1.0));
+    }
+
+    SECTION("postfix double increment mutates the variable") {
+        auto f = jit->lookup_symbol<double(*)(double)>("postfix_incr_double_mutates");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1.5) == Catch::Approx(2.5));
+        REQUIRE(f(-0.5) == Catch::Approx(0.5));
+    }
+
+    SECTION("postfix double increment result is old value") {
+        auto f = jit->lookup_symbol<double(*)(double)>("postfix_incr_double_result_is_old");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1.5) == Catch::Approx(1.5));
+        REQUIRE(f(-0.5) == Catch::Approx(-0.5));
+    }
+
+    SECTION("postfix decrement double returns old value") {
+        auto f = jit->lookup_symbol<double(*)(double)>("postfix_decr_double");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1.0) == Catch::Approx(1.0));
+        REQUIRE(f(2.5) == Catch::Approx(2.5));
+        REQUIRE(f(0.0) == Catch::Approx(0.0));
+    }
+
+    SECTION("postfix double decrement mutates the variable") {
+        auto f = jit->lookup_symbol<double(*)(double)>("postfix_decr_double_mutates");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(2.5) == Catch::Approx(1.5));
+        REQUIRE(f(0.5) == Catch::Approx(-0.5));
+    }
+
+    SECTION("postfix double decrement result is old value") {
+        auto f = jit->lookup_symbol<double(*)(double)>("postfix_decr_double_result_is_old");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(2.5) == Catch::Approx(2.5));
+        REQUIRE(f(0.5) == Catch::Approx(0.5));
     }
 
     SECTION("double equal") {
@@ -2091,3 +2643,300 @@ TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
         REQUIRE( ge(false, true) == false );
     }
 }
+
+
+
+// ============================================================================
+// INTERACTION WITH LOOPS AND COMBINED USES
+// ============================================================================
+
+TEST_CASE("Increment/decrement in loops", "[gen][incr-decr][loop]") {
+    auto jit = gen_jit(R"SRC(
+        module __incr_loops__;
+
+        // Sum 0..n-1 using postfix ++
+        sum_postfix_incr(n : int) : int {
+            r : int = 0;
+            i : int = 0;
+            while (i < n) {
+                r = r + i;
+                i++;
+            }
+            return r;
+        }
+
+        // Sum 0..n-1 using prefix ++
+        sum_prefix_incr(n : int) : int {
+            r : int = 0;
+            i : int = 0;
+            while (i < n) {
+                r = r + i;
+                ++i;
+            }
+            return r;
+        }
+
+        // Count down from n using postfix --
+        countdown_postfix_decr(n : int) : int {
+            count : int = 0;
+            i : int = n;
+            while (i > 0) {
+                count++;
+                i--;
+            }
+            return count;
+        }
+
+        // Count down from n using prefix --
+        countdown_prefix_decr(n : int) : int {
+            count : int = 0;
+            i : int = n;
+            while (i > 0) {
+                ++count;
+                --i;
+            }
+            return count;
+        }
+
+        // for-loop style with prefix ++
+        for_prefix_incr(n : int) : int {
+            r : int = 0;
+            for (i : int = 0; i < n; ++i) {
+                r += i;
+            }
+            return r;
+        }
+
+        // for-loop style with postfix ++
+        for_postfix_incr(n : int) : int {
+            r : int = 0;
+            for (i : int = 0; i < n; i++) {
+                r += i;
+            }
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    SECTION("sum with postfix increment") {
+        auto f = jit->lookup_symbol<int(*)(int)>("sum_postfix_incr");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(1) == 0);
+        REQUIRE(f(5) == 10);  // 0+1+2+3+4
+        REQUIRE(f(10) == 45); // 0+1+...+9
+    }
+
+    SECTION("sum with prefix increment") {
+        auto f = jit->lookup_symbol<int(*)(int)>("sum_prefix_incr");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(1) == 0);
+        REQUIRE(f(5) == 10);
+        REQUIRE(f(10) == 45);
+    }
+
+    SECTION("countdown with postfix decrement") {
+        auto f = jit->lookup_symbol<int(*)(int)>("countdown_postfix_decr");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(1) == 1);
+        REQUIRE(f(5) == 5);
+        REQUIRE(f(10) == 10);
+    }
+
+    SECTION("countdown with prefix decrement") {
+        auto f = jit->lookup_symbol<int(*)(int)>("countdown_prefix_decr");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(1) == 1);
+        REQUIRE(f(5) == 5);
+        REQUIRE(f(10) == 10);
+    }
+
+    SECTION("for-loop with prefix increment") {
+        auto f = jit->lookup_symbol<int(*)(int)>("for_prefix_incr");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(1) == 0);
+        REQUIRE(f(5) == 10);
+        REQUIRE(f(10) == 45);
+    }
+
+    SECTION("for-loop with postfix increment") {
+        auto f = jit->lookup_symbol<int(*)(int)>("for_postfix_incr");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(1) == 0);
+        REQUIRE(f(5) == 10);
+        REQUIRE(f(10) == 45);
+    }
+}
+
+// ============================================================================
+// PREFIX vs POSTFIX DISTINCTION
+// ============================================================================
+
+TEST_CASE("Prefix and postfix distinction", "[gen][incr-decr][prefix-vs-postfix]") {
+    auto jit = gen_jit(R"SRC(
+        module __prefix_vs_postfix__;
+
+        // Compute a + b where a is prefix-incremented before use
+        // Expected: (a+1) + b
+        add_prefix_incr(a : int, b : int) : int {
+            return (++a) + b;
+        }
+
+        // Compute a + b where a is postfix-incremented before use
+        // Expected: a + b (old value of a used, then a gets incremented)
+        add_postfix_incr(a : int, b : int) : int {
+            return (a++) + b;
+        }
+
+        // Compute a - b where a is prefix-decremented before use
+        // Expected: (a-1) - b
+        sub_prefix_decr(a : int, b : int) : int {
+            return (--a) - b;
+        }
+
+        // Compute a - b where a is postfix-decremented before use
+        // Expected: a - b (old value of a used)
+        sub_postfix_decr(a : int, b : int) : int {
+            return (a--) - b;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    SECTION("prefix increment uses new value in expression") {
+        auto f = jit->lookup_symbol<int(*)(int, int)>("add_prefix_incr");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5, 3) == 9);   // (5+1) + 3 = 9
+        REQUIRE(f(0, 10) == 11); // (0+1) + 10 = 11
+        REQUIRE(f(-1, 5) == 5);  // (-1+1) + 5 = 5
+    }
+
+    SECTION("postfix increment uses old value in expression") {
+        auto f = jit->lookup_symbol<int(*)(int, int)>("add_postfix_incr");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5, 3) == 8);   // 5 + 3 = 8 (old a=5 used)
+        REQUIRE(f(0, 10) == 10); // 0 + 10 = 10
+        REQUIRE(f(-1, 5) == 4);  // -1 + 5 = 4
+    }
+
+    SECTION("prefix decrement uses new value in expression") {
+        auto f = jit->lookup_symbol<int(*)(int, int)>("sub_prefix_decr");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5, 3) == 1);   // (5-1) - 3 = 1
+        REQUIRE(f(10, 4) == 5);  // (10-1) - 4 = 5
+        REQUIRE(f(1, 5) == -5);  // (1-1) - 5 = -5
+    }
+
+    SECTION("postfix decrement uses old value in expression") {
+        auto f = jit->lookup_symbol<int(*)(int, int)>("sub_postfix_decr");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(5, 3) == 2);   // 5 - 3 = 2 (old a=5 used)
+        REQUIRE(f(10, 4) == 6);  // 10 - 4 = 6
+        REQUIRE(f(1, 5) == -4);  // 1 - 5 = -4
+    }
+}
+
+// ============================================================================
+// UNSIGNED INTEGER INCREMENT/DECREMENT
+// ============================================================================
+
+TEST_CASE("Increment/decrement on unsigned integer types", "[gen][incr-decr][unsigned]") {
+    auto jit = gen_jit(R"SRC(
+        module __incr_unsigned__;
+
+        prefix_incr_ubyte(a : byte) : byte {
+            return ++a;
+        }
+        prefix_decr_ubyte(a : byte) : byte {
+            return --a;
+        }
+        postfix_incr_ubyte(a : byte) : byte {
+            return a++;
+        }
+        postfix_decr_ubyte(a : byte) : byte {
+            return a--;
+        }
+
+        prefix_incr_ulong(a : unsigned long) : unsigned long {
+            return ++a;
+        }
+        prefix_decr_ulong(a : unsigned long) : unsigned long {
+            return --a;
+        }
+        postfix_incr_ulong(a : unsigned long) : unsigned long {
+            return a++;
+        }
+        postfix_decr_ulong(a : unsigned long) : unsigned long {
+            return a--;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    SECTION("prefix increment unsigned byte") {
+        auto f = jit->lookup_symbol<unsigned char(*)(unsigned char)>("prefix_incr_ubyte");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 1);
+        REQUIRE(f(41) == 42);
+        REQUIRE(f(100) == 101);
+    }
+
+    SECTION("prefix decrement unsigned byte") {
+        auto f = jit->lookup_symbol<unsigned char(*)(unsigned char)>("prefix_decr_ubyte");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1) == 0);
+        REQUIRE(f(42) == 41);
+        REQUIRE(f(101) == 100);
+    }
+
+    SECTION("postfix increment unsigned byte returns old value") {
+        auto f = jit->lookup_symbol<unsigned char(*)(unsigned char)>("postfix_incr_ubyte");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0) == 0);
+        REQUIRE(f(41) == 41);
+        REQUIRE(f(100) == 100);
+    }
+
+    SECTION("postfix decrement unsigned byte returns old value") {
+        auto f = jit->lookup_symbol<unsigned char(*)(unsigned char)>("postfix_decr_ubyte");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1) == 1);
+        REQUIRE(f(42) == 42);
+        REQUIRE(f(101) == 101);
+    }
+
+    SECTION("prefix increment unsigned long") {
+        auto f = jit->lookup_symbol<uint64_t(*)(uint64_t)>("prefix_incr_ulong");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0UL) == 1UL);
+        REQUIRE(f(41UL) == 42UL);
+        REQUIRE(f(1000000000UL) == 1000000001UL);
+    }
+
+    SECTION("prefix decrement unsigned long") {
+        auto f = jit->lookup_symbol<uint64_t(*)(uint64_t)>("prefix_decr_ulong");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1UL) == 0UL);
+        REQUIRE(f(42UL) == 41UL);
+        REQUIRE(f(1000000001UL) == 1000000000UL);
+    }
+
+    SECTION("postfix increment unsigned long returns old value") {
+        auto f = jit->lookup_symbol<uint64_t(*)(uint64_t)>("postfix_incr_ulong");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(0UL) == 0UL);
+        REQUIRE(f(41UL) == 41UL);
+    }
+
+    SECTION("postfix decrement unsigned long returns old value") {
+        auto f = jit->lookup_symbol<uint64_t(*)(uint64_t)>("postfix_decr_ulong");
+        REQUIRE(f != nullptr);
+        REQUIRE(f(1UL) == 1UL);
+        REQUIRE(f(42UL) == 42UL);
+    }
+}
+
+
