@@ -26,6 +26,7 @@
 #include "../common/common.hpp"
 
 namespace llvm {
+    class ArrayType;
     class Constant;
     class ConstantStruct;
     class Type;
@@ -332,7 +333,25 @@ public:
 
     std::shared_ptr<sized_array_type> with_size(unsigned long size) override;
 
+    /**
+     * Returns the LLVM struct type { i32, [N x T] } for this sized array.
+     * Field 0: i32 (element count / capacity)
+     * Field 1: [N x T] (element data)
+     */
     llvm::Type* get_llvm_type() const override;
+
+    /** Index of the size/capacity field in the LLVM struct (always 0). */
+    static constexpr unsigned FIELD_SIZE = 0;
+    /** Index of the data array field in the LLVM struct (always 1). */
+    static constexpr unsigned FIELD_DATA = 1;
+
+    /** Returns the LLVM struct type cast, or nullptr. */
+    llvm::StructType* get_llvm_struct_type() const;
+
+    /** Returns the LLVM [N x T] array type (field 1 of the struct). */
+    llvm::ArrayType* get_llvm_data_array_type() const;
+
+    llvm::Constant* generate_default_value_initializer() const override;
 
     std::string to_string() const override;
 

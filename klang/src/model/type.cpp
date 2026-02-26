@@ -21,6 +21,10 @@
 #include "context.hpp"
 #include "../common/tools.hpp"
 
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Type.h>
+
 namespace k::model {
 
 //
@@ -228,8 +232,12 @@ std::shared_ptr<sized_array_type> array_type::with_size(unsigned long size) {
 }
 
 llvm::Type* array_type::get_llvm_type() const {
-    std::cerr << "Unsized array are not supported yet." << std::endl;
-    return nullptr;
+    // An unsized array (int[]) is a reference to a sized-array struct.
+    // Its LLVM type is an opaque pointer (ptr), just like reference_type.
+    // The actual struct layout is { i32, [N x T] } but since the size is unknown,
+    // we use an opaque pointer here.
+    return llvm::PointerType::get(llvm::Type::getInt8Ty(
+        const_cast<array_type*>(this)->subtype.lock()->get_llvm_type()->getContext()), 0);
 }
 
 std::string array_type::to_string() const {
@@ -268,7 +276,38 @@ std::shared_ptr<sized_array_type> sized_array_type::with_size(unsigned long size
 }
 
 llvm::Type* sized_array_type::get_llvm_type() const {
-    return llvm::ArrayType::get(subtype.lock()->get_llvm_type(), get_size());
+    if (_llvm_type == nullptr) {
+        auto* elem_llvm = subtype.lock()->get_llvm_type();
+        if (!elem_llvm) return nullptr;
+        auto& ctx = elem_llvm->getContext();
+        // Field 0: i32  (element count / capacity)
+        // Field 1: [N x T]  (element data)
+        auto* i32_t    = llvm::Type::getInt32Ty(ctx);
+        auto* data_t   = llvm::ArrayType::get(elem_llvm, size);
+        _llvm_type = llvm::StructType::get(ctx, {i32_t, data_t}, /*isPacked=*/false);
+    }
+    return _llvm_type;
+}
+
+llvm::StructType* sized_array_type::get_llvm_struct_type() const {
+    return llvm::dyn_cast_or_null<llvm::StructType>(get_llvm_type());
+}
+
+llvm::ArrayType* sized_array_type::get_llvm_data_array_type() const {
+    auto* st = get_llvm_struct_type();
+    if (!st) return nullptr;
+    return llvm::dyn_cast_or_null<llvm::ArrayType>(st->getElementType(FIELD_DATA));
+}
+
+llvm::Constant* sized_array_type::generate_default_value_initializer() const {
+    auto* st = get_llvm_struct_type();
+    if (!st) return nullptr;
+    auto& ctx = st->getContext();
+    // { i32 N, zeroinitializer }
+    auto* size_val = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx),
+                                            static_cast<uint64_t>(size), /*isSigned=*/false);
+    auto* data_zero = llvm::ConstantAggregateZero::get(st->getElementType(FIELD_DATA));
+    return llvm::ConstantStruct::get(st, {size_val, data_zero});
 }
 
 std::string sized_array_type::to_string() const {

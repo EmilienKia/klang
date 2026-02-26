@@ -669,32 +669,51 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
 void implementation_generator::visit_subscript_expression(subscript_expression& expr) {
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        // TODO throw exception ?
         _value = nullptr;
         return;
     }
 
     auto left_type = expr.left()->get_type();
 
-    // Dereference if double ref
+    // Dereference if double ref (ref<ref<array>>)
     if(type::is_double_reference(left_type)) {
         left_type = left_type->get_subtype();
-        left = _builder->CreateLoad(_context->get_llvm_type(left_type), left);
+        left = _builder->CreateLoad(_context->get_llvm_type(left_type), left, "arr_ref");
     }
+
+    // At this point left_type is ref<array<T>> or ref<sized_array<T>>.
+    // left is the pointer to the { i32, [N x T] } struct.
+    auto arr_type_inner = left_type->get_subtype(); // sized_array_type or array_type
 
     // Dereference index if needed
     auto right_type = expr.right()->get_type();
     if(type::is_reference(right_type)) {
         right_type = std::dynamic_pointer_cast<reference_type>(right_type)->get_subtype();
-        right = _builder->CreateLoad(_context->get_llvm_type(right_type), right);
+        right = _builder->CreateLoad(_context->get_llvm_type(right_type), right, "idx");
     }
 
-    auto arr_type = _context->get_llvm_type(left_type->get_subtype());
-
-    llvm::Value* indices[] = {_builder->getInt32(0), right};
-
-//    _value = _builder->Insert(llvm::GetElementPtrInst::Create(arr_type, left, indices));
-    _value = _builder->CreateGEP(arr_type, left, indices);
+    if (auto sized_arr = std::dynamic_pointer_cast<sized_array_type>(arr_type_inner)) {
+        // Layout: { i32, [N x T] }
+        // GEP: struct_ptr -> field 1 (data array) -> element index
+        auto* struct_llvm = sized_arr->get_llvm_struct_type();
+        auto* data_arr_llvm = sized_arr->get_llvm_data_array_type();
+        if (!struct_llvm || !data_arr_llvm) {
+            throw_internal_error(0x000C, std::nullopt,
+                "Internal error: sized array has no LLVM struct type during subscript code generation");
+        }
+        // Two-step GEP: first into the struct field 1, then into the array element
+        llvm::Value* field_data_ptr = _builder->CreateStructGEP(struct_llvm, left,
+            sized_array_type::FIELD_DATA, "arr_data_ptr");
+        llvm::Value* indices[] = {_builder->getInt32(0), right};
+        _value = _builder->CreateGEP(data_arr_llvm, field_data_ptr, indices, "elem_ptr");
+    } else {
+        // Unsized array ref (int[]) — ptr to opaque struct; use i8* arithmetic for now
+        // Fall back to generic GEP via element type
+        auto elem_type = arr_type_inner->get_subtype();
+        auto* elem_llvm = _context->get_llvm_type(elem_type);
+        llvm::Value* indices[] = {right};
+        _value = _builder->CreateGEP(elem_llvm, left, indices, "elem_ptr");
+    }
 }
 
 //
@@ -1151,25 +1170,16 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         _value = _builder->CreateCall(llvm_func, args);
 
     } else if (auto ref_type = std::dynamic_pointer_cast<reference_type>(var_type)) {
-        // Reference variable: store the address (pointer) of the referent into the local alloca.
-        // The initializer is guaranteed by the resolver to be a single reference-typed expression.
-        //
-        // Important: for a reference variable, visit_symbol_expression LOADS the pointer stored in
-        // the alloca, so object_ref already holds the (uninitialized) loaded value rather than the
-        // alloca itself.  We must write back through the *alloca*, not through object_ref.
-        // Retrieve the raw alloca directly.
+        // Reference variable — could be a plain ref (int&) or an array ref (int[N]&).
+        // In both cases we need the raw alloca, not the loaded pointer.
 
         llvm::Value* alloca_ptr = nullptr;
         if (auto local_var = std::dynamic_pointer_cast<variable_statement>(var_def)) {
             auto it = _context->_variables.find(local_var);
-            if (it != _context->_variables.end()) {
-                alloca_ptr = it->second;
-            }
+            if (it != _context->_variables.end()) alloca_ptr = it->second;
         } else if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_def)) {
             auto it = _context->_global_vars.find(global_var);
-            if (it != _context->_global_vars.end()) {
-                alloca_ptr = it->second;
-            }
+            if (it != _context->_global_vars.end()) alloca_ptr = it->second;
         }
 
         if (!alloca_ptr) {
@@ -1189,8 +1199,116 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                     "this indicates a code-generation bug",
                     {var_def->get_fq_name()});
             }
-            // _value is the address (pointer) of the referent — store it into the alloca.
-            _builder->CreateStore(_value, alloca_ptr);
+
+            auto ref_sub = ref_type->get_subtype();
+            if (type::is_sized_array(ref_sub)) {
+                // int[N]& : copy-initialise.
+                // alloca_ptr is the alloca of the reference variable — it holds a POINTER (ptr),
+                // not the struct itself.  We must:
+                //   1. Allocate a fresh { i32, [N x T] } struct in the entry block.
+                //   2. Copy elements from the source into that fresh struct.
+                //   3. Store the address of the fresh struct into alloca_ptr.
+                auto dest_arr = std::dynamic_pointer_cast<sized_array_type>(ref_sub);
+                auto src_ptr  = _value; // ptr to source struct { i32, [M x T] }
+
+                auto* struct_llvm    = dest_arr->get_llvm_struct_type();
+                auto* data_arr_llvm  = dest_arr->get_llvm_data_array_type();
+                auto* elem_llvm      = _context->get_llvm_type(dest_arr->get_subtype());
+                auto  dest_n         = static_cast<uint64_t>(dest_arr->get_size());
+
+                // Allocate the destination struct in the entry block
+                auto* fn = _builder->GetInsertBlock()->getParent();
+                llvm::IRBuilder<> entry_build(&fn->getEntryBlock(), fn->getEntryBlock().begin());
+                llvm::AllocaInst* dest_struct_alloca = entry_build.CreateAlloca(
+                    struct_llvm, nullptr, var_def->get_short_name() + "_arr_storage");
+
+                // Zero-fill destination struct, then set its size field
+                _builder->CreateStore(llvm::ConstantAggregateZero::get(struct_llvm), dest_struct_alloca);
+                llvm::Value* dest_size_field = _builder->CreateStructGEP(struct_llvm, dest_struct_alloca,
+                    sized_array_type::FIELD_SIZE, "dest_size_fld");
+                _builder->CreateStore(
+                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()), dest_n, false),
+                    dest_size_field);
+
+                // Determine the source struct type (may differ in array size from dest_arr)
+                // We read the source capacity from field 0.
+                // Use the source's struct type by reading src_n from field 0.
+                // Since field 0 is always i32 at offset 0, we can use dest_arr's struct type for GEP.
+                llvm::Value* src_size_field = _builder->CreateStructGEP(struct_llvm, src_ptr,
+                    sized_array_type::FIELD_SIZE, "src_size_fld");
+                llvm::Value* src_n = _builder->CreateLoad(
+                    llvm::Type::getInt32Ty(_builder->getContext()), src_size_field, "src_n");
+
+                // Data pointers
+                llvm::Value* src_data_ptr  = _builder->CreateStructGEP(struct_llvm, src_ptr,
+                    sized_array_type::FIELD_DATA, "src_data_ptr");
+                llvm::Value* dest_data_ptr = _builder->CreateStructGEP(struct_llvm, dest_struct_alloca,
+                    sized_array_type::FIELD_DATA, "dest_data_ptr");
+
+                // copy_n = min(dest_n, src_n)
+                auto* i32_t = llvm::Type::getInt32Ty(_builder->getContext());
+                auto* dest_n_val = llvm::ConstantInt::get(i32_t, dest_n, false);
+                llvm::Value* copy_n_val = _builder->CreateSelect(
+                    _builder->CreateICmpULT(src_n, dest_n_val), src_n, dest_n_val, "copy_n");
+
+                // --- copy loop ---
+                auto* copy_entry_bb = _builder->GetInsertBlock();
+                auto* copy_loop_bb  = llvm::BasicBlock::Create(_builder->getContext(), "arr_ref_copy_loop", fn);
+                auto* copy_done_bb  = llvm::BasicBlock::Create(_builder->getContext(), "arr_ref_copy_done", fn);
+                auto* zero_loop_bb  = llvm::BasicBlock::Create(_builder->getContext(), "arr_ref_zero_loop", fn);
+                auto* init_done_bb  = llvm::BasicBlock::Create(_builder->getContext(), "arr_ref_init_done", fn);
+
+                _builder->CreateCondBr(
+                    _builder->CreateICmpUGT(copy_n_val, llvm::ConstantInt::get(i32_t, 0, false)),
+                    copy_loop_bb, copy_done_bb);
+
+                _builder->SetInsertPoint(copy_loop_bb);
+                auto* copy_idx = _builder->CreatePHI(i32_t, 2, "copy_idx");
+                copy_idx->addIncoming(llvm::ConstantInt::get(i32_t, 0, false), copy_entry_bb);
+
+                llvm::Value* s_elem = _builder->CreateGEP(data_arr_llvm, src_data_ptr,
+                    {_builder->getInt32(0), copy_idx}, "s_elem");
+                llvm::Value* d_elem = _builder->CreateGEP(data_arr_llvm, dest_data_ptr,
+                    {_builder->getInt32(0), copy_idx}, "d_elem");
+                _builder->CreateStore(_builder->CreateLoad(elem_llvm, s_elem, "ev"), d_elem);
+
+                auto* copy_next = _builder->CreateAdd(copy_idx,
+                    llvm::ConstantInt::get(i32_t, 1, false), "copy_next");
+                copy_idx->addIncoming(copy_next, copy_loop_bb);
+                _builder->CreateCondBr(
+                    _builder->CreateICmpULT(copy_next, copy_n_val),
+                    copy_loop_bb, copy_done_bb);
+
+                _builder->SetInsertPoint(copy_done_bb);
+                _builder->CreateCondBr(
+                    _builder->CreateICmpULT(copy_n_val, dest_n_val),
+                    zero_loop_bb, init_done_bb);
+
+                _builder->SetInsertPoint(zero_loop_bb);
+                auto* zero_idx = _builder->CreatePHI(i32_t, 2, "zero_idx");
+                zero_idx->addIncoming(copy_n_val, copy_done_bb);
+
+                llvm::Value* z_elem = _builder->CreateGEP(data_arr_llvm, dest_data_ptr,
+                    {_builder->getInt32(0), zero_idx}, "z_elem");
+                _builder->CreateStore(llvm::Constant::getNullValue(elem_llvm), z_elem);
+
+                auto* zero_next = _builder->CreateAdd(zero_idx,
+                    llvm::ConstantInt::get(i32_t, 1, false), "zero_next");
+                zero_idx->addIncoming(zero_next, zero_loop_bb);
+                _builder->CreateCondBr(
+                    _builder->CreateICmpULT(zero_next, dest_n_val),
+                    zero_loop_bb, init_done_bb);
+
+                _builder->SetInsertPoint(init_done_bb);
+
+                // Store the address of our local struct into the reference variable's alloca
+                _builder->CreateStore(dest_struct_alloca, alloca_ptr);
+                object_ref = alloca_ptr;
+            } else {
+                // Plain reference (int&, struct&, etc.) — store the address of the referent
+                _builder->CreateStore(_value, alloca_ptr);
+                object_ref = alloca_ptr;
+            }
         } else {
             throw_internal_error(0x001C, std::nullopt,
                 "Internal error: reference variable '{}' has no initialisation argument; "
@@ -1198,8 +1316,26 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 {var_def->get_fq_name()});
         }
 
-        // Return the alloca itself (as a reference to the reference variable's storage).
-        object_ref = alloca_ptr;
+    } else if (auto sized_arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type)) {
+        // Sized array value variable: int[N]
+        // No explicit init — zero-initialise the entire struct, then set the count field.
+        auto* struct_llvm = sized_arr_type->get_llvm_struct_type();
+        if (!struct_llvm) {
+            throw_internal_error(0x001D, std::nullopt,
+                "Internal error: sized array variable '{}' has no LLVM struct type",
+                {var_def->get_fq_name()});
+        }
+        // Zero-fill the entire struct { i32, [N x T] }
+        _builder->CreateStore(llvm::ConstantAggregateZero::get(struct_llvm), object_ref);
+        // Then write the element count N into field 0
+        llvm::Value* size_field_ptr = _builder->CreateStructGEP(struct_llvm, object_ref,
+            sized_array_type::FIELD_SIZE, "arr_size_ptr");
+        _builder->CreateStore(
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()),
+                sized_arr_type->get_size(), false),
+            size_field_ptr);
+        // Field 1 (data) is now zeroed — primitives are ready.
+        // TODO: call default constructors for struct element types.
     } else {
         // TODO This is probably a non-primitive primary type, so direct construction will be done
     }

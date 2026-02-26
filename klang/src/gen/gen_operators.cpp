@@ -502,10 +502,40 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 {source_type ? source_type->to_string() : "?",
                  target_type ? target_type->to_string() : "?"});
         }
+    } else if (type::is_sized_array(target_type)) {
+        // Array = array : element-wise copy (see spec).
+        // Source must be a reference to a sized array of the same element type.
+        auto dest_arr = std::dynamic_pointer_cast<sized_array_type>(target_type);
+        std::shared_ptr<type> src_inner_type = source_type;
+        if (type::is_reference(source_type)) {
+            src_inner_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+        }
+        if (!type::is_sized_array(src_inner_type)) {
+            throw_error(0x0060, std::nullopt,
+                "Array assignment: the right-hand side must be an array of the same element type, "
+                "but '{}' is not a sized array",
+                {source_type ? source_type->to_string() : "?"});
+        }
+        auto src_arr = std::dynamic_pointer_cast<sized_array_type>(src_inner_type);
+        if (!type::are_equal(dest_arr->get_subtype(), src_arr->get_subtype())) {
+            throw_error(0x0061, std::nullopt,
+                "Array assignment: element type mismatch — cannot copy from '{}' to '{}'",
+                {source_type ? source_type->to_string() : "?",
+                 target_type ? target_type->to_string() : "?"});
+        }
+        // Type of the assignment expression is ref<dest array>
+        expr.set_type(ref_target_type);
+        // Ensure the source is referenced (if it isn't already)
+        if (!type::is_reference(source_type)) {
+            right = load_value_expression::make_shared(right);
+            right->set_type(source_type->get_reference());
+            expr.assign_right(right);
+        }
+        return; // code generation handled in visit_simple_assignation_expression
     } else if(!type::is_primitive(target_type)) {
         throw_error(0x000D, std::nullopt,
             "Assignment to a non-primitive, non-pointer type is not yet supported: "
-            "the target has type '{}'; only assignments to primitive types and pointers are supported",
+            "the target has type '{}'; only assignments to primitive types, pointers and arrays are supported",
             {target_type ? target_type->to_string() : "?"});
     } else if(type::is_prim_bool(target_type)) {
         throw_error(0x000E, std::nullopt,
@@ -555,13 +585,79 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             "this indicates a code-generation bug in an operand expression");
     }
 
-    auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type())->get_subtype();
-    auto left_type = left_ref_type->get_subtype();
-    auto llvm_type = _context->get_llvm_type(left_type);
+    // left is a pointer to the storage.
+    // Determine what the target type really is after one level of ref-unwrap.
+    auto expr_left_type = expr.left()->get_type();
+    auto left_ref_type  = std::dynamic_pointer_cast<reference_type>(expr_left_type);
+    auto target_type    = left_ref_type ? left_ref_type->get_subtype() : nullptr;
 
+    // If target is ref-to-ref, unwrap one more level (variable access pattern).
+    if (target_type && type::is_reference(target_type)) {
+        target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
+    }
+
+    // ------------------------------------------------------------------
+    // Array assignment: element-wise copy (spec: partial copy, no resize)
+    // ------------------------------------------------------------------
+    if (target_type && type::is_sized_array(target_type)) {
+        auto dest_arr  = std::dynamic_pointer_cast<sized_array_type>(target_type);
+        auto* struct_llvm    = dest_arr->get_llvm_struct_type();
+        auto* data_arr_llvm  = dest_arr->get_llvm_data_array_type();
+        auto* elem_llvm      = _context->get_llvm_type(dest_arr->get_subtype());
+        auto  dest_n         = static_cast<uint64_t>(dest_arr->get_size());
+
+        // right is the pointer to the source struct { i32, [N x T] }
+        auto* i32_t = llvm::Type::getInt32Ty(_builder->getContext());
+
+        // Source capacity (runtime value from field 0)
+        llvm::Value* src_size_ptr = _builder->CreateStructGEP(struct_llvm, right,
+            sized_array_type::FIELD_SIZE, "src_sz_ptr");
+        llvm::Value* src_n = _builder->CreateLoad(i32_t, src_size_ptr, "src_n");
+
+        // Data pointers
+        llvm::Value* src_data  = _builder->CreateStructGEP(struct_llvm, right,
+            sized_array_type::FIELD_DATA, "src_data");
+        llvm::Value* dest_data = _builder->CreateStructGEP(struct_llvm, left,
+            sized_array_type::FIELD_DATA, "dst_data");
+
+        // copy_n = min(dest_n, src_n)
+        auto* dest_n_val = llvm::ConstantInt::get(i32_t, dest_n, false);
+        llvm::Value* copy_n = _builder->CreateSelect(
+            _builder->CreateICmpULT(src_n, dest_n_val), src_n, dest_n_val, "copy_n");
+
+        // Emit copy loop
+        auto* fn = _builder->GetInsertBlock()->getParent();
+        auto* pre_bb   = _builder->GetInsertBlock();
+        auto* loop_bb  = llvm::BasicBlock::Create(_builder->getContext(), "arr_asgn_loop", fn);
+        auto* done_bb  = llvm::BasicBlock::Create(_builder->getContext(), "arr_asgn_done", fn);
+
+        _builder->CreateCondBr(
+            _builder->CreateICmpUGT(copy_n, llvm::ConstantInt::get(i32_t, 0, false)),
+            loop_bb, done_bb);
+
+        _builder->SetInsertPoint(loop_bb);
+        auto* idx = _builder->CreatePHI(i32_t, 2, "asgn_idx");
+        idx->addIncoming(llvm::ConstantInt::get(i32_t, 0, false), pre_bb);
+
+        llvm::Value* s = _builder->CreateGEP(data_arr_llvm, src_data,
+            {_builder->getInt32(0), idx}, "s_elem");
+        llvm::Value* d = _builder->CreateGEP(data_arr_llvm, dest_data,
+            {_builder->getInt32(0), idx}, "d_elem");
+        _builder->CreateStore(_builder->CreateLoad(elem_llvm, s, "ev"), d);
+
+        auto* nxt = _builder->CreateAdd(idx, llvm::ConstantInt::get(i32_t, 1), "nxt");
+        idx->addIncoming(nxt, loop_bb);
+        _builder->CreateCondBr(_builder->CreateICmpULT(nxt, copy_n), loop_bb, done_bb);
+
+        _builder->SetInsertPoint(done_bb);
+        _value = left;
+        return;
+    }
+
+    // ------------------------------------------------------------------
+    // Scalar / pointer assignment (existing behaviour)
+    // ------------------------------------------------------------------
     _value = right;
-
-    // Store the value, return the left ref
     _value = _builder->CreateStore(_value, left);
     _value = left;
 

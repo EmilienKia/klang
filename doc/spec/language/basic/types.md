@@ -12,6 +12,12 @@ K is a statically-typed language. Every expression has a type determined at comp
 2. [Reference types](#2-reference-types)
 3. [Pointer types](#3-pointer-types)
 4. [Array types](#4-array-types)
+   - 4.1 [Internal representation](#41-internal-representation)
+   - 4.2 [Sized array value — `T[N]`](#42-sized-array-value--tn)
+   - 4.3 [Sized array reference — `T[N]&`](#43-sized-array-reference--tn)
+   - 4.4 [Unsized array reference — `T[]`](#44-unsized-array-reference--t--)
+   - 4.5 [Array assignment](#45-array-assignment-)
+   - 4.6 [Subscript operator](#46-subscript-operator)
 5. [Struct types](#5-struct-types)
 6. [Type specifiers — grammar](#6-type-specifiers--grammar)
 7. [Implicit conversions](#7-implicit-conversions)
@@ -161,47 +167,168 @@ p = &a;                 // take address of 'a'
 ## 4. Array types
 
 An array type represents a fixed-size sequence of elements of the same type.
+Arrays in K are **value types** — each array variable holds its own storage.
 
-### Sized array
+### 4.1 Internal representation
 
-A sized array has a fixed number of elements specified at the type level.
+A sized array of type `T[N]` is represented internally as a struct:
+
+```
+{ uint32 count; T[N] data; }
+```
+
+* **`count`** (field 0) — number of elements (`N`), stored as a 32-bit unsigned integer.
+  The maximum number of elements in a single array is 2³² − 1.
+* **`data`** (field 1) — contiguous block of `N` elements of type `T`.
+
+This layout is opaque to the programmer; it is specified here for documentation completeness.
+
+---
+
+### 4.2 Sized array value — `T[N]`
+
+A sized array **value** variable declares and allocates a concrete array of `N` elements.
 
 ```
 SizedArrayTypeSuffix:
     '[' IntegerLiteral ']'
 ```
 
-**Example:**
+**Examples:**
 
 ```k
-arr : int[4];           // array of 4 ints
-set(p: int[4]&, i: int, v: int) {
-    p[i] = v;
-}
+arr : int[4];           // local array of 4 ints, zero-initialised
+g   : double[100];      // global array of 100 doubles, zero-initialised
 ```
 
-### Unsized array (pointer decay)
+**Initialisation:**
+- A sized array variable is always **zero-initialised** at its declaration (primitives are set to
+  `0`; struct elements will be default-constructed in a future version).
+- Explicit initialiser expressions at declaration are not supported.
 
-An array type may omit the size (`[]`), which is treated as a pointer-like view.
-
-```
-UnsizedArrayTypeSuffix:
-    '[' ']'
-```
-
-**Subscript access:**
-Elements are accessed via the subscript operator `[ ]`.
-
-```k
-a[0] = 1;
-x = a[2];
-```
-
-**Constraints:**
-- Array indices are zero-based.
-- Bounds checking is not performed at runtime in the current implementation.
+**Lifetime:**
+- An array never changes its size or type during its lifetime.
+- The compiler allocates the full storage at the point of declaration.
 
 ---
+
+### 4.3 Sized array reference — `T[N]&`
+
+A sized array **reference** is a reference that **owns a fresh copy** of the source array.
+It is semantically equivalent to binding the alias name to a privately owned copy.
+
+```
+SizedArrayReferenceType:
+    T '[' N ']' '&'
+```
+
+**Copy-initialisation rules:**
+
+Let `dst : T[N]& = src` where `src` has type `T[M]` or `T[M]&`:
+
+| Relationship | Elements copied | Remaining dest elements |
+|---|---|---|
+| dest.size ≤ src.size | first `N` elements of `src` | — |
+| dest.size = src.size | all `N` elements | — |
+| dest.size > src.size | all `M` elements of `src` | zero-initialised (primitives) / default-constructed (structs) |
+
+**Constraints on `T[N]&`:**
+
+1. **Mandatory initialisation** — An array reference must be initialised at its declaration:
+   ```k
+   r : int[4]&;          // ERROR: array reference without initialiser
+   ```
+
+2. **Initialiser must be an array reference (lvalue)** — The initialiser must be a sized array
+   variable (or parameter); a bare value or non-array is rejected:
+   ```k
+   x : int = 5;
+   r : int[4]& = x;      // ERROR: int is not an array
+   ```
+
+3. **Element types must match exactly** — The element type of source and destination must be
+   identical; no implicit conversions between element types are applied:
+   ```k
+   src : double[4];
+   r : int[4]& = src;    // ERROR: element type mismatch (double ≠ int)
+   ```
+
+4. **No rebind** — Once bound, the reference always refers to its own copy; it cannot be
+   rebound to point to another array.
+
+5. **No null** — An array reference is always bound to a valid array.
+
+---
+
+### 4.4 Unsized array reference — `T[]` (= `T[]&`)
+
+An unsized array type `T[]` is a reference to an array whose size is not known at the
+declaration site.  It is exactly equivalent to `T[]&` (the explicit reference form).
+
+```
+UnsizedArrayRefType:
+    T '[' ']'          -- canonical form; identical to T '[]' '&'
+    | T '[' ']' '&'    -- explicit reference form; same representation
+```
+
+Both notations compile to the same internal representation: a pointer to a
+`{ uint32 count; T[?] data; }` struct.
+
+**Constraints:**
+- All constraints that apply to `T[N]&` (mandatory initialisation, element type match, no
+  rebind, no null) also apply to `T[]`.
+- The size of the referenced array is determined at the binding site.
+
+**Examples:**
+
+```k
+// Both declarations are identical:
+a : int[];      // reference to int array of unknown size
+b : int[]&;     // same — explicit & is optional but permitted
+```
+
+---
+
+### 4.5 Array assignment (`=`)
+
+Assigning one array to another performs an **element-wise copy**.  The destination array
+never changes its size.
+
+| Relationship | Elements overwritten | Tail elements |
+|---|---|---|
+| dest.size ≤ src.size | first `dest.size` elements | unchanged |
+| dest.size = src.size | all elements | — |
+| dest.size > src.size | first `src.size` elements | unchanged |
+
+> **Important:** Unlike initialisation via `T[N]&`, assignment does **not** zero-initialise
+> or default-construct the tail elements of the destination.  Only the copied range is
+> modified.
+
+```k
+a : int[3];
+a[0] = 1; a[1] = 2; a[2] = 3;
+b : int[3];
+b = a;             // element-wise copy: b = {1, 2, 3}
+a[0] = 99;         // does not affect b
+```
+
+---
+
+### 4.6 Subscript operator
+
+Elements are accessed via the subscript operator `[]`.
+
+```k
+arr[0] = 42;
+x = arr[i];
+```
+
+* Indices are zero-based.
+* The index expression must be implicitly convertible to `unsigned int`.
+* Bounds checking is **not** performed at runtime in the current implementation.
+
+---
+
 
 ## 5. Struct types
 

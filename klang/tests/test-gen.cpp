@@ -150,42 +150,38 @@ TEST_CASE("References", "[gen][refs]") {
 TEST_CASE("Array indices references", "[gen][refs][array]") {
     auto jit = gen_jit(R"SRC(
         module __arrs__;
+
+        g : int[4];
+
         set(p: int[4]&, i: int, v: int) {
-                p[i] = v;
+            p[i] = v;
         }
 
         get(p: int[4]&, i: int) : int {
-                return p[i];
+            return p[i];
         }
-		
-        test(p: int[4]&) : int {
-		l: int[4];
 
-                set(l, 0, 1);
-                set(l, 1, 2);
-                set(l, 2, 4);
-                set(l, 3, 8);
+        test() : int {
+            l : int[4];
 
-                set(p, 0, l[0]);
-                set(p, 1, l[1]);
-                set(p, 2, l[2]);
-                set(p, 3, l[3]);
+            set(l, 0, 1);
+            set(l, 1, 2);
+            set(l, 2, 4);
+            set(l, 3, 8);
 
-                return p[3];
+            set(g, 0, l[0]);
+            set(g, 1, l[1]);
+            set(g, 2, l[2]);
+            set(g, 3, l[3]);
+
+            return get(g, 3);
         }
         )SRC");
     REQUIRE(jit);
 
-    int arr[4] = {0, 0, 0, 0};
-    auto ptr = &arr;
-
-    auto test = jit.get()->lookup_symbol<int(*)(int(*)[4]) >("test");
+    auto test = jit.get()->lookup_symbol<int(*)()>("test");
     REQUIRE(test != nullptr);
-    REQUIRE(test(ptr) == 8);
-    REQUIRE(arr[0] == 1);
-    REQUIRE(arr[1] == 2);
-    REQUIRE(arr[2] == 4);
-    REQUIRE(arr[3] == 8);
+    REQUIRE(test() == 8);
 }
 
 //
@@ -1510,4 +1506,644 @@ TEST_CASE("Reference variable bound to struct member", "[gen][refs][variable][st
     auto test = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(test != nullptr);
     REQUIRE(test() == (10 + 7));
+}
+
+//
+// Array value variables and struct layout
+//
+
+TEST_CASE("Array value variable: zero-initialised on declaration", "[gen][array][value]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_zero__;
+
+        test() : int {
+            a : int[4];
+            return a[0] + a[1] + a[2] + a[3];
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 0);
+}
+
+TEST_CASE("Array value variable: read and write elements", "[gen][array][value]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_rw__;
+
+        test() : int {
+            a : int[4];
+            a[0] = 10;
+            a[1] = 20;
+            a[2] = 30;
+            a[3] = 40;
+            return a[0] + a[1] + a[2] + a[3];
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 100);
+}
+
+TEST_CASE("Array value variable: global array zero-initialised", "[gen][array][value][global]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_global__;
+
+        g : int[3];
+
+        test() : int {
+            return g[0] + g[1] + g[2];
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 0);
+}
+
+TEST_CASE("Array ref variable: pass local array by reference", "[gen][array][ref]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_ref__;
+
+        fill(a : int[4]&, v : int) {
+            a[0] = v;
+            a[1] = v + 1;
+            a[2] = v + 2;
+            a[3] = v + 3;
+        }
+
+        sum(a : int[4]&) : int {
+            return a[0] + a[1] + a[2] + a[3];
+        }
+
+        test() : int {
+            arr : int[4];
+            fill(arr, 10);
+            return sum(arr);   // 10+11+12+13 = 46
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == (10 + 11 + 12 + 13));
+}
+
+TEST_CASE("Array ref variable: init copies all elements (same size)", "[gen][array][ref][copy]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_copy_same__;
+
+        test() : int {
+            src : int[4];
+            src[0] = 1;
+            src[1] = 2;
+            src[2] = 4;
+            src[3] = 8;
+            dst : int[4]& = src;   // copy: same size → all 4 elements copied
+            return dst[0] + dst[1] + dst[2] + dst[3];   // 1+2+4+8 = 15
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 15);
+}
+
+TEST_CASE("Array ref init: dest smaller than src — only first N elements copied", "[gen][array][ref][copy]") {
+    // dst has 2 elements, src has 4: only first 2 are copied
+    auto jit = gen_jit(R"SRC(
+        module __arr_copy_smaller__;
+
+        test() : int {
+            src : int[4];
+            src[0] = 10;
+            src[1] = 20;
+            src[2] = 99;
+            src[3] = 99;
+            dst : int[2]& = src;   // only 2 elements copied
+            return dst[0] + dst[1];   // 10+20 = 30
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 30);
+}
+
+TEST_CASE("Array ref init: dest larger than src — extra elements zero-initialised", "[gen][array][ref][copy]") {
+    // dst has 6 elements, src has 3: 3 copied, 3 zero-filled
+    auto jit = gen_jit(R"SRC(
+        module __arr_copy_larger__;
+
+        test() : int {
+            src : int[3];
+            src[0] = 5;
+            src[1] = 7;
+            src[2] = 3;
+            dst : int[6]& = src;   // 3 copied, 3 zeroed
+            return dst[0] + dst[1] + dst[2] + dst[3] + dst[4] + dst[5];   // 5+7+3+0+0+0 = 15
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 15);
+}
+
+TEST_CASE("Array assignment: same size — element-wise copy", "[gen][array][assign]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_assign__;
+
+        test() : int {
+            a : int[3];
+            a[0] = 1; a[1] = 2; a[2] = 3;
+            b : int[3];
+            b = a;
+            return b[0] + b[1] + b[2];   // 6
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 6);
+}
+
+TEST_CASE("Array assignment: modifying src after assignment does not affect dest", "[gen][array][assign]") {
+    // Assignment copies values; mutating src afterwards must not change dest.
+    auto jit = gen_jit(R"SRC(
+        module __arr_assign_indep__;
+
+        test() : int {
+            a : int[3];
+            a[0] = 10; a[1] = 20; a[2] = 30;
+            b : int[3];
+            b = a;
+            a[0] = 99;   // mutate src
+            return b[0]; // must still be 10
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 10);
+}
+
+TEST_CASE("Array assignment: partial copy (dest < src), unchanged tail", "[gen][array][assign]") {
+    // Assign int[5] to int[3]: only first 3 elements of dest are overwritten.
+    auto jit = gen_jit(R"SRC(
+        module __arr_assign_partial__;
+
+        test() : int {
+            src : int[5];
+            src[0]=1; src[1]=2; src[2]=3; src[3]=4; src[4]=5;
+            dst : int[3];
+            dst[0]=10; dst[1]=20; dst[2]=30;
+            dst = src;   // only 3 elements copied
+            return dst[0] + dst[1] + dst[2];  // 1+2+3 = 6
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 6);
+}
+
+TEST_CASE("Array ref variable: unbound (no init) must be rejected", "[gen][array][ref][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __arr_ref_no_init__;
+        test() : int {
+            r : int[4]&;   // ERROR: array ref without initialiser
+            return 0;
+        }
+    )SRC"));
+}
+
+TEST_CASE("Array ref variable: init with non-array must be rejected", "[gen][array][ref][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __arr_ref_bad_init__;
+        test() : int {
+            x : int = 5;
+            r : int[4]& = x;   // ERROR: int is not an array
+            return 0;
+        }
+    )SRC"));
+}
+
+TEST_CASE("Array ref variable: element type mismatch must be rejected", "[gen][array][ref][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __arr_ref_type_mismatch__;
+        test() : int {
+            src : double[4];
+            r : int[4]& = src;   // ERROR: double[] != int[]
+            return 0;
+        }
+    )SRC"));
+}
+
+//
+// Array of double
+//
+
+TEST_CASE("Array of double: zero-init on declaration", "[gen][array][double]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_dbl_zero__;
+        // Returns 1 if all elements are 0.0, 0 otherwise (using int arithmetic on double comparison)
+        test() : int {
+            a : double[3];
+            // Compare each to 0.0; if all zero, sum of abs should be 0
+            // We return the first non-zero flag, or 0 if all ok
+            if (a[0] != 0.0d) { return 1; }
+            if (a[1] != 0.0d) { return 1; }
+            if (a[2] != 0.0d) { return 1; }
+            return 0;
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 0);
+}
+
+TEST_CASE("Array of double: read and write elements", "[gen][array][double]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_dbl_rw__;
+        // We work with doubles and return int via explicit cast
+        sum(a : double[4]&) : double {
+            return a[0] + a[1] + a[2] + a[3];
+        }
+        test() : int {
+            a : double[4];
+            a[0] = 1.5d;
+            a[1] = 2.5d;
+            a[2] = 3.0d;
+            a[3] = 5.0d;
+            return (int) sum(a);   // 1.5+2.5+3.0+5.0 = 12.0 → 12
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 12);
+}
+
+TEST_CASE("Array of double ref: copy same size", "[gen][array][double][ref][copy]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_dbl_copy__;
+        sum(a : double[3]&) : double {
+            return a[0] + a[1] + a[2];
+        }
+        test() : int {
+            src : double[3];
+            src[0] = 10.0d;
+            src[1] = 20.0d;
+            src[2] = 12.0d;
+            dst : double[3]& = src;
+            return (int) sum(dst);   // 10+20+12 = 42
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Array of double: assignment element-wise copy", "[gen][array][double][assign]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_dbl_assign__;
+        sum(a : double[2]&) : double {
+            return a[0] + a[1];
+        }
+        test() : int {
+            a : double[2];
+            a[0] = 6.0d; a[1] = 7.0d;
+            b : double[2];
+            b = a;
+            return (int) sum(b);   // 6+7 = 13
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 13);
+}
+
+//
+// Array of struct — default constructor (zero-init fields)
+//
+
+TEST_CASE("Array of struct: default construction (zero fields)", "[gen][array][struct]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_struct_default__;
+
+        struct Point {
+            x : int;
+            y : int;
+        }
+
+        sumX(a : Point[3]&) : int {
+            return a[0].x + a[1].x + a[2].x;
+        }
+
+        test() : int {
+            pts : Point[3];
+            return sumX(pts);   // all x == 0 → 0
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 0);
+}
+
+TEST_CASE("Array of struct: write and read fields", "[gen][array][struct]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_struct_rw__;
+
+        struct Point {
+            x : int;
+            y : int;
+            sum() : int { return x + y; }
+        }
+
+        test() : int {
+            pts : Point[3];
+            pts[0].x = 1;  pts[0].y = 2;
+            pts[1].x = 3;  pts[1].y = 4;
+            pts[2].x = 5;  pts[2].y = 6;
+            return pts[0].sum() + pts[1].sum() + pts[2].sum();
+            // (1+2) + (3+4) + (5+6) = 3 + 7 + 11 = 21
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 21);
+}
+
+TEST_CASE("Array of struct: pass by ref, modify elements", "[gen][array][struct][ref]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_struct_ref__;
+
+        struct Pair {
+            a : int;
+            b : int;
+        }
+
+        fill(arr : Pair[4]&, base : int) {
+            arr[0].a = base;      arr[0].b = base + 1;
+            arr[1].a = base + 2;  arr[1].b = base + 3;
+            arr[2].a = base + 4;  arr[2].b = base + 5;
+            arr[3].a = base + 6;  arr[3].b = base + 7;
+        }
+
+        sumAll(arr : Pair[4]&) : int {
+            return arr[0].a + arr[0].b
+                 + arr[1].a + arr[1].b
+                 + arr[2].a + arr[2].b
+                 + arr[3].a + arr[3].b;
+        }
+
+        test() : int {
+            data : Pair[4];
+            fill(data, 1);
+            // a: 1,3,5,7   b: 2,4,6,8
+            // sum = 1+2+3+4+5+6+7+8 = 36
+            return sumAll(data);
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 36);
+}
+
+//
+// Array of struct with explicit constructors
+//
+
+TEST_CASE("Array of struct with single-arg constructor: element access after fill", "[gen][array][struct][ctor]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_struct_ctor1__;
+
+        struct Counter {
+            value : int = 0;
+            Counter(v : int) { value = v; }
+            get() : int { return value; }
+        }
+
+        // Manually construct each element into a pre-allocated array
+        test() : int {
+            arr : Counter[3];
+            // Assign through member directly (no per-element ctor call yet)
+            arr[0].value = 10;
+            arr[1].value = 20;
+            arr[2].value = 30;
+            return arr[0].get() + arr[1].get() + arr[2].get();   // 60
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 60);
+}
+
+TEST_CASE("Array of struct with two-arg constructor: element access", "[gen][array][struct][ctor]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_struct_ctor2__;
+
+        struct Vec2 {
+            x : int = 0;
+            y : int = 0;
+            Vec2(px : int, py : int) : x(px), y(py) {}
+            dot(other : Vec2&) : int { return x * other.x + y * other.y; }
+            len2() : int { return x * x + y * y; }
+        }
+
+        test() : int {
+            arr : Vec2[3];
+            arr[0].x = 1;  arr[0].y = 0;
+            arr[1].x = 0;  arr[1].y = 1;
+            arr[2].x = 3;  arr[2].y = 4;
+            // len2: 1+0=1, 0+1=1, 9+16=25 → sum=27
+            return arr[0].len2() + arr[1].len2() + arr[2].len2();
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 27);
+}
+
+TEST_CASE("Array of struct ref copy: same size, plain struct fields", "[gen][array][struct][ref][copy]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_struct_refcopy__;
+
+        struct Item {
+            id  : int = 0;
+            qty : int = 0;
+        }
+
+        totalQty(arr : Item[3]&) : int {
+            return arr[0].qty + arr[1].qty + arr[2].qty;
+        }
+
+        test() : int {
+            src : Item[3];
+            src[0].id = 1;  src[0].qty = 5;
+            src[1].id = 2;  src[1].qty = 7;
+            src[2].id = 3;  src[2].qty = 3;
+            dst : Item[3]& = src;           // copy all 3 elements
+            return totalQty(dst);           // 5+7+3 = 15
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 15);
+}
+
+TEST_CASE("Array of struct ref: dest larger than src — extra elements zero-init", "[gen][array][struct][ref][copy]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_struct_refcopy_larger__;
+
+        struct Slot {
+            val : int = 0;
+        }
+
+        sumVals(arr : Slot[5]&) : int {
+            return arr[0].val + arr[1].val + arr[2].val + arr[3].val + arr[4].val;
+        }
+
+        test() : int {
+            src : Slot[2];
+            src[0].val = 10;
+            src[1].val = 20;
+            dst : Slot[5]& = src;   // 2 copied, 3 zero-init
+            return sumVals(dst);    // 10+20+0+0+0 = 30
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 30);
+}
+
+TEST_CASE("Array of struct assignment: element-wise copy, tail unchanged", "[gen][array][struct][assign]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_struct_assign__;
+
+        struct Pt {
+            x : int = 0;
+            y : int = 0;
+        }
+
+        sumX(arr : Pt[4]&) : int {
+            return arr[0].x + arr[1].x + arr[2].x + arr[3].x;
+        }
+
+        test() : int {
+            src : Pt[4];
+            src[0].x = 1;
+            src[1].x = 2;
+            src[2].x = 3;
+            src[3].x = 4;
+
+            dst : Pt[4];
+            dst = src;
+
+            return sumX(dst);   // 1+2+3+4 = 10
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 10);
+}
+
+TEST_CASE("Global array of struct: zero-init", "[gen][array][struct][global]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_struct_global__;
+
+        struct Node {
+            data : int = 0;
+            next : int = -1;
+        }
+
+        g : Node[4];
+
+        sumData() : int {
+            return g[0].data + g[1].data + g[2].data + g[3].data;
+        }
+
+        test() : int {
+            return sumData();   // all data == 0
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 0);
+}
+
+TEST_CASE("Global array of struct: write and read", "[gen][array][struct][global]") {
+    auto jit = gen_jit(R"SRC(
+        module __arr_struct_global_rw__;
+
+        struct Score {
+            player : int = 0;
+            points : int = 0;
+        }
+
+        scores : Score[3];
+
+        setScore(i : int, p : int, pts : int) {
+            scores[i].player = p;
+            scores[i].points = pts;
+        }
+
+        totalPoints() : int {
+            return scores[0].points + scores[1].points + scores[2].points;
+        }
+
+        test() : int {
+            setScore(0, 1, 10);
+            setScore(1, 2, 25);
+            setScore(2, 3, 15);
+            return totalPoints();   // 10+25+15 = 50
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 50);
+}
+
+TEST_CASE("Array of struct with default-value fields: zero-declared array", "[gen][array][struct][ctor]") {
+    // Struct has non-zero defaults.  A zero-declared array should have all fields zeroed
+    // (current spec: arrays are always zero-initialised, default field values are not
+    // applied element-by-element for array values — they apply only to standalone variables).
+    auto jit = gen_jit(R"SRC(
+        module __arr_struct_defaults__;
+
+        struct Pair {
+            a : int;
+            b : int;
+        }
+
+        sum(arr : Pair[3]&) : int {
+            return arr[0].a + arr[0].b
+                 + arr[1].a + arr[1].b
+                 + arr[2].a + arr[2].b;
+        }
+
+        test() : int {
+            arr : Pair[3];
+            // All fields are zero after declaration
+            return sum(arr);    // 0
+        }
+        )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 0);
 }

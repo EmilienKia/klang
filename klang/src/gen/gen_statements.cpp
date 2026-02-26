@@ -597,6 +597,20 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     if (init != nullptr) {
         _value = nullptr;
         init->accept(*this);
+    } else if (k::model::type::is_sized_array(var_type)) {
+        // int[N] without explicit initializer: zero-init the entire struct,
+        // then store the capacity N in field 0.
+        auto sized_arr = std::dynamic_pointer_cast<k::model::sized_array_type>(var_type);
+        auto* struct_llvm = sized_arr->get_llvm_struct_type();
+        // Zero-fill the alloca
+        _builder->CreateStore(llvm::ConstantAggregateZero::get(struct_llvm), alloca);
+        // Write the element count into field 0
+        llvm::Value* size_ptr = _builder->CreateStructGEP(struct_llvm, alloca,
+            k::model::sized_array_type::FIELD_SIZE, "arr_size");
+        _builder->CreateStore(
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()),
+                sized_arr->get_size(), false),
+            size_ptr);
     } else {
         throw_error(0x0003, std::nullopt,
             "Variable '{}' has no initialisation expression; "

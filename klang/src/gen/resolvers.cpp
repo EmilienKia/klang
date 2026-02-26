@@ -792,10 +792,18 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
     if(!type::is_resolved(var.get_type())) {
         auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
         if(!unres_type) {
-            throw_internal_error(0x0001, std::nullopt,
-                "Internal error: variable '{}' has an unresolvable type that is not an unresolved_type instance; "
-                "this indicates a compiler bug",
-                {var.get_fq_name()});
+            // The type is not resolved but is not a plain unresolved_type either (e.g. it
+            // is a sized_array_type or reference_type whose subtype is still unresolved).
+            // Delegate to context->resolve_type which recursively resolves composite types.
+            auto resolved = _context->resolve_type(var.get_type());
+            if (resolved && type::is_resolved(resolved)) {
+                var.set_type(resolved);
+            } else {
+                throw_internal_error(0x0001, std::nullopt,
+                    "Internal error: variable '{}' has an unresolvable type that is not an unresolved_type instance; "
+                    "this indicates a compiler bug",
+                    {var.get_fq_name()});
+            }
         } else {
             // First try qualified name resolution from the unit root (handles namespaced
             // types like shapes::rect, or root-prefixed like ::shapes::rect).
@@ -934,6 +942,68 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         // Reference variable: must be initialized at declaration, and the
         // initializer must itself be a reference (lvalue), not a bare value.
         auto ref_var_type = std::dynamic_pointer_cast<reference_type>(var.get_type());
+        auto ref_sub = ref_var_type->get_subtype();
+
+        // ------------------------------------------------------------------
+        // Case A: ref to sized array, i.e.  int[N]&
+        // The initialiser must be a reference to an array whose element type
+        // matches.  Copy-initialisation semantics apply (see spec).
+        // ------------------------------------------------------------------
+        if (type::is_sized_array(ref_sub)) {
+            auto dest_arr = std::dynamic_pointer_cast<sized_array_type>(ref_sub);
+            if (!init_expr || init_expr->empty()) {
+                throw_error(0x4101, std::nullopt,
+                    "Array reference variable '{}' of type '{}' must be initialised at its declaration; "
+                    "an array reference cannot be left unbound",
+                    {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
+                return;
+            }
+            if (init_expr->size() > 1) {
+                throw_error(0x4102, std::nullopt,
+                    "Array reference variable '{}' of type '{}' must be initialised with exactly one "
+                    "expression, but {} were provided",
+                    {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                     std::to_string(init_expr->size())});
+                return;
+            }
+            auto arg = init_expr->argument(0);
+            auto arg_type = arg ? arg->get_type() : nullptr;
+            // Initialiser must be a reference to a sized array of the same element type.
+            if (!arg_type || !type::is_reference(arg_type)) {
+                throw_error(0x4104, std::nullopt,
+                    "Array reference variable '{}' of type '{}' must be initialised with an array "
+                    "reference (lvalue), but the initialiser has type '{}' which is not a reference",
+                    {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                     arg_type ? arg_type->to_string() : "?"});
+                return;
+            }
+            auto arg_ref = std::dynamic_pointer_cast<reference_type>(arg_type);
+            auto arg_sub = arg_ref->get_subtype();
+            if (!type::is_sized_array(arg_sub)) {
+                throw_error(0x4105, std::nullopt,
+                    "Array reference variable '{}' of type '{}' can only be initialised from another "
+                    "array reference, but the initialiser refers to type '{}' which is not a sized array",
+                    {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                     arg_sub ? arg_sub->to_string() : "?"});
+                return;
+            }
+            auto src_arr = std::dynamic_pointer_cast<sized_array_type>(arg_sub);
+            // Element types must match exactly.
+            if (!type::are_equal(dest_arr->get_subtype(), src_arr->get_subtype())) {
+                throw_error(0x4106, std::nullopt,
+                    "Array reference variable '{}' of type '{}' cannot be initialised from an array of "
+                    "type '{}': element types must match exactly",
+                    {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                     arg_type ? arg_type->to_string() : "?"});
+                return;
+            }
+            // Validation OK — element-wise copy will be emitted at code generation time.
+            return;
+        }
+
+        // ------------------------------------------------------------------
+        // Case B: plain reference (non-array), e.g.  int&
+        // ------------------------------------------------------------------
 
         // 1. Initialization is mandatory
         if (!init_expr || init_expr->empty()) {
@@ -987,6 +1057,17 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 "the referenced type must match exactly",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?",
                  arg_type ? arg_type->to_string() : "?"});
+            return;
+        }
+    } else if (type::is_sized_array(var.get_type())) {
+        // Sized array variable: int[N]
+        // No initializer = zero-init (always valid for any element type).
+        // An explicit initializer is not yet supported at declaration for value arrays.
+        if (init_expr && !init_expr->empty()) {
+            throw_error(0x4201, std::nullopt,
+                "Array variable '{}' of type '{}' cannot have an explicit initialiser at declaration; "
+                "arrays are always zero-initialised at construction",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
             return;
         }
     } else {

@@ -152,7 +152,9 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
         if(arr->lex_int) {
             return subtype->get_array(arr->lex_int->to_unsigned_int());
         } else {
-            return subtype->get_array();
+            // int[] is a reference to an unsized array — identical to int[]&
+            // Canonicalise immediately so that int[] and int[]& share the same type object.
+            return subtype->get_array()->get_reference();
         }
     } else {
         return {};
@@ -395,7 +397,8 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
                 auto sized_arr = std::dynamic_pointer_cast<sized_array_type>(type);
                 return res->get_array(sized_arr->get_size());
             } else {
-                return res->get_array();
+                // Unsized array: canonicalise to ref<array<T>> (same as int[]&)
+                return res->get_array()->get_reference();
             }
         }
     } else if (auto unres = std::dynamic_pointer_cast<unresolved_type>(type)) {
