@@ -1150,6 +1150,56 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         }
         _value = _builder->CreateCall(llvm_func, args);
 
+    } else if (auto ref_type = std::dynamic_pointer_cast<reference_type>(var_type)) {
+        // Reference variable: store the address (pointer) of the referent into the local alloca.
+        // The initializer is guaranteed by the resolver to be a single reference-typed expression.
+        //
+        // Important: for a reference variable, visit_symbol_expression LOADS the pointer stored in
+        // the alloca, so object_ref already holds the (uninitialized) loaded value rather than the
+        // alloca itself.  We must write back through the *alloca*, not through object_ref.
+        // Retrieve the raw alloca directly.
+
+        llvm::Value* alloca_ptr = nullptr;
+        if (auto local_var = std::dynamic_pointer_cast<variable_statement>(var_def)) {
+            auto it = _context->_variables.find(local_var);
+            if (it != _context->_variables.end()) {
+                alloca_ptr = it->second;
+            }
+        } else if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_def)) {
+            auto it = _context->_global_vars.find(global_var);
+            if (it != _context->_global_vars.end()) {
+                alloca_ptr = it->second;
+            }
+        }
+
+        if (!alloca_ptr) {
+            throw_internal_error(0x001A, std::nullopt,
+                "Internal error: could not obtain the storage location for reference variable '{}'; "
+                "the variable must have been allocated before constructor code generation",
+                {var_def->get_fq_name()});
+        }
+
+        if (!expr.empty()) {
+            auto first_arg = expr.argument(0);
+            _value = nullptr;
+            first_arg->accept(*this);
+            if (!_value) {
+                throw_internal_error(0x001B, std::nullopt,
+                    "Internal error: reference variable '{}' initialisation argument produced no LLVM value; "
+                    "this indicates a code-generation bug",
+                    {var_def->get_fq_name()});
+            }
+            // _value is the address (pointer) of the referent — store it into the alloca.
+            _builder->CreateStore(_value, alloca_ptr);
+        } else {
+            throw_internal_error(0x001C, std::nullopt,
+                "Internal error: reference variable '{}' has no initialisation argument; "
+                "the resolver should have rejected this earlier",
+                {var_def->get_fq_name()});
+        }
+
+        // Return the alloca itself (as a reference to the reference variable's storage).
+        object_ref = alloca_ptr;
     } else {
         // TODO This is probably a non-primitive primary type, so direct construction will be done
     }

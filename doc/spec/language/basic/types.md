@@ -56,7 +56,7 @@ Primitive types are built-in types that represent scalar values.
 
 ## 2. Reference types
 
-A reference is an alias for an existing object. References must be bound to an object at all times.
+A reference is an alias for an existing object. It behaves as a non-nullable, non-rebindable pointer that is always initialised.
 
 A reference type is formed by appending `&` to a type.
 
@@ -70,18 +70,60 @@ ReferenceTypeSuffix:
 **Examples:**
 
 ```k
-r : int&;               // reference to int
+// Reference as a function parameter (pass by reference)
 set(var: int&, val: int) {
     var = val;          // modifies the referenced object
 }
+
+// Reference as a local variable (alias)
+test() : int {
+    x : int = 10;
+    r : int& = x;       // r is bound to x
+    r = 42;             // assigns 42 to x through r
+    return x;           // returns 42
+}
 ```
 
-References can be used as function parameters to pass objects by reference (allowing modification or avoiding copies).
+References can be used as function parameters to pass objects by reference (allowing modification or avoiding copies), and as local variable aliases.
 
 **Constraints:**
-- A reference must be bound to an object of the referenced type.
-- References to references are supported internally but have restricted user-facing uses.
-- There is no null reference.
+
+1. **Mandatory initialisation** — A reference variable must be initialised at its declaration.
+   The following is a compile-time error:
+   ```k
+   r : int&;           // ERROR: reference without initialiser
+   ```
+
+2. **Initialiser must be addressable (lvalue)** — The initialiser must denote an existing object
+   (a variable, parameter, or struct member). A temporary value or arithmetic result is not
+   accepted:
+   ```k
+   r : int& = 42;      // ERROR: 42 is not addressable
+   r : int& = x + 1;   // ERROR: x+1 is a temporary
+   ```
+
+3. **Type must match exactly** — The type of the initialiser must be the same as the referenced
+   type; implicit conversions are not applied when binding a reference:
+   ```k
+   d : double = 3.14d;
+   r : int& = d;       // ERROR: int& cannot refer to a double
+   ```
+
+4. **Binding is permanent (no rebind)** — Once bound, a reference always refers to the same
+   object. Assigning to a reference modifies the value of the referred-to object, not the
+   binding itself:
+   ```k
+   x : int = 10;
+   y : int = 20;
+   r : int& = x;
+   r = 99;             // sets x to 99; r is still bound to x, NOT rebound to y
+   ```
+
+5. **No null reference** — A reference is always bound to a valid object; there is no null
+   reference.
+
+6. **References to references** — Reference-to-reference types are used internally by the
+   compiler (e.g. to model variable access) but have restricted user-facing uses.
 
 ---
 

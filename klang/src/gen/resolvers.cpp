@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 //
-// Note: Last resolver log number: 0x4002D (type_reference_resolver)
+// Note: Last resolver log number: 0x40031 (type_reference_resolver)
 //
 // How symbols are resolved:
 // A symbol is resolved by trying to match a looked name from a searched context.
@@ -930,9 +930,68 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             init_expr->arguments(adapted_args);
         }
 
+    } else if (type::is_reference(var.get_type())) {
+        // Reference variable: must be initialized at declaration, and the
+        // initializer must itself be a reference (lvalue), not a bare value.
+        auto ref_var_type = std::dynamic_pointer_cast<reference_type>(var.get_type());
+
+        // 1. Initialization is mandatory
+        if (!init_expr || init_expr->empty()) {
+            throw_error(0x4001, std::nullopt,
+                "Reference variable '{}' of type '{}' must be initialised at its declaration: "
+                "a reference is an alias for an existing object and cannot be left unbound",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
+            return;
+        }
+
+        // 2. Only one initializer expression is allowed (e.g. ref<int> x = a, b; is invalid)
+        if (init_expr->size() > 1) {
+            throw_error(0x4002, std::nullopt,
+                "Reference variable '{}' of type '{}' must be initialised with exactly one expression, "
+                "but {} were provided",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                 std::to_string(init_expr->size())});
+            return;
+        }
+
+        auto arg = init_expr->argument(0);
+        if (!arg) {
+            throw_internal_error(0x4003, std::nullopt,
+                "Reference variable '{}': initialisation argument is null; "
+                "this is an internal compiler inconsistency",
+                {var.get_fq_name()});
+            return;
+        }
+
+        auto arg_type = arg->get_type();
+
+        // 3. Initialization must be a reference (lvalue), not a bare value: ref<T> x = y; is valid if y is ref<T>, but not if y is T.
+        if (!type::is_reference(arg_type)) {
+            throw_error(0x4004, std::nullopt,
+                "Reference variable '{}' of type '{}' must be initialised with a reference (an addressable "
+                "object), but the initialiser has type '{}' which is not a reference; "
+                "you cannot bind a reference to a temporary or rvalue",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                 arg_type ? arg_type->to_string() : "?"});
+            return;
+        }
+
+        // 4. Type compatibility check: the referenced type must match exactly (no conversions allowed, not even between compatible primitives)
+        auto arg_ref = std::dynamic_pointer_cast<reference_type>(arg_type);
+        auto arg_sub = arg_ref ? arg_ref->get_subtype() : nullptr;
+        auto var_sub = ref_var_type->get_subtype();
+
+        if (!arg_sub || !var_sub || !type::are_equal(arg_sub, var_sub)) {
+            throw_error(0x4005, std::nullopt,
+                "Reference variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
+                "the referenced type must match exactly",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                 arg_type ? arg_type->to_string() : "?"});
+            return;
+        }
     } else {
         // Unsupported construction for other types for now
-        // TODO Support construction for other types (ref, array, etc.)
+        // TODO Support construction for other types (array, etc.)
     }
 }
 

@@ -90,8 +90,13 @@ p : plop;                    // default-constructed struct
 q : plop(5);                 // struct constructed with argument
 arr : int[4];                // array of 4 ints
 ptr : int* = &x;             // pointer initialized to address of x
-ref : int& = x;              // reference bound to x (parameter style)
+ref : int& = x;              // reference bound to x — x must be an addressable variable
 ```
+
+> **Note:** Reference variables (`int&`) must be initialised with an addressable object (lvalue).
+> A literal or arithmetic expression is not allowed. The binding is permanent: assigning to
+> `ref` modifies the referred-to object, not the reference itself.
+> See [Types — Reference types](../basic/types.md#2-reference-types) for full constraints.
 ### Static local variables
 A local variable declared with `static` persists across function calls.  
 Its initialiser is evaluated only the first time the declaration is reached.

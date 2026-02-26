@@ -940,7 +940,7 @@ TEST_CASE("Constructor overload resolution preferring widening over narrowing", 
     // plop(int) and plop(short): passing an int literal should select plop(int) (CAST_NONE),
     // and passing a short should prefer plop(short) (CAST_NONE) over plop(int) (CAST_WIDENING).
     auto jit = gen_jit(R"SRC(
-        module __ctor_overload_weight__;
+        module __ctor_overload__;
 
         struct plop {
             a : int = 0;
@@ -1396,3 +1396,118 @@ TEST_CASE("Constructor with default parameter", "[gen][default-params][structs]"
     REQUIRE(test_default() == (3 * 10));
 }
 
+//
+// Reference variables (local and global)
+//
+
+TEST_CASE("Local reference variable bound to a local variable", "[gen][refs][variable]") {
+    auto jit = gen_jit(R"SRC(
+        module __ref_var__;
+
+        test() : int {
+            x : int = 10;
+            r : int& = x;
+            r = 42;
+            return x;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    // Assigning through r must modify x
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Local reference variable bound to a global variable", "[gen][refs][variable]") {
+    auto jit = gen_jit(R"SRC(
+        module __ref_var_global__;
+
+        g : int = 0;
+
+        set_via_ref(v : int) {
+            r : int& = g;
+            r = v;
+        }
+
+        get() : int {
+            return g;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto set_via_ref = jit->lookup_symbol<void(*)(int)>("set_via_ref");
+    REQUIRE(set_via_ref != nullptr);
+    set_via_ref(99);
+
+    auto get = jit->lookup_symbol<int(*)()>("get");
+    REQUIRE(get != nullptr);
+    REQUIRE(get() == 99);
+}
+
+TEST_CASE("Local reference variable bound to a function parameter", "[gen][refs][variable]") {
+    auto jit = gen_jit(R"SRC(
+        module __ref_param__;
+
+        increment(x : int&) {
+            r : int& = x;
+            r = r + 1;
+        }
+
+        test() : int {
+            v : int = 10;
+            increment(v);
+            return v;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 11);
+}
+
+TEST_CASE("Local reference variable: assignment modifies referent, does not rebind", "[gen][refs][variable]") {
+    // After r is bound to x, assigning r = 99 must change x, not rebind r.
+    auto jit = gen_jit(R"SRC(
+        module __ref_rebind__;
+
+        test() : int {
+            x : int = 10;
+            y : int = 20;
+            r : int& = x;
+            r = 99;         // must change x, not rebind r to y
+            return x + y;   // expected: 99 + 20 = 119
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == (99 + 20));
+}
+
+TEST_CASE("Reference variable bound to struct member", "[gen][refs][variable][struct]") {
+    auto jit = gen_jit(R"SRC(
+        module __ref_struct__;
+
+        struct Point {
+            x : int = 0;
+            y : int = 0;
+        }
+
+        test() : int {
+            p : Point;
+            p.x = 3;
+            p.y = 7;
+            rx : int& = p.x;
+            rx = 10;
+            return p.x + p.y;   // 10 + 7 = 17
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == (10 + 7));
+}

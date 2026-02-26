@@ -1441,3 +1441,69 @@ TEST_CASE("Non-colliding constructors: Box(int) and Box(int,int,int=0)", "[gen][
     REQUIRE(t3() == 6);       // x=1, y=2, z=3
 }
 
+
+// =============================================================================
+// Reference variable constraints
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// ERROR: reference variable declared without initializer
+// -----------------------------------------------------------------------------
+TEST_CASE("Reference variable without initializer must be rejected", "[gen][resolution][refs]") {
+    // A reference MUST be bound at its declaration. Omitting the init must be an error.
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __ref_no_init__;
+
+        test() : int {
+            r : int&;     // ERROR: reference without initializer
+            return 0;
+        }
+    )SRC"));
+}
+
+// -----------------------------------------------------------------------------
+// ERROR: reference variable initialised with an rvalue (non-reference)
+// -----------------------------------------------------------------------------
+TEST_CASE("Reference variable bound to a literal (rvalue) must be rejected", "[gen][resolution][refs]") {
+    // A reference cannot be bound to a temporary or literal value.
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __ref_rvalue__;
+
+        test() : int {
+            r : int& = 42;    // ERROR: 42 is not an addressable object
+            return r;
+        }
+    )SRC"));
+}
+
+// -----------------------------------------------------------------------------
+// ERROR: reference variable initialised with an expression result (rvalue)
+// -----------------------------------------------------------------------------
+TEST_CASE("Reference variable bound to an arithmetic result (rvalue) must be rejected", "[gen][resolution][refs]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __ref_arith_rvalue__;
+
+        test() : int {
+            x : int = 10;
+            r : int& = x + 1;    // ERROR: x+1 is not addressable
+            return r;
+        }
+    )SRC"));
+}
+
+// -----------------------------------------------------------------------------
+// ERROR: reference variable bound to an incompatible type
+// -----------------------------------------------------------------------------
+TEST_CASE("Reference variable bound to wrong type must be rejected", "[gen][resolution][refs]") {
+    // r : int& cannot be bound to a double variable.
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __ref_wrong_type__;
+
+        test() : int {
+            d : double = 3.14d;
+            r : int& = d;    // ERROR: int& cannot refer to a double
+            return 0;
+        }
+    )SRC"));
+}
+
