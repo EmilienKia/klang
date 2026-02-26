@@ -1,7 +1,7 @@
 /*
  * K Language compiler
  *
- * Copyright 2023-2024 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -345,11 +345,29 @@ public:
     void set_visibility(visibility v) { _visibility = v; }
 };
 
+/**
+ * Specifies a single base class in an inheritance clause.
+ * E.g. "struct D : public B1, private B2"
+ */
+struct base_spec {
+    /** Inheritance visibility (PUBLIC by default, as in C++ struct). */
+    visibility vis = PUBLIC;
+    /** Raw name as written in source (before resolution). */
+    std::string raw_name;
+    /** Resolved base structure (set during symbol resolution). */
+    std::shared_ptr<structure> base;
+
+    base_spec() = default;
+    base_spec(const std::string& raw_name, visibility vis = PUBLIC)
+        : vis(vis), raw_name(raw_name) {}
+};
+
 class structure : public element, public named_element, public variable_holder, public function_holder, public structure_holder {
 protected:
     friend class ns;
     friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
 
     /** Collection of all children of this namespace. */
     std::vector<std::shared_ptr<element>> _children;
@@ -374,6 +392,9 @@ protected:
 
     /** Synthetic member variable for the implicit parent pointer (non-static nested structs only). */
     std::shared_ptr<member_variable_definition> _parent_field;
+
+    /** Base classes declared in the inheritance clause (in declaration order). */
+    std::vector<base_spec> _bases;
 
     structure(std::shared_ptr<element> parent) :
         element(parent) {}
@@ -445,6 +466,42 @@ public:
 
     /** Returns the static destructor (class finalizer) if defined, nullptr otherwise. */
     std::shared_ptr<static_destructor> get_static_destructor() const { return _static_destructor; }
+
+    //
+    // Inheritance
+    //
+
+    /** Add a base class to the inheritance clause. */
+    void add_base(const std::string& raw_name, visibility vis = PUBLIC) {
+        _bases.push_back({raw_name, vis});
+    }
+
+    /** Returns the list of base class specs (in declaration order). */
+    const std::vector<base_spec>& get_bases() const { return _bases; }
+    std::vector<base_spec>& get_bases_mutable() { return _bases; }
+
+    /** True if this structure has at least one base class. */
+    bool has_bases() const { return !_bases.empty(); }
+
+    /**
+     * Return true if this struct (directly or transitively) derives from `base_st`.
+     * Only works after symbol resolution (base_spec::base must be set).
+     */
+    bool is_derived_from(const std::shared_ptr<structure>& base_st) const;
+
+    /**
+     * Return the list of ALL base specs in depth-first BFS order
+     * (direct bases first, then their bases, etc.).
+     * Only works after symbol resolution.
+     */
+    std::vector<base_spec> get_all_bases() const;
+
+    /**
+     * Returns the copy constructor if one exists, nullptr otherwise.
+     * A copy constructor is one whose first (and only non-this) parameter is of type
+     * `const Struct&` or `Struct&`.
+     */
+    std::shared_ptr<constructor> get_copy_constructor() const;
 };
 
 class parameter : public element, public variable_definition {
@@ -576,11 +633,18 @@ public:
     struct member_init_spec {
         std::string member_name;
         std::vector<std::shared_ptr<expression>> args;
+        /** True if this initializer refers to a base class (not a member variable). */
+        bool is_base_init = false;
+        /** Resolved base structure (set during symbol resolution, only when is_base_init=true). */
+        std::shared_ptr<structure> base_struct;
     };
 
 protected:
     /** Explicit member initializers from the source mem-initializer-list (in declaration order). */
     std::vector<member_init_spec> _member_inits;
+
+    /** True if this constructor is a copy constructor (detected/marked during symbol resolution). */
+    bool _is_copy_constructor = false;
 
     constructor(std::shared_ptr<structure> parent) :
         function(parent) {}
@@ -592,11 +656,14 @@ protected:
 public:
     void accept(model_visitor& visitor) override;
 
-    void add_member_init(const std::string& name, std::vector<std::shared_ptr<expression>> args) {
-        _member_inits.push_back({name, std::move(args)});
+    void add_member_init(const std::string& name, std::vector<std::shared_ptr<expression>> args, bool is_base_init = false) {
+        _member_inits.push_back({name, std::move(args), is_base_init});
     }
 
     const std::vector<member_init_spec>& member_inits() const { return _member_inits; }
+
+    bool is_copy_constructor() const { return _is_copy_constructor; }
+    void set_copy_constructor(bool v) { _is_copy_constructor = v; }
 };
 
 

@@ -89,6 +89,7 @@ add_executable(tests
         tests/test-gen-init-order.cpp
         tests/test-gen-nested-structs.cpp
         tests/test-gen-visibility.cpp
+        tests/test-gen-inheritance.cpp
         tests/test-run.cpp
 )
 target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain)

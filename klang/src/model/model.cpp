@@ -661,6 +661,46 @@ void structure::on_structure_defined(std::shared_ptr<structure> st) {
     _children.push_back(st);
 }
 
+bool structure::is_derived_from(const std::shared_ptr<structure>& base_st) const {
+    for (auto& bs : _bases) {
+        if (!bs.base) continue;
+        if (bs.base == base_st) return true;
+        if (bs.base->is_derived_from(base_st)) return true;
+    }
+    return false;
+}
+
+std::vector<base_spec> structure::get_all_bases() const {
+    std::vector<base_spec> result;
+    for (auto& bs : _bases) {
+        if (!bs.base) continue;
+        result.push_back(bs);
+        auto sub_bases = bs.base->get_all_bases();
+        result.insert(result.end(), sub_bases.begin(), sub_bases.end());
+    }
+    return result;
+}
+
+std::shared_ptr<constructor> structure::get_copy_constructor() const {
+    for (auto& ctor : _constructors) {
+        if (ctor->is_copy_constructor()) return ctor;
+        // Detect by signature: single parameter of type ThisStruct& or const ThisStruct&
+        if (ctor->get_parameter_size() == 1) {
+            auto p0 = ctor->get_parameter(0);
+            if (p0) {
+                auto pt = p0->get_type();
+                if (auto ref = std::dynamic_pointer_cast<reference_type>(pt)) {
+                    auto sub = std::dynamic_pointer_cast<struct_type>(ref->get_referenced_type());
+                    if (sub && sub->get_struct() && sub->get_struct().get() == this) {
+                        return ctor;
+                    }
+                }
+            }
+        }
+    }
+    return nullptr;
+}
+
 //
 // Global variable definition
 //

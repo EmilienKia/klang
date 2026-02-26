@@ -1046,18 +1046,39 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             return;
         }
 
-        // 4. Type compatibility check: the referenced type must match exactly (no conversions allowed, not even between compatible primitives)
+        // 4. Type compatibility check: the referenced type must match exactly or be an upcast-compatible struct type.
         auto arg_ref = std::dynamic_pointer_cast<reference_type>(arg_type);
         auto arg_sub = arg_ref ? arg_ref->get_subtype() : nullptr;
         auto var_sub = ref_var_type->get_subtype();
 
-        if (!arg_sub || !var_sub || !type::are_equal(arg_sub, var_sub)) {
+        if (!arg_sub || !var_sub) {
             throw_error(0x4005, std::nullopt,
                 "Reference variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
                 "the referenced type must match exactly",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?",
                  arg_type ? arg_type->to_string() : "?"});
             return;
+        }
+
+        if (!type::are_equal(arg_sub, var_sub)) {
+            // Allow implicit upcast: Derived& can bind to Base&
+            auto arg_st = std::dynamic_pointer_cast<struct_type>(arg_sub);
+            auto var_st = std::dynamic_pointer_cast<struct_type>(var_sub);
+            bool is_upcast = arg_st && var_st &&
+                             arg_st->get_struct() && var_st->get_struct() &&
+                             arg_st->get_struct()->is_derived_from(var_st->get_struct());
+            if (!is_upcast) {
+                throw_error(0x4005, std::nullopt,
+                    "Reference variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
+                    "the referenced type must match exactly",
+                    {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                     arg_type ? arg_type->to_string() : "?"});
+                return;
+            }
+            // Insert an upcast expression so IR can GEP to the right subobject
+            auto upcast = cast_expression::make_shared(arg, var_type);
+            upcast->set_type(var_type);
+            init_expr->assign_argument(0, upcast);
         }
     } else if (type::is_sized_array(var.get_type())) {
         // Sized array variable: int[N]
@@ -1103,7 +1124,19 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     if (type::is_reference(effective_src)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(effective_src);
         if (type::is_reference(tgt)) {
-            return (effective_src == tgt) ? CAST_NONE : CAST_IMPOSSIBLE;
+            if (effective_src == tgt) return CAST_NONE;
+            // Check struct upcast: ref<Derived> → ref<Base>
+            auto src_st_type = std::dynamic_pointer_cast<struct_type>(ref_src->get_referenced_type());
+            auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(
+                std::dynamic_pointer_cast<reference_type>(tgt)->get_referenced_type());
+            if (src_st_type && tgt_st_type) {
+                auto src_st = src_st_type->get_struct();
+                auto tgt_st = tgt_st_type->get_struct();
+                if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                    return CAST_REF_CONV;
+                }
+            }
+            return CAST_IMPOSSIBLE;
         }
         // ref -> value: need a load
         auto sub = ref_src->get_subtype();
@@ -1162,6 +1195,34 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     if (sub_weight != CAST_IMPOSSIBLE) {
                         return CAST_CONSTRUCT;
                     }
+                }
+            }
+        }
+    }
+
+    // --- Upcast: struct ref → base struct ref (implicit) ---
+    if (type::is_reference(tgt) && type::is_reference(effective_src)) {
+        auto src_st_type = std::dynamic_pointer_cast<struct_type>(
+            std::dynamic_pointer_cast<reference_type>(effective_src)->get_referenced_type());
+        auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(
+            std::dynamic_pointer_cast<reference_type>(tgt)->get_referenced_type());
+        if (src_st_type && tgt_st_type && src_st_type != tgt_st_type) {
+            auto src_st = src_st_type->get_struct();
+            auto tgt_st = tgt_st_type->get_struct();
+            if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                return CAST_REF_CONV; // upcast is cheap (just a GEP offset)
+            }
+        }
+    }
+    // --- Upcast: struct value → base struct value ---
+    if (auto src_st_type = std::dynamic_pointer_cast<struct_type>(effective_src)) {
+        if (auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt)) {
+            if (src_st_type != tgt_st_type) {
+                auto src_st = src_st_type->get_struct();
+                auto tgt_st = tgt_st_type->get_struct();
+                if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                    // Slicing: struct by value copy to base
+                    return CAST_CONSTRUCT; // copy constructor
                 }
             }
         }
@@ -1542,11 +1603,25 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             if (type == type_src) {
                 // Reference to same type, return the expression
                 return expr;
-            } else {
-                // Reference to different types
-                // TODO verify casting
-                return {};
             }
+            // Upcast: ref<Derived> → ref<Base>
+            auto src_ref = std::dynamic_pointer_cast<reference_type>(type_src);
+            auto tgt_ref = std::dynamic_pointer_cast<reference_type>(type);
+            auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_ref->get_referenced_type());
+            auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_ref->get_referenced_type());
+            if (src_st_type && tgt_st_type) {
+                auto src_st = src_st_type->get_struct();
+                auto tgt_st = tgt_st_type->get_struct();
+                if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                    // Create an upcast expression (reinterpret the ref as a base ref)
+                    // At IR level this will be a GEP to the base subobject.
+                    auto upcast = cast_expression::make_shared(expr, type); // type == target ref type
+                    upcast->set_type(type);
+                    return upcast;
+                }
+            }
+            // Reference to different types (no upcast possible)
+            return {};
         }
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
         auto ref_subtype = ref_src->get_subtype();
@@ -1789,6 +1864,20 @@ void init_order_resolver::collect_deps_for_sctor(
             auto it = gv_index.find(dep_gv.get());
             if (it != gv_index.end()) {
                 adj[it->second].push_back(my_idx); // dep_gv → SC(sctor)
+            }
+        }
+    }
+
+    // Implicit: static constructors of BASE CLASSES must run BEFORE this one.
+    // (A derived struct's static constructor depends on its bases' static constructors.)
+    if (auto owner = sctor->get_owner()) {
+        for (auto& bs : owner->get_bases()) {
+            if (!bs.base) continue;
+            if (auto base_sc = bs.base->get_static_constructor()) {
+                auto it = sctor_index.find(base_sc.get());
+                if (it != sctor_index.end()) {
+                    adj[it->second].push_back(my_idx); // SC(base) → SC(derived)
+                }
             }
         }
     }

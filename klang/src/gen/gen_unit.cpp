@@ -177,6 +177,86 @@ void symbol_resolver::visit_structure(structure& st) {
         }
     }
 
+    // ── Inheritance: resolve base class names ──────────────────────────────────
+    if (st.has_bases()) {
+        // Build a set of all ancestors to detect cycles
+        std::function<bool(const structure*, std::unordered_set<const structure*>&)> detect_cycle;
+        detect_cycle = [&](const structure* cur, std::unordered_set<const structure*>& visited) -> bool {
+            for (auto& bs : cur->get_bases()) {
+                if (!bs.base) continue;
+                if (visited.count(bs.base.get())) return true;
+                visited.insert(bs.base.get());
+                if (detect_cycle(bs.base.get(), visited)) return true;
+                visited.erase(bs.base.get());
+            }
+            return false;
+        };
+
+        for (auto& bs : st.get_bases_mutable()) {
+            // Resolve the base name from the current structure scope upward
+            auto base_st = scope_lookup::lookup_structure(st.shared_as<element>(), bs.raw_name);
+            if (!base_st) {
+                throw_error(0x0010, std::nullopt,
+                    "Base class '{}' of struct '{}' is not found",
+                    {bs.raw_name, st.get_short_name()});
+            }
+            bs.base = base_st;
+
+            // Warn if inner struct inherits from outer or outer inherits from inner
+            if (st.is_nested() || base_st->is_nested()) {
+                auto outer = st.get_enclosing_structure();
+                if (outer && (base_st.get() == outer.get() || outer->is_derived_from(base_st))) {
+                    // child inherits from enclosing — warn
+                    std::clog << "Warning: inner struct '" << st.get_short_name()
+                              << "' inherits from enclosing struct '" << base_st->get_short_name() << "'" << std::endl;
+                }
+                if (base_st->is_nested()) {
+                    auto base_outer = base_st->get_enclosing_structure();
+                    if (base_outer && (base_outer.get() == &st || st.is_derived_from(base_outer))) {
+                        std::clog << "Warning: struct '" << st.get_short_name()
+                                  << "' inherits from inner struct '" << base_st->get_short_name() << "'" << std::endl;
+                    }
+                }
+            }
+        }
+
+        // Detect cycles after resolution
+        std::unordered_set<const structure*> visited;
+        visited.insert(&st);
+        if (detect_cycle(&st, visited)) {
+            throw_error(0x0011, std::nullopt,
+                "Circular inheritance detected in struct '{}'",
+                {st.get_short_name()});
+        }
+
+        // Inject base sub-objects as synthetic member variables in DECLARATION ORDER
+        // before any own member (and before __parent__ for inner structs).
+        // Each base sub-object is stored as a member of the base's struct_type.
+        // We insert them at the beginning of _children and _vars, after any already-injected
+        // fields but before own member variables.
+        size_t insert_idx = 0; // position just before any other members
+
+        // If inner: __parent__ will be injected below — keep index 0 free for it.
+        // Actually: inject bases *before* __parent__ in the layout so that when __parent__
+        // is injected later it also goes at index 0 correctly.
+        // To keep things simple and correct: insert bases at position 0 here, then __parent__
+        // will be prepended at position 0 below (pushing bases to indices 1+).
+        // This mirrors C++ layout: for inner structs, conceptually __parent__ is a hidden
+        // compiler field and comes first (index 0), then bases (indices 1, 2, ...).
+        // We insert in reverse order so that after all prepends the order is preserved.
+        std::vector<base_spec>& bases_mutable = st.get_bases_mutable();
+        for (auto it = bases_mutable.rbegin(); it != bases_mutable.rend(); ++it) {
+            auto& bs = *it;
+            if (!bs.base || !bs.base->get_struct_type()) continue;
+            std::string subobj_name = "__base_" + bs.raw_name + "__";
+            auto subobj_field = member_variable_definition::make_shared(st.shared_as<structure>(), subobj_name);
+            subobj_field->set_type(bs.base->get_struct_type());
+            // Register in vars and children (at front)
+            st._vars.insert({subobj_name, subobj_field});
+            st._children.insert(st._children.begin() + insert_idx, subobj_field);
+        }
+    }
+
     // For non-static inner structs, inject a synthetic __parent__ member variable
     // (a reference to the enclosing struct). This is index-0 in the LLVM layout.
     if (st.is_inner()) {
@@ -221,6 +301,29 @@ void symbol_resolver::visit_structure(structure& st) {
         st._constructors.push_back(default_constructor);
         st._children.push_back(default_constructor);
         default_constructor->accept(*this);
+    }
+
+    // ── Copy constructor: generate if absent and struct has bases or struct members ──
+    bool needs_copy_ctor = st.has_bases();
+    if (!needs_copy_ctor) {
+        for (auto& [name, var] : st.variables()) {
+            if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(var)) {
+                if (type::is_struct(mv->get_type())) { needs_copy_ctor = true; break; }
+            }
+        }
+    }
+    if (needs_copy_ctor && !st.get_copy_constructor()) {
+        std::clog << "Warning: struct '" << st.get_short_name()
+                  << "' has bases or struct members but no copy constructor; "
+                     "a default copy constructor will be generated." << std::endl;
+        auto copy_ctor = constructor::make_shared(st.shared_as<structure>());
+        copy_ctor->set_compiler_generated(true);
+        copy_ctor->set_copy_constructor(true);
+        // Add parameter: const Struct& other (typed as a reference to the struct type)
+        copy_ctor->append_parameter("other", st_type->get_reference());
+        st._constructors.push_back(copy_ctor);
+        st._children.push_back(copy_ctor);
+        copy_ctor->accept(*this);
     }
 }
 
@@ -559,10 +662,84 @@ void implementation_generator::visit_function(function &function) {
                 }
             }
         }
+
+        // ── Generated copy constructor: emit memberwise copy at IR level ──────
+        if (ctor->is_copy_constructor() && ctor->is_compiler_generated()) {
+            // Load the 'other' parameter (first explicit param, type Struct&)
+            auto other_param = ctor->get_parameter("other");
+            if (other_param) {
+                auto other_alloca_it = _context->_parameter_variables.find(
+                    std::const_pointer_cast<parameter>(other_param));
+                if (other_alloca_it != _context->_parameter_variables.end()) {
+                    auto other_ref_type = _context->get_llvm_type(st->get_struct_type()->get_reference());
+                    auto other_ptr = _builder->CreateLoad(other_ref_type, other_alloca_it->second, "other_ref");
+                    auto st_llvm_type = _context->get_llvm_type(st->get_struct_type());
+
+                    // Copy each field by field index using GEP + memcpy approach:
+                    // We use a simple aggregate load/store (only valid for simple types).
+                    // For structs with nested struct members, we'd need to call their copy ctors —
+                    // but since we only generate this for trivially-copyable cases,
+                    // a bitwise copy (memcpy semantics) is correct.
+                    // Use llvm.memcpy intrinsic: copy sizeof(Struct) bytes from other to this.
+                    auto& dl = _context->_module->getDataLayout();
+                    uint64_t size = dl.getTypeAllocSize(st_llvm_type);
+                    _builder->CreateMemCpy(
+                        this_ptr, llvm::MaybeAlign(),
+                        other_ptr, llvm::MaybeAlign(),
+                        _builder->getInt64(size)
+                    );
+                }
+            }
+            // No user block to visit for a generated copy constructor — return immediately.
+            // Add terminator and finalize.
+            _builder->CreateRetVoid();
+            optimize_function_dead_inst_elimination(*func);
+            llvm::verifyFunction(*func);
+            return;
+        }
     }
 
     // Produce content
     function.get_block()->accept(*this);
+
+    // ── For destructors: call base destructors in reverse base-declaration order ──
+    // (own members are handled by visit_block cleanup; bases are handled here)
+    if (auto dtor = function.shared_as<destructor>()) {
+        auto st = dtor->get_owner();
+        if (st && st->has_bases()) {
+            auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+            if (this_param_it != _context->_function_this_variables.end()) {
+                auto this_param = this_param_it->second;
+                auto this_ptr = _builder->CreateLoad(
+                    st->get_struct_type()->get_reference()->get_llvm_type(),
+                    this_param, "this_ptr");
+
+                const auto& bases = st->get_bases();
+                // Iterate in reverse base-declaration order
+                for (auto bit = bases.rbegin(); bit != bases.rend(); ++bit) {
+                    auto& bs = *bit;
+                    if (!bs.base) continue;
+                    auto base_dtor = bs.base->get_destructor();
+                    if (!base_dtor) continue;
+                    auto dtor_it = _context->_functions.find(base_dtor->shared_as<k::model::function>());
+                    if (dtor_it == _context->_functions.end()) continue;
+
+                    // GEP to base subobject field
+                    std::string subobj_name = "__base_" + bs.raw_name + "__";
+                    auto base_field = st->get_struct_type()->get_member(subobj_name);
+                    if (!base_field) continue;
+
+                    auto base_ptr = _builder->CreateStructGEP(
+                        _context->get_llvm_type(st->get_struct_type()),
+                        this_ptr,
+                        (unsigned)base_field->index,
+                        "base_" + bs.raw_name + "_ptr"
+                    );
+                    _builder->CreateCall(dtor_it->second, {base_ptr});
+                }
+            }
+        }
+    }
 
     // Force adding a terminator as last instruction guard (will be eliminated if unreachable).
     if (function.has_return_type()) {
@@ -610,40 +787,123 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
         }
     }
 
+    // ── Mark base-class member_inits and detect copy constructor ──────────────
+    if (st) {
+        // Build set of base names
+        std::unordered_map<std::string, std::shared_ptr<structure>> base_by_name;
+        for (auto& bs : st->get_bases()) {
+            if (bs.base) base_by_name[bs.raw_name] = bs.base;
+        }
+
+        // Mark each explicit mem-init as base-init or member-init
+        for (auto& mi : const_cast<std::vector<constructor::member_init_spec>&>(ctor.member_inits())) {
+            auto it = base_by_name.find(mi.member_name);
+            if (it != base_by_name.end()) {
+                mi.is_base_init = true;
+                mi.base_struct = it->second;
+            }
+        }
+
+        // Detect copy constructor: single non-this param whose type is a ref to this struct
+        if (ctor.get_parameter_size() == 1 && !ctor.is_compiler_generated()) {
+            auto p0 = ctor.get_parameter(0);
+            if (p0) {
+                auto ptype = p0->get_type();
+                if (auto ref = std::dynamic_pointer_cast<reference_type>(ptype)) {
+                    if (auto sub_st = std::dynamic_pointer_cast<struct_type>(ref->get_referenced_type())) {
+                        if (sub_st->get_struct() && sub_st->get_struct().get() == st.get()) {
+                            ctor.set_copy_constructor(true);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Before resolving the block, inject expression_statements for each explicit member
     // initializer into the beginning of the constructor block. This ensures that when
     // visit_function → visit_block visits the block, the symbol expressions inside the
     // mem-init args have a proper parent in the element hierarchy and can resolve
     // parameter references correctly.
     // Injected in struct member declaration order (as in C++), not in the list order.
+    //
+    // For base inits: we'll inject a constructor_invocation_expression targeting the
+    // synthetic __base_X__ subobject field.
 
     auto blck = ctor.get_block();
     // Note: 'st' already declared above for inner-struct check
-    if (blck && st && !ctor.member_inits().empty()) {
-        // Build a lookup map from member name to mem_init_spec
-        std::unordered_map<std::string, const constructor::member_init_spec*> init_by_name;
-        for (auto& mi : ctor.member_inits()) {
-            init_by_name[mi.member_name] = &mi;
-        }
-
-        auto insert_pos = blck->begin();
-        for (auto& var_entry : st->variables()) {
-            if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
-                auto it = init_by_name.find(var->get_short_name());
-                if (it == init_by_name.end()) continue;
-                const auto& mi = *it->second;
-
-                // Clone the args so each constructor gets its own independent copy
-                std::vector<std::shared_ptr<expression>> args;
-                args.reserve(mi.args.size());
-                for (auto& arg : mi.args) {
-                    args.push_back(arg->clone());
+    if (blck && st) {
+        // ── Step 1: inject base constructor calls (in base declaration order) ──
+        if (st->has_bases()) {
+            // Build lookup: base raw_name → member_init_spec for this constructor
+            std::unordered_map<std::string, const constructor::member_init_spec*> base_init_by_name;
+            for (auto& mi : ctor.member_inits()) {
+                if (mi.is_base_init) {
+                    base_init_by_name[mi.member_name] = &mi;
                 }
-                auto init_expr = constructor_invocation_expression::make_shared(var, args);
+            }
+
+            auto insert_pos = blck->begin();
+            for (auto& bs : st->get_bases()) {
+                if (!bs.base) continue;
+                std::string subobj_name = "__base_" + bs.raw_name + "__";
+                auto subobj_var_it = st->variables().find(subobj_name);
+                if (subobj_var_it == st->variables().end()) continue;
+                auto subobj_var = std::dynamic_pointer_cast<member_variable_definition>(subobj_var_it->second);
+                if (!subobj_var) continue;
+
+                std::vector<std::shared_ptr<expression>> args;
+                auto it = base_init_by_name.find(bs.raw_name);
+                if (it != base_init_by_name.end()) {
+                    for (auto& arg : it->second->args) {
+                        args.push_back(arg->clone());
+                    }
+                }
+                // Default constructor call (empty args) when not specified
+                auto init_expr = constructor_invocation_expression::make_shared(subobj_var, args);
                 auto stmt = std::make_shared<expression_statement>(blck);
                 stmt->set_expression(init_expr);
                 insert_pos = blck->insert_statement(insert_pos, stmt);
                 ++insert_pos;
+            }
+        }
+
+        // ── Step 2: inject member initializers (in member declaration order) ──
+        if (!ctor.member_inits().empty()) {
+            // Build a lookup map from member name to mem_init_spec
+            std::unordered_map<std::string, const constructor::member_init_spec*> init_by_name;
+            for (auto& mi : ctor.member_inits()) {
+                if (!mi.is_base_init) init_by_name[mi.member_name] = &mi;
+            }
+
+            // Insert after the base-init calls
+            // Figure out where we are now (after base inits)
+            size_t base_count = st->get_bases().size();
+            auto insert_pos2 = blck->begin();
+            for (size_t i = 0; i < base_count; ++i) ++insert_pos2;
+
+            for (auto& var_entry : st->variables()) {
+                if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
+                    // Skip synthetic fields
+                    if (var->get_short_name() == "__parent__") continue;
+                    if (var->get_short_name().rfind("__base_", 0) == 0) continue;
+
+                    auto it = init_by_name.find(var->get_short_name());
+                    if (it == init_by_name.end()) continue;
+                    const auto& mi = *it->second;
+
+                    // Clone the args so each constructor gets its own independent copy
+                    std::vector<std::shared_ptr<expression>> args;
+                    args.reserve(mi.args.size());
+                    for (auto& arg : mi.args) {
+                        args.push_back(arg->clone());
+                    }
+                    auto init_expr = constructor_invocation_expression::make_shared(var, args);
+                    auto stmt = std::make_shared<expression_statement>(blck);
+                    stmt->set_expression(init_expr);
+                    insert_pos2 = blck->insert_statement(insert_pos2, stmt);
+                    ++insert_pos2;
+                }
             }
         }
     }
@@ -664,16 +924,20 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
     }
 
     auto blck = ctor.get_block();
-    // Note : the statements for explicit member_inits were already injected by
+
+    // For compiler-generated copy constructor: do NOT inject model-level statements.
+    // The memberwise copy will be emitted directly at IR level in implementation_generator::visit_function.
+    if (ctor.is_copy_constructor() && ctor.is_compiler_generated()) {
+        visit_function(ctor);
+        return;
+    }
+
+    // Note : the statements for explicit member_inits and base inits were already injected by
     // symbol_resolver::visit_constructor (in struct member declaration order).
     // Here we insert fallback initialization statements for members NOT listed in the
     // mem-initializer-list, interleaved in declaration order.
-    //
-    // The first N statements in the block (where N = number of explicit mem-inits listed in
-    // declaration order) are the already-injected ones. We walk declaration order and insert
-    // missing members at the right position.
 
-    // Build the set of member names with an explicit initializer
+    // Build the set of member names and base names with an explicit initializer
     std::unordered_set<std::string> explicit_init_names;
     for (auto& mi : ctor.member_inits()) {
         explicit_init_names.insert(mi.member_name);
@@ -683,10 +947,20 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
     // at the correct position (interleaved with the already-injected explicit ones).
     // We maintain insert_pos which advances past each already-injected or newly-injected stmt.
     block::iterator insert_pos = blck->begin();
+
+    // Skip already-injected base init stmts
+    for (auto& bs : st->get_bases()) {
+        (void)bs;
+        ++insert_pos; // Each base has one injected stmt
+    }
+
     for (auto& var_entry : st->variables()) {
         if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
             // Skip __parent__ field — stored directly at IR level in constructor prologue
             if (var->get_short_name() == "__parent__") continue;
+            // Skip base subobject fields — already handled above
+            if (var->get_short_name().rfind("__base_", 0) == 0) continue;
+
             if (explicit_init_names.count(var->get_short_name()) > 0) {
                 // This member has an explicit initializer already in the block: skip past it
                 ++insert_pos;
@@ -722,10 +996,12 @@ void type_reference_resolver::visit_destructor(destructor& dtor) {
 
     auto blck = dtor.get_block();
     // Insert calls to members' destructors at the END of the destructor block, in reverse declaration order.
-    // Collect member variables that have a destructor
+    // Collect member variables that have a destructor (own members, not base subobjs)
     std::vector<std::shared_ptr<member_variable_definition>> dtor_members;
     for (auto& var_entry : st->variables()) {
         if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
+            if (var->get_short_name() == "__parent__") continue;
+            if (var->get_short_name().rfind("__base_", 0) == 0) continue;
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(var->get_type())) {
                 if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
                     dtor_members.push_back(var);
@@ -733,14 +1009,15 @@ void type_reference_resolver::visit_destructor(destructor& dtor) {
             }
         }
     }
-    // Insert destructor calls in reverse order at end of block
-    // (they will be appended and processed after user code — the block visitor handles ordering)
+    // Insert destructor calls for own members in reverse order at end of block
     for (auto it = dtor_members.rbegin(); it != dtor_members.rend(); ++it) {
-        // Member destructor calls will be generated by implementation_generator::visit_block
-        // via the destructor_invocation mechanism — for now, mark via a model expression.
-        // The actual call generation happens at IR level in visit_block/visit_destructor.
         (void)*it; // placeholder – IR generation handles this
     }
+
+    // Insert base destructor calls in reverse base-declaration order
+    // (bases are destroyed after own members, in reverse order of construction)
+    // Placeholder: actual IR generation happens in implementation_generator.
+    // We just record the intent; implementation_generator::visit_function handles it.
 
     visit_function(dtor);
 }

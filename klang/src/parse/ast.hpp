@@ -561,6 +561,17 @@ namespace k::parse {
             lex::identifier name;
             std::vector <decl_ptr> declarations;
 
+            /**
+             * A single entry in the base-class clause.
+             * E.g. "public Base" or just "Base" (visibility is optional).
+             */
+            struct base_clause_entry {
+                std::optional<lex::keyword> visibility_kw; ///< 'public', 'protected', 'private' or absent
+                lex::identifier name;                      ///< simple base-class identifier
+            };
+            /** Base-class clause entries, in declaration order. Empty if no inheritance. */
+            std::vector<base_clause_entry> bases;
+
             struct_decl(const std::vector <lex::keyword>& specifiers,
                             const lex::keyword& st,
                             const lex::punctuator& open_brace,
@@ -568,6 +579,15 @@ namespace k::parse {
                             const lex::identifier& name,
                             const std::vector <decl_ptr> &declarations) :
                     specifiers(specifiers), st(st), open_brace(open_brace), close_brace(close_brace), name(name), declarations(declarations) {}
+
+            struct_decl(const std::vector <lex::keyword>& specifiers,
+                            const lex::keyword& st,
+                            const lex::punctuator& open_brace,
+                            const lex::punctuator& close_brace,
+                            const lex::identifier& name,
+                            const std::vector<base_clause_entry>& bases,
+                            const std::vector <decl_ptr> &declarations) :
+                    specifiers(specifiers), st(st), open_brace(open_brace), close_brace(close_brace), name(name), bases(bases), declarations(declarations) {}
 
             struct_decl(std::vector <lex::keyword>&& specifiers,
                             lex::keyword&& st,

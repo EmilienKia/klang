@@ -243,6 +243,45 @@ std::shared_ptr<ast::struct_decl> parser::parse_struct_decl()
         return {};
     }
 
+    // Optional base-class clause: ':' [vis] Name [',' [vis] Name]*
+    std::vector<ast::struct_decl::base_clause_entry> bases;
+    {
+        lex::lex_holder base_holder(_lexer);
+        auto maybe_colon = _lexer.get();
+        if (maybe_colon == lex::operator_::COLON) {
+            // Parse list of base class specs
+            while (true) {
+                std::optional<lex::keyword> vis_kw;
+                // Optional visibility specifier
+                lex::lex_holder vis_holder(_lexer);
+                auto maybe_vis = _lexer.get();
+                if (maybe_vis == lex::keyword::PUBLIC || maybe_vis == lex::keyword::PROTECTED || maybe_vis == lex::keyword::PRIVATE) {
+                    vis_kw = lex::as<lex::keyword>(maybe_vis);
+                } else {
+                    vis_holder.rollback();
+                }
+                // Expect base class name (simple identifier)
+                auto lbase_name = _lexer.get();
+                if (!lex::is<lex::identifier>(lbase_name)) {
+                    throw_error(0x003F, _lexer.pick_current(), "Expected base class name in inheritance clause");
+                }
+                ast::struct_decl::base_clause_entry entry{vis_kw, lex::as<lex::identifier>(lbase_name)};
+                bases.push_back(std::move(entry));
+                // Check for ',' to continue
+                lex::lex_holder comma_holder(_lexer);
+                auto maybe_comma = _lexer.get();
+                if (maybe_comma == lex::punctuator::COMMA) {
+                    // continue to next base
+                } else {
+                    comma_holder.rollback();
+                    break;
+                }
+            }
+        } else {
+            base_holder.rollback();
+        }
+    }
+
     // Expect an open brace
     if(lex::opt_ref_any_lexeme lopenbrace= _lexer.get(); lopenbrace==lex::punctuator::BRACE_OPEN) {
         open_brace = lex::as<lex::punctuator>(lopenbrace);
@@ -259,7 +298,7 @@ std::shared_ptr<ast::struct_decl> parser::parse_struct_decl()
         throw_error(0x003C, _lexer.pick_current(), "Struct closing brace is expected");
     }
 
-    return std::make_shared<ast::struct_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), declarations);
+    return std::make_shared<ast::struct_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations);
 }
 
 std::vector<lex::keyword> parser::parse_specifiers()

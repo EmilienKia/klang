@@ -527,20 +527,90 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
     }
     auto subtype = type->get_subtype();
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(subtype)) {
-        const auto& member_name =  expr.symbol();
-        if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
-            // Check member variable visibility
-            auto st = struct_subtype->get_struct();
-            if (st) {
-                auto mv = std::dynamic_pointer_cast<member_variable_definition>(st->get_variable(member_name.get_name().to_string()));
-                if (mv && mv->get_visibility() != PUBLIC) {
+        const auto& member_name = expr.symbol();
+        const std::string& name_str = member_name.get_name().to_string();
+
+        // ── Helper: search a struct and its bases for a named field or function,
+        //    returning (struct_type*, field) or (struct_type*, nullptr=function).
+        //    Returns empty vector if not found, multiple items if ambiguous.
+        struct MemberHit {
+            std::shared_ptr<struct_type> in_struct_type;
+            std::optional<struct_type::field> field;
+            bool is_function = false;
+        };
+
+        std::function<std::vector<MemberHit>(const std::shared_ptr<struct_type>&, const std::string&, visibility, bool)> search_member;
+        search_member = [&](const std::shared_ptr<struct_type>& stype, const std::string& mname,
+                             visibility inherit_vis, bool /*top_level*/) -> std::vector<MemberHit> {
+            std::vector<MemberHit> hits;
+            // Check direct field
+            if (auto field = stype->get_member(mname)) {
+                // Apply inheritance visibility filter (private base → members inaccessible)
+                if (inherit_vis == PRIVATE) {
+                    // members not accessible via private inheritance from outside
+                    // (but we don't check access site here, defer to visibility check below)
+                }
+                hits.push_back({stype, field, false});
+                return hits; // found in direct members — stop, no ambiguity possible at this level
+            }
+            // Check direct method
+            if (auto st = stype->get_struct()) {
+                if (st->get_function(mname)) {
+                    hits.push_back({stype, std::nullopt, true});
+                    return hits;
+                }
+                // Search bases
+                for (auto& bs : st->get_bases()) {
+                    if (!bs.base || !bs.base->get_struct_type()) continue;
+                    // Combine inheritance visibility: private always wins
+                    visibility eff_vis = (inherit_vis == PRIVATE || bs.vis == PRIVATE) ? PRIVATE :
+                                         (inherit_vis == PROTECTED || bs.vis == PROTECTED) ? PROTECTED :
+                                         PUBLIC;
+                    auto sub_hits = search_member(bs.base->get_struct_type(), mname, eff_vis, false);
+                    hits.insert(hits.end(), sub_hits.begin(), sub_hits.end());
+                }
+            }
+            return hits;
+        };
+
+        auto hits = search_member(struct_subtype, name_str, PUBLIC, true);
+
+        if (hits.empty()) {
+            // If this member_of_object_expression is the callee of a function_invocation_expression,
+            // the name may be a free function callable via unified-call syntax (e.g. pt.sum() where
+            // sum(p: point&) is a free function). Let visit_function_invocation_expression handle it.
+            auto parent_expr = expr.get_parent_expression();
+            bool is_function_callee = false;
+            if (auto parent_invoc = std::dynamic_pointer_cast<function_invocation_expression>(parent_expr)) {
+                is_function_callee = (parent_invoc->callee_expr().get() == &expr);
+            }
+            if (is_function_callee) return; // defer to function_invocation_expression
+            throw_error(0x001D, std::nullopt,
+                "No member named '{}' in struct '{}' or any of its bases",
+                {name_str, struct_subtype->name()});
+        }
+
+        if (hits.size() > 1) {
+            throw_error(0x0031, std::nullopt,
+                "Ambiguous access to member '{}' in struct '{}': "
+                "the member is found in multiple base classes; use Base::member to disambiguate",
+                {name_str, struct_subtype->name()});
+        }
+
+        auto& hit = hits[0];
+
+        // Check visibility of the accessed member
+        if (auto st_model = hit.in_struct_type->get_struct()) {
+            auto mv = st_model->get_variable(name_str);
+            if (auto member_var = std::dynamic_pointer_cast<member_variable_definition>(mv)) {
+                if (member_var->get_visibility() != PUBLIC) {
                     bool accessible = false;
                     for (auto it = _function_stack.rbegin(); it != _function_stack.rend(); ++it) {
                         const auto& fn = *it;
                         if (fn->is_member() && !fn->is_static()) {
                             auto check_st = fn->get_owner();
                             while (check_st) {
-                                if (check_st.get() == st.get()) { accessible = true; break; }
+                                if (check_st.get() == st_model.get()) { accessible = true; break; }
                                 check_st = check_st->get_enclosing_structure();
                             }
                         }
@@ -550,20 +620,37 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                         throw_error(0x0030, std::nullopt,
                             "{} member variable '{}' of struct '{}' is not accessible here; "
                             "it can only be accessed from member functions of '{}'",
-                            {mv->get_visibility() == PROTECTED ? "protected" : "private",
-                             mv->get_short_name(), st->get_short_name(), st->get_short_name()});
+                            {member_var->get_visibility() == PROTECTED ? "protected" : "private",
+                             member_var->get_short_name(), st_model->get_short_name(), st_model->get_short_name()});
                     }
                 }
             }
-            expr.set_type(field->field_type.lock()->get_reference());
-        } else if(auto method = struct_subtype->get_struct()->get_function(member_name.get_name())) {
-            // Member function: type resolution deferred to function_invocation_expression
-        } else {
-            throw_error(0x001D, std::nullopt,
-                "No member named '{}' in struct '{}': "
-                "check the spelling or verify that '{}' is declared as a field or method of '{}'",
-                {member_name.get_name().to_string(), struct_subtype->name(),
-                 member_name.get_name().to_string(), struct_subtype->name()});
+        }
+
+        if (!hit.is_function && hit.field.has_value()) {
+            expr.set_type(hit.field->field_type.lock()->get_reference());
+            // If the field is in a base, wrap sub_expr in a cast_expression to base ref
+            // so that implementation_generator will compute the correct GEP offset.
+            if (hit.in_struct_type != struct_subtype) {
+                auto base_ref_type = hit.in_struct_type->get_reference();
+                // Create cast with base_ref_type as cast_type so visit_cast_expression works
+                auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
+                upcast->set_type(base_ref_type);
+                // Directly replace the sub_expr via mutable reference
+                expr.sub_expr() = upcast;
+            }
+        } else if (hit.is_function) {
+            // Member function: update the sub_expr type to point to the struct that owns the method.
+            // This is needed so that implementation_generator finds the method in the correct struct,
+            // and so that the 'this' pointer is correctly adjusted via upcast if needed.
+            if (hit.in_struct_type != struct_subtype) {
+                auto base_ref_type = hit.in_struct_type->get_reference();
+                auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
+                upcast->set_type(base_ref_type);
+                expr.sub_expr() = upcast;
+            }
+            // Type of member_of_object_expression for functions is the struct ref (for 'this')
+            // — leave expr type unset; function_invocation_expression will handle it.
         }
     } else {
         throw_error(0x001E, std::nullopt,
@@ -747,7 +834,10 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     // Case 1 : member-of-object call  "obj.method(args)"
     // ----------------------------------------------------------------
     if (member_callee) {
-        member_callee->sub_expr()->accept(*this);
+        // Visit the full member_of_object_expression so that upcast injection for inherited
+        // methods is triggered (visit_member_of_object_expression injects a cast_expression
+        // into sub_expr when the method belongs to a base struct).
+        member_callee->accept(*this);
 
         callee = std::dynamic_pointer_cast<symbol_expression>(
                 member_callee->symbol().shared_as<symbol_expression>());
@@ -757,9 +847,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 "not a complex expression");
         }
 
-        // sub_expr of member_callee gives the object reference
+        // sub_expr of member_callee gives the object reference (possibly upcast)
         auto this_expr = member_callee->sub_expr();
-        auto this_type = this_expr->get_type(); // should be ref<struct>
+        auto this_type = this_expr->get_type(); // should be ref<struct> (possibly base)
 
         if (!type::is_reference(this_type)) {
             throw_error(0x0024, std::nullopt,
@@ -848,11 +938,20 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     auto st = first_struct->get_struct();
                     this_candidate = args[0];
                     rest_args = std::vector<std::shared_ptr<expression>>(args.begin() + 1, args.end());
-                    for (auto& f : scope_lookup::lookup_functions(st, func_name)) {
-                        if (std::find(all_candidates.begin(), all_candidates.end(), f) == all_candidates.end()) {
-                            all_candidates.push_back(f);
+                    // Collect member functions from the struct and all its bases (recursively)
+                    std::function<void(const std::shared_ptr<structure>&)> collect_member_fns;
+                    collect_member_fns = [&](const std::shared_ptr<structure>& s) {
+                        if (!s) return;
+                        for (auto& f : scope_lookup::lookup_functions(s, func_name)) {
+                            if (std::find(all_candidates.begin(), all_candidates.end(), f) == all_candidates.end()) {
+                                all_candidates.push_back(f);
+                            }
                         }
-                    }
+                        for (auto& bs : s->get_bases()) {
+                            if (bs.base) collect_member_fns(bs.base);
+                        }
+                    };
+                    collect_member_fns(st);
                 }
             }
         }
@@ -1366,6 +1465,11 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
             } else {
                 // TODO throw an error, other pointer casting are not supported
             }
+        } else if(type::is_reference(source_type) && type::is_reference(target_type)) {
+            // Struct reference upcast: ref<Derived> → ref<Base>
+            // Both are references and types differ — validated during adapt_type / compute_cast_weight.
+            // No additional transformation needed at model level; IR generation handles GEP.
+            // Keep as-is (no load_value replacement).
         } else if(type::is_reference(source_type)) {
             if(type::is_reference(target_type)) {
                 // TODO throw an error, casting references is not supported yet (not for any primitive type)
@@ -1389,6 +1493,55 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         throw_internal_error(0x0019, std::nullopt,
             "Internal error: cast expression has an unresolved source or target type; "
             "type resolution must complete before code generation");
+    }
+
+    // ── Struct reference upcast: ref<Derived> → ref<Base> ────────────────────
+    // Both source and target are references to struct types. We need to GEP to the
+    // base subobject field within the derived struct.
+    if (type::is_reference(source_type) && type::is_reference(target_type)) {
+        auto src_ref = std::dynamic_pointer_cast<reference_type>(source_type);
+        auto tgt_ref = std::dynamic_pointer_cast<reference_type>(target_type);
+        auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_ref->get_referenced_type());
+        auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_ref->get_referenced_type());
+        if (src_st_type && tgt_st_type && src_st_type != tgt_st_type) {
+            auto src_st = src_st_type->get_struct();
+            auto tgt_st = tgt_st_type->get_struct();
+            if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                // Generate GEP to base subobject field
+                _value = nullptr;
+                expr.sub_expr()->accept(*this);
+                if (!_value) return;
+
+                // Find the base subobject field index in the derived struct
+                // The base subobject is stored as "__base_<name>__" member
+                // We need to find which field index it corresponds to in the LLVM struct type
+                std::string subobj_name;
+                for (auto& bs : src_st->get_bases()) {
+                    if (bs.base && bs.base.get() == tgt_st.get()) {
+                        subobj_name = "__base_" + bs.raw_name + "__";
+                        break;
+                    }
+                }
+                if (!subobj_name.empty()) {
+                    auto src_llvm_type = _context->get_llvm_type(src_st_type);
+                    if (auto field = src_st_type->get_member(subobj_name)) {
+                        _value = _builder->CreateStructGEP(
+                            src_llvm_type,
+                            _value,
+                            (unsigned)field->index,
+                            "base_" + tgt_st->get_short_name() + "_ptr"
+                        );
+                        return;
+                    }
+                }
+                // Fallback: return as-is (pointer reinterpret for same-layout case)
+                return;
+            }
+        }
+        // Same type, no-op
+        _value = nullptr;
+        expr.sub_expr()->accept(*this);
+        return;
     }
 
     if(type::is_pointer(source_type) && type::is_prim_bool(target_type)) {

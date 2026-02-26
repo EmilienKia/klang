@@ -141,6 +141,20 @@ namespace k::model {
         }
         struc->set_visibility(vis);
 
+        // Register base-class clause entries (raw names, will be resolved later by symbol_resolver)
+        for (auto& base_entry : st.bases) {
+            model::visibility base_vis = model::PUBLIC; // public by default (as in C++ struct)
+            if (base_entry.visibility_kw.has_value()) {
+                switch (base_entry.visibility_kw->type) {
+                    case lex::keyword::PUBLIC:    base_vis = model::PUBLIC;    break;
+                    case lex::keyword::PROTECTED: base_vis = model::PROTECTED; break;
+                    case lex::keyword::PRIVATE:   base_vis = model::PRIVATE;   break;
+                    default: break;
+                }
+            }
+            struc->add_base(std::string{base_entry.name.content}, base_vis);
+        }
+
         // Push function context
         stack<struct_context> push(_contexts, struc);
 
