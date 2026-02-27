@@ -20,6 +20,7 @@
 
 #include "context.hpp"
 #include "model.hpp"
+#include "type.hpp"
 
 #include <iosfwd>
 #include <sstream>
@@ -42,6 +43,10 @@
 #define SYMBOL_MODIFIER_REF        "R"
 #define SYMBOL_MODIFIER_REF_LVAL   SYMBOL_MODIFIER_REF
 #define SYMBOL_MODIFIER_REF_RVAL   "O"
+// 'L' for link (~) : mutable strong (non-null) indirection
+#define SYMBOL_MODIFIER_LINK       "L"
+// 'Q' for pinned (^) : immutable nullable indirection
+#define SYMBOL_MODIFIER_PINNED     "Q"
 
 #define SYMBOL_STATIC_CONSTRUCTOR_NAME "C"
 #define SYMBOL_STATIC_DESTRUCTOR_NAME  "D"
@@ -255,6 +260,10 @@ std::string mangler::mangle_type(const type& ty) const {
         return SYMBOL_MODIFIER_REF + mangle_type(*ref_ty->get_referenced_type());
     } else if (auto ptr_ty = dynamic_cast<const pointer_type*>(&ty)) {
         return SYMBOL_MODIFIER_PTR + mangle_type(*ptr_ty->get_pointed_type());
+    } else if (auto link_ty = dynamic_cast<const link_type*>(&ty)) {
+        return SYMBOL_MODIFIER_LINK + mangle_type(*link_ty->get_linked_type());
+    } else if (auto pin_ty = dynamic_cast<const pinned_type*>(&ty)) {
+        return SYMBOL_MODIFIER_PINNED + mangle_type(*pin_ty->get_pinned_type());
     } else if (auto struct_ty = dynamic_cast<const struct_type*>(&ty)) {
         auto st = struct_ty->get_struct();
         if (!st) {

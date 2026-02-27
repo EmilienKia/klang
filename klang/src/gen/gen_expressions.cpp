@@ -407,8 +407,6 @@ void type_reference_resolver::visit_address_of_expression(address_of_expression&
     auto sub_expr = expr.sub_expr();
     auto sub_type = sub_expr->get_type();
 
-    // TODO support pointer to pointer.
-
     if(!type::is_reference(sub_type)) {
         throw_error(0x0018, std::nullopt,
             "Cannot take the address of a non-reference expression: "
@@ -417,7 +415,8 @@ void type_reference_resolver::visit_address_of_expression(address_of_expression&
             {sub_type ? sub_type->to_string() : "?"});
     }
 
-    expr.set_type(sub_type->get_subtype()->get_pointer());
+    // &ref produces a link_type (mutable, non-null address).
+    expr.set_type(sub_type->get_subtype()->get_link());
 }
 
 void implementation_generator::visit_address_of_expression(address_of_expression& expr) {
@@ -466,27 +465,34 @@ void implementation_generator::visit_load_value_expression(load_value_expression
 
 void type_reference_resolver::visit_dereference_expression(dereference_expression& expr) {
     expr.sub_expr()->accept(*this);
-
     auto type = expr.sub_expr()->get_type();
 
+    // Unwrap one level of reference if the referred-to type is an indirection
     if(auto ref_type = std::dynamic_pointer_cast<reference_type>(type)) {
-        if(auto sub_ref_type = std::dynamic_pointer_cast<pointer_type>(ref_type->get_subtype())) {
-            type = sub_ref_type;
+        auto sub = ref_type->get_subtype();
+        if(std::dynamic_pointer_cast<pointer_type>(sub) ||
+           std::dynamic_pointer_cast<link_type>(sub) ||
+           std::dynamic_pointer_cast<pinned_type>(sub)) {
+            type = sub;
         } else {
             throw_error(0x001A, std::nullopt,
                 "Cannot dereference a reference to a non-pointer type: "
-                "the dereference operator ('*') on a reference requires the referenced type to be a pointer, "
-                "but '{}' is not a pointer type",
-                {ref_type->get_subtype() ? ref_type->get_subtype()->to_string() : "?"});
+                "the dereference operator ('*') requires pointer (*), link (~) or pinned (^), "
+                "but '{}' is not a pointer-like type",
+                {sub ? sub->to_string() : "?"});
         }
     }
 
     if(auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type)) {
         expr.set_type(ptr_type->get_subtype()->get_reference());
+    } else if(auto lnk_type = std::dynamic_pointer_cast<link_type>(type)) {
+        expr.set_type(lnk_type->get_linked_type()->get_reference());
+    } else if(auto pin_type = std::dynamic_pointer_cast<pinned_type>(type)) {
+        expr.set_type(pin_type->get_pinned_type()->get_reference());
     } else {
         throw_error(0x001B, std::nullopt,
             "Cannot dereference a non-pointer expression: "
-            "the dereference operator ('*') requires a pointer or reference-to-pointer operand, "
+            "the dereference operator ('*') requires a pointer (*), link (~) or pinned (^), "
             "but the operand has type '{}'",
             {type ? type->to_string() : "?"});
     }
@@ -495,14 +501,26 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
 void implementation_generator::visit_dereference_expression(dereference_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
-    // Just keep the returned address : internally, a reference is a pointer
 
-    if(auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.sub_expr()->get_type())) {
-        if(auto sub_ref_type = std::dynamic_pointer_cast<pointer_type>(ref_type->get_subtype())) {
-            llvm::Type* type = _context->get_llvm_type(sub_ref_type);
-            _value = _builder->CreateLoad(type, _value);
-        }
+    auto sub_type = expr.sub_expr()->get_type();
+
+    // If sub is ref<indirection>, load the stored address from the alloca
+    std::shared_ptr<k::model::type> inner_type;
+    if(auto ref_type = std::dynamic_pointer_cast<reference_type>(sub_type)) {
+        inner_type = ref_type->get_subtype();
+        llvm::Type* llvm_inner = _context->get_llvm_type(inner_type);
+        _value = _builder->CreateLoad(llvm_inner, _value, "deref_load");
+    } else {
+        inner_type = sub_type;
     }
+
+    // For nullable indirections, emit a null-check before use
+    if (std::dynamic_pointer_cast<pointer_type>(inner_type) ||
+        std::dynamic_pointer_cast<pinned_type>(inner_type)) {
+        auto* fatal = get_or_declare_fatal_null_function("__fatal_null_dereference");
+        emit_null_check(_value, fatal, "deref");
+    }
+    // _value now holds the raw pointer — acts as a reference to the pointed object
 }
 
 //
@@ -692,14 +710,88 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
 }
 
 //
-// Member of pointer expression
+// Member of pointer expression (->)
+// Acts as (*expr).member. Supported LHS: pointer (*), link (~), pinned (^).
 //
 void type_reference_resolver::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
-    // TODO
+    expr.sub_expr()->accept(*this);
+    auto type = expr.sub_expr()->get_type();
+
+    // Unwrap ref-to-indirection
+    if (auto ref_type = std::dynamic_pointer_cast<reference_type>(type)) {
+        type = ref_type->get_subtype();
+    }
+
+    std::shared_ptr<k::model::type> pointed_type;
+    if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(type)) {
+        pointed_type = ptr_t->get_pointed_type();
+    } else if (auto lnk_t = std::dynamic_pointer_cast<link_type>(type)) {
+        pointed_type = lnk_t->get_linked_type();
+    } else if (auto pin_t = std::dynamic_pointer_cast<pinned_type>(type)) {
+        pointed_type = pin_t->get_pinned_type();
+    } else {
+        throw_error(0x0080, std::nullopt,
+            "The '->' operator requires a pointer (*), link (~) or pinned (^) on the LHS, "
+            "but got '{}'", {type ? type->to_string() : "?"});
+    }
+
+    auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_type);
+    if (!struct_subtype) {
+        throw_error(0x0081, std::nullopt,
+            "The '->' operator requires a pointer to a struct, "
+            "but the pointed-to type is '{}'",
+            {pointed_type ? pointed_type->to_string() : "?"});
+    }
+
+    const auto& member_name = expr.symbol();
+    const std::string& name_str = member_name.get_name().to_string();
+    if (auto field = struct_subtype->get_member(name_str)) {
+        auto field_type = field->field_type.lock();
+        expr.set_type(field_type ? field_type->get_reference() : nullptr);
+    } else if (struct_subtype->get_struct() && struct_subtype->get_struct()->get_function(name_str)) {
+        expr.set_type(pointed_type->get_reference());
+    } else {
+        throw_error(0x0082, std::nullopt,
+            "Struct '{}' has no member named '{}'",
+            {struct_subtype->name(), name_str});
+    }
 }
 
 void implementation_generator::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
-    // TODO
+    _value = nullptr;
+    expr.sub_expr()->accept(*this);
+
+    auto sub_type = expr.sub_expr()->get_type();
+    std::shared_ptr<k::model::type> inner_type;
+    if (auto ref_type = std::dynamic_pointer_cast<reference_type>(sub_type)) {
+        inner_type = ref_type->get_subtype();
+        _value = _builder->CreateLoad(_context->get_llvm_type(inner_type), _value, "arrow_load");
+    } else {
+        inner_type = sub_type;
+    }
+
+    // Null-check for nullable indirections
+    if (std::dynamic_pointer_cast<pointer_type>(inner_type) ||
+        std::dynamic_pointer_cast<pinned_type>(inner_type)) {
+        auto* fatal = get_or_declare_fatal_null_function("__fatal_null_dereference");
+        emit_null_check(_value, fatal, "arrow");
+    }
+
+    std::shared_ptr<k::model::type> pointed_type;
+    if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(inner_type)) pointed_type = ptr_t->get_pointed_type();
+    else if (auto lnk_t = std::dynamic_pointer_cast<link_type>(inner_type)) pointed_type = lnk_t->get_linked_type();
+    else if (auto pin_t = std::dynamic_pointer_cast<pinned_type>(inner_type)) pointed_type = pin_t->get_pinned_type();
+    if (!pointed_type) return;
+
+    auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_type);
+    if (!struct_subtype) return;
+    const auto& member_name = expr.symbol();
+    if (auto field = struct_subtype->get_member(member_name.get_name())) {
+        _value = _builder->CreateStructGEP(
+            _context->get_llvm_type(pointed_type), _value,
+            (unsigned)field->index, member_name.get_name().to_string() + "_ptr");
+    }
+    // For method: _value is already the struct ptr (this)
 }
 
 //
@@ -1268,6 +1360,51 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         }
         _value = _builder->CreateCall(llvm_func, args);
 
+    } else if (auto ptr_var_type = std::dynamic_pointer_cast<pointer_type>(var_type)) {
+        // Pointer (*) variable: store the address.
+        if (!expr.empty()) {
+            _value = nullptr;
+            expr.argument(0)->accept(*this);
+            if (_value) {
+                // Unwrap ref if argument is ref<indirection>
+                auto arg_type = expr.argument(0)->get_type();
+                if (arg_type && type::is_reference(arg_type)) {
+                    auto inner = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
+                    _value = _builder->CreateLoad(_context->get_llvm_type(inner), _value, "ptr_init_load");
+                }
+                _builder->CreateStore(_value, object_ref);
+            }
+        }
+        _value = object_ref;
+
+    } else if (type::is_link(var_type) || type::is_pinned(var_type)) {
+        // Link (~) or pinned (^) variable: store the raw address.
+        if (!expr.empty()) {
+            _value = nullptr;
+            expr.argument(0)->accept(*this);
+            if (_value) {
+                // Unwrap ref if argument is ref<indirection>
+                auto arg_type = expr.argument(0)->get_type();
+                if (arg_type && type::is_reference(arg_type)) {
+                    auto inner = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
+                    _value = _builder->CreateLoad(_context->get_llvm_type(inner), _value, "ind_init_load");
+                }
+                if (type::is_link(var_type)) {
+                    // Non-null required: emit null-check if source is nullable.
+                    auto effective_type = arg_type;
+                    if (effective_type && type::is_reference(effective_type)) {
+                        effective_type = std::dynamic_pointer_cast<reference_type>(effective_type)->get_subtype();
+                    }
+                    if (effective_type && type::is_nullable_indirection(effective_type)) {
+                        auto* fatal = get_or_declare_fatal_null_function("__fatal_null_assignation");
+                        emit_null_check(_value, fatal, "link_ctor");
+                    }
+                }
+                _builder->CreateStore(_value, object_ref);
+            }
+        }
+        _value = object_ref;
+
     } else if (auto ref_type = std::dynamic_pointer_cast<reference_type>(var_type)) {
         // Reference variable — could be a plain ref (int&) or an array ref (int[N]&).
         // In both cases we need the raw alloca, not the loaded pointer.
@@ -1651,5 +1788,49 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         // Support other types
     }
 }
+
+//
+// Fatal null helpers
+//
+
+llvm::Function* implementation_generator::get_or_declare_fatal_null_function(const std::string& name) {
+    llvm::Module& mod = get_module();
+    if (auto* existing = mod.getFunction(name)) {
+        return existing;
+    }
+    auto& llvm_ctx = mod.getContext();
+    auto* void_ty  = llvm::Type::getVoidTy(llvm_ctx);
+    auto* fn_type  = llvm::FunctionType::get(void_ty, false);
+    auto* fn = llvm::Function::Create(fn_type, llvm::Function::ExternalLinkage, name, mod);
+    fn->addFnAttr(llvm::Attribute::NoReturn);
+    fn->addFnAttr(llvm::Attribute::NoUnwind);
+    fn->addFnAttr(llvm::Attribute::Cold);
+    auto* entry = llvm::BasicBlock::Create(llvm_ctx, "entry", fn);
+    llvm::IRBuilder<> b(entry);
+#ifdef NDEBUG
+    auto* trap_fn = llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::trap);
+#else
+    auto* trap_fn = llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::debugtrap);
+#endif
+    b.CreateCall(trap_fn, {});
+    b.CreateUnreachable();
+    return fn;
+}
+
+void implementation_generator::emit_null_check(llvm::Value* ptr_value, llvm::Function* fatal_fn, const std::string& label) {
+    auto* fn   = _builder->GetInsertBlock()->getParent();
+    auto& ctx  = _builder->getContext();
+    auto* ptr_ty = llvm::PointerType::get(ctx, 0);
+    auto* null_bb = llvm::BasicBlock::Create(ctx, label + "_null", fn);
+    auto* ok_bb   = llvm::BasicBlock::Create(ctx, label + "_ok",   fn);
+    auto* is_null = _builder->CreateICmpEQ(
+        ptr_value, llvm::ConstantPointerNull::get(ptr_ty), label + "_is_null");
+    _builder->CreateCondBr(is_null, null_bb, ok_bb);
+    _builder->SetInsertPoint(null_bb);
+    _builder->CreateCall(fatal_fn, {});
+    _builder->CreateUnreachable();
+    _builder->SetInsertPoint(ok_bb);
+}
+
 
 } // namespace k::model::gen

@@ -9,18 +9,22 @@ K is a statically-typed language. Every expression has a type determined at comp
 ## Contents
 
 1. [Primitive types](#1-primitive-types)
-2. [Reference types](#2-reference-types)
-3. [Pointer types](#3-pointer-types)
-4. [Array types](#4-array-types)
-   - 4.1 [Internal representation](#41-internal-representation)
-   - 4.2 [Sized array value — `T[N]`](#42-sized-array-value--tn)
-   - 4.3 [Sized array reference — `T[N]&`](#43-sized-array-reference--tn)
-   - 4.4 [Unsized array reference — `T[]`](#44-unsized-array-reference--t--)
-   - 4.5 [Array assignment](#45-array-assignment-)
-   - 4.6 [Subscript operator](#46-subscript-operator)
-5. [Struct types](#5-struct-types)
-6. [Type specifiers — grammar](#6-type-specifiers--grammar)
-7. [Implicit conversions](#7-implicit-conversions)
+2. [Indirection types — overview](#2-indirection-types--overview)
+3. [Reference (`&`)](#3-reference-)
+4. [Link (`~`)](#4-link-)
+5. [Pinned (`^`)](#5-pinned-)
+6. [Pointer (`*`)](#6-pointer-)
+7. [Indirection operators](#7-indirection-operators)
+8. [Array types](#8-array-types)
+   - 8.1 [Internal representation](#81-internal-representation)
+   - 8.2 [Sized array value — `T[N]`](#82-sized-array-value--tn)
+   - 8.3 [Sized array reference — `T[N]&`](#83-sized-array-reference--tn)
+   - 8.4 [Unsized array reference — `T[]`](#84-unsized-array-reference--t)
+   - 8.5 [Array assignment](#85-array-assignment)
+   - 8.6 [Subscript operator](#86-subscript-operator)
+9. [Struct types](#9-struct-types)
+10. [Type specifiers — grammar](#10-type-specifiers--grammar)
+11. [Implicit conversions](#11-implicit-conversions)
 
 ---
 
@@ -60,28 +64,68 @@ Primitive types are built-in types that represent scalar values.
 
 ---
 
-## 2. Reference types
+## 2. Indirection types — overview
 
-A reference is an alias for an existing object. It behaves as a non-nullable, non-rebindable pointer that is always initialised.
+K has four distinct indirection types, forming a 2×2 matrix along two independent axes:
 
-A reference type is formed by appending `&` to a type.
+|              | **Non-null** (strong) | **Nullable** |
+|--------------|-----------------------|--------------|
+| **Immutable binding** | `T&` — reference      | `T^` — pinned |
+| **Mutable binding**   | `T~` — link           | `T*` — pointer |
+
+* **Binding mutability** — whether the indirection variable can be *rebound* after initialisation (i.e. made to point to a different object).
+* **Nullability** — whether the indirection may hold a null address at runtime.
+
+All four types carry the address of an object of type `T`. They differ only in the above properties; their bit-width and calling convention are identical.
 
 **Grammar:**
 
 ```
-ReferenceTypeSuffix:
-    '&'
+TypeSuffix:
+    '&'    -- reference (immutable binding, non-null)
+    | '~'  -- link      (mutable binding,   non-null)
+    | '^'  -- pinned    (immutable binding, nullable)
+    | '*'  -- pointer   (mutable binding,   nullable)
 ```
+
+**Assignment semantics summary:**
+
+| Type | `x = val` (val is a value) | `x = &y` / `x = lnk` (val is an indirection) |
+|------|------|------|
+| `T&` | assigns `val` to the referenced object | compile-time error (rebind forbidden) |
+| `T~` | assigns `val` to the linked object | **rebinds** `x` to point to `y` |
+| `T^` | compile-time error (rebind forbidden) | compile-time error (rebind forbidden) |
+| `T*` | compile-time error (must use `*x = val`) | **rebinds** `x` to point to `y` |
+
+**Null safety:**
+
+Assigning or initialising a `T~` (link) from a nullable source (`T^` or `T*`) emits a **compile-time warning** and inserts a **runtime null-check**; if the source is null at runtime, `__fatal_null_assignation()` is called (which traps).
+
+Dereferencing (`*x` or `x->m`) a `T^` or `T*` value likewise inserts a runtime null-check; if null, `__fatal_null_dereference()` is called.
+
+---
+
+## 3. Reference (`&`)
+
+A reference is an alias for an existing object. It acts exactly as the object itself.
+
+**Syntax:** `T&`
+
+**Properties:**
+
+- Immutable binding — cannot be rebound after initialisation.
+- Non-null — always refers to a valid object.
+- Transparent — operations on a reference apply to the referenced object:
+  `r = 42` assigns to the object, not to `r`.
+- Taking the address of a reference with `&r` returns a link (`T~`) to the same object.
 
 **Examples:**
 
 ```k
-// Reference as a function parameter (pass by reference)
 set(var: int&, val: int) {
     var = val;          // modifies the referenced object
 }
 
-// Reference as a local variable (alias)
 test() : int {
     x : int = 10;
     r : int& = x;       // r is bound to x
@@ -90,86 +134,215 @@ test() : int {
 }
 ```
 
-References can be used as function parameters to pass objects by reference (allowing modification or avoiding copies), and as local variable aliases.
-
 **Constraints:**
 
-1. **Mandatory initialisation** — A reference variable must be initialised at its declaration.
-   The following is a compile-time error:
+1. **Mandatory initialisation** — must be initialised at declaration:
    ```k
    r : int&;           // ERROR: reference without initialiser
    ```
-
-2. **Initialiser must be addressable (lvalue)** — The initialiser must denote an existing object
-   (a variable, parameter, or struct member). A temporary value or arithmetic result is not
-   accepted:
+2. **Initialiser must be addressable** — the initialiser must be an lvalue (variable, parameter, struct member); a temporary or arithmetic result is rejected:
    ```k
    r : int& = 42;      // ERROR: 42 is not addressable
-   r : int& = x + 1;   // ERROR: x+1 is a temporary
+   r : int& = x + 1;   // ERROR: temporary
    ```
-
-3. **Type must match exactly** — The type of the initialiser must be the same as the referenced
-   type; implicit conversions are not applied when binding a reference:
+3. **Type must match exactly** — no implicit conversions when binding:
    ```k
    d : double = 3.14d;
    r : int& = d;       // ERROR: int& cannot refer to a double
    ```
-
-4. **Binding is permanent (no rebind)** — Once bound, a reference always refers to the same
-   object. Assigning to a reference modifies the value of the referred-to object, not the
-   binding itself:
+4. **No rebind** — assigning through a reference modifies the object, not the binding:
    ```k
    x : int = 10;
    y : int = 20;
    r : int& = x;
-   r = 99;             // sets x to 99; r is still bound to x, NOT rebound to y
+   r = y;              // copies y's value into x; r is still bound to x
    ```
-
-5. **No null reference** — A reference is always bound to a valid object; there is no null
-   reference.
-
-6. **References to references** — Reference-to-reference types are used internally by the
-   compiler (e.g. to model variable access) but have restricted user-facing uses.
+5. **No null** — there is no null reference.
 
 ---
 
-## 3. Pointer types
+## 4. Link (`~`)
 
-A pointer holds the memory address of an object. Pointers may be null.
+A link is a **rebindable**, non-null address. It combines the non-null safety of a reference with the ability to be pointed at a different object later.
 
-A pointer type is formed by appending `*` to a type.
+**Syntax:** `T~`
 
-**Grammar:**
+**Properties:**
 
-```
-PointerTypeSuffix:
-    '*'
-```
+- Mutable binding — can be rebound after initialisation using `lnk = &y` or `lnk = other_link`.
+- Non-null — always points to a valid object; rebinding from a nullable source triggers a runtime null-check.
+- Transparent on value operations — `lnk = val` (where `val` is of type `T`) assigns to the linked object.
+- Rebind on address operations — `lnk = &y` or `lnk = other_link` rebinds the link.
 
 **Examples:**
 
 ```k
-p : int*;               // pointer to int
-p = &a;                 // take address of 'a'
-*p += 1;                // dereference and modify
+test() : int {
+    x : int = 10;
+    y : int = 20;
+    lnk : int~ = &x;   // lnk points to x
+    lnk = 99;           // assigns 99 to x through lnk (transparent)
+    lnk = &y;           // REBIND: lnk now points to y
+    return *lnk;        // returns 20 (y's value)
+}
 ```
 
-**Pointer operators:**
+**Dereference:** `*lnk` produces a reference (`T&`) to the linked object. No null-check is inserted (link is non-null).
 
-| Operator | Meaning |
-|----------|---------|
-| `&expr`  | Address-of: yields a pointer to `expr` |
-| `*expr`  | Dereference: yields the object pointed to by `expr` |
-| `p->m`   | Member access through pointer: equivalent to `(*p).m` |
+**Member access:** `lnk->m` accesses member `m` of the linked struct. Equivalent to `(*lnk).m`.
+
+**Constraints:**
+
+1. **Mandatory initialisation** — must be initialised at declaration:
+   ```k
+   lnk : int~;         // ERROR: link without initialiser
+   ```
+2. **Initialiser must be an indirection** — must be initialised from a reference, link, pinned or pointer:
+   ```k
+   lnk : int~ = 42;    // ERROR: 42 is not an address
+   ```
+3. **Warning on nullable source** — if initialised or rebound from a `T^` or `T*`, a warning is emitted and a runtime null-check is inserted.
 
 ---
 
-## 4. Array types
+## 5. Pinned (`^`)
+
+A pinned is an **immutable binding** that may be null. Think of it as a non-rebindable raw pointer.
+
+**Syntax:** `T^`
+
+**Properties:**
+
+- Immutable binding — cannot be rebound after initialisation. `pin = &y` is a compile-time error.
+- Nullable — may hold null.
+- Requires explicit dereference — `*pin` to access the object (with a runtime null-check).
+
+**Examples:**
+
+```k
+test() : int {
+    x : int = 42;
+    pin : int^ = &x;    // pin holds the address of x; cannot be changed later
+    return *pin;        // dereferences with null-check; returns 42
+}
+
+maybe_null() : int {
+    pin : int^ = null;
+    return *pin;        // runtime trap: __fatal_null_dereference()
+}
+```
+
+**Dereference:** `*pin` inserts a runtime null-check. If null, `__fatal_null_dereference()` is called.
+
+**Member access:** `pin->m` accesses member `m` of the pinned struct, with null-check.
+
+**Constraints:**
+
+1. **Mandatory initialisation** — must be initialised at declaration:
+   ```k
+   pin : int^;         // ERROR: pinned without initialiser
+   ```
+2. **No rebind** — any assignment to `pin` after initialisation is a compile-time error:
+   ```k
+   pin : int^ = &x;
+   pin = &y;           // ERROR: pinned is immutable
+   ```
+
+---
+
+## 6. Pointer (`*`)
+
+A pointer holds the address of an object and can be reassigned to point to a different object (or null).
+
+**Syntax:** `T*`
+
+**Properties:**
+
+- Mutable binding — can be rebound at any time.
+- Nullable — may hold null.
+- Requires explicit dereference — `*p` to access or assign the object.
+
+**Examples:**
+
+```k
+test() : int {
+    x : int = 10;
+    y : int = 20;
+    p : int* = &x;      // p points to x
+    *p = 99;            // assigns 99 to x
+    p = &y;             // rebind: p now points to y
+    return *p;          // dereferences with null-check; returns 20
+}
+```
+
+**Dereference:** `*p` inserts a runtime null-check. If null, `__fatal_null_dereference()` is called.
+
+**Member access:** `p->m` accesses member `m` of the pointed-to struct, with null-check.
+
+**Address-of:** `&p` yields a link (`T*~`) to the pointer variable itself (address of the pointer).
+
+---
+
+## 7. Indirection operators
+
+The following operators apply to all four indirection types.
+
+### Address-of (`&expr`)
+
+Takes the address of an lvalue. The result type depends on the context:
+
+- Applied to an ordinary variable or parameter of type `T`: produces `T~` (a link).
+- Applied to a `T&` reference variable: produces `T~` (a link to the same object).
+
+```k
+x : int = 5;
+lnk : int~ = &x;     // address-of produces a link
+```
+
+> **Note:** In previous versions, `&expr` returned `T*`. It now returns `T~` (non-null address), which can be widened to `T*` or `T^` by implicit conversion.
+
+### Dereference (`*expr`)
+
+Yields a reference (`T&`) to the object at the address held by `expr`.
+
+| Operand type | Null-check at runtime |
+|---|---|
+| `T~` | No (link is non-null) |
+| `T^` | Yes — calls `__fatal_null_dereference()` if null |
+| `T*` | Yes — calls `__fatal_null_dereference()` if null |
+| `T&` | Not applicable (& is not dereferenceable by `*`) |
+
+```k
+p  : int* = &x;
+lnk : int~ = &x;
+*p   = 42;           // null-check + assign
+*lnk = 42;           // no null-check + assign
+```
+
+### Member-of-pointer (`expr->m`)
+
+Accesses member `m` of the struct pointed to by `expr`. Equivalent to `(*expr).m`.
+
+Inserts a runtime null-check for `T^` and `T*` operands.
+
+```k
+struct Point { x : int = 0; y : int = 0; }
+
+test() : int {
+    pt : Point();
+    p  : Point* = &pt;
+    return p->x + p->y;     // null-check then member access
+}
+```
+
+---
+
+## 8. Array types
 
 An array type represents a fixed-size sequence of elements of the same type.
 Arrays in K are **value types** — each array variable holds its own storage.
 
-### 4.1 Internal representation
+### 8.1 Internal representation
 
 A sized array of type `T[N]` is represented internally as a struct:
 
@@ -185,7 +358,7 @@ This layout is opaque to the programmer; it is specified here for documentation 
 
 ---
 
-### 4.2 Sized array value — `T[N]`
+### 8.2 Sized array value — `T[N]`
 
 A sized array **value** variable declares and allocates a concrete array of `N` elements.
 
@@ -212,7 +385,7 @@ g   : double[100];      // global array of 100 doubles, zero-initialised
 
 ---
 
-### 4.3 Sized array reference — `T[N]&`
+### 8.3 Sized array reference — `T[N]&`
 
 A sized array **reference** is a reference that **owns a fresh copy** of the source array.
 It is semantically equivalent to binding the alias name to a privately owned copy.
@@ -260,7 +433,7 @@ Let `dst : T[N]& = src` where `src` has type `T[M]` or `T[M]&`:
 
 ---
 
-### 4.4 Unsized array reference — `T[]` (= `T[]&`)
+### 8.4 Unsized array reference — `T[]` (= `T[]&`)
 
 An unsized array type `T[]` is a reference to an array whose size is not known at the
 declaration site.  It is exactly equivalent to `T[]&` (the explicit reference form).
@@ -289,7 +462,7 @@ b : int[]&;     // same — explicit & is optional but permitted
 
 ---
 
-### 4.5 Array assignment (`=`)
+### 8.5 Array assignment
 
 Assigning one array to another performs an **element-wise copy**.  The destination array
 never changes its size.
@@ -314,7 +487,7 @@ a[0] = 99;         // does not affect b
 
 ---
 
-### 4.6 Subscript operator
+### 8.6 Subscript operator
 
 Elements are accessed via the subscript operator `[]`.
 
@@ -330,7 +503,7 @@ x = arr[i];
 ---
 
 
-## 5. Struct types
+## 9. Struct types
 
 A struct type is a user-defined composite type. See the [Structures](../structs/structs.md) reference for full details.
 
@@ -344,7 +517,7 @@ ptr : plop*;            // pointer to 'plop'
 
 ---
 
-## 6. Type specifiers — grammar
+## 10. Type specifiers — grammar
 
 Types appear in variable declarations, parameter declarations, and return type annotations.
 
@@ -361,8 +534,10 @@ FundamentalTypeSpec:
 
 TypeSuffix:
     '[' [ IntegerLiteral ] ']'     -- array suffix (sized or unsized)
-    | '*'                          -- pointer suffix
-    | '&'                          -- reference suffix
+    | '&'                          -- reference (immutable binding, non-null)
+    | '~'                          -- link (mutable binding, non-null)
+    | '^'                          -- pinned (immutable binding, nullable)
+    | '*'                          -- pointer (mutable binding, nullable)
 ```
 
 Suffixes may be chained: `int*` is a pointer to int; `int[4]` is a 4-element int array; `int[4]&` is a reference to a 4-element int array.
@@ -374,15 +549,18 @@ int
 double
 unsigned int
 short*
+int~
+int^
 int[4]
 int[4]&
 plop&
+plop~
 plop*
 ```
 
 ---
 
-## 7. Implicit conversions
+## 11. Implicit conversions
 
 The compiler performs implicit type conversions in certain contexts (e.g., function call arguments, assignments):
 

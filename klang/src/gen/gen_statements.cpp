@@ -597,6 +597,8 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     if (init != nullptr) {
         _value = nullptr;
         init->accept(*this);
+
+        // constructor_invocation_expression handles the store for all types.
     } else if (k::model::type::is_sized_array(var_type)) {
         // int[N] without explicit initializer: zero-init the entire struct,
         // then store the capacity N in field 0.

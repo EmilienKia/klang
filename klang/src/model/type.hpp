@@ -57,6 +57,8 @@ class structure;
 
 class reference_type;
 class pointer_type;
+class link_type;
+class pinned_type;
 class sized_array_type;
 class array_type;
 class struct_type;
@@ -71,6 +73,8 @@ protected:
 
     std::shared_ptr<reference_type> reference;
     std::shared_ptr<pointer_type> pointer;
+    std::shared_ptr<link_type> link;
+    std::shared_ptr<pinned_type> pinned;
     std::shared_ptr<array_type> array;
 
     mutable llvm::Type* _llvm_type;
@@ -96,6 +100,18 @@ public:
     inline static bool is_reference(const std::shared_ptr<type>& type);
     inline static bool is_double_reference(const std::shared_ptr<type>& type);
     inline static bool is_pointer(const std::shared_ptr<type>& type);
+    inline static bool is_link(const std::shared_ptr<type>& type);
+    inline static bool is_pinned(const std::shared_ptr<type>& type);
+    /** True for any of the four indirection kinds: reference, pointer, link, pinned. */
+    inline static bool is_any_indirection(const std::shared_ptr<type>& type);
+    /** True for indirections that are non-null (reference and link). */
+    inline static bool is_strong_indirection(const std::shared_ptr<type>& type);
+    /** True for indirections that are mutable (link and pointer). */
+    inline static bool is_mutable_indirection(const std::shared_ptr<type>& type);
+    /** True for indirections that may be null (pointer and pinned). */
+    inline static bool is_nullable_indirection(const std::shared_ptr<type>& type);
+    /** True for indirections that are immutable (reference and pinned). */
+    inline static bool is_immutable_indirection(const std::shared_ptr<type>& type);
     inline static bool is_sized_array(const std::shared_ptr<type>& type);
     inline static bool is_array(const std::shared_ptr<type>& type);
     inline static bool is_struct(const std::shared_ptr<type>& type);
@@ -105,6 +121,8 @@ public:
 
     virtual std::shared_ptr<reference_type> get_reference();
     std::shared_ptr<pointer_type> get_pointer();
+    std::shared_ptr<link_type> get_link();
+    std::shared_ptr<pinned_type> get_pinned();
     std::shared_ptr<array_type> get_array();
     std::shared_ptr<sized_array_type> get_array(unsigned long size);
 
@@ -288,6 +306,80 @@ public:
 
 inline bool type::is_pointer(const std::shared_ptr<type>& type) {
     return std::dynamic_pointer_cast<pointer_type>(type) != nullptr;
+}
+
+
+/**
+ * Link type (~) — mutable, non-null (strong) indirection.
+ * Like a reference but rebindable (via assignment to the link itself).
+ * Represented in LLVM as an opaque pointer, identical to pointer_type.
+ * Mangling modifier: 'L'
+ */
+class link_type : public type {
+protected:
+    friend class type;
+
+    link_type(const std::shared_ptr<type> &subtype);
+
+public:
+    bool is_resolved() const override;
+
+    llvm::Type* get_llvm_type() const override;
+
+    std::string to_string() const override;
+
+    std::shared_ptr<type> get_linked_type() const {return get_subtype();}
+};
+
+inline bool type::is_link(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<link_type>(type) != nullptr;
+}
+
+
+/**
+ * Pinned type (^) — immutable (not rebindable after construction), nullable indirection.
+ * Like a const pointer: can be null, but cannot be rebound after initialisation.
+ * Represented in LLVM as an opaque pointer, identical to pointer_type.
+ * Mangling modifier: 'Q'
+ */
+class pinned_type : public type {
+protected:
+    friend class type;
+
+    pinned_type(const std::shared_ptr<type> &subtype);
+
+public:
+    bool is_resolved() const override;
+
+    llvm::Type* get_llvm_type() const override;
+
+    std::string to_string() const override;
+
+    std::shared_ptr<type> get_pinned_type() const {return get_subtype();}
+};
+
+inline bool type::is_pinned(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<pinned_type>(type) != nullptr;
+}
+
+inline bool type::is_any_indirection(const std::shared_ptr<type>& t) {
+    return is_reference(t) || is_pointer(t) || is_link(t) || is_pinned(t);
+}
+
+inline bool type::is_strong_indirection(const std::shared_ptr<type>& t) {
+    return is_reference(t) || is_link(t);
+}
+
+inline bool type::is_mutable_indirection(const std::shared_ptr<type>& t) {
+    return is_link(t) || is_pointer(t);
+}
+
+inline bool type::is_nullable_indirection(const std::shared_ptr<type>& t) {
+    return is_pointer(t) || is_pinned(t);
+}
+
+inline bool type::is_immutable_indirection(const std::shared_ptr<type>& t) {
+    return is_reference(t) || is_pinned(t);
 }
 
 

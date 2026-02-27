@@ -20,7 +20,7 @@ Examples are included where they clarify the normative text.
 | [Lexical Conventions](basic/lexical.md) | Source encoding, comments, tokens |
 | [Keywords](basic/keywords.md) | Reserved words of the language |
 | [Names, Namespaces and Lookup](basic/names.md) | Identifiers, qualified names, lookup rules, namespace visibility |
-| [Types](basic/types.md) | Primitive types, reference, pointer, array and struct types |
+| [Types](basic/types.md) | Primitive types; the four indirection types (`&` `~` `^` `*`); array and struct types |
 | [Module System](basic/modules.md) | Module declarations and imports |
 | [Main Function](basic/main.md) | Program entry point |
 
@@ -31,7 +31,7 @@ Examples are included where they clarify the normative text.
 | [Expressions](expressions/expressions.md) | Overview, value categories, expression list |
 | [Literals](expressions/literals.md) | Integer, floating-point, boolean, character, string, null literals |
 | [Identifiers and Name Expressions](expressions/identifiers.md) | Symbol expressions, qualified access |
-| [Unary Operators](expressions/unary.md) | `+`, `-`, `~`, `!`, `&`, `*`, cast |
+| [Unary Operators](expressions/unary.md) | `+`, `-`, `~`, `!`, `&` (address-of), `*` (dereference), cast |
 | [Binary Operators](expressions/binary.md) | Arithmetic, bitwise, shift, comparison, logical |
 | [Assignment Operators](expressions/assignment.md) | `=` and compound assignment |
 | [Function Call and Subscript](expressions/call.md) | Invocation, subscript `[]`, member access `.` and `->` |

@@ -8,12 +8,16 @@ Assignment operators store a value into a variable or memory location.
 
 ## Contents
 1. [Simple assignment](#1-simple-assignment)
-2. [Compound assignment operators](#2-compound-assignment-operators)
-3. [Operand requirements](#3-operand-requirements)
+2. [Assignment through indirection types](#2-assignment-through-indirection-types)
+3. [Compound assignment operators](#3-compound-assignment-operators)
+4. [Operand requirements](#4-operand-requirements)
+
 ---
 ## 1. Simple assignment
+
 `lhs = rhs` evaluates `rhs`, converts it to the type of `lhs` if needed, and stores the result in `lhs`.  
 The value of the assignment expression is the value stored.
+
 ### Grammar
 ```
 AssignmentExpr:
@@ -21,7 +25,9 @@ AssignmentExpr:
 AssignmentOperator: (one of)
     =   *=   /=   %=   +=   -=   >>=   <<=   &=   ^=   |=
 ```
+
 Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result to `a`.
+
 **Examples:**
 ```k
 x = 42;
@@ -29,10 +35,87 @@ p.b = 72;
 *ptr = value;
 arr[i] = v;
 ```
+
 ---
-## 2. Compound assignment operators
+## 2. Assignment through indirection types
+
+The four indirection types have different assignment semantics:
+
+### Reference (`T&`) — transparent object semantics
+
+Assigning to a reference variable assigns to the **object it refers to**. The binding itself never changes.
+
+```k
+x : int = 10;
+y : int = 20;
+r : int& = x;
+r = y;              // copies y's value into x; r remains bound to x
+r = 99;             // assigns 99 to x
+```
+
+Taking the address of a reference with `&r` produces a `T~` pointing to the same object.
+
+### Link (`T~`) — rebind or transparent, depending on RHS type
+
+The compiler distinguishes between a **rebind** and an **assignment to the pointed-to object** by the type of the right-hand side:
+
+- If the RHS is an **indirection of the same element type** (`T~`, `T^`, or `T*`), the assignment **rebinds** the link — the link is made to point to the new address.
+- Otherwise the assignment is **transparent** — it assigns to the linked object.
+
+```k
+x : int = 10;
+y : int = 20;
+lnk : int~ = &x;
+
+lnk = 99;           // transparent: assigns 99 to x (RHS is int, not int*)
+lnk = &y;           // REBIND: lnk now points to y (RHS is int~)
+lnk = &x;           // REBIND back to x
+```
+
+Rebinding a link from a nullable source (`T^` or `T*`) emits a **compile-time warning** and inserts a **runtime null-check** (`__fatal_null_assignation()` if null).
+
+### Pinned (`T^`) — immutable binding
+
+Assigning to a pinned variable after its initialisation is a **compile-time error**.
+
+```k
+pin : int^ = &x;
+pin = &y;           // ERROR: pinned is immutable — cannot be rebound
+```
+
+To modify the pointed-to object, use dereference:
+```k
+*pin = 99;          // modifies the object (with null-check at runtime)
+```
+
+### Pointer (`T*`) — rebind
+
+Assigning to a pointer variable always **rebinds** it — the pointer is made to point to the new address.  
+To modify the pointed-to object, use dereference.
+
+```k
+p : int* = &x;
+p = &y;             // rebind: p now points to y
+*p = 99;            // modifies y (with null-check)
+```
+
+The RHS of a pointer assignment must be a pointer (`T*`) or a link (`T~`). Assigning a plain value is a compile-time error.
+
+### Summary table
+
+| LHS type | `x = val` (val is `T`) | `x = &y` / `x = lnk` (val is `T~`, `T*`, `T^`) |
+|---|---|---|
+| `T&` | Assigns `val` to the referenced object | Compile-time error (no rebind) |
+| `T~` | Assigns `val` to the linked object | **Rebinds** `x` to point to `y` |
+| `T^` | Compile-time error (no rebind) | Compile-time error (no rebind) |
+| `T*` | Compile-time error (must use `*x = val`) | **Rebinds** `x` to point to `y` |
+
+---
+## 3. Compound assignment operators
+
 Compound assignment applies a binary operation and stores the result back in the left operand.  
 `lhs op= rhs` is semantically equivalent to `lhs = lhs op rhs` (with `lhs` evaluated once).
+
 | Operator | Equivalent to |
 |----------|---------------|
 | `+=`     | `lhs = lhs + rhs` |
@@ -45,18 +128,23 @@ Compound assignment applies a binary operation and stores the result back in the
 | `^=`     | `lhs = lhs ^ rhs` |
 | `<<=`    | `lhs = lhs << rhs` |
 | `>>=`    | `lhs = lhs >> rhs` |
+
 **Examples:**
 ```k
 r += i;         // r = r + i
 i = i - 1;     // could also be written: i -= 1
-*p += i + j;   // dereference and add
+*p += i + j;   // dereference and add (with null-check)
 p.b += 12;     // member field compound assignment
 n += 1;        // increment by 1 (same as ++n)
 ```
+
 ---
-## 3. Operand requirements
-- The left-hand side (`lhs`) must be an assignable location (lvalue): a variable, a parameter, a dereferenced pointer, an array subscript, or a struct field access.
+## 4. Operand requirements
+
+- The left-hand side (`lhs`) must be an assignable location (lvalue): a variable, a parameter, a dereferenced pointer/link/pinned, an array subscript, or a struct field access.
+- Assigning to a `T^` (pinned) variable directly (rebind) is a compile-time error.
 - The right-hand side (`rhs`) is an expression of a compatible type.
-- Implicit widening or narrowing conversions are applied as described in [Types — Implicit conversions](../basic/types.md#7-implicit-conversions).
+- Implicit widening or narrowing conversions are applied as described in [Types — Implicit conversions](../basic/types.md#11-implicit-conversions).
+
 ---
-*See also:* [Binary Operators](binary.md) · [Expressions](expressions.md) · [Types](../basic/types.md)
+*See also:* [Binary Operators](binary.md) · [Expressions](expressions.md) · [Types](../basic/types.md) · [Unary Operators](unary.md)

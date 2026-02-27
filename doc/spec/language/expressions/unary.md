@@ -10,8 +10,8 @@ Unary operators operate on a single operand.
 1. [Arithmetic unary operators](#1-arithmetic-unary-operators)
 2. [Logical NOT](#2-logical-not)
 3. [Bitwise NOT](#3-bitwise-not)
-4. [Address-of operator](#4-address-of-operator)
-5. [Dereference operator](#5-dereference-operator)
+4. [Address-of operator (`&`)](#4-address-of-operator-)
+5. [Dereference operator (`*`)](#5-dereference-operator-)
 6. [Cast expression](#6-cast-expression)
 7. [Prefix increment and decrement](#7-prefix-increment-and-decrement)
 ---
@@ -61,36 +61,58 @@ BitwiseNotExpr:
 mask : int = ~0xFF;    // all bits set except the low 8
 ```
 ---
-## 4. Address-of operator
-`&expr` yields a pointer to the object denoted by `expr`.  
-`expr` must be an lvalue (a variable or a dereferenced pointer).
+## 4. Address-of operator (`&`)
+
+`&expr` yields the address of the object denoted by `expr`.
+`expr` must be an lvalue (a variable, parameter, array element, or struct member).
+
 ```
 AddressOfExpr:
     '&' CastExpr
 ```
-The result type is `T*` when `expr` has type `T`.
+
+The result type is `T~` (a **link** — non-null, mutable address) when `expr` has type `T`.
+
 ```k
-a : int = 5;
-p : int* = &a;   // p points to a
+a   : int = 5;
+lnk : int~ = &a;     // link to a (non-null)
+p   : int* = &a;     // implicitly widened to pointer
+pin : int^ = &a;     // implicitly widened to pinned
 ```
+
+> **Note:** `&expr` always produces a non-null address (`T~`). It can be implicitly widened to a nullable type (`T*`, `T^`) but not the other way around.
+
+Applied to a reference variable `r : T&`, `&r` returns a `T~` pointing to the same object as `r`.
+
 ---
-## 5. Dereference operator
-`*expr` dereferences a pointer, yielding a reference to the pointed-to object.  
-`expr` must be of pointer type.
+## 5. Dereference operator (`*`)
+
+`*expr` dereferences an indirection, yielding a **reference** (`T&`) to the pointed-to object.
+`expr` must be of type `T~`, `T^`, or `T*`.
+
 ```
 DereferenceExpr:
     '*' CastExpr
 ```
+
+| Operand type | Null-check inserted |
+|---|---|
+| `T~` (link)    | No — link is non-null |
+| `T^` (pinned)  | Yes — calls `__fatal_null_dereference()` if null |
+| `T*` (pointer) | Yes — calls `__fatal_null_dereference()` if null |
+
 ```k
-p : int*;
-p = &a;
-*p = 42;         // assigns 42 to the object pointed to by p
-x : int = *p;    // reads the value
+x   : int  = 42;
+lnk : int~ = &x;
+p   : int* = &x;
+
+*lnk = 10;       // no null-check; assigns 10 to x
+*p   = 20;       // null-check, then assigns 20 to x
+y : int = *p;    // null-check, then reads
 ```
-Combined with assignment:
-```k
-*p += i + j;
-```
+
+The dereference of a reference (`T&`) is not supported directly via `*` — a reference already acts as the object itself.
+
 ---
 ## 6. Cast expression
 Explicit type conversion. Converts `expr` to the specified type.

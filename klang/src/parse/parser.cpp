@@ -946,7 +946,8 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
         holder.sync();
         auto lex = _lexer.get();
 
-        if(lex == lex::operator_::STAR || lex == lex::operator_::AMPERSAND) {
+        if(lex == lex::operator_::STAR || lex == lex::operator_::AMPERSAND
+            || lex == lex::operator_::TILDE || lex == lex::operator_::CARET) {
             res = std::make_shared<ast::pointer_type_specifier>(res, lex::as<lex::operator_>(lex));
             continue;
         }

@@ -145,6 +145,10 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             return subtype->get_pointer();
         } else if(ptr->pointer_type==lex::operator_::AMPERSAND) {
             return subtype->get_reference();
+        } else if(ptr->pointer_type==lex::operator_::TILDE) {
+            return subtype->get_link();
+        } else if(ptr->pointer_type==lex::operator_::CARET) {
+            return subtype->get_pinned();
         } else
             return {}; // Shall not happen
     } else if(auto arr = dynamic_cast<const k::parse::ast::array_type_specifier*>(&type_spec)) {
@@ -378,12 +382,26 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     } else if (type::is_reference(type)) {
         auto res = resolve_type(type->get_subtype());
         if (!res) {
-            // Not resolvable
-            // TODO throw an exception
             std::cerr << "Error: cannot resolve reference subtype." << std::endl;
             return nullptr;
         } else {
             return res->get_reference();
+        }
+    } else if (type::is_link(type)) {
+        auto res = resolve_type(type->get_subtype());
+        if (!res) {
+            std::cerr << "Error: cannot resolve link subtype." << std::endl;
+            return nullptr;
+        } else {
+            return res->get_link();
+        }
+    } else if (type::is_pinned(type)) {
+        auto res = resolve_type(type->get_subtype());
+        if (!res) {
+            std::cerr << "Error: cannot resolve pinned subtype." << std::endl;
+            return nullptr;
+        } else {
+            return res->get_pinned();
         }
     } else if (type::is_array(type)) {
         auto res = resolve_type(type->get_subtype());

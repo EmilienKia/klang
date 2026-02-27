@@ -1080,6 +1080,99 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             upcast->set_type(var_type);
             init_expr->assign_argument(0, upcast);
         }
+    } else if (type::is_link(var.get_type())) {
+        // Link variable (~): mutable, non-null — must be initialised at declaration.
+        // Same initialisation rules as reference: exactly one addressable (reference-typed) arg.
+        auto link_var_type = std::dynamic_pointer_cast<link_type>(var.get_type());
+
+        if (!init_expr || init_expr->empty()) {
+            throw_error(0x4501, std::nullopt,
+                "Link variable '{}' of type '{}' must be initialised at its declaration: "
+                "a link is non-null and cannot be left unbound",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
+            return;
+        }
+        if (init_expr->size() > 1) {
+            throw_error(0x4502, std::nullopt,
+                "Link variable '{}' of type '{}' must be initialised with exactly one expression, "
+                "but {} were provided",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                 std::to_string(init_expr->size())});
+            return;
+        }
+        auto arg = init_expr->argument(0);
+        if (!arg) {
+            throw_internal_error(0x4503, std::nullopt,
+                "Link variable '{}': initialisation argument is null; "
+                "this is an internal compiler inconsistency",
+                {var.get_fq_name()});
+            return;
+        }
+        auto arg_type = arg->get_type();
+        // The initialiser must provide an address: reference, link, pinned or pointer.
+        if (!type::is_any_indirection(arg_type)) {
+            throw_error(0x4504, std::nullopt,
+                "Link variable '{}' of type '{}' must be initialised with an addressable expression "
+                "(reference, link, pinned or pointer), but the initialiser has type '{}' "
+                "which is not an indirection type",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                 arg_type ? arg_type->to_string() : "?"});
+            return;
+        }
+        // If initialising from a nullable indirection (pinned or pointer), emit a warning:
+        // a null-check + __fatal_null_assignation() will be generated at IR level.
+        if (type::is_nullable_indirection(arg_type)) {
+            // Emit warning — a runtime null-check will be generated
+            auto diag = k::log::diagnostic::make_warning(with_flag(0x4505),
+                "Link variable '{}' of type '{}' is being initialised from a nullable source "
+                "(type '{}'): a runtime null-check will be inserted",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                 arg_type ? arg_type->to_string() : "?"});
+            logger_relay::report(diag);
+        }
+
+    } else if (type::is_pinned(var.get_type())) {
+        // Pinned variable (^): immutable (not rebindable after init), nullable.
+        // Must be initialised at declaration; initialiser can be any indirection or null.
+        if (!init_expr || init_expr->empty()) {
+            throw_error(0x4601, std::nullopt,
+                "Pinned variable '{}' of type '{}' must be initialised at its declaration: "
+                "a pinned indirection cannot be left unbound",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
+            return;
+        }
+        if (init_expr->size() > 1) {
+            throw_error(0x4602, std::nullopt,
+                "Pinned variable '{}' of type '{}' must be initialised with exactly one expression, "
+                "but {} were provided",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                 std::to_string(init_expr->size())});
+            return;
+        }
+        auto arg = init_expr->argument(0);
+        if (!arg) {
+            throw_internal_error(0x4603, std::nullopt,
+                "Pinned variable '{}': initialisation argument is null; "
+                "this is an internal compiler inconsistency",
+                {var.get_fq_name()});
+            return;
+        }
+        auto arg_type = arg->get_type();
+        // Initialiser must be an indirection or null literal.
+        bool is_null_init = false;
+        if (auto ve = std::dynamic_pointer_cast<value_expression>(arg)) {
+            is_null_init = std::holds_alternative<std::nullptr_t>(ve->get_value());
+        }
+        if (!is_null_init && !type::is_any_indirection(arg_type)) {
+            throw_error(0x4604, std::nullopt,
+                "Pinned variable '{}' of type '{}' must be initialised with an addressable expression "
+                "(reference, link, pinned, pointer or null), but the initialiser has type '{}' "
+                "which is not an indirection type",
+                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                 arg_type ? arg_type->to_string() : "?"});
+            return;
+        }
+
     } else if (type::is_sized_array(var.get_type())) {
         // Sized array variable: int[N]
         // No initializer = zero-init (always valid for any element type).

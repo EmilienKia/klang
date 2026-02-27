@@ -67,6 +67,22 @@ std::shared_ptr<pointer_type> type::get_pointer()
     return pointer;
 }
 
+std::shared_ptr<link_type> type::get_link()
+{
+    if(!link) {
+        link = std::shared_ptr<link_type>(new link_type(shared_from_this()));
+    }
+    return link;
+}
+
+std::shared_ptr<pinned_type> type::get_pinned()
+{
+    if(!pinned) {
+        pinned = std::shared_ptr<pinned_type>(new pinned_type(shared_from_this()));
+    }
+    return pinned;
+}
+
 std::shared_ptr<array_type> type::get_array()
 {
     if(!array) {
@@ -205,6 +221,62 @@ std::string reference_type::to_string() const {
         return sub->to_string() + "&";
     } else {
         return "<<nosub>>&";
+    }
+}
+
+//
+// Link type (~)
+//
+link_type::link_type(const std::shared_ptr<type> &subtype):
+type(subtype)
+{}
+
+bool link_type::is_resolved() const
+{
+    return subtype.lock()->is_resolved();
+}
+
+llvm::Type* link_type::get_llvm_type() const {
+    if(_llvm_type==nullptr && is_resolved()) {
+        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0);
+    }
+    return _llvm_type;
+}
+
+std::string link_type::to_string() const {
+    auto sub = subtype.lock();
+    if(sub) {
+        return sub->to_string() + "~";
+    } else {
+        return "<<nosub>>~";
+    }
+}
+
+//
+// Pinned type (^)
+//
+pinned_type::pinned_type(const std::shared_ptr<type> &subtype):
+type(subtype)
+{}
+
+bool pinned_type::is_resolved() const
+{
+    return subtype.lock()->is_resolved();
+}
+
+llvm::Type* pinned_type::get_llvm_type() const {
+    if(_llvm_type==nullptr && is_resolved()) {
+        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0);
+    }
+    return _llvm_type;
+}
+
+std::string pinned_type::to_string() const {
+    auto sub = subtype.lock();
+    if(sub) {
+        return sub->to_string() + "^";
+    } else {
+        return "<<nosub>>^";
     }
 }
 

@@ -122,8 +122,10 @@ Grammar notation used here:
     | `'bool'`
 <a id="typesuffix"></a>**TypeSuffix:**
     `'['` `[` [IntegerLiteral](#integerliteral) `]` `']'`     -- array (sized or unsized)
-    | `'*'`                                 -- pointer
-    | `'&'`                                 -- reference
+    | `'*'`                                 -- pointer (mutable, nullable)
+    | `'&'`                                 -- reference (immutable binding, non-null)
+    | `'~'`                                 -- link (mutable binding, non-null)
+    | `'^'`                                 -- pinned (immutable binding, nullable)
 ### Parameters
 *Full description:* [Functions - Parameters](functions/functions.md#2-parameters)
 <a id="parameterlist"></a>**ParameterList:**

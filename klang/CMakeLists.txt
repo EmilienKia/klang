@@ -91,6 +91,7 @@ add_executable(tests
         tests/test-gen-visibility.cpp
         tests/test-gen-inheritance.cpp
         tests/test-run.cpp
+        tests/test-gen-indirection.cpp
 )
 target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain)
 

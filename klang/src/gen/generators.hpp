@@ -252,6 +252,18 @@ public:
 
 protected:
     void optimize_function_dead_inst_elimination(llvm::Function& func);
+
+    /**
+     * Emit or retrieve the declaration of @__fatal_null_assignation or @__fatal_null_dereference.
+     * The function is declared as: void() noreturn nounwind cold, calling llvm.trap or llvm.debugtrap.
+     */
+    llvm::Function* get_or_declare_fatal_null_function(const std::string& name);
+
+    /**
+     * Emit a runtime null-check for `ptr_value`. If null, calls fatal_fn and then unreachable.
+     * `ok_bb` is the block to continue in if not null. The function creates the check+branch.
+     */
+    void emit_null_check(llvm::Value* ptr_value, llvm::Function* fatal_fn, const std::string& label = "");
 };
 
 

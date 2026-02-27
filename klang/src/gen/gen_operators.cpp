@@ -476,32 +476,124 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     auto target_type = ref_target_type->get_subtype();
 
     if(type::is_reference(target_type)) {
-        // Left hand is a ref-to-ref-to-something, i.e. a ref-something variable.
-        // Deref again target type
+        // Left hand is ref-to-ref: assignment acts on the underlying object.
         left = load_value_expression::make_shared(left);
         left->set_type(target_type);
         expr.assign_left(left);
         target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
+    } else if (type::is_link(target_type)) {
+        // Left hand is ref-to-link.
+        // Determine if this is a rebind (RHS is an indirection) or
+        // an assignment to the pointed object (RHS is a value).
+        auto link_subtype = std::dynamic_pointer_cast<link_type>(target_type)->get_linked_type();
+        auto rhs_type = right->get_type();
+        // Unwrap ref<indirection> from rhs_type
+        auto rhs_effective = rhs_type;
+        if (type::is_reference(rhs_type)) {
+            auto inner = std::dynamic_pointer_cast<reference_type>(rhs_type)->get_subtype();
+            if (type::is_link(inner) || type::is_pointer(inner) || type::is_pinned(inner)) {
+                rhs_effective = inner;
+            }
+        }
+        // If RHS is an indirection of the same subtype: REBIND
+        if (type::is_any_indirection(rhs_effective) &&
+            rhs_effective->get_subtype() && link_subtype &&
+            type::are_equal(rhs_effective->get_subtype(), link_subtype)) {
+            // Rebind: load the source address and store into the link alloca.
+            // If source is nullable, warn — null-check at IR level.
+            if (type::is_nullable_indirection(rhs_effective)) {
+                auto diag = k::log::diagnostic::make_warning(with_flag(0x0072),
+                    "Rebinding a link from a nullable indirection (type '{}'): "
+                    "a runtime null-check will be inserted",
+                    {rhs_type ? rhs_type->to_string() : "?"});
+                logger_relay::report(diag);
+            }
+            // Unwrap the ref wrapper from rhs if needed
+            if (type::is_reference(rhs_type)) {
+                right = load_value_expression::make_shared(right);
+                rhs_type = rhs_effective;
+                right->set_type(rhs_type);
+                expr.assign_right(right);
+            }
+            // The assignment stores a new address into the link alloca.
+            expr.set_type(ref_target_type);
+            return;
+        }
+        // Otherwise: transparent reference — assignment to the pointed object.
+        left = load_value_expression::make_shared(left);
+        left->set_type(target_type);
+        auto ref_to_target = link_subtype->get_reference();
+        left->set_type(ref_to_target);
+        expr.assign_left(left);
+        target_type = link_subtype;
+        ref_target_type = ref_to_target;
+    } else if (type::is_pinned(target_type)) {
+        throw_error(0x0070, std::nullopt,
+            "Cannot assign to a pinned indirection (type '{}'): "
+            "a pinned ('^') is immutable after initialisation",
+            {target_type ? target_type->to_string() : "?"});
     }
 
     auto source_type = right->get_type();
 
+    // Unwrap ref<link/ptr/pin> for source-side checks
+    auto effective_source_type = source_type;
+    if (type::is_reference(source_type)) {
+        auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+        if (type::is_link(inner) || type::is_pointer(inner) || type::is_pinned(inner)) {
+            effective_source_type = inner;
+        }
+    }
+
     if(type::is_pointer(target_type)) {
-        if(type::is_pointer(source_type)) {
-            if(target_type->get_subtype() != source_type->get_subtype()) {
+        if(type::is_pointer(effective_source_type) || type::is_link(effective_source_type)) {
+            auto src_sub = effective_source_type->get_subtype();
+            auto tgt_sub = target_type->get_subtype();
+            if (src_sub != tgt_sub) {
                 throw_error(0x000B, std::nullopt,
                     "Pointer assignment type mismatch: "
                     "cannot assign a '{}' to a '{}'; pointer types must match exactly",
                     {source_type ? source_type->to_string() : "?",
                      target_type ? target_type->to_string() : "?"});
             }
+            if (type::is_reference(source_type)) {
+                right = load_value_expression::make_shared(right);
+                source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+                right->set_type(source_type);
+                expr.assign_right(right);
+            }
+            expr.set_type(ref_target_type);
+            return;
         } else {
             throw_error(0x000C, std::nullopt,
-                "Pointer assignment requires a pointer on the right-hand side: "
+                "Pointer assignment requires a pointer or link on the right-hand side: "
                 "cannot assign a value of type '{}' to a pointer of type '{}'",
                 {source_type ? source_type->to_string() : "?",
                  target_type ? target_type->to_string() : "?"});
         }
+    } else if (type::is_link(target_type)) {
+        // Direct link rebind (reached after link-to-link case not matched above).
+        if (!type::is_any_indirection(effective_source_type)) {
+            throw_error(0x0071, std::nullopt,
+                "Link assignment requires an indirection on the right-hand side, "
+                "but got type '{}'",
+                {source_type ? source_type->to_string() : "?"});
+        }
+        if (type::is_nullable_indirection(effective_source_type)) {
+            auto diag = k::log::diagnostic::make_warning(with_flag(0x0072),
+                "Assigning a nullable indirection (type '{}') to a link: "
+                "a runtime null-check will be inserted",
+                {source_type ? source_type->to_string() : "?"});
+            logger_relay::report(diag);
+        }
+        if (type::is_reference(source_type)) {
+            right = load_value_expression::make_shared(right);
+            source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+            right->set_type(source_type);
+            expr.assign_right(right);
+        }
+        expr.set_type(ref_target_type);
+        return;
     } else if (type::is_sized_array(target_type)) {
         // Array = array : element-wise copy (see spec).
         // Source must be a reference to a sized array of the same element type.
@@ -532,7 +624,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             expr.assign_right(right);
         }
         return; // code generation handled in visit_simple_assignation_expression
-    } else if(!type::is_primitive(target_type)) {
+    } else if(!type::is_primitive(target_type) && !type::is_struct(target_type)) {
         throw_error(0x000D, std::nullopt,
             "Assignment to a non-primitive, non-pointer type is not yet supported: "
             "the target has type '{}'; only assignments to primitive types, pointers and arrays are supported",
