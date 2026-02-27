@@ -650,6 +650,9 @@ namespace k::parse {
         };
 
         struct function_decl : public declaration {
+            /** Specifier for function-aliasing declarations (-> default ; / -> delete ;). */
+            enum class aliasing_spec_t { NONE, DEFAULT, DELETE };
+
             std::vector<lex::keyword> specifiers;
             lex::identifier name;
             std::shared_ptr<ast::type_specifier> type;
@@ -658,6 +661,8 @@ namespace k::parse {
             std::vector<member_initializer> member_inits;
             std::shared_ptr<block_statement> content;
             bool is_destructor = false;
+            /** Aliasing specifier: NONE = regular body, DEFAULT = -> default ;, DELETE = -> delete ; */
+            aliasing_spec_t aliasing_spec = aliasing_spec_t::NONE;
 
             function_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
                           const std::shared_ptr<ast::type_specifier> &type, const std::vector<std::shared_ptr<parameter_spec>> &params,
@@ -675,6 +680,12 @@ namespace k::parse {
                           std::vector<member_initializer> &&member_inits,
                           std::shared_ptr <block_statement> &&content, bool is_destructor = false) :
                     specifiers(specifiers), name(name), type(type), params(params), member_inits(std::move(member_inits)), content(content), is_destructor(is_destructor) {}
+
+            /** Constructor for aliasing declarations (-> default ; / -> delete ;). No content block. */
+            function_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
+                          const std::vector<std::shared_ptr<parameter_spec>> &params,
+                          aliasing_spec_t aliasing) :
+                    specifiers(specifiers), name(name), params(params), aliasing_spec(aliasing) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

@@ -47,6 +47,9 @@ namespace k::lex {
 
         {"struct", keyword::STRUCT},
 
+        {"default", keyword::DEFAULT},
+        {"delete", keyword::DELETE},
+
         {"bool", keyword::BOOL},
         {"byte", keyword::BYTE},
         {"char", keyword::CHAR},

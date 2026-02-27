@@ -1272,6 +1272,24 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         return {nullptr, {}};
     }
 
+    // --- Step 1b: among arity-matched, check if all are deleted ---
+    // If the best match would be a deleted constructor, report a dedicated error.
+    {
+        std::vector<std::shared_ptr<constructor>> non_deleted;
+        for (auto& ctor : arity_matched) {
+            if (!ctor->is_deleted()) non_deleted.push_back(ctor);
+        }
+        if (non_deleted.empty()) {
+            // All arity-matched constructors are deleted
+            auto d = k::log::diagnostic::make_error(0x30007,
+                "Use of deleted constructor: a constructor matching {} argument(s) exists but has been explicitly deleted with '-> delete'",
+                {std::to_string(arg_count)});
+            report(d);
+            return {nullptr, {}};
+        }
+        arity_matched = std::move(non_deleted);
+    }
+
     // --- Step 2: compute per-candidate score (max of per-param weights) ---
     struct Candidate {
         std::shared_ptr<constructor> ctor;

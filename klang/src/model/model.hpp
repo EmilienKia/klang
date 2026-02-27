@@ -544,6 +544,13 @@ public:
 };
 
 class function : public element, public named_element, public variable_holder {
+public:
+    /**
+     * Aliasing specifier set by '-> default' or '-> delete' on constructor declarations.
+     * NONE means a regular user-defined body is present.
+     */
+    enum class function_aliasing { NONE, DEFAULT, DELETE };
+
 protected:
     friend class ns;
     friend class structure;
@@ -558,6 +565,9 @@ protected:
 
     /** Declared visibility of this function. PUBLIC by default. */
     visibility _visibility = PUBLIC;
+
+    /** Backing storage for the aliasing specifier. */
+    function_aliasing _aliasing = function_aliasing::NONE;
 
     std::shared_ptr<type> _return_type;
     std::vector<std::shared_ptr<parameter>> _parameters;
@@ -617,6 +627,15 @@ public:
 
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }
+
+    /** Returns the aliasing specifier (NONE / DEFAULT / DELETE). */
+    function_aliasing get_aliasing() const { return _aliasing; }
+    /** Set the aliasing specifier. */
+    void set_aliasing(function_aliasing a) { _aliasing = a; }
+    /** True if the constructor was declared with '-> default ;'. */
+    bool is_defaulted() const { return _aliasing == function_aliasing::DEFAULT; }
+    /** True if the constructor was declared with '-> delete ;'. */
+    bool is_deleted() const { return _aliasing == function_aliasing::DELETE; }
 };
 
 

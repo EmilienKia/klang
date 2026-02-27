@@ -134,7 +134,9 @@ struct keyword : public lexeme {
         ELSE,
         WHILE,
         FOR,
-        STRUCT
+        STRUCT,
+        DEFAULT,
+        DELETE
         /* TODO add new lexeme definition here. */
     };
 

@@ -552,6 +552,34 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
 
     auto statements = parse_statement_block();
     if(!statements) {
+        // Try to parse a function-aliasing declaration: -> ('default'|'delete') ';'
+        lex::lex_holder alias_holder(_lexer);
+        auto larrow = _lexer.get();
+        if(larrow == lex::operator_::ARROW) {
+            auto lkw = _lexer.get();
+            ast::function_decl::aliasing_spec_t aliasing;
+            if(lkw == lex::keyword::DEFAULT) {
+                aliasing = ast::function_decl::aliasing_spec_t::DEFAULT;
+            } else if(lkw == lex::keyword::DELETE) {
+                aliasing = ast::function_decl::aliasing_spec_t::DELETE;
+            } else {
+                throw_error(0x0045, _lexer.pick_current(), "Function aliasing declaration expects 'default' or 'delete' after '->'");
+            }
+            if(auto lsemi = _lexer.get(); lsemi != lex::punctuator::SEMICOLON) {
+                throw_error(0x0046, _lexer.pick_current(), "Function aliasing declaration expects ';' after 'default'/'delete'");
+            }
+            // Only constructors (non-static) may use -> default / -> delete
+            if(is_destructor) {
+                throw_error(0x0047, _lexer.pick_current(),
+                    "The '-> default' / '-> delete' specifier is only allowed on non-static constructors, not on destructors");
+            }
+            if(lex::keyword::has(specifiers, lex::keyword::STATIC)) {
+                throw_error(0x0048, _lexer.pick_current(),
+                    "The '-> default' / '-> delete' specifier is only allowed on non-static constructors; static constructors cannot be defaulted or deleted");
+            }
+            return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), params, aliasing);
+        }
+        alias_holder.rollback();
         throw_error(0x000F, _lexer.pick_current(), "Function declaration expects a body block '{ ... }'");
     }
     return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, statements, is_destructor);

@@ -1368,3 +1368,104 @@ TEST_CASE("Parse constructor with default parameter", "[parser][default-params]"
     REQUIRE(func->params.size() == 1);
     REQUIRE(func->params[0]->default_expr != nullptr);
 }
+
+
+//
+// Function aliasing declarations (-> default / -> delete)
+//
+
+TEST_CASE("Parse constructor -> default", "[parser][function_decl][aliasing]") {
+    test_logger log;
+    k::source src{"MyStruct() -> default;"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+    REQUIRE( decl->name.content == "MyStruct" );
+    REQUIRE( decl->params.empty() );
+    REQUIRE( decl->aliasing_spec == ast::function_decl::aliasing_spec_t::DEFAULT );
+    REQUIRE( !decl->content );
+}
+
+TEST_CASE("Parse constructor -> delete", "[parser][function_decl][aliasing]") {
+    test_logger log;
+    k::source src{"MyStruct() -> delete;"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+    REQUIRE( decl->name.content == "MyStruct" );
+    REQUIRE( decl->params.empty() );
+    REQUIRE( decl->aliasing_spec == ast::function_decl::aliasing_spec_t::DELETE );
+    REQUIRE( !decl->content );
+}
+
+TEST_CASE("Parse constructor with params -> delete", "[parser][function_decl][aliasing]") {
+    test_logger log;
+    k::source src{"MyStruct(v: int) -> delete;"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+    REQUIRE( decl->name.content == "MyStruct" );
+    REQUIRE( decl->params.size() == 1 );
+    REQUIRE( decl->aliasing_spec == ast::function_decl::aliasing_spec_t::DELETE );
+    REQUIRE( !decl->content );
+}
+
+TEST_CASE("Parse constructor with params -> default", "[parser][function_decl][aliasing]") {
+    test_logger log;
+    k::source src{"MyStruct(v: int) -> default;"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+    REQUIRE( decl->name.content == "MyStruct" );
+    REQUIRE( decl->params.size() == 1 );
+    REQUIRE( decl->aliasing_spec == ast::function_decl::aliasing_spec_t::DEFAULT );
+    REQUIRE( !decl->content );
+}
+
+TEST_CASE("Parse struct with defaulted and deleted constructors", "[parser][function_decl][aliasing][struct]") {
+    test_logger log;
+    k::source src{R"SRC(
+        struct Foo {
+            Foo() -> default;
+            Foo(v: int) -> delete;
+        }
+    )SRC"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_struct_decl();
+    REQUIRE( decl );
+    REQUIRE( decl->declarations.size() == 2 );
+
+    auto ctor0 = std::dynamic_pointer_cast<ast::function_decl>(decl->declarations[0]);
+    REQUIRE( ctor0 );
+    REQUIRE( ctor0->name.content == "Foo" );
+    REQUIRE( ctor0->params.empty() );
+    REQUIRE( ctor0->aliasing_spec == ast::function_decl::aliasing_spec_t::DEFAULT );
+
+    auto ctor1 = std::dynamic_pointer_cast<ast::function_decl>(decl->declarations[1]);
+    REQUIRE( ctor1 );
+    REQUIRE( ctor1->name.content == "Foo" );
+    REQUIRE( ctor1->params.size() == 1 );
+    REQUIRE( ctor1->aliasing_spec == ast::function_decl::aliasing_spec_t::DELETE );
+}
+
+TEST_CASE("Parse -> delete on destructor yields error", "[parser][function_decl][aliasing][error]") {
+    test_logger log;
+    k::source src{"~MyStruct() -> delete;"};
+    k::parse::parser parser(log, src);
+    REQUIRE_THROWS( parser.parse_function_decl() );
+}
+
+TEST_CASE("Parse -> default with bad keyword yields error", "[parser][function_decl][aliasing][error]") {
+    test_logger log;
+    k::source src{"MyStruct() -> int;"};
+    k::parse::parser parser(log, src);
+    REQUIRE_THROWS( parser.parse_function_decl() );
+}
+
+TEST_CASE("Parse -> default missing semicolon yields error", "[parser][function_decl][aliasing][error]") {
+    test_logger log;
+    k::source src{"MyStruct() -> default"};
+    k::parse::parser parser(log, src);
+    REQUIRE_THROWS( parser.parse_function_decl() );
+}
+

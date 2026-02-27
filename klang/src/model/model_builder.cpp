@@ -233,6 +233,26 @@ namespace k::model {
 
         std::shared_ptr<model::function> function = parent_scope->define_function(func_name, is_static);
 
+        // Propagate aliasing specifier (-> default / -> delete)
+        if(func.aliasing_spec != parse::ast::function_decl::aliasing_spec_t::NONE) {
+            // Validated at parse time: only non-static constructors may carry this specifier.
+            // Here we double-check at model level and emit a clearer error if the context is wrong.
+            if(!std::dynamic_pointer_cast<constructor>(function)) {
+                throw_error(0x0021, func.name,
+                    "'-> default' / '-> delete' is only allowed on non-static constructors; "
+                    "function '{}' is not a non-static constructor",
+                    {func_name});
+            }
+            auto aliasing = (func.aliasing_spec == parse::ast::function_decl::aliasing_spec_t::DEFAULT)
+                ? model::function::function_aliasing::DEFAULT
+                : model::function::function_aliasing::DELETE;
+            function->set_aliasing(aliasing);
+            // A defaulted constructor is compiler-generated
+            if(aliasing == model::function::function_aliasing::DEFAULT) {
+                function->set_compiler_generated(true);
+            }
+        }
+
         // Resolve visibility for namespace/struct-level functions
         if (auto vctx = current_context<visibility_context>()) {
             model::visibility vis = model::PUBLIC; // default for ns/struct

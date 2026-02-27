@@ -547,6 +547,11 @@ void type_reference_resolver::visit_function(function& fn) {
 }
 
 void declaration_generator::visit_function(function &function) {
+    // Deleted constructors must never be called; do not emit any LLVM declaration for them.
+    if (function.is_deleted()) {
+        return;
+    }
+
     // Parameter types:
     std::vector<llvm::Type*> param_types;
     if (function.is_member()  && !function.is_static()) {
@@ -571,11 +576,17 @@ void declaration_generator::visit_function(function &function) {
 
     _context->_functions.insert({function.shared_as<k::model::function>(), func});
 
-    // Declare content
-    function.get_block()->accept(*this);
+    // Declare content (only if there is a block — defaulted constructors may have no body yet)
+    if (auto blck = function.get_block()) {
+        blck->accept(*this);
+    }
 }
 
 void implementation_generator::visit_function(function &function) {
+    // Deleted functions have no LLVM declaration and must never be implemented.
+    if (function.is_deleted()) {
+        return;
+    }
 
     auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
     if (func_it==_context->_functions.end()) {
@@ -774,6 +785,15 @@ void implementation_generator::optimize_function_dead_inst_elimination(llvm::Fun
 //
 
 void symbol_resolver::visit_constructor(constructor& ctor) {
+    // Deleted constructors have no body: skip body resolution and member-init injection.
+    // The constructor already appears in the overload set because it was added to
+    // _constructors by model_builder. Naming and 'this' setup are not needed here
+    // because get_best_matching_constructor only looks at parameter count / types,
+    // and symbol_resolver has not yet resolved the parameter types anyway.
+    if (ctor.is_deleted()) {
+        return;
+    }
+
     // For non-static inner structs, inject the implicit 'parent' parameter
     // as the first explicit parameter (position 0, after the implicit 'this').
     // Type is Outer& (reference), consistent with 'this' parameter semantics.
@@ -923,6 +943,19 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
             "every constructor must belong to a struct — this indicates a compiler bug");
     }
 
+    // Deleted constructors have no body and must never be called (enforced at resolution time).
+    // Ensure _this_param exists (needed by check_constructor_visibility and type queries)
+    // and resolve the formal parameter types so overload resolution can match argument types.
+    if (ctor.is_deleted()) {
+        if (ctor.is_member() && !ctor.is_static() && !ctor.get_this_parameter()) {
+            ctor.create_this_parameter();
+        }
+        for (auto param : ctor.parameters()) {
+            param->accept(*this);
+        }
+        return;
+    }
+
     auto blck = ctor.get_block();
 
     // For compiler-generated copy constructor: do NOT inject model-level statements.
@@ -931,6 +964,12 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
         visit_function(ctor);
         return;
     }
+
+    // Defaulted (-> default ;) constructors: they are compiler-generated and have no
+    // user-provided body, but they still need to have member default-value initialisations
+    // injected (same as any compiler-generated or user-written constructor without a
+    // mem-initializer-list). Fall through to the standard injection logic below.
+    // (do NOT return early here)
 
     // Note : the statements for explicit member_inits and base inits were already injected by
     // symbol_resolver::visit_constructor (in struct member declaration order).

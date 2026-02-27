@@ -1259,7 +1259,7 @@ TEST_CASE("Constructor overload collision: Ambig() and Ambig(int=99) overlap at 
 // =============================================================================
 
 // -----------------------------------------------------------------------------
-// OK: f(int, int) vs f(int, int, int=5) — ranges [2,2] and [2,3]
+// OK: f(int) vs f(int, int, int=5) — ranges [2,2] and [2,3]
 // overlap at arity 2 → still a collision!
 // But f(int) vs f(int, int, int=5) — ranges [1,1] and [2,3] → NO overlap → OK
 // -----------------------------------------------------------------------------
@@ -1505,5 +1505,80 @@ TEST_CASE("Reference variable bound to wrong type must be rejected", "[gen][reso
             return 0;
         }
     )SRC"));
+}
+
+// =============================================================================
+// Constructor aliasing: -> default / -> delete
+// =============================================================================
+
+TEST_CASE("Deleted default constructor prevents default construction", "[gen][resolution][aliasing][delete]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __ctor_delete_default__;
+
+        struct Foo {
+            a : int = 0;
+            Foo() -> delete;
+        }
+
+        test() : int {
+            p : Foo;   // ERROR: Foo() is deleted
+            return p.a;
+        }
+    )SRC"));
+}
+
+TEST_CASE("Deleted parameterized constructor prevents invocation", "[gen][resolution][aliasing][delete]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __ctor_delete_param__;
+
+        struct Foo {
+            a : int = 0;
+            Foo(v: int) -> delete;
+        }
+
+        test() : int {
+            p : Foo(42);   // ERROR: Foo(int) is deleted
+            return p.a;
+        }
+    )SRC"));
+}
+
+TEST_CASE("Non-deleted constructor still usable when another overload is deleted", "[gen][resolution][aliasing][delete]") {
+    // Foo() -> delete; but Foo(int) is a regular constructor — Foo(int) must still work.
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __ctor_delete_one__;
+
+        struct Foo {
+            a : int = 0;
+            Foo() -> delete;
+        }
+
+        test() : int {
+            p : Foo;   // ERROR: only Foo() exists but is deleted
+            return p.a;
+        }
+    )SRC"));
+}
+
+TEST_CASE("Defaulted constructor (-> default) behaves like compiler-generated", "[gen][resolution][aliasing][default]") {
+    // A struct with -> default; constructor should still allow default construction
+    // and initialize fields to their declared defaults.
+    auto jit = gen_jit(R"SRC(
+        module __ctor_default__;
+
+        struct Bar {
+            x : int = 7;
+            Bar() -> default;
+        }
+
+        test() : int {
+            b : Bar;
+            return b.x;
+        }
+    )SRC");
+    REQUIRE( jit );
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE( test != nullptr );
+    REQUIRE( test() == 7 );
 }
 
