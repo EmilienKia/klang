@@ -251,7 +251,16 @@ void function::update_mangled_name() {
 
 void function::create_this_parameter() {
     if (is_member() && !_this_param) {
-        _this_param = parameter::make_shared(shared_as<function>(), "this", get_owner()->get_struct_type()->get_reference(), -1);
+        auto struct_type = get_owner()->get_struct_type();
+        std::shared_ptr<type> this_type;
+        if (_is_const_member) {
+            // const member function: this is ref<const T>
+            this_type = struct_type->get_const()->get_reference();
+        } else {
+            // mutable member function: this is ref<T>
+            this_type = struct_type->get_reference();
+        }
+        _this_param = parameter::make_shared(shared_as<function>(), "this", this_type, -1);
         _this_param->set_parent(shared_from_this());
     }
 }
@@ -689,10 +698,23 @@ std::shared_ptr<constructor> structure::get_copy_constructor() const {
             auto p0 = ctor->get_parameter(0);
             if (p0) {
                 auto pt = p0->get_type();
+                // Strip const if present (const T& is also a valid copy ctor signature)
+                if (type::is_const(pt)) pt = type::remove_const(pt);
                 if (auto ref = std::dynamic_pointer_cast<reference_type>(pt)) {
-                    auto sub = std::dynamic_pointer_cast<struct_type>(ref->get_referenced_type());
-                    if (sub && sub->get_struct() && sub->get_struct().get() == this) {
-                        return ctor;
+                    auto sub = ref->get_referenced_type();
+                    // Strip const from the referenced type too (const Struct& case)
+                    if (type::is_const(sub)) sub = type::remove_const(sub);
+                    // Already-resolved struct_type
+                    if (auto st = std::dynamic_pointer_cast<struct_type>(sub)) {
+                        if (st->get_struct() && st->get_struct().get() == this) {
+                            return ctor;
+                        }
+                    }
+                    // Not-yet-resolved unresolved_type: match by simple name
+                    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(sub)) {
+                        if (unres->type_id().to_string() == get_short_name()) {
+                            return ctor;
+                        }
                     }
                 }
             }

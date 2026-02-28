@@ -133,6 +133,10 @@ namespace k::model {
         bool is_final = lex::keyword::has(st.specifiers, lex::keyword::FINAL);
         struc->set_final(is_final);
 
+        // Detect if the const specifier is present
+        bool is_const_struct = lex::keyword::has(st.specifiers, lex::keyword::CONST);
+        struc->set_const_struct(is_const_struct);
+
         // Resolve visibility: per-element specifier takes precedence over group visibility
         model::visibility vis = model::PUBLIC; // default
         if (auto vctx = current_context<visibility_context>()) {
@@ -243,6 +247,7 @@ namespace k::model {
         }
 
         bool is_static = lex::keyword::has(func.specifiers, lex::keyword::STATIC);
+        bool is_const_member = lex::keyword::has(func.specifiers, lex::keyword::CONST);
 
         // For destructor, prefix the name with ~ to match structure::define_function detection
         std::string func_name = func.is_destructor
@@ -250,6 +255,30 @@ namespace k::model {
             : std::string{func.name.content};
 
         std::shared_ptr<model::function> function = parent_scope->define_function(func_name, is_static);
+
+        // const member is only meaningful for non-static member functions (not constructors/destructors/static)
+        if (is_const_member) {
+            if (is_static) {
+                throw_error(0x0009, func.name,
+                    "Function '{}' cannot be both 'const' and 'static': "
+                    "'const' on a member function qualifies the implicit 'this' parameter as const, "
+                    "which is meaningless for a static function that has no 'this' parameter",
+                    {func_name});
+            }
+            if (func.is_destructor) {
+                throw_error(0x000A, func.name,
+                    "Destructor '~{}' cannot be declared 'const': "
+                    "destructors always operate on mutable objects",
+                    {std::string{func.name.content}});
+            }
+            if (std::dynamic_pointer_cast<model::constructor>(function)) {
+                throw_error(0x000B, func.name,
+                    "Constructor '{}' cannot be declared 'const': "
+                    "constructors always operate on mutable objects being initialised",
+                    {func_name});
+            }
+            function->set_const_member(true);
+        }
 
         // Propagate aliasing specifier (-> default / -> delete)
         if(func.aliasing_spec != parse::ast::function_decl::aliasing_spec_t::NONE) {

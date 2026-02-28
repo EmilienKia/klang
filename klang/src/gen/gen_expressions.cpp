@@ -572,7 +572,12 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
             {type ? type->to_string() : "?"});
     }
     auto subtype = type->get_subtype();
-    if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(subtype)) {
+    // Detect if we are accessing through a const reference (ref<const S> or ref<S> where S is const struct)
+    bool is_const_access = type::is_const(subtype);
+    // Strip const to get the actual struct_type for member lookup
+    auto bare_subtype = type::remove_const(subtype);
+
+    if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
         const auto& member_name = expr.symbol();
         const std::string& name_str = member_name.get_name().to_string();
 
@@ -674,15 +679,21 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         }
 
         if (!hit.is_function && hit.field.has_value()) {
-            expr.set_type(hit.field->field_type.lock()->get_reference());
+            auto field_type = hit.field->field_type.lock();
+            // If accessing through a const reference, the field is also const.
+            if (is_const_access) {
+                field_type = type::remove_const(field_type)->get_const();
+            }
+            expr.set_type(field_type->get_reference());
             // If the field is in a base, wrap sub_expr in a cast_expression to base ref
             // so that implementation_generator will compute the correct GEP offset.
             if (hit.in_struct_type != struct_subtype) {
-                auto base_ref_type = hit.in_struct_type->get_reference();
-                // Create cast with base_ref_type as cast_type so visit_cast_expression works
+                // Build the correct base ref type (const-qualified if access is const)
+                auto base_ref_type = is_const_access
+                    ? hit.in_struct_type->get_const()->get_reference()
+                    : hit.in_struct_type->get_reference();
                 auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
                 upcast->set_type(base_ref_type);
-                // Directly replace the sub_expr via mutable reference
                 expr.sub_expr() = upcast;
             }
         } else if (hit.is_function) {
@@ -690,7 +701,9 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
             // This is needed so that implementation_generator finds the method in the correct struct,
             // and so that the 'this' pointer is correctly adjusted via upcast if needed.
             if (hit.in_struct_type != struct_subtype) {
-                auto base_ref_type = hit.in_struct_type->get_reference();
+                auto base_ref_type = is_const_access
+                    ? hit.in_struct_type->get_const()->get_reference()
+                    : hit.in_struct_type->get_reference();
                 auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
                 upcast->set_type(base_ref_type);
                 expr.sub_expr() = upcast;
@@ -702,7 +715,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         throw_error(0x001E, std::nullopt,
             "The '.' operator can only be applied to a reference to a struct type, "
             "but the left-hand side is a reference to '{}' which is not a struct",
-            {subtype ? subtype->to_string() : "?"});
+            {bare_subtype ? bare_subtype->to_string() : "?"});
     }
 }
 
@@ -717,10 +730,13 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
     auto struct_ref = _value;
 
     auto type = expr.sub_expr()->get_type(); // Is a reference
-    if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(type->get_subtype())) {
+    // Strip const from the subtype to get the bare struct_type for GEP/method lookup.
+    // e.g. ref<const Counter> → subtype = const_type(Counter) → bare = Counter
+    auto bare_subtype = type::remove_const(type->get_subtype());
+    if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
         const auto& member_name =  expr.symbol();
         if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
-            _value = _builder->CreateStructGEP(type->get_subtype()->get_llvm_type(), _value, field->index);
+            _value = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), _value, field->index);
         } else if(auto method = struct_subtype->get_struct()->get_function(member_name.get_name())) {
             // Note return the already-assigned address of the struct onto which the function is applied to
         } else {
@@ -978,12 +994,15 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 {this_type ? this_type->to_string() : "?"});
         }
         auto subtype = type::is_reference(this_type) ? this_type->get_subtype() : this_type;
-        auto struct_subtype = std::dynamic_pointer_cast<struct_type>(subtype);
+        // Detect if the object is accessed through a const reference (ref<const S>)
+        bool is_const_this = type::is_const(subtype);
+        auto bare_subtype = type::remove_const(subtype);
+        auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype);
         if (!struct_subtype) {
             throw_error(0x0025, std::nullopt,
                 "The '.' operator can only be applied to a struct type, "
                 "but the left-hand side has type '{}' which is not a struct",
-                {subtype ? subtype->to_string() : "?"});
+                {bare_subtype ? bare_subtype->to_string() : "?"});
         }
         auto st = struct_subtype->get_struct();
 
@@ -992,6 +1011,23 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
         // Collect all candidate functions (member + free/static from parent scopes)
         std::vector<std::shared_ptr<function>> candidates = scope_lookup::lookup_functions(st, func_short_name);
+
+        // If calling on a const object, only const member functions are callable.
+        if (is_const_this) {
+            std::vector<std::shared_ptr<function>> const_candidates;
+            for (auto& f : candidates) {
+                if (!f->is_member() || f->is_static() || f->is_const_member()) {
+                    const_candidates.push_back(f);
+                }
+            }
+            if (const_candidates.empty() && !candidates.empty()) {
+                throw_error(0x0034, std::nullopt,
+                    "Cannot call mutable member function '{}' on a const object of type '{}': "
+                    "only const member functions can be called on const objects",
+                    {func_short_name, struct_subtype->name()});
+            }
+            candidates = std::move(const_candidates);
+        }
 
         if (candidates.empty()) {
             throw_error(0x0026, std::nullopt,

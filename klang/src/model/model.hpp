@@ -396,6 +396,9 @@ protected:
     /** True if this structure is final (cannot be used as a base class). */
     bool _is_final = false;
 
+    /** True if this structure is declared const (all non-static methods are implicitly const). */
+    bool _is_const_struct = false;
+
     /** Declared visibility of this structure. PUBLIC by default. */
     visibility _visibility = PUBLIC;
 
@@ -450,6 +453,12 @@ public:
 
     /** Set whether this structure is final. */
     void set_final(bool v) { _is_final = v; }
+
+    /** True if this structure is declared const (all non-static methods are implicitly const). */
+    bool is_const_struct() const { return _is_const_struct; }
+
+    /** Set whether this structure is a const structure. */
+    void set_const_struct(bool v) { _is_const_struct = v; }
 
     /** True if this is a non-static inner struct (has an implicit parent reference). */
     bool is_inner() const { return is_nested() && !_is_static_nested; }
@@ -584,6 +593,9 @@ protected:
     /** Backing storage for the aliasing specifier. */
     function_aliasing _aliasing = function_aliasing::NONE;
 
+    /** True if this member function is declared const (this parameter is ref<const T>). */
+    bool _is_const_member = false;
+
     std::shared_ptr<type> _return_type;
     std::vector<std::shared_ptr<parameter>> _parameters;
     std::shared_ptr<parameter> _this_param;
@@ -636,6 +648,19 @@ public:
     bool is_static() const { return _is_static; }
     bool is_compiler_generated() const { return _compiler_generated; }
     void set_compiler_generated(bool v) { _compiler_generated = v; }
+
+    /** True if this member function is declared const (this parameter is ref<const T>). */
+    bool is_const_member() const { return _is_const_member; }
+    /** Set whether this member function is const. */
+    void set_const_member(bool v) { _is_const_member = v; }
+
+    /**
+     * Reset the implicit 'this' parameter so that create_this_parameter() will
+     * recreate it with the current _is_const_member flag.
+     * Useful when const-ness is promoted after initial construction (e.g. in a const struct).
+     */
+    void reset_this_parameter() { _this_param = nullptr; }
+
     bool is_member() const;
     std::shared_ptr<const structure> get_owner() const;
     std::shared_ptr<structure> get_owner();

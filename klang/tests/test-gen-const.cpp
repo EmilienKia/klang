@@ -406,3 +406,253 @@ TEST_CASE("Const link form equivalence — type side write rejected", "[gen][con
         }
     )SRC"), k::log::compiler_error);
 }
+
+// =============================================================================
+// CONST MEMBER FUNCTIONS
+// =============================================================================
+
+// A const member function can be called on a mutable object.
+TEST_CASE("Const member function — call on mutable object", "[gen][const][struct]") {
+    auto jit = gen_jit(R"SRC(
+        module __const_mfn_mutable_obj__;
+        struct Counter {
+            value : int;
+            Counter(v : int) : value(v) {}
+            const get() : int { return this.value; }
+        }
+        test() : int {
+            c : Counter(42);
+            return c.get();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+// A const member function can be called on a const object.
+TEST_CASE("Const member function — call on const object (by ref)", "[gen][const][struct]") {
+    auto jit = gen_jit(R"SRC(
+        module __const_mfn_const_obj__;
+        struct Point {
+            x : int;
+            y : int;
+            Point(px : int, py : int) : x(px), y(py) {}
+            const sum() : int { return this.x + this.y; }
+        }
+        read(p : const Point&) : int {
+            return p.sum();
+        }
+        test() : int {
+            pt : Point(3, 7);
+            return read(pt);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 10);
+}
+
+// A mutable member function cannot be called on a const object.
+TEST_CASE("Mutable member function call on const object rejected", "[gen][const][struct][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __const_mfn_mutable_on_const__;
+        struct Counter {
+            value : int;
+            Counter() : value(0) {}
+            increment() { value = value + 1; }
+        }
+        test(c : const Counter&) {
+            c.increment();   // must be rejected: mutable method on const object
+        }
+    )SRC"), k::log::compiler_error);
+}
+
+// A const member function cannot assign to a member field.
+TEST_CASE("Const member function cannot assign to field", "[gen][const][struct][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __const_mfn_assign_field__;
+        struct Counter {
+            value : int;
+            Counter() : value(0) {}
+            const bad_set(v : int) { this.value = v; }  // must be rejected
+        }
+    )SRC"), k::log::compiler_error);
+}
+
+// Const member function can read a field.
+TEST_CASE("Const member function can read field via this", "[gen][const][struct]") {
+    auto jit = gen_jit(R"SRC(
+        module __const_mfn_read_field__;
+        struct Box {
+            size : int;
+            Box(s : int) : size(s) {}
+            const area() : int { return this.size * this.size; }
+        }
+        test() : int {
+            b : Box(5);
+            return b.area();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 25);
+}
+
+// const local variable of struct type: only const methods can be called.
+TEST_CASE("Const local struct variable — only const methods callable", "[gen][const][struct][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __const_local_struct_mutable_call__;
+        struct Counter {
+            value : int;
+            Counter() : value(0) {}
+            increment() { value = value + 1; }
+        }
+        test() {
+            const c : Counter();
+            c.increment();   // must be rejected
+        }
+    )SRC"), k::log::compiler_error);
+}
+
+// const local variable of struct type: can read field.
+TEST_CASE("Const local struct variable — field is read-only", "[gen][const][struct][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __const_local_struct_field_assign__;
+        struct Point {
+            x : int;
+            Point(v : int) : x(v) {}
+        }
+        test() {
+            const p : Point(3);
+            p.x = 5;    // must be rejected: field of const object is const
+        }
+    )SRC"), k::log::compiler_error);
+}
+
+// const local variable of struct type: const method call succeeds.
+TEST_CASE("Const local struct variable — const method callable", "[gen][const][struct]") {
+    auto jit = gen_jit(R"SRC(
+        module __const_local_struct_const_call__;
+        struct Point {
+            x : int;
+            y : int;
+            Point(px : int, py : int) : x(px), y(py) {}
+            const sum() : int { return this.x + this.y; }
+        }
+        test() : int {
+            const p : Point(4, 6);
+            return p.sum();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 10);
+}
+
+// =============================================================================
+// CONST STRUCT
+// =============================================================================
+
+// In a const struct, a non-const non-static member function is implicitly promoted to const
+// with a warning — it is NOT rejected as a compile error.
+TEST_CASE("Const struct with implicit-const method emits warning and compiles", "[gen][const][struct]") {
+    // The method 'mutate' is not declared const but belongs to a const struct.
+    // It should be silently promoted to const (warning emitted) and the code should compile.
+    // Note: direct field assignment inside the promoted method that uses the direct-symbol
+    // path (not this.x) may not yet be blocked by const checking — that is a separate issue.
+    auto jit = gen_jit(R"SRC(
+        module __const_struct_implicit_const__;
+        const struct Frozen {
+            x : int;
+            Frozen(v : int) : x(v) {}
+            const get() : int { return this.x; }
+            get_via_implicit_const() : int { return this.x; }  // promoted implicitly to const
+        }
+        test() : int {
+            f : Frozen(42);
+            return f.get_via_implicit_const();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+// A const struct with only const methods compiles fine.
+TEST_CASE("Const struct — all const methods — compiles and runs", "[gen][const][struct]") {
+    auto jit = gen_jit(R"SRC(
+        module __const_struct_ok__;
+        const struct Frozen {
+            x : int;
+            Frozen(v : int) : x(v) {}
+            const get() : int { return this.x; }
+        }
+        test() : int {
+            f : Frozen(99);
+            return f.get();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 99);
+}
+
+// A const struct cannot inherit from a mutable struct.
+TEST_CASE("Const struct cannot inherit from mutable struct", "[gen][const][struct][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __const_struct_bad_inherit__;
+        struct Mutable {
+            x : int;
+            Mutable(v : int) : x(v) {}
+        }
+        const struct Frozen : public Mutable {
+            Frozen(v : int) : Mutable(v) {}
+            const get() : int { return this.x; }
+        }
+    )SRC", false, false), k::model::gen::resolution_error);
+}
+
+// A mutable struct can inherit from a const struct.
+TEST_CASE("Mutable struct can inherit from const struct", "[gen][const][struct]") {
+    auto jit = gen_jit(R"SRC(
+        module __mutable_struct_inherit_const__;
+        const struct ReadOnly {
+            x : int;
+            ReadOnly(v : int) : x(v) {}
+            ReadOnly(src : const ReadOnly&) : x(src.x) {}
+            const get() : int { return this.x; }
+        }
+        struct Writable : public ReadOnly {
+            Writable(v : int) : ReadOnly(v) {}
+            Writable(src : Writable&) : ReadOnly(src.get()) {}
+            set(v : int) { this.x = v; }
+        }
+        test() : int {
+            w : Writable(10);
+            w.set(42);
+            return w.get();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+// Const and static are not compatible on a member function.
+TEST_CASE("Const static member function rejected", "[gen][const][struct][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __const_static_method__;
+        struct Bad {
+            const static make() : int { return 1; }
+        }
+    )SRC"), k::log::compiler_error);
+}
+

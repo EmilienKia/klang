@@ -1277,10 +1277,24 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         auto ref_src = std::dynamic_pointer_cast<reference_type>(effective_src);
         if (type::is_reference(tgt_nc)) {
             if (effective_src == tgt_nc) return CAST_NONE;
-            // Check struct upcast: ref<Derived> → ref<Base>
-            auto src_st_type = std::dynamic_pointer_cast<struct_type>(ref_src->get_referenced_type());
-            auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(
-                std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_referenced_type());
+            // Mutable → const widening: ref<T> → ref<const T>
+            auto src_sub = ref_src->get_referenced_type();
+            auto tgt_ref = std::dynamic_pointer_cast<reference_type>(tgt_nc);
+            auto tgt_sub = tgt_ref->get_referenced_type();
+            auto src_sub_nc = type::remove_const(src_sub);
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            // ref<T> → ref<const T>: allowed if base types are the same (strip const)
+            if (src_sub_nc == tgt_sub_nc) {
+                // If target has const but source doesn't: widening
+                if (type::is_const(tgt_sub) && !type::is_const(src_sub)) return CAST_WIDENING;
+                // If source has const but target doesn't: narrowing (forbidden for assignments)
+                if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
+                // Same constness (both or neither): same type, already handled above
+                return CAST_NONE;
+            }
+            // Check struct upcast: ref<Derived> → ref<Base> (also handle const variants)
+            auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st_type && tgt_st_type) {
                 auto src_st = src_st_type->get_struct();
                 auto tgt_st = tgt_st_type->get_struct();
@@ -1777,11 +1791,23 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                 // Reference to same type, return the expression
                 return expr;
             }
-            // Upcast: ref<Derived> → ref<Base>
             auto src_ref = std::dynamic_pointer_cast<reference_type>(type_src);
             auto tgt_ref = std::dynamic_pointer_cast<reference_type>(type_nc);
-            auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_ref->get_referenced_type());
-            auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_ref->get_referenced_type());
+            auto src_sub = src_ref->get_referenced_type();
+            auto tgt_sub = tgt_ref->get_referenced_type();
+            auto src_sub_nc = type::remove_const(src_sub);
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            // Mutable → const widening: ref<T> → ref<const T>
+            if (src_sub_nc == tgt_sub_nc && type::is_const(tgt_sub) && !type::is_const(src_sub)) {
+                // Bitwise-identical at IR level (just a different type annotation).
+                // Wrap in a cast so implementation_generator passes the right LLVM type.
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
+            // Upcast: ref<Derived> → ref<Base> (also handles const variants on both sides)
+            auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st_type && tgt_st_type) {
                 auto src_st = src_st_type->get_struct();
                 auto tgt_st = tgt_st_type->get_struct();

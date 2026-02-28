@@ -372,6 +372,15 @@ void context::init_module(const std::string& module_name) {
 std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     if (type->is_resolved()) {
         return type;
+    } else if (type::is_const(type)) {
+        // const_type wrapping an unresolved inner type (e.g. const(unresolved(Point)))
+        auto res = resolve_type(type->get_subtype());
+        if (!res) {
+            std::cerr << "Error: cannot resolve const subtype." << std::endl;
+            return nullptr;
+        } else {
+            return res->get_const();
+        }
     } else if (type::is_pointer(type)) {
         auto res = resolve_type(type->get_subtype());
         if (!res) {

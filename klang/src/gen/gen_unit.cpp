@@ -208,6 +208,14 @@ void symbol_resolver::visit_structure(structure& st) {
                     {bs.raw_name, st.get_short_name(), bs.raw_name});
             }
 
+            // A const struct cannot inherit from a mutable (non-const) struct
+            if (st.is_const_struct() && !base_st->is_const_struct()) {
+                throw_error(0x0033, std::nullopt,
+                    "const struct '{}' cannot inherit from mutable struct '{}': "
+                    "a const struct may only inherit from other const structs",
+                    {st.get_short_name(), bs.raw_name});
+            }
+
             bs.base = base_st;
 
             // Warn if inner struct inherits from outer or outer inherits from inner
@@ -294,14 +302,35 @@ void symbol_resolver::visit_structure(structure& st) {
         }
     }
 
+    // For a const struct: implicitly promote any non-static, non-constructor, non-destructor
+    // member function that is not already declared const, BEFORE visiting them.
+    // This ensures create_this_parameter() is called with the correct const-qualified type,
+    // so that declaration_generator emits the right LLVM prototype.
+    if (st.is_const_struct()) {
+        for(auto& child : st.get_children()) {
+            auto func = std::dynamic_pointer_cast<function>(child);
+            if (!func) continue;
+            if (func->is_static()) continue;
+            if (std::dynamic_pointer_cast<constructor>(func)) continue;
+            if (std::dynamic_pointer_cast<destructor>(func)) continue;
+            if (!func->is_const_member()) {
+                warn(0x0010, std::nullopt,
+                    "member function '{}' of const struct '{}' is not declared 'const'; "
+                    "it is implicitly promoted to const",
+                    {func->get_short_name(), st.get_short_name()});
+                func->set_const_member(true);
+                // _this_param has not been created yet at this stage (visit_function will do it),
+                // so no reset is needed — create_this_parameter() will pick up _is_const_member=true.
+            }
+        }
+    }
+
     // Visit function children (includes constructors and destructor)
     for(auto& child : st.get_children()) {
         if(auto func = std::dynamic_pointer_cast<function>(child)) {
             func->accept(*this);
         }
     }
-
-    // Add a compiler-generated default constructor if none was defined by the user.
     // It is added to both _constructors and _children so all visitors find it uniformly.
     if (st.constructors().empty()) {
         auto default_constructor = constructor::make_shared(st.shared_as<structure>());
@@ -336,6 +365,9 @@ void symbol_resolver::visit_structure(structure& st) {
 }
 
 void type_reference_resolver::visit_structure(structure& st) {
+    // Note: const-struct method promotion (set_const_member) is already done in
+    // symbol_resolver::visit_structure, before this phase. No promotion needed here.
+
     // Visit nested structure children first
     for(auto& child : st.get_children()) {
         if(auto nested_st = std::dynamic_pointer_cast<structure>(child)) {
@@ -348,6 +380,7 @@ void type_reference_resolver::visit_structure(structure& st) {
         if(std::dynamic_pointer_cast<structure>(child)) continue;
         child->accept(*this);
     }
+
     // After all members are resolved, check for overload collisions.
     check_overload_collisions(st);
     check_constructor_overload_collisions(st);

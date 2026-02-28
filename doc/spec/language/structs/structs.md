@@ -18,6 +18,8 @@ A *struct* (structure) is a user-defined composite type that aggregates fields a
 9. [Struct specifiers](#9-struct-specifiers)
 10. [Member visibility](#10-member-visibility)
 11. [Final structs](#11-final-structs)
+12. [Const member functions](#12-const-member-functions)
+13. [Const structs](#13-const-structs)
 ---
 ## 1. Struct declaration
 A struct is declared with the `struct` keyword, a name, and a body containing field and member function declarations.
@@ -171,6 +173,8 @@ Specifiers appear before a declaration inside a struct body (or before the `stru
 |-------------|-----------------------|---------|
 | `static`    | Nested struct         | Declares a static nested struct (see [Nested Structures](nested.md)). |
 | `final`     | Struct declaration    | Declares a final struct (cannot be used as a base class; see [§ 11](#11-final-structs)). |
+| `const`     | Struct declaration    | Declares a const struct (see [§ 13](#13-const-structs)); all non-static member functions must be `const`. |
+| `const`     | Non-static member function | Declares a const member function (see [§ 12](#12-const-member-functions)); `this` is `const`. |
 | `public`    | Any member            | Per-element visibility: public (see [§ 10](#10-member-visibility)). |
 | `protected` | Any member            | Per-element visibility: protected (see [§ 10](#10-member-visibility)). |
 | `private`   | Any member            | Per-element visibility: private (see [§ 10](#10-member-visibility)). |
@@ -191,7 +195,7 @@ VisibilityDecl:
     ( 'public' | 'protected' | 'private' ) ':'
 
 Specifier: (one of)
-    'static'   'final'   'public'   'protected'   'private'
+    'static'   'final'   'const'   'public'   'protected'   'private'
 ```
 
 ---
@@ -350,4 +354,162 @@ It also allows the compiler (in future optimisation passes) to devirtualise call
 
 ---
 
-*See also:* [Constructors](constructors.md) · [Destructors](destructors.md) · [Nested Structures](nested.md) · [Inheritance](../structs/structs.md) · [Namespace visibility](../basic/names.md#5-visibility-of-namespace-members)
+## 12. Const member functions
+
+A **const member function** is declared by placing the `const` specifier before the member function declaration.  
+Its implicit `this` parameter is typed as `const Struct&` (a reference to a const instance) instead of the usual mutable `Struct&`.
+
+### Semantics
+
+Inside a const member function:
+- All fields of the struct (and inherited fields) are **implicitly const** — they can be read but not assigned or mutated.
+- Only other **const** member functions (direct or inherited) may be invoked on `this`.
+- The function may still call non-member functions or static member functions freely.
+- `++` / `--` on any field is forbidden.
+
+### Grammar
+
+```
+ConstMemberFunctionDecl:
+    'const' { OtherSpecifier } Identifier '(' [ ParameterList ] ')' [ ':' TypeSpec ] BlockStatement
+```
+
+`const` may appear in any position among the specifiers of a non-static member function.
+
+> **Note:** `const` and `static` cannot be combined on a member function: a static function has no `this` parameter, so `const` on `this` is meaningless. This is a compile-time error.
+
+### Examples
+
+```k
+struct Counter {
+    value : int;
+
+    Counter(v : int) : value(v) {}
+
+    // Const member function: can read fields, cannot modify them
+    const get() : int { return this.value; }
+
+    // Mutable member function: can modify fields
+    increment() { this.value = this.value + 1; }
+}
+
+test() : int {
+    c : Counter(10);
+    c.increment();         // OK: c is mutable
+    return c.get();        // OK: calling const function on mutable object — always allowed
+}
+
+test_const() : int {
+    const c : Counter(10);
+    // c.increment();      // ERROR: cannot call mutable function on const object
+    return c.get();        // OK: const function on const object
+}
+```
+
+### Const member function on a const variable
+
+When a struct variable is declared `const` (or accessed via a `const T&` reference/parameter), only const member functions may be called on it:
+
+```k
+use_counter(const c : Counter&) : int {
+    // c.increment();  // ERROR: cannot call mutable member function on const Counter
+    return c.get();    // OK
+}
+```
+
+### Overloading with const
+
+`const` is part of the function signature for mangling but overloading between a `const` and a mutable version of the same member function is not currently supported.
+
+---
+
+## 13. Const structs
+
+A **const struct** is a struct declared with the `const` specifier.  
+All non-static member functions of a const struct are implicitly const: a non-static member function that is not explicitly declared `const` inside a const struct is **automatically promoted to const** at compile time, and a **warning** is emitted to signal the implicit promotion.
+
+### Semantics
+
+- All fields of a const struct are effectively const in every context — even if not explicitly declared `const`.
+- Constructors and destructors are **exempt** from the const requirement (they always have mutable `this`).
+- Static member functions are **exempt** (they have no `this` parameter).
+- A const struct instance (whether declared `const` or not) behaves as fully immutable after construction.
+- A non-static member function that is **not** declared `const` inside a const struct is silently promoted to const. The compiler emits a `Warning 30010` to alert the developer. The promoted function is treated as const in all contexts: its generated prototype, its invocation, and inheritance.
+
+### Grammar
+
+```
+ConstStructDecl:
+    'const' { OtherSpecifier } 'struct' Identifier [ ':' BaseClause ] '{' { StructMember } '}'
+```
+
+### Warning on implicit promotion
+
+```
+Warning 30010 : member function 'foo' of const struct 'Bar' is not declared 'const';
+                it is implicitly promoted to const
+```
+
+This warning helps catch accidental omissions. To silence it, add the `const` specifier explicitly.
+
+### Inheritance rules
+
+| Situation | Allowed? | Notes |
+|-----------|----------|-------|
+| `const` struct inherits from `const` struct | ✓ | All inherited methods remain const. |
+| `const` struct inherits from mutable struct | ✗ | Compile-time error. |
+| Mutable struct inherits from `const` struct | ✓ | Inherited const methods remain const; inherited fields become mutable in the derived context. |
+
+### Examples
+
+```k
+const struct Immutable {
+    x : int;
+    Immutable(v : int) : x(v) {}
+
+    const get() : int { return this.x; }   // OK: explicitly const — no warning
+
+    // The function below is not declared const but is inside a const struct.
+    // It is automatically promoted to const (Warning 30010 emitted).
+    // To suppress the warning, add 'const' explicitly.
+    also_get() : int { return this.x; }    // Warning 30010 → promoted to const
+}
+
+test() : int {
+    i : Immutable(7);
+    return i.also_get();   // OK: works as a const member function
+}
+```
+
+```k
+// A mutable struct may inherit from a const struct.
+// Inherited const methods are kept const; the derived struct may add mutable methods.
+struct Mutable : public Immutable {
+    Mutable(v : int) : Immutable(v) {}
+    set(v : int) { this.x = v; }           // OK: Mutable is not a const struct
+}
+
+test() : int {
+    m : Mutable(5);
+    m.set(42);
+    return m.get();   // 42
+}
+```
+
+### Const struct instance via const variable
+
+If a mutable struct is instantiated as a `const` variable (or passed as `const Struct&`), all its fields are treated as const and only const member functions may be called:
+
+```k
+test_const_instance() : int {
+    const p : Counter(10);
+    // p.increment();   // ERROR: mutable method on const instance
+    return p.get();     // OK
+}
+```
+
+This applies regardless of whether the struct itself is declared `const`.
+
+---
+
+*See also:* [Constructors](constructors.md) · [Destructors](destructors.md) · [Nested Structures](nested.md) · [Inheritance](../structs/structs.md) · [Namespace visibility](../basic/names.md#5-visibility-of-namespace-members) · [Types — Const-ness](../basic/types.md#12-const-ness)

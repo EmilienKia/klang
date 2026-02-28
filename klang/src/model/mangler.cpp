@@ -128,6 +128,9 @@ std::string mangler::mangle_function(const function& func) const {
 
     if (func.is_member() && ! func.is_static()) {
         mangled << SYMBOL_MEMBER;
+        if (func.is_const_member()) {
+            mangled << SYMBOL_MODIFIER_CONST; // MK = const member function
+        }
     }
     mangled << mangle_fq_name(name, false);
 

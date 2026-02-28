@@ -780,5 +780,57 @@ A function `f(const n : int) : int` has its parameter encoded as `Ki` instead of
 
 ---
 
-*See also:* [Keywords](keywords.md) · [Expressions](../expressions/expressions.md) · [Statements](../statements/statements.md)
+### 12.7 Const member functions
 
+A member function declared with the `const` specifier receives its implicit `this` parameter as a **const reference** (`const Struct&`) instead of a mutable reference.
+
+Inside a const member function:
+- All fields (direct and inherited) are implicitly const — read-only.
+- Only other const member functions may be called on `this`.
+- `++` / `--` on any field is a compile-time error.
+
+```k
+struct Point {
+    x : int;
+    y : int;
+    Point(a : int, b : int) : x(a), y(b) {}
+
+    const sum() : int { return this.x + this.y; }  // OK: reads only
+    // scale(f : int) called on a const Point → ERROR
+}
+```
+
+A const member function can be called on both mutable **and** const objects/references.  
+A mutable member function can only be called on mutable objects.
+
+> `const` and `static` are incompatible on a member function: static functions have no `this` and the combination is a compile-time error.
+
+See [Structures — §12](../structs/structs.md#12-const-member-functions) for full details.
+
+---
+
+### 12.8 Const structs
+
+A struct declared `const` ensures that **all** non-static member functions are treated as const.
+Constructors and destructors are exempt.
+
+A non-static member function that is **not** explicitly declared `const` inside a const struct is **automatically promoted to const** at compile time. A `Warning 30010` is emitted to signal the implicit promotion — add `const` explicitly to the declaration to suppress it.
+
+```k
+const struct ReadOnly {
+    x : int;
+    ReadOnly(v : int) : x(v) {}
+    const get() : int { return this.x; }         // explicit const — no warning
+    also_get() : int { return this.x; }          // Warning 30010: promoted to const
+}
+```
+
+Inheritance rules:
+- A `const` struct may only inherit from other `const` structs.
+- A mutable struct may inherit from a `const` struct; inherited const methods remain const.
+
+See [Structures — §13](../structs/structs.md#13-const-structs) for full details.
+
+---
+
+*See also:* [Keywords](keywords.md) · [Expressions](../expressions/expressions.md) · [Statements](../statements/statements.md) · [Structures](../structs/structs.md)
