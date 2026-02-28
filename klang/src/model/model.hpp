@@ -387,6 +387,9 @@ protected:
     /** True if this structure is a static nested struct (no implicit parent reference). */
     bool _is_static_nested = false;
 
+    /** True if this structure is final (cannot be used as a base class). */
+    bool _is_final = false;
+
     /** Declared visibility of this structure. PUBLIC by default. */
     visibility _visibility = PUBLIC;
 
@@ -435,6 +438,12 @@ public:
 
     /** Set whether this is a static nested struct. */
     void set_static_nested(bool v) { _is_static_nested = v; }
+
+    /** True if this structure is final (cannot be used as a base class). */
+    bool is_final() const { return _is_final; }
+
+    /** Set whether this structure is final. */
+    void set_final(bool v) { _is_final = v; }
 
     /** True if this is a non-static inner struct (has an implicit parent reference). */
     bool is_inner() const { return is_nested() && !_is_static_nested; }

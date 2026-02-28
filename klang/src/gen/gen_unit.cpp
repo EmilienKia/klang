@@ -200,6 +200,14 @@ void symbol_resolver::visit_structure(structure& st) {
                     "Base class '{}' of struct '{}' is not found",
                     {bs.raw_name, st.get_short_name()});
             }
+
+            // A final struct cannot be used as a base class
+            if (base_st->is_final()) {
+                throw_error(0x0012, std::nullopt,
+                    "Cannot inherit from '{}' in struct '{}': '{}' is declared final and cannot be used as a base class",
+                    {bs.raw_name, st.get_short_name(), bs.raw_name});
+            }
+
             bs.base = base_st;
 
             // Warn if inner struct inherits from outer or outer inherits from inner

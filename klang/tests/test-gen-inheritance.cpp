@@ -543,3 +543,184 @@ try_access(d: Derived&) : int {
 )SRC", false, false), k::model::gen::resolution_error);
 }
 
+//
+// ─── Final struct tests ───────────────────────────────────────────────────────
+//
+
+TEST_CASE("Parse final struct specifier", "[parser][final]") {
+
+    SECTION("Simple final struct (no base clause)") {
+        test_logger logger;
+        k::parse::parser parser(logger);
+        k::source src(R"SRC(final struct Leaf { })SRC");
+        parser.parse(src);
+        auto unit = parser.parse_unit();
+        REQUIRE(unit);
+        REQUIRE(unit->declarations.size() == 1);
+        auto st = std::dynamic_pointer_cast<k::parse::ast::struct_decl>(unit->declarations[0]);
+        REQUIRE(st);
+        CHECK(k::lex::keyword::has(st->specifiers, k::lex::keyword::FINAL));
+        CHECK(st->bases.empty());
+    }
+
+    SECTION("Final struct with other specifiers") {
+        test_logger logger;
+        k::parse::parser parser(logger);
+        k::source src(R"SRC(public final struct Leaf { })SRC");
+        parser.parse(src);
+        auto unit = parser.parse_unit();
+        REQUIRE(unit);
+        auto st = std::dynamic_pointer_cast<k::parse::ast::struct_decl>(unit->declarations[0]);
+        REQUIRE(st);
+        CHECK(k::lex::keyword::has(st->specifiers, k::lex::keyword::FINAL));
+        CHECK(k::lex::keyword::has(st->specifiers, k::lex::keyword::PUBLIC));
+    }
+
+    SECTION("Non-final struct does not carry final specifier") {
+        test_logger logger;
+        k::parse::parser parser(logger);
+        k::source src(R"SRC(struct Regular { })SRC");
+        parser.parse(src);
+        auto unit = parser.parse_unit();
+        REQUIRE(unit);
+        auto st = std::dynamic_pointer_cast<k::parse::ast::struct_decl>(unit->declarations[0]);
+        REQUIRE(st);
+        CHECK_FALSE(k::lex::keyword::has(st->specifiers, k::lex::keyword::FINAL));
+    }
+}
+
+TEST_CASE("Model: final struct is_final flag", "[model][final]") {
+
+    SECTION("final struct sets is_final to true") {
+        test_logger logger;
+        auto jit = gen_jit(R"SRC(
+module __final_model__;
+final struct Leaf {
+    x: int;
+    Leaf() : x(0) {}
+}
+)SRC", false, false);
+        REQUIRE(jit);
+    }
+
+    SECTION("Non-final struct has is_final false") {
+        test_logger logger;
+        auto jit = gen_jit(R"SRC(
+module __nonfinal_model__;
+struct Extendable {
+    x: int;
+    Extendable() : x(0) {}
+}
+)SRC", false, false);
+        REQUIRE(jit);
+    }
+}
+
+TEST_CASE("Final struct can be used as member (aggregation)", "[gen][final]") {
+    auto jit = gen_jit(R"SRC(
+module __final_aggregation__;
+
+final struct Coord {
+    x: int;
+    y: int;
+    Coord() : x(0), y(0) {}
+    Coord(a: int, b: int) : x(a), y(b) {}
+}
+
+struct Shape {
+    pos: Coord;
+    Shape() {}
+    Shape(a: int, b: int) : pos(a, b) {}
+    get_x() : int { return pos.x; }
+    get_y() : int { return pos.y; }
+}
+
+test_final_aggregation() : int {
+    s: Shape(3, 7);
+    return s.get_x() + s.get_y();
+}
+)SRC", false, false);
+    REQUIRE(jit);
+
+    auto fn = jit->lookup_symbol<int(*)()>("test_final_aggregation");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 10);
+}
+
+TEST_CASE("Final struct can be used as function parameter", "[gen][final]") {
+    auto jit = gen_jit(R"SRC(
+module __final_param__;
+
+final struct Point {
+    x: int;
+    Point() : x(0) {}
+    Point(v: int) : x(v) {}
+}
+
+get_value(p: Point&) : int {
+    return p.x;
+}
+
+test_final_param() : int {
+    p: Point(42);
+    return get_value(p);
+}
+)SRC", false, false);
+    REQUIRE(jit);
+
+    auto fn = jit->lookup_symbol<int(*)()>("test_final_param");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Inheritance - error when inheriting from a final struct", "[gen][final]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+module __final_inherit_error__;
+final struct Base {
+    x: int;
+    Base() : x(0) {}
+}
+struct Derived : public Base {
+    Derived() {}
+}
+)SRC", false, false), k::model::gen::resolution_error);
+}
+
+TEST_CASE("Inheritance - error: final struct in multi-inheritance chain", "[gen][final]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+module __final_multi_inherit__;
+struct A { A() {} }
+final struct B { B() {} }
+struct C : public A, public B {
+    C() {}
+}
+)SRC", false, false), k::model::gen::resolution_error);
+}
+
+TEST_CASE("Inheritance - final struct can itself inherit", "[gen][final]") {
+    // A final struct may still derive from another struct;
+    // it only forbids being used AS a base class.
+    auto jit = gen_jit(R"SRC(
+module __final_can_inherit__;
+
+struct Base {
+    v: int;
+    Base() : v(10) {}
+}
+
+final struct Leaf : public Base {
+    w: int;
+    Leaf() : w(5) {}
+}
+
+test_final_can_inherit() : int {
+    l: Leaf;
+    return l.v + l.w;
+}
+)SRC", false, false);
+    REQUIRE(jit);
+
+    auto fn = jit->lookup_symbol<int(*)()>("test_final_can_inherit");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 15);
+}

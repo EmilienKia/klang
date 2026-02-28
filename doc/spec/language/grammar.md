@@ -101,7 +101,11 @@ Grammar notation used here:
 <a id="namespacedecl"></a>**NamespaceDecl:**
     `'namespace'` `[` [Identifier](#identifier) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
 <a id="structdecl"></a>**StructDecl:**
-    {{ [Specifier](#specifier) }} `'struct'` [Identifier](#identifier) `'{{' {{ [Declaration](#declaration) }} '}}'`
+    {{ [Specifier](#specifier) }} `'struct'` [Identifier](#identifier) `[` `':'` [BaseClause](#baseclause) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
+<a id="baseclause"></a>**BaseClause:**
+    [BaseSpec](#basespec) {{ `','` [BaseSpec](#basespec) }}
+<a id="basespec"></a>**BaseSpec:**
+    `[` `(` `'public'` | `'protected'` | `'private'` `)` `]` [Identifier](#identifier)
 <a id="functiondecl"></a>**FunctionDecl:**
     {{ [Specifier](#specifier) }} `[` `'~'` `]` [Identifier](#identifier) `'('` `[` [ParameterList](#parameterlist) `]` `')'` `[` `':'` [TypeSpec](#typespec) `]`
     `[` `':'` `(` [MemberInitList](#memberinitlist) | [StaticDepList](#staticdeplist) `)` `]`

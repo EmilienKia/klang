@@ -125,6 +125,10 @@ namespace k::model {
         bool is_static_nested = lex::keyword::has(st.specifiers, lex::keyword::STATIC);
         struc->set_static_nested(is_static_nested);
 
+        // Detect if the final specifier is present
+        bool is_final = lex::keyword::has(st.specifiers, lex::keyword::FINAL);
+        struc->set_final(is_final);
+
         // Resolve visibility: per-element specifier takes precedence over group visibility
         model::visibility vis = model::PUBLIC; // default
         if (auto vctx = current_context<visibility_context>()) {

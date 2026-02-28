@@ -17,6 +17,7 @@ A *struct* (structure) is a user-defined composite type that aggregates fields a
 8. [Aggregated structs](#8-aggregated-structs)
 9. [Struct specifiers](#9-struct-specifiers)
 10. [Member visibility](#10-member-visibility)
+11. [Final structs](#11-final-structs)
 ---
 ## 1. Struct declaration
 A struct is declared with the `struct` keyword, a name, and a body containing field and member function declarations.
@@ -169,6 +170,7 @@ Specifiers appear before a declaration inside a struct body (or before the `stru
 | Specifier   | Applies to            | Meaning |
 |-------------|-----------------------|---------|
 | `static`    | Nested struct         | Declares a static nested struct (see [Nested Structures](nested.md)). |
+| `final`     | Struct declaration    | Declares a final struct (cannot be used as a base class; see [§ 11](#11-final-structs)). |
 | `public`    | Any member            | Per-element visibility: public (see [§ 10](#10-member-visibility)). |
 | `protected` | Any member            | Per-element visibility: protected (see [§ 10](#10-member-visibility)). |
 | `private`   | Any member            | Per-element visibility: private (see [§ 10](#10-member-visibility)). |
@@ -189,7 +191,7 @@ VisibilityDecl:
     ( 'public' | 'protected' | 'private' ) ':'
 
 Specifier: (one of)
-    'static'   'public'   'protected'   'private'
+    'static'   'final'   'public'   'protected'   'private'
 ```
 
 ---
@@ -273,3 +275,79 @@ If a struct is visible from another context, it may be declared as a static-init
 
 *See also:* [Constructors](constructors.md) · [Destructors](destructors.md) · [Nested Structures](nested.md) · [Namespace visibility](../basic/names.md#5-visibility-of-namespace-members) · [Functions](../functions/functions.md) · [Types](../basic/types.md)
 
+---
+
+## 11. Final structs
+
+A struct declared with the `final` specifier **cannot be used as a base class**.  
+Any attempt to inherit from a final struct is a compile-time error.
+
+A final struct is otherwise a fully normal struct: it can have fields, member functions, constructors, a destructor, and it can itself inherit from other (non-final or final) structs.  
+It can also be used freely as a **field type** (aggregation) in other structs, or as a function parameter type.
+
+### Grammar
+
+```
+FinalStructDecl:
+    'final' { OtherSpecifier } 'struct' Identifier [ ':' BaseClause ] '{' { StructMember } '}'
+```
+
+`final` may appear in any position among the specifiers, combined with visibility specifiers if needed.
+
+### Examples
+
+**Declaring a final struct:**
+
+```k
+final struct Coord {
+    x : int;
+    y : int;
+    Coord(a: int, b: int) : x(a), y(b) {}
+}
+```
+
+**A final struct can be inherited from another (non-final) struct:**
+
+```k
+struct Base { v : int; Base() : v(10) {} }
+
+final struct Leaf : public Base {
+    w : int;
+    Leaf() : w(5) {}
+}
+
+test() : int {
+    l : Leaf;
+    return l.v + l.w;   // 10 + 5 = 15
+}
+```
+
+**A final struct can be used as a member (aggregation):**
+
+```k
+struct Shape {
+    pos : Coord;          // aggregation — OK
+    Shape(a: int, b: int) : pos(a, b) {}
+    get_x() : int { return pos.x; }
+}
+```
+
+**Inheriting from a final struct is a compile-time error:**
+
+```k
+// ERROR: cannot inherit from 'Coord', it is declared final
+struct Extended : public Coord { }
+```
+
+```
+Error: Cannot inherit from 'Coord' in struct 'Extended': 'Coord' is declared final and cannot be used as a base class
+```
+
+### Rationale
+
+Marking a struct `final` communicates the design intent that the type is a leaf in the type hierarchy.  
+It also allows the compiler (in future optimisation passes) to devirtualise calls and make stronger layout assumptions.
+
+---
+
+*See also:* [Constructors](constructors.md) · [Destructors](destructors.md) · [Nested Structures](nested.md) · [Inheritance](../structs/structs.md) · [Namespace visibility](../basic/names.md#5-visibility-of-namespace-members)
