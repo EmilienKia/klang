@@ -72,17 +72,22 @@ AddressOfExpr:
 ```
 
 The result type is `T~` (a **link** — non-null, mutable address) when `expr` has type `T`.
+When `expr` denotes a **const** object (type `const T`), the result is `const T~` — a link to const.
 
 ```k
-a   : int = 5;
-lnk : int~ = &a;     // link to a (non-null)
-p   : int* = &a;     // implicitly widened to pointer
-pin : int^ = &a;     // implicitly widened to pinned
+a      : int      = 5;
+lnk    : int~     = &a;     // link to a (non-null)
+p      : int*     = &a;     // implicitly widened to pointer
+
+const b : int     = 7;
+clnk   : const int~ = &b;  // link to const — OK
+bad    : int~       = &b;  // Error: '&b' has type 'const int~'; cannot bind to mutable link
 ```
 
-> **Note:** `&expr` always produces a non-null address (`T~`). It can be implicitly widened to a nullable type (`T*`, `T^`) but not the other way around.
+> **Note:** `&expr` always produces a non-null address. It can be implicitly widened to a nullable type (`T*`, `T^`) but not the other way around.
 
 Applied to a reference variable `r : T&`, `&r` returns a `T~` pointing to the same object as `r`.
+Applied to a reference variable `r : const T&`, `&r` returns a `const T~`.
 
 ---
 ## 5. Dereference operator (`*`)

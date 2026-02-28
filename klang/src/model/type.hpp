@@ -59,6 +59,7 @@ class reference_type;
 class pointer_type;
 class link_type;
 class pinned_type;
+class const_type;
 class sized_array_type;
 class array_type;
 class struct_type;
@@ -75,6 +76,7 @@ protected:
     std::shared_ptr<pointer_type> pointer;
     std::shared_ptr<link_type> link;
     std::shared_ptr<pinned_type> pinned;
+    std::shared_ptr<const_type> const_;
     std::shared_ptr<array_type> array;
 
     mutable llvm::Type* _llvm_type;
@@ -92,16 +94,27 @@ public:
     virtual bool is_resolved() const;
 
     inline static bool is_resolved(const std::shared_ptr<type>& type);
+    /** True if the type is a primitive type (optionally stripping const). */
     inline static bool is_primitive(const std::shared_ptr<type>& type);
-    inline static bool is_prim_integer(const std::shared_ptr<type>& type);
-    inline static bool is_prim_integer_or_bool(const std::shared_ptr<type>& type);
+    /** True if the type is a primitive boolean type (optionally stripping const). */
     inline static bool is_prim_bool(const std::shared_ptr<type>& type);
+    /** True if the type is a primitive integer type (optionally stripping const). */
+    inline static bool is_prim_integer(const std::shared_ptr<type>& type);
+    /** True if the type is a primitive integer or bool type (optionally stripping const). */
+    inline static bool is_prim_integer_or_bool(const std::shared_ptr<type>& type);
+    /** True if the type is a primitive float type (optionally stripping const). */
     inline static bool is_prim_float(const std::shared_ptr<type>& type);
+    /** True if the type is a struct type (optionally stripping const). */
+    inline static bool is_struct(const std::shared_ptr<type>& type);
     inline static bool is_reference(const std::shared_ptr<type>& type);
     inline static bool is_double_reference(const std::shared_ptr<type>& type);
     inline static bool is_pointer(const std::shared_ptr<type>& type);
     inline static bool is_link(const std::shared_ptr<type>& type);
     inline static bool is_pinned(const std::shared_ptr<type>& type);
+    /** True if the type is a const-qualified type. */
+    inline static bool is_const(const std::shared_ptr<type>& type);
+    /** Remove const qualifier if present, return the inner type. If not const, return as-is. */
+    inline static std::shared_ptr<type> remove_const(const std::shared_ptr<type>& type);
     /** True for any of the four indirection kinds: reference, pointer, link, pinned. */
     inline static bool is_any_indirection(const std::shared_ptr<type>& type);
     /** True for indirections that are non-null (reference and link). */
@@ -114,7 +127,6 @@ public:
     inline static bool is_immutable_indirection(const std::shared_ptr<type>& type);
     inline static bool is_sized_array(const std::shared_ptr<type>& type);
     inline static bool is_array(const std::shared_ptr<type>& type);
-    inline static bool is_struct(const std::shared_ptr<type>& type);
     inline static bool is_function_reference(const std::shared_ptr<type>& type);
 
     inline static bool are_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2);
@@ -123,6 +135,7 @@ public:
     std::shared_ptr<pointer_type> get_pointer();
     std::shared_ptr<link_type> get_link();
     std::shared_ptr<pinned_type> get_pinned();
+    std::shared_ptr<const_type> get_const();
     std::shared_ptr<array_type> get_array();
     std::shared_ptr<sized_array_type> get_array(unsigned long size);
 
@@ -228,27 +241,28 @@ inline bool type::is_resolved(const std::shared_ptr<type>& type) {
     return type!=nullptr && type->is_resolved();
 }
 
-inline bool type::is_primitive(const std::shared_ptr<type>& type) {
-    return std::dynamic_pointer_cast<primitive_type>(type) != nullptr;
+inline bool type::is_primitive(const std::shared_ptr<type>& t) {
+    auto nc = remove_const(t);
+    return std::dynamic_pointer_cast<primitive_type>(nc) != nullptr;
 }
 
-inline bool type::is_prim_integer(const std::shared_ptr<type>& type) {
-    auto prim = std::dynamic_pointer_cast<primitive_type>(type);
+inline bool type::is_prim_integer(const std::shared_ptr<type>& t) {
+    auto prim = std::dynamic_pointer_cast<primitive_type>(remove_const(t));
     return prim != nullptr && prim->is_integer();
 }
 
-inline bool type::is_prim_integer_or_bool(const std::shared_ptr<type>& type) {
-    auto prim = std::dynamic_pointer_cast<primitive_type>(type);
+inline bool type::is_prim_integer_or_bool(const std::shared_ptr<type>& t) {
+    auto prim = std::dynamic_pointer_cast<primitive_type>(remove_const(t));
     return prim != nullptr && prim->is_integer_or_bool();
 }
 
-inline bool type::is_prim_bool(const std::shared_ptr<type>& type) {
-    auto prim = std::dynamic_pointer_cast<primitive_type>(type);
+inline bool type::is_prim_bool(const std::shared_ptr<type>& t) {
+    auto prim = std::dynamic_pointer_cast<primitive_type>(remove_const(t));
     return prim != nullptr && prim->is_boolean();
 }
 
-inline bool type::is_prim_float(const std::shared_ptr<type>& type){
-    auto prim = std::dynamic_pointer_cast<primitive_type>(type);
+inline bool type::is_prim_float(const std::shared_ptr<type>& t){
+    auto prim = std::dynamic_pointer_cast<primitive_type>(remove_const(t));
     return prim != nullptr && prim->is_float();
 }
 
@@ -360,6 +374,41 @@ public:
 
 inline bool type::is_pinned(const std::shared_ptr<type>& type) {
     return std::dynamic_pointer_cast<pinned_type>(type) != nullptr;
+}
+
+/**
+ * Const type — compile-time-only qualifier.
+ * Wraps another type and marks it as immutable: no assignment or mutation is allowed
+ * through a variable or indirection of this type.
+ * const_type has NO impact on the generated LLVM IR; it is enforced at type-resolution time only.
+ * Mangling modifier: 'K' (prefix before the inner type mangling).
+ */
+class const_type : public type {
+protected:
+    friend class type;
+
+    const_type(const std::shared_ptr<type> &subtype);
+
+public:
+    bool is_resolved() const override;
+
+    /** const_type delegates its LLVM type to the inner type (no IR impact). */
+    llvm::Type* get_llvm_type() const override;
+
+    std::string to_string() const override;
+
+    std::shared_ptr<type> get_inner_type() const { return get_subtype(); }
+};
+
+inline bool type::is_const(const std::shared_ptr<type>& t) {
+    return std::dynamic_pointer_cast<const_type>(t) != nullptr;
+}
+
+inline std::shared_ptr<type> type::remove_const(const std::shared_ptr<type>& t) {
+    if (auto ct = std::dynamic_pointer_cast<const_type>(t)) {
+        return ct->get_inner_type();
+    }
+    return t;
 }
 
 inline bool type::is_any_indirection(const std::shared_ptr<type>& t) {
@@ -532,8 +581,8 @@ public:
 
 
 
-inline bool type::is_struct(const std::shared_ptr<type>& type) {
-    return std::dynamic_pointer_cast<struct_type>(type) != nullptr;
+inline bool type::is_struct(const std::shared_ptr<type>& t) {
+    return std::dynamic_pointer_cast<struct_type>(remove_const(t)) != nullptr;
 }
 
 

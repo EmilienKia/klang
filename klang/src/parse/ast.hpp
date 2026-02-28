@@ -147,6 +147,20 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * Const type specifier: wraps another type specifier to mark it as const-qualified.
+         * Syntax: 'const' TypeSpec   (e.g. "const int", "const int*")
+         */
+        struct const_type_specifier : public type_specifier {
+            lex::keyword const_kw;
+            std::shared_ptr<type_specifier> subtype;
+
+            const_type_specifier(const lex::keyword &const_kw, const std::shared_ptr<type_specifier> &subtype)
+                    : const_kw(const_kw), subtype(subtype) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct expression;
         struct unary_expression;
         struct binary_expression;
@@ -731,6 +745,7 @@ namespace k::parse {
         virtual void visit_keyword_type_specifier(ast::keyword_type_specifier &) = 0;
         virtual void visit_array_type_specifier(ast::array_type_specifier &) = 0;
         virtual void visit_pointer_type_specifier(ast::pointer_type_specifier &) = 0;
+        virtual void visit_const_type_specifier(ast::const_type_specifier &) = 0;
 
         virtual void visit_parameter_specifier(ast::parameter_spec &) = 0;
 
@@ -778,6 +793,7 @@ namespace k::parse {
         void visit_keyword_type_specifier(ast::keyword_type_specifier &) override;
         void visit_array_type_specifier(ast::array_type_specifier &) override;
         void visit_pointer_type_specifier(ast::pointer_type_specifier &) override;
+        void visit_const_type_specifier(ast::const_type_specifier &) override;
 
         void visit_parameter_specifier(ast::parameter_spec &) override;
         void visit_qualified_identifier(ast::qualified_identifier &) override;

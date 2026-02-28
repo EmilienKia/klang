@@ -928,6 +928,20 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
 {
     std::shared_ptr<ast::type_specifier> res;
 
+    // Optional 'const' prefix: 'const' applies to the base type only (not to pointer suffixes).
+    // 'const int*' is parsed as pointer<const int>, not const<pointer<int>>.
+    std::optional<lex::keyword> const_kw;
+    {
+        lex::lex_holder const_holder(_lexer);
+        auto lconst = _lexer.get();
+        if (lconst == lex::keyword::CONST) {
+            const_holder.sync();
+            const_kw = lex::as<lex::keyword>(lconst);
+        } else {
+            _lexer.unget();
+        }
+    }
+
     res = parse_fundamental_type_spec();
 
     lex::lex_holder holder(_lexer);
@@ -940,6 +954,11 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
             holder.rollback();
             return {};
         }
+    }
+
+    // Apply const wrapper to the base type (before pointer/array suffixes)
+    if(const_kw.has_value()) {
+        res = std::make_shared<ast::const_type_specifier>(*const_kw, res);
     }
 
     while(true) {

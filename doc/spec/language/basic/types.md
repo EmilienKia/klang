@@ -25,6 +25,7 @@ K is a statically-typed language. Every expression has a type determined at comp
 9. [Struct types](#9-struct-types)
 10. [Type specifiers — grammar](#10-type-specifiers--grammar)
 11. [Implicit conversions](#11-implicit-conversions)
+12. [Const-ness](#12-const-ness)
 
 ---
 
@@ -600,3 +601,184 @@ CastExpr:
 ---
 
 *See also:* [Literals](../expressions/literals.md) · [Expressions](../expressions/expressions.md) · [Structures](../structs/structs.md)
+
+---
+
+## 12. Const-ness
+
+The `const` qualifier marks a variable or parameter as **immutable after construction**.
+Const-ness is a **compile-time** property only; it has no impact on the generated IR code.
+
+---
+
+### 12.1 Const variables and parameters
+
+The `const` keyword is a **declaration specifier** placed before the variable name, or a **type qualifier** placed before the base type in the type specifier, or both. All three forms are **semantically identical**:
+
+```k
+const x   : int = 42;       // const as specifier
+y         : const int = 42; // const as type qualifier
+const z   : const int = 42; // both — identical to the two above
+```
+
+Similarly for parameters:
+
+```k
+f(const n : int) : int { return n; }   // specifier form
+f(n : const int) : int { return n; }   // type qualifier form — identical
+f(const n : const int) : int { return n; } // both forms — identical
+```
+
+For indirection types, the `const` qualifier always applies to the **pointed-at object**, whether it is specified via the variable specifier or via the type:
+
+```k
+const lnk : int~  = &x;  // "const lnk : int~"   → link to const int
+lnk : const int~  = &x;  // "lnk : const int~"   → link to const int — identical
+const lnk : const int~ = &x; // both — identical
+```
+
+A `const` variable/parameter:
+- **must** be initialised at its declaration (or at construction for parameters).
+- **cannot** be assigned after initialisation.
+- **cannot** be incremented or decremented (`++`, `--`, prefix or postfix).
+
+```k
+const x : int = 5;
+x = 6;   // Error: cannot assign to a const variable
+x++;     // Error: cannot apply '++' to a const variable
+```
+
+---
+
+### 12.2 Const type qualifier in type specifiers
+
+`const` can appear as a **type qualifier** directly before the base type in any type specifier.
+This is equivalent to placing `const` as a variable specifier (see §12.1).
+
+```k
+x   : int      = 10;
+cp  : const int* = &x;    // pointer to const int — the pointed value cannot be modified
+lnk : const int~ = &x;   // link to const int
+```
+
+The full grammar for type specifiers with `const`:
+
+```
+TypeSpec:
+    'const' BaseTypeSpec { TypeSuffix }   -- const applied to the base type
+    BaseTypeSpec { TypeSuffix }
+
+BaseTypeSpec:
+    FundamentalType
+    QualifiedIdentifier
+```
+
+`const int*` means **pointer to const int**: the pointer itself can be rebound, but the object
+pointed to cannot be modified through it.
+
+> **Note:** `const` always applies to the **base type** that follows it — before any indirection
+> suffixes (`*`, `~`, `^`, `&`). It is not possible to write a "const pointer" (i.e. a pointer
+> whose binding is immutable); for that, use a pinned (`^`) or reference (`&`).
+
+The three forms of a const pointer declaration are all equivalent:
+
+```k
+const p  : int* = &x;         // specifier form
+p : const int*   = &x;         // type qualifier form
+const p : const int* = &x;     // both — all three mean "pointer to const int"
+```
+
+---
+
+### 12.3 Const and indirection types
+
+For all four indirection kinds, `const` applies to the **pointed-at object**, not to the pointer/reference/link/pinned itself:
+
+| Indirection type  | Mutable binding? | Pointed value mutable? |
+|-------------------|-----------------|------------------------|
+| `T&`              | no (always immutable) | yes |
+| `const T&`        | no              | no  |
+| `T~`              | yes (rebindable)| yes |
+| `const T~`        | yes (rebindable)| no  |
+| `T^`              | no (immutable)  | yes |
+| `const T^`        | no              | no  |
+| `T*`              | yes             | yes |
+| `const T*`        | yes             | no  |
+
+> Immutable-binding indirections (references `&` and pinned `^`) are not further constrained by `const`
+> on the binding itself (they are already immutable by design), but `const` still restricts modifications
+> to the pointed object.
+
+---
+
+### 12.4 Const pointer/link compatibility rules
+
+A `const T*` (or `const T~`) **can** be initialised or assigned from a `T*` (or `T~`) — this is a safe widening:
+
+```k
+x  : int  = 5;
+p  : int* = &x;
+cp : const int* = p;  // OK — widening: mutable → const
+```
+
+The reverse is **forbidden** — assigning a `const T*` to a `T*` would allow modification of a const object:
+
+```k
+cp : const int* = &x;
+p  : int* = cp;   // Error: cannot assign pointer-to-const to pointer-to-mutable
+```
+
+Similarly for links:
+
+```k
+clnk : const int~ = &x;
+lnk  : int~ = clnk;   // Error: cannot initialise link-to-mutable from link-to-const
+```
+
+A const variable can only be addressed or referenced by a const indirection:
+
+```k
+const x : int = 42;
+lnk  : int~       = &x;  // Error: '&x' has type 'const int~'; cannot bind to mutable link
+clnk : const int~ = &x;  // OK
+```
+
+---
+
+### 12.5 Const and function overloading
+
+`const` on a **by-value** parameter is part of the function's implementation contract (the caller's type is unaffected).
+Two functions differing only in the `const`-ness of a by-value parameter are **ambiguous** at the call site:
+
+```k
+pick(n : int) : int       { return 1; }
+pick(const n : int) : int { return 2; }
+
+pick(0);  // Error: ambiguous — both overloads are equally viable
+```
+
+Their **mangled names** are distinct (the `const` modifier `K` is emitted in the parameter encoding),
+so the two definitions can coexist as separate symbols, but resolution from a call with a plain `int`
+argument is rejected as ambiguous.
+
+---
+
+### 12.6 Name mangling
+
+The const qualifier is encoded in the mangled symbol name using the modifier prefix **`K`**:
+
+| Source type | Mangling |
+|-------------|----------|
+| `int`       | `i`      |
+| `const int` | `Ki`     |
+| `int*`      | `Pi`     |
+| `const int*`| `PKi`    |
+| `int~`      | `Li`     |
+| `const int~`| `LKi`    |
+
+A function `f(const n : int) : int` has its parameter encoded as `Ki` instead of `i`.
+
+---
+
+*See also:* [Keywords](keywords.md) · [Expressions](../expressions/expressions.md) · [Statements](../statements/statements.md)
+

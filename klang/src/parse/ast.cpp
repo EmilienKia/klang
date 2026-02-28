@@ -69,6 +69,10 @@ void ast::pointer_type_specifier::visit(ast_visitor &visitor) {
     visitor.visit_pointer_type_specifier(*this);
 }
 
+void ast::const_type_specifier::visit(ast_visitor &visitor) {
+    visitor.visit_const_type_specifier(*this);
+}
+
 void ast::parameter_spec::visit(ast_visitor &visitor) {
     visitor.visit_parameter_specifier(*this);
 }
@@ -197,6 +201,10 @@ void default_ast_visitor::visit_array_type_specifier(ast::array_type_specifier &
 }
 
 void default_ast_visitor::visit_pointer_type_specifier(ast::pointer_type_specifier &) {
+
+}
+
+void default_ast_visitor::visit_const_type_specifier(ast::const_type_specifier &) {
 
 }
 

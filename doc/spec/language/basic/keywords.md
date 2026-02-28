@@ -25,7 +25,7 @@ They may **not** be used as ordinary identifiers.
 | `module`    | Module (compilation unit) name declaration |
 | `import`    | Import declaration |
 | `static`    | Static storage / static member modifier |
-| `const`     | Constant modifier (reserved, semantics TBD) |
+| `const`     | Constant qualifier: marks a variable or parameter as immutable after construction |
 | `public`    | Public visibility modifier |
 | `protected` | Protected visibility modifier |
 | `private`   | Private visibility modifier |
@@ -55,7 +55,8 @@ Keyword: (one of)
 
 ## Notes
 
-- `const`, `abstract`, and `final` are reserved keywords but their full semantics are not yet defined.
+- `abstract` and `final` are reserved keywords but their full semantics are not yet defined.
+- `const` marks a variable or parameter as immutable. See [Const-ness](types.md#12-const-ness) for the full specification.
 - `public`, `protected`, and `private` are parsed as visibility declarations inside namespace and struct bodies; they end with a colon (e.g., `public:`).
 - `unsigned` is used as a type modifier: `unsigned int`, `unsigned short`, etc. It is not a standalone type.
 - All other keywords are used in declarations or statements as described in the relevant reference sections.

@@ -135,7 +135,10 @@ std::shared_ptr<type> context::from_keyword(const lex::keyword& kw, bool is_unsi
 
 std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_specifier& type_spec)
 {
-    if(auto ident = dynamic_cast<const k::parse::ast::identified_type_specifier*>(&type_spec)) {
+    if(auto ct = dynamic_cast<const k::parse::ast::const_type_specifier*>(&type_spec)) {
+        auto inner = from_type_specifier(*ct->subtype);
+        return inner ? inner->get_const() : std::shared_ptr<type>{};
+    } else if(auto ident = dynamic_cast<const k::parse::ast::identified_type_specifier*>(&type_spec)) {
         return create_unresolved(ident->name.to_name());
     } else if(auto kw = dynamic_cast<const k::parse::ast::keyword_type_specifier*>(&type_spec)) {
         return from_keyword(kw->keyword);

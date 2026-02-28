@@ -56,6 +56,8 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
         // Target type must be de-referenced
         target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
     }
+    // Strip const qualifier for arithmetic type checks (const is compile-time only)
+    target_type = type::remove_const(target_type);
     if(!type::is_primitive(target_type)) {
         throw_error(0x0001, std::nullopt,
             "Arithmetic operators are not supported for non-primitive types: "
@@ -475,6 +477,17 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     auto ref_target_type = std::dynamic_pointer_cast<reference_type>(left_type);
     auto target_type = ref_target_type->get_subtype();
 
+    // ── Const-check ──────────────────────────────────────────────────────────
+    // If the target type is const-qualified (ref<const T>), assignment is forbidden.
+    if (type::is_const(target_type)) {
+        throw_error(0x0080, std::nullopt,
+            "Cannot assign to a const variable: "
+            "the left-hand side has type '{}' which is const; "
+            "const variables cannot be modified after initialisation",
+            {target_type ? target_type->to_string() : "?"});
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     if(type::is_reference(target_type)) {
         // Left hand is ref-to-ref: assignment acts on the underlying object.
         left = load_value_expression::make_shared(left);
@@ -498,7 +511,15 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         // If RHS is an indirection of the same subtype: REBIND
         if (type::is_any_indirection(rhs_effective) &&
             rhs_effective->get_subtype() && link_subtype &&
-            type::are_equal(rhs_effective->get_subtype(), link_subtype)) {
+            type::are_equal(type::remove_const(rhs_effective->get_subtype()), type::remove_const(link_subtype))) {
+            // Rebind: check const compatibility (const T~ ← T~ is OK; T~ ← const T~ is not)
+            if (type::is_const(rhs_effective->get_subtype()) && !type::is_const(link_subtype)) {
+                throw_error(0x0082, std::nullopt,
+                    "Cannot rebind a link-to-mutable ('{}') from a link-to-const ('{}'): "
+                    "this would allow modification of a const object",
+                    {target_type ? target_type->to_string() : "?",
+                     rhs_type ? rhs_type->to_string() : "?"});
+            }
             // Rebind: load the source address and store into the link alloca.
             // If source is nullable, warn — null-check at IR level.
             if (type::is_nullable_indirection(rhs_effective)) {
@@ -549,10 +570,21 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         if(type::is_pointer(effective_source_type) || type::is_link(effective_source_type)) {
             auto src_sub = effective_source_type->get_subtype();
             auto tgt_sub = target_type->get_subtype();
-            if (src_sub != tgt_sub) {
+            // Strip const from both sides for structural comparison
+            auto src_sub_nc = type::remove_const(src_sub);
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (src_sub_nc != tgt_sub_nc) {
                 throw_error(0x000B, std::nullopt,
                     "Pointer assignment type mismatch: "
-                    "cannot assign a '{}' to a '{}'; pointer types must match exactly",
+                    "cannot assign a '{}' to a '{}'; pointer subtypes must match",
+                    {source_type ? source_type->to_string() : "?",
+                     target_type ? target_type->to_string() : "?"});
+            }
+            // Forbid const T* → T* (would lose const-ness on pointed object)
+            if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
+                throw_error(0x0081, std::nullopt,
+                    "Cannot assign a pointer-to-const ('{}') to a pointer-to-mutable ('{}'): "
+                    "this would allow modification of a const object through the mutable pointer",
                     {source_type ? source_type->to_string() : "?",
                      target_type ? target_type->to_string() : "?"});
             }
@@ -1184,6 +1216,12 @@ void type_reference_resolver::visit_prefix_increment_expression(prefix_increment
         value_type = value_type->get_subtype();
     }
 
+    if(type::is_const(value_type)) {
+        throw_error(0x0083, std::nullopt,
+            "Cannot apply prefix '++' to a const variable of type '{}'",
+            {value_type ? value_type->to_string() : "?"});
+    }
+
     if(!type::is_primitive(value_type)) {
         throw_error(0x0030, std::nullopt,
             "Prefix '++' requires a numeric primitive operand, but got type '{}'",
@@ -1258,6 +1296,12 @@ void type_reference_resolver::visit_prefix_decrement_expression(prefix_decrement
         value_type = value_type->get_subtype();
     }
 
+    if(type::is_const(value_type)) {
+        throw_error(0x0084, std::nullopt,
+            "Cannot apply prefix '--' to a const variable of type '{}'",
+            {value_type ? value_type->to_string() : "?"});
+    }
+
     if(!type::is_primitive(value_type)) {
         throw_error(0x0033, std::nullopt,
             "Prefix '--' requires a numeric primitive operand, but got type '{}'",
@@ -1327,6 +1371,12 @@ void type_reference_resolver::visit_postfix_increment_expression(postfix_increme
     auto value_type = ref_type->get_subtype();
     if(type::is_reference(value_type)) {
         value_type = value_type->get_subtype();
+    }
+
+    if(type::is_const(value_type)) {
+        throw_error(0x0085, std::nullopt,
+            "Cannot apply postfix '++' to a const variable of type '{}'",
+            {value_type ? value_type->to_string() : "?"});
     }
 
     if(!type::is_primitive(value_type)) {
@@ -1399,6 +1449,12 @@ void type_reference_resolver::visit_postfix_decrement_expression(postfix_decreme
     auto value_type = ref_type->get_subtype();
     if(type::is_reference(value_type)) {
         value_type = value_type->get_subtype();
+    }
+
+    if(type::is_const(value_type)) {
+        throw_error(0x0086, std::nullopt,
+            "Cannot apply postfix '--' to a const variable of type '{}'",
+            {value_type ? value_type->to_string() : "?"});
     }
 
     if(!type::is_primitive(value_type)) {

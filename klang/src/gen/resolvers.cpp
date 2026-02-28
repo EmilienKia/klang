@@ -1080,9 +1080,34 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             upcast->set_type(var_type);
             init_expr->assign_argument(0, upcast);
         }
+    } else if (type::is_pointer(var.get_type())) {
+        // Pointer variable (*): validate const-compatibility of initializer.
+        // A pointer-to-const (*K) cannot be initialized from a pointer-to-mutable if const-ness
+        // would be lost (i.e. const T* ← T* is OK; T* ← const T* is forbidden).
+        if (init_expr && !init_expr->empty()) {
+            if (auto arg = init_expr->argument(0)) {
+                auto arg_type = arg->get_type();
+                // Unwrap ref if the init expression is a reference to a pointer
+                if (type::is_reference(arg_type)) {
+                    arg_type = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
+                }
+                auto tgt_ptr = std::dynamic_pointer_cast<pointer_type>(var.get_type());
+                auto src_ptr = std::dynamic_pointer_cast<pointer_type>(arg_type);
+                auto src_lnk = std::dynamic_pointer_cast<link_type>(arg_type);
+                auto src_sub = src_ptr ? src_ptr->get_subtype() : (src_lnk ? src_lnk->get_linked_type() : nullptr);
+                if (tgt_ptr && src_sub) {
+                    auto tgt_sub = tgt_ptr->get_subtype();
+                    if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
+                        throw_error(0x0081, std::nullopt,
+                            "Cannot initialise a pointer-to-mutable ('{}') from a pointer-to-const ('{}'): "
+                            "this would allow modification of a const object through the mutable pointer",
+                            {var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
+                    }
+                }
+            }
+        }
     } else if (type::is_link(var.get_type())) {
-        // Link variable (~): mutable, non-null — must be initialised at declaration.
-        // Same initialisation rules as reference: exactly one addressable (reference-typed) arg.
+        // Link variable (~): validate const-compatibility of initializer (for rebind semantics).
         auto link_var_type = std::dynamic_pointer_cast<link_type>(var.get_type());
 
         if (!init_expr || init_expr->empty()) {
@@ -1119,10 +1144,33 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                  arg_type ? arg_type->to_string() : "?"});
             return;
         }
+        // Const-compatibility: link-to-mutable cannot be init from link/pointer/ref-to-const
+        {
+            auto link_sub = link_var_type->get_linked_type();
+            std::shared_ptr<type> src_pointed_type; // what the source points to
+            auto effective_arg = arg_type;
+            // Unwrap ref if init expr is ref<link> or ref<pointer>
+            if (auto ref_t = std::dynamic_pointer_cast<reference_type>(arg_type)) {
+                effective_arg = ref_t->get_subtype();
+            }
+            if (auto lnk_t = std::dynamic_pointer_cast<link_type>(effective_arg)) {
+                src_pointed_type = lnk_t->get_linked_type();
+            } else if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(effective_arg)) {
+                src_pointed_type = ptr_t->get_pointed_type();
+            } else if (auto ref_t2 = std::dynamic_pointer_cast<reference_type>(effective_arg)) {
+                src_pointed_type = ref_t2->get_subtype(); // &const_var → const T
+            } else if (type::is_const(effective_arg)) {
+                src_pointed_type = effective_arg;
+            }
+            if (src_pointed_type && type::is_const(src_pointed_type) && !type::is_const(link_sub)) {
+                throw_error(0x0082, std::nullopt,
+                    "Cannot initialise link-to-mutable ('{}') from a const source (type '{}'): "
+                    "this would allow modification of a const object",
+                    {var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
+            }
+        }
         // If initialising from a nullable indirection (pinned or pointer), emit a warning:
-        // a null-check + __fatal_null_assignation() will be generated at IR level.
         if (type::is_nullable_indirection(arg_type)) {
-            // Emit warning — a runtime null-check will be generated
             auto diag = k::log::diagnostic::make_warning(with_flag(0x4505),
                 "Link variable '{}' of type '{}' is being initialised from a nullable source "
                 "(type '{}'): a runtime null-check will be inserted",
@@ -1198,11 +1246,22 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
 
     auto type_src = expr->get_type();
 
+    // Strip const from both sides: const T and T are interchangeable for value conversions.
+    // Const-checking for assignment targets is done separately in visit_assignation_expression.
+    auto tgt_nc = type::remove_const(tgt);
+
     // --- Pointer cases ---
     if (type::is_pointer(type_src)) {
-        if (type::is_pointer(tgt)) {
-            // Pointed types must be identical for now, no pointer conversions supported yet.
-            return (type_src == tgt) ? CAST_NONE : CAST_IMPOSSIBLE;
+        if (type::is_pointer(tgt_nc)) {
+            // For pointer weight, compare after stripping const on pointed types (widening const allowed).
+            auto src_sub = type_src->get_subtype();
+            auto tgt_sub = tgt_nc->get_subtype();
+            auto src_sub_nc = type::remove_const(src_sub);
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (src_sub_nc != tgt_sub_nc) return CAST_IMPOSSIBLE;
+            // const T* <- T*: allowed (widening), T* <- const T*: forbidden (narrowing at value level -> IMPOSSIBLE for weights)
+            if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
+            return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
         }
         return CAST_IMPOSSIBLE;
     }
@@ -1216,12 +1275,12 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     // --- Reference cases ---
     if (type::is_reference(effective_src)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(effective_src);
-        if (type::is_reference(tgt)) {
-            if (effective_src == tgt) return CAST_NONE;
+        if (type::is_reference(tgt_nc)) {
+            if (effective_src == tgt_nc) return CAST_NONE;
             // Check struct upcast: ref<Derived> → ref<Base>
             auto src_st_type = std::dynamic_pointer_cast<struct_type>(ref_src->get_referenced_type());
             auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(
-                std::dynamic_pointer_cast<reference_type>(tgt)->get_referenced_type());
+                std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_referenced_type());
             if (src_st_type && tgt_st_type) {
                 auto src_st = src_st_type->get_struct();
                 auto tgt_st = tgt_st_type->get_struct();
@@ -1232,13 +1291,13 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             return CAST_IMPOSSIBLE;
         }
         // ref -> value: need a load
-        auto sub = ref_src->get_subtype();
-        if (sub == tgt) {
+        auto sub = type::remove_const(ref_src->get_subtype());
+        if (sub == tgt_nc) {
             return CAST_REF_CONV;
         }
         // ref -> different primitive: load + cast
         auto prim_sub = std::dynamic_pointer_cast<primitive_type>(sub);
-        auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(tgt);
+        auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(tgt_nc);
         if (prim_sub && prim_tgt) {
             if (*prim_sub == *prim_tgt) return CAST_REF_CONV;
             // Widening: same category, target is larger or same
@@ -1259,7 +1318,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
 
     // --- Both primitive ---
     auto prim_src = std::dynamic_pointer_cast<primitive_type>(effective_src);
-    auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(tgt);
+    auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(tgt_nc);
     if (prim_src && prim_tgt) {
         if (*prim_src == *prim_tgt) return CAST_NONE;
         // Widening: integers same signedness, target wider or equal; or float widening
@@ -1277,7 +1336,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     }
 
     // --- Struct construction via single-arg constructor ---
-    if (auto st_tgt = std::dynamic_pointer_cast<struct_type>(tgt)) {
+    if (auto st_tgt = std::dynamic_pointer_cast<struct_type>(tgt_nc)) {
         auto st = st_tgt->get_struct();
         if (st) {
             for (auto& ctor : st->constructors()) {
@@ -1294,11 +1353,11 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     }
 
     // --- Upcast: struct ref → base struct ref (implicit) ---
-    if (type::is_reference(tgt) && type::is_reference(effective_src)) {
+    if (type::is_reference(tgt_nc) && type::is_reference(effective_src)) {
         auto src_st_type = std::dynamic_pointer_cast<struct_type>(
             std::dynamic_pointer_cast<reference_type>(effective_src)->get_referenced_type());
         auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(
-            std::dynamic_pointer_cast<reference_type>(tgt)->get_referenced_type());
+            std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_referenced_type());
         if (src_st_type && tgt_st_type && src_st_type != tgt_st_type) {
             auto src_st = src_st_type->get_struct();
             auto tgt_st = tgt_st_type->get_struct();
@@ -1309,7 +1368,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     }
     // --- Upcast: struct value → base struct value ---
     if (auto src_st_type = std::dynamic_pointer_cast<struct_type>(effective_src)) {
-        if (auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt)) {
+        if (auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_nc)) {
             if (src_st_type != tgt_st_type) {
                 auto src_st = src_st_type->get_struct();
                 auto tgt_st = tgt_st_type->get_struct();
@@ -1670,7 +1729,8 @@ std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(
 
     if(type::is_reference(type)) {
         auto deref = load_value_expression::make_shared(expr);
-        deref->set_type(type->get_subtype());
+        // Strip const when loading a value: const is compile-time only.
+        deref->set_type(k::model::type::remove_const(type->get_subtype()));
         return deref;
     } else {
         return expr;
@@ -1684,9 +1744,11 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     }
 
     auto type_src = expr->get_type();
+    // For value-level adaptation, strip const from both sides.
+    auto type_nc = type::remove_const(type);
 
     if(type::is_pointer(type_src)) {
-        if(type::is_pointer(type)) {
+        if(type::is_pointer(type_nc)) {
             if (type == type_src) {
                 // Pointers to same type, return the expression
                 return expr;
@@ -1710,45 +1772,40 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     }
 
     if(type::is_reference(type_src)) {
-        if(type::is_reference(type)) {
-            if (type == type_src) {
+        if(type::is_reference(type_nc)) {
+            if (type_nc == type_src) {
                 // Reference to same type, return the expression
                 return expr;
             }
             // Upcast: ref<Derived> → ref<Base>
             auto src_ref = std::dynamic_pointer_cast<reference_type>(type_src);
-            auto tgt_ref = std::dynamic_pointer_cast<reference_type>(type);
+            auto tgt_ref = std::dynamic_pointer_cast<reference_type>(type_nc);
             auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_ref->get_referenced_type());
             auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_ref->get_referenced_type());
             if (src_st_type && tgt_st_type) {
                 auto src_st = src_st_type->get_struct();
                 auto tgt_st = tgt_st_type->get_struct();
                 if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
-                    // Create an upcast expression (reinterpret the ref as a base ref)
-                    // At IR level this will be a GEP to the base subobject.
-                    auto upcast = cast_expression::make_shared(expr, type); // type == target ref type
-                    upcast->set_type(type);
+                    auto upcast = cast_expression::make_shared(expr, type_nc);
+                    upcast->set_type(type_nc);
                     return upcast;
                 }
             }
-            // Reference to different types (no upcast possible)
             return {};
         }
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
-        auto ref_subtype = ref_src->get_subtype();
-        if(ref_subtype == type) {
+        auto ref_subtype = type::remove_const(ref_src->get_subtype());
+        if(ref_subtype == type_nc) {
             // ref<T> -> T : simple load
             return adapt_reference_load_value(expr);
         }
         // ref<primA> -> primB : load first, then cast between primitives
         auto prim_sub = std::dynamic_pointer_cast<primitive_type>(ref_subtype);
-        auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type);
+        auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
         if (prim_sub && prim_tgt) {
-            // Load the reference to get the value
             auto loaded = adapt_reference_load_value(expr);
             if (!loaded) return {};
             if (*prim_sub == *prim_tgt) return loaded;
-            // Cast the loaded value to the target primitive type
             auto cast = cast_expression::make_shared(loaded, prim_tgt);
             cast->set_type(prim_tgt);
             return cast;
@@ -1756,17 +1813,14 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
         return {};
     }
 
-    auto prim_src = std::dynamic_pointer_cast<primitive_type>(expr->get_type());
-    auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type);
+    auto prim_src = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr->get_type()));
+    auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
 
     if(!prim_src || !prim_tgt) {
-        // Support only primitive types for now.
-        // TODO support not-primitive type casting
         return {};
     }
 
     if(*prim_src==*prim_tgt) {
-        // Trivially agree for same types
         return expr;
     }
 

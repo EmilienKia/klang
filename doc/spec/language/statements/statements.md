@@ -74,6 +74,7 @@ VariableDecl:
     { Specifier } Identifier ':' TypeSpec [ Initialiser ] ';'
 Specifier: (one of)
     'static'
+    'const'
 Initialiser:
     '=' ConditionalExpr                     -- value initialisation
     | '(' [ ExpressionList ] ')'            -- constructor initialisation
@@ -83,6 +84,7 @@ The type specifier follows a colon (`:`) after the variable name.
 ```k
 x : int;                     // uninitialized (zero for primitives)
 n : int = 42;                // value initialization
+const MAX : int = 100;       // const variable — cannot be modified after initialization
 s : short = 10s;             // typed with short literal
 result : double = 3.14d;
 flag : bool = true;
@@ -90,8 +92,12 @@ p : plop;                    // default-constructed struct
 q : plop(5);                 // struct constructed with argument
 arr : int[4];                // array of 4 ints
 ptr : int* = &x;             // pointer initialized to address of x
+cptr : const int* = &x;      // pointer to const int — pointed value cannot be modified
 ref : int& = x;              // reference bound to x — x must be an addressable variable
 ```
+
+> **Note on const:** A `const` variable must be initialised at declaration and cannot be
+> subsequently assigned, incremented or decremented. See [Types — Const-ness](../basic/types.md#12-const-ness).
 
 > **Note:** Reference variables (`int&`) must be initialised with an addressable object (lvalue).
 > A literal or arithmetic expression is not allowed. The binding is permanent: assigning to

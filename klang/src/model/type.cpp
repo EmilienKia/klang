@@ -83,6 +83,14 @@ std::shared_ptr<pinned_type> type::get_pinned()
     return pinned;
 }
 
+std::shared_ptr<const_type> type::get_const()
+{
+    if(!const_) {
+        const_ = std::shared_ptr<const_type>(new const_type(shared_from_this()));
+    }
+    return const_;
+}
+
 std::shared_ptr<array_type> type::get_array()
 {
     if(!array) {
@@ -277,6 +285,33 @@ std::string pinned_type::to_string() const {
         return sub->to_string() + "^";
     } else {
         return "<<nosub>>^";
+    }
+}
+
+//
+// Const type (const qualifier — compile-time only, no IR impact)
+//
+const_type::const_type(const std::shared_ptr<type> &subtype):
+type(subtype)
+{}
+
+bool const_type::is_resolved() const
+{
+    return subtype.lock()->is_resolved();
+}
+
+llvm::Type* const_type::get_llvm_type() const {
+    // const is a compile-time qualifier only; delegate to the inner type.
+    auto sub = subtype.lock();
+    return sub ? sub->get_llvm_type() : nullptr;
+}
+
+std::string const_type::to_string() const {
+    auto sub = subtype.lock();
+    if(sub) {
+        return "const " + sub->to_string();
+    } else {
+        return "const <<nosub>>";
     }
 }
 

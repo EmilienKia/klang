@@ -136,6 +136,9 @@ std::string mangler::mangle_function(const function& func) const {
     } else {
         for(size_t i = 0; i < func.get_parameter_size(); ++i) {
             auto param = func.get_parameter(i);
+            if (param->is_const()) {
+                mangled << SYMBOL_MODIFIER_CONST;
+            }
             mangled << mangle_type(*param->get_type());
         }
     }
@@ -166,6 +169,9 @@ std::string mangler::mangle_constructor(const constructor& ctor) const {
     } else {
         for(size_t i = 0; i < ctor.get_parameter_size(); ++i) {
             auto param = ctor.get_parameter(i);
+            if (param->is_const()) {
+                mangled << SYMBOL_MODIFIER_CONST;
+            }
             mangled << mangle_type(*param->get_type());
         }
     }
@@ -239,7 +245,9 @@ std::string mangler::mangle_static_destructor(const static_destructor& sdtor) co
 
 
 std::string mangler::mangle_type(const type& ty) const {
-    if (auto prim = dynamic_cast<const primitive_type*>(&ty)) {
+    if (auto const_ty = dynamic_cast<const const_type*>(&ty)) {
+        return SYMBOL_MODIFIER_CONST + mangle_type(*const_ty->get_inner_type());
+    } else if (auto prim = dynamic_cast<const primitive_type*>(&ty)) {
         switch(prim->get_type()) {
             case primitive_type::BOOL: return TYPE_BOOL;
             case primitive_type::CHAR: return TYPE_CHAR;

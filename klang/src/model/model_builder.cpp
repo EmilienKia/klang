@@ -73,6 +73,10 @@ namespace k::model {
 
     }
 
+    void model_builder::visit_const_type_specifier(parse::ast::const_type_specifier &) {
+        // Type resolution is handled by context::from_type_specifier; no model action needed here.
+    }
+
     void model_builder::visit_qualified_identifier(parse::ast::qualified_identifier &) {
 
     }
@@ -172,8 +176,18 @@ namespace k::model {
         }
 
         bool is_static = lex::keyword::has(decl.specifiers, lex::keyword::STATIC);
+        bool is_const  = lex::keyword::has(decl.specifiers, lex::keyword::CONST);
         std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(std::string{decl.name.content}, is_static);
-        var->set_type(_context->from_type_specifier(*decl.type));
+        auto var_type = _context->from_type_specifier(*decl.type);
+        // Normalize: if the type itself is const-qualified (e.g. "var : const T"),
+        // strip the const from the type and promote it to the is_const flag.
+        // This makes "const var : T", "var : const T", and "const var : const T" semantically identical.
+        if (type::is_const(var_type)) {
+            var_type = type::remove_const(var_type);
+            is_const = true;
+        }
+        var->set_type(var_type);
+        var->set_const(is_const);
 
         // Resolve visibility for namespace/struct-level variables (global or member)
         // Local variables (inside functions/blocks) do not have visibility.
@@ -308,7 +322,17 @@ namespace k::model {
         }
 
         for(auto param : func.params) {
-            std::shared_ptr<model::parameter> parameter = function->append_parameter(std::string{param->name->content}, _context->from_type_specifier(*(param->type)));
+            bool param_is_const = lex::keyword::has(param->specifiers, lex::keyword::CONST);
+            auto param_type = _context->from_type_specifier(*(param->type));
+            // Normalize: if the type itself is const-qualified (e.g. "n : const T"),
+            // strip the const from the type and promote it to param_is_const.
+            // Makes "const n : T", "n : const T" and "const n : const T" semantically identical.
+            if (type::is_const(param_type)) {
+                param_type = type::remove_const(param_type);
+                param_is_const = true;
+            }
+            std::shared_ptr<model::parameter> parameter = function->append_parameter(std::string{param->name->content}, param_type);
+            parameter->set_const(param_is_const);
             // Build default expression if present
             if(param->default_expr) {
                 _expr.reset();

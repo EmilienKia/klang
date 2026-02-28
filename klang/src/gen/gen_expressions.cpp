@@ -124,6 +124,31 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
     if (symbol.is_variable_def()) {
         auto var_def = symbol.get_variable_def();
         auto var_type = var_def->get_type();
+        // If the variable is declared const (flag), propagate const-ness through the type system.
+        // For primitive/struct types: wrap in const_type → "const int", "const MyStruct".
+        // For indirection types (link, pointer, pinned): apply const to the pointed-at subtype
+        // → "link(const int)", "pointer(const int)", "pinned(const int)".
+        // References are immutable by design; const on a reference applies to its subtype too.
+        // This ensures that "const x : int~" and "x : const int~" are truly identical.
+        if (var_def->is_const() && !type::is_const(var_type)) {
+            if (type::is_any_indirection(var_type)) {
+                // Apply const to the subtype of the indirection.
+                auto sub = var_type->get_subtype();
+                auto const_sub = sub->get_const();
+                // Reconstruct the same indirection kind with const subtype.
+                if (type::is_link(var_type)) {
+                    var_type = const_sub->get_link();
+                } else if (type::is_pointer(var_type)) {
+                    var_type = const_sub->get_pointer();
+                } else if (type::is_pinned(var_type)) {
+                    var_type = const_sub->get_pinned();
+                } else { // reference
+                    var_type = const_sub->get_reference();
+                }
+            } else {
+                var_type = var_type->get_const();
+            }
+        }
         // Variable symbol will always be a reference to the variable type.
         if (type::is_reference(var_type)) {
             // Variable is already a reference, so symbol type is the variable type.
@@ -415,8 +440,10 @@ void type_reference_resolver::visit_address_of_expression(address_of_expression&
             {sub_type ? sub_type->to_string() : "?"});
     }
 
-    // &ref produces a link_type (mutable, non-null address).
-    expr.set_type(sub_type->get_subtype()->get_link());
+    // &ref<T> produces a link_type (mutable, non-null address).
+    // &ref<const T> produces a link_type to const T: const T~
+    auto inner = sub_type->get_subtype(); // T or const T
+    expr.set_type(inner->get_link());
 }
 
 void implementation_generator::visit_address_of_expression(address_of_expression& expr) {
@@ -440,9 +467,10 @@ void type_reference_resolver::visit_load_value_expression(load_value_expression&
     auto type = expr.sub_expr()->get_type();
 
     if(auto ref_type = std::dynamic_pointer_cast<reference_type>(type)) {
-        expr.set_type(ref_type->get_subtype());
+        // Strip const when loading a value: const int& → int (the loaded value is not const itself)
+        expr.set_type(k::model::type::remove_const(ref_type->get_subtype()));
     } else if(auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type)) {
-        expr.set_type(ptr_type->get_subtype());
+        expr.set_type(k::model::type::remove_const(ptr_type->get_subtype()));
     } else {
         throw_error(0x0019, std::nullopt,
             "Cannot dereference a non-pointer/non-reference expression: "

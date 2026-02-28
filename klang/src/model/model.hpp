@@ -230,6 +230,9 @@ protected:
     /** Type of the variable */
     std::shared_ptr<type> _type;
 
+    /** True if this variable is declared const (immutable after construction). */
+    bool _is_const = false;
+
     /** Optional initialization statement */
     std::shared_ptr<constructor_invocation_expression> _init_expr;
 
@@ -250,6 +253,9 @@ public:
 
     virtual std::shared_ptr<type> get_type() const;
     virtual variable_definition& set_type(std::shared_ptr<type> type);
+
+    bool is_const() const { return _is_const; }
+    variable_definition& set_const(bool c) { _is_const = c; return *this; }
 
     virtual std::shared_ptr<constructor_invocation_expression> get_init_expr() const;
     virtual variable_definition& set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr);
