@@ -340,6 +340,134 @@ TEST_CASE("Visibility: private namespace function not callable from different na
     )SRC"));
 }
 
+// =============================================================================
+// Visibility — PROTECTED: accessible from subclasses
+// =============================================================================
 
+TEST_CASE("Visibility: protected member variable accessible from subclass method", "[visibility][gen]") {
+    auto jit = gen_jit(R"SRC(
+        module vis_test;
+        struct Base {
+        protected:
+            val : int;
+        public:
+            Base() : val(42) {}
+        }
+        struct Derived : public Base {
+            Derived() {}
+            get() : int { return this.val; }   // accesses protected member of Base
+        }
+        test() : int {
+            d : Derived;
+            return d.get();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
 
+TEST_CASE("Visibility: protected member variable not accessible from unrelated struct", "[visibility][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module vis_test;
+        struct A {
+        protected:
+            x : int;
+        public:
+            A() : x(0) {}
+        }
+        steal(a : A&) : int { return a.x; }   // must be rejected: free function, not a subclass
+    )SRC"));
+}
+
+TEST_CASE("Visibility: protected method accessible from subclass method", "[visibility][gen]") {
+    auto jit = gen_jit(R"SRC(
+        module vis_test;
+        struct Base {
+        protected:
+            compute() : int { return 21; }
+        }
+        struct Derived : public Base {
+            Derived() {}
+            result() : int { return this.compute() * 2; }   // calls protected method of Base
+        }
+        test() : int {
+            d : Derived;
+            return d.result();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Visibility: protected method not callable from unrelated struct", "[visibility][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module vis_test;
+        struct A {
+        protected:
+            secret() : int { return 1; }
+        }
+        call(a : A&) : int { return a.secret(); }   // must be rejected: free function, not a subclass
+    )SRC"));
+}
+
+TEST_CASE("Visibility: private member not accessible from subclass", "[visibility][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module vis_test;
+        struct Base {
+        private:
+            x : int;
+        public:
+            Base() : x(0) {}
+        }
+        struct Derived : public Base {
+            Derived() {}
+            get() : int { return this.x; }   // must be rejected: private, not accessible from subclass
+        }
+    )SRC"));
+}
+
+// =============================================================================
+// Visibility — member access via -> operator
+// =============================================================================
+
+TEST_CASE("Visibility: private member variable not accessible via -> from outside struct", "[visibility][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module vis_test;
+        struct S {
+        private:
+            x : int;
+        public:
+            S() : x(5) {}
+        }
+        test() : int {
+            s : S;
+            p : S* = &s;
+            return p->x;   // must be rejected: private via ->
+        }
+    )SRC"));
+}
+
+TEST_CASE("Visibility: public member variable accessible via -> from outside struct", "[visibility][gen]") {
+    auto jit = gen_jit(R"SRC(
+        module vis_test;
+        struct S {
+        public:
+            x : int;
+            S() : x(42) {}
+        }
+        test() : int {
+            s : S;
+            p : S* = &s;
+            return p->x;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
 

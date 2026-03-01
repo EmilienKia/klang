@@ -206,13 +206,11 @@ Every field and member function inside a struct has a *visibility* that determin
 
 ### Visibility levels
 
-| Keyword     | Accessible from …                                                       |
-|-------------|-------------------------------------------------------------------------|
-| `public`    | Everywhere. This is the **default**.                                    |
-| `protected` | Member functions of this struct and of its nested structs.              |
-| `private`   | Member functions of this struct only.                                   |
-
-> **Note:** For struct members, `protected` and `private` currently have the same access rules. The distinction will become meaningful when a friendship mechanism is introduced in a future language version.
+| Keyword     | Accessible from …                                                                              |
+|-------------|-----------------------------------------------------------------------------------------------|
+| `public`    | Everywhere. This is the **default**.                                                           |
+| `protected` | Member functions of this struct, of any struct that **derives** from it, and of its nested structs. |
+| `private`   | Member functions of **this struct only** (and its nested structs). Subclasses are excluded.   |
 
 ### Ways to specify visibility
 
@@ -247,7 +245,11 @@ Without any specifier the default visibility is **public**.
 
 ### Access from member functions
 
-Private and protected members are accessible from any (non-static) member function of the same struct.
+A member is accessible from a member function when:
+- It is `public` (accessible from anywhere), **or**
+- It is `protected` and the function belongs to the owning struct **or any struct that transitively derives from it**, **or**
+- It is `private` and the function belongs to **the exact owning struct** (or a struct nested inside it).
+
 When calling another member function of the same struct from within a method, use explicit `this.`:
 
 ```k
@@ -259,15 +261,82 @@ public:
 }
 ```
 
+### Visibility and inheritance
+
+`protected` members are the standard mechanism for sharing implementation details with subclasses while hiding them from unrelated code:
+
+```k
+struct Base {
+protected:
+    val : int;
+public:
+    Base() : val(0) {}
+}
+
+struct Derived : public Base {
+    Derived() {}
+    // OK: Derived is a subclass of Base — protected member is accessible
+    get() : int { return this.val; }
+}
+
+// A free function or unrelated struct cannot access protected members:
+steal(b : Base&) : int {
+    return b.val;  // ERROR: protected member — not a member function of Base or a subclass
+}
+```
+
+`private` members are **not** accessible from subclasses:
+
+```k
+struct Base {
+private:
+    secret : int;
+public:
+    Base() : secret(0) {}
+}
+
+struct Derived : public Base {
+    Derived() {}
+    // ERROR: secret is private in Base — subclasses cannot access it
+    get() : int { return this.secret; }
+}
+```
+
+### Member access via `.` and `->`
+
+Visibility is enforced identically for both the `.` (object/reference) and `->` (pointer) member-access operators:
+
+```k
+struct S {
+private:
+    x : int;
+public:
+    S() : x(5) {}
+}
+
+test() : int {
+    s : S;
+    p : S* = &s;
+    // s.x     // ERROR: private via '.'
+    // p->x    // ERROR: private via '->'
+    return 0;
+}
+```
+
 ### Access enforcement
 
-Accessing a private or protected member from outside its struct is a compile-time error:
+Accessing a private or protected member from outside its permitted scope is a compile-time error:
 
 ```
 Error 40030 : private member variable 'balance' of struct 'BankAccount' is not accessible here;
               it can only be accessed from member functions of 'BankAccount'
 Error 4002F : private member function 'log' of struct 'BankAccount' is not accessible here;
               it can only be called from member functions of 'BankAccount'
+
+Error 40030 : protected member variable 'val' of struct 'Base' is not accessible here;
+              it can only be accessed from member functions of 'Base' or its subclasses
+Error 40083 : private member variable 'x' of struct 'S' is not accessible here via '->';
+              it can only be accessed from member functions of 'S'
 ```
 
 ### Static constructors and visibility

@@ -104,6 +104,28 @@ public:
     /** True if access_site's root namespace is the same object as owner_root. */
     static bool is_in_same_module(const element& access_site, const ns& owner_root);
 
+    /**
+     * Check whether a struct member (variable or function) with the given visibility is
+     * accessible from the context described by function_stack.
+     *
+     * - PUBLIC    : always accessible.
+     * - PRIVATE   : accessible only from member functions of owner_st itself
+     *               (or a struct nested inside owner_st via get_enclosing_structure).
+     * - PROTECTED : accessible from member functions of owner_st OR any struct that
+     *               transitively derives from owner_st (is_derived_from).
+     *
+     * @param vis             Visibility of the member being accessed.
+     * @param owner_st        The struct that declares the member.
+     * @param owner_st_shared Shared pointer to owner_st (needed for is_derived_from).
+     * @param function_stack  The resolver's current function call stack (innermost last).
+     * @return true if the access is permitted.
+     */
+    static bool is_struct_member_accessible(
+        visibility vis,
+        const structure& owner_st,
+        const std::shared_ptr<structure>& owner_st_shared,
+        const std::vector<std::shared_ptr<function>>& function_stack);
+
 private:
     scope_lookup() = delete; // static-only utility class
 };

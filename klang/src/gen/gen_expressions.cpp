@@ -654,25 +654,15 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         if (auto st_model = hit.in_struct_type->get_struct()) {
             auto mv = st_model->get_variable(name_str);
             if (auto member_var = std::dynamic_pointer_cast<member_variable_definition>(mv)) {
-                if (member_var->get_visibility() != PUBLIC) {
-                    bool accessible = false;
-                    for (auto it = _function_stack.rbegin(); it != _function_stack.rend(); ++it) {
-                        const auto& fn = *it;
-                        if (fn->is_member() && !fn->is_static()) {
-                            auto check_st = fn->get_owner();
-                            while (check_st) {
-                                if (check_st.get() == st_model.get()) { accessible = true; break; }
-                                check_st = check_st->get_enclosing_structure();
-                            }
-                        }
-                        if (accessible) break;
-                    }
-                    if (!accessible) {
+                auto vis = member_var->get_visibility();
+                if (vis != PUBLIC) {
+                    if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
                         throw_error(0x0030, std::nullopt,
                             "{} member variable '{}' of struct '{}' is not accessible here; "
-                            "it can only be accessed from member functions of '{}'",
-                            {member_var->get_visibility() == PROTECTED ? "protected" : "private",
-                             member_var->get_short_name(), st_model->get_short_name(), st_model->get_short_name()});
+                            "it can only be accessed from member functions of '{}'{}",
+                            {vis == PROTECTED ? "protected" : "private",
+                             member_var->get_short_name(), st_model->get_short_name(), st_model->get_short_name(),
+                             vis == PROTECTED ? " or its subclasses" : ""});
                     }
                 }
             }
@@ -790,9 +780,41 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
     const auto& member_name = expr.symbol();
     const std::string& name_str = member_name.get_name().to_string();
     if (auto field = struct_subtype->get_member(name_str)) {
+        // Check visibility of the accessed field
+        if (auto st_model = struct_subtype->get_struct()) {
+            if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(st_model->get_variable(name_str))) {
+                auto vis = mv->get_visibility();
+                if (vis != PUBLIC) {
+                    if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
+                        throw_error(0x0083, std::nullopt,
+                            "{} member variable '{}' of struct '{}' is not accessible here via '->'; "
+                            "it can only be accessed from member functions of '{}'{}",
+                            {vis == PROTECTED ? "protected" : "private",
+                             mv->get_short_name(), st_model->get_short_name(), st_model->get_short_name(),
+                             vis == PROTECTED ? " or its subclasses" : ""});
+                    }
+                }
+            }
+        }
         auto field_type = field->field_type.lock();
         expr.set_type(field_type ? field_type->get_reference() : nullptr);
     } else if (struct_subtype->get_struct() && struct_subtype->get_struct()->get_function(name_str)) {
+        // Check visibility of the accessed method
+        if (auto st_model = struct_subtype->get_struct()) {
+            if (auto fn = st_model->get_function(name_str)) {
+                auto vis = fn->get_visibility();
+                if (vis != PUBLIC) {
+                    if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
+                        throw_error(0x0084, std::nullopt,
+                            "{} member function '{}' of struct '{}' is not accessible here via '->'; "
+                            "it can only be called from member functions of '{}'{}",
+                            {vis == PROTECTED ? "protected" : "private",
+                             fn->get_short_name(), st_model->get_short_name(), st_model->get_short_name(),
+                             vis == PROTECTED ? " or its subclasses" : ""});
+                    }
+                }
+            }
+        }
         expr.set_type(pointed_type->get_reference());
     } else {
         throw_error(0x0082, std::nullopt,
