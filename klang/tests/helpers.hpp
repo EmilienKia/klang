@@ -43,7 +43,28 @@ k::tools::exec_result build_and_exec(const std::string_view& src);
 
 class test_logger : public k::log::logger {
 public:
+    /** All diagnostics reported via this logger (for inspection in tests). */
+    std::vector<k::log::diagnostic> diagnostics;
+
     void report(const k::log::diagnostic& diag) override;
+
+    /** True if at least one warning-level diagnostic was reported. */
+    bool has_warning() const {
+        return std::any_of(diagnostics.begin(), diagnostics.end(), [](const k::log::diagnostic& d){
+            return d.level == k::log::diagnostic::severity::warning;
+        });
+    }
+
+    /** True if at least one error-or-fatal-level diagnostic was reported. */
+    bool has_error() const {
+        return std::any_of(diagnostics.begin(), diagnostics.end(), [](const k::log::diagnostic& d){
+            return d.level == k::log::diagnostic::severity::error
+                || d.level == k::log::diagnostic::severity::fatal;
+        });
+    }
+
+    /** Reset collected diagnostics. */
+    void clear() { diagnostics.clear(); }
 };
 
 

@@ -465,7 +465,7 @@ std::shared_ptr<struct_type> struct_type_builder::build() {
 // Structure type
 //
 
-struct_type::struct_type(const std::string& name, std::weak_ptr<k::model::structure> st):
+struct_type::struct_type(const std::string& name, std::weak_ptr<k::model::aggregate> st):
 type(nullptr),
 _name(name),
 _struct(st)
@@ -473,7 +473,7 @@ _struct(st)
 }
 
 
-struct_type::struct_type(const std::string& name, std::weak_ptr<structure> st, std::vector<field>&& fields, llvm::StructType* llvm_struct_type):
+struct_type::struct_type(const std::string& name, std::weak_ptr<aggregate> st, std::vector<field>&& fields, llvm::StructType* llvm_struct_type):
 type(llvm_struct_type),
 _name(name),
 _fields(fields),
@@ -499,7 +499,7 @@ std::string struct_type::to_string() const {
     return "struct:" + _name;
 }
 
-std::shared_ptr<structure> struct_type::get_struct() const {
+std::shared_ptr<aggregate> struct_type::get_struct() const {
     return _struct.lock();
 }
 

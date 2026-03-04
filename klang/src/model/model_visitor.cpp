@@ -35,8 +35,20 @@ void default_model_visitor::visit_namespace(ns &ns) {
     visit_element(ns);
 }
 
-void default_model_visitor::visit_structure(structure &st) {
+void default_model_visitor::visit_aggregate(aggregate &st) {
     visit_element(st);
+}
+
+void default_model_visitor::visit_structure(structure &st) {
+    visit_aggregate(st);
+}
+
+void default_model_visitor::visit_klass(klass &kl) {
+    visit_aggregate(kl);
+}
+
+void default_model_visitor::visit_interface(interface &iface) {
+    visit_klass(iface);
 }
 
 void default_model_visitor::visit_function(function &func) {

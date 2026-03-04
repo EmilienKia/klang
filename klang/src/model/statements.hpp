@@ -21,6 +21,7 @@
 #define KLANG_MODEL_STATEMENTS_HPP
 
 #include "model.hpp"
+#include "../parse/ast.hpp"
 
 namespace k::model {
 

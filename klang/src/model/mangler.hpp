@@ -105,6 +105,43 @@ public:
     std::string mangle_static_constructor(const static_constructor& sctor) const;
     std::string mangle_static_destructor(const static_destructor& sdtor) const;
 
+    /**
+     * Mangle the C2 (base-object constructor) variant of a constructor.
+     * Itanium-inspired: _KFMC2N<class>E<params>
+     * This is the base-subobject constructor variant used in virtual inheritance.
+     */
+    std::string mangle_constructor_c2(const constructor& ctor) const;
+
+    /**
+     * Mangle the D2 (base-object destructor) variant of a destructor.
+     * Itanium-inspired: _KFMD2N<class>E v
+     */
+    std::string mangle_destructor_d2(const destructor& dtor) const;
+
+    /**
+     * Mangle the vtable global variable name for a class.
+     * Convention: _KTVN<class>E
+     */
+    static std::string mangle_vtable(const name& class_name);
+
+    /**
+     * Mangle the name of the virtual dispatch thunk (wrapper that loads the vptr and calls through the vtable).
+     * Convention: _KFMvN<class><funcname>E<params>
+     * The 'v' after 'M' denotes "virtual dispatch".
+     */
+    std::string mangle_virtual_dispatch(const function& func) const;
+
+    /**
+     * Mangle the name of the concrete implementation (non-virtual) of a virtual function.
+     * Used for the specific-implementation symbol (invoked by the vtable slot and directly
+     * for non-virtual qualified calls like MyClass::myMethod()).
+     * Convention: same as mangle_function (the implementation IS the function body).
+     * Alias for mangle_function provided for clarity.
+     */
+    std::string mangle_virtual_impl(const function& func) const {
+        return mangle_function(func);
+    }
+
 
     static std::string mangle_short_name(const std::string& short_name);
 

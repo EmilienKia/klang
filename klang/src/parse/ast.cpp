@@ -49,8 +49,8 @@ void ast::namespace_decl::visit(ast_visitor &visitor) {
     visitor.visit_namespace_decl(*this);
 }
 
-void ast::struct_decl::visit(ast_visitor &visitor) {
-    visitor.visit_struct_decl(*this);
+void ast::aggregate_decl::visit(ast_visitor &visitor) {
+    visitor.visit_aggregate_decl(*this);
 }
 
 void ast::identified_type_specifier::visit(ast_visitor &visitor) {
@@ -226,7 +226,7 @@ void default_ast_visitor::visit_namespace_decl(ast::namespace_decl &ns) {
     }
 }
 
-void default_ast_visitor::visit_struct_decl(ast::struct_decl &st) {
+void default_ast_visitor::visit_aggregate_decl(ast::aggregate_decl &st) {
     for(ast::decl_ptr& decl : st.declarations) {
         decl->visit(*this);
     }

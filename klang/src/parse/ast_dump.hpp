@@ -174,8 +174,8 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             }
         }
 
-        void visit_struct_decl(ast::struct_decl& decl) override {
-            prefix() << "struct " << decl.name.content << std::endl;
+        void visit_aggregate_decl(ast::aggregate_decl& decl) override {
+            prefix() << decl.kw_aggregate_type.content << " " << decl.name.content << std::endl;
             auto pf = prefix_inc();
             for(auto d : decl.declarations) {
                 d->visit(*this);

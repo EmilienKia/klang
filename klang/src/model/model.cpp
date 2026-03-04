@@ -24,6 +24,9 @@
 
 #include "../common/tools.hpp"
 
+#include <queue>
+#include <unordered_set>
+
 
 namespace k::model {
 
@@ -136,20 +139,51 @@ std::vector<std::shared_ptr<function>> function_holder::get_functions(const std:
 
 
 //
-// Abstract structure holder
+// Abstract aggregate holder
 //
 
-std::shared_ptr<structure> structure_holder::define_structure(const std::string &name) {
+std::shared_ptr<aggregate> aggregate_holder::define_aggregate(const std::string &name, bool is_class) {
+    if (is_class) {
+        return define_class(name);
+    } else {
+        return define_structure(name);
+    }
+}
+
+std::shared_ptr<structure> aggregate_holder::define_structure(const std::string &name) {
     std::shared_ptr<structure> st = do_create_structure(name);
     _structs.insert({name, st});
-    on_structure_defined(st);
+    on_aggregate_defined(st);
     return st;
 }
 
-std::shared_ptr<structure> structure_holder::get_structure(const std::string &name) const {
+std::shared_ptr<klass> aggregate_holder::define_class(const std::string &name) {
+    std::shared_ptr<klass> kl = do_create_class(name);
+    _structs.insert({name, kl});
+    on_aggregate_defined(kl);
+    return kl;
+}
+
+std::shared_ptr<interface> aggregate_holder::define_interface(const std::string &name) {
+    std::shared_ptr<interface> iface = do_create_interface(name);
+    _structs.insert({name, iface});
+    on_aggregate_defined(iface);
+    return iface;
+}
+
+std::shared_ptr<aggregate> aggregate_holder::get_aggregate(const std::string &name) const {
     auto it = _structs.find(name);
     if (it != _structs.end()) {
         return it->second;
+    } else {
+        return {};
+    }
+}
+
+std::shared_ptr<structure> aggregate_holder::get_structure(const std::string &name) const {
+    auto it = _structs.find(name);
+    if (it != _structs.end()) {
+        return std::dynamic_pointer_cast<structure>(it->second);
     } else {
         return {};
     }
@@ -238,8 +272,8 @@ void parameter::accept(model_visitor& visitor) {
 //
 
 std::shared_ptr<function> function::make_shared(std::shared_ptr<element> parent, const std::string& name, bool is_static) {
-    // Is static is only supported for structure members (not global methods)
-    is_static = std::dynamic_pointer_cast<structure>(parent)!=nullptr ? is_static : false;
+    // Is static is only supported for aggregate members (not global methods)
+    is_static = std::dynamic_pointer_cast<aggregate>(parent)!=nullptr ? is_static : false;
     auto fn = std::shared_ptr<function>(new function(std::move(parent), is_static));
     fn->assign_name(name);
     return fn;
@@ -283,15 +317,15 @@ std::shared_ptr<block> function::get_block() {
 }
 
 bool function::is_member() const {
-    return std::dynamic_pointer_cast<const structure>(parent<element>()) != nullptr;
+    return std::dynamic_pointer_cast<const aggregate>(parent<element>()) != nullptr;
 }
 
-std::shared_ptr<const structure> function::function::get_owner() const {
-    return std::dynamic_pointer_cast<const structure>(parent<element>());
+std::shared_ptr<const aggregate> function::function::get_owner() const {
+    return std::dynamic_pointer_cast<const aggregate>(parent<element>());
 }
 
-std::shared_ptr<structure> function::function::get_owner() {
-    return std::dynamic_pointer_cast<structure>(parent<element>());
+std::shared_ptr<aggregate> function::function::get_owner() {
+    return std::dynamic_pointer_cast<aggregate>(parent<element>());
 }
 
 void function::set_return_type(std::shared_ptr<type> return_type) {
@@ -393,7 +427,7 @@ void constructor::update_mangled_name() {
     _mangled_name = mangler(get_context()).mangle_constructor(*this);
 }
 
-std::shared_ptr<constructor> constructor::make_shared(std::shared_ptr<structure> parent) {
+std::shared_ptr<constructor> constructor::make_shared(std::shared_ptr<aggregate> parent) {
     auto fn = std::shared_ptr<constructor>(new constructor(parent));
     fn->assign_name(parent->get_short_name());
     return fn;
@@ -411,7 +445,7 @@ void destructor::update_mangled_name() {
     _mangled_name = mangler(get_context()).mangle_destructor(*this);
 }
 
-std::shared_ptr<destructor> destructor::make_shared(std::shared_ptr<structure> parent) {
+std::shared_ptr<destructor> destructor::make_shared(std::shared_ptr<aggregate> parent) {
     auto fn = std::shared_ptr<destructor>(new destructor(parent));
     fn->assign_name("~" + parent->get_short_name());
     return fn;
@@ -429,7 +463,7 @@ void static_constructor::update_mangled_name() {
     _mangled_name = mangler(get_context()).mangle_static_constructor(*this);
 }
 
-std::shared_ptr<static_constructor> static_constructor::make_shared(std::shared_ptr<structure> parent) {
+std::shared_ptr<static_constructor> static_constructor::make_shared(std::shared_ptr<aggregate> parent) {
     auto fn = std::shared_ptr<static_constructor>(new static_constructor(parent));
     fn->assign_name(parent->get_short_name());
     return fn;
@@ -447,7 +481,7 @@ void static_destructor::update_mangled_name() {
     _mangled_name = mangler(get_context()).mangle_static_destructor(*this);
 }
 
-std::shared_ptr<static_destructor> static_destructor::make_shared(std::shared_ptr<structure> parent) {
+std::shared_ptr<static_destructor> static_destructor::make_shared(std::shared_ptr<aggregate> parent) {
     auto fn = std::shared_ptr<static_destructor>(new static_destructor(parent));
     fn->assign_name("~" + parent->get_short_name());
     return fn;
@@ -546,10 +580,10 @@ void global_main_function::accept(model_visitor& visitor) {
 //
 // Member variable definition
 //
-member_variable_definition::member_variable_definition(std::shared_ptr<structure> st) :
+member_variable_definition::member_variable_definition(std::shared_ptr<aggregate> st) :
         element(st){}
 
-std::shared_ptr<member_variable_definition> member_variable_definition::make_shared(std::shared_ptr<structure> st, const std::string &name) {
+std::shared_ptr<member_variable_definition> member_variable_definition::make_shared(std::shared_ptr<aggregate> st, const std::string &name) {
     auto var_def =  std::shared_ptr<member_variable_definition>(new member_variable_definition(std::move(st)));
     var_def->init(name);
     return var_def;
@@ -568,37 +602,85 @@ void member_variable_definition::accept(model_visitor &visitor) {
 // Structure
 //
 
+// (make_shared and accept defined below, together with aggregate)
+
+//
+// Klass
+//
+
+// (make_shared and accept defined below, together with aggregate)
+
+//
+// Aggregate
+//
+
+void aggregate::update_mangled_name() {
+    // Useless but for information
+    _mangled_name = _name.has_root_prefix() ? mangler::mangle_structure(_name) : "";
+}
+
+void aggregate::accept(model_visitor& visitor) {
+    visitor.visit_aggregate(*this);
+}
+
+//
+// Structure
+//
+
 std::shared_ptr<structure> structure::make_shared(std::shared_ptr<element> parent, const std::string &name) {
     auto st = std::shared_ptr<structure>(new structure(std::move(parent)));
     st->assign_name(name);
     return st;
 }
 
-void structure::update_mangled_name() {
-    // Useless but for information
-    _mangled_name = _name.has_root_prefix() ? mangler::mangle_structure(_name) : "";
-}
-
 void structure::accept(model_visitor& visitor) {
     visitor.visit_structure(*this);
 }
 
-std::shared_ptr<function> structure::define_function(const std::string &name, bool is_static) {
+//
+// Klass
+//
+
+std::shared_ptr<klass> klass::make_shared(std::shared_ptr<element> parent, const std::string &name) {
+    auto kl = std::shared_ptr<klass>(new klass(std::move(parent)));
+    kl->assign_name(name);
+    return kl;
+}
+
+void klass::accept(model_visitor& visitor) {
+    visitor.visit_klass(*this);
+}
+
+//
+// Interface
+//
+
+std::shared_ptr<interface> interface::make_shared(std::shared_ptr<element> parent, const std::string &name) {
+    auto iface = std::shared_ptr<interface>(new interface(std::move(parent)));
+    iface->assign_name(name);
+    return iface;
+}
+
+void interface::accept(model_visitor& visitor) {
+    visitor.visit_interface(*this);
+}
+
+std::shared_ptr<function> aggregate::define_function(const std::string &name, bool is_static) {
     if (name == get_short_name()) {
         if (is_static) {
             // Static constructor (class initializer)
             if (_static_constructor) {
-                std::cerr << "Error: structure " << get_short_name() << " already has a static constructor." << std::endl;
+                std::cerr << "Error: aggregate " << get_short_name() << " already has a static constructor." << std::endl;
                 return _static_constructor;
             }
-            auto sctor = static_constructor::make_shared(shared_as<structure>());
+            auto sctor = static_constructor::make_shared(shared_as<aggregate>());
             if (sctor) {
                 _static_constructor = sctor;
                 _children.push_back(sctor);
             }
             return sctor;
         } else {
-            auto construct = constructor::make_shared(shared_as<structure>());
+            auto construct = constructor::make_shared(shared_as<aggregate>());
             if (construct) {
                 _constructors.push_back(construct);
                 _children.push_back(construct);
@@ -609,10 +691,10 @@ std::shared_ptr<function> structure::define_function(const std::string &name, bo
         if (is_static) {
             // Static destructor (class finalizer)
             if (_static_destructor) {
-                std::cerr << "Error: structure " << get_short_name() << " already has a static destructor." << std::endl;
+                std::cerr << "Error: aggregate " << get_short_name() << " already has a static destructor." << std::endl;
                 return _static_destructor;
             }
-            auto sdtor = static_destructor::make_shared(shared_as<structure>());
+            auto sdtor = static_destructor::make_shared(shared_as<aggregate>());
             if (sdtor) {
                 _static_destructor = sdtor;
                 _children.push_back(sdtor);
@@ -620,11 +702,10 @@ std::shared_ptr<function> structure::define_function(const std::string &name, bo
             return sdtor;
         } else {
             if (_destructor) {
-                // TODO throw error: only one destructor allowed
-                std::cerr << "Error: structure " << get_short_name() << " already has a destructor." << std::endl;
+                std::cerr << "Error: aggregate " << get_short_name() << " already has a destructor." << std::endl;
                 return _destructor;
             }
-            auto dtor = destructor::make_shared(shared_as<structure>());
+            auto dtor = destructor::make_shared(shared_as<aggregate>());
             if (dtor) {
                 _destructor = dtor;
                 _children.push_back(dtor);
@@ -636,41 +717,48 @@ std::shared_ptr<function> structure::define_function(const std::string &name, bo
     }
 }
 
-std::shared_ptr<function> structure::do_create_function(const std::string &name, bool is_static) {
-    std::shared_ptr<structure> this_st = shared_as<structure>();
-    return std::shared_ptr<function>{function::make_shared(this_st, name, is_static)};
+std::shared_ptr<function> aggregate::do_create_function(const std::string &name, bool is_static) {
+    std::shared_ptr<aggregate> this_agg = shared_as<aggregate>();
+    return std::shared_ptr<function>{function::make_shared(this_agg, name, is_static)};
 }
 
-void structure::on_function_defined(std::shared_ptr<function> func) {
+void aggregate::on_function_defined(std::shared_ptr<function> func) {
     _children.push_back(func);
 }
 
-
-std::shared_ptr<variable_definition> structure::do_create_variable(const std::string &name, bool is_static) {
+std::shared_ptr<variable_definition> aggregate::do_create_variable(const std::string &name, bool is_static) {
     if (is_static) {
-        return std::shared_ptr<variable_definition>(global_variable_definition::make_shared(shared_as<structure>(), name));
+        return std::shared_ptr<variable_definition>(global_variable_definition::make_shared(shared_as<aggregate>(), name));
     } else {
-        return std::shared_ptr<variable_definition>(member_variable_definition::make_shared(shared_as<structure>(), name));
+        return std::shared_ptr<variable_definition>(member_variable_definition::make_shared(shared_as<aggregate>(), name));
     }
 }
 
-void structure::on_variable_defined(std::shared_ptr<variable_definition> var) {
+void aggregate::on_variable_defined(std::shared_ptr<variable_definition> var) {
     if(std::dynamic_pointer_cast<member_variable_definition>(var) != nullptr || std::dynamic_pointer_cast<global_variable_definition>(var) != nullptr ) {
         _children.push_back(std::dynamic_pointer_cast<element>(var));
     } else {
-        std::cerr << "Try to register an unsupported type of variable as member of struct" << std::endl;
+        std::cerr << "Try to register an unsupported type of variable as member of aggregate" << std::endl;
     }
 }
 
-std::shared_ptr<structure> structure::do_create_structure(const std::string &name) {
-    return structure::make_shared(shared_as<structure>(), name);
+std::shared_ptr<structure> aggregate::do_create_structure(const std::string &name) {
+    return structure::make_shared(shared_as<aggregate>(), name);
 }
 
-void structure::on_structure_defined(std::shared_ptr<structure> st) {
-    _children.push_back(st);
+std::shared_ptr<klass> aggregate::do_create_class(const std::string &name) {
+    return klass::make_shared(shared_as<aggregate>(), name);
 }
 
-bool structure::is_derived_from(const std::shared_ptr<structure>& base_st) const {
+std::shared_ptr<interface> aggregate::do_create_interface(const std::string &name) {
+    return interface::make_shared(shared_as<aggregate>(), name);
+}
+
+void aggregate::on_aggregate_defined(std::shared_ptr<aggregate> agg) {
+    _children.push_back(agg);
+}
+
+bool aggregate::is_derived_from(const std::shared_ptr<aggregate>& base_st) const {
     for (auto& bs : _bases) {
         if (!bs.base) continue;
         if (bs.base == base_st) return true;
@@ -679,7 +767,7 @@ bool structure::is_derived_from(const std::shared_ptr<structure>& base_st) const
     return false;
 }
 
-std::vector<base_spec> structure::get_all_bases() const {
+std::vector<base_spec> aggregate::get_all_bases() const {
     std::vector<base_spec> result;
     for (auto& bs : _bases) {
         if (!bs.base) continue;
@@ -690,27 +778,104 @@ std::vector<base_spec> structure::get_all_bases() const {
     return result;
 }
 
-std::shared_ptr<constructor> structure::get_copy_constructor() const {
+std::vector<std::shared_ptr<aggregate>> aggregate::get_all_virtual_base_structs() const {
+    std::vector<std::shared_ptr<aggregate>> result;
+    std::unordered_set<const aggregate*> seen;
+    std::queue<const aggregate*> q;
+    q.push(this);
+    while (!q.empty()) {
+        const aggregate* cur = q.front(); q.pop();
+        for (auto& bs : cur->get_bases()) {
+            if (!bs.base) continue;
+            if (bs.is_virtual) {
+                if (!seen.count(bs.base.get())) {
+                    seen.insert(bs.base.get());
+                    result.push_back(bs.base);
+                }
+                q.push(bs.base.get());
+            } else {
+                q.push(bs.base.get());
+            }
+        }
+    }
+    return result;
+}
+
+void klass::compute_virtual_bases(const std::vector<std::shared_ptr<aggregate>>& all_aggregates) {
+    // Step 1: count how many times each aggregate appears in the full base graph
+    // of each class. Aggregates reached more than once are diamond bases.
+    std::function<void(const aggregate*, std::unordered_map<const aggregate*, int>&)> count_class_bases;
+    count_class_bases = [&](const aggregate* cur, std::unordered_map<const aggregate*, int>& counts) {
+        for (auto& bs : cur->get_bases()) {
+            if (!bs.base || !bs.base->is_class()) continue;
+            counts[bs.base.get()]++;
+            count_class_bases(bs.base.get(), counts);
+        }
+    };
+
+    // Collect all diamond-base pairs: (intermediate, diamond_base)
+    // so we can mark intermediate→diamond_base as virtual in the intermediate class.
+    // Maps intermediate aggregate → set of diamond bases it should treat as virtual.
+    std::unordered_map<const aggregate*, std::unordered_set<const aggregate*>> needs_virtual;
+
+    for (auto& agg : all_aggregates) {
+        if (!agg || !agg->is_class()) continue;
+
+        std::unordered_map<const aggregate*, int> base_count;
+        count_class_bases(agg.get(), base_count);
+
+        std::unordered_set<const aggregate*> diamond_bases;
+        for (auto& [base_ptr, count] : base_count) {
+            if (count > 1) diamond_bases.insert(base_ptr);
+        }
+
+        if (diamond_bases.empty()) continue;
+
+        // For every node in the base graph of agg that has a diamond_base as a direct base,
+        // mark that edge as virtual. This includes the direct bases of agg itself (D→B, D→C)
+        // AND the intermediate bases (B→A, C→A).
+        std::function<void(aggregate*)> mark_virtual_edges;
+        mark_virtual_edges = [&](aggregate* cur) {
+            for (auto& bs : cur->get_bases_mutable()) {
+                if (!bs.base || !bs.base->is_class()) continue;
+                if (diamond_bases.count(bs.base.get())) {
+                    // This edge (cur→bs.base) leads directly to a diamond base: mark virtual.
+                    bs.is_virtual = true;
+                    needs_virtual[cur].insert(bs.base.get());
+                } else {
+                    // This edge leads to an intermediate. Recurse to mark deeper edges.
+                    mark_virtual_edges(bs.base.get());
+                }
+            }
+        };
+        mark_virtual_edges(agg.get());
+    }
+}
+
+bool klass::has_abstract_vtable_slots() const {
+    if (!_vtable) return false;
+    for (auto& entry : _vtable->entries) {
+        if (entry.func && entry.func->is_abstract_func()) return true;
+    }
+    return false;
+}
+
+std::shared_ptr<constructor> aggregate::get_copy_constructor() const {
     for (auto& ctor : _constructors) {
         if (ctor->is_copy_constructor()) return ctor;
-        // Detect by signature: single parameter of type ThisStruct& or const ThisStruct&
         if (ctor->get_parameter_size() == 1) {
             auto p0 = ctor->get_parameter(0);
             if (p0) {
                 auto pt = p0->get_type();
-                // Strip const if present (const T& is also a valid copy ctor signature)
                 if (type::is_const(pt)) pt = type::remove_const(pt);
                 if (auto ref = std::dynamic_pointer_cast<reference_type>(pt)) {
                     auto sub = ref->get_referenced_type();
-                    // Strip const from the referenced type too (const Struct& case)
                     if (type::is_const(sub)) sub = type::remove_const(sub);
-                    // Already-resolved struct_type
                     if (auto st = std::dynamic_pointer_cast<struct_type>(sub)) {
                         if (st->get_struct() && st->get_struct().get() == this) {
                             return ctor;
                         }
                     }
-                    // Not-yet-resolved unresolved_type: match by simple name
                     if (auto unres = std::dynamic_pointer_cast<unresolved_type>(sub)) {
                         if (unres->type_id().to_string() == get_short_name()) {
                             return ctor;
@@ -814,8 +979,16 @@ std::shared_ptr<structure> ns::do_create_structure(const std::string &name) {
     return std::shared_ptr<structure>(structure::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name));
 }
 
-void ns::on_structure_defined(std::shared_ptr<structure> st) {
-    _children.push_back(st);
+std::shared_ptr<klass> ns::do_create_class(const std::string &name) {
+    return std::shared_ptr<klass>(klass::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name));
+}
+
+std::shared_ptr<interface> ns::do_create_interface(const std::string &name) {
+    return std::shared_ptr<interface>(interface::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name));
+}
+
+void ns::on_aggregate_defined(std::shared_ptr<aggregate> agg) {
+    _children.push_back(agg);
 }
 
 

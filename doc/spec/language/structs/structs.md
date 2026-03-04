@@ -488,7 +488,9 @@ use_counter(const c : Counter&) : int {
 
 ### Overloading with const
 
-`const` is part of the function signature for mangling but overloading between a `const` and a mutable version of the same member function is not currently supported.
+`const` is part of the function signature for name mangling purposes.  
+Overloading between a `const` and a mutable version of the same member function is supported **for classes** (see [Classes — §13.2](classes.md#132-constmutable-overloading)).  
+On plain structs this combination is valid syntactically but is not commonly used, as structs have no virtual dispatch and the selection purely follows the constness of the receiver.
 
 ---
 

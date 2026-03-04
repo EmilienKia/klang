@@ -96,7 +96,7 @@ public:
     std::vector<ast::decl_ptr> parse_declarations();
 
     /**
-     *  DECLARATION := VISIBILITY_DECL | NAMESPACE_DECL | FUNCTION_DECL | STRUCT_DECLARATION | VARIABLE_DECL
+     *  DECLARATION := VISIBILITY_DECL | NAMESPACE_DECL | FUNCTION_DECL | AGGREGATE_DECLARATION | VARIABLE_DECL
      * @return
      */
     ast::decl_ptr parse_declaration();
@@ -114,9 +114,9 @@ public:
     std::shared_ptr<ast::namespace_decl> parse_namespace_decl();
 
     /**
-     * STRUCT_DECL := SPECIFIERS 'struct' identifier '{' DECLARATIONS '}'
+     * AGGREGATE_DECLARATION := SPECIFIERS ['struct'|'class', 'interface'] identifier '{' DECLARATIONS '}'
      */
-    std::shared_ptr<ast::struct_decl> parse_struct_decl();
+    std::shared_ptr<ast::aggregate_decl> parse_aggregate_decl();
 
     /**
      * QUALIFIED_IDENTIFIER := ?'::' identifier *( '::' identifier )

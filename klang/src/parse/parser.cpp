@@ -141,7 +141,7 @@ ast::decl_ptr parser::parse_declaration()
     }
 
     // Look for a struct decl
-    if(auto decl = parse_struct_decl()) {
+    if(auto decl = parse_aggregate_decl()) {
         return decl;
     }
 
@@ -219,7 +219,7 @@ std::shared_ptr<ast::namespace_decl> parser::parse_namespace_decl()
     return std::make_shared<ast::namespace_decl>(*ns, *open_par, *close_par, name, declarations);
 }
 
-std::shared_ptr<ast::struct_decl> parser::parse_struct_decl()
+std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
 {
     lex::lex_holder holder(_lexer);
 
@@ -228,8 +228,8 @@ std::shared_ptr<ast::struct_decl> parser::parse_struct_decl()
     std::optional<lex::keyword> st;
     std::optional<lex::punctuator> open_brace, close_brace;
 
-    // Not a "struct" keyword, skip namespace declaration
-    if(lex::opt_ref_any_lexeme lstruct = _lexer.get(); lstruct==lex::keyword::STRUCT) {
+    // Accept "struct", "class" or "interface" keyword
+    if(lex::opt_ref_any_lexeme lstruct = _lexer.get(); lstruct==lex::keyword::STRUCT || lstruct==lex::keyword::CLASS || lstruct==lex::keyword::INTERFACE) {
         st = lex::as<lex::keyword>(lstruct);
     } else {
         holder.rollback();
@@ -244,7 +244,7 @@ std::shared_ptr<ast::struct_decl> parser::parse_struct_decl()
     }
 
     // Optional base-class clause: ':' [vis] Name [',' [vis] Name]*
-    std::vector<ast::struct_decl::base_clause_entry> bases;
+    std::vector<ast::aggregate_decl::base_clause_entry> bases;
     {
         lex::lex_holder base_holder(_lexer);
         auto maybe_colon = _lexer.get();
@@ -265,7 +265,7 @@ std::shared_ptr<ast::struct_decl> parser::parse_struct_decl()
                 if (!lex::is<lex::identifier>(lbase_name)) {
                     throw_error(0x003F, _lexer.pick_current(), "Expected base class name in inheritance clause");
                 }
-                ast::struct_decl::base_clause_entry entry{vis_kw, lex::as<lex::identifier>(lbase_name)};
+                ast::aggregate_decl::base_clause_entry entry{vis_kw, lex::as<lex::identifier>(lbase_name)};
                 bases.push_back(std::move(entry));
                 // Check for ',' to continue
                 lex::lex_holder comma_holder(_lexer);
@@ -298,7 +298,7 @@ std::shared_ptr<ast::struct_decl> parser::parse_struct_decl()
         throw_error(0x003C, _lexer.pick_current(), "Struct closing brace is expected");
     }
 
-    return std::make_shared<ast::struct_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations);
+    return std::make_shared<ast::aggregate_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations);
 }
 
 std::vector<lex::keyword> parser::parse_specifiers()
@@ -463,8 +463,9 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         // it is a return-type specifier. Otherwise, we try to parse as a mem-initializer-list.
         // Disambiguation: a type specifier always comes right before '{', so if after parsing the
         // type spec the next token is '{', it was indeed the return type.
+        // For abstract functions a bare ';' also ends the return type (no body follows).
         // But for mem-initializer-list the identifier is followed by '(', not ':' or '[' etc.
-        // Strategy: try type-spec; if next is '{' → return type. Else rollback and try mem-init-list.
+        // Strategy: try type-spec; if next is '{' or (abstract + ';') → return type. Else rollback and try mem-init-list.
         {
             lex::lex_holder type_holder(_lexer);
             auto candidate_type = parse_type_spec();
@@ -473,7 +474,9 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 lex::lex_holder peek_holder(_lexer);
                 auto next = _lexer.get();
                 peek_holder.rollback();
-                if(next == lex::punctuator::BRACE_OPEN) {
+                bool is_return_type = (next == lex::punctuator::BRACE_OPEN)
+                    || (next == lex::punctuator::SEMICOLON);
+                if(is_return_type) {
                     // It really is a return type
                     restype = candidate_type;
                     // type_holder stays synced (consumed)
@@ -580,6 +583,20 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), params, aliasing);
         }
         alias_holder.rollback();
+
+        // Allow bodyless function declarations: 'fun() : T;' or 'abstract fun() : T;'
+        // The model_builder will validate whether a bodyless function is permitted
+        // in the current context (interface methods, abstract class methods, etc.).
+        {
+            lex::lex_holder semi_holder(_lexer);
+            auto lsemi = _lexer.get();
+            if (lsemi == lex::punctuator::SEMICOLON) {
+                // Return a function_decl with no body and no aliasing
+                return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, nullptr, is_destructor);
+            }
+            semi_holder.rollback();
+        }
+
         throw_error(0x000F, _lexer.pick_current(), "Function declaration expects a body block '{ ... }'");
     }
     return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, statements, is_destructor);

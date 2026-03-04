@@ -1290,7 +1290,7 @@ TEST_CASE("Parse struct with constructor mem-initializer-list", "[parser][functi
         }
     )SRC"};
     k::parse::parser parser(log, src);
-    auto decl = parser.parse_struct_decl();
+    auto decl = parser.parse_aggregate_decl();
     REQUIRE( decl );
 
     REQUIRE( decl->declarations.size() == 3 );
@@ -1360,7 +1360,7 @@ TEST_CASE("Parse constructor with default parameter", "[parser][default-params]"
         }
     )SRC"};
     k::parse::parser parser(log, src);
-    auto decl = parser.parse_struct_decl();
+    auto decl = parser.parse_aggregate_decl();
     REQUIRE(decl);
     REQUIRE(decl->declarations.size() == 1);
     auto func = std::dynamic_pointer_cast<ast::function_decl>(decl->declarations[0]);
@@ -1431,7 +1431,7 @@ TEST_CASE("Parse struct with defaulted and deleted constructors", "[parser][func
         }
     )SRC"};
     k::parse::parser parser(log, src);
-    auto decl = parser.parse_struct_decl();
+    auto decl = parser.parse_aggregate_decl();
     REQUIRE( decl );
     REQUIRE( decl->declarations.size() == 2 );
 

@@ -41,7 +41,10 @@ public:
     virtual void visit_unit(unit&) =0;
 
     virtual void visit_namespace(ns&) =0;
+    virtual void visit_aggregate(aggregate&) =0;
     virtual void visit_structure(structure&) =0;
+    virtual void visit_klass(klass&) =0;
+    virtual void visit_interface(interface&) =0;
     virtual void visit_function(function&) =0;
     virtual void visit_constructor(constructor&) =0;
     virtual void visit_destructor(destructor&) =0;
@@ -140,7 +143,10 @@ public:
     void visit_unit(unit&) override;
 
     void visit_namespace(ns&) override;
+    void visit_aggregate(aggregate&) override;
     void visit_structure(structure&) override;
+    void visit_klass(klass&) override;
+    void visit_interface(interface&) override;
     void visit_function(function&) override;
     void visit_constructor(constructor&) override;
     void visit_destructor(destructor&) override;

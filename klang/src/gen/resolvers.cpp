@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 //
-// Note: Last resolver log number: 0x40031 (type_reference_resolver)
+// Note: Last resolver log number: 0x40032 (type_reference_resolver), 0x30039 (symbol_resolver)
 //
 // How symbols are resolved:
 // A symbol is resolved by trying to match a looked name from a searched context.
@@ -58,8 +58,12 @@
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
 
+#include <llvm/IR/DerivedTypes.h>
+
 #include <queue>
 #include <set>
+#include <unordered_set>
+#include <functional>
 
 namespace k::model::gen {
 
@@ -88,7 +92,7 @@ std::shared_ptr<ns> scope_lookup::root_namespace(const element& elem) {
     return last_ns;
 }
 
-bool scope_lookup::is_inside_member_function_of_or_ancestor(const element& access_site, const structure& st) {
+bool scope_lookup::is_inside_member_function_of_or_ancestor(const element& access_site, const aggregate& st) {
     auto cur = access_site.shared_as<const element>();
     while (cur) {
         if (auto fn = std::dynamic_pointer_cast<const function>(cur)) {
@@ -96,7 +100,7 @@ bool scope_lookup::is_inside_member_function_of_or_ancestor(const element& acces
                 auto check_st = fn->get_owner();
                 while (check_st) {
                     if (check_st.get() == &st) return true;
-                    check_st = check_st->get_enclosing_structure();
+                    check_st = check_st->get_enclosing_aggregate();
                 }
             }
         }
@@ -122,29 +126,25 @@ bool scope_lookup::is_in_same_module(const element& access_site, const ns& owner
 
 bool scope_lookup::is_struct_member_accessible(
     visibility vis,
-    const structure& owner_st,
-    const std::shared_ptr<structure>& owner_st_shared,
+    const aggregate& owner_st,
+    const std::shared_ptr<aggregate>& owner_st_shared,
     const std::vector<std::shared_ptr<function>>& function_stack)
 {
     if (vis == PUBLIC) return true;
 
-    // Walk the function stack from innermost to outermost
     for (auto it = function_stack.rbegin(); it != function_stack.rend(); ++it) {
         const auto& fn = *it;
         if (!fn->is_member() || fn->is_static()) continue;
 
-        // Walk up through enclosing structs (handles nested structs)
         auto check_st = fn->get_owner();
         while (check_st) {
             if (vis == PRIVATE) {
-                // PRIVATE: only exact owner_st (or its nesting ancestors) can access
                 if (check_st.get() == &owner_st) return true;
             } else {
-                // PROTECTED: owner_st itself OR any struct that derives from owner_st
                 if (check_st.get() == &owner_st) return true;
                 if (owner_st_shared && check_st->is_derived_from(owner_st_shared)) return true;
             }
-            check_st = check_st->get_enclosing_structure();
+            check_st = check_st->get_enclosing_aggregate();
         }
     }
     return false;
@@ -199,12 +199,12 @@ scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string&
     return result;
 }
 
-std::shared_ptr<structure>
+std::shared_ptr<aggregate>
 scope_lookup::lookup_structure(std::shared_ptr<element> elem, const std::string& name) {
     for (auto current = elem; current; current = current->parent<element>()) {
-        if (auto sh = std::dynamic_pointer_cast<structure_holder>(current)) {
-            if (auto st = sh->get_structure(name)) {
-                return st;
+        if (auto sh = std::dynamic_pointer_cast<aggregate_holder>(current)) {
+            if (auto agg = sh->get_aggregate(name)) {
+                return agg;
             }
         }
     }
@@ -250,10 +250,10 @@ symbol_resolver::resolve_qualified_from(const element& elem, const name& name) {
         }
     }
 
-    // Try structure
-    if (auto st_holder = dynamic_cast<const structure_holder*>(&elem)) {
-        if (auto st = st_holder->get_structure(first)) {
-            auto res = resolve_qualified_from(*st, rest);
+    // Try aggregate (structure or class)
+    if (auto st_holder = dynamic_cast<const aggregate_holder*>(&elem)) {
+        if (auto agg = st_holder->get_aggregate(first)) {
+            auto res = resolve_qualified_from(*agg, rest);
             if (res.index() != 0) return res;
         }
     }
@@ -331,10 +331,10 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
     } else if(name.size() > 1) {
         // Qualified name
 
-        // Look at structures
-        if (auto st_holder = dynamic_cast<const structure_holder*>(&elem)) {
-            if (auto st = st_holder->get_structure(name.front())) {
-                if (auto res = resolve_symbol(*st, name.without_front()); res.index()!=0) {
+        // Look at aggregates (structures and classes)
+        if (auto st_holder = dynamic_cast<const aggregate_holder*>(&elem)) {
+            if (auto agg = st_holder->get_aggregate(name.front())) {
+                if (auto res = resolve_symbol(*agg, name.without_front()); res.index()!=0) {
                     return res;
                 }
             }
@@ -388,18 +388,16 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
 void symbol_resolver::check_variable_visibility(const variable_definition& var, const element& /*access_site*/) {
     // Member variable in a struct
     if (auto mv = dynamic_cast<const member_variable_definition*>(&var)) {
-        auto owner_st = std::const_pointer_cast<structure>(mv->parent<structure>());
-        if (!owner_st) return;
+        auto owner_agg = std::const_pointer_cast<aggregate>(mv->parent<aggregate>());
+        if (!owner_agg) return;
         auto vis = mv->get_visibility();
         if (vis == PUBLIC) return;
-        // PRIVATE:    only from member functions of the exact owning struct (or nested structs of it).
-        // PROTECTED:  same as PRIVATE plus any struct that transitively derives from the owning struct.
-        if (scope_lookup::is_struct_member_accessible(vis, *owner_st, owner_st, _function_stack)) return;
+        if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
         throw_error(0x000F, std::nullopt,
             "{} member variable '{}' of struct '{}' is not accessible here; "
             "it can only be accessed from member functions of '{}'{}",
             {vis == PROTECTED ? "protected" : "private",
-             mv->get_short_name(), owner_st->get_short_name(), owner_st->get_short_name(),
+             mv->get_short_name(), owner_agg->get_short_name(), owner_agg->get_short_name(),
              vis == PROTECTED ? " or its subclasses" : ""});
     }
 
@@ -519,6 +517,489 @@ std::shared_ptr<expression> symbol_resolver::adapt_type(std::shared_ptr<expressi
 }
 
 //
+// Aggregate type resolver (Phase 1.a)
+//
+
+// ── Type resolution helpers (mirror of type_reference_resolver) ──────────────
+
+std::shared_ptr<aggregate>
+aggregate_type_resolver::resolve_struct_from(const element& elem, const k::name& qualified_name) {
+    if (qualified_name.empty()) return {};
+
+    if (qualified_name.size() == 1) {
+        if (auto st_holder = dynamic_cast<const aggregate_holder*>(&elem)) {
+            if (auto agg = st_holder->get_aggregate(qualified_name.front())) return agg;
+        }
+        return {};
+    }
+
+    const auto& first = qualified_name.front();
+    const auto  rest  = qualified_name.without_front();
+
+    if (auto nspc = dynamic_cast<const ns*>(&elem)) {
+        if (auto child = nspc->get_child_namespace(first)) {
+            if (auto st = resolve_struct_from(*child, rest)) return st;
+        }
+    }
+    if (auto st_holder = dynamic_cast<const aggregate_holder*>(&elem)) {
+        if (auto agg = st_holder->get_aggregate(first)) {
+            if (auto nested = resolve_struct_from(*agg, rest)) return nested;
+        }
+    }
+    return {};
+}
+
+std::shared_ptr<type>
+aggregate_type_resolver::resolve_type_from_root(const k::name& name_without_prefix) {
+    if (name_without_prefix.empty()) return {};
+    auto root_ns = _unit.get_root_namespace();
+    if (!root_ns) return {};
+
+    const auto& unit_name = _unit.get_unit_name();
+    if (!unit_name.empty() && name_without_prefix.front() == unit_name.back()) {
+        auto rest = name_without_prefix.without_front();
+        if (!rest.empty()) {
+            if (auto st = resolve_struct_from(*root_ns, rest)) return st->get_struct_type();
+        }
+    }
+    if (auto st = resolve_struct_from(*root_ns, name_without_prefix)) return st->get_struct_type();
+    return {};
+}
+
+std::shared_ptr<type>
+aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const element& context_elem) {
+    if (type_name.empty()) return {};
+
+    if (type_name.has_root_prefix()) {
+        return resolve_type_from_root(type_name.without_root_prefix());
+    }
+
+    if (type_name.size() == 1) {
+        auto prim = _context->from_string(type_name.front());
+        if (prim && type::is_resolved(prim)) return prim;
+    }
+
+    for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
+        if (auto st = resolve_struct_from(*current, type_name)) return st->get_struct_type();
+    }
+    return {};
+}
+
+// ── Resolve a single type reference (for parameters and member variables) ────
+
+static std::shared_ptr<type>
+resolve_one_type(const std::shared_ptr<type>& t,
+                 aggregate_type_resolver& resolver,
+                 const element& context_elem,
+                 std::shared_ptr<context> ctx) {
+    if (type::is_resolved(t)) return t;
+
+    // Composite type (reference_type, pointer_type, etc. wrapping an unresolved subtype)
+    auto resolved_composite = ctx->resolve_type(t);
+    if (type::is_resolved(resolved_composite)) return resolved_composite;
+
+    auto unres = std::dynamic_pointer_cast<unresolved_type>(t);
+    if (!unres) return t; // cannot resolve further
+
+    auto resolved = resolver.resolve_type_by_name(unres->type_id(), context_elem);
+    if (!resolved || !type::is_resolved(resolved)) {
+        resolved = ctx->from_string(unres->type_id());
+    }
+    return resolved;
+}
+
+// ── Visitors ─────────────────────────────────────────────────────────────────
+
+void aggregate_type_resolver::resolve() {
+    visit_unit(_unit);
+}
+
+void aggregate_type_resolver::visit_unit(unit& /*unit*/) {
+    visit_namespace(*_unit.get_root_namespace());
+    // Note: global_constructor_function, global_destructor_function and global_main_function
+    // are handled by type_reference_resolver — they contain expressions and statements.
+    // aggregate_type_resolver only handles declaration-level type resolution.
+}
+
+void aggregate_type_resolver::visit_namespace(ns& ns) {
+    for (auto& child : ns.get_children()) {
+        child->accept(*this);
+    }
+}
+
+void aggregate_type_resolver::visit_aggregate(aggregate& st) {
+    // Visit nested aggregate children first (depth-first), so their types are available
+    // before we process members of the outer aggregate.
+    for (auto& child : st.get_children()) {
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            nested->accept(*this);
+        }
+    }
+
+    // NOTE: member variable type resolution, global variable type resolution, and
+    // function signature resolution are intentionally NOT done here for Phase 1.
+    // type_reference_resolver handles all of these in Phase 1.b.
+    // aggregate_type_resolver's role is limited to building LLVM vtable struct types
+    // in visit_klass (see below) so they are available before type_reference_resolver runs.
+}
+
+void aggregate_type_resolver::visit_klass(klass& klass) {
+    visit_aggregate(klass);
+
+    // Build the LLVM struct type for the vtable (mirrors type_reference_resolver::visit_klass)
+    if (!klass.has_vtable()) return;
+
+    auto vt = klass.get_vtable();
+    size_t num_slots = vt->slot_count();
+
+    llvm::LLVMContext& llvm_ctx = **_context;
+    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    std::vector<llvm::Type*> vtable_fields;
+    vtable_fields.push_back(ptr_ty); // RTTI placeholder
+    for (size_t i = 0; i < num_slots; ++i) {
+        vtable_fields.push_back(ptr_ty);
+    }
+    std::string vtable_struct_name = "__vtable_" + klass.get_short_name() + "__";
+    // Only create if not already created (idempotency)
+    auto* existing = llvm::StructType::getTypeByName(llvm_ctx, vtable_struct_name);
+    if (!existing) {
+        existing = llvm::StructType::create(llvm_ctx, vtable_fields, vtable_struct_name);
+    }
+    vt->llvm_type = existing;
+}
+
+void aggregate_type_resolver::visit_interface(interface& iface) {
+    visit_klass(iface);
+}
+
+void aggregate_type_resolver::visit_member_variable_definition(member_variable_definition& var) {
+    // __parent__ is already assigned a resolved type by symbol_resolver
+    if (var.get_short_name() == "__parent__") return;
+
+    if (!type::is_resolved(var.get_type())) {
+        auto resolved = resolve_one_type(var.get_type(), *this, var, _context);
+        if (resolved && type::is_resolved(resolved)) {
+            var.set_type(resolved);
+        }
+    }
+    // Do NOT visit init expressions — those are expressions, handled by type_reference_resolver
+}
+
+void aggregate_type_resolver::visit_global_variable_definition(global_variable_definition& var) {
+    if (!type::is_resolved(var.get_type())) {
+        auto resolved = resolve_one_type(var.get_type(), *this, var, _context);
+        if (resolved && type::is_resolved(resolved)) {
+            var.set_type(resolved);
+        }
+    }
+    // Do NOT register in global_constructor — that is done by type_reference_resolver
+    // Do NOT visit init expressions — those are expressions, handled by type_reference_resolver
+}
+
+void aggregate_type_resolver::visit_parameter(parameter& param) {
+    // Resolve the type only (no default expressions — those are handled by type_reference_resolver)
+    if (!type::is_resolved(param.get_type())) {
+        auto res_type = _context->resolve_type(param.get_type());
+        if (!type::is_resolved(res_type)) {
+            // Try name-based resolution from parameter's context
+            auto owner_func = param.parent<function>();
+            if (owner_func) {
+                res_type = resolve_type_by_name(
+                    std::dynamic_pointer_cast<unresolved_type>(param.get_type())
+                        ? std::dynamic_pointer_cast<unresolved_type>(param.get_type())->type_id()
+                        : k::name{},
+                    *owner_func);
+            }
+        }
+        if (type::is_resolved(res_type)) {
+            param.set_type(res_type);
+        }
+    }
+}
+
+void aggregate_type_resolver::visit_function(function& fn) {
+    // Resolve 'this' parameter type for non-static member functions
+    if (fn.is_member() && !fn.is_static() && fn.get_this_parameter()) {
+        auto this_param = std::const_pointer_cast<parameter>(fn.get_this_parameter());
+        this_param->accept(*this);
+    }
+
+    // Resolve parameter types (signatures only, no default expressions)
+    for (auto param : fn.parameters()) {
+        param->accept(*this);
+    }
+
+    // Resolve return type
+    if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
+        auto resolved = resolve_type_by_name(
+            std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type())
+                ? std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type())->type_id()
+                : k::name{},
+            fn);
+        if (resolved && type::is_resolved(resolved)) {
+            fn.set_return_type(resolved);
+        } else {
+            auto resolved2 = _context->resolve_type(fn.get_return_type());
+            if (type::is_resolved(resolved2)) fn.set_return_type(resolved2);
+        }
+    }
+
+    // NOTE: the block / body is NOT visited here.
+    // That is the responsibility of type_reference_resolver (Phase 1.b).
+}
+
+void aggregate_type_resolver::visit_constructor(constructor& ctor) {
+    visit_function(ctor);
+}
+
+void aggregate_type_resolver::visit_destructor(destructor& dtor) {
+    visit_function(dtor);
+}
+
+void aggregate_type_resolver::visit_static_constructor(static_constructor& sctor) {
+    visit_function(sctor);
+}
+
+void aggregate_type_resolver::visit_static_destructor(static_destructor& sdtor) {
+    visit_function(sdtor);
+}
+
+void aggregate_type_resolver::visit_global_constructor_function(global_constructor_function& func) {
+    visit_function(func);
+}
+
+void aggregate_type_resolver::visit_global_destructor_function(global_destructor_function& func) {
+    visit_function(func);
+}
+
+void aggregate_type_resolver::visit_global_main_function(global_main_function& /*func*/) {
+    // Nothing to do — global_main_function is created and resolved in type_reference_resolver
+}
+
+//
+// Model materializer (Phase 2)
+//
+
+void model_materializer::materialize() {
+    visit_unit(_unit);
+}
+
+void model_materializer::visit_unit(unit& /*u*/) {
+    visit_namespace(*_unit.get_root_namespace());
+}
+
+void model_materializer::visit_namespace(ns& n) {
+    for (auto& child : n.get_children()) {
+        child->accept(*this);
+    }
+}
+
+void model_materializer::visit_aggregate(aggregate& st) {
+    // Visit nested aggregates first (depth-first)
+    for (auto& child : st.get_children()) {
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            nested->accept(*this);
+        }
+    }
+}
+
+void model_materializer::visit_klass(klass& kl) {
+    // Recurse into nested aggregates
+    visit_aggregate(kl);
+
+    if (!kl.has_vtable()) return;
+
+    // 1. Validate vtable consistency
+    validate_vtable(kl);
+
+    // 2. Compute secondary vtable thunk specs (requires LLVM struct types to exist)
+    compute_secondary_vtable_specs(kl);
+}
+
+void model_materializer::visit_interface(interface& iface) {
+    visit_klass(iface);
+}
+
+bool model_materializer::validate_vtable(klass& kl) {
+    auto vt = kl.get_vtable();
+    if (!vt) return true;
+
+    bool ok = true;
+    for (auto& entry : vt->entries) {
+        if (!entry.func) continue;
+        // If the slot is still occupied by an abstract function and the class is NOT abstract,
+        // that is a compilation error (should have been caught by symbol_resolver, but we
+        // double-check here as a defensive measure).
+        if (entry.func->is_abstract_func() && !kl.is_abstract()) {
+            throw_error(0x0001, std::nullopt,
+                "class '{}' must implement abstract method '{}' (introduced in '{}') "
+                "or be declared 'abstract'",
+                {kl.get_short_name(),
+                 entry.func->get_short_name(),
+                 entry.introducing_func && entry.introducing_func->get_owner()
+                     ? entry.introducing_func->get_owner()->get_short_name()
+                     : "?"});
+            ok = false;
+        }
+    }
+    return ok;
+}
+
+void model_materializer::compute_secondary_vtable_specs(klass& kl) {
+    auto vt = kl.get_vtable();
+    if (!vt) return;
+
+    // Clear any previously computed specs (idempotency)
+    vt->secondary_vtables.clear();
+
+    auto kl_struct_type = kl.get_struct_type();
+    if (!kl_struct_type) return;
+
+    llvm::StructType* kl_llvm_type = llvm::cast_or_null<llvm::StructType>(
+        kl_struct_type->get_llvm_type());
+    if (!kl_llvm_type) return;
+
+    constexpr size_t PTR_SIZE = 8; // bytes, 64-bit assumption
+
+    // Helper: compute byte offset of a named field in an LLVM struct type
+    auto field_byte_offset = [&](llvm::StructType* sty, unsigned field_idx) -> size_t {
+        size_t off = 0;
+        for (unsigned fi = 0; fi < field_idx; ++fi) {
+            llvm::Type* ft = sty->getElementType(fi);
+            if (!ft) { off += PTR_SIZE; continue; }
+            if (ft->isPointerTy())      off += PTR_SIZE;
+            else if (ft->isIntegerTy()) off += (ft->getIntegerBitWidth() + 7) / 8;
+            else if (ft->isFloatTy())   off += 4;
+            else if (ft->isDoubleTy())  off += 8;
+            else if (auto* sty2 = llvm::dyn_cast<llvm::StructType>(ft))
+                                        off += PTR_SIZE * sty2->getNumElements();
+            else                        off += PTR_SIZE;
+        }
+        return off;
+    };
+
+    // Helper: does derived_func transitively override base_func?
+    auto overrides_base_func = [&](const function& derived_func,
+                                   const function& base_func) -> bool {
+        const function* cur = &derived_func;
+        while (cur) {
+            if (cur == &base_func) return true;
+            auto ov = cur->get_overrides();
+            cur = ov ? ov.get() : nullptr;
+        }
+        return false;
+    };
+
+    // Helper: build a secondary_vtable_spec for base_klass at byte_offset in kl
+    auto build_spec = [&](std::shared_ptr<klass> base_klass, size_t byte_offset) {
+        auto base_vt = base_klass->get_vtable();
+        if (!base_vt || !base_vt->llvm_type) return;
+
+        secondary_vtable_spec spec;
+        spec.base_class  = base_klass;
+        spec.base_offset = static_cast<ptrdiff_t>(byte_offset);
+
+        for (auto& base_entry : base_vt->entries) {
+            thunk_info ti;
+            ti.slot_index = base_entry.slot_index;
+
+            const vtable_entry* derived_entry = nullptr;
+            for (auto& de : vt->entries) {
+                if (de.func && base_entry.introducing_func
+                    && (overrides_base_func(*de.func, *base_entry.introducing_func)
+                        || (base_entry.func && overrides_base_func(*de.func, *base_entry.func)))) {
+                    derived_entry = &de;
+                    break;
+                }
+            }
+
+            if (!derived_entry || !derived_entry->func) {
+                ti.real_func       = base_entry.func;
+                ti.this_adjustment = 0;
+                ti.needs_thunk     = false;
+            } else {
+                bool is_overridden = (derived_entry->func.get() != base_entry.func.get());
+                ti.real_func       = derived_entry->func;
+                ti.this_adjustment = is_overridden ? static_cast<ptrdiff_t>(byte_offset) : 0;
+                ti.needs_thunk     = is_overridden && (byte_offset > 0);
+            }
+            spec.slot_thunks.push_back(ti);
+        }
+
+        vt->secondary_vtables.push_back(std::move(spec));
+    };
+
+    // Walk ALL non-virtual sub-objects transitively reachable from kl,
+    // computing their cumulative byte offsets in kl's layout.
+    // For each sub-object with a vtable, generate a secondary_vtable_spec.
+    // This includes both "primary" and "secondary" bases at all levels —
+    // in K's layout every base sub-object (including the primary) is at a
+    // non-zero offset because kl's own __vptr__ occupies field 0.
+    // We use `already_processed` to avoid duplicating specs for the same type.
+    std::unordered_set<const klass*> already_processed;
+
+    // DFS: for each aggregate, walk its non-virtual bases and build specs for
+    // all sub-objects that have a vtable, at their correct cumulative offsets.
+    std::function<void(const aggregate&, llvm::StructType*, size_t)> walk;
+    walk = [&](const aggregate& cur, llvm::StructType* cur_llvm_type, size_t cum_offset) {
+        for (auto& bs : cur.get_bases()) {
+            if (!bs.base || bs.is_virtual) continue;
+            auto base_klass = std::dynamic_pointer_cast<klass>(bs.base);
+            if (!base_klass) continue;
+
+            // Find the field in cur's LLVM struct for this base sub-object
+            std::string field_name = "__base_" + bs.raw_name + "__";
+            auto field_opt = (cur.get_struct_type())
+                ? cur.get_struct_type()->get_member(field_name) : std::nullopt;
+
+            size_t this_offset = cum_offset;
+            if (field_opt && cur_llvm_type) {
+                this_offset += field_byte_offset(cur_llvm_type, (unsigned)field_opt->index);
+            }
+
+            // Build spec for this base if not already done and it has a vtable
+            if (!already_processed.count(base_klass.get()) && base_klass->has_vtable()) {
+                already_processed.insert(base_klass.get());
+                build_spec(base_klass, this_offset);
+            }
+
+            // Recurse into this base to pick up its own sub-objects
+            auto base_llvm_type = base_klass->get_struct_type()
+                ? llvm::cast_or_null<llvm::StructType>(base_klass->get_struct_type()->get_llvm_type())
+                : nullptr;
+            walk(*base_klass, base_llvm_type, this_offset);
+        }
+    };
+
+    walk(kl, kl_llvm_type, 0);
+
+    // ── Virtual bases: generate secondary vtable specs for __vbase_X__ ───────
+    // (same logic as before, unchanged)
+    {
+        auto vbases = kl.get_all_virtual_base_structs();
+        for (auto& vbase_agg : vbases) {
+            auto vbase_klass = std::dynamic_pointer_cast<klass>(vbase_agg);
+            if (!vbase_klass || !vbase_klass->has_vtable()) continue;
+
+            auto vbase_vt = vbase_klass->get_vtable();
+            if (!vbase_vt || !vbase_vt->llvm_type) continue;
+
+            std::string vbase_field_name = "__vbase_" + vbase_klass->get_short_name() + "__";
+            auto vbase_field = kl_struct_type->get_member(vbase_field_name);
+            if (!vbase_field) continue;
+
+            size_t byte_offset = field_byte_offset(kl_llvm_type, (unsigned)vbase_field->index);
+
+            if (!already_processed.count(vbase_klass.get())) {
+                already_processed.insert(vbase_klass.get());
+                build_spec(vbase_klass, byte_offset);
+            }
+        }
+    }
+}
+
+//
 // Type resolver
 //
 
@@ -533,17 +1014,14 @@ void type_reference_resolver::check_function_visibility(const function& func, co
     auto vis = func.get_visibility();
     if (vis == PUBLIC) return;
 
-    auto owner_st = std::const_pointer_cast<structure>(func.get_owner());
-    if (owner_st) {
-        // Struct member function:
-        // PRIVATE   → only from member functions of owner_st itself (or nested structs).
-        // PROTECTED → also from member functions of subclasses.
-        if (scope_lookup::is_struct_member_accessible(vis, *owner_st, owner_st, _function_stack)) return;
+    auto owner_agg = std::const_pointer_cast<aggregate>(func.get_owner());
+    if (owner_agg) {
+        if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
         throw_error(0x002F, std::nullopt,
             "{} member function '{}' of struct '{}' is not accessible here; "
             "it can only be called from member functions of '{}'{}",
             {vis == PROTECTED ? "protected" : "private",
-             func.get_short_name(), owner_st->get_short_name(), owner_st->get_short_name(),
+             func.get_short_name(), owner_agg->get_short_name(), owner_agg->get_short_name(),
              vis == PROTECTED ? " or its subclasses" : ""});
     } else {
         // Namespace-level function
@@ -575,39 +1053,37 @@ void type_reference_resolver::check_constructor_visibility(const constructor& ct
     auto vis = ctor.get_visibility();
     if (vis == PUBLIC) return;
 
-    auto owner_st = std::const_pointer_cast<structure>(ctor.get_owner());
-    if (!owner_st) return;
+    auto owner_agg = std::const_pointer_cast<aggregate>(ctor.get_owner());
+    if (!owner_agg) return;
 
-    // PRIVATE   → only from member functions of owner_st itself (or its nested structs).
-    // PROTECTED → also accessible from member functions of subclasses.
-    if (scope_lookup::is_struct_member_accessible(vis, *owner_st, owner_st, _function_stack)) return;
+    if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
 
     throw_error(0x0030, std::nullopt,
         "{} constructor of struct '{}' is not accessible here; "
         "it can only be called from member functions of '{}'{}",
         {vis == PROTECTED ? "protected" : "private",
-         owner_st->get_short_name(), owner_st->get_short_name(),
+         owner_agg->get_short_name(), owner_agg->get_short_name(),
          vis == PROTECTED ? " or its subclasses" : ""});
 }
 
 /**
- * Resolve a structure by qualified name descending from elem, without climbing to parents.
+ * Resolve an aggregate (structure or class) by qualified name descending from elem, without climbing to parents.
  */
-std::shared_ptr<structure>
+std::shared_ptr<aggregate>
 type_reference_resolver::resolve_struct_from(const element& elem, const k::name& qualified_name) {
     if (qualified_name.empty()) return {};
 
     if (qualified_name.size() == 1) {
-        // Simple name: look for structure directly in this element
-        if (auto st_holder = dynamic_cast<const structure_holder*>(&elem)) {
-            if (auto st = st_holder->get_structure(qualified_name.front())) {
-                return st;
+        // Simple name: look for aggregate directly in this element
+        if (auto st_holder = dynamic_cast<const aggregate_holder*>(&elem)) {
+            if (auto agg = st_holder->get_aggregate(qualified_name.front())) {
+                return agg;
             }
         }
         return {};
     }
 
-    // Qualified: first component is namespace or struct, rest continues recursively
+    // Qualified: first component is namespace or aggregate, rest continues recursively
     const auto& first = qualified_name.front();
     const auto  rest  = qualified_name.without_front();
 
@@ -620,12 +1096,10 @@ type_reference_resolver::resolve_struct_from(const element& elem, const k::name&
         }
     }
 
-    // Try nested structure
-    if (auto st_holder = dynamic_cast<const structure_holder*>(&elem)) {
-        if (auto st = st_holder->get_structure(first)) {
-            if (auto nested = resolve_struct_from(*st, rest)) {
-                return nested;
-            }
+    // Try nested aggregate
+    if (auto st_holder = dynamic_cast<const aggregate_holder*>(&elem)) {
+        if (auto agg = st_holder->get_aggregate(first)) {
+            if (auto nested = resolve_struct_from(*agg, rest)) return nested;
         }
     }
 
@@ -771,7 +1245,7 @@ void type_reference_resolver::check_overload_collisions(function_holder& fh)
     }
 }
 
-void type_reference_resolver::check_constructor_overload_collisions(structure& st)
+void type_reference_resolver::check_constructor_overload_collisions(aggregate& st)
 {
     const auto& ctors = st.constructors();
     if (ctors.size() < 2) return;
@@ -990,6 +1464,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             }
             auto arg_ref = std::dynamic_pointer_cast<reference_type>(arg_type);
             auto arg_sub = arg_ref->get_subtype();
+            auto src_arr = std::dynamic_pointer_cast<sized_array_type>(arg_sub);
             if (!type::is_sized_array(arg_sub)) {
                 throw_error(0x4105, std::nullopt,
                     "Array reference variable '{}' of type '{}' can only be initialised from another "
@@ -998,7 +1473,6 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                      arg_sub ? arg_sub->to_string() : "?"});
                 return;
             }
-            auto src_arr = std::dynamic_pointer_cast<sized_array_type>(arg_sub);
             // Element types must match exactly.
             if (!type::are_equal(dest_arr->get_subtype(), src_arr->get_subtype())) {
                 throw_error(0x4106, std::nullopt,
@@ -1656,7 +2130,17 @@ type_reference_resolver::get_best_matching_function(
                 auto [w, adapted] = score_with_defaults(args, params, 0);
                 if (w != CAST_IMPOSSIBLE) {
                     size_t def = params.size() - args.size();
-                    valid.push_back({func, std::move(adapted), w, false, nullptr, 0, def});
+                    // Const/mutable tie-breaker: on a mutable this, prefer mutable overload (pref=0)
+                    // over const overload (pref=1). On a const this, both are filtered upstream
+                    // (only const methods remain in candidates), so both get pref=0.
+                    bool this_is_const = false;
+                    if (this_expr && this_expr->get_type()) {
+                        auto t = this_expr->get_type();
+                        auto sub = type::is_reference(t) ? t->get_subtype() : t;
+                        this_is_const = type::is_const(sub);
+                    }
+                    int pref = (!this_is_const && func->is_const_member()) ? 1 : 0;
+                    valid.push_back({func, std::move(adapted), w, false, nullptr, pref, def});
                 }
             }
         }
@@ -2101,17 +2585,16 @@ void init_order_resolver::resolve() {
     // We gather them by scanning all structures in the unit.
     std::vector<std::shared_ptr<static_destructor>> standalone_sdtors;
     {
-        std::unordered_set<const structure*> has_sctor;
+        std::unordered_set<const aggregate*> has_sctor;
         for (auto& sc : raw_sctors) {
             if (auto owner = sc->get_owner()) has_sctor.insert(owner.get());
         }
         // Walk the root namespace recursively
         std::function<void(const ns&)> scan_ns = [&](const ns& n) {
-            // Walk children to find structure nodes (structures are in _children as well as _structs)
             for (auto& child : n.get_children()) {
-                if (auto st = std::dynamic_pointer_cast<structure>(child)) {
-                    if (!has_sctor.count(st.get())) {
-                        if (auto sdtor = st->get_static_destructor()) {
+                if (auto agg = std::dynamic_pointer_cast<aggregate>(child)) {
+                    if (!has_sctor.count(agg.get())) {
+                        if (auto sdtor = agg->get_static_destructor()) {
                             standalone_sdtors.push_back(sdtor);
                         }
                     }

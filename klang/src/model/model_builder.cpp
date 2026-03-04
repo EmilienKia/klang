@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 //
-// Note: Last model_builder log number: 0x2001B
+// Note: Last model_builder log number: 0x2002D
 //
 
 #include "model_builder.hpp"
@@ -117,25 +117,57 @@ namespace k::model {
         super::visit_namespace_decl(ns);
     }
 
-    void model_builder::visit_struct_decl(parse::ast::struct_decl& st) {
-        std::shared_ptr<model::structure_holder> parent_scope = current_context_content<model::structure_holder>();
+    void model_builder::visit_aggregate_decl(parse::ast::aggregate_decl& st) {
+        std::shared_ptr<model::aggregate_holder> parent_scope = current_context_content<model::aggregate_holder>();
         if(!parent_scope){
-            throw_error(0x0003, st.st, "Structure '{}' cannot be declared here; structures are only allowed at namespace or structure scope", {std::string{st.name.content}});
+            throw_error(0x0003, st.kw_aggregate_type, "Structure '{}' cannot be declared here; structures are only allowed at namespace or structure scope", {std::string{st.name.content}});
         }
 
-        std::shared_ptr<model::structure> struc = parent_scope->define_structure(std::string{st.name.content});
+        // Determine if this is a class (keyword 'class'), interface (keyword 'interface'), or a struct (keyword 'struct')
+        bool is_class = (st.kw_aggregate_type.type == lex::keyword::CLASS);
+        bool is_interface = (st.kw_aggregate_type.type == lex::keyword::INTERFACE);
 
-        // Detect if declared inside an outer structure and if the static specifier is present
+        std::shared_ptr<model::aggregate> agg;
+        if (is_class) {
+            agg = parent_scope->define_class(std::string{st.name.content});
+        } else if (is_interface) {
+            agg = parent_scope->define_interface(std::string{st.name.content});
+        } else {
+            agg = parent_scope->define_structure(std::string{st.name.content});
+        }
+
+        // Detect if declared inside an outer aggregate
         bool is_static_nested = lex::keyword::has(st.specifiers, lex::keyword::STATIC);
-        struc->set_static_nested(is_static_nested);
+        agg->set_static_nested(is_static_nested);
 
         // Detect if the final specifier is present
         bool is_final = lex::keyword::has(st.specifiers, lex::keyword::FINAL);
-        struc->set_final(is_final);
+        agg->set_final(is_final);
+
+        // Detect if the abstract specifier is present (only valid on classes and interfaces, not structs)
+        if (lex::keyword::has(st.specifiers, lex::keyword::ABSTRACT)) {
+            if (!is_class && !is_interface) {
+                throw_error(0x0023, st.kw_aggregate_type,
+                    "Specifier 'abstract' is not allowed on struct '{}'; 'abstract' is only valid on classes and interfaces",
+                    {std::string{st.name.content}});
+            }
+            if (is_interface) {
+                // 'abstract' is redundant on an interface: interfaces are implicitly abstract
+                logger_relay::warn(with_flag(0x002A), lex::any_lexeme{st.kw_aggregate_type},
+                    "Specifier 'abstract' is redundant on interface '{}'; interfaces are implicitly abstract",
+                    {std::string{st.name.content}});
+            }
+            agg->set_abstract(true);
+        }
+
+        // Interfaces are always abstract, regardless of whether the specifier was written
+        if (is_interface) {
+            agg->set_abstract(true);
+        }
 
         // Detect if the const specifier is present
         bool is_const_struct = lex::keyword::has(st.specifiers, lex::keyword::CONST);
-        struc->set_const_struct(is_const_struct);
+        agg->set_const_struct(is_const_struct);
 
         // Resolve visibility: per-element specifier takes precedence over group visibility
         model::visibility vis = model::PUBLIC; // default
@@ -151,26 +183,40 @@ namespace k::model {
         } else if (lex::keyword::has(st.specifiers, lex::keyword::PRIVATE)) {
             vis = model::PRIVATE;
         }
-        struc->set_visibility(vis);
+        agg->set_visibility(vis);
 
         // Register base-class clause entries (raw names, will be resolved later by symbol_resolver)
         for (auto& base_entry : st.bases) {
-            model::visibility base_vis = model::PUBLIC; // public by default (as in C++ struct)
+            // Default inheritance visibility: public for struct, protected for class/interface
+            model::visibility base_vis = (is_class || is_interface) ? model::PROTECTED : model::PUBLIC;
             if (base_entry.visibility_kw.has_value()) {
                 switch (base_entry.visibility_kw->type) {
                     case lex::keyword::PUBLIC:    base_vis = model::PUBLIC;    break;
                     case lex::keyword::PROTECTED: base_vis = model::PROTECTED; break;
-                    case lex::keyword::PRIVATE:   base_vis = model::PRIVATE;   break;
+                    case lex::keyword::PRIVATE:
+                        // Private inheritance is forbidden for classes and interfaces
+                        if (is_class || is_interface) {
+                            throw_error(0x0022, st.kw_aggregate_type,
+                                "Class/interface '{}' cannot use private inheritance; private inheritance is not supported in K language; use public or protected inheritance",
+                                {std::string{st.name.content}});
+                        }
+                        base_vis = model::PRIVATE;
+                        break;
                     default: break;
                 }
             }
-            struc->add_base(std::string{base_entry.name.content}, base_vis);
+            agg->add_base(std::string{base_entry.name.content}, base_vis);
         }
 
-        // Push function context
-        stack<struct_context> push(_contexts, struc);
+        // Push aggregate context
+        stack<struct_context> push(_contexts, agg);
 
-        default_ast_visitor::visit_struct_decl(st);
+        // Set initial default visibility for the aggregate context
+        if (auto vctx = current_context<visibility_context>()) {
+            vctx->visibility = model::DEFAULT;
+        }
+
+        default_ast_visitor::visit_aggregate_decl(st);
     }
 
     void model_builder::visit_variable_decl(parse::ast::variable_decl &decl) {
@@ -196,9 +242,20 @@ namespace k::model {
         // Resolve visibility for namespace/struct-level variables (global or member)
         // Local variables (inside functions/blocks) do not have visibility.
         if (auto vctx = current_context<visibility_context>()) {
+            // Default visibility depends on context:
+            // - For class member variables: PROTECTED by default
+            // - For struct member variables: PUBLIC by default
+            // - For namespace variables: PUBLIC by default
             model::visibility vis = model::PUBLIC; // default for ns/struct
             if (vctx->visibility != model::DEFAULT) {
                 vis = vctx->visibility;
+            } else {
+                // Check if we are inside a class (PROTECTED default) vs struct (PUBLIC default)
+                if (auto owner_agg = current_context_content<model::aggregate>()) {
+                    if (owner_agg->is_class()) {
+                        vis = model::PROTECTED;
+                    }
+                }
             }
             // Per-element specifier overrides group visibility
             if (lex::keyword::has(decl.specifiers, lex::keyword::PUBLIC)) {
@@ -300,9 +357,74 @@ namespace k::model {
             }
         }
 
+        // Propagate 'final' specifier for functions
+        bool is_final_func = lex::keyword::has(func.specifiers, lex::keyword::FINAL);
+        function->set_final_func(is_final_func);
+
+        // Propagate 'abstract' specifier for functions
+        if (lex::keyword::has(func.specifiers, lex::keyword::ABSTRACT)) {
+            // abstract is only valid on non-static, non-private, non-final member functions of classes/interfaces
+            if (is_static) {
+                throw_error(0x0024, func.name,
+                    "Function '{}' cannot be both 'abstract' and 'static': abstract functions require virtual dispatch",
+                    {func_name});
+            }
+            if (is_final_func) {
+                throw_error(0x0025, func.name,
+                    "Function '{}' cannot be both 'abstract' and 'final': a final function is already defined",
+                    {func_name});
+            }
+            if (func.content) {
+                throw_error(0x0026, func.name,
+                    "Abstract function '{}' must not have a body; remove the body or remove the 'abstract' specifier",
+                    {func_name});
+            }
+            // Check that we are inside a class or interface, not a struct
+            if (auto owner_agg = current_context_content<model::aggregate>()) {
+                if (!owner_agg->is_class() && !std::dynamic_pointer_cast<model::interface>(owner_agg)) {
+                    throw_error(0x0027, func.name,
+                        "Abstract function '{}' is only allowed inside a class or interface, not a struct",
+                        {func_name});
+                }
+                // Warn if 'abstract' is redundant (inside an interface)
+                if (std::dynamic_pointer_cast<model::interface>(owner_agg)) {
+                    logger_relay::warn(with_flag(0x002B), lex::any_lexeme{func.name},
+                        "Specifier 'abstract' is redundant on function '{}' inside interface '{}'; interface member functions are implicitly abstract",
+                        {func_name, owner_agg->get_short_name()});
+                }
+            } else {
+                throw_error(0x0028, func.name,
+                    "Abstract function '{}' can only be declared as a member of a class or interface",
+                    {func_name});
+            }
+            // Check visibility after it has been resolved
+            // (visibility is resolved later in this function; we re-check after)
+            function->set_abstract_func(true);
+        }
+
+        // Implicitly mark member functions inside an interface as abstract
+        // (non-static, non-ctor/dtor, non-final functions that have no body)
+        if (!lex::keyword::has(func.specifiers, lex::keyword::ABSTRACT)) {
+            if (auto owner_iface = std::dynamic_pointer_cast<model::interface>(current_context_content<model::aggregate>())) {
+                if (!is_static
+                    && !func.is_destructor
+                    && !std::dynamic_pointer_cast<model::constructor>(function)
+                    && !std::dynamic_pointer_cast<model::destructor>(function)
+                    && !is_final_func) {
+                    if (func.content) {
+                        // Interface member functions must not have a body
+                        throw_error(0x002D, func.name,
+                            "Function '{}' inside interface '{}' must not have a body; interface member functions are implicitly abstract",
+                            {func_name, owner_iface->get_short_name()});
+                    }
+                    function->set_abstract_func(true);
+                }
+            }
+        }
+
         // Resolve visibility for namespace/struct-level functions
         if (auto vctx = current_context<visibility_context>()) {
-            model::visibility vis = model::PUBLIC; // default for ns/struct
+            model::visibility vis = model::PUBLIC; // default for ns/struct (PUBLIC for both struct and class functions)
             if (vctx->visibility != model::DEFAULT) {
                 vis = vctx->visibility;
             }
@@ -315,6 +437,13 @@ namespace k::model {
                 vis = model::PRIVATE;
             }
             function->set_visibility(vis);
+        }
+
+        // Post-visibility check: abstract cannot be private (private functions are never virtual)
+        if (function->is_abstract_func() && function->get_visibility() == model::PRIVATE) {
+            throw_error(0x0029, func.name,
+                "Function '{}' cannot be both 'abstract' and 'private': abstract functions must be publicly or protectedly accessible for overriding",
+                {func_name});
         }
 
         // Push function context
@@ -407,6 +536,13 @@ namespace k::model {
             if(auto block = std::dynamic_pointer_cast<model::block>(_stmt)) {
                 function->set_block(block);
             }
+        } else if (!function->is_abstract_func()
+                   && func.aliasing_spec == parse::ast::function_decl::aliasing_spec_t::NONE) {
+            // A non-abstract function with no body is only valid inside an interface
+            // (where it is implicitly abstract) or when using '-> default'/'-> delete'.
+            throw_error(0x002C, func.name,
+                "Function '{}' has no body; a function body is required unless the function is abstract or declared inside an interface",
+                {func_name});
         }
     }
 

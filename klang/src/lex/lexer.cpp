@@ -46,7 +46,8 @@ namespace k::lex {
         {"for", keyword::FOR},
 
         {"struct", keyword::STRUCT},
-
+        {"class", keyword::CLASS},
+        {"interface", keyword::INTERFACE},
         {"default", keyword::DEFAULT},
         {"delete", keyword::DELETE},
 

@@ -58,7 +58,10 @@ Examples are included where they clarify the normative text.
 
 | Page | Description |
 |------|-------------|
-| [Structures](structs/structs.md) | Declaration, fields, member functions, member visibility |
+| [Structures](structs/structs.md) | Declaration, fields, member functions, member visibility, struct specifiers |
+| [Classes and Virtuality](structs/classes.md) | The `class` keyword, automatic virtual dispatch, vtable rules, virtual base classes |
+| [Interfaces](structs/interfaces.md) | The `interface` keyword, implicit abstraction, virtual dispatch through interfaces |
+| [Inheritance](structs/inheritance.md) | Single and multiple inheritance, diamond patterns, cross-type restrictions |
 | [Constructors](structs/constructors.md) | Instance and static constructors |
 | [Destructors](structs/destructors.md) | Instance and static destructors |
 | [Nested Structures](structs/nested.md) | Static nested and non-static inner structures |

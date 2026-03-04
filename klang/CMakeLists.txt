@@ -1,4 +1,3 @@
-
 configure_file(src/config.h.in config.h)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -59,6 +58,9 @@ add_library(klangcomp
         src/gen/gen_operators.cpp
         src/gen/gen_statements.cpp
         src/gen/gen_unit.cpp
+        src/gen/gen_struct.cpp
+        src/gen/gen_class.cpp
+        src/gen/gen_function.cpp
         src/compiler.hpp
         src/compiler.cpp
         src/common/process.cpp
@@ -93,6 +95,16 @@ add_executable(tests
         tests/test-run.cpp
         tests/test-gen-indirection.cpp
         tests/test-gen-const.cpp
+        tests/test-gen-class-basic.cpp
+        tests/test-gen-virtual-inheritance.cpp
+        tests/test-gen-class-virtuality.cpp
+        tests/test-gen-class-abstract.cpp
+        tests/test-gen-interface.cpp
+        tests/test-model-materializer.cpp
+        tests/test-phase3-dispatch.cpp
+        tests/test-phase4-gen.cpp
+        tests/test-gen-virtuality-coverage.cpp
+        tests/test-gen-multi-diamond.cpp
 )
 target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain)
 

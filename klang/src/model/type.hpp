@@ -48,11 +48,13 @@ namespace k::model {
 
 namespace gen {
     class symbol_resolver;
+    class type_reference_resolver;
 }
 
 
 class context;
 
+class aggregate;
 class structure;
 
 class reference_type;
@@ -525,31 +527,33 @@ public:
 protected:
     friend class type;
     friend class struct_type_builder;
+    friend class k::model::aggregate;
     friend class k::model::structure;
     friend class k::model::gen::symbol_resolver;
+    friend class k::model::gen::type_reference_resolver;
     friend class k::model::context;
 
     std::string _name;
 
     std::vector<field> _fields;
 
-    std::weak_ptr<k::model::structure> _struct;
+    std::weak_ptr<k::model::aggregate> _struct;
 
     llvm::Constant* _default_init_constant = nullptr;
 
-    struct_type(const std::string& name, std::weak_ptr<k::model::structure> st, std::vector<field>&& fields, llvm::StructType* llvm_struct_type);
+    struct_type(const std::string& name, std::weak_ptr<k::model::aggregate> st, std::vector<field>&& fields, llvm::StructType* llvm_struct_type);
 
     void set_llvm_type(std::vector<field>&& fields, llvm::StructType* llvm_struct_type, llvm::Constant* default_init_constant);
 
 public:
-    struct_type(const std::string& name, std::weak_ptr<k::model::structure> st);
+    struct_type(const std::string& name, std::weak_ptr<k::model::aggregate> st);
 
     std::string name() const {return _name;}
 
     bool is_resolved() const override;
 
     std::string to_string() const override;
-    std::shared_ptr<structure> get_struct() const;
+    std::shared_ptr<aggregate> get_struct() const;
 
     inline fields_t::size_type fields_size()const {return _fields.size();}
     inline fields_t::const_iterator fields_begin()const {return _fields.begin();}
@@ -565,14 +569,14 @@ class struct_type_builder {
 protected:
     std::shared_ptr<context> _context;
     std::string _name;
-    std::weak_ptr<k::model::structure> _struct;
+    std::weak_ptr<k::model::aggregate> _struct;
     std::vector<struct_type::field> _fields;
 
 public:
     struct_type_builder(std::shared_ptr<context> context);
 
     void name(const std::string& name) {_name = name;}
-    void structure(std::weak_ptr<k::model::structure> st) {_struct = st;}
+    void structure(std::weak_ptr<k::model::aggregate> st) {_struct = st;}
 
     void append_field(const std::string& name, std::shared_ptr<type> type);
 

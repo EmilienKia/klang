@@ -21,21 +21,16 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "../lex/lexer.hpp"
-#include "../parse/ast.hpp"
-#include "../parse/parser.hpp"
 #include "../common/common.hpp"
 #include "type.hpp"
 
-
 #include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
-#include <llvm/IR/Type.h>
-
 
 namespace k::model {
 class constructor_invocation_expression;
@@ -54,7 +49,10 @@ class constructor;
 class destructor;
 class static_constructor;
 class static_destructor;
+class aggregate;
 class structure;
+class klass;
+class interface;
 class ns;
 class unit;
 
@@ -64,6 +62,9 @@ class global_destructor_function;
 
 
 namespace gen {
+class symbol_resolver;
+class aggregate_type_resolver;
+class model_materializer;
 class type_reference_resolver;
 class declaration_generator;
 class implementation_generator;
@@ -75,6 +76,143 @@ enum visibility {
     PUBLIC,
     PROTECTED,
     PRIVATE
+};
+
+/**
+ * A single entry in the vtable of a class.
+ * Represents a virtual function slot: the function that occupies this slot
+ * and the index within the vtable array (after the RTTI placeholder at index 0).
+ */
+struct vtable_entry {
+    /** Slot index in the vtable (0 = first function slot, i.e. vtable[1] after RTTI). */
+    size_t slot_index = 0;
+    /**
+     * The most-derived override of this virtual function in the class that owns the vtable.
+     * After symbol resolution, this always points to the concrete implementation.
+     */
+    std::shared_ptr<function> func;
+    /**
+     * The "introducing" function (the first declaration of this virtual slot
+     * in the inheritance hierarchy). Used for signature matching.
+     */
+    std::shared_ptr<function> introducing_func;
+};
+
+/**
+ * This-adjustment thunk descriptor for a secondary vtable slot.
+ *
+ * When a derived class D inherits from multiple bases (B, C) each with their own
+ * vtable, the secondary vtable for base C (embedded at a non-zero byte offset in D)
+ * needs "thunk" function pointers that adjust 'this' from C* back to D* before
+ * calling the real override.
+ *
+ * This struct describes one such thunk: the slot index, the real override function,
+ * and the byte offset to subtract from 'this'.
+ *
+ * No LLVM types are stored here; they are computed by the generators from these
+ * pure model values.
+ */
+struct thunk_info {
+    /** Vtable slot index (0-based within the vtable entries, NOT counting the RTTI slot). */
+    size_t slot_index = 0;
+    /** The concrete (most-derived) override function to call after this-adjustment. */
+    std::shared_ptr<function> real_func;
+    /**
+     * Byte offset to subtract from 'this' (a Base* pointing into D's layout) to
+     * obtain the D* pointing to the start of D. Always positive when the base
+     * subobject is at a non-zero offset.
+     */
+    ptrdiff_t this_adjustment = 0;
+    /** True if a thunk is needed (this_adjustment != 0 AND real_func overrides an ancestor). */
+    bool needs_thunk = false;
+};
+
+/**
+ * Descriptor for a secondary vtable that a derived class must emit for one of its
+ * non-primary base subobjects.
+ *
+ * A "secondary vtable" points to the vtable entries as seen from the perspective of
+ * a base class embedded at a non-zero offset inside the derived class.  Its function
+ * pointers may be this-adjustment thunks when the slot was overridden in the derived class.
+ */
+struct secondary_vtable_spec {
+    /** The base class whose embedded subobject needs a secondary vtable. */
+    std::shared_ptr<klass> base_class;
+    /**
+     * Byte offset of the base subobject within the derived class layout.
+     * 0 means the base is at the start of the object — no adjustment needed (skip).
+     */
+    ptrdiff_t base_offset = 0;
+    /** Per-slot thunk descriptors (indexed identically to base_class->get_vtable()->entries). */
+    std::vector<thunk_info> slot_thunks;
+};
+
+/**
+ * Annotation attached to a function_invocation_expression by type_reference_resolver
+ * (Phase 3). Describes how the call should be dispatched at the call-site level.
+ *
+ * This is pure model data — no llvm::* types.  The code generator reads it to
+ * decide between a direct LLVM call and a vtable-indirect dispatch.
+ */
+struct virtual_dispatch_info {
+    /** Dispatch strategy chosen at resolution time. */
+    enum class dispatch_kind {
+        /** Direct (non-virtual) call: call the LLVM function directly. */
+        DIRECT,
+        /** Vtable dispatch through the static receiver type's vtable. */
+        VTABLE,
+    };
+
+    dispatch_kind kind = dispatch_kind::DIRECT;
+
+    /**
+     * Vtable slot index (0-based within vtable entries, not counting the RTTI slot).
+     * Valid only when kind == VTABLE; -1 for DIRECT.
+     */
+    int slot_index = -1;
+
+    /**
+     * The klass whose vtable should be used for the dispatch lookup.
+     * This is the *static* receiver type at the call site (e.g. the type of `b` in
+     * `b.speak()` where b : Animal&). Non-null when kind == VTABLE.
+     */
+    std::shared_ptr<klass> dispatch_class;
+
+    /**
+     * Optional this-adjustment offset (bytes) to apply BEFORE loading the vptr.
+     * Non-zero when the receiver is a secondary-base reference (e.g. a C& pointing
+     * into a D object that embeds C at offset > 0).
+     * 0 for primary-base dispatch (no adjustment needed before vptr load).
+     */
+    ptrdiff_t this_adjustment = 0;
+};
+
+/**
+ * Complete vtable layout for a class.
+ * Each class (or virtual base) has its own vtable descriptor.
+ * For single inheritance, there is one vtable_layout per class.
+ * For multiple / diamond inheritance, a derived class may have multiple
+ * vtable_layouts (one per primary vtable + one per each non-primary base path).
+ */
+struct vtable_layout {
+    /** All virtual function slots in declaration order. */
+    std::vector<vtable_entry> entries;
+
+    /**
+     * Secondary vtable specifications computed by model_materializer.
+     * One entry per non-primary base class with a vtable embedded at non-zero offset.
+     * Empty for classes with no multiple inheritance.
+     */
+    std::vector<secondary_vtable_spec> secondary_vtables;
+
+    /** LLVM global variable holding the vtable constant (set during declaration generation). */
+    llvm::GlobalVariable* llvm_global = nullptr;
+
+    /** LLVM struct type for the vtable: { ptr (RTTI), [N x ptr] } (set during type resolution). */
+    llvm::StructType* llvm_type = nullptr;
+
+    /** Total number of slots (entries.size()). */
+    size_t slot_count() const { return entries.size(); }
 };
 
 
@@ -311,36 +449,49 @@ protected:
 };
 
 /**
-* Interface for holding structures (like ns and structs)
+* Interface for holding aggregates (structures and classes) (like ns and aggregates)
 */
-class structure_holder
+class aggregate_holder
 {
 public:
+    virtual std::shared_ptr<aggregate> define_aggregate(const std::string& name, bool is_class = false);
     virtual std::shared_ptr<structure> define_structure(const std::string& name);
+    virtual std::shared_ptr<klass> define_class(const std::string& name);
+    virtual std::shared_ptr<interface> define_interface(const std::string& name);
+    virtual std::shared_ptr<aggregate> get_aggregate(const std::string& name) const;
+    /** Legacy: get by name as structure pointer (returns nullptr if not an aggregate or not found). */
     virtual std::shared_ptr<structure> get_structure(const std::string& name) const;
 
 protected:
-    /** Map of all defined structures. */
-    std::map<std::string, std::shared_ptr<structure>> _structs;
+    /** Map of all defined aggregates (structures and classes). */
+    std::map<std::string, std::shared_ptr<aggregate>> _structs;
 
     virtual std::shared_ptr<structure> do_create_structure(const std::string &name) =0;
-    virtual void on_structure_defined(std::shared_ptr<structure>) =0;
+    virtual std::shared_ptr<klass> do_create_class(const std::string &name) =0;
+    virtual std::shared_ptr<interface> do_create_interface(const std::string &name) =0;
+    virtual void on_aggregate_defined(std::shared_ptr<aggregate>) =0;
+
+public:
+    const std::map<std::string, std::shared_ptr<aggregate>>& aggregates() const {return _structs;}
 };
 
 
 class member_variable_definition : public element, public variable_definition {
 protected:
 
+    friend class aggregate;
     friend class structure;
+    friend class klass;
     friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
+    friend class gen::declaration_generator;
 
     /** Declared visibility of this member variable. PUBLIC by default. */
     visibility _visibility = PUBLIC;
 
-    member_variable_definition(std::shared_ptr<structure> st);
+    member_variable_definition(std::shared_ptr<aggregate> st);
 
-    static std::shared_ptr<member_variable_definition> make_shared(std::shared_ptr<structure> st, const std::string &name);
+    static std::shared_ptr<member_variable_definition> make_shared(std::shared_ptr<aggregate> st, const std::string &name);
 
     void update_mangled_name() override;
 
@@ -353,65 +504,81 @@ public:
 
 /**
  * Specifies a single base class in an inheritance clause.
- * E.g. "struct D : public B1, private B2"
  */
 struct base_spec {
-    /** Inheritance visibility (PUBLIC by default, as in C++ struct). */
+    /** Inheritance visibility (PUBLIC by default, as in K struct). */
     visibility vis = PUBLIC;
     /** Raw name as written in source (before resolution). */
     std::string raw_name;
-    /** Resolved base structure (set during symbol resolution). */
-    std::shared_ptr<structure> base;
+    /** Resolved base aggregate (set during symbol resolution). */
+    std::shared_ptr<aggregate> base;
+    /**
+     * True if this base is inherited virtually (diamond-safe).
+     * Set automatically by compute_virtual_bases() after all classes are resolved.
+     */
+    bool is_virtual = false;
 
     base_spec() = default;
     base_spec(const std::string& raw_name, visibility vis = PUBLIC)
         : vis(vis), raw_name(raw_name) {}
 };
 
-class structure : public element, public named_element, public variable_holder, public function_holder, public structure_holder {
+/**
+ * Abstract base class for all aggregate types (struct and class).
+ * Holds all common member data: member variables, functions, constructors,
+ * destructor, static ctor/dtor, nested aggregates, bases, vtable, vptrs, etc.
+ */
+class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder {
 protected:
     friend class ns;
     friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
 
-    /** Collection of all children of this namespace. */
+    /** Collection of all children of this aggregate. */
     std::vector<std::shared_ptr<element>> _children;
 
     std::vector<std::shared_ptr<constructor>> _constructors;
 
     std::shared_ptr<destructor> _destructor;
 
-    /** Optional static constructor (class initializer), named with the struct name and static. */
+    /** Optional static constructor (class initializer). */
     std::shared_ptr<static_constructor> _static_constructor;
 
-    /** Optional static destructor (class finalizer), named with ~struct_name and static. */
+    /** Optional static destructor (class finalizer). */
     std::shared_ptr<static_destructor> _static_destructor;
 
     std::shared_ptr<struct_type> _type;
 
-    /** True if this structure is a static nested struct (no implicit parent reference). */
+    /** True if this aggregate is a static nested aggregate (no implicit parent reference). */
     bool _is_static_nested = false;
 
-    /** True if this structure is final (cannot be used as a base class). */
+    /** True if this aggregate is final (cannot be used as a base class). */
     bool _is_final = false;
 
-    /** True if this structure is declared const (all non-static methods are implicitly const). */
+    /**
+     * True if this aggregate is abstract (cannot be instantiated directly).
+     * A class is abstract if it is explicitly declared abstract, or if it has at
+     * least one directly declared or inherited unimplemented abstract method.
+     * Only meaningful on klass (not structure).
+     */
+    bool _is_abstract = false;
+
+    /** True if this aggregate is declared const (all non-static methods are implicitly const). */
     bool _is_const_struct = false;
 
-    /** Declared visibility of this structure. PUBLIC by default. */
+    /** Declared visibility of this aggregate. PUBLIC by default. */
     visibility _visibility = PUBLIC;
 
-    /** Synthetic member variable for the implicit parent pointer (non-static nested structs only). */
+    /** Synthetic member variable for the implicit parent pointer (non-static nested aggregates only). */
     std::shared_ptr<member_variable_definition> _parent_field;
 
     /** Base classes declared in the inheritance clause (in declaration order). */
     std::vector<base_spec> _bases;
 
-    structure(std::shared_ptr<element> parent) :
-        element(parent) {}
 
-    static std::shared_ptr<structure> make_shared(std::shared_ptr<element> parent, const std::string &name);
+    aggregate(std::shared_ptr<element> parent) :
+        element(parent) {}
 
     std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
@@ -420,7 +587,9 @@ protected:
     void on_function_defined(std::shared_ptr<function>) override;
 
     std::shared_ptr<structure> do_create_structure(const std::string &name) override;
-    void on_structure_defined(std::shared_ptr<structure>) override;
+    std::shared_ptr<klass> do_create_class(const std::string &name) override;
+    std::shared_ptr<interface> do_create_interface(const std::string &name) override;
+    void on_aggregate_defined(std::shared_ptr<aggregate>) override;
 
     void set_struct_type(const std::shared_ptr<struct_type>& st_type) {
         _type = st_type;
@@ -439,36 +608,62 @@ public:
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }
 
-    /** True if this structure is declared inside another structure (static or non-static). */
-    bool is_nested() const { return !!parent<structure>(); }
+    /** True if this aggregate is declared inside another aggregate (static or non-static). */
+    bool is_nested() const { return !!parent<aggregate>(); }
 
-    /** True if this structure is a static nested struct (no implicit parent reference). */
+    /** True if this aggregate is a static nested aggregate (no implicit parent reference). */
     bool is_static_nested() const { return _is_static_nested; }
 
-    /** Set whether this is a static nested struct. */
+    /** Set whether this is a static nested aggregate. */
     void set_static_nested(bool v) { _is_static_nested = v; }
 
-    /** True if this structure is final (cannot be used as a base class). */
+    /** True if this aggregate is final (cannot be used as a base class). */
     bool is_final() const { return _is_final; }
 
-    /** Set whether this structure is final. */
+    /** Set whether this aggregate is final. */
     void set_final(bool v) { _is_final = v; }
 
-    /** True if this structure is declared const (all non-static methods are implicitly const). */
+    /**
+     * True if this aggregate is abstract (cannot be directly instantiated).
+     * Only meaningful on classes (klass); always false for structs.
+     */
+    bool is_abstract() const { return _is_abstract; }
+
+    /** Set whether this aggregate is abstract. */
+    void set_abstract(bool v) { _is_abstract = v; }
+
+    /** True if this aggregate is declared const (all non-static methods are implicitly const). */
     bool is_const_struct() const { return _is_const_struct; }
 
-    /** Set whether this structure is a const structure. */
+    /** Set whether this aggregate is a const aggregate. */
     void set_const_struct(bool v) { _is_const_struct = v; }
 
-    /** True if this is a non-static inner struct (has an implicit parent reference). */
+    /** True if this is a class (keyword 'class'), false if it is a struct (keyword 'struct'). */
+    virtual bool is_class() const { return false; }
+
+    /**
+     * True if this aggregate has at least one virtual function (needs a vtable).
+     * Kept virtual on aggregate for generic call sites (e.g. virtual dispatch check
+     * in gen_expressions.cpp) that hold a shared_ptr<aggregate> without knowing
+     * the concrete type.
+     */
+    virtual bool has_vtable() const { return false; }
+
+
+    /** True if this is a non-static inner aggregate (has an implicit parent reference). */
     bool is_inner() const { return is_nested() && !_is_static_nested; }
 
-    /** Returns the direct enclosing structure, or nullptr if not nested. */
-    std::shared_ptr<structure> get_enclosing_structure() const {
-        return std::const_pointer_cast<structure>(parent<structure>());
+    /** Returns the direct enclosing aggregate, or nullptr if not nested. */
+    std::shared_ptr<aggregate> get_enclosing_aggregate() const {
+        return std::const_pointer_cast<aggregate>(parent<aggregate>());
     }
 
-    /** Returns the synthetic __parent__ member variable (non-static inner structs only, set during symbol resolution). */
+    /** Alias for backward compatibility — same as get_enclosing_aggregate(). */
+    std::shared_ptr<aggregate> get_enclosing_structure() const {
+        return get_enclosing_aggregate();
+    }
+
+    /** Returns the synthetic __parent__ member variable (non-static inner aggregates only). */
     std::shared_ptr<member_variable_definition> get_parent_field() const { return _parent_field; }
 
     //
@@ -495,38 +690,181 @@ public:
     // Inheritance
     //
 
-    /** Add a base class to the inheritance clause. */
+    /** Add a base to the inheritance clause. */
     void add_base(const std::string& raw_name, visibility vis = PUBLIC) {
         _bases.push_back({raw_name, vis});
     }
 
-    /** Returns the list of base class specs (in declaration order). */
+    /** Returns the list of base specs (in declaration order). */
     const std::vector<base_spec>& get_bases() const { return _bases; }
     std::vector<base_spec>& get_bases_mutable() { return _bases; }
 
-    /** True if this structure has at least one base class. */
+    /** True if this aggregate has at least one base. */
     bool has_bases() const { return !_bases.empty(); }
 
-    /**
-     * Return true if this struct (directly or transitively) derives from `base_st`.
-     * Only works after symbol resolution (base_spec::base must be set).
-     */
-    bool is_derived_from(const std::shared_ptr<structure>& base_st) const;
+    /** True if this aggregate has any direct virtual bases. */
+    bool has_virtual_bases() const {
+        for (auto& bs : _bases) {
+            if (bs.is_virtual) return true;
+        }
+        return false;
+    }
 
-    /**
-     * Return the list of ALL base specs in depth-first BFS order
-     * (direct bases first, then their bases, etc.).
-     * Only works after symbol resolution.
-     */
+    /** Collect all transitively-declared virtual base aggregates (unique, BFS order). */
+    std::vector<std::shared_ptr<aggregate>> get_all_virtual_base_structs() const;
+
+    /** Return true if this aggregate (directly or transitively) derives from base_st. */
+    bool is_derived_from(const std::shared_ptr<aggregate>& base_st) const;
+
+    /** Return the list of ALL base specs in depth-first BFS order. */
     std::vector<base_spec> get_all_bases() const;
 
-    /**
-     * Returns the copy constructor if one exists, nullptr otherwise.
-     * A copy constructor is one whose first (and only non-this) parameter is of type
-     * `const Struct&` or `Struct&`.
-     */
+    /** Returns the copy constructor if one exists, nullptr otherwise. */
     std::shared_ptr<constructor> get_copy_constructor() const;
 };
+
+/**
+ * Struct aggregate: concrete aggregate declared with the 'struct' keyword.
+ * Constraints: default member visibility PUBLIC, no virtual dispatch,
+ * no cross-inheritance with classes.
+ */
+class structure : public aggregate {
+protected:
+    friend class ns;
+    friend class aggregate;
+    friend class gen::implementation_generator;
+    friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
+
+    structure(std::shared_ptr<element> parent) :
+        aggregate(parent) {}
+
+    static std::shared_ptr<structure> make_shared(std::shared_ptr<element> parent, const std::string &name);
+
+public:
+    bool is_class() const override { return false; }
+
+    void accept(model_visitor& visitor) override;
+
+    /** Returns the direct enclosing structure, or nullptr if not nested in a struct. */
+    std::shared_ptr<structure> get_enclosing_structure() const {
+        return std::dynamic_pointer_cast<structure>(get_enclosing_aggregate());
+    }
+};
+
+/**
+ * Class aggregate: concrete aggregate declared with the 'class' keyword.
+ * Constraints: default member variable visibility PROTECTED, default function visibility PUBLIC,
+ * enables virtual dispatch, no cross-inheritance with structs,
+ * no private inheritance.
+ */
+class klass : public aggregate {
+protected:
+    friend class ns;
+    friend class aggregate;
+    friend class gen::implementation_generator;
+    friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
+
+    /**
+     * Primary vtable layout for this class (set during symbol resolution
+     * when the class has at least one virtual function).
+     */
+    std::shared_ptr<vtable_layout> _vtable;
+
+    /**
+     * Secondary vtable layouts for non-primary base paths (multiple / diamond inheritance).
+     */
+    std::vector<std::pair<std::shared_ptr<aggregate>, std::shared_ptr<vtable_layout>>> _secondary_vtables;
+
+    /**
+     * Synthetic vptr member variables (one per vtable — primary + secondaries).
+     */
+    std::vector<std::shared_ptr<member_variable_definition>> _vptrs;
+
+    klass(std::shared_ptr<element> parent) :
+        aggregate(parent) {}
+
+    static std::shared_ptr<klass> make_shared(std::shared_ptr<element> parent, const std::string &name);
+
+public:
+    bool is_class() const override { return true; }
+    bool has_vtable() const override { return _vtable != nullptr; }
+
+    void accept(model_visitor& visitor) override;
+
+    // ── Virtuality accessors (concrete, klass-only — not part of aggregate interface) ──
+
+    std::shared_ptr<vtable_layout> get_vtable() const { return _vtable; }
+
+    void set_vtable(std::shared_ptr<vtable_layout> vt) { _vtable = std::move(vt); }
+
+    const std::vector<std::pair<std::shared_ptr<aggregate>, std::shared_ptr<vtable_layout>>>&
+    get_secondary_vtables() const { return _secondary_vtables; }
+
+    void add_secondary_vtable(std::shared_ptr<aggregate> base, std::shared_ptr<vtable_layout> vt) {
+        _secondary_vtables.emplace_back(std::move(base), std::move(vt));
+    }
+
+    const std::vector<std::shared_ptr<member_variable_definition>>& get_vptrs() const { return _vptrs; }
+
+    std::shared_ptr<member_variable_definition> inject_vptr_field(const std::string& field_name) {
+        auto vptr_field = member_variable_definition::make_shared(shared_as<aggregate>(), field_name);
+        _vptrs.push_back(vptr_field);
+        _vars.insert({field_name, vptr_field});
+        _children.insert(_children.begin(), vptr_field);
+        return vptr_field;
+    }
+
+    // ── Inheritance / diamond detection ──────────────────────────────────────
+
+    /**
+     * Automatically detect diamond patterns in class hierarchies and mark
+     * the appropriate base_spec entries as virtual (is_virtual = true).
+     * Must be called after all base pointers have been resolved.
+     */
+    static void compute_virtual_bases(const std::vector<std::shared_ptr<aggregate>>& all_aggregates);
+
+    /** Returns the direct enclosing class, or nullptr if not nested in a class. */
+    std::shared_ptr<klass> get_enclosing_class() const {
+        return std::dynamic_pointer_cast<klass>(get_enclosing_aggregate());
+    }
+
+    /**
+     * True if this class has at least one vtable slot whose current function is still abstract
+     * (i.e. the slot was introduced by an abstract method and was not overridden by a
+     * concrete implementation in this class or any ancestor up to and including this class).
+     * Requires that the vtable layout has already been built (symbol_resolver pass).
+     */
+    bool has_abstract_vtable_slots() const;
+};
+
+/**
+ * Interface aggregate: concrete aggregate declared with the 'interface' keyword.
+ * An interface is an abstract, vtable-enabled aggregate where all member functions
+ * are implicitly abstract and public. No member variables are allowed (by convention).
+ * Semantically similar to a klass but restricted to purely virtual method contracts.
+ */
+class interface : public klass {
+protected:
+    friend class ns;
+    friend class aggregate;
+    friend class gen::implementation_generator;
+    friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
+
+    interface(std::shared_ptr<element> parent) :
+        klass(parent) {}
+
+    static std::shared_ptr<interface> make_shared(std::shared_ptr<element> parent, const std::string &name);
+
+public:
+    bool is_class() const override { return false; }
+    bool is_interface() const { return true; }
+
+    void accept(model_visitor& visitor) override;
+};
+
 
 class parameter : public element, public variable_definition {
 protected:
@@ -577,7 +915,7 @@ public:
 
 protected:
     friend class ns;
-    friend class structure;
+    friend class aggregate;
     friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
@@ -595,6 +933,38 @@ protected:
 
     /** True if this member function is declared const (this parameter is ref<const T>). */
     bool _is_const_member = false;
+
+    /**
+     * True if this function is virtual (dispatch through vtable).
+     * Set during symbol resolution for non-static, non-private member functions of classes.
+     */
+    bool _is_virtual = false;
+
+    /**
+     * True if this function is declared 'final' as a specifier.
+     * - A final virtual function cannot be overridden.
+     * - A NEW function declared final is NOT virtual (no vtable slot).
+     */
+    bool _is_final_func = false;
+
+    /**
+     * True if this function is declared 'abstract': it has no body and its class
+     * cannot be instantiated unless a derived class provides a concrete override.
+     * Only valid for non-static, non-private, non-final member functions of classes.
+     */
+    bool _is_abstract_func = false;
+
+    /**
+     * Index of this function's slot in the vtable of its owning class.
+     * -1 means "not in any vtable".
+     */
+    int _vtable_slot = -1;
+
+    /**
+     * The function that this function overrides in the parent class's vtable.
+     * nullptr if no override.
+     */
+    std::shared_ptr<function> _overrides = nullptr;
 
     std::shared_ptr<type> _return_type;
     std::vector<std::shared_ptr<parameter>> _parameters;
@@ -657,13 +1027,12 @@ public:
     /**
      * Reset the implicit 'this' parameter so that create_this_parameter() will
      * recreate it with the current _is_const_member flag.
-     * Useful when const-ness is promoted after initial construction (e.g. in a const struct).
      */
     void reset_this_parameter() { _this_param = nullptr; }
 
     bool is_member() const;
-    std::shared_ptr<const structure> get_owner() const;
-    std::shared_ptr<structure> get_owner();
+    std::shared_ptr<const aggregate> get_owner() const;
+    std::shared_ptr<aggregate> get_owner();
 
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }
@@ -676,12 +1045,40 @@ public:
     bool is_defaulted() const { return _aliasing == function_aliasing::DEFAULT; }
     /** True if the constructor was declared with '-> delete ;'. */
     bool is_deleted() const { return _aliasing == function_aliasing::DELETE; }
-};
 
+    /** True if this function is virtual (dispatched through vtable). Set by symbol_resolver. */
+    bool is_virtual() const { return _is_virtual; }
+    /** Mark this function as virtual (or non-virtual). */
+    void set_virtual(bool v) { _is_virtual = v; }
+
+    /** True if this function is declared 'final'. */
+    bool is_final_func() const { return _is_final_func; }
+    /** Set whether this function is declared 'final'. */
+    void set_final_func(bool v) { _is_final_func = v; }
+
+    /**
+     * True if this function is declared 'abstract' (has no body; must not be materialized).
+     * The owning class must itself be declared abstract.
+     */
+    bool is_abstract_func() const { return _is_abstract_func; }
+    /** Set whether this function is abstract. */
+    void set_abstract_func(bool v) { _is_abstract_func = v; }
+
+    /** Vtable slot index (-1 = not in vtable). Set by symbol_resolver. */
+    int get_vtable_slot() const { return _vtable_slot; }
+    /** Set the vtable slot index. */
+    void set_vtable_slot(int slot) { _vtable_slot = slot; }
+
+    /** Returns the function overridden by this one (nullptr = new virtual or non-virtual). */
+    std::shared_ptr<function> get_overrides() const { return _overrides; }
+    /** Set the function overridden by this one. */
+    void set_overrides(std::shared_ptr<function> f) { _overrides = std::move(f); }
+
+};
 
 class constructor : public function {
 protected:
-    friend class structure;
+    friend class aggregate;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
 
@@ -694,8 +1091,8 @@ public:
         std::vector<std::shared_ptr<expression>> args;
         /** True if this initializer refers to a base class (not a member variable). */
         bool is_base_init = false;
-        /** Resolved base structure (set during symbol resolution, only when is_base_init=true). */
-        std::shared_ptr<structure> base_struct;
+        /** Resolved base aggregate (set during symbol resolution, only when is_base_init=true). */
+        std::shared_ptr<aggregate> base_struct;
     };
 
 protected:
@@ -705,12 +1102,12 @@ protected:
     /** True if this constructor is a copy constructor (detected/marked during symbol resolution). */
     bool _is_copy_constructor = false;
 
-    constructor(std::shared_ptr<structure> parent) :
+    constructor(std::shared_ptr<aggregate> parent) :
         function(parent) {}
 
     void update_mangled_name() override;
 
-    static std::shared_ptr<constructor> make_shared(std::shared_ptr<structure> parent);
+    static std::shared_ptr<constructor> make_shared(std::shared_ptr<aggregate> parent);
 
 public:
     void accept(model_visitor& visitor) override;
@@ -728,15 +1125,15 @@ public:
 
 class destructor : public function {
 protected:
-    friend class structure;
+    friend class aggregate;
     friend class gen::symbol_resolver;
 
-    destructor(std::shared_ptr<structure> parent) :
+    destructor(std::shared_ptr<aggregate> parent) :
         function(parent) {}
 
     void update_mangled_name() override;
 
-    static std::shared_ptr<destructor> make_shared(std::shared_ptr<structure> parent);
+    static std::shared_ptr<destructor> make_shared(std::shared_ptr<aggregate> parent);
 
 public:
     void accept(model_visitor& visitor) override;
@@ -745,52 +1142,41 @@ public:
 
 
 /**
- * Static constructor: a static no-argument void function named exactly with the structure name.
+ * Static constructor: a static no-argument void function named exactly with the aggregate name.
  * Acts as a class initializer. Its execution is registered in the global initializer function.
  */
 class static_constructor : public function {
 public:
     /**
      * A dependency declared in the static constructor's mem-init list.
-     * Syntax: `static S() : A(), gvar() {}`
-     *
-     * Each entry is initially created with only a raw name (from the parser/model_builder).
-     * During symbol resolution (symbol_resolver::visit_static_constructor), the name is
-     * resolved to either a `structure` (whose static constructor must run first) or a
-     * `global_variable_definition` (which must be initialized first).
-     * After resolution the `resolved` variant holds the concrete model element; the raw
-     * `name` string is kept for diagnostics only.
-     *
-     * Resolution is performed exclusively by gen::symbol_resolver — the model itself
-     * contains no resolution logic.
      */
     struct static_dep_spec {
         /// Raw name as written in source — kept for error messages only.
         std::string name;
 
         /// Resolved target: monostate = not yet resolved (or resolution failed),
-        /// shared_ptr<structure> = depends on that struct's static constructor,
+        /// shared_ptr<aggregate> = depends on that aggregate's static constructor,
         /// shared_ptr<global_variable_definition> = depends on that global variable.
         std::variant<
             std::monostate,
-            std::shared_ptr<structure>,
+            std::shared_ptr<aggregate>,
             std::shared_ptr<global_variable_definition>
         > resolved;
 
         bool is_resolved() const { return resolved.index() != 0; }
 
-        /// True when the dep resolved to a structure.
+        /// True when the dep resolved to an aggregate.
         bool is_structure() const {
-            return std::holds_alternative<std::shared_ptr<structure>>(resolved);
+            return std::holds_alternative<std::shared_ptr<aggregate>>(resolved);
         }
         /// True when the dep resolved to a global variable.
         bool is_global_variable() const {
             return std::holds_alternative<std::shared_ptr<global_variable_definition>>(resolved);
         }
 
-        /// Returns the resolved structure (nullptr if not a structure dep).
-        std::shared_ptr<structure> get_structure() const {
-            auto* p = std::get_if<std::shared_ptr<structure>>(&resolved);
+        /// Returns the resolved aggregate (nullptr if not an aggregate dep).
+        std::shared_ptr<aggregate> get_structure() const {
+            auto* p = std::get_if<std::shared_ptr<aggregate>>(&resolved);
             return p ? *p : nullptr;
         }
         /// Returns the resolved global variable (nullptr if not a global-var dep).
@@ -801,18 +1187,18 @@ public:
     };
 
 protected:
-    friend class structure;
+    friend class aggregate;
     friend class gen::symbol_resolver;
     friend class gen::init_order_resolver;
 
     std::vector<static_dep_spec> _static_deps;
 
-    static_constructor(std::shared_ptr<structure> parent) :
+    static_constructor(std::shared_ptr<aggregate> parent) :
         function(parent, true) {}
 
     void update_mangled_name() override;
 
-    static std::shared_ptr<static_constructor> make_shared(std::shared_ptr<structure> parent);
+    static std::shared_ptr<static_constructor> make_shared(std::shared_ptr<aggregate> parent);
 
 public:
     void accept(model_visitor& visitor) override;
@@ -831,20 +1217,20 @@ public:
 
 
 /**
- * Static destructor: a static no-argument void function named with "~" + structure name.
+ * Static destructor: a static no-argument void function named with "~" + aggregate name.
  * Acts as a class finalizer. Its execution is registered in the global finalizer function.
  */
 class static_destructor : public function {
 protected:
-    friend class structure;
+    friend class aggregate;
     friend class gen::symbol_resolver;
 
-    static_destructor(std::shared_ptr<structure> parent) :
+    static_destructor(std::shared_ptr<aggregate> parent) :
         function(parent, true) {}
 
     void update_mangled_name() override;
 
-    static std::shared_ptr<static_destructor> make_shared(std::shared_ptr<structure> parent);
+    static std::shared_ptr<static_destructor> make_shared(std::shared_ptr<aggregate> parent);
 
 public:
     void accept(model_visitor& visitor) override;
@@ -853,12 +1239,6 @@ public:
 
 /**
  * An "init item" is one node in the global initialization/finalization graph.
- * It is either:
- *   - a static_constructor (class-level initializer for a structure), or
- *   - a global_variable_definition (global or static struct member variable).
- *
- * This variant type is used in the unified ordered init/finit sequence produced
- * by init_order_resolver.
  */
 using init_item = std::variant<
     std::shared_ptr<static_constructor>,
@@ -988,7 +1368,7 @@ class global_variable_definition : public element, public variable_definition {
 protected:
 
     friend class ns;
-    friend class structure;
+    friend class aggregate;
     friend class block;
     friend class gen::implementation_generator;
 
@@ -1008,7 +1388,7 @@ public:
     void set_visibility(visibility v) { _visibility = v; }
 };
 
-class ns : public element, public named_element, public variable_holder, public function_holder, public structure_holder {
+class ns : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder {
 protected:
 
     friend class unit;
@@ -1018,9 +1398,6 @@ protected:
 
     /** Map of direct child namespaces. */
     std::map<std::string, std::shared_ptr<ns>> _ns;
-
-    /** Map of all structures defined in this namespace. */
-    std::map<std::string, std::shared_ptr<structure>> _structs;
 
     ns(std::shared_ptr<element> parent):
         element(parent) {}
@@ -1034,7 +1411,9 @@ protected:
     void on_function_defined(std::shared_ptr<function> func) override;
 
     std::shared_ptr<structure> do_create_structure(const std::string &name) override;
-    void on_structure_defined(std::shared_ptr<structure>) override;
+    std::shared_ptr<klass> do_create_class(const std::string &name) override;
+    std::shared_ptr<interface> do_create_interface(const std::string &name) override;
+    void on_aggregate_defined(std::shared_ptr<aggregate>) override;
 
     void update_mangled_name() override;
 public:
@@ -1098,6 +1477,8 @@ protected:
     std::shared_ptr<global_main_function> _global_main_func;
 
     friend class k::model::gen::symbol_resolver;
+    friend class k::model::gen::aggregate_type_resolver;
+    friend class k::model::gen::model_materializer;
     friend class k::model::gen::type_reference_resolver;
     friend class k::model::gen::declaration_generator;
     friend class k::model::gen::implementation_generator;

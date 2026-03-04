@@ -93,15 +93,19 @@ Grammar notation used here:
 <a id="declaration"></a>**Declaration:**
     [VisibilityDecl](#visibilitydecl)
     | [NamespaceDecl](#namespacedecl)
-    | [StructDecl](#structdecl)
+    | [AggregateDecl](#aggregatedecl)
     | [FunctionDecl](#functiondecl)
     | [VariableDecl](#variabledecl)
 <a id="visibilitydecl"></a>**VisibilityDecl:**
     `(` `'public'` | `'protected'` | `'private'` `)` `':'`
 <a id="namespacedecl"></a>**NamespaceDecl:**
     `'namespace'` `[` [Identifier](#identifier) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
-<a id="structdecl"></a>**StructDecl:**
-    {{ [Specifier](#specifier) }} `'struct'` [Identifier](#identifier) `[` `':'` [BaseClause](#baseclause) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
+<a id="aggregatedecl"></a>**AggregateDecl:**
+    {{ [Specifier](#specifier) }} `(` `'struct'` | `'class'` | `'interface'` `)` [Identifier](#identifier) `[` `':'` [BaseClause](#baseclause) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
+
+    *Notes:*
+    - *`'abstract'` in [Specifier](#specifier) is only valid with `'class'`, not `'struct'`. For `'interface'` it is accepted but redundant (warning `0x2002A`).*
+    - *`'interface'` bodies may not contain fields, constructors, or destructors. Method bodies are forbidden (implicit abstract, warning `0x2002B` if `abstract` is written explicitly).*
 <a id="baseclause"></a>**BaseClause:**
     [BaseSpec](#basespec) {{ `','` [BaseSpec](#basespec) }}
 <a id="basespec"></a>**BaseSpec:**
@@ -109,7 +113,9 @@ Grammar notation used here:
 <a id="functiondecl"></a>**FunctionDecl:**
     {{ [Specifier](#specifier) }} `[` `'~'` `]` [Identifier](#identifier) `'('` `[` [ParameterList](#parameterlist) `]` `')'` `[` `':'` [TypeSpec](#typespec) `]`
     `[` `':'` `(` [MemberInitList](#memberinitlist) | [StaticDepList](#staticdeplist) `)` `]`
-    [BlockStatement](#blockstatement)
+    ( [BlockStatement](#blockstatement) | `'->'` `(` `'default'` | `'delete'` `)` `';'` | `';'` *(abstract only)* )
+
+    *Note: the bare `';'` form (no body) is only valid when `'abstract'` appears in the [Specifier](#specifier) list.*
 <a id="variabledecl"></a>**VariableDecl:**
     {{ [Specifier](#specifier) }} [Identifier](#identifier) `':'` [TypeSpec](#typespec) `[` [Initialiser](#initialiser) `]` `';'`
 <a id="specifier"></a>**Specifier:**

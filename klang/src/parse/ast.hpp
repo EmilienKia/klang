@@ -568,9 +568,9 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
-        struct struct_decl : public declaration {
+        struct aggregate_decl : public declaration {
             std::vector <lex::keyword> specifiers;
-            lex::keyword st;
+            lex::keyword kw_aggregate_type;
             lex::punctuator open_brace, close_brace;
             lex::identifier name;
             std::vector <decl_ptr> declarations;
@@ -586,30 +586,35 @@ namespace k::parse {
             /** Base-class clause entries, in declaration order. Empty if no inheritance. */
             std::vector<base_clause_entry> bases;
 
-            struct_decl(const std::vector <lex::keyword>& specifiers,
-                            const lex::keyword& st,
+            /** True if this declaration uses the 'class' keyword (vs 'struct'). */
+            bool is_class() const { return kw_aggregate_type.type == lex::keyword::CLASS; }
+            bool is_struct() const { return kw_aggregate_type.type == lex::keyword::STRUCT; }
+            bool is_interface() const { return kw_aggregate_type.type == lex::keyword::INTERFACE; }
+
+            aggregate_decl(const std::vector <lex::keyword>& specifiers,
+                            const lex::keyword& kw_aggregate_type,
                             const lex::punctuator& open_brace,
                             const lex::punctuator& close_brace,
                             const lex::identifier& name,
                             const std::vector <decl_ptr> &declarations) :
-                    specifiers(specifiers), st(st), open_brace(open_brace), close_brace(close_brace), name(name), declarations(declarations) {}
+                    specifiers(specifiers), kw_aggregate_type(kw_aggregate_type), open_brace(open_brace), close_brace(close_brace), name(name), declarations(declarations) {}
 
-            struct_decl(const std::vector <lex::keyword>& specifiers,
-                            const lex::keyword& st,
+            aggregate_decl(const std::vector <lex::keyword>& specifiers,
+                            const lex::keyword& kw_aggregate_type,
                             const lex::punctuator& open_brace,
                             const lex::punctuator& close_brace,
                             const lex::identifier& name,
                             const std::vector<base_clause_entry>& bases,
                             const std::vector <decl_ptr> &declarations) :
-                    specifiers(specifiers), st(st), open_brace(open_brace), close_brace(close_brace), name(name), bases(bases), declarations(declarations) {}
+                    specifiers(specifiers), kw_aggregate_type(kw_aggregate_type), open_brace(open_brace), close_brace(close_brace), name(name), bases(bases), declarations(declarations) {}
 
-            struct_decl(std::vector <lex::keyword>&& specifiers,
-                            lex::keyword&& st,
+            aggregate_decl(std::vector <lex::keyword>&& specifiers,
+                            lex::keyword&& kw_aggregate_type,
                             lex::punctuator&& open_brace,
                             lex::punctuator&& close_brace,
                             lex::identifier &&name,
                             std::vector <decl_ptr> &&declarations) :
-                    specifiers(specifiers), st(st), open_brace(open_brace), close_brace(close_brace), name(name), declarations(declarations) {}
+                    specifiers(specifiers), kw_aggregate_type(kw_aggregate_type), open_brace(open_brace), close_brace(close_brace), name(name), declarations(declarations) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -753,7 +758,7 @@ namespace k::parse {
 
         virtual void visit_visibility_decl(ast::visibility_decl &) = 0;
         virtual void visit_namespace_decl(ast::namespace_decl &) = 0;
-        virtual void visit_struct_decl(ast::struct_decl &) = 0;
+        virtual void visit_aggregate_decl(ast::aggregate_decl &) = 0;
         virtual void visit_variable_decl(ast::variable_decl &) = 0;
         virtual void visit_function_decl(ast::function_decl &) = 0;
 
@@ -800,7 +805,7 @@ namespace k::parse {
 
         void visit_visibility_decl(ast::visibility_decl &) override;
         void visit_namespace_decl(ast::namespace_decl &) override;
-        void visit_struct_decl(ast::struct_decl &) override;
+        void visit_aggregate_decl(ast::aggregate_decl &) override;
         void visit_variable_decl(ast::variable_decl &) override;
         void visit_function_decl(ast::function_decl &) override;
 

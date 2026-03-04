@@ -52,7 +52,15 @@
 #define SYMBOL_STATIC_DESTRUCTOR_NAME  "D"
 
 #define SYMBOL_CONSTRUCTOR_C1_NAME "C1"
+#define SYMBOL_CONSTRUCTOR_C2_NAME "C2"
 #define SYMBOL_DESTRUCTOR_D1_NAME  "D1"
+#define SYMBOL_DESTRUCTOR_D2_NAME  "D2"
+
+// Vtable global variable prefix: _KTV
+#define SYMBOL_VTABLE_PREFIX "TV"
+
+// Virtual dispatch thunk: 'v' after 'M' means "virtual dispatch"
+#define SYMBOL_VIRTUAL_DISPATCH "Mv"
 
 #define TYPE_VOID           "v"
 #define TYPE_BOOL           "b"
@@ -289,6 +297,69 @@ std::string mangler::mangle_type(const type& ty) const {
 
 }
 
+std::string mangler::mangle_constructor_c2(const constructor& ctor) const {
+    auto name = ctor.get_name();
+    if (!name.has_root_prefix()) return "";
+    if (name.size() < 2) return "";
+
+    std::ostringstream mangled;
+    mangled << K_LANG_SYMBOL_PREFIX SYMBOL_TYPE_FUNCTION SYMBOL_MEMBER;
+    mangled << mangle_fq_name_with_raw_last_part(name.without_back(), SYMBOL_CONSTRUCTOR_C2_NAME, false);
+
+    if (ctor.get_parameter_size() == 0) {
+        mangled << TYPE_VOID;
+    } else {
+        for (size_t i = 0; i < ctor.get_parameter_size(); ++i) {
+            auto param = ctor.get_parameter(i);
+            if (param->is_const()) mangled << SYMBOL_MODIFIER_CONST;
+            mangled << mangle_type(*param->get_type());
+        }
+    }
+    return mangled.str();
+}
+
+std::string mangler::mangle_destructor_d2(const destructor& dtor) const {
+    auto name = dtor.get_name();
+    if (!name.has_root_prefix()) return "";
+    if (name.size() < 2) return "";
+
+    std::ostringstream mangled;
+    mangled << K_LANG_SYMBOL_PREFIX SYMBOL_TYPE_FUNCTION SYMBOL_MEMBER;
+    mangled << mangle_fq_name_with_raw_last_part(name.without_back(), SYMBOL_DESTRUCTOR_D2_NAME, false);
+    mangled << TYPE_VOID;
+    return mangled.str();
+}
+
+std::string mangler::mangle_vtable(const name& class_name) {
+    std::ostringstream mangled;
+    mangled << K_LANG_SYMBOL_PREFIX << SYMBOL_VTABLE_PREFIX;
+    mangled << mangle_fq_name(class_name, false);
+    return mangled.str();
+}
+
+std::string mangler::mangle_virtual_dispatch(const function& func) const {
+    auto name = func.get_name();
+    if (!name.has_root_prefix()) return "";
+
+    std::ostringstream mangled;
+    // Virtual dispatch thunk: _KFMvN<name>E<params>
+    mangled << K_LANG_SYMBOL_PREFIX SYMBOL_TYPE_FUNCTION SYMBOL_VIRTUAL_DISPATCH;
+    if (func.is_const_member()) {
+        mangled << SYMBOL_MODIFIER_CONST;
+    }
+    mangled << mangle_fq_name(name, false);
+
+    if (func.get_parameter_size() == 0) {
+        mangled << TYPE_VOID;
+    } else {
+        for (size_t i = 0; i < func.get_parameter_size(); ++i) {
+            auto param = func.get_parameter(i);
+            if (param->is_const()) mangled << SYMBOL_MODIFIER_CONST;
+            mangled << mangle_type(*param->get_type());
+        }
+    }
+    return mangled.str();
+}
 
 
 } // k::model

@@ -805,7 +805,25 @@ A mutable member function can only be called on mutable objects.
 
 > `const` and `static` are incompatible on a member function: static functions have no `this` and the combination is a compile-time error.
 
-See [Structures — §12](../structs/structs.md#12-const-member-functions) for full details.
+#### Const/mutable overloading (classes)
+
+In a **class**, a `const` and a mutable method may share the same name (overloaded on receiver constness).  
+The mutable overload is selected on mutable receivers; the const overload is selected on const receivers:
+
+```k
+class C {
+    public x : int;
+    C() : x(5) {}
+    get() : int       { return this.x; }       // mutable overload
+    const get() : int { return this.x + 100; } // const overload
+}
+// mutable receiver → get() = 5
+// const receiver   → const get() = 105
+```
+
+A mutable method in a derived class does **not** override a const base method — they occupy distinct vtable slots.
+
+See [Structures — §12](../structs/structs.md#12-const-member-functions) and [Classes — §13](../structs/classes.md#13-const-member-functions-in-classes) for full details.
 
 ---
 

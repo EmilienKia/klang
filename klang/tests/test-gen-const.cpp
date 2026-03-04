@@ -656,3 +656,295 @@ TEST_CASE("Const static member function rejected", "[gen][const][struct][error]"
     )SRC"), k::log::compiler_error);
 }
 
+// =============================================================================
+// CONST MEMBER FUNCTIONS — CLASS
+// =============================================================================
+
+// A const method of a class can read fields.
+TEST_CASE("Class: const method can read field", "[gen][const][class]") {
+    auto jit = gen_jit(R"SRC(
+        module __cls_const_read__;
+        class Box {
+            public size : int;
+            Box(s : int) : size(s) {}
+            const area() : int { return this.size * this.size; }
+        }
+        test() : int {
+            b : Box(5);
+            return b.area();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 25);
+}
+
+// A const method of a class cannot assign to a field.
+TEST_CASE("Class: const method cannot assign to field", "[gen][const][class][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __cls_const_assign__;
+        class C {
+            public x : int;
+            C() : x(0) {}
+            const bad(v : int) { this.x = v; }
+        }
+    )SRC"));
+}
+
+// A const method of a class cannot call a mutable method on this.
+TEST_CASE("Class: const method cannot call mutable method on this", "[gen][const][class][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __cls_const_call_mut__;
+        class C {
+            public x : int;
+            C() : x(0) {}
+            mut() { this.x = 1; }
+            const bad() { this.mut(); }
+        }
+    )SRC"));
+}
+
+// A const method of a class can call another const method on this.
+TEST_CASE("Class: const method can call another const method", "[gen][const][class]") {
+    auto jit = gen_jit(R"SRC(
+        module __cls_const_call_const__;
+        class C {
+            public x : int;
+            C() : x(5) {}
+            const inner() : int { return this.x; }
+            const outer() : int { return this.inner() + 1; }
+        }
+        test() : int {
+            c : C;
+            return c.outer();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 6);
+}
+
+// A mutable method cannot be called on a const local class variable.
+TEST_CASE("Class: mutable method on const local variable rejected", "[gen][const][class][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __cls_const_local_mut__;
+        class C {
+            public x : int;
+            C() : x(0) {}
+            inc() { this.x = this.x + 1; }
+        }
+        test() {
+            const c : C;
+            c.inc();
+        }
+    )SRC"));
+}
+
+// A const method can be called on a const local class variable.
+TEST_CASE("Class: const method on const local variable allowed", "[gen][const][class]") {
+    auto jit = gen_jit(R"SRC(
+        module __cls_const_local_const__;
+        class C {
+            public x : int;
+            C() : x(7) {}
+            const get() : int { return this.x; }
+        }
+        test() : int {
+            const c : C;
+            return c.get();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 7);
+}
+
+// A mutable method cannot be called on a const reference parameter to a class.
+TEST_CASE("Class: mutable method on const ref parameter rejected", "[gen][const][class][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __cls_const_ref_mut__;
+        class C {
+            public x : int;
+            C() : x(0) {}
+            inc() { this.x = this.x + 1; }
+        }
+        test(c : const C&) { c.inc(); }
+    )SRC"));
+}
+
+// A const method can be called on a const reference parameter.
+TEST_CASE("Class: const method on const ref parameter allowed", "[gen][const][class]") {
+    auto jit = gen_jit(R"SRC(
+        module __cls_const_ref_const__;
+        class C {
+            public x : int;
+            C() : x(9) {}
+            const get() : int { return this.x; }
+        }
+        call(c : const C&) : int { return c.get(); }
+        test() : int {
+            c : C;
+            return call(c);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 9);
+}
+
+// =============================================================================
+// CONST/MUTABLE OVERLOAD RESOLUTION — CLASS
+// =============================================================================
+
+// On a mutable object, the mutable overload is preferred over the const overload.
+TEST_CASE("Class: mutable overload preferred on mutable object", "[gen][const][class][overload]") {
+    auto jit = gen_jit(R"SRC(
+        module __cls_overload_mut__;
+        class C {
+            public x : int;
+            C() : x(5) {}
+            get() : int { return this.x; }
+            const get() : int { return this.x + 100; }
+        }
+        test() : int {
+            c : C;
+            return c.get();
+        }
+    )SRC", false, false);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 5);   // mutable overload: x = 5 (not 105)
+}
+
+// On a const object, the const overload is selected.
+TEST_CASE("Class: const overload selected on const object", "[gen][const][class][overload]") {
+    auto jit = gen_jit(R"SRC(
+        module __cls_overload_const__;
+        class C {
+            public x : int;
+            C() : x(5) {}
+            get() : int { return this.x; }
+            const get() : int { return this.x + 100; }
+        }
+        test() : int {
+            const c : C;
+            return c.get();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 105);   // const overload: x + 100 = 105
+}
+
+// =============================================================================
+// CONST + VIRTUAL DISPATCH — CLASS
+// =============================================================================
+
+// A const method is virtual in a class and dispatches correctly.
+TEST_CASE("Class: const method is virtual and dispatches correctly", "[gen][const][class][virtual]") {
+    auto jit = gen_jit(R"SRC(
+        module __cls_const_virt__;
+        class Base {
+            public x : int;
+            Base() : x(1) {}
+            const get() : int { return this.x; }
+        }
+        class Derived : public Base {
+            Derived() {}
+            const get() : int { return this.x + 10; }
+        }
+        call(b : const Base&) : int { return b.get(); }
+        test() : int {
+            d : Derived;
+            return call(d);
+        }
+    )SRC", false, false);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 11);   // virtual dispatch → Derived::get → 1 + 10 = 11
+}
+
+// A mutable method in Derived does NOT override the const method in Base:
+// they are distinct vtable slots (different this-constness = different signature).
+TEST_CASE("Class: mutable method does not override const base method", "[gen][const][class][virtual]") {
+    auto jit = gen_jit(R"SRC(
+        module __cls_const_no_override__;
+        class Base {
+            public x : int;
+            Base() : x(1) {}
+            const get() : int { return this.x; }
+        }
+        class Derived : public Base {
+            Derived() {}
+            get() : int { return this.x + 10; }
+        }
+        call_const(b : const Base&) : int { return b.get(); }
+        test_const_path() : int {
+            d : Derived;
+            return call_const(d);
+        }
+        test_mutable_path() : int {
+            d : Derived;
+            return d.get();
+        }
+    )SRC", false, false);
+    REQUIRE(jit);
+    auto fn_const  = jit->lookup_symbol<int(*)()>("test_const_path");
+    auto fn_mutable = jit->lookup_symbol<int(*)()>("test_mutable_path");
+    REQUIRE(fn_const); REQUIRE(fn_mutable);
+    // const path → Base::get (not overridden by Derived::get which is mutable) → 1
+    CHECK(fn_const()   == 1);
+    // mutable path → Derived::get → 1 + 10 = 11
+    CHECK(fn_mutable() == 11);
+}
+
+// =============================================================================
+// CONST + INHERITANCE — CLASS
+// =============================================================================
+
+// Derived const method can call base const method.
+TEST_CASE("Class: derived const method can call base const method", "[gen][const][class][inheritance]") {
+    auto jit = gen_jit(R"SRC(
+        module __cls_const_inherit__;
+        class B {
+            public x : int;
+            B() : x(3) {}
+            const get() : int { return this.x; }
+        }
+        class D : public B {
+            D() {}
+            const get2() : int { return this.get() * 2; }
+        }
+        test() : int {
+            d : D;
+            return d.get2();
+        }
+    )SRC", false, false);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 6);   // get() = 3, get2() = 3 * 2 = 6
+}
+
+// Derived const method cannot call base mutable method.
+TEST_CASE("Class: derived const method cannot call base mutable method", "[gen][const][class][inheritance][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __cls_const_inherit_err__;
+        class B {
+            public x : int;
+            B() : x(0) {}
+            mut() { this.x = 1; }
+        }
+        class D : public B {
+            D() {}
+            const bad() { this.mut(); }
+        }
+    )SRC"));
+}

@@ -22,26 +22,12 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
-#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Module.h>
-#include <llvm/IR/Type.h>
-#include <llvm/IR/LegacyPassManager.h>
 
-
-#include <llvm/ExecutionEngine/JITSymbol.h>
-#include <llvm/ExecutionEngine/Orc/CompileUtils.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
-#include <llvm/ExecutionEngine/Orc/ExecutionUtils.h>
-#include <llvm/ExecutionEngine/Orc/ExecutorProcessControl.h>
 #include <llvm/ExecutionEngine/Orc/IRCompileLayer.h>
-#include <llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
-#include <llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h>
-#include <llvm/ExecutionEngine/SectionMemoryManager.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
-
 
 #include "../model/model.hpp"
 #include "../model/model_visitor.hpp"
@@ -83,7 +69,7 @@ protected:
 
     llvm::Value* _value;
 
-    std::stack<std::shared_ptr<structure>> _struct_stack;
+    std::stack<std::shared_ptr<aggregate>> _struct_stack;
 
     static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
 
@@ -109,9 +95,18 @@ public:
 
     void visit_namespace(ns &) override;
     void visit_function(function &) override;
-    void visit_structure(structure&) override;
+    void visit_aggregate(aggregate&) override;
+    void visit_klass(klass&) override;
+    void visit_interface(interface&) override;
     void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition &) override;
+
+    /**
+     * Emit the @_KVT<mangled> vtable global stub and declare $impl / thunk
+     * function variants for a polymorphic class aggregate.
+     * Called from visit_klass for class aggregates only.
+     */
+    void emit_vtable_stub(klass& st);
 
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;
@@ -138,7 +133,7 @@ protected:
 
     llvm::Value* _value;
 
-    std::stack<std::shared_ptr<structure>> _struct_stack;
+    std::stack<std::shared_ptr<aggregate>> _struct_stack;
 
     /** Stack of active cleanup BasicBlocks, one per block with destructible local variables. */
     std::stack<llvm::BasicBlock*> _cleanup_blocks;
@@ -175,9 +170,37 @@ public:
     void visit_function(function &) override;
     void visit_global_constructor_function(global_constructor_function&) override;
     void visit_global_destructor_function(global_destructor_function&) override;
-    void visit_structure(structure&) override;
+    void visit_aggregate(aggregate&) override;
+    void visit_klass(klass&) override;
+    void visit_interface(interface&) override;
     void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition &) override;
+
+    /**
+     * Fill the @_KVT<mangled> vtable global constant with the actual function pointers
+     * and offset-to-top values for a polymorphic class.
+     * Called from visit_klass for class aggregates.
+     */
+    void fill_vtable(klass& st);
+
+    /**
+     * Get or create an adjustment thunk for `func` when dispatched from the secondary
+     * base sub-object at `sub_object_offset` bytes.
+     * Returns the LLVM function for the thunk, creating it if necessary.
+     */
+    llvm::Function* get_or_create_thunk(structure& st, function& func,
+                                        ptrdiff_t sub_object_offset,
+                                        size_t section_index);
+
+    /**
+     * Emit vptr store instructions at the start of a constructor body.
+     * @param b            The IRBuilder positioned at the entry of the constructor.
+     * @param st           The class owning the constructor.
+     * @param this_val     The 'this' pointer LLVM value.
+     * @param is_complete  True for C1 (complete-object ctor), false for C2 (base-object ctor).
+     */
+    void emit_vptr_stores(llvm::IRBuilder<>& b, structure& st,
+                          llvm::Value* this_val, bool is_complete);
 
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;

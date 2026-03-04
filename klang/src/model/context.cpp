@@ -303,8 +303,24 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
     auto st = st_type->get_struct();
     std::vector<struct_type::field> fields;
     std::vector<llvm::Type*> types;
-    for (auto [var_name, var] : st->variables()) {
+
+    // Iterate over _children in insertion order (not _vars which is alphabetically sorted).
+    // This ensures __vptr__ (injected at position 0) is first, followed by __base_X__ fields
+    // (injected before regular members), and then user-declared members in declaration order.
+    for (auto& child : st->get_children()) {
+        auto var = std::dynamic_pointer_cast<member_variable_definition>(child);
+        if (!var) continue;
+        std::string var_name = var->get_short_name();
         auto type = var->get_type();
+
+        // Special case: synthetic vptr fields (injected by symbol_resolver_process_class)
+        // have no type yet — represent them as opaque pointers at LLVM level.
+        if (!type) {
+            llvm::Type* ptr_ty = llvm::PointerType::get(llvm_context(), 0);
+            fields.emplace_back(struct_type::field{fields.size(), var_name, std::weak_ptr<k::model::type>{}});
+            types.push_back(ptr_ty);
+            continue;
+        }
 
         // For pointer/reference types whose immediate subtype is a struct_type,
         // resolve the underlying struct first so get_llvm_type() on the pointer/ref succeeds.

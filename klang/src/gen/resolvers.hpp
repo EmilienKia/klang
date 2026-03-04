@@ -77,9 +77,9 @@ public:
     lookup_functions(std::shared_ptr<element> elem, const std::string& name);
 
     /**
-     * Look up a structure by name, starting from elem and walking up the scope chain.
+     * Look up an aggregate (structure or class) by name, starting from elem and walking up the scope chain.
      */
-    static std::shared_ptr<structure>
+    static std::shared_ptr<aggregate>
     lookup_structure(std::shared_ptr<element> elem, const std::string& name);
 
     //
@@ -93,10 +93,10 @@ public:
     static std::shared_ptr<ns> root_namespace(const element& elem);
 
     /**
-     * True if access_site is inside a member function of st, or any of st's nested struct
-     * ancestors (used so nested struct methods can access the parent struct's protected members).
+     * True if access_site is inside a member function of st, or any of st's nested aggregate
+     * ancestors (used so nested aggregate methods can access the parent aggregate's protected members).
      */
-    static bool is_inside_member_function_of_or_ancestor(const element& access_site, const structure& st);
+    static bool is_inside_member_function_of_or_ancestor(const element& access_site, const aggregate& st);
 
     /** True if access_site is textually inside owner_ns (same ns pointer or any descendant). */
     static bool is_in_same_namespace(const element& access_site, const ns& owner_ns);
@@ -122,8 +122,8 @@ public:
      */
     static bool is_struct_member_accessible(
         visibility vis,
-        const structure& owner_st,
-        const std::shared_ptr<structure>& owner_st_shared,
+        const aggregate& owner_st,
+        const std::shared_ptr<aggregate>& owner_st_shared,
         const std::vector<std::shared_ptr<function>>& function_stack);
 
 private:
@@ -199,7 +199,7 @@ protected:
         throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
     }
 
-    void visit_named_element(named_element&);
+protected:
 
     /**
      * Check if a variable (member or global) is accessible from the given access-site element.
@@ -209,10 +209,16 @@ protected:
      * @param access_site  The element from which the access occurs.
      */
     void check_variable_visibility(const variable_definition& var, const element& access_site);
+
+    void visit_named_element(named_element&);
+
     void visit_unit(unit&) override;
 
     void visit_namespace(ns&) override;
-    void visit_structure(structure&) override;
+    void visit_aggregate(aggregate&) override;
+    void visit_klass(klass&) override;
+    void visit_interface(interface&) override;
+
     void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition&) override;
     void visit_parameter(parameter &) override;
@@ -260,7 +266,150 @@ protected:
 };
 
 
-// TODO Add the type definition resolver here in the meantime
+/**
+ * Aggregate type resolver — Phase 1.a
+ *
+ * Resolves the types of all unit-level declarations: aggregates (structs, classes,
+ * interfaces), functions (signatures only — no bodies), constructors, destructors,
+ * and their parameters and member variables.
+ *
+ * It does NOT visit blocks, expressions, or statements. Its sole purpose is to
+ * guarantee that, when type_reference_resolver runs, every aggregate and function
+ * signature type is already resolved — including the LLVM vtable struct types for
+ * polymorphic classes.
+ *
+ * Must be run AFTER symbol_resolver and BEFORE type_reference_resolver.
+ */
+class aggregate_type_resolver : public default_model_visitor, protected k::log::logger_relay {
+protected:
+    std::shared_ptr<context> _context;
+    unit& _unit;
+
+public:
+    aggregate_type_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit)
+        : k::log::logger_relay(logger, 0x50000),
+          _context(context),
+          _unit(unit) {}
+
+    void resolve();
+
+    // Type resolution helpers (public so they can be used by free helpers)
+    std::shared_ptr<type> resolve_type_by_name(const k::name& type_name, const element& context_elem);
+    static std::shared_ptr<aggregate> resolve_struct_from(const element& elem, const k::name& qualified_name);
+    std::shared_ptr<type> resolve_type_from_root(const k::name& name_without_prefix);
+
+protected:
+    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme,
+                                  const std::string& message, const std::vector<std::string>& args = {}) {
+        k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
+        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        if (opt) diag.at(*opt);
+        logger_relay::report(diag);
+        throw resolution_error(std::move(diag));
+    }
+
+    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme,
+                                           const std::string& message, const std::vector<std::string>& args = {}) {
+        throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
+    }
+
+    void visit_unit(unit&) override;
+    void visit_namespace(ns&) override;
+    void visit_aggregate(aggregate&) override;
+    void visit_klass(klass&) override;
+    void visit_interface(interface&) override;
+    void visit_member_variable_definition(member_variable_definition&) override;
+    void visit_global_variable_definition(global_variable_definition&) override;
+    void visit_parameter(parameter&) override;
+    void visit_function(function&) override;
+    void visit_constructor(constructor&) override;
+    void visit_destructor(destructor&) override;
+    void visit_static_constructor(static_constructor&) override;
+    void visit_static_destructor(static_destructor&) override;
+    void visit_global_constructor_function(global_constructor_function&) override;
+    void visit_global_destructor_function(global_destructor_function&) override;
+    void visit_global_main_function(global_main_function&) override;
+};
+
+
+/**
+ * Model materializer — Phase 2
+ *
+ * Synthesizes and materializes all internal model information needed for virtual
+ * dispatch and constructor/destructor variant generation.  Runs AFTER
+ * aggregate_type_resolver (Phase 1.a) and BEFORE type_reference_resolver (Phase 1.b).
+ *
+ * Responsibilities:
+ *  1. Validate vtable consistency: every non-abstract class must have all inherited
+ *     abstract slots concretely implemented.
+ *  2. Compute secondary-vtable thunk descriptors: for each non-primary base class
+ *     with a vtable embedded at a non-zero byte offset in a derived class, compute
+ *     the this-adjustment offset and build thunk_info records stored in
+ *     vtable_layout::secondary_vtables.  No LLVM types are involved — only byte offsets
+ *     computed from the LLVM DataLayout.
+ *  3. Validate abstract function specifiers on interfaces and classes.
+ *
+ * All output is pure model data (no llvm::*** in model elements).
+ * The generators (declaration_generator / implementation_generator) read these
+ * pre-computed descriptors instead of recomputing them on the fly.
+ *
+ * Must be run AFTER aggregate_type_resolver and BEFORE type_reference_resolver.
+ */
+class model_materializer : public default_model_visitor, protected k::log::logger_relay {
+protected:
+    std::shared_ptr<context> _context;
+    unit& _unit;
+
+public:
+    model_materializer(k::log::logger& logger, std::shared_ptr<context> context, unit& unit)
+        : k::log::logger_relay(logger, 0x60000),
+          _context(context),
+          _unit(unit) {}
+
+    void materialize();
+
+protected:
+    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xB000;
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme,
+                                  const std::string& message, const std::vector<std::string>& args = {}) {
+        k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
+        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        if (opt) diag.at(*opt);
+        logger_relay::report(diag);
+        throw resolution_error(std::move(diag));
+    }
+
+    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme,
+                                           const std::string& message, const std::vector<std::string>& args = {}) {
+        throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
+    }
+
+    void visit_unit(unit&) override;
+    void visit_namespace(ns&) override;
+    void visit_aggregate(aggregate&) override;
+    void visit_klass(klass&) override;
+    void visit_interface(interface&) override;
+
+    /**
+     * Validate vtable consistency for a class:
+     * - All inherited abstract slots must be concretely implemented in non-abstract classes.
+     * - All abstract methods in an abstract class have a vtable slot.
+     * Returns false and emits an error if any inconsistency is found.
+     */
+    bool validate_vtable(klass& klass);
+
+    /**
+     * Compute secondary vtable thunk descriptors for a class with multiple class bases.
+     * Populates vtable_layout::secondary_vtables with thunk_info records.
+     * The byte offsets are computed from the LLVM StructLayout (requires that
+     * context::init_module has NOT yet run; we use DataLayout from the target machine).
+     * If no target machine is available, offsets are estimated from field indices.
+     */
+    void compute_secondary_vtable_specs(klass& klass);
+};
 
 
 /**
@@ -299,7 +448,7 @@ protected:
     std::shared_ptr<type> resolve_type_by_name(const k::name& type_name, const element& context_elem);
 
     /** Resolve a struct type from a given element, without climbing to parents. */
-    static std::shared_ptr<structure> resolve_struct_from(const element& elem, const k::name& qualified_name);
+    static std::shared_ptr<aggregate> resolve_struct_from(const element& elem, const k::name& qualified_name);
 
     /** Resolve a struct type from the root namespace of the unit. */
     std::shared_ptr<type> resolve_type_from_root(const k::name& name_without_prefix);
@@ -327,9 +476,18 @@ protected:
 
     void visit_unit(unit&) override;
 
-    void visit_namespace(ns&) override;
-    void visit_structure(structure&) override;
+    void visit_namespace(ns& ) override;
+    void visit_aggregate(aggregate&) override;
+    void visit_klass(klass&) override;
+    void visit_interface(interface&) override;
     void visit_variable_definition(variable_definition&);
+
+    /**
+     * Inject vptr fields into the LLVM struct type for a polymorphic class.
+     * Records section first-slot indices in the vtable_layout.
+     * Called after the LLVM struct type has been built by visit_klass.
+     */
+    void inject_vptr_fields(klass& st);
     void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition&) override;
     void visit_parameter(parameter &) override;
@@ -482,11 +640,11 @@ protected:
     void check_overload_collisions(function_holder& fh);
 
     /**
-     * Check all constructor overloads of a structure for arity-overlap collisions caused
+     * Check all constructor overloads of an aggregate for arity-overlap collisions caused
      * by default-parameter values.
      * Reports an error for every colliding pair found.
      */
-    void check_constructor_overload_collisions(structure& st);
+    void check_constructor_overload_collisions(aggregate& st);
 
     /**
      * Adapt a reference expression to load its value.

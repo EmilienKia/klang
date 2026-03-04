@@ -110,6 +110,9 @@ k::tools::exec_result build_and_exec(const std::string_view& src) {
 void test_logger::report(const k::log::diagnostic& diag) {
     static constexpr auto FORMAT = "{:0>5X} : {}\n";
 
+    // Store for post-hoc inspection
+    diagnostics.push_back(diag);
+
     std::string msg = diag.message;
     if (!diag.args.empty()) {
         fmt::dynamic_format_arg_store<fmt::format_context> store;

@@ -74,6 +74,12 @@ protected:
     std::map<std::shared_ptr<function>, llvm::AllocaInst*> _function_this_variables;
     std::map<std::shared_ptr<variable_statement>, llvm::AllocaInst*> _variables;
 
+    // Virtual base standalone allocas: for each aggregate that has a direct virtual base,
+    // maps vbase short name → the stack alloca for the standalone virtual base sub-object.
+    // Set during constructor IR generation; used by constructor_invocation_expression to
+    // find where to place the virtual base sub-object.
+    std::map<std::shared_ptr<aggregate>, std::map<std::string, llvm::AllocaInst*>> _vbase_standalone_allocas;
+
     // LLVM module
     std::unique_ptr<llvm::Module> _module;
 
@@ -108,6 +114,15 @@ public:
 
     void init_module(const std::string& module_name);
     llvm::Module& module() {return *_module;}
+
+    /**
+     * Look up the LLVM Function* for a model function.
+     * Returns nullptr if not yet declared.
+     */
+    llvm::Function* lookup_llvm_function(const std::shared_ptr<function>& func) const {
+        auto it = _functions.find(func);
+        return (it != _functions.end()) ? it->second : nullptr;
+    }
 
 protected:
 

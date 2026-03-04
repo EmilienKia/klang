@@ -41,7 +41,7 @@ TEST_CASE("Parse struct with base clause", "[parser][inheritance]") {
         auto unit = parser.parse_unit();
         REQUIRE(unit);
         REQUIRE(unit->declarations.size() == 1);
-        auto st = std::dynamic_pointer_cast<k::parse::ast::struct_decl>(unit->declarations[0]);
+        auto st = std::dynamic_pointer_cast<k::parse::ast::aggregate_decl>(unit->declarations[0]);
         REQUIRE(st);
         REQUIRE(st->bases.size() == 1);
         CHECK(std::string{st->bases[0].name.content} == "Base");
@@ -55,7 +55,7 @@ TEST_CASE("Parse struct with base clause", "[parser][inheritance]") {
         parser.parse(src);
         auto unit = parser.parse_unit();
         REQUIRE(unit);
-        auto st = std::dynamic_pointer_cast<k::parse::ast::struct_decl>(unit->declarations[0]);
+        auto st = std::dynamic_pointer_cast<k::parse::ast::aggregate_decl>(unit->declarations[0]);
         REQUIRE(st);
         REQUIRE(st->bases.size() == 1);
         CHECK(st->bases[0].visibility_kw.has_value());
@@ -69,7 +69,7 @@ TEST_CASE("Parse struct with base clause", "[parser][inheritance]") {
         parser.parse(src);
         auto unit = parser.parse_unit();
         REQUIRE(unit);
-        auto st = std::dynamic_pointer_cast<k::parse::ast::struct_decl>(unit->declarations[0]);
+        auto st = std::dynamic_pointer_cast<k::parse::ast::aggregate_decl>(unit->declarations[0]);
         REQUIRE(st);
         REQUIRE(st->bases.size() == 3);
         CHECK(std::string{st->bases[0].name.content} == "Base1");
@@ -557,7 +557,7 @@ TEST_CASE("Parse final struct specifier", "[parser][final]") {
         auto unit = parser.parse_unit();
         REQUIRE(unit);
         REQUIRE(unit->declarations.size() == 1);
-        auto st = std::dynamic_pointer_cast<k::parse::ast::struct_decl>(unit->declarations[0]);
+        auto st = std::dynamic_pointer_cast<k::parse::ast::aggregate_decl>(unit->declarations[0]);
         REQUIRE(st);
         CHECK(k::lex::keyword::has(st->specifiers, k::lex::keyword::FINAL));
         CHECK(st->bases.empty());
@@ -570,7 +570,7 @@ TEST_CASE("Parse final struct specifier", "[parser][final]") {
         parser.parse(src);
         auto unit = parser.parse_unit();
         REQUIRE(unit);
-        auto st = std::dynamic_pointer_cast<k::parse::ast::struct_decl>(unit->declarations[0]);
+        auto st = std::dynamic_pointer_cast<k::parse::ast::aggregate_decl>(unit->declarations[0]);
         REQUIRE(st);
         CHECK(k::lex::keyword::has(st->specifiers, k::lex::keyword::FINAL));
         CHECK(k::lex::keyword::has(st->specifiers, k::lex::keyword::PUBLIC));
@@ -583,7 +583,7 @@ TEST_CASE("Parse final struct specifier", "[parser][final]") {
         parser.parse(src);
         auto unit = parser.parse_unit();
         REQUIRE(unit);
-        auto st = std::dynamic_pointer_cast<k::parse::ast::struct_decl>(unit->declarations[0]);
+        auto st = std::dynamic_pointer_cast<k::parse::ast::aggregate_decl>(unit->declarations[0]);
         REQUIRE(st);
         CHECK_FALSE(k::lex::keyword::has(st->specifiers, k::lex::keyword::FINAL));
     }

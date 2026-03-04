@@ -28,6 +28,13 @@
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar/GVN.h>
 
+#include <llvm/ExecutionEngine/Orc/CompileUtils.h>
+#include <llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h>
+#include <llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h>
+#include <llvm/ExecutionEngine/SectionMemoryManager.h>
+#include <llvm/ExecutionEngine/Orc/LLJIT.h>
+#include <llvm/IR/LegacyPassManager.h>
+
 #include <fmt/core.h>
 #include <fmt/format.h>
 #include <fmt/args.h>
@@ -144,17 +151,17 @@ void compiler::find_elements_from(const name& name, const std::shared_ptr<model:
                 res.push_back(std::dynamic_pointer_cast<model::element>(fn));
             }
         }
-        if (auto st_holder = std::dynamic_pointer_cast<model::structure_holder>(element)) {
-            // ... and structures
-            if (auto st = st_holder->get_structure(front)) {
-                res.push_back(std::dynamic_pointer_cast<model::element>(st));
+        if (auto st_holder = std::dynamic_pointer_cast<model::aggregate_holder>(element)) {
+            // ... and aggregates
+            if (auto agg = st_holder->get_aggregate(front)) {
+                res.push_back(std::dynamic_pointer_cast<model::element>(agg));
             }
         }
     } else {
-        if (auto st_holder = std::dynamic_pointer_cast<model::structure_holder>(element)) {
-            if (auto st = st_holder->get_structure(front)) {
-                // Recurse structures to find functions or static variables
-                find_elements_from(rest, std::dynamic_pointer_cast<model::element>(st), res);
+        if (auto st_holder = std::dynamic_pointer_cast<model::aggregate_holder>(element)) {
+            if (auto agg = st_holder->get_aggregate(front)) {
+                // Recurse aggregates to find functions or static variables
+                find_elements_from(rest, std::dynamic_pointer_cast<model::element>(agg), res);
             }
         }
         if (auto ns = std::dynamic_pointer_cast<model::ns>(element)) {
@@ -219,6 +226,12 @@ void compiler::parse_source(const std::string_view& path, const std::string_view
         }
 
         _context->resolve_types();
+
+        k::model::gen::aggregate_type_resolver agg_type_resolver(*this, _context, *_model_unit);
+        agg_type_resolver.resolve();
+
+        k::model::gen::model_materializer materializer(*this, _context, *_model_unit);
+        materializer.materialize();
 
         k::model::gen::type_reference_resolver type_ref_resolver(*this, _context, *_model_unit);
         type_ref_resolver.resolve();
@@ -290,8 +303,13 @@ void compiler::dump_gen_code() {
 }
 
 bool compiler::verify_gen_code() {
-    // TODO Better log check errors
-    return !llvm::verifyModule(_context->module(), &llvm::outs());
+    std::string errors;
+    llvm::raw_string_ostream err_stream(errors);
+    bool has_errors = llvm::verifyModule(_context->module(), &err_stream);
+    if (has_errors) {
+        std::cerr << "LLVM module verification errors:\n" << errors << std::endl;
+    }
+    return !has_errors;
 }
 
 void compiler::optimize_gen_code() {

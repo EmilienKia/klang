@@ -135,6 +135,8 @@ struct keyword : public lexeme {
         WHILE,
         FOR,
         STRUCT,
+        CLASS,
+        INTERFACE,
         DEFAULT,
         DELETE
         /* TODO add new lexeme definition here. */

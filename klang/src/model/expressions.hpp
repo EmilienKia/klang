@@ -42,6 +42,10 @@
 
 #include "model.hpp"
 
+namespace k::parse::ast {
+struct unary_expression;
+}
+
 namespace k::model {
 
 namespace gen {
@@ -563,6 +567,28 @@ public:
 
     void assign_argument(size_t index, const std::shared_ptr<expression> &arg);
 
+    /**
+     * True when this call was written with a qualified name, e.g. Base::method(obj).
+     * In that case the virtual dispatch mechanism must be bypassed and the exact
+     * function named in the callee must be invoked directly (non-virtual call).
+     */
+    bool _non_virtual_qualified_call = false;
+
+    bool is_non_virtual_qualified_call() const { return _non_virtual_qualified_call; }
+    void set_non_virtual_qualified_call(bool v) { _non_virtual_qualified_call = v; }
+
+    /**
+     * Phase-3 dispatch annotation set by type_reference_resolver.
+     * Describes exactly how this call should be dispatched (direct or vtable).
+     * Empty (nullopt) if the resolver has not yet annotated this node.
+     */
+    std::optional<virtual_dispatch_info> _dispatch_info;
+
+    bool has_dispatch_info() const { return _dispatch_info.has_value(); }
+    const virtual_dispatch_info& get_dispatch_info() const { return _dispatch_info.value(); }
+    void set_dispatch_info(virtual_dispatch_info info) { _dispatch_info = std::move(info); }
+    void clear_dispatch_info() { _dispatch_info.reset(); }
+
     static std::shared_ptr<function_invocation_expression> make_shared(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args);
 
     static std::shared_ptr<function_invocation_expression> make_shared(const std::shared_ptr<function> &callee_func, const std::vector<std::shared_ptr<expression>> &args);
@@ -573,6 +599,8 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<function_invocation_expression> c{new function_invocation_expression()};
         c->_type = _type;
+        c->_non_virtual_qualified_call = _non_virtual_qualified_call;
+        c->_dispatch_info = _dispatch_info;
         std::vector<std::shared_ptr<expression>> args;
         for (auto& a : _arguments) args.push_back(a->clone());
         auto callee = _callee_expr ? _callee_expr->clone() : nullptr;

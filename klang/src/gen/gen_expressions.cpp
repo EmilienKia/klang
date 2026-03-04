@@ -23,6 +23,16 @@
 #include "../model/operators.hpp"
 
 #include "llvm/Support/raw_os_ostream.h"
+
+#include <unordered_set>
+
+namespace k::model::gen {
+// Forward declarations for class-related helpers defined in gen_class.cpp
+void emit_vptr_store(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr, std::shared_ptr<context> ctx);
+llvm::Value* emit_virtual_dispatch_call(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr,
+    int slot_index, llvm::FunctionType* fn_type, const std::vector<llvm::Value*>& args,
+    std::shared_ptr<context> ctx, const std::string& result_name);
+} // k::model::gen
 template<typename STM>
 inline STM& operator << (STM& stm, const llvm::Type& type) {
     llvm::raw_os_ostream ross(stm);
@@ -209,7 +219,7 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
 
             // Determine if the member belongs to the current struct or an ancestor struct.
             // Build the chain of structs from the current (innermost) up to the owning struct.
-            auto member_owner = member_var->parent<structure>();
+            auto member_owner = member_var->parent<aggregate>();
             auto current_struct = _struct_stack.top();
 
             // Walk the __parent__ chain to reach the owning struct
@@ -564,6 +574,23 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
     expr.sub_expr()->accept(*this);
     auto type = expr.sub_expr()->get_type();
 
+    // Handle vbptr path: sub_expr was cast to pointer<VirtualBase> by the type resolver (this visit)
+    // on a previous recursive call. Accept pointer type and resolve the member type.
+    if (type::is_pointer(type)) {
+        auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type);
+        auto bare_subtype = type::remove_const(ptr_type->get_pointed_type());
+        if (auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
+            const auto& member_name = expr.symbol();
+            const std::string& name_str = member_name.get_name().to_string();
+            if (auto field = struct_subtype->get_member(name_str)) {
+                auto field_type = field->field_type.lock();
+                expr.set_type(field_type->get_reference());
+            }
+            // For method: leave type unset, handled by function_invocation_expression
+        }
+        return;
+    }
+
     if(!type::is_reference(type)) {
         throw_error(0x001C, std::nullopt,
             "Cannot access a member on a non-reference expression: "
@@ -584,47 +611,60 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         // ── Helper: search a struct and its bases for a named field or function,
         //    returning (struct_type*, field) or (struct_type*, nullptr=function).
         //    Returns empty vector if not found, multiple items if ambiguous.
+        //    'via_virtual' is true when the path to the member crossed at least one virtual link.
         struct MemberHit {
             std::shared_ptr<struct_type> in_struct_type;
             std::optional<struct_type::field> field;
             bool is_function = false;
+            bool via_virtual = false; ///< true if the path to this member crosses a virtual base link
         };
 
-        std::function<std::vector<MemberHit>(const std::shared_ptr<struct_type>&, const std::string&, visibility, bool)> search_member;
+        // Track visited structs to deduplicate diamond paths.
+        // When traversing via a virtual base path, all transitively-visited structs
+        // are deduplicated (even non-virtual ones), because the virtual base already
+        // ensures a single shared copy.
+        std::unordered_set<const aggregate*> visited_virtual_bases;
+
+        std::function<std::vector<MemberHit>(const std::shared_ptr<struct_type>&, const std::string&, visibility, bool, bool)> search_member;
         search_member = [&](const std::shared_ptr<struct_type>& stype, const std::string& mname,
-                             visibility inherit_vis, bool /*top_level*/) -> std::vector<MemberHit> {
+                             visibility inherit_vis, bool /*top_level*/, bool via_virt) -> std::vector<MemberHit> {
             std::vector<MemberHit> hits;
             // Check direct field
             if (auto field = stype->get_member(mname)) {
-                // Apply inheritance visibility filter (private base → members inaccessible)
-                if (inherit_vis == PRIVATE) {
-                    // members not accessible via private inheritance from outside
-                    // (but we don't check access site here, defer to visibility check below)
-                }
-                hits.push_back({stype, field, false});
-                return hits; // found in direct members — stop, no ambiguity possible at this level
+                hits.push_back({stype, field, false, via_virt});
+                return hits;
             }
             // Check direct method
             if (auto st = stype->get_struct()) {
                 if (st->get_function(mname)) {
-                    hits.push_back({stype, std::nullopt, true});
+                    hits.push_back({stype, std::nullopt, true, via_virt});
                     return hits;
                 }
                 // Search bases
                 for (auto& bs : st->get_bases()) {
                     if (!bs.base || !bs.base->get_struct_type()) continue;
-                    // Combine inheritance visibility: private always wins
                     visibility eff_vis = (inherit_vis == PRIVATE || bs.vis == PRIVATE) ? PRIVATE :
                                          (inherit_vis == PROTECTED || bs.vis == PROTECTED) ? PROTECTED :
                                          PUBLIC;
-                    auto sub_hits = search_member(bs.base->get_struct_type(), mname, eff_vis, false);
+                    bool next_via_virt = via_virt || bs.is_virtual;
+                    // Deduplicate: if this base is virtual (explicitly), or if we're already
+                    // traversing through a virtual-base path, track visited structs to avoid
+                    // finding the same member multiple times (diamond disambiguation).
+                    if (bs.is_virtual || via_virt) {
+                        if (visited_virtual_bases.count(bs.base.get())) continue;
+                        visited_virtual_bases.insert(bs.base.get());
+                    }
+                    auto sub_hits = search_member(bs.base->get_struct_type(), mname, eff_vis, false, next_via_virt);
                     hits.insert(hits.end(), sub_hits.begin(), sub_hits.end());
                 }
             }
             return hits;
         };
 
-        auto hits = search_member(struct_subtype, name_str, PUBLIC, true);
+        auto hits = search_member(struct_subtype, name_str, PUBLIC, true, false);
+        if (hits.size() > 1) {
+            std::cerr << "[DEBUG] Ambiguous: " << hits.size() << " hits for '" << name_str << "' in '" << struct_subtype->name() << "'\n" << std::flush;
+        }
 
         if (hits.empty()) {
             // If this member_of_object_expression is the callee of a function_invocation_expression,
@@ -678,25 +718,155 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
             // If the field is in a base, wrap sub_expr in a cast_expression to base ref
             // so that implementation_generator will compute the correct GEP offset.
             if (hit.in_struct_type != struct_subtype) {
-                // Build the correct base ref type (const-qualified if access is const)
-                auto base_ref_type = is_const_access
-                    ? hit.in_struct_type->get_const()->get_reference()
-                    : hit.in_struct_type->get_reference();
-                auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
-                upcast->set_type(base_ref_type);
-                expr.sub_expr() = upcast;
+                if (hit.via_virtual) {
+                    // Virtual base access: find the direct path to the virtual base.
+                    // The most-derived class has a __vbase_X__ embedded sub-object;
+                    // an intermediate class has a __vbptr_X__ pointer field.
+                    auto vbase_st = hit.in_struct_type->get_struct();
+                    std::string vbase_short_name = vbase_st ? vbase_st->get_short_name() : "";
+                    std::string vbase_field_name = "__vbase_" + vbase_short_name + "__";
+                    std::string vbptr_field_name = "__vbptr_" + vbase_short_name + "__";
+
+                    if (struct_subtype->get_member(vbase_field_name)) {
+                        // Most-derived class: has the actual __vbase_X__ embedded sub-object.
+                        // Upcast to that sub-object via GEP (no load needed).
+                        auto base_ref_type = is_const_access
+                            ? hit.in_struct_type->get_const()->get_reference()
+                            : hit.in_struct_type->get_reference();
+                        auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
+                        upcast->set_type(base_ref_type);
+                        expr.sub_expr() = upcast;
+                    } else if (struct_subtype->get_member(vbptr_field_name)) {
+                        // Intermediate class: has a __vbptr_X__ pointer.
+                        // Use ref<A> (not A*) — the cast implementation will load the vbptr.
+                        auto base_ref_type = is_const_access
+                            ? hit.in_struct_type->get_const()->get_reference()
+                            : hit.in_struct_type->get_reference();
+                        auto vbptr_cast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
+                        vbptr_cast->set_type(base_ref_type);
+                        expr.sub_expr() = vbptr_cast;
+                    } else {
+                        // Fallback: the member is in a base X that is not directly a virtual base
+                        // of struct_subtype, but is reachable through a virtual base path.
+                        // Example: D->B(virtual)->A(non-virtual): x is in A, path is D.__vbase_B__.__base_A__.x
+                        // Find one direct base of D that contains or leads to hit.in_struct_type.
+                        bool found = false;
+                        std::string base_A_name = "__base_" + vbase_short_name + "__";
+                        for (auto& bs2 : struct_subtype->get_struct()->get_bases()) {
+                            if (!bs2.base) continue;
+                            auto base_sub = bs2.base->get_struct_type();
+                            if (!base_sub) continue;
+                            bool this_base_has_path = base_sub->get_member(vbase_field_name)
+                                || base_sub->get_member(vbptr_field_name)
+                                || base_sub->get_member(base_A_name);
+                            if (!this_base_has_path) continue;
+                            // Found a direct base of D that can reach hit.in_struct_type
+                            // Build the cast: D → (via vbptr/vbase) bs2.base → (via __base_X__) hit.in_struct_type
+                            auto inter_ref_type = is_const_access
+                                ? base_sub->get_const()->get_reference()
+                                : base_sub->get_reference();
+                            auto inter_upcast = cast_expression::make_shared(expr.sub_expr(), inter_ref_type);
+                            inter_upcast->set_type(inter_ref_type);
+                            auto vbase_ref_type = is_const_access
+                                ? hit.in_struct_type->get_const()->get_reference()
+                                : hit.in_struct_type->get_reference();
+                            auto vbase_upcast = cast_expression::make_shared(inter_upcast, vbase_ref_type);
+                            vbase_upcast->set_type(vbase_ref_type);
+                            expr.sub_expr() = vbase_upcast;
+                            found = true;
+                            break;
+                        }
+                        if (!found) {
+                            // Simple fallback: treat as regular cast
+                            auto base_ref_type = is_const_access
+                                ? hit.in_struct_type->get_const()->get_reference()
+                                : hit.in_struct_type->get_reference();
+                            auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
+                            upcast->set_type(base_ref_type);
+                            expr.sub_expr() = upcast;
+                        }
+                    }
+                } else {
+                    // Non-virtual base: normal GEP-based upcast
+                    auto base_ref_type = is_const_access
+                        ? hit.in_struct_type->get_const()->get_reference()
+                        : hit.in_struct_type->get_reference();
+                    auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
+                    upcast->set_type(base_ref_type);
+                    expr.sub_expr() = upcast;
+                }
             }
         } else if (hit.is_function) {
             // Member function: update the sub_expr type to point to the struct that owns the method.
             // This is needed so that implementation_generator finds the method in the correct struct,
             // and so that the 'this' pointer is correctly adjusted via upcast if needed.
             if (hit.in_struct_type != struct_subtype) {
-                auto base_ref_type = is_const_access
-                    ? hit.in_struct_type->get_const()->get_reference()
-                    : hit.in_struct_type->get_reference();
-                auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
-                upcast->set_type(base_ref_type);
-                expr.sub_expr() = upcast;
+                if (hit.via_virtual) {
+                    // Virtual base: function is in a virtual base. Same path-finding as field access.
+                    auto vbase_st = hit.in_struct_type->get_struct();
+                    std::string vbase_short_name = vbase_st ? vbase_st->get_short_name() : "";
+                    std::string vbase_field_name = "__vbase_" + vbase_short_name + "__";
+                    std::string vbptr_field_name = "__vbptr_" + vbase_short_name + "__";
+
+                    if (struct_subtype->get_member(vbase_field_name)) {
+                        auto base_ref_type = is_const_access
+                            ? hit.in_struct_type->get_const()->get_reference()
+                            : hit.in_struct_type->get_reference();
+                        auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
+                        upcast->set_type(base_ref_type);
+                        expr.sub_expr() = upcast;
+                    } else if (struct_subtype->get_member(vbptr_field_name)) {
+                        // Intermediate class has __vbptr_X__: load vbptr.
+                        // Use ref<A> type (not A*) so function invocations accept it as reference.
+                        auto base_ref_type = is_const_access
+                            ? hit.in_struct_type->get_const()->get_reference()
+                            : hit.in_struct_type->get_reference();
+                        auto vbptr_cast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
+                        vbptr_cast->set_type(base_ref_type);
+                        expr.sub_expr() = vbptr_cast;
+                    } else {
+                        // Fallback: member function in a transitively reachable base
+                        // (e.g., D->B(virtual)->A(non-virtual): method is in A)
+                        std::string base_A_name2 = "__base_" + vbase_short_name + "__";
+                        bool found2 = false;
+                        for (auto& bs : struct_subtype->get_struct()->get_bases()) {
+                            if (!bs.base) continue;
+                            auto base_sub = bs.base->get_struct_type();
+                            if (!base_sub) continue;
+                            if (base_sub->get_member(vbase_field_name) || base_sub->get_member(vbptr_field_name) || base_sub->get_member(base_A_name2)) {
+                                auto inter_ref_type = is_const_access
+                                    ? base_sub->get_const()->get_reference()
+                                    : base_sub->get_reference();
+                                auto inter_upcast = cast_expression::make_shared(expr.sub_expr(), inter_ref_type);
+                                inter_upcast->set_type(inter_ref_type);
+                                auto vbase_ref_type = is_const_access
+                                    ? hit.in_struct_type->get_const()->get_reference()
+                                    : hit.in_struct_type->get_reference();
+                                auto vbase_upcast = cast_expression::make_shared(inter_upcast, vbase_ref_type);
+                                vbase_upcast->set_type(vbase_ref_type);
+                                expr.sub_expr() = vbase_upcast;
+                                found2 = true;
+                                break;
+                            }
+                        }
+                        if (!found2) {
+                            // Simple fallback
+                            auto base_ref_type = is_const_access
+                                ? hit.in_struct_type->get_const()->get_reference()
+                                : hit.in_struct_type->get_reference();
+                            auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
+                            upcast->set_type(base_ref_type);
+                            expr.sub_expr() = upcast;
+                        }
+                    }
+                } else {
+                    auto base_ref_type = is_const_access
+                        ? hit.in_struct_type->get_const()->get_reference()
+                        : hit.in_struct_type->get_reference();
+                    auto upcast = cast_expression::make_shared(expr.sub_expr(), base_ref_type);
+                    upcast->set_type(base_ref_type);
+                    expr.sub_expr() = upcast;
+                }
             }
             // Type of member_of_object_expression for functions is the struct ref (for 'this')
             // — leave expr type unset; function_invocation_expression will handle it.
@@ -717,11 +887,24 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
 void implementation_generator::visit_member_of_object_expression(member_of_object_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
-    auto struct_ref = _value;
 
-    auto type = expr.sub_expr()->get_type(); // Is a reference
+    auto type = expr.sub_expr()->get_type(); // Is a reference or (for vbptr path) a pointer
+
+    // Handle vbptr path: sub_expr was cast to pointer<VirtualBase> by the type resolver
+    if (type::is_pointer(type)) {
+        auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type);
+        auto bare_subtype = type::remove_const(ptr_type->get_pointed_type());
+        if (auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
+            const auto& member_name = expr.symbol();
+            if (auto field = struct_subtype->get_member(member_name.get_name()); field) {
+                _value = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), _value, field->index);
+            }
+            // For method calls: leave _value as the A* pointer (treated as A ref at LLVM level)
+        }
+        return;
+    }
+
     // Strip const from the subtype to get the bare struct_type for GEP/method lookup.
-    // e.g. ref<const Counter> → subtype = const_type(Counter) → bare = Counter
     auto bare_subtype = type::remove_const(type->get_subtype());
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
         const auto& member_name =  expr.symbol();
@@ -973,6 +1156,89 @@ void symbol_resolver::visit_function_invocation_expression(function_invocation_e
     // TODO Add more pre process here ?!?
 }
 
+namespace {
+/**
+ * Phase-3 helper: compute and store a virtual_dispatch_info annotation on a
+ * function_invocation_expression after the callee and its 'this' type have been resolved.
+ *
+ * @param expr          The call expression being annotated.
+ * @param func          The resolved function (callee).
+ * @param member_callee Non-null when the call is of the form obj.method(...).
+ *
+ * Rules:
+ *  - Qualified call (expr.is_non_virtual_qualified_call()) → DIRECT
+ *  - Non-member call / no receiver              → DIRECT
+ *  - Function not virtual                       → DIRECT
+ *  - Virtual function through a class reference → VTABLE
+ *    The dispatch_class is the *static* receiver type (the base class as written
+ *    in the source).  The slot_index comes from the vtable layout.
+ *    If the receiver is a secondary-base reference (embedded at non-zero offset),
+ *    this_adjustment is set from secondary_vtable_spec::base_offset so the generator
+ *    can use it if needed (Phase 4).
+ */
+void annotate_dispatch_info(function_invocation_expression& expr,
+                            const std::shared_ptr<function>& func,
+                            const std::shared_ptr<member_of_object_expression>& member_callee)
+{
+    // ── DIRECT cases ─────────────────────────────────────────────────────────
+    if (expr.is_non_virtual_qualified_call() || !member_callee || !func) {
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+        expr.set_dispatch_info(std::move(di));
+        return;
+    }
+
+    if (!func->is_virtual() || func->get_vtable_slot() < 0) {
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+        expr.set_dispatch_info(std::move(di));
+        return;
+    }
+
+    // ── Determine the static receiver type ───────────────────────────────────
+    auto this_type = member_callee->sub_expr()->get_type();
+    if (!type::is_reference(this_type)) {
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+        expr.set_dispatch_info(std::move(di));
+        return;
+    }
+
+    auto bare_subtype = type::remove_const(this_type->get_subtype());
+    auto st_type = std::dynamic_pointer_cast<struct_type>(bare_subtype);
+    if (!st_type) {
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+        expr.set_dispatch_info(std::move(di));
+        return;
+    }
+
+    auto kl = std::dynamic_pointer_cast<klass>(st_type->get_struct());
+    if (!kl || !kl->has_vtable()) {
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+        expr.set_dispatch_info(std::move(di));
+        return;
+    }
+
+    // ── Build VTABLE annotation ───────────────────────────────────────────────
+    virtual_dispatch_info di;
+    di.kind           = virtual_dispatch_info::dispatch_kind::VTABLE;
+    di.slot_index     = func->get_vtable_slot();
+    di.dispatch_class = kl;
+    di.this_adjustment = 0;
+
+    // Check if this receiver class is a secondary base somewhere (for information;
+    // the generator may use this in Phase 4 to apply this-adjustment before vptr load).
+    // We look for kl in the secondary_vtable_specs of its owner classes.
+    // For now, for static dispatch we just store 0: the vptr in the object already
+    // points to the right secondary vtable (set up by the constructor via emit_vptr_store).
+    // The slot_index here is the index within kl's own vtable.
+
+    expr.set_dispatch_info(std::move(di));
+}
+} // anonymous namespace
+
 void type_reference_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
@@ -1030,6 +1296,73 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
         // Use the short (unqualified) name for function lookup
         std::string func_short_name = callee->get_name().back();
+
+        // ── Qualified member call: obj.Base::method(args) or this->Base::method(args) ──
+        // If the callee symbol has more than one name component (e.g. Base::method), it is
+        // an explicit qualification: bypass virtual dispatch and call the exact named class.
+        const bool is_qualified_member_call = (callee->get_name().size() > 1);
+        if (is_qualified_member_call) {
+            // The qualifying class name is the second-to-last component (e.g. "Base" in Base::method).
+            const std::string& qualifying_class_name = callee->get_name()[callee->get_name().size() - 2];
+
+            // Find the qualifying aggregate — it must be the class itself or one of its bases.
+            std::shared_ptr<aggregate> qualifying_agg;
+            std::function<void(const std::shared_ptr<aggregate>&)> find_class;
+            find_class = [&](const std::shared_ptr<aggregate>& agg) {
+                if (!agg || qualifying_agg) return;
+                if (agg->get_short_name() == qualifying_class_name) {
+                    qualifying_agg = agg;
+                    return;
+                }
+                for (auto& bs : agg->get_bases()) {
+                    if (bs.base) find_class(bs.base);
+                }
+            };
+            find_class(st);
+
+            if (!qualifying_agg) {
+                throw_error(0x0040, std::nullopt,
+                    "Qualified member call '{}': '{}' is not a base class of '{}'; "
+                    "the qualifying class must be the class itself or one of its base classes",
+                    {callee->get_name().to_string(), qualifying_class_name, st->get_short_name()});
+            }
+
+            // Collect overloads of func_short_name directly in the qualifying class
+            std::vector<std::shared_ptr<function>> qual_candidates;
+            for (auto& fn : qualifying_agg->functions()) {
+                if (fn && fn->get_short_name() == func_short_name) {
+                    qual_candidates.push_back(fn);
+                }
+            }
+            if (qual_candidates.empty()) {
+                throw_error(0x0041, std::nullopt,
+                    "No function named '{}' found in class '{}'",
+                    {func_short_name, qualifying_class_name});
+            }
+
+            // Upcast this_expr to the qualifying class reference
+            auto qual_ref_type = is_const_this
+                ? qualifying_agg->get_struct_type()->get_const()->get_reference()
+                : qualifying_agg->get_struct_type()->get_reference();
+            auto upcast_this = adapt_type(this_expr, qual_ref_type);
+            if (upcast_this) this_expr = upcast_this;
+            // Update the sub_expr of member_callee so the IR generator uses the upcast
+            member_callee->sub_expr() = this_expr;
+
+            auto best = get_best_matching_function(qual_candidates, expr.arguments(), this_expr);
+            if (!best.func) return;
+
+            check_function_visibility(*best.func, expr);
+
+            callee->set_target(best.func);
+            expr.set_type(best.func->get_return_type());
+            expr.assign_arguments(best.adapted_args);
+            // Bypass virtual dispatch — this is an explicit base-class call
+            expr.set_non_virtual_qualified_call(true);
+            // Phase 3: annotate dispatch info
+            annotate_dispatch_info(expr, best.func, member_callee);
+            return;
+        }
 
         // Collect all candidate functions (member + free/static from parent scopes)
         std::vector<std::shared_ptr<function>> candidates = scope_lookup::lookup_functions(st, func_short_name);
@@ -1090,6 +1423,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // Note: if best.is_unified_call, the callee stays as member_of_object_expression
         // but the resolved function is free/static. impl_gen handles this by passing
         // sub_expr() value as first argument when the function is not a member.
+        // Phase 3: annotate dispatch info
+        annotate_dispatch_info(expr, best.func, member_callee);
         return;
     }
 
@@ -1100,25 +1435,97 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         std::string func_name = callee->get_name().back();
         const auto& args = expr.arguments();
 
+        // A qualified name (e.g. Base::value) means the call is non-virtual and targets
+        // exactly the named function.  Do NOT collect additional member-function candidates
+        // from the first argument's struct type — that would create false ambiguities and
+        // would defeat the purpose of the explicit qualification.
+        const bool is_qualified_call = (callee->get_name().size() > 1);
+
         std::vector<std::shared_ptr<function>> all_candidates;
-        if (callee->is_function() && callee->get_name().size() > 1) {
-            all_candidates.push_back(callee->get_function());
+        if (is_qualified_call) {
+            // For a qualified name (e.g. Base::value or point::get), collect ALL overloads
+            // of the short name within the qualifying context (struct / namespace), not the
+            // entire scope chain.  This prevents false ambiguity with functions of the same
+            // name in outer scopes while still supporting overload resolution.
+            if (callee->is_function() && callee->get_function()) {
+                auto resolved_fn = callee->get_function();
+                auto owner = resolved_fn->parent<element>();
+                if (owner) {
+                    // Collect all overloads of func_name directly in the owner element.
+                    if (auto fh = dynamic_cast<function_holder*>(owner.get())) {
+                        for (auto& fn : fh->functions()) {
+                            if (fn && fn->get_short_name() == func_name) {
+                                all_candidates.push_back(fn);
+                            }
+                        }
+                    }
+                }
+                // Fallback: only the resolved function
+                if (all_candidates.empty()) {
+                    all_candidates.push_back(resolved_fn);
+                }
+            }
         } else {
             all_candidates = scope_lookup::lookup_functions(callee, func_name);
         }
 
         std::shared_ptr<expression> this_candidate;
         std::vector<std::shared_ptr<expression>> rest_args;
-        if (!args.empty()) {
+
+        // For a qualified call (e.g. Base::value(d) or point::get(pt, 6f)):
+        // If the first argument is a reference to a struct, treat it as the potential 'this'
+        // for member functions (Mode A) while also allowing Mode B matching for static functions.
+        // We do NOT restrict to all_are_member because the candidates may be a mix of member
+        // and static overloads.
+        if (is_qualified_call && !all_candidates.empty() && !args.empty()) {
+            auto first_arg_type = args[0]->get_type();
+            if (type::is_reference(first_arg_type)) {
+                auto bare_sub = type::remove_const(first_arg_type->get_subtype());
+                if (std::dynamic_pointer_cast<struct_type>(bare_sub)) {
+                    this_candidate = args[0];
+                    rest_args = std::vector<std::shared_ptr<expression>>(args.begin() + 1, args.end());
+                }
+            }
+        }
+
+        // ── Implicit 'this' injection for Base::method() from inside a member function ──
+        // If we have a qualified call (Base::method) with no explicit 'this' argument yet,
+        // and we are inside a non-static member function whose owning class is derived from
+        // the qualifying base class, inject 'this' automatically.
+        // This enables the pattern:  Base::method()  inside an override instead of
+        // the more verbose:  Base::method(this)
+        if (is_qualified_call && !this_candidate && !_function_stack.empty()) {
+            auto enclosing_fn = _function_stack.back();
+            if (enclosing_fn && enclosing_fn->is_member() && !enclosing_fn->is_static()) {
+                auto this_param = enclosing_fn->get_this_parameter();
+                if (this_param && this_param->get_type()) {
+                    // Check that at least one candidate is a member function (not static)
+                    bool any_member = std::any_of(all_candidates.begin(), all_candidates.end(),
+                        [](const std::shared_ptr<function>& f){ return f && f->is_member() && !f->is_static(); });
+                    if (any_member) {
+                        // Build a symbol_expression for 'this'
+                        auto this_sym = symbol_expression::from_identifier(k::name("this"));
+                        this_sym->set_target(std::const_pointer_cast<parameter>(this_param));
+                        this_sym->set_type(this_param->get_type());
+                        this_candidate = this_sym;
+                        rest_args = args; // all explicit args remain as-is (no args consumed)
+                    }
+                }
+            }
+        }
+
+        // Unified-call-syntax: only when the call is NOT a qualified name.
+        // For a qualified call "Base::method(d)", d is already handled above.
+        if (!is_qualified_call && !args.empty()) {
             auto first_arg_type = args[0]->get_type();
             if (type::is_reference(first_arg_type)) {
                 if (auto first_struct = std::dynamic_pointer_cast<struct_type>(first_arg_type->get_subtype())) {
                     auto st = first_struct->get_struct();
                     this_candidate = args[0];
                     rest_args = std::vector<std::shared_ptr<expression>>(args.begin() + 1, args.end());
-                    // Collect member functions from the struct and all its bases (recursively)
-                    std::function<void(const std::shared_ptr<structure>&)> collect_member_fns;
-                    collect_member_fns = [&](const std::shared_ptr<structure>& s) {
+                    // Collect member functions from the aggregate and all its bases (recursively)
+                    std::function<void(const std::shared_ptr<aggregate>&)> collect_member_fns;
+                    collect_member_fns = [&](const std::shared_ptr<aggregate>& s) {
                         if (!s) return;
                         for (auto& f : scope_lookup::lookup_functions(s, func_name)) {
                             if (std::find(all_candidates.begin(), all_candidates.end(), f) == all_candidates.end()) {
@@ -1146,6 +1553,11 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         auto cast = adapt_type(arg, params[n]->get_type());
                         if (cast && cast != arg) expr.assign_argument(n, cast);
                     }
+                }
+                // Phase 3: annotate — already_func is resolved but we have no member_callee here
+                {
+                    auto mc = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
+                    annotate_dispatch_info(expr, already_func, mc);
                 }
                 return;
             }
@@ -1192,14 +1604,45 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
         if (is_free_to_member_call) {
             // Member function found via free-function syntax: func(obj, args...)
-            auto obj_expr = expr.arguments()[0];
+            // (also covers qualified calls like Base::method(d))
+            auto obj_expr = this_candidate; // first arg is the object
+
+            // For a qualified call targeting a base-class method (e.g. Base::value(d)),
+            // adapt the object expression to the expected 'this' type (upcast Derived→Base).
+            if (is_qualified_call && best.func->is_member() && !best.func->is_static()) {
+                // The implicit 'this' type is ref<OwningClass>.
+                auto owner_st = best.func->parent<aggregate>();
+                if (owner_st) {
+                    auto owner_ref_type = owner_st->get_struct_type()
+                        ? owner_st->get_struct_type()->get_reference()
+                        : nullptr;
+                    if (owner_ref_type) {
+                        auto adapted_obj = adapt_type(obj_expr, owner_ref_type);
+                        if (adapted_obj) obj_expr = adapted_obj;
+                    }
+                }
+            }
+
             auto sym_for_member = symbol_expression::from_function(best.func);
             sym_for_member->set_target(best.func);
             auto member_expr = member_of_object_expression::make_shared(obj_expr, sym_for_member);
             expr.assign(member_expr, best.adapted_args);
+
+            // A qualified call (e.g. Base::method(d)) must bypass virtual dispatch
+            // and invoke the exact named function directly.
+            if (is_qualified_call) {
+                expr.set_non_virtual_qualified_call(true);
+            }
         } else {
             // Regular/unified call — may include default values for trailing params
             expr.assign_arguments(best.adapted_args);
+        }
+
+        // Phase 3: annotate dispatch info
+        // After the potential rewrite above, re-read member_callee from the (possibly updated) callee.
+        {
+            auto updated_member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
+            annotate_dispatch_info(expr, best.func, updated_member_callee);
         }
         return;
     }
@@ -1252,19 +1695,61 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     auto function = callee->get_function();
     auto it = _context->_functions.find(function);
     if(it==_context->_functions.end()) {
-        throw_internal_error(0x0010, std::nullopt,
-            "Internal error: LLVM declaration not found for function '{}' during code generation; "
-            "the declaration pass must be run before the implementation pass",
-            {function ? function->get_fq_name() : "<null>"});
+        // If the function is abstract and this is a virtual dispatch call,
+        // we can still dispatch through the vtable using the function's model signature.
+        // The callee's LLVM function was intentionally not emitted for abstract functions.
+        if (function && function->is_abstract_func() && function->is_virtual()) {
+            // Fall through: llvm_func will remain null; virtual dispatch handles it below.
+        } else {
+            throw_internal_error(0x0010, std::nullopt,
+                "Internal error: LLVM declaration not found for function '{}' during code generation; "
+                "the declaration pass must be run before the implementation pass",
+                {function ? function->get_fq_name() : "<null>"});
+        }
     }
-    llvm::Function* llvm_func = it->second;
-    if(!llvm_func) {
+    llvm::Function* llvm_func = (it != _context->_functions.end()) ? it->second : nullptr;
+    if(llvm_func == nullptr && !(function && function->is_abstract_func())) {
         throw_internal_error(0x0011, std::nullopt,
             "Internal error: LLVM function object is null for '{}'; "
             "this indicates a compiler bug in the declaration pass",
             {function ? function->get_fq_name() : "<null>"});
     }
 
+    // ── Virtual dispatch ─────────────────────────────────────────────────────
+    // Phase 3/4: dispatch_info is normally set by type_reference_resolver.
+    // If absent (e.g. a synthetic node that bypassed the resolver), treat as DIRECT.
+    const bool is_vtable_dispatch =
+        expr.has_dispatch_info()
+        && expr.get_dispatch_info().kind == virtual_dispatch_info::dispatch_kind::VTABLE
+        && expr.get_dispatch_info().dispatch_class != nullptr;
+
+    if (is_vtable_dispatch) {
+        const auto& di = expr.get_dispatch_info();
+        auto kl = di.dispatch_class;
+        if (kl && kl->has_vtable() && !args.empty()) {
+            // Build function type — from LLVM function or model parameter/return types.
+            llvm::FunctionType* fn_type = nullptr;
+            if (llvm_func) {
+                fn_type = llvm_func->getFunctionType();
+            } else {
+                // Abstract function: build FunctionType from model parameter/return types.
+                std::vector<llvm::Type*> param_types;
+                if (function->is_member() && !function->is_static()) {
+                    param_types.push_back(_context->get_llvm_type(function->get_this_parameter()->get_type()));
+                }
+                for (const auto& param : function->parameters()) {
+                    param_types.push_back(_context->get_llvm_type(param->get_type()));
+                }
+                llvm::Type* ret_type = function->has_return_type()
+                    ? _context->get_llvm_type(function->get_return_type())
+                    : llvm::Type::getVoidTy(**_context);
+                fn_type = llvm::FunctionType::get(ret_type, param_types, false);
+            }
+            _value = emit_virtual_dispatch_call(*_builder, *kl, args[0], di.slot_index, fn_type, args, _context, "");
+            return;
+        }
+    }
+    // ── Direct call (non-virtual, or qualified, or free function) ────────────
     _value = _builder->CreateCall(llvm_func, args);
 }
 
@@ -1349,6 +1834,19 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
                 "No matching constructor found for member initialisation of type '{}': "
                 "none of the available constructors can be called with the provided arguments",
                 {st_type->to_string()});
+        }
+        // Cannot instantiate an abstract class directly.
+        // Skip this check for synthetic base sub-object fields (e.g. __base_X__ / __vbase_X__)
+        // which are compiler-generated during base class construction.
+        if (st->is_abstract()) {
+            auto var_name = var_def->get_short_name();
+            bool is_subobject_init = (var_name.rfind("__base_", 0) == 0)
+                                  || (var_name.rfind("__vbase_", 0) == 0);
+            if (!is_subobject_init) {
+                throw_error(0x0032, std::nullopt,
+                    "Cannot instantiate abstract class '{}'; abstract classes cannot be directly instantiated",
+                    {st->get_short_name()});
+            }
         }
         // Check constructor visibility
         check_constructor_visibility(*best_constructor, expr);
@@ -1724,8 +2222,8 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     if (type::is_reference(source_type) && type::is_reference(target_type)) {
         auto src_ref = std::dynamic_pointer_cast<reference_type>(source_type);
         auto tgt_ref = std::dynamic_pointer_cast<reference_type>(target_type);
-        auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_ref->get_referenced_type());
-        auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_ref->get_referenced_type());
+        auto src_st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(src_ref->get_referenced_type()));
+        auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(tgt_ref->get_referenced_type()));
         if (src_st_type && tgt_st_type && src_st_type != tgt_st_type) {
             auto src_st = src_st_type->get_struct();
             auto tgt_st = tgt_st_type->get_struct();
@@ -1736,13 +2234,21 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 if (!_value) return;
 
                 // Find the base subobject field index in the derived struct
-                // The base subobject is stored as "__base_<name>__" member
-                // We need to find which field index it corresponds to in the LLVM struct type
+                // The base subobject is stored as "__base_<name>__" or "__vbase_<name>__" member
                 std::string subobj_name;
                 for (auto& bs : src_st->get_bases()) {
                     if (bs.base && bs.base.get() == tgt_st.get()) {
-                        subobj_name = "__base_" + bs.raw_name + "__";
+                        subobj_name = bs.is_virtual
+                            ? "__vbase_" + bs.raw_name + "__"
+                            : "__base_" + bs.raw_name + "__";
                         break;
+                    }
+                }
+                // Also check for __vbase_ in the most-derived class (transitively virtual)
+                if (subobj_name.empty()) {
+                    std::string vbase_name = "__vbase_" + tgt_st->get_short_name() + "__";
+                    if (src_st_type->get_member(vbase_name)) {
+                        subobj_name = vbase_name;
                     }
                 }
                 if (!subobj_name.empty()) {
@@ -1757,11 +2263,123 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                         return;
                     }
                 }
+
+                // ── Transitive upcast: tgt_st is a transitive (non-direct) base of src_st.
+                // Find a path src_st → ... → intermediate → tgt_st via non-virtual bases,
+                // and generate chained GEPs to walk through each intermediate sub-object.
+                // Uses BFS so we always find the shortest path first.
+                if (subobj_name.empty()) {
+                    // BFS: each entry is (current_aggregate, current_llvm_value, current_struct_type)
+                    struct PathNode {
+                        aggregate* agg;
+                        struct_type* st_type;
+                        llvm::Value* ptr;
+                    };
+                    std::vector<PathNode> frontier;
+                    frontier.push_back({src_st.get(), src_st_type.get(), _value});
+                    bool found_transitive = false;
+
+                    // Iterative DFS (small hierarchy, depth-first is fine)
+                    std::function<bool(aggregate*, struct_type*, llvm::Value*)> dfs_gep;
+                    dfs_gep = [&](aggregate* cur_agg, struct_type* cur_st_type, llvm::Value* cur_ptr) -> bool {
+                        for (auto& bs : cur_agg->get_bases()) {
+                            if (!bs.base || bs.is_virtual) continue;
+                            std::string field_name = "__base_" + bs.raw_name + "__";
+                            auto field = cur_st_type->get_member(field_name);
+                            if (!field) continue;
+
+                            auto base_klass = std::dynamic_pointer_cast<k::model::klass>(bs.base);
+                            if (!base_klass) continue;
+
+                            auto base_st_type = base_klass->get_struct_type();
+                            if (!base_st_type) continue;
+
+                            llvm::Type* cur_llvm_type = cur_st_type->get_llvm_type();
+                            if (!cur_llvm_type) continue;
+                            llvm::Value* base_ptr = _builder->CreateStructGEP(
+                                cur_llvm_type, cur_ptr, (unsigned)field->index,
+                                "trans_base_" + bs.raw_name + "_ptr");
+
+                            if (bs.base.get() == tgt_st.get()) {
+                                // Found it!
+                                _value = base_ptr;
+                                return true;
+                            }
+
+                            // Check if tgt_st is a direct __vbase_ of this intermediate
+                            std::string vbase_name2 = "__vbase_" + tgt_st->get_short_name() + "__";
+                            if (auto vbase_field2 = base_st_type->get_member(vbase_name2)) {
+                                llvm::Type* inter_llvm_type = base_st_type->get_llvm_type();
+                                if (!inter_llvm_type) continue;
+                                _value = _builder->CreateStructGEP(
+                                    inter_llvm_type, base_ptr, (unsigned)vbase_field2->index,
+                                    "trans_vbase_" + tgt_st->get_short_name() + "_ptr");
+                                return true;
+                            }
+
+                            // Recurse
+                            if (dfs_gep(bs.base.get(), base_st_type.get(), base_ptr)) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    };
+                    found_transitive = dfs_gep(src_st.get(), src_st_type.get(), _value);
+                    if (found_transitive) return;
+                }
+
+                // Virtual base via vbptr: src has __vbptr_X__ but not __vbase_X__
+                // (e.g. ref<B> → ref<A> where B has virtual A)
+                {
+                    std::string vbptr_name = "__vbptr_" + tgt_st->get_short_name() + "__";
+                    auto src_llvm_type = _context->get_llvm_type(src_st_type);
+                    if (auto vbptr_field = src_st_type->get_member(vbptr_name)) {
+                        // Load the vbptr to get A*
+                        llvm::Type* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+                        llvm::Value* vbptr_addr = _builder->CreateStructGEP(
+                            src_llvm_type, _value, (unsigned)vbptr_field->index,
+                            "vbptr_" + tgt_st->get_short_name() + "_addr");
+                        _value = _builder->CreateLoad(ptr_ty, vbptr_addr,
+                            "vbase_" + tgt_st->get_short_name() + "_ptr");
+                        return;
+                    }
+                }
                 // Fallback: return as-is (pointer reinterpret for same-layout case)
                 return;
             }
         }
         // Same type, no-op
+        _value = nullptr;
+        expr.sub_expr()->accept(*this);
+        return;
+    }
+
+    // ── Struct reference → pointer upcast for virtual base vbptr deref ────────
+    // When the type resolver sets target type to pointer<VirtualBase>, it means we need
+    // to load the __vbptr_<name>__ field and use it as a pointer (which the subsequent
+    // GEP in member_of_object_expression will use).
+    if (type::is_reference(source_type) && type::is_pointer(target_type)) {
+        auto src_ref = std::dynamic_pointer_cast<reference_type>(source_type);
+        auto tgt_ptr = std::dynamic_pointer_cast<pointer_type>(target_type);
+        auto src_st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(src_ref->get_referenced_type()));
+        auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_ptr->get_pointed_type());
+        if (src_st_type && tgt_st_type) {
+            _value = nullptr;
+            expr.sub_expr()->accept(*this);
+            if (!_value) return;
+
+            std::string vbptr_name = "__vbptr_" + tgt_st_type->name() + "__";
+            auto src_llvm_type = _context->get_llvm_type(src_st_type);
+            if (auto field = src_st_type->get_member(vbptr_name)) {
+                // Load the vbptr field (it's an opaque ptr to the virtual base)
+                llvm::Type* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+                llvm::Value* vbptr_field_addr = _builder->CreateStructGEP(
+                    src_llvm_type, _value, (unsigned)field->index, "vbptr_" + tgt_st_type->name() + "_addr");
+                _value = _builder->CreateLoad(ptr_ty, vbptr_field_addr, "vbptr_" + tgt_st_type->name());
+                return;
+            }
+        }
+        // Fallback
         _value = nullptr;
         expr.sub_expr()->accept(*this);
         return;

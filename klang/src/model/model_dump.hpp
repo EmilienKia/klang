@@ -97,7 +97,7 @@ public:
         prefix() << "} // " << ns.get_short_name() << std::endl;
     }
 
-    void visit_structure(structure& st) override {
+    void visit_aggregate(aggregate& st) override {
         prefix() << "struct '" << st.get_short_name() << "' ("
                  << st.get_fq_name() << " / " << st.get_mangled_name()
                  << ") {" << std::endl;
