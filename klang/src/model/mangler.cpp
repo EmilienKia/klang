@@ -337,6 +337,16 @@ std::string mangler::mangle_vtable(const name& class_name) {
     return mangled.str();
 }
 
+// RTTI global variable prefix: _KTRI
+#define SYMBOL_RTTI_PREFIX "TRI"
+
+std::string mangler::mangle_rtti(const name& class_name) {
+    std::ostringstream mangled;
+    mangled << K_LANG_SYMBOL_PREFIX << SYMBOL_RTTI_PREFIX;
+    mangled << mangle_fq_name(class_name, false);
+    return mangled.str();
+}
+
 std::string mangler::mangle_virtual_dispatch(const function& func) const {
     auto name = func.get_name();
     if (!name.has_root_prefix()) return "";

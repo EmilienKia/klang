@@ -60,6 +60,9 @@ std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool du
 
 
 bool compile_text(const std::string_view& source, const std::string& out_file) {
+    // Ensure LLVM targets are registered before any target lookup.
+    k::compiler::initialize();
+
     std::string target_triple = llvm::sys::getDefaultTargetTriple();
     std::string error;
     auto target = llvm::TargetRegistry::lookupTarget(target_triple, error);
@@ -71,7 +74,9 @@ bool compile_text(const std::string_view& source, const std::string& out_file) {
     std::string features = "";
 
     llvm::TargetOptions target_options;
-    std::optional<llvm::Reloc::Model> reloc_model;
+    // Use PIC relocation model so the generated object is compatible with
+    // PIE executables (avoids R_X86_64_32S relocations against .rodata).
+    std::optional<llvm::Reloc::Model> reloc_model = llvm::Reloc::PIC_;
     auto target_machine = target->createTargetMachine(
             target_triple, cpu,
             features,

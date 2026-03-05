@@ -38,7 +38,7 @@
 //    class D : B { void f() override; }
 //
 //    Vtable of D (primary):
-//      slot 0  : ptr  RTTI placeholder (nullptr for now)
+//      slot 0  : ptr  RTTI global (@_KTRINmoduleDDE) — self-pointer typeid, always non-null for non-abstract
 //      slot 1  : ptr  @_KFMvN...fE  (D::f dispatch thunk)
 //
 //    Layout of D:
@@ -427,7 +427,7 @@ void symbol_resolver::visit_klass(klass& klass) {
 //     (member types, function parameter/return types, overload collision checks).
 //  2. Early-exit if the class has no vtable (no virtual functions declared or inherited).
 //  3. Construct the LLVM struct type for the vtable:
-//     - Slot 0: opaque pointer (RTTI placeholder, currently nullptr).
+//     - Slot 0: opaque pointer (RTTI pointer — filled during declaration generation).
 //     - Slots 1..N: one opaque pointer per virtual function entry.
 //     The struct is named "__vtable_<ClassName>__" for debuggability.
 //  4. Store the resulting llvm::StructType* on the vtable_layout object so that
@@ -460,19 +460,23 @@ void type_reference_resolver::visit_klass(klass& klass) {
 
 // declaration_generator::visit_klass
 // ------------------------------------
-// Extends aggregate declaration generation by emitting the vtable global variable
-// for a class that has virtual functions.
+// Extends aggregate declaration generation by emitting the RTTI global and the
+// vtable global variable for a class that has virtual functions.
 //
 // Steps:
 //  1. Delegate to visit_aggregate to emit declarations for all member functions,
 //     variables, nested aggregates, constructors, and destructor.
 //  2. Early-exit if the class has no vtable or if the vtable LLVM type was not built
 //     (type_reference_resolver must have run first).
-//  3. Build the initial vtable initializer:
-//     - Slot 0: null pointer (RTTI placeholder).
+//  3. Emit the RTTI global variable for ALL classes and interfaces (including abstract):
+//     - Struct layout: { ptr self_rtti_ptr, ptr name_cstr, ptr null_introspection }
+//     - 'typeid' = address of this global (self-pointer), unique cross-module.
+//     - ExternalLinkage so the linker merges duplicates across DSOs (ODR).
+//  4. For non-abstract classes only, build the initial vtable initializer:
+//     - Slot 0: pointer to the RTTI global (from step 3).
 //     - Slots 1..N: null pointers for each virtual function entry (will be filled
 //       in by implementation_generator::visit_klass once function bodies are emitted).
-//  4. Emit a GlobalVariable named after the mangled vtable name with the null initializer
+//  5. Emit a GlobalVariable named after the mangled vtable name with the null initializer
 //     and ExternalLinkage, and store its pointer on the vtable_layout object.
 void declaration_generator::visit_klass(klass& klass) {
     // ── Pre-create secondary vtable globals BEFORE visit_aggregate ─────────────
@@ -579,6 +583,60 @@ void declaration_generator::visit_klass(klass& klass) {
 
     if (!klass.has_vtable()) return;
 
+    // ── Emit RTTI global for all classes and interfaces (including abstract) ────
+    // The RTTI struct layout:
+    //   { ptr self_rtti_ptr, ptr name_cstr, ptr null_introspection }
+    //
+    // 'typeid' semantics: the address of the RTTI global itself (self-pointer).
+    // This guarantees uniqueness across dynamically-loaded modules:
+    //   - Each class has exactly one RTTI global with ExternalLinkage.
+    //   - The linker merges duplicate definitions across DSOs (ODR rule).
+    //   - Comparing two 'typeid' values is just a pointer equality check.
+    {
+        llvm::LLVMContext& llvm_ctx = **_context;
+        llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+        // Build RTTI struct type: { ptr, ptr, ptr }
+        std::string rtti_struct_name = "__rtti_" + klass.get_short_name() + "__";
+        llvm::StructType* rtti_llvm_type = llvm::StructType::create(
+            llvm_ctx,
+            {ptr_ty, ptr_ty, ptr_ty},
+            rtti_struct_name);
+
+        std::string rtti_name = mangler::mangle_rtti(klass.get_name());
+
+        // Emit the mangled name as a global null-terminated string constant.
+        llvm::Constant* name_str_data = llvm::ConstantDataArray::getString(llvm_ctx, rtti_name, /*AddNull=*/true);
+        auto name_gv = new llvm::GlobalVariable(
+            _context->module(), name_str_data->getType(),
+            true, llvm::GlobalValue::PrivateLinkage,
+            name_str_data, rtti_name + "_name");
+        name_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        // name_gv is already a ptr (GlobalVariable is a pointer constant); use it directly.
+        llvm::Constant* name_cstr = name_gv;
+
+        // Create the RTTI global with a null initializer first (self-ptr will be patched below)
+        // We use ExternalLinkage so the linker merges the symbol across DSOs.
+        std::vector<llvm::Constant*> rtti_init = {
+            llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)), // self_rtti_ptr (patched below)
+            name_cstr,                                                              // name_cstr
+            llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty))  // null_introspection (reserved)
+        };
+        llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
+        auto rtti_gv = new llvm::GlobalVariable(
+            _context->module(), rtti_llvm_type,
+            true, llvm::GlobalValue::ExternalLinkage,
+            rtti_const, rtti_name);
+
+        // Now patch slot 0 (self_rtti_ptr) to point to rtti_gv itself.
+        // We re-create the initializer with the correct self-pointer.
+        rtti_init[0] = rtti_gv; // self-pointer
+        rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_llvm_type, rtti_init));
+
+        // Store on vtable_layout so implementation_generator can use it for vtable slot 0
+        klass.get_vtable()->llvm_rtti_global = rtti_gv;
+    }
+
     // Abstract classes cannot be instantiated directly; their vtable is never used at runtime.
     // Do not emit a vtable global for abstract classes.
     if (klass.is_abstract()) return;
@@ -591,8 +649,13 @@ void declaration_generator::visit_klass(klass& klass) {
 
     std::string vtable_name = mangler::mangle_vtable(klass.get_name());
 
+    // Slot 0 points to the RTTI global (already created above)
+    llvm::Constant* rtti_slot = vt->llvm_rtti_global
+        ? llvm::cast<llvm::Constant>(vt->llvm_rtti_global)
+        : llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
     std::vector<llvm::Constant*> vtable_init;
-    vtable_init.push_back(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
+    vtable_init.push_back(rtti_slot);
     for (size_t i = 0; i < vt->slot_count(); ++i) {
         vtable_init.push_back(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
     }
@@ -616,7 +679,7 @@ void declaration_generator::visit_klass(klass& klass) {
 //  2. Early-exit if the class has no vtable, or if the vtable global or LLVM type
 //     were not created (declaration pass must run first).
 //  3. Build the final vtable initializer:
-//     - Slot 0: null pointer (RTTI placeholder, not yet implemented).
+//     - Slot 0: RTTI pointer (the klass's RTTI global, set in declaration pass).
 //     - Slots 1..N: for each vtable entry, look up the LLVM function corresponding
 //       to the most-derived override (entry.func).  If the function was successfully
 //       declared, use its pointer; otherwise fall back to null.
@@ -639,7 +702,11 @@ void implementation_generator::visit_klass(klass& klass) {
     // ── 1. Fill the primary vtable ─────────────────────────────────────────────
     {
         std::vector<llvm::Constant*> vtable_init;
-        vtable_init.push_back(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
+        // Slot 0: RTTI pointer (use the RTTI global stored on the vtable layout)
+        llvm::Constant* rtti_slot = vt->llvm_rtti_global
+            ? llvm::cast<llvm::Constant>(vt->llvm_rtti_global)
+            : llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+        vtable_init.push_back(rtti_slot);
         for (auto& entry : vt->entries) {
             llvm::Function* llvm_func = _context->lookup_llvm_function(entry.func);
             if (llvm_func) {
@@ -672,7 +739,12 @@ void implementation_generator::visit_klass(klass& klass) {
         if (!sec_gv) continue; // should have been created in declaration pass
 
         std::vector<llvm::Constant*> sec_init;
-        sec_init.push_back(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
+        // Slot 0 of secondary vtable: same RTTI global as the primary vtable
+        // (the secondary vtable is part of the same concrete object)
+        llvm::Constant* rtti_slot = vt->llvm_rtti_global
+            ? llvm::cast<llvm::Constant>(vt->llvm_rtti_global)
+            : llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+        sec_init.push_back(rtti_slot);
 
         for (auto& ti : spec.slot_thunks) {
             if (!ti.real_func) {

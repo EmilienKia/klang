@@ -462,22 +462,32 @@ public:
 class cast_expression : public unary_expression {
 protected:
     std::shared_ptr<type> _cast_type;
+    /** True when the cast is dynamic and a null result is fatal (target is lnk or ref). */
+    bool _null_is_fatal = false;
     cast_expression() = default;
 public:
     void accept(model_visitor &visitor) override;
-    static std::shared_ptr<expression> make_shared(const std::shared_ptr<expression> &expr, const std::shared_ptr<type> &type) {
+    static std::shared_ptr<expression> make_shared(
+            const std::shared_ptr<expression>& expr,
+            const std::shared_ptr<type>& type,
+            bool null_is_fatal = false) {
         std::shared_ptr<cast_expression> rexpr{new cast_expression()};
         rexpr->assign(expr);
         rexpr->_cast_type = type;
+        rexpr->_null_is_fatal = null_is_fatal;
+        rexpr->_type = type;
         return std::shared_ptr<expression>{rexpr};
     }
     std::shared_ptr<type> get_cast_type() { return _cast_type; }
     std::shared_ptr<const type> get_cast_type() const { return _cast_type; }
+    /** True if a null result from a dynamic cast is fatal (target is lnk or ref). */
+    bool null_is_fatal() const { return _null_is_fatal; }
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<cast_expression> c{new cast_expression()};
         c->_type = _type;
         c->_ast_unary_expr = _ast_unary_expr;
         c->_cast_type = _cast_type;
+        c->_null_is_fatal = _null_is_fatal;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }

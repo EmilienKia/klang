@@ -282,6 +282,11 @@ protected:
      */
     llvm::Function* get_or_declare_fatal_null_function(const std::string& name);
 
+    /** Emit RTTI-based dynamic cast IR for a cast_expression whose types require it. */
+    void emit_dynamic_cast(cast_expression& expr,
+                           std::shared_ptr<struct_type> src_st_type,
+                           std::shared_ptr<struct_type> tgt_st_type);
+
     /**
      * Emit a runtime null-check for `ptr_value`. If null, calls fatal_fn and then unreachable.
      * `ok_bb` is the block to continue in if not null. The function creates the check+branch.

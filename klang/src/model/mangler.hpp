@@ -125,6 +125,17 @@ public:
     static std::string mangle_vtable(const name& class_name);
 
     /**
+     * Mangle the RTTI global variable name for a class or interface.
+     * Convention: _KTRIN<class>E
+     *
+     * The RTTI global is a constant struct { ptr self, ptr name_cstr, ptr null_introspection }.
+     * The 'typeid' of the class is the address of this global itself (self-pointer), which
+     * guarantees uniqueness even across dynamically-loaded modules (the linker ensures a single
+     * definition per strong symbol).
+     */
+    static std::string mangle_rtti(const name& class_name);
+
+    /**
      * Mangle the name of the virtual dispatch thunk (wrapper that loads the vptr and calls through the vtable).
      * Convention: _KFMvN<class><funcname>E<params>
      * The 'v' after 'M' denotes "virtual dispatch".

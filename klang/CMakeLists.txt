@@ -106,6 +106,8 @@ add_executable(tests
         tests/test-gen-virtuality-coverage.cpp
         tests/test-gen-multi-diamond.cpp
         tests/test-gen-indirection-downcast.cpp
+        tests/test-gen-class-upcast.cpp
+        tests/test-gen-upcast.cpp
 )
 target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain)
 

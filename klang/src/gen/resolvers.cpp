@@ -1546,24 +1546,36 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         }
 
         if (!type::are_equal(arg_sub, var_sub)) {
-            // Allow implicit upcast: Derived& can bind to Base&
+            // Allow implicit static upcast: Derived& can bind to Base&
             auto arg_st = std::dynamic_pointer_cast<struct_type>(arg_sub);
             auto var_st = std::dynamic_pointer_cast<struct_type>(var_sub);
-            bool is_upcast = arg_st && var_st &&
+            bool is_static_upcast = arg_st && var_st &&
                              arg_st->get_struct() && var_st->get_struct() &&
                              arg_st->get_struct()->is_derived_from(var_st->get_struct());
-            if (!is_upcast) {
-                throw_error(0x4005, std::nullopt,
-                    "Reference variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
-                    "the referenced type must match exactly",
-                    {var.get_fq_name(), var_type ? var_type->to_string() : "?",
-                     arg_type ? arg_type->to_string() : "?"});
-                return;
+            if (is_static_upcast) {
+                // Insert a static cast_expression so IR can GEP to the right subobject
+                auto upcast = cast_expression::make_shared(arg, var_type);
+                upcast->set_type(var_type);
+                init_expr->assign_argument(0, upcast);
+            } else {
+                // Allow implicit dynamic downcast: Base& bound to Derived& (klass/interface only)
+                bool is_dynamic_downcast = arg_st && var_st &&
+                    arg_st->get_struct() && var_st->get_struct() &&
+                    var_st->get_struct()->is_derived_from(arg_st->get_struct()) &&
+                    std::dynamic_pointer_cast<klass>(var_st->get_struct()) != nullptr;
+                if (is_dynamic_downcast) {
+                    // ref is non-null — fatal if RTTI check fails
+                    auto dc = cast_expression::make_shared(arg, var_type, /*null_is_fatal=*/true);
+                    init_expr->assign_argument(0, dc);
+                } else {
+                    throw_error(0x4005, std::nullopt,
+                        "Reference variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
+                        "the referenced type must match exactly",
+                        {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                         arg_type ? arg_type->to_string() : "?"});
+                    return;
+                }
             }
-            // Insert an upcast expression so IR can GEP to the right subobject
-            auto upcast = cast_expression::make_shared(arg, var_type);
-            upcast->set_type(var_type);
-            init_expr->assign_argument(0, upcast);
         }
     } else if (type::is_pointer(var.get_type())) {
         // Pointer variable (*): validate const-compatibility of initializer and type compatibility.
@@ -1600,24 +1612,36 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     auto src_sub_nc = type::remove_const(src_sub);
                     auto tgt_sub_nc = type::remove_const(tgt_sub);
                     if (!type::are_equal(src_sub_nc, tgt_sub_nc)) {
-                        // Check upcast compatibility
+                        // Check static upcast compatibility: Derived → Base
                         auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
                         auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
-                        bool is_upcast = src_st && tgt_st &&
+                        bool is_static_upcast = src_st && tgt_st &&
                                          src_st->get_struct() && tgt_st->get_struct() &&
                                          src_st->get_struct()->is_derived_from(tgt_st->get_struct());
-                        if (!is_upcast) {
-                            throw_error(0x4700, std::nullopt,
-                                "Pointer variable '{}' of type '{}' cannot be initialised from an expression of type '{}': "
-                                "the pointed types are incompatible (no inheritance relationship)",
-                                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
-                                 arg_type ? arg_type->to_string() : "?"});
-                            return;
+                        if (is_static_upcast) {
+                            // Insert a cast_expression so IR can GEP to the right subobject
+                            auto upcast = cast_expression::make_shared(arg, var.get_type());
+                            upcast->set_type(var.get_type());
+                            init_expr->assign_argument(0, upcast);
+                        } else {
+                            // Check dynamic downcast compatibility: Base → Derived (klass/interface only)
+                            bool is_dynamic_downcast = src_st && tgt_st &&
+                                src_st->get_struct() && tgt_st->get_struct() &&
+                                tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
+                                std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
+                            if (is_dynamic_downcast) {
+                                // ptr can be null — not fatal on null result
+                                auto dc = cast_expression::make_shared(arg, var.get_type(), /*null_is_fatal=*/false);
+                                init_expr->assign_argument(0, dc);
+                            } else {
+                                throw_error(0x4700, std::nullopt,
+                                    "Pointer variable '{}' of type '{}' cannot be initialised from an expression of type '{}': "
+                                    "the pointed types are incompatible (no inheritance relationship)",
+                                    {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                                     arg_type ? arg_type->to_string() : "?"});
+                                return;
+                            }
                         }
-                        // Insert a cast_expression so IR can GEP to the right subobject
-                        auto upcast = cast_expression::make_shared(arg, var.get_type());
-                        upcast->set_type(var.get_type());
-                        init_expr->assign_argument(0, upcast);
                     }
                 }
             }
@@ -1713,24 +1737,36 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 src_pointed_nc = type::remove_const(ref_t2->get_subtype());
             }
             if (src_pointed_nc && !type::are_equal(src_pointed_nc, link_sub_nc)) {
-                // Check upcast compatibility
+                // Check static upcast compatibility: Derived → Base
                 auto src_st = std::dynamic_pointer_cast<struct_type>(src_pointed_nc);
                 auto tgt_st = std::dynamic_pointer_cast<struct_type>(link_sub_nc);
-                bool is_upcast = src_st && tgt_st &&
+                bool is_static_upcast = src_st && tgt_st &&
                                  src_st->get_struct() && tgt_st->get_struct() &&
                                  src_st->get_struct()->is_derived_from(tgt_st->get_struct());
-                if (!is_upcast) {
-                    throw_error(0x4506, std::nullopt,
-                        "Link variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
-                        "the linked types are incompatible (no inheritance relationship)",
-                        {var.get_fq_name(), var_type ? var_type->to_string() : "?",
-                         arg_type ? arg_type->to_string() : "?"});
-                    return;
+                if (is_static_upcast) {
+                    // Insert a cast_expression so IR can GEP to the right subobject
+                    auto upcast = cast_expression::make_shared(arg, var_type);
+                    upcast->set_type(var_type);
+                    init_expr->assign_argument(0, upcast);
+                } else {
+                    // Check dynamic downcast: Base → Derived (klass/interface only)
+                    bool is_dynamic_downcast = src_st && tgt_st &&
+                        src_st->get_struct() && tgt_st->get_struct() &&
+                        tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
+                        std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
+                    if (is_dynamic_downcast) {
+                        // lien is non-null — fatal if RTTI check fails
+                        auto dc = cast_expression::make_shared(arg, var_type, /*null_is_fatal=*/true);
+                        init_expr->assign_argument(0, dc);
+                    } else {
+                        throw_error(0x4506, std::nullopt,
+                            "Link variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
+                            "the linked types are incompatible (no inheritance relationship)",
+                            {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                             arg_type ? arg_type->to_string() : "?"});
+                        return;
+                    }
                 }
-                // Insert a cast_expression so IR can GEP to the right subobject
-                auto upcast = cast_expression::make_shared(arg, var_type);
-                upcast->set_type(var_type);
-                init_expr->assign_argument(0, upcast);
             }
         }
 
@@ -1796,21 +1832,33 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             if (src_pointed_nc && !type::are_equal(src_pointed_nc, pin_sub_nc)) {
                 auto src_st = std::dynamic_pointer_cast<struct_type>(src_pointed_nc);
                 auto tgt_st = std::dynamic_pointer_cast<struct_type>(pin_sub_nc);
-                bool is_upcast = src_st && tgt_st &&
+                bool is_static_upcast = src_st && tgt_st &&
                                  src_st->get_struct() && tgt_st->get_struct() &&
                                  src_st->get_struct()->is_derived_from(tgt_st->get_struct());
-                if (!is_upcast) {
-                    throw_error(0x4605, std::nullopt,
-                        "Pinned variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
-                        "the pinned types are incompatible (no inheritance relationship)",
-                        {var.get_fq_name(), var_type ? var_type->to_string() : "?",
-                         arg_type ? arg_type->to_string() : "?"});
-                    return;
+                if (is_static_upcast) {
+                    // Insert a cast_expression so IR can GEP to the right subobject
+                    auto upcast = cast_expression::make_shared(arg, var_type);
+                    upcast->set_type(var_type);
+                    init_expr->assign_argument(0, upcast);
+                } else {
+                    // Check dynamic downcast: Base → Derived (klass/interface only)
+                    bool is_dynamic_downcast = src_st && tgt_st &&
+                        src_st->get_struct() && tgt_st->get_struct() &&
+                        tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
+                        std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
+                    if (is_dynamic_downcast) {
+                        // pin can be null — not fatal on null result
+                        auto dc = cast_expression::make_shared(arg, var_type, /*null_is_fatal=*/false);
+                        init_expr->assign_argument(0, dc);
+                    } else {
+                        throw_error(0x4605, std::nullopt,
+                            "Pinned variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
+                            "the pinned types are incompatible (no inheritance relationship)",
+                            {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                             arg_type ? arg_type->to_string() : "?"});
+                        return;
+                    }
                 }
-                // Insert a cast_expression so IR can GEP to the right subobject
-                auto upcast = cast_expression::make_shared(arg, var_type);
-                upcast->set_type(var_type);
-                init_expr->assign_argument(0, upcast);
             }
         }
 

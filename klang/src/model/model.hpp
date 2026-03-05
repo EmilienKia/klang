@@ -211,6 +211,15 @@ struct vtable_layout {
     /** LLVM struct type for the vtable: { ptr (RTTI), [N x ptr] } (set during type resolution). */
     llvm::StructType* llvm_type = nullptr;
 
+    /**
+     * LLVM global variable holding the RTTI constant for this class.
+     * Layout: { ptr self_rtti_ptr, ptr name_cstr, ptr null_introspection }
+     * The 'typeid' is the address of this global (self-pointer), valid across dynamic modules.
+     * Set during declaration generation. May be non-null even if llvm_global is null
+     * (e.g. for abstract classes that have no emitted vtable global).
+     */
+    llvm::GlobalVariable* llvm_rtti_global = nullptr;
+
     /** Total number of slots (entries.size()). */
     size_t slot_count() const { return entries.size(); }
 };

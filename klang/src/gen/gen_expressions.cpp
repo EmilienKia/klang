@@ -21,8 +21,10 @@
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
 #include "../model/operators.hpp"
+#include "../model/mangler.hpp"
 
 #include "llvm/Support/raw_os_ostream.h"
+#include <llvm/IR/DataLayout.h>
 
 #include <unordered_set>
 
@@ -2240,7 +2242,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             auto src_st = src_st_type->get_struct();
             auto tgt_st = tgt_st_type->get_struct();
             if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
-                // Generate GEP to base subobject field
+                // ── Static upcast: ref<Derived> → ref<Base> — GEP to base subobject ──
                 _value = nullptr;
                 expr.sub_expr()->accept(*this);
                 if (!_value) return;
@@ -2277,21 +2279,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 }
 
                 // ── Transitive upcast: tgt_st is a transitive (non-direct) base of src_st.
-                // Find a path src_st → ... → intermediate → tgt_st via non-virtual bases,
-                // and generate chained GEPs to walk through each intermediate sub-object.
-                // Uses BFS so we always find the shortest path first.
                 if (subobj_name.empty()) {
-                    // BFS: each entry is (current_aggregate, current_llvm_value, current_struct_type)
-                    struct PathNode {
-                        aggregate* agg;
-                        struct_type* st_type;
-                        llvm::Value* ptr;
-                    };
-                    std::vector<PathNode> frontier;
-                    frontier.push_back({src_st.get(), src_st_type.get(), _value});
-                    bool found_transitive = false;
-
-                    // Iterative DFS (small hierarchy, depth-first is fine)
                     std::function<bool(aggregate*, struct_type*, llvm::Value*)> dfs_gep;
                     dfs_gep = [&](aggregate* cur_agg, struct_type* cur_st_type, llvm::Value* cur_ptr) -> bool {
                         for (auto& bs : cur_agg->get_bases()) {
@@ -2300,10 +2288,8 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                             auto field = cur_st_type->get_member(field_name);
                             if (!field) continue;
 
-                            auto base_klass = std::dynamic_pointer_cast<k::model::klass>(bs.base);
-                            if (!base_klass) continue;
-
-                            auto base_st_type = base_klass->get_struct_type();
+                            auto base_agg = bs.base;
+                            auto base_st_type = base_agg->get_struct_type();
                             if (!base_st_type) continue;
 
                             llvm::Type* cur_llvm_type = cur_st_type->get_llvm_type();
@@ -2313,7 +2299,6 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                                 "trans_base_" + bs.raw_name + "_ptr");
 
                             if (bs.base.get() == tgt_st.get()) {
-                                // Found it!
                                 _value = base_ptr;
                                 return true;
                             }
@@ -2329,24 +2314,20 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                                 return true;
                             }
 
-                            // Recurse
                             if (dfs_gep(bs.base.get(), base_st_type.get(), base_ptr)) {
                                 return true;
                             }
                         }
                         return false;
                     };
-                    found_transitive = dfs_gep(src_st.get(), src_st_type.get(), _value);
-                    if (found_transitive) return;
+                    if (dfs_gep(src_st.get(), src_st_type.get(), _value)) return;
                 }
 
-                // Virtual base via vbptr: src has __vbptr_X__ but not __vbase_X__
-                // (e.g. ref<B> → ref<A> where B has virtual A)
+                // Virtual base via vbptr
                 {
                     std::string vbptr_name = "__vbptr_" + tgt_st->get_short_name() + "__";
                     auto src_llvm_type = _context->get_llvm_type(src_st_type);
                     if (auto vbptr_field = src_st_type->get_member(vbptr_name)) {
-                        // Load the vbptr to get A*
                         llvm::Type* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
                         llvm::Value* vbptr_addr = _builder->CreateStructGEP(
                             src_llvm_type, _value, (unsigned)vbptr_field->index,
@@ -2359,14 +2340,26 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 // Fallback: return as-is (pointer reinterpret for same-layout case)
                 return;
             }
+            // If tgt_st is derived from src_st (dynamic downcast ref<Base>→ref<Derived>),
+            // fall through to the dynamic cast block below — do NOT handle here.
+            // Only do a no-op for truly same/unrelated types.
+            bool is_dynamic_downcast = src_st && tgt_st &&
+                tgt_st->is_derived_from(src_st) &&
+                std::dynamic_pointer_cast<klass>(tgt_st) != nullptr;
+            if (!is_dynamic_downcast) {
+                // Same type or unrelated: no-op
+                _value = nullptr;
+                expr.sub_expr()->accept(*this);
+                return;
+            }
+            // else: fall through to dynamic cast block
+        } else {
+            // Same type, no-op
+            _value = nullptr;
+            expr.sub_expr()->accept(*this);
+            return;
         }
-        // Same type, no-op
-        _value = nullptr;
-        expr.sub_expr()->accept(*this);
-        return;
     }
-
-    // ── Struct indirection upcast (lien/pin/ptr): same GEP logic as ref→ref ─────
     // For lien~, pin^, ptr* pointing to Derived → lien~, pin^, ptr* pointing to Base.
     // All are LLVM opaque pointers; same GEP strategy applies.
     // Also handles ref<ptr<Derived>>→lien<Base> etc. (load through ref first).
@@ -2458,9 +2451,9 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     std::string field_name = "__base_" + bs.raw_name + "__";
                     auto field = cur_st_type->get_member(field_name);
                     if (!field) continue;
-                    auto base_klass = std::dynamic_pointer_cast<k::model::klass>(bs.base);
-                    if (!base_klass) continue;
-                    auto base_st_type = base_klass->get_struct_type();
+                    // Use aggregate directly (works for both structure and klass/interface)
+                    auto base_agg = bs.base;
+                    auto base_st_type = base_agg->get_struct_type();
                     if (!base_st_type) continue;
                     llvm::Type* cur_llvm_type = cur_st_type->get_llvm_type();
                     if (!cur_llvm_type) continue;
@@ -2509,35 +2502,89 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     // When the type resolver sets target type to pointer<VirtualBase>, it means we need
     // to load the __vbptr_<name>__ field and use it as a pointer (which the subsequent
     // GEP in member_of_object_expression will use).
+    // ── Struct reference → pointer for virtual base vbptr deref ─────────────
+    // Only applies when source is ref<StructType> (not ref<ptr/lnk/pin>).
+    // When source referenced type is itself an indirection (e.g. ref<ptr<Base>>→ptr<Derived>),
+    // fall through to the dynamic cast block below.
     if (type::is_reference(source_type) && type::is_pointer(target_type)) {
         auto src_ref = std::dynamic_pointer_cast<reference_type>(source_type);
-        auto tgt_ptr = std::dynamic_pointer_cast<pointer_type>(target_type);
-        auto src_st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(src_ref->get_referenced_type()));
-        auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_ptr->get_pointed_type());
-        if (src_st_type && tgt_st_type) {
-            _value = nullptr;
-            expr.sub_expr()->accept(*this);
-            if (!_value) return;
+        auto src_inner = src_ref->get_referenced_type();
+        // Only handle this block when source references a struct directly (not a ptr/lnk/pin).
+        // If source is ref<ptr/lnk/pin>, fall through to dynamic cast.
+        if (!type::is_any_indirection(src_inner)) {
+            auto tgt_ptr = std::dynamic_pointer_cast<pointer_type>(target_type);
+            auto src_st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(src_inner));
+            auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_ptr->get_pointed_type());
+            if (src_st_type && tgt_st_type) {
+                // Check if this is a dynamic downcast (Base→Derived): if so, fall through
+                auto src_agg = src_st_type->get_struct();
+                auto tgt_agg = tgt_st_type->get_struct();
+                bool is_dynamic_downcast = src_agg && tgt_agg &&
+                    tgt_agg->is_derived_from(src_agg) &&
+                    std::dynamic_pointer_cast<klass>(tgt_agg) != nullptr;
+                if (!is_dynamic_downcast) {
+                    _value = nullptr;
+                    expr.sub_expr()->accept(*this);
+                    if (!_value) return;
 
-            std::string vbptr_name = "__vbptr_" + tgt_st_type->name() + "__";
-            auto src_llvm_type = _context->get_llvm_type(src_st_type);
-            if (auto field = src_st_type->get_member(vbptr_name)) {
-                // Load the vbptr field (it's an opaque ptr to the virtual base)
-                llvm::Type* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
-                llvm::Value* vbptr_field_addr = _builder->CreateStructGEP(
-                    src_llvm_type, _value, (unsigned)field->index, "vbptr_" + tgt_st_type->name() + "_addr");
-                _value = _builder->CreateLoad(ptr_ty, vbptr_field_addr, "vbptr_" + tgt_st_type->name());
-                return;
+                    std::string vbptr_name = "__vbptr_" + tgt_st_type->name() + "__";
+                    auto src_llvm_type = _context->get_llvm_type(src_st_type);
+                    if (auto field = src_st_type->get_member(vbptr_name)) {
+                        // Load the vbptr field (it's an opaque ptr to the virtual base)
+                        llvm::Type* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+                        llvm::Value* vbptr_field_addr = _builder->CreateStructGEP(
+                            src_llvm_type, _value, (unsigned)field->index, "vbptr_" + tgt_st_type->name() + "_addr");
+                        _value = _builder->CreateLoad(ptr_ty, vbptr_field_addr, "vbptr_" + tgt_st_type->name());
+                        return;
+                    }
+                    // Fallback for non-dynamic ref<Struct>→ptr<Struct> (no vbptr found)
+                    return;
+                }
+                // is_dynamic_downcast → fall through to dynamic cast block
             }
+            // src_st_type or tgt_st_type null → fall through
         }
-        // Fallback
-        _value = nullptr;
-        expr.sub_expr()->accept(*this);
-        return;
+        // ref<ptr/lnk/pin> → fall through to dynamic cast block
     }
 
     if(type::is_pointer(source_type) && type::is_prim_bool(target_type)) {
         // TODO add pointer to boolean casting
+    }
+
+    // ── Dynamic cast (RTTI-based): Base→Derived for klass/interface indirections ──
+    // Triggered when target_st is derived from source_st (i.e. going "upward" in the
+    // type hierarchy from a base pointer to a more-derived pointer).
+    // This is the inverse of the static upcast handled above.
+    {
+        // Helper: extract struct_type from any indirection or ref<indirection> or ref<struct>
+        auto get_pointed_struct = [](const std::shared_ptr<type>& t) -> std::shared_ptr<struct_type> {
+            auto effective = t;
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(t)) {
+                auto inner = ref->get_referenced_type();
+                if (type::is_any_indirection(inner)) effective = inner;
+                else return std::dynamic_pointer_cast<struct_type>(type::remove_const(inner));
+            }
+            if (auto lnk = std::dynamic_pointer_cast<link_type>(effective))
+                return std::dynamic_pointer_cast<struct_type>(type::remove_const(lnk->get_linked_type()));
+            if (auto pin = std::dynamic_pointer_cast<pinned_type>(effective))
+                return std::dynamic_pointer_cast<struct_type>(type::remove_const(pin->get_pinned_type()));
+            if (auto ptr = std::dynamic_pointer_cast<pointer_type>(effective))
+                return std::dynamic_pointer_cast<struct_type>(type::remove_const(ptr->get_pointed_type()));
+            return nullptr;
+        };
+        auto src_st_type = get_pointed_struct(source_type);
+        auto tgt_st_type = get_pointed_struct(target_type);
+        if (src_st_type && tgt_st_type) {
+            auto src_st = src_st_type->get_struct();
+            auto tgt_st = tgt_st_type->get_struct();
+            bool is_dynamic = src_st && tgt_st &&
+                tgt_st->is_derived_from(src_st) &&
+                std::dynamic_pointer_cast<klass>(tgt_st) != nullptr;
+            if (is_dynamic) {
+                emit_dynamic_cast(expr, src_st_type, tgt_st_type);
+                return;
+            }
+        }
     }
 
     if(!type::is_primitive(source_type) || !type::is_primitive(target_type)) {
@@ -2642,6 +2689,165 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     } else {
         // Support other types
     }
+}
+
+
+// ─── Dynamic cast (RTTI-based): emit_dynamic_cast ────────────────────────────
+//
+// Called from visit_cast_expression when types require a runtime RTTI check.
+// source is a base-typed indirection; target is a derived-typed indirection.
+// Algorithm:
+//  1. Evaluate source → raw base pointer.
+//  2. Load the vptr (field 0 of the base klass layout).
+//  3. Load vtable[0] → actual RTTI pointer of the most-derived object.
+//  4. Compare with the RTTI global of the target klass.
+//  5. On match: subtract compile-time byte-offset → Derived* result.
+//  6. On mismatch: null.
+//  7. If expr.null_is_fatal(): emit debugtrap on null (target is lnk or ref).
+//
+void implementation_generator::emit_dynamic_cast(
+        cast_expression& expr,
+        std::shared_ptr<struct_type> src_st_type,
+        std::shared_ptr<struct_type> tgt_st_type)
+{
+    auto& llvm_ctx  = _builder->getContext();
+    auto* ptr_ty    = llvm::PointerType::get(llvm_ctx, 0);
+    auto* i64_ty    = llvm::Type::getInt64Ty(llvm_ctx);
+
+    auto source_type = expr.sub_expr()->get_type();
+
+    auto src_st = src_st_type->get_struct();
+    auto tgt_st = tgt_st_type->get_struct();
+    auto tgt_klass = std::dynamic_pointer_cast<klass>(tgt_st);
+
+    if (!src_st || !tgt_st || !tgt_klass) {
+        throw_internal_error(0x0026, std::nullopt,
+            "emit_dynamic_cast: source or target is not a class/interface aggregate");
+    }
+
+    // ── 1. Evaluate sub-expression → raw base pointer ────────────────────────
+    _value = nullptr;
+    expr.sub_expr()->accept(*this);
+    if (!_value) return;
+    llvm::Value* base_raw = _value;
+
+    // If source is ref<lnk/pin/ptr>, load the stored pointer value.
+    {
+        if (auto ref_t = std::dynamic_pointer_cast<reference_type>(source_type)) {
+            auto inner = ref_t->get_referenced_type();
+            if (type::is_any_indirection(inner)) {
+                base_raw = _builder->CreateLoad(ptr_ty, base_raw, "dyncast_load_indir");
+            }
+        }
+    }
+
+    // ── 2. Find the RTTI global for the target class ──────────────────────────
+    std::string rtti_name = mangler::mangle_rtti(tgt_klass->get_name());
+    llvm::GlobalVariable* tgt_rtti_gv = _context->module().getNamedGlobal(rtti_name);
+    if (!tgt_rtti_gv) {
+        throw_internal_error(0x0027, std::nullopt,
+            "emit_dynamic_cast: RTTI global '{}' not found in module",
+            {rtti_name});
+    }
+
+    // ── 3. Load the vptr from the source object (field 0 of the klass) ───────
+    auto src_klass = std::dynamic_pointer_cast<klass>(src_st);
+    if (!src_klass || !src_klass->has_vtable()) {
+        throw_internal_error(0x0028, std::nullopt,
+            "emit_dynamic_cast: source class '{}' has no vtable/vptr",
+            {src_st->get_short_name()});
+    }
+    auto src_vt = src_klass->get_vtable();
+    auto* src_llvm_type = src_st_type->get_llvm_type();
+    if (!src_llvm_type || !src_vt->llvm_type) {
+        throw_internal_error(0x0029, std::nullopt,
+            "emit_dynamic_cast: source class LLVM type not built");
+    }
+    llvm::Value* vptr_addr = _builder->CreateStructGEP(
+        src_llvm_type, base_raw, 0, "dyncast_vptr_addr");
+    llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "dyncast_vptr");
+
+    // ── 4. Load vtable[0] → actual RTTI pointer ──────────────────────────────
+    llvm::Value* rtti_slot_addr = _builder->CreateStructGEP(
+        src_vt->llvm_type, vptr, 0, "dyncast_rtti_slot_addr");
+    llvm::Value* actual_rtti = _builder->CreateLoad(ptr_ty, rtti_slot_addr, "dyncast_actual_rtti");
+
+    // ── 5. Compare RTTI pointers ──────────────────────────────────────────────
+    llvm::Value* rtti_match = _builder->CreateICmpEQ(
+        actual_rtti, tgt_rtti_gv, "dyncast_rtti_match");
+
+    // ── 6. Compute adjusted pointer (Derived* = Base* − byte_offset) ─────────
+    llvm::Value* derived_ptr = nullptr;
+    {
+        llvm::DataLayout dl(&_context->module());
+
+        // Try direct base first
+        std::string subobj_name;
+        for (auto& bs : tgt_st->get_bases()) {
+            if (!bs.base) continue;
+            if (bs.base.get() == src_st.get()) {
+                subobj_name = bs.is_virtual
+                    ? "__vbase_" + bs.raw_name + "__"
+                    : "__base_" + bs.raw_name + "__";
+                break;
+            }
+        }
+        if (subobj_name.empty()) {
+            std::string vbase_name = "__vbase_" + src_st->get_short_name() + "__";
+            if (tgt_st_type->get_member(vbase_name)) subobj_name = vbase_name;
+        }
+        if (!subobj_name.empty()) {
+            if (auto field = tgt_st_type->get_member(subobj_name)) {
+                auto* tgt_llvm_type = llvm::dyn_cast_or_null<llvm::StructType>(tgt_st_type->get_llvm_type());
+                if (tgt_llvm_type) {
+                    uint64_t off = dl.getStructLayout(tgt_llvm_type)->getElementOffset((unsigned)field->index);
+                    llvm::Value* bi = _builder->CreatePtrToInt(base_raw, i64_ty, "dyncast_base_int");
+                    llvm::Value* di = _builder->CreateSub(bi, llvm::ConstantInt::get(i64_ty, off), "dyncast_derived_int");
+                    derived_ptr = _builder->CreateIntToPtr(di, ptr_ty, "dyncast_derived_ptr");
+                }
+            }
+        }
+        if (!derived_ptr) {
+            // Transitive DFS: accumulate byte offsets through hierarchy
+            std::function<int64_t(aggregate*, struct_type*)> dfs_offset;
+            dfs_offset = [&](aggregate* cur_agg, struct_type* cur_st_type) -> int64_t {
+                for (auto& bs : cur_agg->get_bases()) {
+                    if (!bs.base || bs.is_virtual) continue;
+                    std::string fname = "__base_" + bs.raw_name + "__";
+                    auto field = cur_st_type->get_member(fname);
+                    if (!field) continue;
+                    auto* cur_llvm = llvm::dyn_cast_or_null<llvm::StructType>(cur_st_type->get_llvm_type());
+                    if (!cur_llvm) continue;
+                    uint64_t this_off = dl.getStructLayout(cur_llvm)->getElementOffset((unsigned)field->index);
+                    if (bs.base.get() == src_st.get()) return (int64_t)this_off;
+                    auto base_st_type = bs.base->get_struct_type();
+                    if (!base_st_type) continue;
+                    int64_t inner = dfs_offset(bs.base.get(), base_st_type.get());
+                    if (inner >= 0) return (int64_t)this_off + inner;
+                }
+                return -1;
+            };
+            int64_t total = dfs_offset(tgt_st.get(), tgt_st_type.get());
+            if (total >= 0) {
+                llvm::Value* bi2 = _builder->CreatePtrToInt(base_raw, i64_ty);
+                llvm::Value* di2 = _builder->CreateSub(bi2, llvm::ConstantInt::get(i64_ty, (uint64_t)total), "dyncast_trans_int");
+                derived_ptr = _builder->CreateIntToPtr(di2, ptr_ty, "dyncast_trans_ptr");
+            }
+        }
+    }
+    if (!derived_ptr) derived_ptr = base_raw; // degenerate: same address
+
+    // ── 7. Select result: derived_ptr on match, null on mismatch ─────────────
+    auto* null_val = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+    llvm::Value* result = _builder->CreateSelect(rtti_match, derived_ptr, null_val, "dyncast_result");
+
+    // ── 8. Fatal-null check for lnk/ref targets ───────────────────────────────
+    if (expr.null_is_fatal()) {
+        auto* fatal_fn = get_or_declare_fatal_null_function("__fatal_null_dyncast");
+        emit_null_check(result, fatal_fn, "dyncast");
+    }
+
+    _value = result;
 }
 
 //

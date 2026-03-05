@@ -89,3 +89,84 @@ use() {
 | Rebinding an immutable indirection (`ref`, `pin`) | Compile error |
 
 *See also:* [Types — §11.3](../basic/types.md#113-static-indirection-upcast-aggregate-types)
+
+---
+
+## Dynamic indirection downcast (class/interface only)
+
+When a `Base*` (or `Base~`, `Base^`, `Base&`) indirection may point at a `Derived` object at
+runtime, K allows assigning it to a `Derived*` (or `Derived~`, `Derived^`, `Derived&`) via a
+**runtime RTTI check**.
+
+This applies **only to `class` and `interface` types** — structs have no vtable/RTTI and
+attempting a dynamic downcast on struct pointers is a **compile-time error**.
+
+**Semantics:**
+
+1. The compiler loads the RTTI pointer from the object's vtable slot 0.
+2. It compares the loaded RTTI pointer with the RTTI descriptor of `Derived`.
+3. On match: the raw pointer is adjusted (byte-offset subtraction) to point to the start of the
+   `Derived` sub-object; the result is assigned.
+4. On mismatch: **null** is assigned.
+5. Null assigned to a non-null target (`~` or `&`) immediately calls `__fatal_null_dyncast()`.
+
+**Binding constraints:**
+
+| Target type | When allowed | On RTTI mismatch |
+|-------------|--------------|-----------------|
+| `Derived&`  | Init only (immutable binding) | fatal trap |
+| `Derived~`  | Init only (non-null link) | fatal trap |
+| `Derived^`  | Init only (nullable pin) | null assigned |
+| `Derived*`  | Init and rebind (nullable ptr) | null assigned |
+
+**Examples:**
+
+```k
+class Animal {
+    public Animal(v : int) : name_code(v) {}
+    public speak() : int { return name_code; }
+    public name_code : int;
+}
+class Dog : public Animal {
+    public Dog(v : int) : Animal(v), tricks(v * 2) {}
+    public speak() : int { return tricks; }
+    public get_tricks() : int { return tricks; }
+    public tricks : int;
+}
+
+tricks_fn(d : Dog&) : int { return d.get_tricks(); }
+
+test() : int {
+    d   : Dog(7);
+    al  : Animal~ = &d;      // static upcast to Animal~
+    dl  : Dog~    = al;      // dynamic downcast; traps if RTTI mismatches
+    return tricks_fn(*dl);   // → 14
+}
+```
+
+**Transitive downcast** (e.g. `ptr<C>` from `ptr<A>` where `C→B→A`) is fully supported:
+the byte offset through the entire inheritance chain is computed at compile time and subtracted
+from the source pointer at runtime when RTTI matches.
+
+**Interface downcast:**
+
+A pointer to an interface can be dynamically downcast to a pointer to a concrete implementing class:
+
+```k
+interface IBase { get_val() : int; }
+class Derived : public IBase {
+    public val : int;
+    public Derived(v : int) : val(v) {}
+    public get_val() : int { return val; }
+}
+
+test() : int {
+    d  : Derived(21);
+    ip : IBase*   = &d;      // static upcast to IBase*
+    dp : Derived* = ip;      // dynamic downcast via RTTI → non-null
+    return dp->get_val();    // → 21 (if supported)
+}
+```
+
+*See also:* [Types — §11.4](../basic/types.md#114-dynamic-indirection-downcast-classinterface) · [Classes — §14](classes.md#14-rtti-and-dynamic-downcast)
+

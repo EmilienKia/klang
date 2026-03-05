@@ -31,6 +31,7 @@ The most important distinction between `struct` and `class` is *virtuality*:
 11. [Non-virtual qualified calls](#11-non-virtual-qualified-calls)
 12. [Abstract classes and methods](#12-abstract-classes-and-methods)
 13. [Const member functions in classes](#13-const-member-functions-in-classes)
+14. [RTTI and dynamic downcast](#14-rtti-and-dynamic-downcast)
 
 ---
 
@@ -797,3 +798,152 @@ test() : int {
 ---
 
 *See also:* [Structs](structs.md) · [Interfaces](interfaces.md) · [Inheritance](inheritance.md) · [Constructors](constructors.md) · [Destructors](destructors.md) · [Nested Structures](nested.md) · [Types — Const-ness](../basic/types.md#12-const-ness)
+
+---
+
+## 14. RTTI and dynamic downcast
+
+### 14.1 Runtime Type Information (RTTI)
+
+Every **concrete** (non-abstract) `class` and every `class` or `interface` that has virtual
+functions automatically receives an **RTTI descriptor** at compile time.
+
+The RTTI descriptor is a global constant struct with the layout:
+
+```
+{ ptr self_rtti_ptr, ptr mangled_name_cstr, ptr null_introspection }
+```
+
+| Field | Content |
+|-------|---------|
+| `self_rtti_ptr` | Pointer to this RTTI global itself (used as the unique *typeid*) |
+| `mangled_name_cstr` | Null-terminated C string of the mangled class name |
+| `null_introspection` | Reserved — currently null; reserved for future introspection data |
+
+The RTTI global is stored at **vtable slot 0** (before the first virtual function pointer).
+Every vtable — primary and secondary — carries the RTTI of the **concrete** (most-derived) class
+of the complete object, so loading vtable[0] from any base sub-object of a `Derived` object
+always yields `Derived`'s RTTI.
+
+`struct` types have **no vtable and no RTTI**.
+
+### 14.2 Dynamic downcast semantics
+
+A **dynamic downcast** assigns a `Base*` (or `Base~`, `Base^`, `Base&`) to a `Derived*`
+(or `Derived~`, `Derived^`, `Derived&`) with a runtime type check:
+
+1. Load the vptr from field 0 of the pointed-at object (via the Base sub-object layout).
+2. Load vtable[0] — the actual RTTI pointer of the concrete object.
+3. Compare with Derived's RTTI global address.
+4. **Match** → subtract the byte offset of the Base sub-object inside Derived from the source
+   pointer to obtain the start of Derived; assign the adjusted pointer.
+5. **Mismatch** → assign **null**.
+6. If null is assigned to a non-null target (`~` link or `&` reference) → call
+   `__fatal_null_dyncast()`.
+
+The operation is emitted implicitly whenever the compiler detects that a `Base` indirection is
+being assigned to a `Derived` indirection and `Derived` is a class/interface derived from `Base`.
+
+### 14.3 Binding rules
+
+| Target type | Allowed when | On RTTI mismatch |
+|-------------|--------------|-----------------|
+| `Derived&`  | Init only (immutable binding) | `__fatal_null_dyncast()` |
+| `Derived~`  | Init only (non-null link) | `__fatal_null_dyncast()` |
+| `Derived^`  | Init only (nullable pin) | null assigned |
+| `Derived*`  | Init and rebind (nullable ptr) | null assigned |
+
+### 14.4 Applicability
+
+| Type | Dynamic downcast? |
+|------|-------------------|
+| `class` | ✓ Yes |
+| `interface` | ✓ Yes |
+| `struct` | ✗ No — compile-time error |
+| Primitives | ✗ No |
+
+### 14.5 Examples
+
+```k
+class Base {
+    public val : int;
+    public Base(v : int) : val(v) {}
+    public dummy() : int { return 0; }
+}
+class Derived : public Base {
+    public extra : int;
+    public Derived(v : int) : Base(v), extra(99) {}
+    public get_extra() : int { return extra; }
+}
+
+get_extra_fn(d : Derived&) : int { return d.get_extra(); }
+
+test_ptr() : int {
+    d  : Derived(42);
+    bp : Base*    = &d;       // static upcast Derived→Base
+    dp : Derived* = bp;       // dynamic downcast — dp non-null (RTTI matches)
+    return get_extra_fn(*dp); // → 99
+}
+
+test_lnk() : int {
+    d   : Derived(7);
+    bl  : Base~   = &d;
+    dl  : Derived~ = bl;      // dynamic downcast — dl non-null; fatal if RTTI mismatches
+    return get_extra_fn(*dl); // → 99
+}
+
+test_ref() : int {
+    d  : Derived(3);
+    br : Base&    = d;
+    dr : Derived& = br;       // dynamic downcast — fatal if RTTI mismatches
+    return get_extra_fn(dr);  // → 99
+}
+```
+
+**Transitive hierarchy:**
+
+```k
+class A { public x : int; public A(v:int):x(v){} public dummy():int{return 0;} }
+class B : public A { public B(v:int):A(v){} }
+class C : public B { public z : int; public C(v:int):B(v),z(99){} public get_z():int{return z;} }
+
+get_z_fn(c : C&) : int { return c.get_z(); }
+
+test() : int {
+    c  : C(5);
+    ap : A*  = &c;   // static upcast through B→A
+    cp : C*  = ap;   // dynamic downcast A→C via RTTI
+    return get_z_fn(*cp); // → 99
+}
+```
+
+**Interface downcast:**
+
+```k
+interface IBase { get_val() : int; }
+class Derived : public IBase {
+    public val : int;
+    public Derived(v : int) : val(v) {}
+    public get_val() : int { return val; }
+    public get_extra() : int { return val * 2; }
+}
+
+get_extra_fn(d : Derived&) : int { return d.get_extra(); }
+
+test() : int {
+    d  : Derived(21);
+    ip : IBase*   = &d;      // static upcast to interface
+    dp : Derived* = ip;      // dynamic downcast via RTTI → non-null
+    return get_extra_fn(*dp); // → 42
+}
+```
+
+### 14.6 Error reference
+
+| Code | Condition |
+|------|-----------|
+| `0x4700` | Source and target have no inheritance relationship — compile-time error |
+| *(runtime)* | RTTI mismatch on non-null target → `__fatal_null_dyncast()` |
+
+*See also:* [Types — §11.4](../basic/types.md#114-dynamic-indirection-downcast-classinterface) · [Inheritance — Dynamic downcast](inheritance.md#dynamic-indirection-downcast-classinterface-only)
+

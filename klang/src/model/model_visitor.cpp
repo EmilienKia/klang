@@ -155,6 +155,7 @@ void default_model_visitor::visit_cast_expression(cast_expression &expr) {
     visit_unary_expression(expr);
 }
 
+
 void default_model_visitor::visit_binary_expression(binary_expression &expr) {
     visit_expression(expr);
 }

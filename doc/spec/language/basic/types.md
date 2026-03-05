@@ -28,7 +28,8 @@ K is a statically-typed language. Every expression has a type determined at comp
     - 11.1 [Widening conversions (primitives)](#111-widening-conversions-no-data-loss)
     - 11.2 [Narrowing conversions](#112-narrowing-conversions-possible-data-loss)
     - 11.3 [Static indirection upcast (aggregate types)](#113-static-indirection-upcast-aggregate-types)
-    - 11.4 [Explicit cast](#114-explicit-cast)
+    - 11.4 [Dynamic indirection downcast (class/interface)](#114-dynamic-indirection-downcast-classinterface)
+    - 11.5 [Explicit cast](#115-explicit-cast)
 12. [Const-ness](#12-const-ness)
 
 ---
@@ -113,6 +114,12 @@ Dereferencing (`*x` or `x->m`) a `T^` or `T*` value likewise inserts a runtime n
 When `Derived` inherits from `Base`, an indirection of type `T<Derived>` can be implicitly assigned to an indirection of type `T<Base>`.  
 The pointer is adjusted at compile time via a GEP to address the `Base` sub-object.  
 See [§11.3 — Static indirection upcast](#113-static-indirection-upcast-aggregate-types) for full details.
+
+**Dynamic downcast (class/interface types):**
+
+When a `Base` indirection may point to a `Derived` object at runtime (and both are `class` or `interface` types), it can be assigned to a `Derived` indirection.  
+A runtime RTTI check is emitted; on mismatch, null is assigned (and fatal for non-null targets).  
+See [§11.4 — Dynamic indirection downcast](#114-dynamic-indirection-downcast-classinterface) for full details.
 
 ---
 
@@ -664,7 +671,105 @@ use() {
 }
 ```
 
-### 11.4 Explicit cast
+### 11.4 Dynamic indirection downcast (class/interface)
+
+When a `Base*` (or `Base~`, `Base^`, `Base&`) indirection may actually point to a `Derived` object
+at runtime, K allows assigning it to a `Derived*` (or `Derived~`, `Derived^`, `Derived&`).
+This is a **dynamic (RTTI-based) downcast** — the compiler inserts a runtime type check.
+
+**Applicability:**
+
+| Applies to | Notes |
+|------------|-------|
+| `class` types | Yes — classes carry RTTI via their vtable |
+| `interface` types | Yes — interfaces carry RTTI |
+| `struct` types | **No** — structs have no vtable/RTTI; compile-time error |
+| Primitive types | **No** |
+
+**Semantics:**
+
+1. At runtime, the RTTI pointer stored in the object's vtable is compared with the RTTI descriptor of `Derived`.
+2. If they match, the pointer is adjusted (byte offset subtracted) to point to the start of the `Derived` sub-object, and the result is assigned.
+3. If they do not match, **null** is assigned to the target.
+4. Null assigned to a **non-null** indirection (`link ~` or `reference &`) immediately invokes `__fatal_null_dyncast()`.
+
+**Binding rules (same as static upcast):**
+
+| Target type | When allowed | Null-on-mismatch behaviour |
+|-------------|--------------|---------------------------|
+| `Derived&`  | Init only (immutable binding) | fatal trap (non-null) |
+| `Derived~`  | Init only (immutable binding) | fatal trap (non-null) |
+| `Derived^`  | Init only (immutable binding, nullable) | null assigned |
+| `Derived*`  | Init and rebind | null assigned |
+
+**Error conditions:**
+
+| Situation | Result |
+|-----------|--------|
+| Source and target are unrelated classes | Compile error |
+| Source or target is a `struct` type | Compile error |
+| Rebinding a `ref` or `pin` | Compile error |
+
+**Examples:**
+
+```k
+class Base {
+    public val : int;
+    public Base(v : int) : val(v) {}
+    public dummy() : int { return 0; }
+}
+class Derived : public Base {
+    public extra : int;
+    public Derived(v : int) : Base(v), extra(99) {}
+    public get_extra() : int { return extra; }
+}
+
+get_extra_fn(d : Derived&) : int { return d.get_extra(); }
+
+test() : int {
+    d  : Derived(42);
+    bp : Base*    = &d;          // static upcast: Base* pointing at a Derived object
+
+    // ptr — nullable, null on mismatch
+    dp : Derived* = bp;          // dynamic downcast; dp non-null if RTTI matches
+    // *dp crashes if dp is null
+
+    // pin — nullable, null on mismatch  
+    pp : Derived^ = bp;          // same as ptr but immutable binding
+
+    // lnk — non-null; fatal trap if RTTI mismatches
+    dl : Derived~ = bp;          // __fatal_null_dyncast() if bp does not point to Derived
+
+    // ref — non-null; fatal trap if RTTI mismatches
+    dr : Derived& = d;           // ref<Base> bound to d
+    // dr2 : Derived& = br;      // would trap if br does not point to a Derived
+
+    return get_extra_fn(*dp);    // → 99
+}
+```
+
+**Transitive hierarchies:**
+
+Dynamic downcast works through any depth of inheritance:
+
+```k
+// C → B → A: ptr<C> from ptr<A>
+ap : A* = &c_obj;
+cp : C* = ap;    // RTTI check: matches only if *ap is actually a C
+```
+
+**Interface downcast:**
+
+A `ptr<IBase>` can be dynamically downcast to `ptr<Derived>` where `Derived` implements `IBase`:
+
+```k
+ip : IBase* = &d;    // static upcast to interface
+dp : Derived* = ip;  // dynamic downcast via RTTI
+```
+
+---
+
+### 11.5 Explicit cast
 
 A C-style cast converts an expression to a named type:
 

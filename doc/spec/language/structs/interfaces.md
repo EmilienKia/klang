@@ -327,5 +327,5 @@ Explicitly combining `abstract` and `static` is an error (`0x20024`).
 
 ---
 
-*See also:* [Classes and Virtuality](classes.md) · [Inheritance](inheritance.md) · [Structures](structs.md)
+*See also:* [Classes and Virtuality](classes.md) · [Inheritance](inheritance.md) · [Structures](structs.md) · [Types — §11.4 Dynamic downcast](../basic/types.md#114-dynamic-indirection-downcast-classinterface)
 

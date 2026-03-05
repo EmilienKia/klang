@@ -20,7 +20,7 @@ Examples are included where they clarify the normative text.
 | [Lexical Conventions](basic/lexical.md) | Source encoding, comments, tokens |
 | [Keywords](basic/keywords.md) | Reserved words of the language |
 | [Names, Namespaces and Lookup](basic/names.md) | Identifiers, qualified names, lookup rules, namespace visibility |
-| [Types](basic/types.md) | Primitive types; the four indirection types (`&` `~` `^` `*`); array and struct types |
+| [Types](basic/types.md) | Primitive types; the four indirection types (`&` `~` `^` `*`); array and struct types; static upcast; dynamic downcast (RTTI) |
 | [Module System](basic/modules.md) | Module declarations and imports |
 | [Main Function](basic/main.md) | Program entry point |
 
@@ -59,9 +59,9 @@ Examples are included where they clarify the normative text.
 | Page | Description |
 |------|-------------|
 | [Structures](structs/structs.md) | Declaration, fields, member functions, member visibility, struct specifiers |
-| [Classes and Virtuality](structs/classes.md) | The `class` keyword, automatic virtual dispatch, vtable rules, virtual base classes |
+| [Classes and Virtuality](structs/classes.md) | The `class` keyword, automatic virtual dispatch, vtable rules, virtual base classes, RTTI, dynamic downcast |
 | [Interfaces](structs/interfaces.md) | The `interface` keyword, implicit abstraction, virtual dispatch through interfaces |
-| [Inheritance](structs/inheritance.md) | Single and multiple inheritance, diamond patterns, cross-type restrictions |
+| [Inheritance](structs/inheritance.md) | Single and multiple inheritance, diamond patterns, cross-type restrictions, static upcast, dynamic downcast |
 | [Constructors](structs/constructors.md) | Instance and static constructors |
 | [Destructors](structs/destructors.md) | Instance and static destructors |
 | [Nested Structures](structs/nested.md) | Static nested and non-static inner structures |

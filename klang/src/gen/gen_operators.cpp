@@ -508,19 +508,22 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 rhs_effective = inner;
             }
         }
-        // Helper lambda: check if rhs_effective is an indirection compatible with link_subtype (same or derived)
+        // Helper lambda: check if rhs_effective is an indirection compatible with link_subtype (same, static upcast, or dynamic downcast)
         auto is_rebind_compatible = [&]() -> bool {
             if (!type::is_any_indirection(rhs_effective) || !rhs_effective->get_subtype() || !link_subtype)
                 return false;
             auto rhs_sub_nc = type::remove_const(rhs_effective->get_subtype());
             auto lnk_sub_nc = type::remove_const(link_subtype);
             if (type::are_equal(rhs_sub_nc, lnk_sub_nc)) return true;
-            // Also accept upcast: rhs points to a Derived, link points to Base
             auto src_st = std::dynamic_pointer_cast<struct_type>(rhs_sub_nc);
             auto tgt_st = std::dynamic_pointer_cast<struct_type>(lnk_sub_nc);
-            return src_st && tgt_st &&
-                   src_st->get_struct() && tgt_st->get_struct() &&
-                   src_st->get_struct()->is_derived_from(tgt_st->get_struct());
+            if (!src_st || !tgt_st || !src_st->get_struct() || !tgt_st->get_struct()) return false;
+            // Static upcast: rhs points to Derived, link points to Base
+            if (src_st->get_struct()->is_derived_from(tgt_st->get_struct())) return true;
+            // Dynamic downcast: rhs points to Base, link points to Derived (klass/interface only)
+            if (tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
+                std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr) return true;
+            return false;
         };
         // If RHS is an indirection compatible (same or upcast) with link_subtype: REBIND
         if (is_rebind_compatible()) {
@@ -548,14 +551,25 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 right->set_type(rhs_type);
                 expr.assign_right(right);
             }
-            // If upcast needed: insert cast_expression to GEP to the base subobject
+            // Determine whether to use static upcast or dynamic downcast
             {
                 auto rhs_sub_nc = type::remove_const(right->get_type()->get_subtype());
                 auto lnk_sub_nc = type::remove_const(link_subtype);
                 if (!type::are_equal(rhs_sub_nc, lnk_sub_nc)) {
-                    auto upcast = cast_expression::make_shared(right, target_type);
-                    upcast->set_type(target_type);
-                    expr.assign_right(upcast);
+                    auto src_st = std::dynamic_pointer_cast<struct_type>(rhs_sub_nc);
+                    auto tgt_st = std::dynamic_pointer_cast<struct_type>(lnk_sub_nc);
+                    bool is_static_upcast = src_st && tgt_st &&
+                        src_st->get_struct() && tgt_st->get_struct() &&
+                        src_st->get_struct()->is_derived_from(tgt_st->get_struct());
+                    if (is_static_upcast) {
+                        auto upcast = cast_expression::make_shared(right, target_type);
+                        upcast->set_type(target_type);
+                        expr.assign_right(upcast);
+                    } else {
+                        // Dynamic downcast — lien is non-null, so fatal on null result
+                        auto dc = cast_expression::make_shared(right, target_type, /*null_is_fatal=*/true);
+                        expr.assign_right(dc);
+                    }
                 }
             }
             // The assignment stores a new address into the link alloca.
@@ -597,13 +611,17 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
             if (src_sub_nc != tgt_sub_nc) {
-                // Check upcast: ptr<Derived>→ptr<Base>
+                // Check static upcast: ptr<Derived>→ptr<Base>
                 auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
                 auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
-                bool is_upcast = src_st && tgt_st &&
+                bool is_static_upcast = src_st && tgt_st &&
                                  src_st->get_struct() && tgt_st->get_struct() &&
                                  src_st->get_struct()->is_derived_from(tgt_st->get_struct());
-                if (!is_upcast) {
+                bool is_dynamic_downcast = !is_static_upcast && src_st && tgt_st &&
+                                 src_st->get_struct() && tgt_st->get_struct() &&
+                                 tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
+                                 std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
+                if (!is_static_upcast && !is_dynamic_downcast) {
                     throw_error(0x000B, std::nullopt,
                         "Pointer assignment type mismatch: "
                         "cannot assign a '{}' to a '{}'; pointer subtypes must match "
@@ -619,16 +637,22 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                         {source_type ? source_type->to_string() : "?",
                          target_type ? target_type->to_string() : "?"});
                 }
-                // Unwrap ref wrapper if needed, then insert upcast
+                // Unwrap ref wrapper if needed
                 if (type::is_reference(source_type)) {
                     right = load_value_expression::make_shared(right);
                     source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
                     right->set_type(source_type);
                     expr.assign_right(right);
                 }
-                auto upcast = cast_expression::make_shared(right, target_type);
-                upcast->set_type(target_type);
-                expr.assign_right(upcast);
+                if (is_static_upcast) {
+                    auto upcast = cast_expression::make_shared(right, target_type);
+                    upcast->set_type(target_type);
+                    expr.assign_right(upcast);
+                } else {
+                    // Dynamic downcast — ptr can be null, not fatal
+                    auto dc = cast_expression::make_shared(right, target_type, /*null_is_fatal=*/false);
+                    expr.assign_right(dc);
+                }
                 expr.set_type(ref_target_type);
                 return;
             }
