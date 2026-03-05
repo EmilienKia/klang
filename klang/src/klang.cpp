@@ -65,6 +65,8 @@ int main(int argc, const char** argv) {
     std::string output_file;
     std::vector<std::string> input_files;
     std::string target_triple;
+    std::string raw_ir_file;
+    std::string opt_ir_file;
 
     k::compiler::initialize();
 
@@ -75,6 +77,12 @@ int main(int argc, const char** argv) {
             ("compile,c", "Compile the source files, but do not link")
             ("output,o", po::value<std::string>(&output_file), "Place the output into <arg> file.")
             ("input-file", po::value<std::vector<std::string>>(&input_files), "input file")
+            ("emit-raw-ir", "Export LLVM IR text after code generation (before optimisation)")
+            ("raw-ir-file", po::value<std::string>(&raw_ir_file)->implicit_value(""),
+                            "Write raw IR to <arg> file (implies --emit-raw-ir; omit value or use - for stdout)")
+            ("emit-opt-ir", "Export LLVM IR text after optimisation")
+            ("opt-ir-file", po::value<std::string>(&opt_ir_file)->implicit_value(""),
+                            "Write optimised IR to <arg> file (implies --emit-opt-ir; omit value or use - for stdout)")
             ;
 
     po::options_description cli_target_options("Target options");
@@ -169,6 +177,29 @@ int main(int argc, const char** argv) {
     try {
 
         auto compiler = k::compiler::create(target_machine);
+
+        // Build and apply IR export options
+        k::IrOutputOptions ir_opts;
+        ir_opts.emit_raw_ir = vm.count("emit-raw-ir") > 0 || vm.count("raw-ir-file") > 0;
+        ir_opts.raw_ir_file = (raw_ir_file == "-") ? "" : raw_ir_file;
+        ir_opts.emit_opt_ir = vm.count("emit-opt-ir") > 0 || vm.count("opt-ir-file") > 0;
+        ir_opts.opt_ir_file = (opt_ir_file == "-") ? "" : opt_ir_file;
+        compiler->set_ir_output_options(ir_opts);
+
+        // Pre-resolve IR file names from the expected output path so that
+        // process_generation() (called inside parse_source) can use them.
+        if (ir_opts.emit_raw_ir || ir_opts.emit_opt_ir) {
+            std::string effective_output = output_file;
+            if (effective_output.empty()) {
+                if (vm.count("compile")) {
+                    effective_output = std::filesystem::path(input_files[0]).replace_extension(".o").string();
+                } else {
+                    effective_output = std::filesystem::path(input_files[0]).replace_extension("").string();
+                }
+            }
+            compiler->resolve_ir_filenames(effective_output);
+        }
+
         compiler->parse_source(input_files[0], source, true, false);
 
         if (vm.count("compile")) {

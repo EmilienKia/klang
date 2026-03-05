@@ -22,6 +22,8 @@
 #include <iostream>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/TargetParser/Host.h>
 #include <llvm/Transforms/Scalar.h>
@@ -285,6 +287,9 @@ void compiler::process_generation(bool optimize, bool dump) {
     if(dump) {
         dump_gen_code();
     }
+    if (_ir_output_options.emit_raw_ir) {
+        emit_ir(_ir_output_options.raw_ir_file);
+    }
 
     if (optimize) {
         if(dump) {
@@ -295,11 +300,55 @@ void compiler::process_generation(bool optimize, bool dump) {
         if(dump) {
             dump_gen_code();
         }
+        if (_ir_output_options.emit_opt_ir) {
+            emit_ir(_ir_output_options.opt_ir_file);
+        }
     }
 }
 
 void compiler::dump_gen_code() {
     _context->module().print(llvm::outs(), nullptr);
+}
+
+void compiler::set_ir_output_options(const IrOutputOptions& opts) {
+    _ir_output_options = opts;
+    // Providing a file path implicitly enables the corresponding flag
+    if (!opts.raw_ir_file.empty()) {
+        _ir_output_options.emit_raw_ir = true;
+    }
+    if (!opts.opt_ir_file.empty()) {
+        _ir_output_options.emit_opt_ir = true;
+    }
+}
+
+void compiler::emit_ir(const std::string& filepath) {
+    if (filepath.empty()) {
+        _context->module().print(llvm::outs(), nullptr);
+    } else {
+        std::error_code ec;
+        llvm::raw_fd_ostream os(filepath, ec, llvm::sys::fs::OF_Text);
+        if (ec) {
+            llvm::errs() << "Could not open IR output file '" << filepath << "': " << ec.message() << "\n";
+            return;
+        }
+        _context->module().print(os, nullptr);
+    }
+}
+
+void compiler::resolve_ir_filenames(const std::string& output_file) {
+    if (output_file.empty()) {
+        return;
+    }
+    std::filesystem::path base(output_file);
+    // Remove any existing extension to build a clean stem
+    std::filesystem::path stem = base.parent_path() / base.stem();
+
+    if (_ir_output_options.emit_raw_ir && _ir_output_options.raw_ir_file.empty()) {
+        _ir_output_options.raw_ir_file = stem.string() + ".raw.ll";
+    }
+    if (_ir_output_options.emit_opt_ir && _ir_output_options.opt_ir_file.empty()) {
+        _ir_output_options.opt_ir_file = stem.string() + ".opt.ll";
+    }
 }
 
 bool compiler::verify_gen_code() {
@@ -359,6 +408,7 @@ std::unique_ptr<k::model::gen::jit> compiler::to_jit(bool init_runtime) {
 }
 
 bool compiler::gen_object_file(const std::string& output_file) {
+    resolve_ir_filenames(output_file);
     std::error_code EC;
     llvm::raw_fd_ostream dest(output_file, EC, llvm::sys::fs::OF_None);
     if (EC) {
@@ -387,6 +437,7 @@ bool compiler::gen_executable(const std::string& output_file) {
     }
 
     std::filesystem::path output_path(output_file.empty() ? get_unit()->get_unit_name().to_string() : output_file);
+    resolve_ir_filenames(output_path.string());
 
     auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
 

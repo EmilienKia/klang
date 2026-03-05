@@ -17,6 +17,7 @@
  */
 #ifndef KLANG_COMPILER_HPP
 #define KLANG_COMPILER_HPP
+#include <string>
 #include <string_view>
 
 #include "common/logger.hpp"
@@ -39,6 +40,18 @@ class unit;
 class context;
 }
 
+/**
+ * Options controlling LLVM IR text export.
+ * Each flag independently enables export at a specific pipeline stage.
+ * If a file path is empty, the output goes to stdout.
+ */
+struct IrOutputOptions {
+    bool emit_raw_ir = false;       ///< Export IR after code generation (before optimisation)
+    std::string raw_ir_file;        ///< Destination file (empty = stdout)
+    bool emit_opt_ir = false;       ///< Export IR after optimisation
+    std::string opt_ir_file;        ///< Destination file (empty = stdout)
+};
+
 class compiler : protected log::logger,  public std::enable_shared_from_this<compiler> {
 protected:
     static bool _compiler_class_init;
@@ -54,6 +67,8 @@ protected:
     /** Set to true when a fatal compilation error occurs (e.g. overload collision).
      *  to_jit() returns nullptr when this flag is set. */
     bool _has_compilation_error = false;
+
+    IrOutputOptions _ir_output_options;
 
     void process_generation(bool optimize = true, bool dump = true);
 
@@ -104,6 +119,20 @@ public:
 
     void parse_source(const std::string_view& path, const std::string_view& src, bool optimize = true, bool dump = false);
 
+    /**
+     * Configure the LLVM IR text export options.
+     * Must be called before parse_source() / gen_object_file() / gen_executable().
+     * Automatic file names are resolved lazily when the output file is known.
+     */
+    void set_ir_output_options(const IrOutputOptions& opts);
+
+    /**
+     * Resolve automatic IR file names based on the output file path.
+     * Safe to call multiple times (already-set file names are not overwritten).
+     * @param output_file  The object/executable output file path.
+     */
+    void resolve_ir_filenames(const std::string& output_file);
+
     bool has_main_method() const;
 
     void dump_gen_code();
@@ -120,6 +149,12 @@ public:
 
 protected:
     void find_elements_from(const name& name, const std::shared_ptr<model::element>& element, std::vector<std::shared_ptr<model::element>>& res) const;
+
+    /**
+     * Emit the current LLVM module as text IR.
+     * @param filepath  Destination file path. If empty, writes to stdout.
+     */
+    void emit_ir(const std::string& filepath);
 
     char_coord coordinates_from_pos(const k::char_pos& coord) const;
     std::pair<char_coord,char_coord> coordinates_from_lex(const lex::lexeme& lex) const;
