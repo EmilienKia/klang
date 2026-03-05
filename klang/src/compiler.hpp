@@ -145,6 +145,16 @@ public:
 
     bool gen_executable(const std::string& output_file);
 
+    /**
+     * Compile and link the current module as a shared library (.so).
+     * If output_file is empty, the output is named lib<module_name>.so in the
+     * current directory, where "::" separators in the module name are replaced by ".".
+     * @param output_file  Destination path for the shared library, or empty to
+     *                     derive the name automatically.
+     * @return true on success.
+     */
+    bool gen_shared_library(const std::string& output_file = "");
+
     void print_logs();
 
 protected:

@@ -45,9 +45,14 @@ linker. The output file name defaults to the input file name with its extension
 replaced by `.o` (see `-o`).
 
 **`-o` _file_**, **`--output=`_file_**  
-Place the primary output (object file or executable) into _file_.  
-When `-c` is not specified and no `-o` is given, the output name is derived
-from the input file name by stripping its extension.
+Place the primary output (object file, executable or shared library) into _file_.  
+When `-c` is not specified and no `-o` is given:
+
+* If the module defines a `main` function, the output name is derived from the
+  input file name by stripping its extension (executable).
+* If the module has **no** `main` function, the output name is derived
+  automatically as `lib`_module_`.so` (see *Shared-Library Output Naming*
+  below).
 
 **`input-file`**  
 Path to the K source file to compile. Positional; may also be specified
@@ -169,6 +174,37 @@ The language supports:
 
 ---
 
+## SHARED-LIBRARY OUTPUT NAMING
+
+When a K source file does **not** define a `main` function and `-c` is not
+specified, **klangc** automatically produces a shared library instead of an
+executable.
+
+If no `-o` option is given, the output file name is derived from the module
+name declared in the source file:
+
+1. Any `::` namespace separator in the module name is replaced by `.`.
+2. The result is prefixed with `lib` and suffixed with `.so`.
+3. The file is placed in the **current working directory**.
+
+**Examples:**
+
+| Module declaration | Automatic output name |
+|--------------------|-----------------------|
+| `module mylib;`    | `libmylib.so`         |
+| `module math::utils;` | `libmath.utils.so` |
+| `module com::example::foo;` | `libcom.example.foo.so` |
+
+When `-o` _file_ is given, the shared library is written to _file_ regardless
+of the module name.
+
+The object file is linked with `clang -shared -fPIC`.  The compiler
+automatically uses a **PIC** (Position-Independent Code) relocation model for
+all compilations so that the resulting object is compatible with both shared
+libraries and PIE executables.
+
+---
+
 ## EXAMPLES
 
 **Compile and link a source file into an executable:**
@@ -178,6 +214,36 @@ klangc hello.k
 ```
 
 Produces the executable `hello` (same name as input, without extension).
+
+---
+
+**Compile a library module into a shared library (no `main` function):**
+
+```sh
+klangc mylib.k
+```
+
+If `mylib.k` declares `module mylib;` and has no `main` function, this
+produces `libmylib.so` in the current directory.
+
+---
+
+**Compile a library with a compound module name:**
+
+```sh
+klangc math_utils.k
+```
+
+If `math_utils.k` declares `module math::utils;`, this produces
+`libmath.utils.so` in the current directory.
+
+---
+
+**Compile a library with an explicit output name:**
+
+```sh
+klangc -o /usr/local/lib/libmylib.so mylib.k
+```
 
 ---
 
@@ -236,6 +302,7 @@ klangc --print-effective-triple
 |------|-------------|
 | `*.k` | K language source file |
 | `*.o` | Native object file produced by `-c` |
+| `lib*.so` | Shared library produced when no `main` is defined |
 | `*.raw.ll` | Auto-generated raw LLVM IR text file |
 | `*.opt.ll` | Auto-generated optimised LLVM IR text file |
 
@@ -245,8 +312,16 @@ klangc --print-effective-triple
 
 * Multiple source files on the command line are currently **not supported**.
   Only the first file is compiled; a warning is emitted for the rest.
-* Linking is performed by invoking **clang(1)** with `-pie`. The `clang`
-  binary must therefore be present in `PATH`.
+* When a module has no `main` function and `-c` is not used, **klangc**
+  automatically produces a shared library (`.so`) instead of an executable.
+  The output file name is derived from the module name (see
+  *Shared-Library Output Naming*).
+* Linking is performed by invoking **clang(1)**: with `-pie` for executables
+  and with `-shared -fPIC` for shared libraries. The `clang` binary must
+  therefore be present in `PATH`.
+* All compilations use the **PIC** (Position-Independent Code) relocation
+  model, making the generated objects compatible with both shared libraries
+  and PIE executables.
 * The optimisation pipeline uses the LLVM legacy pass manager with the
   following passes: instruction combining, expression reassociation, GVN
   (global value numbering), dead-code elimination and CFG simplification.

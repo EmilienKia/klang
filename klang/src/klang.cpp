@@ -133,7 +133,9 @@ int main(int argc, const char** argv) {
     std::string features = "";
 
     llvm::TargetOptions target_options;
-    std::optional<llvm::Reloc::Model> reloc_model;
+    // Use PIC relocation model so that object files are compatible with both
+    // PIE executables and shared libraries.
+    std::optional<llvm::Reloc::Model> reloc_model = llvm::Reloc::PIC_;
     auto target_machine = target->createTargetMachine(
             target_triple, cpu,
             features,
@@ -208,8 +210,12 @@ int main(int argc, const char** argv) {
                 output_file = std::filesystem::path(input_files[0]).replace_extension(".o").string();
             }
             return compiler->gen_object_file(output_file) ? 0 : -1;
+        } else if (!compiler->has_main_method()) {
+            // No main function → produce a shared library
+            // If no -o is specified, the name is derived automatically as lib<module>.so
+            return compiler->gen_shared_library(output_file) ? 0 : -1;
         } else {
-            // Compile and link
+            // Compile and link into an executable
             return compiler->gen_executable(output_file);
         }
 

@@ -112,6 +112,56 @@ k::tools::exec_result build_and_exec(const std::string_view& src) {
     return res;
 }
 
+std::string build_shared_library(const std::string_view& src) {
+    // Ensure LLVM targets are registered before any target lookup.
+    k::compiler::initialize();
+
+    std::string target_triple = llvm::sys::getDefaultTargetTriple();
+    std::string error;
+    auto target = llvm::TargetRegistry::lookupTarget(target_triple, error);
+    if (!target) {
+        throw std::runtime_error("Could not find LLVM target: " + error);
+    }
+
+    std::string cpu = "generic";
+    std::string features = "";
+
+    llvm::TargetOptions target_options;
+    // PIC is required for shared libraries
+    std::optional<llvm::Reloc::Model> reloc_model = llvm::Reloc::PIC_;
+    auto target_machine = target->createTargetMachine(
+            target_triple, cpu,
+            features,
+            target_options,
+            reloc_model);
+
+    // Produce a temp file name for the .so (mkstemp gives us a unique stem)
+    char tmp_stem[] = "/tmp/klang_lib_test_XXXXXX";
+    int fd = ::mkstemp(tmp_stem);
+    if (fd == -1) {
+        throw std::runtime_error("Could not create temporary file for shared library test");
+    }
+    ::close(fd);
+    std::string out_file = std::string(tmp_stem) + ".so";
+    // Remove the stem file (we just needed a unique name)
+    std::filesystem::remove(tmp_stem);
+
+    auto compiler = k::compiler::create(target_machine);
+    try {
+        compiler->parse_source("", src, true, false);
+    } catch (const k::log::compiler_error&) {
+        std::filesystem::remove(out_file);
+        throw std::runtime_error("Compilation error while building shared library");
+    }
+
+    if (!compiler->gen_shared_library(out_file)) {
+        std::filesystem::remove(out_file);
+        throw std::runtime_error("Error generating shared library");
+    }
+
+    return out_file;
+}
+
 
 //
 // test_logger

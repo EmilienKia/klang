@@ -460,6 +460,45 @@ bool compiler::gen_executable(const std::string& output_file) {
     return exec_res.exit_code == 0;
 }
 
+bool compiler::gen_shared_library(const std::string& output_file) {
+    // Derive output path: if not specified, use lib<module>.so where "::" → "."
+    std::string lib_path = output_file;
+    if (lib_path.empty()) {
+        std::string module_name = get_unit()->get_unit_name().to_string();
+        // Replace "::" with "."
+        std::string lib_name = module_name;
+        size_t pos = 0;
+        while ((pos = lib_name.find("::", pos)) != std::string::npos) {
+            lib_name.replace(pos, 2, ".");
+            pos += 1;
+        }
+        lib_path = "lib" + lib_name + ".so";
+    }
+
+    std::filesystem::path output_path(lib_path);
+    resolve_ir_filenames(output_path.string());
+
+    auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
+
+    std::cout << "Generating object: " << object_path << std::endl;
+
+    gen_object_file(object_path);
+
+    std::cout << "Generating shared library: " << output_path << std::endl;
+
+    auto exec_res = tools::lookup_run_process("clang", {"-shared", "-fPIC", "-o", output_path.string(), object_path.string()});
+
+    std::filesystem::remove(object_path);
+
+    if (!exec_res.out.empty()) {
+        std::cout << exec_res.out << std::endl;
+    }
+    if (!exec_res.err.empty()) {
+        std::cerr << exec_res.err << std::endl;
+    }
+    return exec_res.exit_code == 0;
+}
+
 char_coord compiler::coordinates_from_pos(const k::char_pos& coord) const {
     return _source.get_coordinates(coord);
 }

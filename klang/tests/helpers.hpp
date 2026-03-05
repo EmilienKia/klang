@@ -41,6 +41,14 @@ std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool du
 
 k::tools::exec_result build_and_exec(const std::string_view& src);
 
+/**
+ * Compile the given K source into a shared library (.so).
+ * Returns the path to the generated .so file (in /tmp).
+ * Throws std::runtime_error on failure.
+ * The caller is responsible for removing the file when done.
+ */
+std::string build_shared_library(const std::string_view& src);
+
 class test_logger : public k::log::logger {
 public:
     /** All diagnostics reported via this logger (for inspection in tests). */
