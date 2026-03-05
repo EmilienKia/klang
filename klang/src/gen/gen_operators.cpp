@@ -508,10 +508,22 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 rhs_effective = inner;
             }
         }
-        // If RHS is an indirection of the same subtype: REBIND
-        if (type::is_any_indirection(rhs_effective) &&
-            rhs_effective->get_subtype() && link_subtype &&
-            type::are_equal(type::remove_const(rhs_effective->get_subtype()), type::remove_const(link_subtype))) {
+        // Helper lambda: check if rhs_effective is an indirection compatible with link_subtype (same or derived)
+        auto is_rebind_compatible = [&]() -> bool {
+            if (!type::is_any_indirection(rhs_effective) || !rhs_effective->get_subtype() || !link_subtype)
+                return false;
+            auto rhs_sub_nc = type::remove_const(rhs_effective->get_subtype());
+            auto lnk_sub_nc = type::remove_const(link_subtype);
+            if (type::are_equal(rhs_sub_nc, lnk_sub_nc)) return true;
+            // Also accept upcast: rhs points to a Derived, link points to Base
+            auto src_st = std::dynamic_pointer_cast<struct_type>(rhs_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(lnk_sub_nc);
+            return src_st && tgt_st &&
+                   src_st->get_struct() && tgt_st->get_struct() &&
+                   src_st->get_struct()->is_derived_from(tgt_st->get_struct());
+        };
+        // If RHS is an indirection compatible (same or upcast) with link_subtype: REBIND
+        if (is_rebind_compatible()) {
             // Rebind: check const compatibility (const T~ ← T~ is OK; T~ ← const T~ is not)
             if (type::is_const(rhs_effective->get_subtype()) && !type::is_const(link_subtype)) {
                 throw_error(0x0082, std::nullopt,
@@ -535,6 +547,16 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 rhs_type = rhs_effective;
                 right->set_type(rhs_type);
                 expr.assign_right(right);
+            }
+            // If upcast needed: insert cast_expression to GEP to the base subobject
+            {
+                auto rhs_sub_nc = type::remove_const(right->get_type()->get_subtype());
+                auto lnk_sub_nc = type::remove_const(link_subtype);
+                if (!type::are_equal(rhs_sub_nc, lnk_sub_nc)) {
+                    auto upcast = cast_expression::make_shared(right, target_type);
+                    upcast->set_type(target_type);
+                    expr.assign_right(upcast);
+                }
             }
             // The assignment stores a new address into the link alloca.
             expr.set_type(ref_target_type);
@@ -567,18 +589,48 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     }
 
     if(type::is_pointer(target_type)) {
-        if(type::is_pointer(effective_source_type) || type::is_link(effective_source_type)) {
+        if(type::is_pointer(effective_source_type) || type::is_link(effective_source_type)
+           || type::is_pinned(effective_source_type)) {
             auto src_sub = effective_source_type->get_subtype();
             auto tgt_sub = target_type->get_subtype();
             // Strip const from both sides for structural comparison
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
             if (src_sub_nc != tgt_sub_nc) {
-                throw_error(0x000B, std::nullopt,
-                    "Pointer assignment type mismatch: "
-                    "cannot assign a '{}' to a '{}'; pointer subtypes must match",
-                    {source_type ? source_type->to_string() : "?",
-                     target_type ? target_type->to_string() : "?"});
+                // Check upcast: ptr<Derived>→ptr<Base>
+                auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                bool is_upcast = src_st && tgt_st &&
+                                 src_st->get_struct() && tgt_st->get_struct() &&
+                                 src_st->get_struct()->is_derived_from(tgt_st->get_struct());
+                if (!is_upcast) {
+                    throw_error(0x000B, std::nullopt,
+                        "Pointer assignment type mismatch: "
+                        "cannot assign a '{}' to a '{}'; pointer subtypes must match "
+                        "or source must be a derived type of the target",
+                        {source_type ? source_type->to_string() : "?",
+                         target_type ? target_type->to_string() : "?"});
+                }
+                // Forbid const T* → T* (would lose const-ness on pointed object)
+                if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
+                    throw_error(0x0081, std::nullopt,
+                        "Cannot assign a pointer-to-const ('{}') to a pointer-to-mutable ('{}'): "
+                        "this would allow modification of a const object through the mutable pointer",
+                        {source_type ? source_type->to_string() : "?",
+                         target_type ? target_type->to_string() : "?"});
+                }
+                // Unwrap ref wrapper if needed, then insert upcast
+                if (type::is_reference(source_type)) {
+                    right = load_value_expression::make_shared(right);
+                    source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+                    right->set_type(source_type);
+                    expr.assign_right(right);
+                }
+                auto upcast = cast_expression::make_shared(right, target_type);
+                upcast->set_type(target_type);
+                expr.assign_right(upcast);
+                expr.set_type(ref_target_type);
+                return;
             }
             // Forbid const T* → T* (would lose const-ness on pointed object)
             if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
@@ -781,6 +833,26 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
     // ------------------------------------------------------------------
     // Scalar / pointer assignment (existing behaviour)
     // ------------------------------------------------------------------
+
+    // Link rebind from nullable source: emit null-check before store.
+    // (The resolver emits warning 0x0072 at compile-time; we add the runtime guard here.)
+    if (target_type && type::is_link(target_type)) {
+        // Pierce cast_expression to find the real source nullability
+        auto rhs_model = expr.right();
+        auto rhs_type = rhs_model ? rhs_model->get_type() : nullptr;
+        // Also check original type through a cast (upcast Derived→Base wraps nullable ptr)
+        if (auto cast_e = std::dynamic_pointer_cast<cast_expression>(rhs_model)) {
+            auto inner_type = cast_e->sub_expr()->get_type();
+            if (inner_type && type::is_nullable_indirection(inner_type)) {
+                rhs_type = inner_type;
+            }
+        }
+        if (rhs_type && type::is_nullable_indirection(rhs_type)) {
+            auto* fatal = get_or_declare_fatal_null_function("__fatal_null_assignation");
+            emit_null_check(right, fatal, "link_rebind");
+        }
+    }
+
     _value = right;
     _value = _builder->CreateStore(_value, left);
     _value = left;

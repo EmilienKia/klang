@@ -49,4 +49,43 @@ struct may only inherit from struct; class only from class or interface; interfa
 - A `const struct` may only inherit from other `const struct`s (Error 30033).
 - A mutable struct may inherit from a `const struct`.
 
-*See also:* structs.md, classes.md, interfaces.md, constructors.md
+## Static indirection upcast
+
+When `Derived` inherits from `Base`, an indirection (`&`, `~`, `^`, `*`) to `Derived` can be
+implicitly assigned to an indirection to `Base`. The compiler inserts a compile-time GEP
+adjustment to address the `Base` sub-object within the `Derived` object.
+
+```k
+struct Animal { legs : int; Animal(n : int) : legs(n) {} }
+struct Dog : public Animal { Dog(n : int) : Animal(n) {} }
+
+use() {
+    d : Dog(4);
+
+    r   : Animal& = d;      // ref<Base> — immutable binding
+    lnk : Animal~ = &d;     // lien<Base> — mutable binding
+    p   : Animal^ = &d;     // pin<Base>  — immutable binding, nullable
+    ptr : Animal* = &d;     // ptr<Base>  — mutable binding, nullable
+
+    // Rebind (link and ptr only):
+    d2 : Dog(2);
+    lnk = &d2;     // OK: link can rebind
+    ptr = &d2;     // OK: ptr can rebind
+    // r = d2;     // ERROR: ref cannot rebind
+    // p = &d2;    // ERROR: pin cannot rebind
+}
+```
+
+**Rules and error codes:**
+
+| Situation | Result |
+|-----------|--------|
+| `Derived&` → `Base&` (init) | OK — compile-time GEP |
+| `Derived~` → `Base~` (init or rebind) | OK |
+| `Derived^` → `Base^` (init) | OK |
+| `Derived*` → `Base*` (init or rebind) | OK |
+| Nullable source (`^` or `*`) → non-null target (`~` or `&`) | Warning 0x4505 + runtime null-check |
+| Types have no inheritance relationship | Compile error (0x4005 / 0x4506 / 0x4605 / 0x4700) |
+| Rebinding an immutable indirection (`ref`, `pin`) | Compile error |
+
+*See also:* [Types — §11.3](../basic/types.md#113-static-indirection-upcast-aggregate-types)

@@ -25,6 +25,10 @@ K is a statically-typed language. Every expression has a type determined at comp
 9. [Struct types](#9-struct-types)
 10. [Type specifiers — grammar](#10-type-specifiers--grammar)
 11. [Implicit conversions](#11-implicit-conversions)
+    - 11.1 [Widening conversions (primitives)](#111-widening-conversions-no-data-loss)
+    - 11.2 [Narrowing conversions](#112-narrowing-conversions-possible-data-loss)
+    - 11.3 [Static indirection upcast (aggregate types)](#113-static-indirection-upcast-aggregate-types)
+    - 11.4 [Explicit cast](#114-explicit-cast)
 12. [Const-ness](#12-const-ness)
 
 ---
@@ -103,6 +107,12 @@ TypeSuffix:
 Assigning or initialising a `T~` (link) from a nullable source (`T^` or `T*`) emits a **compile-time warning** and inserts a **runtime null-check**; if the source is null at runtime, `__fatal_null_assignation()` is called (which traps).
 
 Dereferencing (`*x` or `x->m`) a `T^` or `T*` value likewise inserts a runtime null-check; if null, `__fatal_null_dereference()` is called.
+
+**Static upcast (aggregate types):**
+
+When `Derived` inherits from `Base`, an indirection of type `T<Derived>` can be implicitly assigned to an indirection of type `T<Base>`.  
+The pointer is adjusted at compile time via a GEP to address the `Base` sub-object.  
+See [§11.3 — Static indirection upcast](#113-static-indirection-upcast-aggregate-types) for full details.
 
 ---
 
@@ -565,7 +575,7 @@ plop*
 
 The compiler performs implicit type conversions in certain contexts (e.g., function call arguments, assignments):
 
-### Widening conversions (no data loss)
+### 11.1 Widening conversions (no data loss)
 
 A narrower integer or float type is widened to a broader one automatically.
 
@@ -577,13 +587,84 @@ A narrower integer or float type is widened to a broader one automatically.
 | `float`     | `double`               |
 | integer     | `float` or `double`    |
 
-### Narrowing conversions (possible data loss)
+### 11.2 Narrowing conversions (possible data loss)
 
 Narrowing conversions are also accepted implicitly by the current compiler (e.g., passing an `int` where a `short` is expected). The programmer is responsible for ensuring correctness.
 
 > **Note:** This behaviour may be tightened in future versions to require an explicit cast for narrowing conversions.
 
-### Explicit cast
+### 11.3 Static indirection upcast (aggregate types)
+
+When the pointed-at type `Derived` inherits from `Base`, an indirection of type `T<Derived>` can be implicitly converted to an indirection of type `T<Base>`. This is a **static (compile-time) upcast** — the pointer is adjusted at compile time via a GEP instruction to point to the `Base` sub-object within the `Derived` object.
+
+This applies to all four indirection types:
+
+| Source                | Destination(s)           | Notes |
+|-----------------------|--------------------------|-------|
+| `Derived&`            | `Base&`                  | Only at construction (ref is immutable binding) |
+| `Derived~`            | `Base~`                  | Init and rebind |
+| `Derived^`            | `Base^`                  | Only at construction (pin is immutable binding) |
+| `Derived*`            | `Base*`                  | Init and rebind |
+| `Derived*` or `Derived~` | `Base~`               | Initialisation only (link is non-null; null-check inserted if source is nullable) |
+| `Derived^` or `Derived*` | `Base*`               | Rebind |
+
+**Rules:**
+
+1. `Base` must be a direct or transitive base class/struct/interface of `Derived`. The relationship is verified at compile time.
+2. If the types have no inheritance relationship, a **compile-time error** is emitted (`0x4506` for links, `0x4605` for pinned, `0x4700` for pointers, `0x4005` for references).
+3. Rebind constraints are respected:
+   - `ref` (`&`) and `pin` (`^`) can only be bound at construction — no rebind (compile-time error).
+   - `link` (`~`) and `ptr` (`*`) can be rebound at any time.
+4. Null-safety is preserved:
+   - Assigning a nullable source (`ptr*` or `pin^`) to a non-null destination (`link~` or `ref&`) inserts a **runtime null-check** (`__fatal_null_assignation()` if null) and emits **warning 0x4505**.
+5. Transitive upcasts (e.g. `C*→A*` where `C→B→A`) are supported via chained GEP.
+6. Virtual base upcasts are supported via the vbptr mechanism.
+
+**Examples:**
+
+```k
+struct Animal {
+    legs : int;
+    Animal(n : int) : legs(n) {}
+}
+struct Dog : public Animal {
+    name_hash : int;
+    Dog(n : int) : Animal(n), name_hash(42) {}
+}
+
+use() {
+    d : Dog(4);
+
+    // ref: bind once at construction
+    r : Animal& = d;         // OK: r sees d.legs = 4
+    // r = d2;               // ERROR: ref cannot be rebound
+
+    // lien: bind and rebind
+    d2 : Dog(2);
+    lnk : Animal~ = &d;      // OK
+    lnk = &d2;               // rebind to d2
+
+    // pin: bind once (nullable)
+    p : Animal^ = &d;        // OK
+    // p = &d2;              // ERROR: pin cannot be rebound
+
+    // ptr: bind and rebind (nullable)
+    ptr : Animal* = &d;      // OK
+    ptr = &d2;               // rebind OK
+    ptr = null;              // OK: ptr can be null
+
+    // Init lien from ptr (nullable → non-null: null-check inserted)
+    dp : Dog* = &d;
+    lnk2 : Animal~ = dp;    // Warning 0x4505: null-check at runtime
+
+    // Error: unrelated type
+    // struct Cat { name_hash : int; Cat() : name_hash(0) {} }
+    // c : Cat();
+    // bad : Animal* = &c;   // ERROR 0x4700: Cat does not inherit from Animal
+}
+```
+
+### 11.4 Explicit cast
 
 A C-style cast converts an expression to a named type:
 

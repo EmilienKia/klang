@@ -1975,9 +1975,21 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 }
                 if (type::is_link(var_type)) {
                     // Non-null required: emit null-check if source is nullable.
+                    // If the argument is a cast_expression (e.g. upcast Derived→Base), pierce through to
+                    // the original source type to check its nullability.
                     auto effective_type = arg_type;
                     if (effective_type && type::is_reference(effective_type)) {
                         effective_type = std::dynamic_pointer_cast<reference_type>(effective_type)->get_subtype();
+                    }
+                    // Pierce cast_expression to find the real source nullability
+                    if (auto cast_arg = std::dynamic_pointer_cast<cast_expression>(expr.argument(0))) {
+                        auto inner_type = cast_arg->sub_expr()->get_type();
+                        if (inner_type && type::is_reference(inner_type)) {
+                            inner_type = std::dynamic_pointer_cast<reference_type>(inner_type)->get_subtype();
+                        }
+                        if (inner_type && type::is_nullable_indirection(inner_type)) {
+                            effective_type = inner_type;
+                        }
                     }
                     if (effective_type && type::is_nullable_indirection(effective_type)) {
                         auto* fatal = get_or_declare_fatal_null_function("__fatal_null_assignation");
@@ -2352,6 +2364,145 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         _value = nullptr;
         expr.sub_expr()->accept(*this);
         return;
+    }
+
+    // ── Struct indirection upcast (lien/pin/ptr): same GEP logic as ref→ref ─────
+    // For lien~, pin^, ptr* pointing to Derived → lien~, pin^, ptr* pointing to Base.
+    // All are LLVM opaque pointers; same GEP strategy applies.
+    // Also handles ref<ptr<Derived>>→lien<Base> etc. (load through ref first).
+    {
+        // Determine source and target struct_type from indirection kind
+        std::shared_ptr<struct_type> indir_src_st_type, indir_tgt_st_type;
+        bool is_indir_upcast = false;
+        bool src_needs_load = false; // source is ref<indirection>
+
+        auto get_indir_pointed = [](const std::shared_ptr<type>& t) -> std::shared_ptr<struct_type> {
+            if (auto lnk = std::dynamic_pointer_cast<link_type>(t))
+                return std::dynamic_pointer_cast<struct_type>(type::remove_const(lnk->get_linked_type()));
+            if (auto pin = std::dynamic_pointer_cast<pinned_type>(t))
+                return std::dynamic_pointer_cast<struct_type>(type::remove_const(pin->get_pinned_type()));
+            if (auto ptr = std::dynamic_pointer_cast<pointer_type>(t))
+                return std::dynamic_pointer_cast<struct_type>(type::remove_const(ptr->get_pointed_type()));
+            return nullptr;
+        };
+
+        // Effective source: if ref<indirection>, unwrap ref for type checks (load needed)
+        auto effective_source = source_type;
+        if (type::is_reference(source_type)) {
+            auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+            if (type::is_link(inner) || type::is_pinned(inner) || type::is_pointer(inner)) {
+                effective_source = inner;
+                src_needs_load = true;
+            }
+        }
+
+        bool src_is_indir = type::is_link(effective_source) || type::is_pinned(effective_source) || type::is_pointer(effective_source);
+        bool tgt_is_indir = type::is_link(target_type) || type::is_pinned(target_type) || type::is_pointer(target_type);
+        if (src_is_indir && tgt_is_indir) {
+            indir_src_st_type = get_indir_pointed(effective_source);
+            indir_tgt_st_type = get_indir_pointed(target_type);
+            if (indir_src_st_type && indir_tgt_st_type && indir_src_st_type != indir_tgt_st_type) {
+                auto src_st = indir_src_st_type->get_struct();
+                auto tgt_st = indir_tgt_st_type->get_struct();
+                if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                    is_indir_upcast = true;
+                }
+            }
+        }
+
+        if (is_indir_upcast) {
+            auto src_st_type = indir_src_st_type;
+            auto tgt_st = indir_tgt_st_type->get_struct();
+            auto src_st = src_st_type->get_struct();
+
+            _value = nullptr;
+            expr.sub_expr()->accept(*this);
+            if (!_value) return;
+
+            // If source was ref<indirection>, load the pointer value first
+            if (src_needs_load) {
+                _value = _builder->CreateLoad(
+                    _context->get_llvm_type(effective_source), _value, "indir_upcast_load");
+            }
+
+            // Same GEP strategy as ref<Derived>→ref<Base>
+            std::string subobj_name;
+            for (auto& bs : src_st->get_bases()) {
+                if (bs.base && bs.base.get() == tgt_st.get()) {
+                    subobj_name = bs.is_virtual
+                        ? "__vbase_" + bs.raw_name + "__"
+                        : "__base_" + bs.raw_name + "__";
+                    break;
+                }
+            }
+            if (subobj_name.empty()) {
+                std::string vbase_name = "__vbase_" + tgt_st->get_short_name() + "__";
+                if (src_st_type->get_member(vbase_name)) {
+                    subobj_name = vbase_name;
+                }
+            }
+            if (!subobj_name.empty()) {
+                auto src_llvm_type = _context->get_llvm_type(src_st_type);
+                if (auto field = src_st_type->get_member(subobj_name)) {
+                    _value = _builder->CreateStructGEP(
+                        src_llvm_type, _value, (unsigned)field->index,
+                        "base_" + tgt_st->get_short_name() + "_ptr");
+                    return;
+                }
+            }
+            // Transitive upcast via DFS
+            std::function<bool(aggregate*, struct_type*, llvm::Value*)> dfs_gep;
+            dfs_gep = [&](aggregate* cur_agg, struct_type* cur_st_type, llvm::Value* cur_ptr) -> bool {
+                for (auto& bs : cur_agg->get_bases()) {
+                    if (!bs.base || bs.is_virtual) continue;
+                    std::string field_name = "__base_" + bs.raw_name + "__";
+                    auto field = cur_st_type->get_member(field_name);
+                    if (!field) continue;
+                    auto base_klass = std::dynamic_pointer_cast<k::model::klass>(bs.base);
+                    if (!base_klass) continue;
+                    auto base_st_type = base_klass->get_struct_type();
+                    if (!base_st_type) continue;
+                    llvm::Type* cur_llvm_type = cur_st_type->get_llvm_type();
+                    if (!cur_llvm_type) continue;
+                    llvm::Value* base_ptr = _builder->CreateStructGEP(
+                        cur_llvm_type, cur_ptr, (unsigned)field->index,
+                        "trans_base_" + bs.raw_name + "_ptr");
+                    if (bs.base.get() == tgt_st.get()) {
+                        _value = base_ptr;
+                        return true;
+                    }
+                    std::string vbase_name2 = "__vbase_" + tgt_st->get_short_name() + "__";
+                    if (auto vbase_field2 = base_st_type->get_member(vbase_name2)) {
+                        llvm::Type* inter_llvm_type = base_st_type->get_llvm_type();
+                        if (!inter_llvm_type) continue;
+                        _value = _builder->CreateStructGEP(
+                            inter_llvm_type, base_ptr, (unsigned)vbase_field2->index,
+                            "trans_vbase_" + tgt_st->get_short_name() + "_ptr");
+                        return true;
+                    }
+                    if (dfs_gep(bs.base.get(), base_st_type.get(), base_ptr)) return true;
+                }
+                return false;
+            };
+            if (dfs_gep(src_st.get(), src_st_type.get(), _value)) return;
+
+            // Virtual base via vbptr
+            {
+                std::string vbptr_name = "__vbptr_" + tgt_st->get_short_name() + "__";
+                auto src_llvm_type = _context->get_llvm_type(src_st_type);
+                if (auto vbptr_field = src_st_type->get_member(vbptr_name)) {
+                    llvm::Type* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+                    llvm::Value* vbptr_addr = _builder->CreateStructGEP(
+                        src_llvm_type, _value, (unsigned)vbptr_field->index,
+                        "vbptr_" + tgt_st->get_short_name() + "_addr");
+                    _value = _builder->CreateLoad(ptr_ty, vbptr_addr,
+                        "vbase_" + tgt_st->get_short_name() + "_ptr");
+                    return;
+                }
+            }
+            // Fallback: return as-is
+            return;
+        }
     }
 
     // ── Struct reference → pointer upcast for virtual base vbptr deref ────────

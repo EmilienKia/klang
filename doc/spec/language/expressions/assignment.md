@@ -110,6 +110,47 @@ The RHS of a pointer assignment must be a pointer (`T*`) or a link (`T~`). Assig
 | `T^` | Compile-time error (no rebind) | Compile-time error (no rebind) |
 | `T*` | Compile-time error (must use `*x = val`) | **Rebinds** `x` to point to `y` |
 
+### Upcast (aggregate types)
+
+When `Derived` inherits from `Base`, an indirection to `Derived` can be assigned to an indirection to `Base` (**static upcast**):
+
+```k
+struct Animal { legs : int; Animal(n : int) : legs(n) {} }
+struct Dog : public Animal { Dog(n : int) : Animal(n) {} }
+
+use() {
+    d : Dog(4);
+
+    // ref: only at construction
+    r : Animal& = d;       // OK — binds to Base sub-object of d
+    // r = d2;             // ERROR: ref cannot rebind
+
+    // lien: init and rebind
+    lnk : Animal~ = &d;    // OK
+    d2 : Dog(2);
+    lnk = &d2;             // OK: rebind to another Derived
+
+    // ptr: init and rebind
+    ptr : Animal* = &d;    // OK
+    ptr = &d2;             // OK
+
+    // pin: only at construction
+    p : Animal^ = &d;      // OK
+    // p = &d2;            // ERROR: pin cannot rebind
+
+    // Nullable source → non-null target: warning + runtime null-check
+    dp : Dog* = &d;
+    lnk2 : Animal~ = dp;   // Warning 0x4505 — null-check at runtime
+
+    // Type mismatch
+    // struct Cat {}
+    // c : Cat();
+    // bad : Animal* = &c; // ERROR 0x4700: Cat does not inherit from Animal
+}
+```
+
+See [Types — §11.3](../basic/types.md#113-static-indirection-upcast-aggregate-types) for the complete specification.
+
 ---
 ## 3. Compound assignment operators
 

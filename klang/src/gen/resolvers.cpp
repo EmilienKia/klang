@@ -1566,27 +1566,58 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             init_expr->assign_argument(0, upcast);
         }
     } else if (type::is_pointer(var.get_type())) {
-        // Pointer variable (*): validate const-compatibility of initializer.
+        // Pointer variable (*): validate const-compatibility of initializer and type compatibility.
         // A pointer-to-const (*K) cannot be initialized from a pointer-to-mutable if const-ness
         // would be lost (i.e. const T* ← T* is OK; T* ← const T* is forbidden).
         if (init_expr && !init_expr->empty()) {
             if (auto arg = init_expr->argument(0)) {
                 auto arg_type = arg->get_type();
-                // Unwrap ref if the init expression is a reference to a pointer
+                // Unwrap ref if the init expression is a reference to a pointer/link/pin
+                auto effective_arg = arg_type;
                 if (type::is_reference(arg_type)) {
-                    arg_type = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
+                    effective_arg = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
                 }
                 auto tgt_ptr = std::dynamic_pointer_cast<pointer_type>(var.get_type());
-                auto src_ptr = std::dynamic_pointer_cast<pointer_type>(arg_type);
-                auto src_lnk = std::dynamic_pointer_cast<link_type>(arg_type);
-                auto src_sub = src_ptr ? src_ptr->get_subtype() : (src_lnk ? src_lnk->get_linked_type() : nullptr);
+                // Accept pointer, link and pinned sources
+                std::shared_ptr<type> src_sub;
+                if (auto src_ptr = std::dynamic_pointer_cast<pointer_type>(effective_arg)) {
+                    src_sub = src_ptr->get_subtype();
+                } else if (auto src_lnk = std::dynamic_pointer_cast<link_type>(effective_arg)) {
+                    src_sub = src_lnk->get_linked_type();
+                } else if (auto src_pin = std::dynamic_pointer_cast<pinned_type>(effective_arg)) {
+                    src_sub = src_pin->get_pinned_type();
+                }
                 if (tgt_ptr && src_sub) {
                     auto tgt_sub = tgt_ptr->get_subtype();
+                    // Const check
                     if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
                         throw_error(0x0081, std::nullopt,
                             "Cannot initialise a pointer-to-mutable ('{}') from a pointer-to-const ('{}'): "
                             "this would allow modification of a const object through the mutable pointer",
                             {var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
+                    }
+                    // Type compatibility check: same or upcast-compatible
+                    auto src_sub_nc = type::remove_const(src_sub);
+                    auto tgt_sub_nc = type::remove_const(tgt_sub);
+                    if (!type::are_equal(src_sub_nc, tgt_sub_nc)) {
+                        // Check upcast compatibility
+                        auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+                        auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                        bool is_upcast = src_st && tgt_st &&
+                                         src_st->get_struct() && tgt_st->get_struct() &&
+                                         src_st->get_struct()->is_derived_from(tgt_st->get_struct());
+                        if (!is_upcast) {
+                            throw_error(0x4700, std::nullopt,
+                                "Pointer variable '{}' of type '{}' cannot be initialised from an expression of type '{}': "
+                                "the pointed types are incompatible (no inheritance relationship)",
+                                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                                 arg_type ? arg_type->to_string() : "?"});
+                            return;
+                        }
+                        // Insert a cast_expression so IR can GEP to the right subobject
+                        auto upcast = cast_expression::make_shared(arg, var.get_type());
+                        upcast->set_type(var.get_type());
+                        init_expr->assign_argument(0, upcast);
                     }
                 }
             }
@@ -1663,6 +1694,45 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                  arg_type ? arg_type->to_string() : "?"});
             logger_relay::report(diag);
         }
+        // Type compatibility: the linked type must match exactly or be an upcast-compatible struct type.
+        {
+            auto link_sub_nc = type::remove_const(link_var_type->get_linked_type());
+            // Unwrap the source indirection to get its pointed-at type
+            auto effective_arg = arg_type;
+            if (auto ref_t = std::dynamic_pointer_cast<reference_type>(arg_type)) {
+                effective_arg = ref_t->get_subtype();
+            }
+            std::shared_ptr<type> src_pointed_nc;
+            if (auto lnk_t = std::dynamic_pointer_cast<link_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(lnk_t->get_linked_type());
+            } else if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(ptr_t->get_pointed_type());
+            } else if (auto pin_t = std::dynamic_pointer_cast<pinned_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(pin_t->get_pinned_type());
+            } else if (auto ref_t2 = std::dynamic_pointer_cast<reference_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(ref_t2->get_subtype());
+            }
+            if (src_pointed_nc && !type::are_equal(src_pointed_nc, link_sub_nc)) {
+                // Check upcast compatibility
+                auto src_st = std::dynamic_pointer_cast<struct_type>(src_pointed_nc);
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(link_sub_nc);
+                bool is_upcast = src_st && tgt_st &&
+                                 src_st->get_struct() && tgt_st->get_struct() &&
+                                 src_st->get_struct()->is_derived_from(tgt_st->get_struct());
+                if (!is_upcast) {
+                    throw_error(0x4506, std::nullopt,
+                        "Link variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
+                        "the linked types are incompatible (no inheritance relationship)",
+                        {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                         arg_type ? arg_type->to_string() : "?"});
+                    return;
+                }
+                // Insert a cast_expression so IR can GEP to the right subobject
+                auto upcast = cast_expression::make_shared(arg, var_type);
+                upcast->set_type(var_type);
+                init_expr->assign_argument(0, upcast);
+            }
+        }
 
     } else if (type::is_pinned(var.get_type())) {
         // Pinned variable (^): immutable (not rebindable after init), nullable.
@@ -1705,6 +1775,44 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                  arg_type ? arg_type->to_string() : "?"});
             return;
         }
+        // Type compatibility: the pinned type must match exactly or be an upcast-compatible struct type.
+        if (!is_null_init && type::is_any_indirection(arg_type)) {
+            auto pin_var_type = std::dynamic_pointer_cast<pinned_type>(var.get_type());
+            auto pin_sub_nc = type::remove_const(pin_var_type->get_pinned_type());
+            auto effective_arg = arg_type;
+            if (auto ref_t = std::dynamic_pointer_cast<reference_type>(arg_type)) {
+                effective_arg = ref_t->get_subtype();
+            }
+            std::shared_ptr<type> src_pointed_nc;
+            if (auto lnk_t = std::dynamic_pointer_cast<link_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(lnk_t->get_linked_type());
+            } else if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(ptr_t->get_pointed_type());
+            } else if (auto pin_t = std::dynamic_pointer_cast<pinned_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(pin_t->get_pinned_type());
+            } else if (auto ref_t2 = std::dynamic_pointer_cast<reference_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(ref_t2->get_subtype());
+            }
+            if (src_pointed_nc && !type::are_equal(src_pointed_nc, pin_sub_nc)) {
+                auto src_st = std::dynamic_pointer_cast<struct_type>(src_pointed_nc);
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(pin_sub_nc);
+                bool is_upcast = src_st && tgt_st &&
+                                 src_st->get_struct() && tgt_st->get_struct() &&
+                                 src_st->get_struct()->is_derived_from(tgt_st->get_struct());
+                if (!is_upcast) {
+                    throw_error(0x4605, std::nullopt,
+                        "Pinned variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
+                        "the pinned types are incompatible (no inheritance relationship)",
+                        {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                         arg_type ? arg_type->to_string() : "?"});
+                    return;
+                }
+                // Insert a cast_expression so IR can GEP to the right subobject
+                auto upcast = cast_expression::make_shared(arg, var_type);
+                upcast->set_type(var_type);
+                init_expr->assign_argument(0, upcast);
+            }
+        }
 
     } else if (type::is_sized_array(var.get_type())) {
         // Sized array variable: int[N]
@@ -1737,16 +1845,80 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
 
     // --- Pointer cases ---
     if (type::is_pointer(type_src)) {
-        if (type::is_pointer(tgt_nc)) {
+        if (type::is_pointer(tgt_nc) || type::is_link(tgt_nc)) {
             // For pointer weight, compare after stripping const on pointed types (widening const allowed).
             auto src_sub = type_src->get_subtype();
             auto tgt_sub = tgt_nc->get_subtype();
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
-            if (src_sub_nc != tgt_sub_nc) return CAST_IMPOSSIBLE;
-            // const T* <- T*: allowed (widening), T* <- const T*: forbidden (narrowing at value level -> IMPOSSIBLE for weights)
-            if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
-            return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
+            if (src_sub_nc == tgt_sub_nc) {
+                // const T* <- T*: allowed (widening), T* <- const T*: forbidden
+                if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
+                return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
+            }
+            // Struct upcast: ptr<Derived> → ptr<Base> or ptr<Derived> → lien<Base>
+            auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st_type && tgt_st_type) {
+                auto src_st = src_st_type->get_struct();
+                auto tgt_st = tgt_st_type->get_struct();
+                if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                    return CAST_REF_CONV;
+                }
+            }
+            return CAST_IMPOSSIBLE;
+        }
+        return CAST_IMPOSSIBLE;
+    }
+
+    // --- Link cases ---
+    if (type::is_link(type_src)) {
+        if (type::is_link(tgt_nc) || type::is_pointer(tgt_nc)) {
+            auto src_sub = type_src->get_subtype();
+            auto tgt_sub = tgt_nc->get_subtype();
+            auto src_sub_nc = type::remove_const(src_sub);
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (src_sub_nc == tgt_sub_nc) {
+                if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
+                return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
+            }
+            // Struct upcast: lien<Derived> → lien<Base> or lien<Derived> → ptr<Base>
+            auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st_type && tgt_st_type) {
+                auto src_st = src_st_type->get_struct();
+                auto tgt_st = tgt_st_type->get_struct();
+                if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                    return CAST_REF_CONV;
+                }
+            }
+            return CAST_IMPOSSIBLE;
+        }
+        return CAST_IMPOSSIBLE;
+    }
+
+    // --- Pinned cases ---
+    if (type::is_pinned(type_src)) {
+        if (type::is_pinned(tgt_nc) || type::is_pointer(tgt_nc)) {
+            auto src_sub = type_src->get_subtype();
+            auto tgt_sub = tgt_nc->get_subtype();
+            auto src_sub_nc = type::remove_const(src_sub);
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (src_sub_nc == tgt_sub_nc) {
+                if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
+                return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
+            }
+            // Struct upcast: pin<Derived> → pin<Base> or pin<Derived> → ptr<Base>
+            auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st_type && tgt_st_type) {
+                auto src_st = src_st_type->get_struct();
+                auto tgt_st = tgt_st_type->get_struct();
+                if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                    return CAST_REF_CONV;
+                }
+            }
+            return CAST_IMPOSSIBLE;
         }
         return CAST_IMPOSSIBLE;
     }
@@ -2257,17 +2429,93 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     auto type_nc = type::remove_const(type);
 
     if(type::is_pointer(type_src)) {
-        if(type::is_pointer(type_nc)) {
-            if (type == type_src) {
+        if(type::is_pointer(type_nc) || type::is_link(type_nc)) {
+            if (type_nc == type_src || type == type_src) {
                 // Pointers to same type, return the expression
                 return expr;
-            } else {
-                // Pointers to different types
-                // TODO verify casting
+            }
+            // Check struct upcast: ptr<Derived> → ptr<Base> or ptr<Derived> → lien<Base>
+            auto src_sub = type_src->get_subtype();
+            auto tgt_sub = type_nc->get_subtype();
+            auto src_sub_nc = type::remove_const(src_sub);
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (src_sub_nc != tgt_sub_nc) {
+                auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+                auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                if (src_st_type && tgt_st_type) {
+                    auto src_st = src_st_type->get_struct();
+                    auto tgt_st = tgt_st_type->get_struct();
+                    if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                        auto upcast = cast_expression::make_shared(expr, type_nc);
+                        upcast->set_type(type_nc);
+                        return upcast;
+                    }
+                }
                 return {};
             }
+            return expr;
         } else {
             // Error : Source is a pointer, and asked to be cast to an object.
+            return {};
+        }
+    }
+
+    if(type::is_link(type_src)) {
+        if(type::is_link(type_nc) || type::is_pointer(type_nc)) {
+            if (type_nc == type_src || type == type_src) {
+                return expr;
+            }
+            // Check struct upcast: lien<Derived> → lien<Base> or lien<Derived> → ptr<Base>
+            auto src_sub = type_src->get_subtype();
+            auto tgt_sub = type_nc->get_subtype();
+            auto src_sub_nc = type::remove_const(src_sub);
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (src_sub_nc != tgt_sub_nc) {
+                auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+                auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                if (src_st_type && tgt_st_type) {
+                    auto src_st = src_st_type->get_struct();
+                    auto tgt_st = tgt_st_type->get_struct();
+                    if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                        auto upcast = cast_expression::make_shared(expr, type_nc);
+                        upcast->set_type(type_nc);
+                        return upcast;
+                    }
+                }
+                return {};
+            }
+            return expr;
+        } else {
+            return {};
+        }
+    }
+
+    if(type::is_pinned(type_src)) {
+        if(type::is_pinned(type_nc) || type::is_pointer(type_nc)) {
+            if (type_nc == type_src || type == type_src) {
+                return expr;
+            }
+            // Check struct upcast: pin<Derived> → pin<Base> or pin<Derived> → ptr<Base>
+            auto src_sub = type_src->get_subtype();
+            auto tgt_sub = type_nc->get_subtype();
+            auto src_sub_nc = type::remove_const(src_sub);
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (src_sub_nc != tgt_sub_nc) {
+                auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+                auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                if (src_st_type && tgt_st_type) {
+                    auto src_st = src_st_type->get_struct();
+                    auto tgt_st = tgt_st_type->get_struct();
+                    if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                        auto upcast = cast_expression::make_shared(expr, type_nc);
+                        upcast->set_type(type_nc);
+                        return upcast;
+                    }
+                }
+                return {};
+            }
+            return expr;
+        } else {
             return {};
         }
     }
