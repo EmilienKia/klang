@@ -18,6 +18,8 @@
 
 #include "helpers.hpp"
 
+#include <unistd.h>
+
 #include <fmt/core.h>
 #include <fmt/format.h>
 #include <fmt/args.h>
@@ -93,10 +95,13 @@ bool compile_text(const std::string_view& source, const std::string& out_file) {
 }
 
 k::tools::exec_result build_and_exec(const std::string_view& src) {
-    char* out_file = std::tmpnam(nullptr);
-    if (out_file==nullptr) {
+    char out_file[] = "/tmp/klang_test_XXXXXX";
+    int fd = ::mkstemp(out_file);
+    if (fd == -1) {
         throw std::runtime_error("Could not create temporary output file for building test");
     }
+    ::close(fd);
+
     if (!compile_text(src, out_file)) {
         std::filesystem::remove(out_file);
         throw std::runtime_error("Error building source code");
