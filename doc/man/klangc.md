@@ -44,15 +44,41 @@ Compile source file(s) to a native object file (`.o`) but do not invoke the
 linker. The output file name defaults to the input file name with its extension
 replaced by `.o` (see `-o`).
 
-**`-o` _file_**, **`--output=`_file_**  
-Place the primary output (object file, executable or shared library) into _file_.  
-When `-c` is not specified and no `-o` is given:
+**`--dyn-lib`**  
+Produce a shared library (`.so`) from the source file, regardless of whether
+the module defines a `main` function. Linking is performed with
+`clang -shared -fPIC`. If `-o` is not specified, the output name is derived
+automatically (see *Library Output Naming* below).  
+A warning is emitted if the module contains a `main` function.
 
-* If the module defines a `main` function, the output name is derived from the
-  input file name by stripping its extension (executable).
-* If the module has **no** `main` function, the output name is derived
-  automatically as `lib`_module_`.so` (see *Shared-Library Output Naming*
-  below).
+**`--static-lib`**  
+Produce a static archive (`.a`) from the source file, regardless of whether
+the module defines a `main` function. The archive is created with `ar rcs`.
+If `-o` is not specified, the output name is derived automatically.  
+A warning is emitted if the module contains a `main` function.
+
+**`--dyn-lib` + `--static-lib`** (combined)  
+Produce **both** a shared library and a static archive in a **single
+compilation pass** — the object file is generated only once and then fed to
+both `clang -shared` and `ar`. `-o` is ignored in this mode (a warning is
+emitted); output names are always derived automatically.  
+A warning is also emitted if the module contains a `main` function.
+
+**`-o` _file_**, **`--output=`_file_**  
+Place the primary output (object file, executable, or library) into _file_.  
+When `-c` is not specified and no `-o` is given, the output name is derived
+automatically according to the following priority:
+
+| Flags active | Output | Automatic name |
+|---|---|---|
+| `-c` | `.o` | input stem + `.o` |
+| `--dyn-lib` + `--static-lib` | `.so` + `.a` | `lib`_base_`.so` / `lib`_base_`.a` |
+| `--dyn-lib` | `.so` | `lib`_base_`.so` |
+| `--static-lib` | `.a` | `lib`_base_`.a` |
+| _(none, no `main`)_ | `.so` | `lib`_base_`.so` |
+| _(none, has `main`)_ | executable | _base_ |
+
+Where _base_ = `unit_name_to_lib_base(module_name)` — see *Library Output Naming*.
 
 **`input-file`**  
 Path to the K source file to compile. Positional; may also be specified
@@ -174,34 +200,28 @@ The language supports:
 
 ---
 
-## SHARED-LIBRARY OUTPUT NAMING
+## LIBRARY OUTPUT NAMING
 
-When a K source file does **not** define a `main` function and `-c` is not
-specified, **klangc** automatically produces a shared library instead of an
-executable.
+When a library name is derived automatically (i.e. no `-o` is given), it is
+built from the **module name** declared in the source file using the following
+algorithm, implemented by `compiler::unit_name_to_lib_base()`:
 
-If no `-o` option is given, the output file name is derived from the module
-name declared in the source file:
-
-1. Any `::` namespace separator in the module name is replaced by `.`.
-2. The result is prefixed with `lib` and suffixed with `.so`.
-3. The file is placed in the **current working directory**.
+1. Every `::` namespace separator in the module name is replaced by `.`.
+2. The result is used as the **base name** (_base_).
+3. A prefix `lib` and the appropriate suffix (`.so` or `.a`) are appended.
+4. The file is placed in the **current working directory**.
 
 **Examples:**
 
-| Module declaration | Automatic output name |
-|--------------------|-----------------------|
-| `module mylib;`    | `libmylib.so`         |
-| `module math::utils;` | `libmath.utils.so` |
-| `module com::example::foo;` | `libcom.example.foo.so` |
+| Module declaration | _base_ | `.so` name | `.a` name |
+|--------------------|--------|-----------|----------|
+| `module mylib;` | `mylib` | `libmylib.so` | `libmylib.a` |
+| `module math::utils;` | `math.utils` | `libmath.utils.so` | `libmath.utils.a` |
+| `module com::example::foo;` | `com.example.foo` | `libcom.example.foo.so` | `libcom.example.foo.a` |
 
-When `-o` _file_ is given, the shared library is written to _file_ regardless
-of the module name.
-
-The object file is linked with `clang -shared -fPIC`.  The compiler
-automatically uses a **PIC** (Position-Independent Code) relocation model for
-all compilations so that the resulting object is compatible with both shared
-libraries and PIE executables.
+When `--dyn-lib` and `--static-lib` are combined, **both** files are produced
+from a **single** intermediate object file — the LLVM module is compiled to a
+`.o` only once, then passed to `clang -shared -fPIC` and `ar rcs` in sequence.
 
 ---
 
@@ -228,21 +248,36 @@ produces `libmylib.so` in the current directory.
 
 ---
 
-**Compile a library with a compound module name:**
+**Force shared library output (even if `main` is present):**
 
 ```sh
-klangc math_utils.k
+klangc --dyn-lib mylib.k
 ```
-
-If `math_utils.k` declares `module math::utils;`, this produces
-`libmath.utils.so` in the current directory.
 
 ---
 
-**Compile a library with an explicit output name:**
+**Produce a static archive:**
 
 ```sh
-klangc -o /usr/local/lib/libmylib.so mylib.k
+klangc --static-lib mylib.k
+# Produces: libmylib.a
+```
+
+---
+
+**Produce both a shared library and a static archive in one pass:**
+
+```sh
+klangc --dyn-lib --static-lib mylib.k
+# Produces: libmylib.so  libmylib.a  (single compilation pass)
+```
+
+---
+
+**Explicit output name for a library:**
+
+```sh
+klangc --dyn-lib -o /usr/local/lib/libmylib.so mylib.k
 ```
 
 ---
@@ -302,7 +337,8 @@ klangc --print-effective-triple
 |------|-------------|
 | `*.k` | K language source file |
 | `*.o` | Native object file produced by `-c` |
-| `lib*.so` | Shared library produced when no `main` is defined |
+| `lib*.so` | Shared library produced by `--dyn-lib` or auto-detection |
+| `lib*.a` | Static archive produced by `--static-lib` |
 | `*.raw.ll` | Auto-generated raw LLVM IR text file |
 | `*.opt.ll` | Auto-generated optimised LLVM IR text file |
 
@@ -312,13 +348,16 @@ klangc --print-effective-triple
 
 * Multiple source files on the command line are currently **not supported**.
   Only the first file is compiled; a warning is emitted for the rest.
-* When a module has no `main` function and `-c` is not used, **klangc**
-  automatically produces a shared library (`.so`) instead of an executable.
-  The output file name is derived from the module name (see
-  *Shared-Library Output Naming*).
-* Linking is performed by invoking **clang(1)**: with `-pie` for executables
-  and with `-shared -fPIC` for shared libraries. The `clang` binary must
-  therefore be present in `PATH`.
+* When a module has no `main` function and neither `-c`, `--dyn-lib` nor
+  `--static-lib` is specified, **klangc** automatically produces a shared
+  library (`.so`).
+* `--dyn-lib` and `--static-lib` may be combined.  In that case the
+  intermediate object file is generated **once** and passed to both
+  `clang -shared -fPIC` (`.so`) and `ar rcs` (`.a`). `-o` is ignored
+  in this combined mode.
+* Shared-library linking uses **clang(1)** with `-shared -fPIC`.  Static
+  archives are created with **ar(1)** (`rcs`).  Executable linking uses
+  **clang(1)** with `-pie`.  Both `clang` and `ar` must be present in `PATH`.
 * All compilations use the **PIC** (Position-Independent Code) relocation
   model, making the generated objects compatible with both shared libraries
   and PIE executables.

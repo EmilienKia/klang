@@ -49,6 +49,23 @@ k::tools::exec_result build_and_exec(const std::string_view& src);
  */
 std::string build_shared_library(const std::string_view& src);
 
+/**
+ * Compile the given K source into a static library (.a).
+ * Returns the path to the generated .a file (in /tmp).
+ * Throws std::runtime_error on failure.
+ * The caller is responsible for removing the file when done.
+ */
+std::string build_static_library(const std::string_view& src);
+
+/**
+ * Compile the given K source into both a shared library (.so) and a static
+ * library (.a) in a single object-file generation pass.
+ * Returns {so_path, a_path} — both located in /tmp.
+ * Throws std::runtime_error on failure.
+ * The caller is responsible for removing both files when done.
+ */
+std::pair<std::string, std::string> build_both_libraries(const std::string_view& src);
+
 class test_logger : public k::log::logger {
 public:
     /** All diagnostics reported via this logger (for inspection in tests). */

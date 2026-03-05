@@ -112,8 +112,10 @@ k::tools::exec_result build_and_exec(const std::string_view& src) {
     return res;
 }
 
-std::string build_shared_library(const std::string_view& src) {
-    // Ensure LLVM targets are registered before any target lookup.
+// ---------------------------------------------------------------------------
+// Internal helper: create a PIC target machine for library tests
+// ---------------------------------------------------------------------------
+static llvm::TargetMachine* make_pic_target_machine() {
     k::compiler::initialize();
 
     std::string target_triple = llvm::sys::getDefaultTargetTriple();
@@ -123,19 +125,13 @@ std::string build_shared_library(const std::string_view& src) {
         throw std::runtime_error("Could not find LLVM target: " + error);
     }
 
-    std::string cpu = "generic";
-    std::string features = "";
-
-    llvm::TargetOptions target_options;
-    // PIC is required for shared libraries
     std::optional<llvm::Reloc::Model> reloc_model = llvm::Reloc::PIC_;
-    auto target_machine = target->createTargetMachine(
-            target_triple, cpu,
-            features,
-            target_options,
-            reloc_model);
+    return target->createTargetMachine(target_triple, "generic", "", {}, reloc_model);
+}
 
-    // Produce a temp file name for the .so (mkstemp gives us a unique stem)
+// ---------------------------------------------------------------------------
+
+std::string build_shared_library(const std::string_view& src) {
     char tmp_stem[] = "/tmp/klang_lib_test_XXXXXX";
     int fd = ::mkstemp(tmp_stem);
     if (fd == -1) {
@@ -143,14 +139,12 @@ std::string build_shared_library(const std::string_view& src) {
     }
     ::close(fd);
     std::string out_file = std::string(tmp_stem) + ".so";
-    // Remove the stem file (we just needed a unique name)
     std::filesystem::remove(tmp_stem);
 
-    auto compiler = k::compiler::create(target_machine);
+    auto compiler = k::compiler::create(make_pic_target_machine());
     try {
         compiler->parse_source("", src, true, false);
     } catch (const k::log::compiler_error&) {
-        std::filesystem::remove(out_file);
         throw std::runtime_error("Compilation error while building shared library");
     }
 
@@ -160,6 +154,63 @@ std::string build_shared_library(const std::string_view& src) {
     }
 
     return out_file;
+}
+
+std::string build_static_library(const std::string_view& src) {
+    char tmp_stem[] = "/tmp/klang_lib_test_XXXXXX";
+    int fd = ::mkstemp(tmp_stem);
+    if (fd == -1) {
+        throw std::runtime_error("Could not create temporary file for static library test");
+    }
+    ::close(fd);
+    std::string out_file = std::string(tmp_stem) + ".a";
+    std::filesystem::remove(tmp_stem);
+
+    auto compiler = k::compiler::create(make_pic_target_machine());
+    try {
+        compiler->parse_source("", src, true, false);
+    } catch (const k::log::compiler_error&) {
+        throw std::runtime_error("Compilation error while building static library");
+    }
+
+    if (!compiler->gen_static_library(out_file)) {
+        std::filesystem::remove(out_file);
+        throw std::runtime_error("Error generating static library");
+    }
+
+    return out_file;
+}
+
+std::pair<std::string, std::string> build_both_libraries(const std::string_view& src) {
+    // Generate unique names for both outputs
+    char tmp_so[] = "/tmp/klang_lib_test_XXXXXX";
+    int fd_so = ::mkstemp(tmp_so);
+    if (fd_so == -1) throw std::runtime_error("Could not create temp file for .so");
+    ::close(fd_so);
+    std::string so_file = std::string(tmp_so) + ".so";
+    std::filesystem::remove(tmp_so);
+
+    char tmp_a[] = "/tmp/klang_lib_test_XXXXXX";
+    int fd_a = ::mkstemp(tmp_a);
+    if (fd_a == -1) throw std::runtime_error("Could not create temp file for .a");
+    ::close(fd_a);
+    std::string a_file = std::string(tmp_a) + ".a";
+    std::filesystem::remove(tmp_a);
+
+    auto compiler = k::compiler::create(make_pic_target_machine());
+    try {
+        compiler->parse_source("", src, true, false);
+    } catch (const k::log::compiler_error&) {
+        throw std::runtime_error("Compilation error while building libraries");
+    }
+
+    if (!compiler->gen_libraries(so_file, a_file)) {
+        std::filesystem::remove(so_file);
+        std::filesystem::remove(a_file);
+        throw std::runtime_error("Error generating libraries");
+    }
+
+    return {so_file, a_file};
 }
 
 

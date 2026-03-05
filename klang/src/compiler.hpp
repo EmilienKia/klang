@@ -135,6 +135,20 @@ public:
 
     bool has_main_method() const;
 
+    /**
+     * Convert a K unit/module name to a library base name by replacing every
+     * "::" separator with ".".
+     * Example: "my::test::lib"  →  "my.test.lib"
+     * This is a pure utility — it does not require a compiler instance.
+     */
+    static std::string unit_name_to_lib_base(const std::string& unit_name);
+
+    /**
+     * Return the library base name derived from the current module's unit name.
+     * Convenience wrapper around unit_name_to_lib_base(get_unit()->get_unit_name().to_string()).
+     */
+    std::string get_lib_base_name() const;
+
     void dump_gen_code();
     bool verify_gen_code();
     void optimize_gen_code();
@@ -143,17 +157,39 @@ public:
 
     bool gen_object_file(const std::string& output_file);
 
-    bool gen_executable(const std::string& output_file);
+    /**
+     * Compile and link into a native executable.
+     * Requires a main() function in the module.
+     * If output_file is empty, the name is derived from the module's unit name.
+     */
+    bool gen_executable(const std::string& output_file = "");
 
     /**
      * Compile and link the current module as a shared library (.so).
-     * If output_file is empty, the output is named lib<module_name>.so in the
-     * current directory, where "::" separators in the module name are replaced by ".".
-     * @param output_file  Destination path for the shared library, or empty to
-     *                     derive the name automatically.
-     * @return true on success.
+     * If output_file is empty, the output is named lib<base>.so in the current
+     * directory, where <base> = unit_name_to_lib_base(module_name).
      */
     bool gen_shared_library(const std::string& output_file = "");
+
+    /**
+     * Archive the current module into a static library (.a).
+     * If output_file is empty, the output is named lib<base>.a in the current
+     * directory, where <base> = unit_name_to_lib_base(module_name).
+     * Uses "ar rcs" — no linker involved.
+     */
+    bool gen_static_library(const std::string& output_file = "");
+
+    /**
+     * Produce both a shared library and a static library in a single object-file
+     * generation pass.  At least one of shared_out / static_out must be non-empty
+     * when the module name cannot be determined, otherwise the names are derived
+     * automatically (lib<base>.so and lib<base>.a).
+     *
+     * @param shared_out  Output path for the .so, or empty for automatic naming.
+     * @param static_out  Output path for the .a,  or empty for automatic naming.
+     * @return true if all requested outputs were produced successfully.
+     */
+    bool gen_libraries(const std::string& shared_out = "", const std::string& static_out = "");
 
     void print_logs();
 

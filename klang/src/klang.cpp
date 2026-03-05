@@ -77,6 +77,8 @@ int main(int argc, const char** argv) {
             ("compile,c", "Compile the source files, but do not link")
             ("output,o", po::value<std::string>(&output_file), "Place the output into <arg> file.")
             ("input-file", po::value<std::vector<std::string>>(&input_files), "input file")
+            ("dyn-lib",    "Produce a shared library (.so) instead of an executable")
+            ("static-lib", "Produce a static library (.a) instead of an executable")
             ("emit-raw-ir", "Export LLVM IR text after code generation (before optimisation)")
             ("raw-ir-file", po::value<std::string>(&raw_ir_file)->implicit_value(""),
                             "Write raw IR to <arg> file (implies --emit-raw-ir; omit value or use - for stdout)")
@@ -195,27 +197,63 @@ int main(int argc, const char** argv) {
             if (effective_output.empty()) {
                 if (vm.count("compile")) {
                     effective_output = std::filesystem::path(input_files[0]).replace_extension(".o").string();
+                } else if (vm.count("dyn-lib") || vm.count("static-lib")) {
+                    // We don't yet know the module name, leave empty — will be
+                    // resolved again after parse_source() by the gen_* methods.
                 } else {
                     effective_output = std::filesystem::path(input_files[0]).replace_extension("").string();
                 }
             }
-            compiler->resolve_ir_filenames(effective_output);
+            if (!effective_output.empty()) {
+                compiler->resolve_ir_filenames(effective_output);
+            }
         }
 
         compiler->parse_source(input_files[0], source, true, false);
 
-        if (vm.count("compile")) {
-            // Just compile to object file (.o)
+        const bool want_compile    = vm.count("compile")     > 0;
+        const bool want_dyn_lib    = vm.count("dyn-lib")     > 0;
+        const bool want_static_lib = vm.count("static-lib")  > 0;
+        const bool has_main        = compiler->has_main_method();
+
+        if (want_compile) {
+            // -c : just emit a native object file, no linking
             if (output_file.empty()) {
                 output_file = std::filesystem::path(input_files[0]).replace_extension(".o").string();
             }
             return compiler->gen_object_file(output_file) ? 0 : -1;
-        } else if (!compiler->has_main_method()) {
-            // No main function → produce a shared library
-            // If no -o is specified, the name is derived automatically as lib<module>.so
+
+        } else if (want_dyn_lib && want_static_lib) {
+            // Both --dyn-lib and --static-lib : single compilation pass, two outputs.
+            // -o is silently ignored here (names are derived automatically).
+            if (!output_file.empty()) {
+                std::cerr << "Warning: -o is ignored when both --dyn-lib and --static-lib are specified." << std::endl;
+            }
+            if (has_main) {
+                std::cerr << "Warning: module defines a 'main' function but a library output was requested (--dyn-lib --static-lib); 'main' will be included in the library but not used as an entry point." << std::endl;
+            }
+            return compiler->gen_libraries("", "") ? 0 : -1;
+
+        } else if (want_dyn_lib) {
+            // --dyn-lib only
+            if (has_main) {
+                std::cerr << "Warning: module defines a 'main' function but a shared library output was requested (--dyn-lib); 'main' will be included in the library but not used as an entry point." << std::endl;
+            }
             return compiler->gen_shared_library(output_file) ? 0 : -1;
+
+        } else if (want_static_lib) {
+            // --static-lib only
+            if (has_main) {
+                std::cerr << "Warning: module defines a 'main' function but a static library output was requested (--static-lib); 'main' will be included in the archive but not used as an entry point." << std::endl;
+            }
+            return compiler->gen_static_library(output_file) ? 0 : -1;
+
+        } else if (!has_main) {
+            // No explicit flag, no main() → auto: produce a shared library
+            return compiler->gen_shared_library(output_file) ? 0 : -1;
+
         } else {
-            // Compile and link into an executable
+            // Default: compile and link into an executable
             return compiler->gen_executable(output_file);
         }
 

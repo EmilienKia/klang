@@ -436,67 +436,122 @@ bool compiler::gen_executable(const std::string& output_file) {
         return false;
     }
 
-    std::filesystem::path output_path(output_file.empty() ? get_unit()->get_unit_name().to_string() : output_file);
+    std::filesystem::path output_path(
+        output_file.empty() ? unit_name_to_lib_base(get_unit()->get_unit_name().to_string())
+                            : output_file);
     resolve_ir_filenames(output_path.string());
 
     auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
 
     std::cout << "Generating object: " << object_path << std::endl;
-
     gen_object_file(object_path);
 
     std::cout << "Generating executable: " << output_path << std::endl;
-
-    auto exec_res = tools::lookup_run_process("clang", {"-pie", "-o", output_path, object_path});
+    auto exec_res = tools::lookup_run_process("clang", {"-pie", "-o", output_path.string(), object_path.string()});
 
     std::filesystem::remove(object_path);
 
-    if (!exec_res.out.empty()) {
-        std::cout << exec_res.out << std::endl;
-    }
-    if (!exec_res.err.empty()) {
-        std::cerr << exec_res.err << std::endl;
-    }
+    if (!exec_res.out.empty()) std::cout << exec_res.out << std::endl;
+    if (!exec_res.err.empty()) std::cerr << exec_res.err << std::endl;
     return exec_res.exit_code == 0;
 }
 
-bool compiler::gen_shared_library(const std::string& output_file) {
-    // Derive output path: if not specified, use lib<module>.so where "::" → "."
-    std::string lib_path = output_file;
-    if (lib_path.empty()) {
-        std::string module_name = get_unit()->get_unit_name().to_string();
-        // Replace "::" with "."
-        std::string lib_name = module_name;
-        size_t pos = 0;
-        while ((pos = lib_name.find("::", pos)) != std::string::npos) {
-            lib_name.replace(pos, 2, ".");
-            pos += 1;
-        }
-        lib_path = "lib" + lib_name + ".so";
-    }
+// ---------------------------------------------------------------------------
+// Library name utilities
+// ---------------------------------------------------------------------------
 
-    std::filesystem::path output_path(lib_path);
+std::string compiler::unit_name_to_lib_base(const std::string& unit_name) {
+    std::string base = unit_name;
+    size_t pos = 0;
+    while ((pos = base.find("::", pos)) != std::string::npos) {
+        base.replace(pos, 2, ".");
+        pos += 1;
+    }
+    return base;
+}
+
+std::string compiler::get_lib_base_name() const {
+    return unit_name_to_lib_base(get_unit()->get_unit_name().to_string());
+}
+
+// ---------------------------------------------------------------------------
+
+bool compiler::gen_shared_library(const std::string& output_file) {
+    std::filesystem::path output_path(
+        output_file.empty() ? "lib" + get_lib_base_name() + ".so"
+                            : output_file);
     resolve_ir_filenames(output_path.string());
 
     auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
 
     std::cout << "Generating object: " << object_path << std::endl;
-
     gen_object_file(object_path);
 
     std::cout << "Generating shared library: " << output_path << std::endl;
-
     auto exec_res = tools::lookup_run_process("clang", {"-shared", "-fPIC", "-o", output_path.string(), object_path.string()});
 
     std::filesystem::remove(object_path);
 
-    if (!exec_res.out.empty()) {
-        std::cout << exec_res.out << std::endl;
-    }
-    if (!exec_res.err.empty()) {
-        std::cerr << exec_res.err << std::endl;
-    }
+    if (!exec_res.out.empty()) std::cout << exec_res.out << std::endl;
+    if (!exec_res.err.empty()) std::cerr << exec_res.err << std::endl;
     return exec_res.exit_code == 0;
+}
+
+bool compiler::gen_static_library(const std::string& output_file) {
+    std::filesystem::path output_path(
+        output_file.empty() ? "lib" + get_lib_base_name() + ".a"
+                            : output_file);
+    resolve_ir_filenames(output_path.string());
+
+    auto object_path = std::filesystem::temp_directory_path() / (output_path.filename().generic_string() + ".o");
+
+    std::cout << "Generating object: " << object_path << std::endl;
+    gen_object_file(object_path);
+
+    std::cout << "Generating static library: " << output_path << std::endl;
+    // ar rcs: create archive, add index, be silent on missing files
+    auto exec_res = tools::lookup_run_process("ar", {"rcs", output_path.string(), object_path.string()});
+
+    std::filesystem::remove(object_path);
+
+    if (!exec_res.out.empty()) std::cout << exec_res.out << std::endl;
+    if (!exec_res.err.empty()) std::cerr << exec_res.err << std::endl;
+    return exec_res.exit_code == 0;
+}
+
+bool compiler::gen_libraries(const std::string& shared_out, const std::string& static_out) {
+    // Determine output paths up front
+    const std::string base = get_lib_base_name();
+    std::filesystem::path so_path(shared_out.empty() ? "lib" + base + ".so" : shared_out);
+    std::filesystem::path  a_path(static_out.empty() ? "lib" + base + ".a"  : static_out);
+
+    resolve_ir_filenames(so_path.string());
+
+    // Generate the object file once
+    auto object_path = std::filesystem::temp_directory_path() / ("lib" + base + ".o");
+    std::cout << "Generating object: " << object_path << std::endl;
+    if (!gen_object_file(object_path)) {
+        return false;
+    }
+
+    bool ok = true;
+
+    // Shared library
+    std::cout << "Generating shared library: " << so_path << std::endl;
+    auto so_res = tools::lookup_run_process("clang", {"-shared", "-fPIC", "-o", so_path.string(), object_path.string()});
+    if (!so_res.out.empty()) std::cout << so_res.out << std::endl;
+    if (!so_res.err.empty()) std::cerr << so_res.err << std::endl;
+    ok &= (so_res.exit_code == 0);
+
+    // Static library
+    std::cout << "Generating static library: " << a_path << std::endl;
+    auto ar_res = tools::lookup_run_process("ar", {"rcs", a_path.string(), object_path.string()});
+    if (!ar_res.out.empty()) std::cout << ar_res.out << std::endl;
+    if (!ar_res.err.empty()) std::cerr << ar_res.err << std::endl;
+    ok &= (ar_res.exit_code == 0);
+
+    std::filesystem::remove(object_path);
+    return ok;
 }
 
 char_coord compiler::coordinates_from_pos(const k::char_pos& coord) const {

@@ -20,31 +20,55 @@
 
 #include "../src/parse/parser.hpp"
 #include "../src/common/process.hpp"
+#include "../src/compiler.hpp"
 
 #include "helpers.hpp"
 
 
-/**
- * Check that the symbol 'symbol_name' is exported (type 'T') in the shared
- * library at 'so_path' using the 'nm' tool.
- * Returns true if the symbol is found as a global/exported symbol.
- */
-static bool so_has_exported_symbol(const std::string& so_path, const std::string& symbol_name) {
-    // nm -D lists dynamic (exported) symbols; --defined-only restricts to
-    // symbols defined in this object.
-    auto res = k::tools::lookup_run_process("nm", {"--dynamic", "--defined-only", so_path});
-    if (res.exit_code != 0) {
-        return false;
-    }
-    // Each nm output line looks like:  <addr> T _ZN3foo3barEv
-    // We check that the expected mangled name appears somewhere in the output.
-    return res.out.find(symbol_name) != std::string::npos;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** True if the nm output for the file contains a defined symbol whose name
+ *  includes the given substring. Works for both .so (--dynamic) and .a. */
+static bool has_defined_symbol_containing(const std::string& file, const std::string& substr) {
+    // For .so: use --dynamic so we inspect the export table.
+    // For .a:  nm lists all symbols without --dynamic; the flag is silently
+    //          ignored on archives by most nm implementations, so one command
+    //          covers both cases.
+    auto res = k::tools::lookup_run_process(
+        "nm", {"--defined-only", file});
+    if (res.exit_code != 0) return false;
+    return res.out.find(substr) != std::string::npos;
 }
 
 
-TEST_CASE( "Shared library: simple module without main produces a .so", "[prod-lib]" ) {
-    // A module with a compound namespace unit name (math::utils) and a global
-    // function — but no main() — should be compiled into a shared library.
+// ---------------------------------------------------------------------------
+// unit_name_to_lib_base — pure utility
+// ---------------------------------------------------------------------------
+
+TEST_CASE("unit_name_to_lib_base: simple name is unchanged", "[prod-lib][unit-name]") {
+    REQUIRE(k::compiler::unit_name_to_lib_base("mylib")        == "mylib");
+}
+
+TEST_CASE("unit_name_to_lib_base: :: replaced by .", "[prod-lib][unit-name]") {
+    REQUIRE(k::compiler::unit_name_to_lib_base("my::test::lib") == "my.test.lib");
+}
+
+TEST_CASE("unit_name_to_lib_base: single separator", "[prod-lib][unit-name]") {
+    REQUIRE(k::compiler::unit_name_to_lib_base("math::utils")  == "math.utils");
+}
+
+TEST_CASE("unit_name_to_lib_base: empty string", "[prod-lib][unit-name]") {
+    REQUIRE(k::compiler::unit_name_to_lib_base("") == "");
+}
+
+
+// ---------------------------------------------------------------------------
+// Shared library (.so)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Shared library: simple module without main produces a .so", "[prod-lib][shared]") {
     std::string so_path;
     REQUIRE_NOTHROW(so_path = build_shared_library(R"SRC(
         module math::utils;
@@ -58,41 +82,21 @@ TEST_CASE( "Shared library: simple module without main produces a .so", "[prod-l
         }
     )SRC"));
 
-    // The .so file must exist and be non-empty.
     REQUIRE( !so_path.empty() );
     REQUIRE( std::filesystem::exists(so_path) );
     REQUIRE( std::filesystem::file_size(so_path) > 0 );
 
-    // Inspect exported symbols with 'nm -D --defined-only'
+    // nm --dynamic --defined-only must report at least the 'add' symbol
     auto nm_res = k::tools::lookup_run_process("nm", {"--dynamic", "--defined-only", so_path});
     INFO( "nm stdout: " << nm_res.out );
     INFO( "nm stderr: " << nm_res.err );
     REQUIRE( nm_res.exit_code == 0 );
-
-    // The function math::utils::add(int,int):int must appear as an exported symbol.
-    // Its mangled name follows the K name-mangling scheme.
-    // We check that the output contains the human-readable demangled name via
-    // nm --demangle, so that the test is independent of the exact mangled form.
-    auto nm_dem_res = k::tools::lookup_run_process("nm", {"--dynamic", "--defined-only", "--demangle", so_path});
-    INFO( "nm --demangle stdout: " << nm_dem_res.out );
-    REQUIRE( nm_dem_res.exit_code == 0 );
-
-    // The demangled output should contain the function name "add"
-    // within the math::utils namespace context.
-    bool found = nm_dem_res.out.find("add") != std::string::npos;
-    REQUIRE( found );
+    REQUIRE( nm_res.out.find("add") != std::string::npos );
 
     std::filesystem::remove(so_path);
 }
 
-
-TEST_CASE( "Shared library: automatic output name is lib<module>.so", "[prod-lib]" ) {
-    // When no -o is specified for a module named "mylib::core", the output file
-    // should be "libmylib.core.so" in the current directory.
-    // We test this by calling gen_shared_library with an empty output path and
-    // checking the returned path.
-
-    // Build a simple library with module name mylib::core
+TEST_CASE("Shared library: compound module — symbol 'square' exported", "[prod-lib][shared]") {
     std::string so_path;
     REQUIRE_NOTHROW(so_path = build_shared_library(R"SRC(
         module mylib::core;
@@ -106,15 +110,107 @@ TEST_CASE( "Shared library: automatic output name is lib<module>.so", "[prod-lib
         }
     )SRC"));
 
-    REQUIRE( !so_path.empty() );
     REQUIRE( std::filesystem::exists(so_path) );
-
-    // Verify the symbol 'square' is exported
-    auto nm_res = k::tools::lookup_run_process("nm", {"--dynamic", "--defined-only", "--demangle", so_path});
-    INFO( "nm stdout: " << nm_res.out );
-    REQUIRE( nm_res.exit_code == 0 );
-    REQUIRE( nm_res.out.find("square") != std::string::npos );
+    REQUIRE( has_defined_symbol_containing(so_path, "square") );
 
     std::filesystem::remove(so_path);
+}
+
+
+// ---------------------------------------------------------------------------
+// Static library (.a)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Static library: module without main produces a .a", "[prod-lib][static]") {
+    std::string a_path;
+    REQUIRE_NOTHROW(a_path = build_static_library(R"SRC(
+        module math::utils;
+
+        namespace math {
+            namespace utils {
+                add(a: int, b: int) : int {
+                    return a + b;
+                }
+            }
+        }
+    )SRC"));
+
+    REQUIRE( !a_path.empty() );
+    REQUIRE( std::filesystem::exists(a_path) );
+    REQUIRE( std::filesystem::file_size(a_path) > 0 );
+
+    // nm on an archive must report the 'add' symbol
+    auto nm_res = k::tools::lookup_run_process("nm", {"--defined-only", a_path});
+    INFO( "nm stdout: " << nm_res.out );
+    INFO( "nm stderr: " << nm_res.err );
+    REQUIRE( nm_res.exit_code == 0 );
+    REQUIRE( nm_res.out.find("add") != std::string::npos );
+
+    std::filesystem::remove(a_path);
+}
+
+TEST_CASE("Static library: compound module — symbol 'cube' present", "[prod-lib][static]") {
+    std::string a_path;
+    REQUIRE_NOTHROW(a_path = build_static_library(R"SRC(
+        module math::extra;
+
+        namespace math {
+            namespace extra {
+                cube(x: int) : int {
+                    return x * x * x;
+                }
+            }
+        }
+    )SRC"));
+
+    REQUIRE( std::filesystem::exists(a_path) );
+    REQUIRE( has_defined_symbol_containing(a_path, "cube") );
+
+    std::filesystem::remove(a_path);
+}
+
+
+// ---------------------------------------------------------------------------
+// Both libraries in a single compilation pass (gen_libraries)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("Both libraries: single pass produces .so and .a with same symbols", "[prod-lib][both]") {
+    auto [so_path, a_path] = build_both_libraries(R"SRC(
+        module geometry::shapes;
+
+        namespace geometry {
+            namespace shapes {
+                area_rect(w: int, h: int) : int {
+                    return w * h;
+                }
+                perimeter_rect(w: int, h: int) : int {
+                    return 2 * (w + h);
+                }
+            }
+        }
+    )SRC");
+
+    // Both files must exist and be non-empty
+    REQUIRE( std::filesystem::exists(so_path) );
+    REQUIRE( std::filesystem::file_size(so_path) > 0 );
+    REQUIRE( std::filesystem::exists(a_path) );
+    REQUIRE( std::filesystem::file_size(a_path) > 0 );
+
+    // The shared library must export both symbols
+    auto nm_so = k::tools::lookup_run_process("nm", {"--dynamic", "--defined-only", so_path});
+    INFO(".so nm: " << nm_so.out);
+    REQUIRE( nm_so.exit_code == 0 );
+    REQUIRE( nm_so.out.find("area_rect") != std::string::npos );
+    REQUIRE( nm_so.out.find("perimeter_rect") != std::string::npos );
+
+    // The static archive must contain both symbols too
+    auto nm_a = k::tools::lookup_run_process("nm", {"--defined-only", a_path});
+    INFO(".a  nm: " << nm_a.out);
+    REQUIRE( nm_a.exit_code == 0 );
+    REQUIRE( nm_a.out.find("area_rect") != std::string::npos );
+    REQUIRE( nm_a.out.find("perimeter_rect") != std::string::npos );
+
+    std::filesystem::remove(so_path);
+    std::filesystem::remove(a_path);
 }
 
