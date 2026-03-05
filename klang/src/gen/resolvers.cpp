@@ -1971,6 +1971,36 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         return CAST_IMPOSSIBLE;
     }
 
+    // --- ref<ptr/lnk/pin> → ptr/lnk/pin: unwrap the ref and delegate ─────────
+    // Allows passing a ref<ptr<Derived>> where a ptr<Base> is expected, for example.
+    if (type::is_reference(type_src) && !type::is_double_reference(type_src)) {
+        auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
+        auto inner = ref_src->get_subtype();
+        if (type::is_pointer(inner) || type::is_link(inner) || type::is_pinned(inner)) {
+            if (type::is_pointer(tgt_nc) || type::is_link(tgt_nc) || type::is_pinned(tgt_nc)) {
+                auto src_sub = inner->get_subtype();
+                auto tgt_sub = tgt_nc->get_subtype();
+                auto src_sub_nc = type::remove_const(src_sub);
+                auto tgt_sub_nc = type::remove_const(tgt_sub);
+                if (src_sub_nc == tgt_sub_nc) {
+                    if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
+                    return CAST_REF_CONV;
+                }
+                // Struct upcast: ref<lnk/pin/ptr<Derived>> → lnk/pin/ptr<Base>
+                auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+                auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                if (src_st_type && tgt_st_type) {
+                    auto src_st = src_st_type->get_struct();
+                    auto tgt_st = tgt_st_type->get_struct();
+                    if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                        return CAST_REF_CONV;
+                    }
+                }
+                return CAST_IMPOSSIBLE;
+            }
+        }
+    }
+
     // --- Double reference: unwrap one level ---
     std::shared_ptr<k::model::type> effective_src = type_src;
     if (type::is_double_reference(type_src)) {
@@ -2577,6 +2607,21 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     }
 
     if(type::is_reference(type_src)) {
+        // ── ref<ptr/lnk/pin<T>> → ptr/lnk/pin<Base>: load the stored pointer then upcast ──
+        if (!type::is_reference(type_nc)) {
+            auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
+            auto inner = ref_src->get_subtype();
+            if ((type::is_pointer(inner) || type::is_link(inner) || type::is_pinned(inner)) &&
+                (type::is_pointer(type_nc) || type::is_link(type_nc) || type::is_pinned(type_nc))) {
+                // Load the pointer value stored in the ref slot
+                auto loaded = load_value_expression::make_shared(expr);
+                loaded->set_type(inner);
+                // Now adapt the loaded indirection to the target indirection type
+                auto adapted = adapt_type(loaded, type_nc);
+                return adapted ? adapted : loaded;
+            }
+        }
+
         if(type::is_reference(type_nc)) {
             if (type_nc == type_src) {
                 // Reference to same type, return the expression

@@ -126,12 +126,57 @@ CastExpr:
     '(' TypeSpec ')' CastExpr
     | UnaryExpr
 ```
+
+### Primitive casts
 ```k
 d : double = 3.99d;
 i : int = (int) d;        // truncates to 3
 b : byte = (byte) largeInt;
 ```
-See [Types — Implicit conversions](../basic/types.md#7-implicit-conversions) for the implicit conversion rules.
+
+### Indirection casts (ref / lnk / pin / ptr)
+
+#### Static upcast (Derived→Base) — compile-time GEP
+
+```k
+struct Base { val : int; Base(v : int) : val(v) {} }
+struct Derived : public Base { extra : int; Derived(v : int) : Base(v), extra(0) {} }
+
+d  : Derived(55);
+pd : Derived* = &d;
+ld : Derived~ = &d;
+
+pb : Base*  = (Base*) pd;    // ptr<Derived> → ptr<Base>
+lb : Base~  = (Base~) ld;    // lnk<Derived> → lnk<Base>
+pb2 : Base* = (Base*) ld;   // lnk<Derived> → ptr<Base> (cross-kind)
+```
+
+#### Dynamic downcast (Base→Derived) — runtime RTTI check
+
+Only for `class` and `interface` types (not `struct`).
+
+```k
+class Base {
+    public dummy() : int { return 0; }
+}
+class Derived : public Base {
+    public extra : int;
+    public Derived(v : int) : extra(v) {}
+    public get_extra() : int { return extra; }
+}
+
+bp : Base* = &some_derived_obj;
+
+// ptr/pin target — nullable: null if RTTI mismatch
+dp  : Derived* = (Derived*) bp;
+dp2 : Derived^ = (Derived^) bp;
+
+// lnk/ref target — non-null: fatal trap if RTTI mismatch
+dl : Derived~ = (Derived~) bp;   // __fatal_null_dyncast() if bp ≠ Derived*
+```
+
+See [Types — §11.5](../basic/types.md#115-explicit-cast) for full rules.
+
 ---
 ## 7. Prefix increment and decrement
 `++expr` increments `expr` by 1 and returns the new value.  

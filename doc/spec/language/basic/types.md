@@ -784,11 +784,116 @@ CastExpr:
     '(' TypeSpec ')' CastExpr
 ```
 
+#### 11.5.1 Explicit cast for primitive types
+
+The standard numeric conversion rules apply (truncation, sign extension, float↔int, etc.).  
+See §11.1 and §11.2 for widening and narrowing rules.
+
+```k
+d : double = 3.99d;
+i : int = (int) d;          // truncates to 3
+b : byte = (byte) largeInt; // narrow
+```
+
+#### 11.5.2 Explicit cast for indirection types (ref / lnk / pin / ptr)
+
+An explicit cast may be applied to any indirection type.  
+Two cases are distinguished based on the direction of the cast:
+
+**A. Explicit static upcast (Derived→Base)**
+
+When the cast target type is a *base* of the expression's pointed type, the cast is a **static (compile-time) GEP upcast** — identical to the implicit upcast (§11.3).
+
+Allowed source → target combinations:
+
+| Source expression type        | Explicit cast target | Notes |
+|-------------------------------|----------------------|-------|
+| `ptr<Derived>`                | `(Base*)`            | GEP to base subobject |
+| `lnk<Derived>`                | `(Base~)`            | GEP to base subobject |
+| `pin<Derived>`                | `(Base^)`            | GEP to base subobject |
+| `ref<Derived>` (via variable) | `(Base&)`            | GEP to base subobject |
+| `lnk<Derived>`                | `(Base*)`            | Cross-kind: GEP; result is nullable |
+| `pin<Derived>`                | `(Base*)`            | Cross-kind: GEP; result is nullable |
+| `ptr<Derived>`                | `(Base~)`            | Cross-kind: GEP; note: ptr is nullable but ~ is non-null (null-check inserted) |
+
+```k
+struct Base { val : int; Base(v : int) : val(v) {} }
+struct Derived : public Base { extra : int; Derived(v : int) : Base(v), extra(0) {} }
+
+d  : Derived(42);
+pd : Derived* = &d;
+pb : Base* = (Base*) pd;    // explicit static upcast: GEP
+lb : Base~ = (Base~) pd;    // cross-kind with null-check
+```
+
+**B. Explicit dynamic downcast (Base→Derived)**
+
+When the cast target type is a *derived class* (or interface implementor) of the expression's pointed type, the cast is a **dynamic (RTTI) downcast** — identical to the implicit dynamic downcast (§11.4).
+
+Applies only to `class` and `interface` types. **Not allowed for `struct` types** (no RTTI).
+
+| Source expression type | Explicit cast target | Null-on-mismatch behaviour |
+|------------------------|----------------------|---------------------------|
+| `ptr<Base>`            | `(Derived*)`         | null assigned |
+| `ptr<Base>`            | `(Derived^)`         | null assigned |
+| `ptr<Base>`            | `(Derived~)`         | fatal trap (`__fatal_null_dyncast`) |
+| `lnk<Base>`            | `(Derived~)`         | fatal trap |
+| `lnk<Base>`            | `(Derived*)`         | null assigned |
+| `ref<Base>`            | `(Derived&)`         | fatal trap |
+
+```k
+class Base {
+    public val : int;
+    public Base(v : int) : val(v) {}
+    public dummy() : int { return 0; }
+}
+class Derived : public Base {
+    public extra : int;
+    public Derived(v : int) : Base(v), extra(99) {}
+    public get_extra() : int { return extra; }
+}
+
+get_fn(d : Derived&) : int { return d.get_extra(); }
+
+test() : int {
+    d  : Derived(42);
+    bp : Base* = &d;          // static upcast
+
+    dp  : Derived* = (Derived*) bp;   // explicit downcast — null if RTTI fails
+    dl  : Derived~ = (Derived~) bp;   // explicit downcast — fatal if RTTI fails
+    dp2 : Derived^ = (Derived^) bp;   // explicit downcast — null if RTTI fails
+
+    return get_fn(*dp);    // → 99 (if dp is non-null)
+}
+```
+
+**C. Error conditions**
+
+| Situation | Result |
+|-----------|--------|
+| Source and target have no inheritance relationship | Compile error `0x40033` |
+| Target is a `struct` type and source is derived class (no RTTI) | Compile error `0x40033` |
+| Ref source and target have no inheritance relationship | Compile error `0x40034` |
+| Target type name cannot be resolved | Compile error `0x40035` |
+
+#### 11.5.3 Implicit cast in function call arguments
+
+When a function expects a `Base*`, `Base~`, `Base^`, or `Base&` parameter, and the caller passes a `Derived*`, `Derived~`, `Derived^`, or `Derived&` expression, the compiler automatically inserts a **static upcast** — no explicit cast syntax is needed.
+
+```k
+get_val(p : Base*) : int { return p->val; }
+
+test() : int {
+    d : Derived(66);
+    pd : Derived* = &d;
+    return get_val(pd);    // implicit upcast: ptr<Derived> → ptr<Base>
+}
+```
+
+This also works for `ref<ptr<Derived>>` when the parameter expects `ptr<Base>` — the reference is automatically loaded and the pointer is upcast.
+
 ---
 
-*See also:* [Literals](../expressions/literals.md) · [Expressions](../expressions/expressions.md) · [Structures](../structs/structs.md)
-
----
 
 ## 12. Const-ness
 

@@ -108,6 +108,7 @@ add_executable(tests
         tests/test-gen-indirection-downcast.cpp
         tests/test-gen-class-upcast.cpp
         tests/test-gen-upcast.cpp
+        tests/test-gen-cast-indirection.cpp
 )
 target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain)
 

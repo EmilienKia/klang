@@ -2189,33 +2189,156 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
     auto source_type = sub_expr->get_type();
     auto target_type = expr.get_cast_type();
 
+    // ── Resolve the target type if it is not yet resolved ────────────────────
+    // A `(Type)expr` cast produces an unresolved type for named types (struct/class/interface).
+    // We must resolve it here before any validation.
+    if (target_type && !type::is_resolved(target_type)) {
+        // Step 1: try context::resolve_type — handles composite types (ptr<unresolved>, etc.)
+        // and looks up structs in the context's _struct_types registry.
+        auto resolved = _context->resolve_type(target_type);
+        if (resolved && type::is_resolved(resolved)) {
+            target_type = resolved;
+            expr.set_cast_type(target_type);
+        } else {
+            // Step 2: for types not in context registry, use name-based resolution from root ns.
+            // This handles types in namespaces or types that haven't been registered yet.
+            auto resolve_by_name_composite = [&](const auto& self, const std::shared_ptr<type>& t) -> std::shared_ptr<type> {
+                if (!t) return nullptr;
+                if (type::is_resolved(t)) return t;
+                if (auto unres = std::dynamic_pointer_cast<unresolved_type>(t)) {
+                    if (auto already = unres->get_resolved()) return already;
+                    auto root_ns = _unit.get_root_namespace();
+                    if (root_ns) return resolve_type_by_name(unres->type_id(), *root_ns);
+                    return nullptr;
+                }
+                auto sub = self(self, t->get_subtype());
+                if (!sub || !type::is_resolved(sub)) return nullptr;
+                if (type::is_pointer(t))   return sub->get_pointer();
+                if (type::is_link(t))      return sub->get_link();
+                if (type::is_pinned(t))    return sub->get_pinned();
+                if (type::is_reference(t)) return sub->get_reference();
+                if (type::is_const(t))     return sub->get_const();
+                return nullptr;
+            };
+            auto resolved2 = resolve_by_name_composite(resolve_by_name_composite, target_type);
+            if (resolved2 && type::is_resolved(resolved2)) {
+                target_type = resolved2;
+                expr.set_cast_type(target_type);
+            } else {
+                throw_error(0x40035, std::nullopt,
+                    "Cannot resolve target type of explicit cast: '{}' is unknown in this scope",
+                    {target_type ? target_type->to_string() : "?"});
+            }
+        }
+    }
+
     if(source_type==target_type) {
         // TODO warn about useless casting
     } else {
-        if(type::is_pointer(source_type)) {
-            if(type::is_prim_bool(target_type)) {
-                // TODO add pointer to boolean casting
-            } else if(type::is_pointer(target_type)) {
-                //  TODO add pointer type casting checking.
-            } else {
-                // TODO throw an error, other pointer casting are not supported
+        // ── Helper: extract struct_type from an indirection (lnk/pin/ptr) ────
+        auto get_indir_struct = [](const std::shared_ptr<type>& t) -> std::shared_ptr<struct_type> {
+            if (auto lnk = std::dynamic_pointer_cast<link_type>(t))
+                return std::dynamic_pointer_cast<struct_type>(type::remove_const(lnk->get_linked_type()));
+            if (auto pin = std::dynamic_pointer_cast<pinned_type>(t))
+                return std::dynamic_pointer_cast<struct_type>(type::remove_const(pin->get_pinned_type()));
+            if (auto ptr = std::dynamic_pointer_cast<pointer_type>(t))
+                return std::dynamic_pointer_cast<struct_type>(type::remove_const(ptr->get_pointed_type()));
+            return nullptr;
+        };
+
+        // ── Helper: is target a non-null indirection (lnk or ref) ────────────
+        auto target_is_nonnull = [](const std::shared_ptr<type>& t) -> bool {
+            return type::is_link(t) || type::is_reference(t);
+        };
+
+        // ── Unwrap ref<indir> source once ─────────────────────────────────────
+        // Allows explicit casts like (Base*)(ref<ptr<Derived>>)
+        auto effective_source = source_type;
+        bool source_unwrapped_ref = false;
+        if (type::is_reference(source_type)) {
+            auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+            if (type::is_link(inner) || type::is_pinned(inner) || type::is_pointer(inner)) {
+                effective_source = inner;
+                source_unwrapped_ref = true;
             }
-        } else if(type::is_reference(source_type) && type::is_reference(target_type)) {
+        }
+
+        // ── Case: ptr/lnk/pin source → ptr/lnk/pin target ────────────────────
+        if ((type::is_pointer(effective_source) || type::is_link(effective_source) || type::is_pinned(effective_source)) &&
+            (type::is_pointer(target_type)       || type::is_link(target_type)       || type::is_pinned(target_type))) {
+
+            auto src_st = get_indir_struct(effective_source);
+            auto tgt_st_type = get_indir_struct(target_type);
+            if (src_st && tgt_st_type) {
+                auto src_agg = src_st->get_struct();
+                auto tgt_agg = tgt_st_type->get_struct();
+                if (src_agg && tgt_agg && src_agg != tgt_agg) {
+                    if (src_agg->is_derived_from(tgt_agg)) {
+                        // Static upcast: ptr/lnk/pin<Derived> → ptr/lnk/pin<Base>
+                        // IR handles GEP; model-level: no load_value wrapping needed.
+                        // null_is_fatal not needed for static upcast.
+                    } else if (tgt_agg->is_derived_from(src_agg) &&
+                               std::dynamic_pointer_cast<klass>(tgt_agg) != nullptr) {
+                        // Dynamic downcast: ptr/lnk/pin<Base> → ptr/lnk/pin<Derived> (RTTI)
+                        // Set null_is_fatal on the cast_expression for non-null targets.
+                        expr.set_null_is_fatal(target_is_nonnull(target_type));
+                    } else {
+                        throw_error(0x40033, std::nullopt,
+                            "Explicit cast: cannot cast from '{}' to '{}': "
+                            "the pointed types have no inheritance relationship",
+                            {source_type->to_string(), target_type->to_string()});
+                    }
+                }
+                // Same struct type: allowed (e.g. ptr<T>→lnk<T>).
+            }
+            // If source or target does not point to a struct/class: allowed (opaque ptr reinterpret).
+        }
+
+        // ── Case: ptr/lnk/pin/ref source → bool target ────────────────────────
+        else if (type::is_pointer(effective_source) && type::is_prim_bool(target_type)) {
+            // Pointer-to-bool: valid (null check). No model transformation needed.
+        }
+
+        // ── Case: ref<Struct> → ref<Struct> (same handling as implicit upcast/downcast) ──
+        else if (type::is_reference(source_type) && type::is_reference(target_type)) {
             // Struct reference upcast: ref<Derived> → ref<Base>
-            // Both are references and types differ — validated during adapt_type / compute_cast_weight.
-            // No additional transformation needed at model level; IR generation handles GEP.
-            // Keep as-is (no load_value replacement).
-        } else if(type::is_reference(source_type)) {
-            if(type::is_reference(target_type)) {
-                // TODO throw an error, casting references is not supported yet (not for any primitive type)
+            // or dynamic downcast: ref<Base> → ref<Derived> (fatal if RTTI mismatch)
+            auto src_ref = std::dynamic_pointer_cast<reference_type>(source_type);
+            auto tgt_ref = std::dynamic_pointer_cast<reference_type>(target_type);
+            auto src_sub_nc = type::remove_const(src_ref->get_referenced_type());
+            auto tgt_sub_nc = type::remove_const(tgt_ref->get_referenced_type());
+            auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st_type && tgt_st_type && src_st_type != tgt_st_type) {
+                auto src_agg = src_st_type->get_struct();
+                auto tgt_agg = tgt_st_type->get_struct();
+                if (src_agg && tgt_agg) {
+                    if (src_agg->is_derived_from(tgt_agg)) {
+                        // Static upcast ref<Derived>→ref<Base>: handled by IR GEP.
+                    } else if (tgt_agg->is_derived_from(src_agg) &&
+                               std::dynamic_pointer_cast<klass>(tgt_agg) != nullptr) {
+                        // Dynamic downcast ref<Base>→ref<Derived>: ref is non-null → fatal.
+                        expr.set_null_is_fatal(true);
+                    } else {
+                        throw_error(0x40034, std::nullopt,
+                            "Explicit cast: cannot cast reference from '{}' to '{}': "
+                            "the referenced types have no inheritance relationship",
+                            {source_type->to_string(), target_type->to_string()});
+                    }
+                }
             }
+            // Keep as-is (no load_value replacement).
+        }
+
+        // ── Case: ref<Struct/Prim> → value (load) ──────────────────────────────
+        else if(type::is_reference(source_type)) {
+            // ref<T> → T : wrap in load_value
             auto deref = load_value_expression::make_shared(sub_expr->shared_as<expression>());
             expr.assign(deref);
             deref->set_type(source_type->get_subtype());
         }
     }
 
-    // TODO check if cast is possible (expr.expr().get_type() && expr.get_cast_type() compatibility)
 
     expr.set_type(expr.get_cast_type());
 }

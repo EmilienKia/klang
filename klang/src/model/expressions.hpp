@@ -480,8 +480,12 @@ public:
     }
     std::shared_ptr<type> get_cast_type() { return _cast_type; }
     std::shared_ptr<const type> get_cast_type() const { return _cast_type; }
+    /** Update the cast target type (used by type_reference_resolver to resolve unresolved types). */
+    void set_cast_type(const std::shared_ptr<type>& t) { _cast_type = t; _type = t; }
     /** True if a null result from a dynamic cast is fatal (target is lnk or ref). */
     bool null_is_fatal() const { return _null_is_fatal; }
+    /** Set whether a null result from a dynamic cast should trigger a fatal trap. */
+    void set_null_is_fatal(bool v) { _null_is_fatal = v; }
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<cast_expression> c{new cast_expression()};
         c->_type = _type;
