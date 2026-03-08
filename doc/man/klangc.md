@@ -64,6 +64,20 @@ both `clang -shared` and `ar`. `-o` is ignored in this mode (a warning is
 emitted); output names are always derived automatically.  
 A warning is also emitted if the module contains a `main` function.
 
+**`--emit-kdi-json`**  
+When producing a library (`.so` or `.a`), also write a `.kdi.json` file
+alongside the `.kdi` CBOR file.  The JSON file is a human-readable equivalent
+of the binary KDI file and has the same content.  The output name is always
+`<lib-stem>.kdi.json` (e.g. `libmath.utils.kdi.json`).  If neither
+`--dyn-lib` nor `--static-lib` is active and the module has no `main`, the
+option is applied to the auto-produced shared library.
+
+**`--no-emit-kdi`**  
+Suppress automatic `.kdi` generation when producing a library.  By default,
+**klangc** always writes a `.kdi` description file alongside every `.so` or
+`.a` it produces.  This flag disables that behaviour entirely.  Implies that
+`--emit-kdi-json` has no effect.
+
 **`-o` _file_**, **`--output=`_file_**  
 Place the primary output (object file, executable, or library) into _file_.  
 When `-c` is not specified and no `-o` is given, the output name is derived
@@ -339,8 +353,59 @@ klangc --print-effective-triple
 | `*.o` | Native object file produced by `-c` |
 | `lib*.so` | Shared library produced by `--dyn-lib` or auto-detection |
 | `lib*.a` | Static archive produced by `--static-lib` |
+| `lib*.kdi` | K Description Interface file — generated automatically alongside every library |
+| `lib*.kdi.json` | Human-readable JSON equivalent of the `.kdi` file (opt-in via `--emit-kdi-json`) |
 | `*.raw.ll` | Auto-generated raw LLVM IR text file |
 | `*.opt.ll` | Auto-generated optimised LLVM IR text file |
+
+---
+
+## KDI DESCRIPTION FILES
+
+Whenever **klangc** produces a library (`.so` or `.a`), it also generates a
+**KDI** (K Description Interface) file in the same directory and with the same
+stem, but with the `.kdi` extension.
+
+```
+libmath.utils.so   →   libmath.utils.kdi
+libmath.utils.a    →   libmath.utils.kdi   (same file if both produced)
+```
+
+A KDI file is a **CBOR**-encoded binary file (schema version **0.1**) that
+describes the public and protected API surface of the compiled module:
+
+* **Header** — module name, library base name, path to the library binary,
+  compiler version, and schema version.
+* **Type table** — flat list of all aggregate type entries referenced by the
+  module (fully-qualified name + LLVM struct mangled name).
+* **Namespace tree** — recursive tree of namespaces containing:
+  * Public / protected **global functions** with parameter types, return type
+    and mangled symbol name.
+  * Public / protected **global variables** with type and mangled symbol name.
+  * Public / protected **aggregates** (struct / class / interface) with:
+    - Inheritance clause (base FQ name, visibility, virtual flag, byte offset).
+    - Physical layout (fields in LLVM index order): vptr, base subobjects,
+      vbptr, vbase subobjects, parent reference, public/protected member
+      variables, and **opaque blocks** for private fields (size in bits only).
+    - Public / protected constructors (mangled C1 + C2 names).
+    - Public / protected destructor (mangled D1 + D2 names).
+    - Public / protected member methods (virtual flag, abstract, final, vtable
+      slot index, mangled name).
+    - Public / protected static variables.
+    - Vtable layout for classes and interfaces (primary + secondary vtables,
+      thunks).
+    - Nested public / protected aggregates.
+
+Private members are **obfuscated**: they appear as opaque blocks that only
+expose their cumulative bit-size, preserving enough layout information for
+subclasses to be compiled correctly without exposing implementation details.
+
+KDI files can be inspected with the **kditool(1)** utility:
+
+```sh
+kditool dump libmath.utils.kdi
+kditool validate libmath.utils.kdi
+```
 
 ---
 
@@ -355,6 +420,10 @@ klangc --print-effective-triple
   intermediate object file is generated **once** and passed to both
   `clang -shared -fPIC` (`.so`) and `ar rcs` (`.a`). `-o` is ignored
   in this combined mode.
+* A **KDI** description file (`.kdi`) is generated automatically alongside
+  every library output (`.so` or `.a`).  When both are produced in a single
+  pass (`--dyn-lib --static-lib`), a single `.kdi` file is emitted, keyed
+  on the `.so` path.  See *KDI DESCRIPTION FILES* above.
 * Shared-library linking uses **clang(1)** with `-shared -fPIC`.  Static
   archives are created with **ar(1)** (`rcs`).  Executable linking uses
   **clang(1)** with `-pie`.  Both `clang` and `ar` must be present in `PATH`.

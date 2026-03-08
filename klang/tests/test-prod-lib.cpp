@@ -22,7 +22,12 @@
 #include "../src/common/process.hpp"
 #include "../src/compiler.hpp"
 
+#include <kdi.hpp>
+#include <kdi_symbols.hpp>
+
 #include "helpers.hpp"
+
+#include <set>
 
 
 // ---------------------------------------------------------------------------
@@ -213,4 +218,292 @@ TEST_CASE("Both libraries: single pass produces .so and .a with same symbols", "
     std::filesystem::remove(so_path);
     std::filesystem::remove(a_path);
 }
+
+
+// ---------------------------------------------------------------------------
+// KDI file generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Given a library path (e.g. /tmp/foo.so or /tmp/foo.a), derive the expected
+ * path of the KDI file (same stem, extension = .kdi).
+ */
+static std::filesystem::path kdi_path_for(const std::string& lib_path) {
+    std::filesystem::path p(lib_path);
+    p.replace_extension(".kdi");
+    return p;
+}
+
+TEST_CASE("KDI: .kdi file generated alongside shared library", "[prod-lib][kdi][shared]") {
+    std::string so_path;
+    REQUIRE_NOTHROW(so_path = build_shared_library(R"SRC(
+        module kdi::test::sharedlib;
+
+        namespace kdi {
+            namespace test {
+                namespace sharedlib {
+                    compute(x: int) : int {
+                        return x * 2;
+                    }
+                }
+            }
+        }
+    )SRC"));
+
+    REQUIRE( std::filesystem::exists(so_path) );
+
+    // A .kdi file must have been produced next to the .so
+    auto kdi_p = kdi_path_for(so_path);
+    INFO("Expected KDI path: " << kdi_p);
+    REQUIRE( std::filesystem::exists(kdi_p) );
+    REQUIRE( std::filesystem::file_size(kdi_p) > 0 );
+
+    // Parse and validate the KDI file
+    kdi::kdi_file kdi_file;
+    REQUIRE_NOTHROW( kdi_file = kdi::kdi_read_cbor_file(kdi_p.string()) );
+
+    // Schema version must be 0.1
+    REQUIRE( kdi_file.header.schema_major == 0 );
+    REQUIRE( kdi_file.header.schema_minor == 1 );
+
+    // Module name must match
+    REQUIRE( kdi_file.header.module_name == "kdi::test::sharedlib" );
+
+    // Lib base must be derived correctly
+    REQUIRE( kdi_file.header.lib_base == "kdi.test.sharedlib" );
+
+    // Walk the namespace tree to find the 'compute' function
+    // root_ns → kdi → test → sharedlib → functions
+    bool found_compute = false;
+    for (auto& ns1 : kdi_file.unit.root_ns.namespaces) {
+        if (ns1.name != "kdi") continue;
+        for (auto& ns2 : ns1.namespaces) {
+            if (ns2.name != "test") continue;
+            for (auto& ns3 : ns2.namespaces) {
+                if (ns3.name != "sharedlib") continue;
+                for (auto& fn : ns3.functions) {
+                    if (fn.name == "compute") {
+                        found_compute = true;
+                        // Mangled name must be non-empty
+                        REQUIRE_FALSE( fn.mangled_name.empty() );
+                        // Return type: int (32-bit signed)
+                        REQUIRE( std::holds_alternative<kdi::kdi_int_type>(fn.return_type.value) );
+                        // One parameter: x: int
+                        REQUIRE( fn.params.size() == 1 );
+                        REQUIRE( fn.params[0].name == "x" );
+                    }
+                }
+            }
+        }
+    }
+    INFO("KDI root_ns.namespaces: " << kdi_file.unit.root_ns.namespaces.size());
+    REQUIRE( found_compute );
+
+    // kdi validate must report VALID
+    auto val_result = kdi::kdi_validate(kdi_file);
+    for (auto& e : val_result.errors) INFO("KDI validation error: " << e.path << ": " << e.message);
+    REQUIRE( val_result.is_valid() );
+
+    std::filesystem::remove(so_path);
+    std::filesystem::remove(kdi_p);
+}
+
+TEST_CASE("KDI: .kdi file generated alongside static library", "[prod-lib][kdi][static]") {
+    std::string a_path;
+    REQUIRE_NOTHROW(a_path = build_static_library(R"SRC(
+        module kdi::test::staticlib;
+
+        namespace kdi {
+            namespace test {
+                namespace staticlib {
+                    triple(x: int) : int {
+                        return x * 3;
+                    }
+                }
+            }
+        }
+    )SRC"));
+
+    REQUIRE( std::filesystem::exists(a_path) );
+
+    auto kdi_p = kdi_path_for(a_path);
+    INFO("Expected KDI path: " << kdi_p);
+    REQUIRE( std::filesystem::exists(kdi_p) );
+
+    kdi::kdi_file kdi_file2;
+    REQUIRE_NOTHROW( kdi_file2 = kdi::kdi_read_cbor_file(kdi_p.string()) );
+    REQUIRE( kdi_file2.header.module_name == "kdi::test::staticlib" );
+    REQUIRE( kdi_file2.header.schema_major == 0 );
+    REQUIRE( kdi_file2.header.schema_minor == 1 );
+
+    // Find 'triple'
+    bool found = false;
+    for (auto& ns1 : kdi_file2.unit.root_ns.namespaces) {
+        if (ns1.name != "kdi") continue;
+        for (auto& ns2 : ns1.namespaces) {
+            if (ns2.name != "test") continue;
+            for (auto& ns3 : ns2.namespaces) {
+                if (ns3.name != "staticlib") continue;
+                for (auto& fn : ns3.functions) {
+                    if (fn.name == "triple") { found = true; REQUIRE_FALSE(fn.mangled_name.empty()); }
+                }
+            }
+        }
+    }
+    REQUIRE( found );
+
+    std::filesystem::remove(a_path);
+    std::filesystem::remove(kdi_p);
+}
+
+TEST_CASE("KDI: both-library pass produces a single .kdi keyed on .so", "[prod-lib][kdi][both]") {
+    auto [so_path, a_path] = build_both_libraries(R"SRC(
+        module kdi::test::bothlibs;
+
+        namespace kdi {
+            namespace test {
+                namespace bothlibs {
+                    halve(x: int) : int {
+                        return x / 2;
+                    }
+                }
+            }
+        }
+    )SRC");
+
+    REQUIRE( std::filesystem::exists(so_path) );
+    REQUIRE( std::filesystem::exists(a_path) );
+
+    // KDI is keyed on the .so
+    auto kdi_p = kdi_path_for(so_path);
+    REQUIRE( std::filesystem::exists(kdi_p) );
+
+    kdi::kdi_file kdi_file3;
+    REQUIRE_NOTHROW( kdi_file3 = kdi::kdi_read_cbor_file(kdi_p.string()) );
+    REQUIRE( kdi_file3.header.module_name == "kdi::test::bothlibs" );
+
+    bool found = false;
+    for (auto& ns1 : kdi_file3.unit.root_ns.namespaces) {
+        if (ns1.name != "kdi") continue;
+        for (auto& ns2 : ns1.namespaces) {
+            if (ns2.name != "test") continue;
+            for (auto& ns3 : ns2.namespaces) {
+                if (ns3.name != "bothlibs") continue;
+                for (auto& fn : ns3.functions) {
+                    if (fn.name == "halve") { found = true; }
+                }
+            }
+        }
+    }
+    REQUIRE( found );
+
+    std::filesystem::remove(so_path);
+    std::filesystem::remove(a_path);
+    std::filesystem::remove(kdi_p);
+}
+
+// ---------------------------------------------------------------------------
+// check-symbols: cross-check .kdi against the produced binary
+// ---------------------------------------------------------------------------
+
+TEST_CASE("check-symbols: .kdi vs .so — all symbols present", "[prod-lib][check-symbols][so]") {
+    std::string so_path;
+    REQUIRE_NOTHROW(so_path = build_shared_library(R"SRC(
+        module chksym::sotest;
+
+        namespace chksym {
+            namespace sotest {
+                multiply(a: int, b: int) : int {
+                    return a * b;
+                }
+                subtract(a: int, b: int) : int {
+                    return a - b;
+                }
+            }
+        }
+    )SRC"));
+
+    REQUIRE( std::filesystem::exists(so_path) );
+    auto kdi_p = kdi_path_for(so_path);
+    REQUIRE( std::filesystem::exists(kdi_p) );
+
+    kdi::kdi_file kdi_file;
+    REQUIRE_NOTHROW( kdi_file = kdi::kdi_read_cbor_file(kdi_p.string()) );
+
+    // Collect symbols from the .so and check
+    std::set<std::string> binary_syms;
+    REQUIRE_NOTHROW( binary_syms = kdi::kdi_collect_binary_symbols(so_path) );
+    REQUIRE( !binary_syms.empty() );
+
+    auto result = kdi::kdi_check_symbols(kdi_file, binary_syms);
+    INFO( "Missing symbols:" );
+    for (auto& m : result.missing) INFO( "  [" << m.context << "] " << m.mangled_name );
+    REQUIRE( result.is_ok() );
+
+    std::filesystem::remove(so_path);
+    std::filesystem::remove(kdi_p);
+}
+
+TEST_CASE("check-symbols: .kdi vs .a — all symbols present", "[prod-lib][check-symbols][a]") {
+    std::string a_path;
+    REQUIRE_NOTHROW(a_path = build_static_library(R"SRC(
+        module chksym::atest;
+
+        namespace chksym {
+            namespace atest {
+                divide(a: int, b: int) : int {
+                    return a / b;
+                }
+            }
+        }
+    )SRC"));
+
+    REQUIRE( std::filesystem::exists(a_path) );
+    auto kdi_p = kdi_path_for(a_path);
+    REQUIRE( std::filesystem::exists(kdi_p) );
+
+    kdi::kdi_file kdi_file;
+    REQUIRE_NOTHROW( kdi_file = kdi::kdi_read_cbor_file(kdi_p.string()) );
+
+    auto result = kdi::kdi_check_symbols(kdi_file, a_path);
+    INFO( "Missing symbols:" );
+    for (auto& m : result.missing) INFO( "  [" << m.context << "] " << m.mangled_name );
+    REQUIRE( result.is_ok() );
+
+    std::filesystem::remove(a_path);
+    std::filesystem::remove(kdi_p);
+}
+
+TEST_CASE("check-symbols: convenience overload (path) works end-to-end", "[prod-lib][check-symbols][so]") {
+    std::string so_path;
+    REQUIRE_NOTHROW(so_path = build_shared_library(R"SRC(
+        module chksym::conv;
+
+        namespace chksym {
+            namespace conv {
+                negate(x: int) : int {
+                    return 0 - x;
+                }
+            }
+        }
+    )SRC"));
+
+    REQUIRE( std::filesystem::exists(so_path) );
+    auto kdi_p = kdi_path_for(so_path);
+    REQUIRE( std::filesystem::exists(kdi_p) );
+
+    kdi::kdi_file kdi_file;
+    REQUIRE_NOTHROW( kdi_file = kdi::kdi_read_cbor_file(kdi_p.string()) );
+
+    // Use the convenience overload (passes binary path directly)
+    kdi::kdi_symbol_check_result result;
+    REQUIRE_NOTHROW( result = kdi::kdi_check_symbols(kdi_file, so_path) );
+    INFO( "Missing symbols:" );
+    for (auto& m : result.missing) INFO( "  [" << m.context << "] " << m.mangled_name );
+    REQUIRE( result.is_ok() );
+
+    std::filesystem::remove(so_path);
+    std::filesystem::remove(kdi_p);
+}
+
 

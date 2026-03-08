@@ -46,10 +46,12 @@ class context;
  * If a file path is empty, the output goes to stdout.
  */
 struct IrOutputOptions {
-    bool emit_raw_ir = false;       ///< Export IR after code generation (before optimisation)
+    bool emit_raw_ir  = false;      ///< Export IR after code generation (before optimisation)
     std::string raw_ir_file;        ///< Destination file (empty = stdout)
-    bool emit_opt_ir = false;       ///< Export IR after optimisation
+    bool emit_opt_ir  = false;      ///< Export IR after optimisation
     std::string opt_ir_file;        ///< Destination file (empty = stdout)
+    bool emit_kdi_json = false;     ///< Also write a .kdi.json alongside every .kdi
+    bool no_emit_kdi  = false;      ///< Suppress .kdi generation even when producing a library
 };
 
 class compiler : protected log::logger,  public std::enable_shared_from_this<compiler> {
@@ -154,6 +156,19 @@ public:
     void optimize_gen_code();
 
     std::unique_ptr<k::model::gen::jit> to_jit(bool init_runtime = true);
+
+    /**
+     * Generate a KDI description file (.kdi) for the current module.
+     * The KDI file is placed alongside the binary (same directory, same stem,
+     * extension replaced with ".kdi").
+     *
+     * Called automatically by gen_shared_library(), gen_static_library() and
+     * gen_libraries() after a successful link.
+     *
+     * @param lib_path   Path to the produced binary (.so or .a).
+     * @return true on success.
+     */
+    bool gen_kdi(const std::string& lib_path);
 
     bool gen_object_file(const std::string& output_file);
 

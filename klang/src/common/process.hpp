@@ -19,9 +19,9 @@
 #ifndef KLANG_PROCESS_HPP
 #define KLANG_PROCESS_HPP
 
-
 #include <filesystem>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -33,7 +33,27 @@ struct exec_result {
     std::string err;
 };
 
+/**
+ * Exception thrown when a required external tool cannot be found on PATH.
+ */
+struct tool_not_found : std::runtime_error {
+    std::string tool_name;
+    explicit tool_not_found(const std::string& name)
+        : std::runtime_error("Required tool not found on PATH: '" + name + "'")
+        , tool_name(name) {}
+};
 
+/**
+ * Search for @p exe_name on PATH.
+ * @returns The absolute path to the executable.
+ * @throws  tool_not_found if the executable cannot be located.
+ */
+std::filesystem::path lookup_tool(const std::string& exe_name);
+
+/**
+ * Look up @p exe_name on PATH, then run it.
+ * @throws tool_not_found if the executable cannot be located.
+ */
 exec_result lookup_run_process(
     const std::string& exe_name,
     const std::vector<std::string>& args = {},

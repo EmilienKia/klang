@@ -85,6 +85,8 @@ int main(int argc, const char** argv) {
             ("emit-opt-ir", "Export LLVM IR text after optimisation")
             ("opt-ir-file", po::value<std::string>(&opt_ir_file)->implicit_value(""),
                             "Write optimised IR to <arg> file (implies --emit-opt-ir; omit value or use - for stdout)")
+            ("emit-kdi-json", "Also write a .kdi.json alongside the .kdi file when producing a library")
+            ("no-emit-kdi",   "Suppress .kdi generation when producing a library")
             ;
 
     po::options_description cli_target_options("Target options");
@@ -184,10 +186,12 @@ int main(int argc, const char** argv) {
 
         // Build and apply IR export options
         k::IrOutputOptions ir_opts;
-        ir_opts.emit_raw_ir = vm.count("emit-raw-ir") > 0 || vm.count("raw-ir-file") > 0;
-        ir_opts.raw_ir_file = (raw_ir_file == "-") ? "" : raw_ir_file;
-        ir_opts.emit_opt_ir = vm.count("emit-opt-ir") > 0 || vm.count("opt-ir-file") > 0;
-        ir_opts.opt_ir_file = (opt_ir_file == "-") ? "" : opt_ir_file;
+        ir_opts.emit_raw_ir   = vm.count("emit-raw-ir") > 0 || vm.count("raw-ir-file") > 0;
+        ir_opts.raw_ir_file   = (raw_ir_file == "-") ? "" : raw_ir_file;
+        ir_opts.emit_opt_ir   = vm.count("emit-opt-ir") > 0 || vm.count("opt-ir-file") > 0;
+        ir_opts.opt_ir_file   = (opt_ir_file == "-") ? "" : opt_ir_file;
+        ir_opts.emit_kdi_json = vm.count("emit-kdi-json") > 0;
+        ir_opts.no_emit_kdi   = vm.count("no-emit-kdi")   > 0;
         compiler->set_ir_output_options(ir_opts);
 
         // Pre-resolve IR file names from the expected output path so that

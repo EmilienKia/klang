@@ -608,6 +608,9 @@ protected:
 public:
     bool is_resolved() const override;
     std::string to_string() const override;
+
+    const std::shared_ptr<type>& get_return_type() const { return _return_type; }
+    const std::vector<std::shared_ptr<type>>& get_parameter_types() const { return _parameter_types; }
 };
 
 class member_function_reference_type : public function_reference_type {

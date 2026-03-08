@@ -18,6 +18,8 @@
 
 #include "compiler.hpp"
 
+#include "config.h"
+
 #include <filesystem>
 #include <iostream>
 #include <llvm/IR/Verifier.h>
@@ -47,6 +49,9 @@
 #include "parse/ast_dump.hpp"
 #include "model/model_builder.hpp"
 #include "model/model_dump.hpp"
+#include "model/kdi_exporter.hpp"
+
+#include <kdi.hpp>
 
 namespace k {
 
@@ -447,7 +452,14 @@ bool compiler::gen_executable(const std::string& output_file) {
     gen_object_file(object_path);
 
     std::cout << "Generating executable: " << output_path << std::endl;
-    auto exec_res = tools::lookup_run_process("clang", {"-pie", "-o", output_path.string(), object_path.string()});
+    tools::exec_result exec_res;
+    try {
+        exec_res = tools::lookup_run_process("clang", {"-pie", "-o", output_path.string(), object_path.string()});
+    } catch (const tools::tool_not_found& e) {
+        std::cerr << "Error: " << e.what() << " (needed to link executable)" << std::endl;
+        std::filesystem::remove(object_path);
+        return false;
+    }
 
     std::filesystem::remove(object_path);
 
@@ -476,6 +488,41 @@ std::string compiler::get_lib_base_name() const {
 
 // ---------------------------------------------------------------------------
 
+bool compiler::gen_kdi(const std::string& lib_path) {
+    // --no-emit-kdi: silently skip KDI generation
+    if (_ir_output_options.no_emit_kdi) return true;
+
+    if (!_model_unit) {
+        std::cerr << "gen_kdi: no compiled unit available." << std::endl;
+        return false;
+    }
+
+    // Derive .kdi path: same stem as lib_path, extension = ".kdi"
+    std::filesystem::path kdi_path(lib_path);
+    kdi_path.replace_extension(".kdi");
+
+    const std::string ver = "klangc-" + std::string(PROJECT_VER);
+
+    kdi::kdi_file kdi_file = k::model::build_kdi(*_context, *_model_unit, lib_path, ver);
+
+    if (!kdi::kdi_write_cbor_file(kdi_file, kdi_path.string())) {
+        std::cerr << "gen_kdi: failed to write '" << kdi_path << "'" << std::endl;
+        return false;
+    }
+    std::cout << "Generated KDI: " << kdi_path << std::endl;
+
+    // Optionally also write the JSON equivalent (.kdi.json)
+    if (_ir_output_options.emit_kdi_json) {
+        std::string json_path = kdi_path.string() + ".json";
+        if (!kdi::kdi_write_json_file(kdi_file, json_path)) {
+            std::cerr << "gen_kdi: failed to write JSON '" << json_path << "'" << std::endl;
+        } else {
+            std::cout << "Generated KDI JSON: " << json_path << std::endl;
+        }
+    }
+    return true;
+}
+
 bool compiler::gen_shared_library(const std::string& output_file) {
     std::filesystem::path output_path(
         output_file.empty() ? "lib" + get_lib_base_name() + ".so"
@@ -488,12 +535,20 @@ bool compiler::gen_shared_library(const std::string& output_file) {
     gen_object_file(object_path);
 
     std::cout << "Generating shared library: " << output_path << std::endl;
-    auto exec_res = tools::lookup_run_process("clang", {"-shared", "-fPIC", "-o", output_path.string(), object_path.string()});
+    tools::exec_result exec_res;
+    try {
+        exec_res = tools::lookup_run_process("clang", {"-shared", "-fPIC", "-o", output_path.string(), object_path.string()});
+    } catch (const tools::tool_not_found& e) {
+        std::cerr << "Error: " << e.what() << " (needed to link shared library)" << std::endl;
+        std::filesystem::remove(object_path);
+        return false;
+    }
 
     std::filesystem::remove(object_path);
 
     if (!exec_res.out.empty()) std::cout << exec_res.out << std::endl;
     if (!exec_res.err.empty()) std::cerr << exec_res.err << std::endl;
+    if (exec_res.exit_code == 0) gen_kdi(output_path.string());
     return exec_res.exit_code == 0;
 }
 
@@ -510,12 +565,20 @@ bool compiler::gen_static_library(const std::string& output_file) {
 
     std::cout << "Generating static library: " << output_path << std::endl;
     // ar rcs: create archive, add index, be silent on missing files
-    auto exec_res = tools::lookup_run_process("ar", {"rcs", output_path.string(), object_path.string()});
+    tools::exec_result exec_res;
+    try {
+        exec_res = tools::lookup_run_process("ar", {"rcs", output_path.string(), object_path.string()});
+    } catch (const tools::tool_not_found& e) {
+        std::cerr << "Error: " << e.what() << " (needed to create static library)" << std::endl;
+        std::filesystem::remove(object_path);
+        return false;
+    }
 
     std::filesystem::remove(object_path);
 
     if (!exec_res.out.empty()) std::cout << exec_res.out << std::endl;
     if (!exec_res.err.empty()) std::cerr << exec_res.err << std::endl;
+    if (exec_res.exit_code == 0) gen_kdi(output_path.string());
     return exec_res.exit_code == 0;
 }
 
@@ -538,19 +601,35 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
 
     // Shared library
     std::cout << "Generating shared library: " << so_path << std::endl;
-    auto so_res = tools::lookup_run_process("clang", {"-shared", "-fPIC", "-o", so_path.string(), object_path.string()});
+    tools::exec_result so_res;
+    try {
+        so_res = tools::lookup_run_process("clang", {"-shared", "-fPIC", "-o", so_path.string(), object_path.string()});
+    } catch (const tools::tool_not_found& e) {
+        std::cerr << "Error: " << e.what() << " (needed to link shared library)" << std::endl;
+        std::filesystem::remove(object_path);
+        return false;
+    }
     if (!so_res.out.empty()) std::cout << so_res.out << std::endl;
     if (!so_res.err.empty()) std::cerr << so_res.err << std::endl;
     ok &= (so_res.exit_code == 0);
 
     // Static library
     std::cout << "Generating static library: " << a_path << std::endl;
-    auto ar_res = tools::lookup_run_process("ar", {"rcs", a_path.string(), object_path.string()});
+    tools::exec_result ar_res;
+    try {
+        ar_res = tools::lookup_run_process("ar", {"rcs", a_path.string(), object_path.string()});
+    } catch (const tools::tool_not_found& e) {
+        std::cerr << "Error: " << e.what() << " (needed to create static library)" << std::endl;
+        std::filesystem::remove(object_path);
+        return false;
+    }
     if (!ar_res.out.empty()) std::cout << ar_res.out << std::endl;
     if (!ar_res.err.empty()) std::cerr << ar_res.err << std::endl;
     ok &= (ar_res.exit_code == 0);
 
     std::filesystem::remove(object_path);
+    // Generate KDI once (keyed on the .so path; same content for both libs)
+    if (ok) gen_kdi(so_path.string());
     return ok;
 }
 

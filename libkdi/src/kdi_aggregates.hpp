@@ -1,0 +1,284 @@
+/*
+ * K Language compiler — libkdi
+ *
+ * Copyright 2026 Emilien Kia
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef LIBKDI_AGGREGATES_HPP
+#define LIBKDI_AGGREGATES_HPP
+
+/**
+ * @file kdi_aggregates.hpp
+ *
+ * KDI aggregate (struct / class / interface) DTOs.
+ *
+ * The layout section of each aggregate exports ALL LLVM fields in index order,
+ * including synthetic compiler fields (vptrs, base sub-objects, …).
+ * Private member variables are collapsed into opaque_block entries that only
+ * expose their cumulative bit-size — implementation details remain hidden.
+ */
+
+#include "kdi_types.hpp"
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <variant>
+#include <vector>
+
+namespace kdi {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visibility
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum class kdi_visibility : uint8_t {
+    public_,
+    protected_,
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parameter & variable
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct kdi_param {
+    std::string name;
+    kdi_type    type;
+};
+
+struct kdi_variable {
+    std::string    name;
+    std::string    fq_name;
+    kdi_visibility visibility   = kdi_visibility::public_;
+    kdi_type       type;
+    bool           is_const     = false;
+    std::string    mangled_name;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Function / method
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Global or namespace-level function. */
+struct kdi_function {
+    std::string              name;
+    std::string              fq_name;
+    kdi_visibility           visibility   = kdi_visibility::public_;
+    bool                     is_static    = false;
+    kdi_type                 return_type;
+    std::vector<kdi_param>   params;
+    std::string              mangled_name;
+};
+
+/** Member method. */
+struct kdi_method {
+    std::string              name;
+    std::string              fq_name;
+    kdi_visibility           visibility      = kdi_visibility::public_;
+    bool                     is_static       = false;
+    bool                     is_const_member = false;
+    bool                     is_virtual      = false;
+    bool                     is_abstract     = false;
+    bool                     is_final        = false;
+    int32_t                  vtable_slot     = -1;   ///< -1 = not virtual
+    kdi_type                 return_type;
+    std::vector<kdi_param>   params;                 ///< excluding 'this'
+    std::string              mangled_name;
+};
+
+struct kdi_constructor {
+    kdi_visibility           visibility          = kdi_visibility::public_;
+    bool                     is_copy_constructor = false;
+    bool                     is_defaulted        = false;
+    bool                     is_deleted          = false;
+    std::vector<kdi_param>   params;
+    std::string              mangled_name;         ///< C1 variant
+    std::string              mangled_name_c2;      ///< C2 (base-subobject) variant
+};
+
+struct kdi_destructor {
+    kdi_visibility visibility             = kdi_visibility::public_;
+    bool           is_virtual             = false;
+    bool           is_compiler_generated  = false;
+    std::string    mangled_name;           ///< D1 variant
+    std::string    mangled_name_d2;        ///< D2 (base-subobject) variant
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vtable
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct kdi_vtable_slot {
+    uint32_t    slot_index       = 0;
+    std::string introducing_func;   ///< fq_name of the introducing function
+    std::string override_symbol;    ///< mangled name; empty if abstract
+    bool        is_abstract      = false;
+};
+
+struct kdi_thunk {
+    uint32_t    slot_index       = 0;
+    std::string real_func_symbol;   ///< mangled name of concrete override
+    int32_t     this_adjustment  = 0;
+    bool        needs_thunk      = false;
+};
+
+struct kdi_secondary_vtable {
+    std::string            base_fq_name;
+    uint64_t               base_offset   = 0;  ///< byte offset in derived layout
+    std::string            vtable_symbol;       ///< mangled name (generated by derived compiler)
+    std::vector<kdi_thunk> thunks;
+};
+
+struct kdi_vtable {
+    std::string                       vtable_symbol;   ///< mangled name of primary vtable global
+    std::string                       rtti_symbol;     ///< mangled name of RTTI global
+    std::vector<kdi_vtable_slot>      slots;
+    std::vector<kdi_secondary_vtable> secondary;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layout fields
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Named, accessible member variable (public or protected). */
+struct kdi_layout_member {
+    std::string    name;
+    std::string    fq_name;
+    kdi_visibility visibility       = kdi_visibility::public_;
+    uint32_t       llvm_field_index = 0;
+    kdi_type       type;
+    bool           is_const         = false;
+    std::string    mangled_name;
+};
+
+/** Primary vptr (first field in classes/interfaces with a vtable). */
+struct kdi_layout_vptr {
+    uint32_t    llvm_field_index = 0;
+    std::string vtable_symbol;     ///< mangled name of the vtable global
+};
+
+/** Secondary vptr for a non-primary base sub-object. */
+struct kdi_layout_vptr_secondary {
+    uint32_t    llvm_field_index = 0;
+    std::string base_fq_name;
+    std::string vtable_symbol;
+};
+
+/** Embedded non-virtual base sub-object (__base_X__). */
+struct kdi_layout_base_subobject {
+    uint32_t    llvm_field_index = 0;
+    std::string base_fq_name;
+};
+
+/** Pointer-to-virtual-base slot (__vbptr_X__). */
+struct kdi_layout_vbptr {
+    uint32_t    llvm_field_index = 0;
+    std::string vbase_fq_name;
+};
+
+/** Embedded virtual base sub-object (__vbase_X__, in the "collector" class). */
+struct kdi_layout_vbase_subobject {
+    uint32_t    llvm_field_index = 0;
+    std::string vbase_fq_name;
+};
+
+/** Implicit parent reference (__parent__, non-static inner aggregates). */
+struct kdi_layout_parent_ref {
+    uint32_t    llvm_field_index = 0;
+    std::string parent_fq_name;
+};
+
+/**
+ * One or more consecutive private/hidden fields collapsed into an opaque block.
+ * The consumer must reserve exactly size_bits in the struct layout but cannot
+ * access individual fields by name.
+ */
+struct kdi_layout_opaque_block {
+    uint32_t llvm_field_index = 0;  ///< index of first field in this block
+    uint32_t field_count      = 0;  ///< number of LLVM fields in the block
+    uint64_t size_bits        = 0;  ///< total bit-size of all fields
+};
+
+using kdi_layout_field = std::variant<
+    kdi_layout_member,
+    kdi_layout_vptr,
+    kdi_layout_vptr_secondary,
+    kdi_layout_base_subobject,
+    kdi_layout_vbptr,
+    kdi_layout_vbase_subobject,
+    kdi_layout_parent_ref,
+    kdi_layout_opaque_block
+>;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Base spec
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct kdi_base {
+    std::string    fq_name;
+    kdi_visibility visibility       = kdi_visibility::public_;
+    bool           is_virtual       = false;
+    int32_t        base_field_index = -1;   ///< LLVM field index of __base_X__; -1 for virtual bases
+    uint64_t       byte_offset      = 0;    ///< byte offset in derived layout
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Aggregate
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum class kdi_aggregate_kind : uint8_t {
+    struct_,
+    class_,
+    interface_,
+};
+
+struct kdi_aggregate; // forward for nested aggregates
+
+struct kdi_aggregate {
+    // Identity
+    kdi_aggregate_kind   kind         = kdi_aggregate_kind::struct_;
+    std::string          name;
+    std::string          fq_name;
+    std::string          mangled_name;
+
+    // Modifiers
+    kdi_visibility       visibility   = kdi_visibility::public_;
+    bool                 is_abstract  = false;
+    bool                 is_final     = false;
+    bool                 is_const_struct = false;
+
+    // Inheritance
+    std::vector<kdi_base> bases;
+
+    // Physical layout (complete LLVM field list in index order)
+    std::vector<kdi_layout_field> layout;
+
+    // API
+    std::vector<kdi_constructor>  constructors;
+    std::optional<kdi_destructor> destructor;
+    std::vector<kdi_method>       methods;
+    std::vector<kdi_variable>     static_vars;
+
+    // Vtable (class/interface only)
+    std::optional<kdi_vtable>     vtable;
+
+    // Nested aggregates (public/protected)
+    std::vector<kdi_aggregate>    nested;
+};
+
+} // namespace kdi
+
+#endif // LIBKDI_AGGREGATES_HPP
+

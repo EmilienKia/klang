@@ -64,8 +64,15 @@ add_library(klangcomp
         src/compiler.hpp
         src/compiler.cpp
         src/common/process.cpp
+        src/model/kdi_exporter.hpp
+        src/model/kdi_exporter.cpp
 )
-target_link_libraries(klangcomp ${LLVM_LIBRARIES} ${Boost_LIBRARIES})
+
+# Make libkdi headers available to klangcomp
+target_include_directories(klangcomp PRIVATE
+    ${CMAKE_SOURCE_DIR}/libkdi/src
+)
+target_link_libraries(klangcomp ${LLVM_LIBRARIES} ${Boost_LIBRARIES} kdi)
 
 add_executable(klangc
         src/klang.cpp
@@ -110,8 +117,10 @@ add_executable(tests
         tests/test-gen-upcast.cpp
         tests/test-gen-cast-indirection.cpp
         tests/test-prod-lib.cpp
+        tests/test-process.cpp
 )
-target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain)
+target_link_libraries(tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain kdi)
+target_include_directories(tests PRIVATE ${CMAKE_SOURCE_DIR}/libkdi/src)
 
 
 #

@@ -4,3 +4,4 @@ project(klang
 )
 
 add_subdirectory(klang)
+add_subdirectory(libkdi)

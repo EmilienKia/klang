@@ -32,7 +32,16 @@ exec_result lookup_run_process(
     std::optional<std::chrono::milliseconds> timeout
 ) {
     bp::filesystem::path exe_path = bp::search_path(exe_name);
+    if (exe_path.empty())
+        throw tool_not_found(exe_name);
     return run_process(exe_path.string(), args, stdin_data, timeout);
+}
+
+std::filesystem::path lookup_tool(const std::string& exe_name) {
+    bp::filesystem::path p = bp::search_path(exe_name);
+    if (p.empty())
+        throw tool_not_found(exe_name);
+    return std::filesystem::path(p.string());
 }
 
 exec_result run_process(
