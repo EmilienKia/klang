@@ -19,9 +19,11 @@
 #include "compiler.hpp"
 
 #include "config.h"
+#include "common/path_lookup_file_resolver.hpp"
 
 #include <filesystem>
 #include <iostream>
+#include <unordered_set>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/FileSystem.h>
@@ -49,7 +51,9 @@
 #include "parse/ast_dump.hpp"
 #include "model/model_builder.hpp"
 #include "model/model_dump.hpp"
-#include "model/kdi_exporter.hpp"
+#include "model/tools/kdi_exporter.hpp"
+#include "model/tools/kdi_importer.hpp"
+#include "common/path_lookup_file_resolver.hpp"
 
 #include <kdi.hpp>
 
@@ -216,6 +220,22 @@ void compiler::parse_source(const std::string_view& path, const std::string_view
         }
         k::model::model_builder::visit(*this, _context, *_ast_unit, *_model_unit);
 
+        // ── Import resolution ──────────────────────────────────────────────
+        // Build a default resolver (current dir) if none was set by the caller.
+        if (!_file_resolver) {
+            auto r = std::make_shared<k::path_lookup_file_resolver>();
+            r->add_search_dir(std::filesystem::current_path());
+            _file_resolver = r;
+        }
+        k::model::kdi_importer importer(*_model_unit, *_file_resolver, *this,
+                                        _enforce_ns_collision);
+        importer.import_all();
+        // Phase B: eagerly materialise all imported symbols (aggregates, functions,
+        // variables) before any resolver pass runs.  This ensures that every
+        // imported type is registered in the context before type resolution begins.
+        // To switch to lazy loading in the future, simply remove this call.
+        importer.materialise_all(_context);
+
         if(dump) {
             k::model::dump::unit_dump unit_dump(std::cout);
             unit_dump.dump(*_model_unit);
@@ -248,6 +268,10 @@ void compiler::parse_source(const std::string_view& path, const std::string_view
             std::cout << "#" << std::endl << "# Type resolution" << std::endl << "#" << std::endl;
             unit_dump.dump(*_model_unit);
         }
+
+        // ── Phase C — unused-import check ─────────────────────────────────
+        // Must run after all resolver passes so that the 'used' flags are set.
+        importer.check_unused_imports();
 
         process_generation(optimize, dump);
     } catch (k::log::compiler_error&) {
@@ -324,6 +348,14 @@ void compiler::set_ir_output_options(const IrOutputOptions& opts) {
     if (!opts.opt_ir_file.empty()) {
         _ir_output_options.emit_opt_ir = true;
     }
+}
+
+void compiler::set_file_resolver(std::shared_ptr<k::file_resolver> resolver) {
+    _file_resolver = std::move(resolver);
+}
+
+void compiler::set_enforce_ns_collision(bool enforce) {
+    _enforce_ns_collision = enforce;
 }
 
 void compiler::emit_ir(const std::string& filepath) {
@@ -454,7 +486,11 @@ bool compiler::gen_executable(const std::string& output_file) {
     std::cout << "Generating executable: " << output_path << std::endl;
     tools::exec_result exec_res;
     try {
-        exec_res = tools::lookup_run_process("clang", {"-pie", "-o", output_path.string(), object_path.string()});
+        std::vector<std::string> clang_args = {"-pie", "-o", output_path.string(), object_path.string()};
+        // Append -L/-l flags for used imports
+        auto import_args = build_import_link_args();
+        clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
+        exec_res = tools::lookup_run_process("clang", clang_args);
     } catch (const tools::tool_not_found& e) {
         std::cerr << "Error: " << e.what() << " (needed to link executable)" << std::endl;
         std::filesystem::remove(object_path);
@@ -487,6 +523,48 @@ std::string compiler::get_lib_base_name() const {
 }
 
 // ---------------------------------------------------------------------------
+// Import link args
+// ---------------------------------------------------------------------------
+
+std::vector<std::string> compiler::build_import_link_args() const {
+    std::vector<std::string> args;
+
+    if (!_model_unit) return args;
+
+    // ── -L<dir> flags from the file resolver search paths ─────────────────
+    if (auto plr = std::dynamic_pointer_cast<const path_lookup_file_resolver>(_file_resolver)) {
+        for (const auto& dir : plr->get_lib_search_dirs()) {
+            args.push_back("-L" + dir.string());
+        }
+    }
+
+    // ── -l<base> for each used direct import ──────────────────────────────
+    // Track added lib bases to avoid duplicates (direct + transitive may overlap)
+    std::unordered_set<std::string> added_libs;
+
+    for (const auto& imp : _model_unit->get_imports()) {
+        if (!imp.used) continue;
+        if (!imp.kdi)  continue;
+        const std::string& lib_base = imp.kdi->header.lib_base;
+        if (!lib_base.empty() && added_libs.insert(lib_base).second) {
+            args.push_back("-l" + lib_base);
+        }
+    }
+
+    // ── -l<base> for transitive dependencies of used imports ──────────────
+    // When lib A depends on lib B, and an executable imports A, the linker
+    // needs -lB as well because libA.so has a DT_NEEDED on libB.so and the
+    // linker must resolve its undefined symbols at link time.
+    for (const auto& tkdi : _model_unit->get_transitive_kdis()) {
+        if (!tkdi) continue;
+        const std::string& lib_base = tkdi->header.lib_base;
+        if (!lib_base.empty() && added_libs.insert(lib_base).second) {
+            args.push_back("-l" + lib_base);
+        }
+    }
+
+    return args;
+}
 
 bool compiler::gen_kdi(const std::string& lib_path) {
     // --no-emit-kdi: silently skip KDI generation
@@ -537,7 +615,10 @@ bool compiler::gen_shared_library(const std::string& output_file) {
     std::cout << "Generating shared library: " << output_path << std::endl;
     tools::exec_result exec_res;
     try {
-        exec_res = tools::lookup_run_process("clang", {"-shared", "-fPIC", "-o", output_path.string(), object_path.string()});
+        std::vector<std::string> clang_args = {"-shared", "-fPIC", "-o", output_path.string(), object_path.string()};
+        auto import_args = build_import_link_args();
+        clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
+        exec_res = tools::lookup_run_process("clang", clang_args);
     } catch (const tools::tool_not_found& e) {
         std::cerr << "Error: " << e.what() << " (needed to link shared library)" << std::endl;
         std::filesystem::remove(object_path);
@@ -603,7 +684,10 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
     std::cout << "Generating shared library: " << so_path << std::endl;
     tools::exec_result so_res;
     try {
-        so_res = tools::lookup_run_process("clang", {"-shared", "-fPIC", "-o", so_path.string(), object_path.string()});
+        std::vector<std::string> clang_args = {"-shared", "-fPIC", "-o", so_path.string(), object_path.string()};
+        auto import_args = build_import_link_args();
+        clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
+        so_res = tools::lookup_run_process("clang", clang_args);
     } catch (const tools::tool_not_found& e) {
         std::cerr << "Error: " << e.what() << " (needed to link shared library)" << std::endl;
         std::filesystem::remove(object_path);

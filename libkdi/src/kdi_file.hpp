@@ -54,6 +54,9 @@ struct kdi_header {
     std::string lib_path;          ///< path to the .so/.a (informational)
     std::string target_triple;     ///< e.g. "x86_64-pc-linux-gnu"
     std::string compiler_ver;      ///< klangc version string
+    /// List of module names (canonical form) that this module directly imports.
+    /// Used by consumers to perform transitive KDI loading.
+    std::vector<std::string> dependencies;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

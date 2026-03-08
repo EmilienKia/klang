@@ -163,6 +163,8 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
     }
     out << "  // " << agg.mangled_name << "\n";
     out << indent(depth) << "{\n";
+    if (!agg.llvm_def.empty())
+        out << indent(depth + 1) << "// llvm: " << agg.llvm_def << "\n";
 
     dump_layout(agg.layout, out, depth + 1);
 
@@ -178,6 +180,8 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
         out << "constructor" << params_str(c.params)
             << "  // C1=" << c.mangled_name
             << " C2=" << c.mangled_name_c2 << "\n";
+        if (!c.llvm_def.empty())
+            out << indent(depth + 2) << "// llvm: " << c.llvm_def << "\n";
     }
     // destructor
     if (agg.destructor) {
@@ -185,6 +189,8 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
         out << indent(depth + 1) << vis_str(d.visibility) << " ";
         if (d.is_virtual) out << "virtual ";
         out << "destructor  // D1=" << d.mangled_name << " D2=" << d.mangled_name_d2 << "\n";
+        if (!d.llvm_def.empty())
+            out << indent(depth + 2) << "// llvm: " << d.llvm_def << "\n";
     }
     // methods
     for (auto& m : agg.methods) {
@@ -197,6 +203,8 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
         out << m.name << params_str(m.params) << " : " << type_str(m.return_type);
         if (m.vtable_slot >= 0) out << "  // slot=" << m.vtable_slot;
         out << "  // " << m.mangled_name << "\n";
+        if (!m.llvm_def.empty())
+            out << indent(depth + 2) << "// llvm: " << m.llvm_def << "\n";
     }
     // static vars
     for (auto& v : agg.static_vars) {
@@ -223,6 +231,8 @@ void dump_namespace(const kdi_namespace& ns, std::ostream& out, int depth) {
         if (f.is_static) out << "static ";
         out << f.name << params_str(f.params) << " : " << type_str(f.return_type)
             << "  // " << f.mangled_name << "\n";
+        if (!f.llvm_def.empty())
+            out << indent(d + 1) << "// llvm: " << f.llvm_def << "\n";
     }
 
     for (auto& v : ns.variables) {

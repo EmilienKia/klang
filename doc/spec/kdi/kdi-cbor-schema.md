@@ -43,7 +43,9 @@ Header = {
   "lib_base"      : text,
   "lib_path"      : text,
   "target_triple" : text,
-  "compiler_ver"  : text
+  "compiler_ver"  : text,
+  ?"dependencies" : array[text]  -- canonical module names of direct imports;
+                                 -- omitted when the module imports nothing
 }
 ```
 
@@ -161,7 +163,9 @@ Function = {
   ?"is_static"   : bool,
   "return_type"  : Type,
   "params"       : array[Param],
-  "mangled_name" : text
+  "mangled_name" : text,
+  "llvm_def"     : text           -- mandatory LLVM IR prototype, e.g.
+                                  -- "declare i32 @_ZN3foo3barEi(i32)"
 }
 ```
 
@@ -182,7 +186,8 @@ Method = {
   ?"vtable_slot"     : uint,   -- omitted when -1
   "return_type"      : Type,
   "params"           : array[Param],
-  "mangled_name"     : text
+  "mangled_name"     : text,
+  "llvm_def"         : text    -- mandatory LLVM IR prototype (with implicit 'this')
 }
 ```
 
@@ -198,7 +203,8 @@ Constructor = {
   ?"is_deleted"          : bool,
   "params"               : array[Param],
   "mangled_name"         : text,     -- C1 variant
-  "mangled_name_c2"      : text      -- C2 variant
+  "mangled_name_c2"      : text,     -- C2 variant
+  "llvm_def"             : text      -- mandatory LLVM IR prototype of C1 variant
 }
 ```
 
@@ -212,7 +218,8 @@ Destructor = {
   ?"is_virtual"             : bool,
   ?"is_compiler_generated"  : bool,
   "mangled_name"            : text,  -- D1 variant
-  "mangled_name_d2"         : text   -- D2 variant
+  "mangled_name_d2"         : text,  -- D2 variant
+  "llvm_def"                : text   -- mandatory LLVM IR prototype of D1 variant
 }
 ```
 
@@ -263,6 +270,7 @@ SecondaryVtable = {
 Vtable = {
   "vtable_symbol" : text,
   "rtti_symbol"   : text,
+  "llvm_def"      : text,           -- mandatory LLVM IR declaration of vtable global
   "slots"         : array[VtableSlot],
   "secondary"     : array[SecondaryVtable]
 }
@@ -351,7 +359,9 @@ Aggregate = {
   "methods"        : array[Method],
   "static_vars"    : array[Variable],
   ?"vtable"        : Vtable,
-  "nested"         : array[Aggregate]
+  "nested"         : array[Aggregate],
+  "llvm_def"       : text           -- mandatory LLVM IR struct type definition,
+                                    -- e.g. "%struct.ns.Counter = type { i32*, i32 }"
 }
 ```
 

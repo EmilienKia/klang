@@ -21,6 +21,7 @@ static kdi_file make_minimal_file() {
     fn.fq_name      = "test::mod::answer";
     fn.return_type  = kdi_type::make_int(32);
     fn.mangled_name = "_KFN4test3mod6answerEv";
+    fn.llvm_def     = "declare i32 @_KFN4test3mod6answerEv()";
     root.functions.push_back(fn);
     f.unit.root_ns  = std::move(root);
 
@@ -63,9 +64,10 @@ static kdi_file make_aggregate_file() {
 
     // default constructor
     kdi_constructor ctor;
-    ctor.visibility   = kdi_visibility::public_;
-    ctor.mangled_name = "_KFMC1N3geo5PointE";
+    ctor.visibility      = kdi_visibility::public_;
+    ctor.mangled_name    = "_KFMC1N3geo5PointE";
     ctor.mangled_name_c2 = "_KFMC2N3geo5PointE";
+    ctor.llvm_def        = "declare void @_KFMC1N3geo5PointE(%struct.geo.Point* %this)";
     agg.constructors.push_back(ctor);
 
     // a method
@@ -75,8 +77,10 @@ static kdi_file make_aggregate_file() {
     m.visibility   = kdi_visibility::public_;
     m.return_type  = kdi_type::make_float(64);
     m.mangled_name = "_KFMN3geo5Point4normEv";
+    m.llvm_def     = "declare double @_KFMN3geo5Point4normEv(%struct.geo.Point* %this)";
     agg.methods.push_back(m);
 
+    agg.llvm_def = "%struct.geo.Point = type { i32, i32 }";
     f.unit.root_ns.aggregates.push_back(agg);
     return f;
 }
@@ -142,6 +146,7 @@ TEST_CASE("CBOR: opaque_block round-trips", "[cbor]") {
     kdi_aggregate agg;
     agg.name    = "Impl";
     agg.fq_name = "priv::Impl";
+    agg.llvm_def = "%struct.priv.Impl = type { i8**, i32, i32 }";
 
     // public vptr at field 0
     kdi_layout_vptr vp;
@@ -184,10 +189,12 @@ TEST_CASE("CBOR: vtable round-trips", "[cbor]") {
     agg.kind    = kdi_aggregate_kind::class_;
     agg.name    = "Animal";
     agg.fq_name = "virt::Animal";
+    agg.llvm_def = "%struct.virt.Animal = type { i8** }";
 
     kdi_vtable vt;
     vt.vtable_symbol = "_KTVNvirtAnimalE";
     vt.rtti_symbol   = "_KTRINvirtAnimalE";
+    vt.llvm_def      = "@_KTVNvirtAnimalE = constant [3 x i8*] zeroinitializer";
 
     kdi_vtable_slot s0;
     s0.slot_index       = 0;
@@ -224,6 +231,7 @@ TEST_CASE("CBOR: all type kinds round-trip", "[cbor][types]") {
         fn.fq_name      = "types::test::" + name;
         fn.return_type  = std::move(ret);
         fn.mangled_name = "_KFN" + name;
+        fn.llvm_def     = "declare void @_KFN" + name + "()";
         f.unit.root_ns.functions.push_back(fn);
     };
 

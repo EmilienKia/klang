@@ -21,6 +21,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 
+#include "../model/imported.hpp"
 #include "../model/expressions.hpp"
 
 #include <llvm/IR/Verifier.h>
@@ -133,6 +134,87 @@ void declaration_generator::visit_unit(unit &unit) {
 
     if (unit._global_main_func) {
         visit_global_main_function(*unit._global_main_func);
+    }
+
+    // ── Emit LLVM declarations for all imported entities ──────────────────
+    // Strategy: if the entity has a non-empty llvm_def we parse it directly
+    // via context::declare_llvm_function_from_def — this guarantees ABI
+    // fidelity regardless of how the K type system maps to LLVM types.
+    // Fallback to the old visit_function() path when llvm_def is absent.
+
+    auto declare_imported_fn = [&](const std::shared_ptr<function>& fn,
+                                   const std::string& llvm_def,
+                                   const std::string& mangled) {
+        if (_context->lookup_llvm_function(fn)) return; // already declared
+        if (!llvm_def.empty() && !mangled.empty()) {
+            auto* llvm_fn = _context->declare_llvm_function_from_def(llvm_def, mangled);
+            if (llvm_fn) {
+                _context->_functions[fn] = llvm_fn;
+                return;
+            }
+        }
+        // Fallback: derive signature from K types (old path)
+        fn->accept(*this);
+    };
+
+    // imported_function
+    for (const auto& [mangled, fn] : unit.get_imported_functions()) {
+        const auto* kfn = fn->get_kdi_function();
+        declare_imported_fn(fn,
+            kfn ? kfn->llvm_def : "",
+            kfn ? kfn->mangled_name : mangled);
+    }
+
+    // imported_aggregate: constructors, destructor, methods
+    for (const auto& [fq, agg] : unit.get_imported_aggregates()) {
+        const auto* kdi_agg = agg->get_kdi_aggregate();
+
+        // Constructors
+        for (size_t i = 0; i < agg->constructors().size(); ++i) {
+            const auto& ic = agg->constructors()[i];
+            std::string def, mng;
+            if (kdi_agg && i < kdi_agg->constructors.size()) {
+                def = kdi_agg->constructors[i].llvm_def;
+                mng = kdi_agg->constructors[i].mangled_name;
+            }
+            declare_imported_fn(ic, def, mng);
+        }
+        // Destructor
+        if (auto id = agg->get_destructor()) {
+            std::string def, mng;
+            if (kdi_agg && kdi_agg->destructor.has_value()) {
+                def = kdi_agg->destructor->llvm_def;
+                mng = kdi_agg->destructor->mangled_name;
+            }
+            declare_imported_fn(id, def, mng);
+        }
+        // Methods
+        size_t method_idx = 0;
+        for (const auto& child : agg->get_children()) {
+            if (auto im = std::dynamic_pointer_cast<imported_method>(child)) {
+                const kdi::kdi_method* km = im->get_kdi_method();
+                declare_imported_fn(im,
+                    km ? km->llvm_def : "",
+                    km ? km->mangled_name : "");
+                ++method_idx;
+            }
+        }
+    }
+
+    // imported_variable — emit ExternalLinkage GlobalVariable with no initialiser
+    for (const auto& [mangled, var] : unit.get_imported_variables()) {
+        if (!var || !var->get_type()) continue;
+        auto llvm_type = _context->get_llvm_type(var->get_type());
+        if (!llvm_type) continue;
+        if (_context->_module->getGlobalVariable(var->get_mangled_name())) continue;
+        auto* gv = new llvm::GlobalVariable(
+            *_context->_module,
+            llvm_type,
+            /*isConstant=*/false,
+            llvm::GlobalValue::ExternalLinkage,
+            /*Initializer=*/nullptr,
+            var->get_mangled_name());
+        _context->_global_vars.insert({var, gv});
     }
 }
 

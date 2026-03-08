@@ -339,6 +339,24 @@ Error 40083 : private member variable 'x' of struct 'S' is not accessible here v
               it can only be accessed from member functions of 'S'
 ```
 
+### Visibility and library export
+
+When a struct is compiled into a library, its member visibility directly
+controls what is written into the **KDI** description file that consumers use:
+
+| Visibility | In `.kdi` | What consumers can do |
+|---|---|---|
+| `public` | Full definition + mangled symbol | Call, access, inherit |
+| `protected` | Full definition + mangled symbol | Inherit and access from subclass |
+| `private` | Size-only opaque block | Nothing — layout preserved, content hidden |
+
+Private members are replaced in the KDI by *opaque blocks* that record only
+the aggregate bit-size.  This allows consumer code to inherit from the struct
+(the derived layout is correct) without seeing or naming the private fields.
+
+See [Libraries — Export and Import](../basic/libraries.md#2-what-is-exported--visibility-and-the-kdi-file)
+for a complete description.
+
 ### Static constructors and visibility
 
 Static constructors (`static StructName() { … }`) are insensitive to per-element visibility specifiers: they inherit the visibility of the struct itself.

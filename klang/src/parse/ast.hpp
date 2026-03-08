@@ -54,13 +54,15 @@ namespace k::parse {
             }
         };
 
+        // Forward declaration (full definition follows)
+        struct qualified_identifier;
+
         struct import : public ast_node {
             lex::keyword import_kw;
-            lex::identifier name;
+            std::shared_ptr<qualified_identifier> qname;
 
-            import(const lex::keyword& import_kw, const lex::identifier &name) : import_kw(import_kw), name(name) {}
-
-            import(lex::keyword&& import_kw, lex::identifier &&name) : import_kw(import_kw), name(name) {}
+            import(const lex::keyword& import_kw, std::shared_ptr<qualified_identifier> qname)
+                : import_kw(import_kw), qname(std::move(qname)) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -577,11 +579,12 @@ namespace k::parse {
 
             /**
              * A single entry in the base-class clause.
-             * E.g. "public Base" or just "Base" (visibility is optional).
+             * E.g. "public Base" or "public ns::Base" (visibility is optional).
              */
             struct base_clause_entry {
                 std::optional<lex::keyword> visibility_kw; ///< 'public', 'protected', 'private' or absent
-                lex::identifier name;                      ///< simple base-class identifier
+                lex::identifier name;                      ///< first component of the base-class name
+                std::string     qualified_name;            ///< full qualified name "ns::Base" (or just "Base")
             };
             /** Base-class clause entries, in declaration order. Empty if no inheritance. */
             std::vector<base_clause_entry> bases;

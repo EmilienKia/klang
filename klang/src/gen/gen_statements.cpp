@@ -18,6 +18,8 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 
+#include "../model/imported.hpp"
+
 namespace k::model::gen {
 
 using namespace k::model;
@@ -568,6 +570,13 @@ void type_reference_resolver::visit_variable_statement(variable_statement& var)
             } else {
                 // var is a statement (element), so walk up from it
                 resolved = resolve_type_by_name(unres_type->type_id(), static_cast<const element&>(var));
+            }
+            // Fallback: try imported aggregates
+            if (!resolved || !type::is_resolved(resolved)) {
+                if (auto imported_agg = _unit.get_or_create_imported_aggregate(
+                        unres_type->type_id(), _context)) {
+                    resolved = imported_agg->get_struct_type();
+                }
             }
             if (resolved && type::is_resolved(resolved)) {
                 var.set_type(resolved);

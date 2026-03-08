@@ -26,6 +26,8 @@
 
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
+#include "../model/imported.hpp"
+#include "../model/mangler.hpp"
 
 #include <llvm/IR/Verifier.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
@@ -62,18 +64,26 @@ void emit_vptr_store(llvm::IRBuilder<>& builder,
     // vptr to point to this class's vtable (K uses single virtual inheritance: one vtable per
     // complete object).  We walk all direct base sub-objects recursively.
     // Note: interfaces are class-like (they have vtables) even though is_class() returns false.
+    // imported_aggregate variants are covered via is_class() overrides.
     auto is_class_like = [](const aggregate& a) {
         return a.is_class() || std::dynamic_pointer_cast<const interface>(a.shared_as<const element>()) != nullptr;
     };
 
     // Helper: look up the secondary vtable for `target` in `st`'s secondary vtable list.
+    // Also searches the LLVM module for secondary vtable globals for imported bases
+    // (named "__vtable_<ConcreteClass>_for_<Base>__" by the declaration pass).
     auto find_secondary_vtable = [&](const aggregate& target) -> llvm::GlobalVariable* {
+        // First: check local secondary vtables (for local klass/interface bases)
         for (auto& [base_agg, sec_vt] : st.get_secondary_vtables()) {
             if (base_agg.get() == &target && sec_vt && sec_vt->llvm_global) {
                 return sec_vt->llvm_global;
             }
         }
-        return nullptr;
+        // Second: check the LLVM module for secondary vtable globals created by the
+        // declaration pass for imported bases.
+        // Name convention: mangler::mangle_vtable(st) + "_for_" + target.get_short_name()
+        std::string sec_name = mangler::mangle_vtable(st.get_name()) + "_for_" + target.get_short_name();
+        return ctx->module().getNamedGlobal(sec_name);
     };
 
     std::function<void(aggregate& base_st, llvm::Value* base_ptr)> update_base_vptrs;
@@ -96,7 +106,7 @@ void emit_vptr_store(llvm::IRBuilder<>& builder,
         // Recurse into base's embedded non-virtual sub-objects
         for (auto& bs : base_st.get_bases()) {
             if (!bs.base || !is_class_like(*bs.base) || bs.is_virtual) continue;
-            std::string subobj_name = "__base_" + bs.raw_name + "__";
+            std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
             auto field_opt = base_st.get_struct_type()->get_member(subobj_name);
             if (!field_opt) continue;
             llvm::Value* sub_ptr = builder.CreateStructGEP(base_llvm_type, base_ptr,
@@ -108,8 +118,8 @@ void emit_vptr_store(llvm::IRBuilder<>& builder,
     for (auto& bs : st.get_bases()) {
         if (!bs.base || !is_class_like(*bs.base)) continue;
         std::string subobj_name = bs.is_virtual
-            ? "__vbase_" + bs.raw_name + "__"
-            : "__base_" + bs.raw_name + "__";
+            ? "__vbase_" + bs.sanitised_name() + "__"
+            : "__base_" + bs.sanitised_name() + "__";
         auto field_opt = st.get_struct_type()->get_member(subobj_name);
         if (!field_opt) continue;
         llvm::Value* sub_ptr = builder.CreateStructGEP(struct_llvm_type, this_ptr,
@@ -156,6 +166,39 @@ void type_reference_resolver::visit_parameter(parameter& param) {
 
     if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
         std::shared_ptr<type> res_type = _context->resolve_type(var_type);
+        if (!type::is_resolved(res_type)) {
+            // Fallback for composite types wrapping an imported aggregate
+            // (e.g. reference_type(unresolved("ns::Type"))).
+            // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.
+            enum class WrapKind { Ref, Ptr, Link, Pin, Const };
+            std::vector<WrapKind> wrappers;
+            auto inner = var_type;
+            while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
+                if      (type::is_reference(inner))  wrappers.push_back(WrapKind::Ref);
+                else if (type::is_pointer(inner))    wrappers.push_back(WrapKind::Ptr);
+                else if (type::is_link(inner))       wrappers.push_back(WrapKind::Link);
+                else if (type::is_pinned(inner))     wrappers.push_back(WrapKind::Pin);
+                else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
+                else break;
+                inner = inner->get_subtype();
+            }
+            if (auto unres = std::dynamic_pointer_cast<unresolved_type>(inner);
+                unres && !unres->type_id().empty())
+            {
+                if (auto imp_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context)) {
+                    res_type = imp_agg->get_struct_type();
+                    for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
+                        switch (*it) {
+                            case WrapKind::Ref:   res_type = res_type->get_reference(); break;
+                            case WrapKind::Ptr:   res_type = res_type->get_pointer();   break;
+                            case WrapKind::Link:  res_type = res_type->get_link();      break;
+                            case WrapKind::Pin:   res_type = res_type->get_pinned();    break;
+                            case WrapKind::Const: res_type = res_type->get_const();     break;
+                        }
+                    }
+                }
+            }
+        }
         if (!type::is_resolved(res_type)) {
             throw_error(0x0001, std::nullopt,
                 "Cannot resolve type for parameter '{}': the type name is unknown",
@@ -231,10 +274,21 @@ void declaration_generator::visit_function(function &function) {
     std::vector<llvm::Type*> param_types;
     if (function.is_member()  && !function.is_static()) {
         // First parameter is the 'this' pointer
-        param_types.push_back(_context->get_llvm_type(function.get_this_parameter()->get_type()));
+        auto this_param = function.get_this_parameter();
+        if (!this_param || !this_param->get_type()) {
+            // Cannot emit declaration without a valid 'this' parameter type.
+            // This can happen for imported methods whose struct type is not yet resolved.
+            return;
+        }
+        param_types.push_back(_context->get_llvm_type(this_param->get_type()));
     }
     for(const auto& param : function.parameters()) {
-        param_types.push_back(_context->get_llvm_type(param->get_type()));
+        auto ptype = _context->get_llvm_type(param->get_type());
+        if (!ptype) {
+            // Skip declaration if any parameter type is unresolved.
+            return;
+        }
+        param_types.push_back(ptype);
     }
 
     // Return type, if any:
@@ -521,23 +575,23 @@ void implementation_generator::visit_function(function &function) {
                                 if (!bs.base) continue;
                                 if (!bs.is_virtual) {
                                     // Non-virtual base: embedded as __base_X__
-                                    std::string sub_name = "__base_" + bs.raw_name + "__";
+                                    std::string sub_name = "__base_" + bs.sanitised_name() + "__";
                                     auto sub_field = base_st.get_struct_type()->get_member(sub_name);
                                     if (!sub_field) continue;
                                     llvm::Value* sub_ptr = _builder->CreateStructGEP(
                                         base_llvm_type, base_sub_ptr,
                                         (unsigned)sub_field->index,
-                                        "sub_" + bs.raw_name + "_ptr");
+                                        "sub_" + bs.sanitised_name() + "_ptr");
                                     set_vbptrs(*bs.base, sub_ptr);
                                 } else {
                                     // Virtual base: stored as __vbase_X__ in the containing object
-                                    std::string vbase_sub_name = "__vbase_" + bs.raw_name + "__";
+                                    std::string vbase_sub_name = "__vbase_" + bs.sanitised_name() + "__";
                                     auto vbase_sub_field = base_st.get_struct_type()->get_member(vbase_sub_name);
                                     if (vbase_sub_field) {
                                         llvm::Value* vbase_sub_ptr = _builder->CreateStructGEP(
                                             base_llvm_type, base_sub_ptr,
                                             (unsigned)vbase_sub_field->index,
-                                            "vbase_" + bs.raw_name + "_sub_ptr");
+                                            "vbase_" + bs.sanitised_name() + "_sub_ptr");
                                         set_vbptrs(*bs.base, vbase_sub_ptr);
                                     }
                                 }
@@ -549,21 +603,21 @@ void implementation_generator::visit_function(function &function) {
                             if (!bs.base) continue;
                             if (!bs.is_virtual) {
                                 // Non-virtual base: embedded as __base_X__
-                                std::string sub_name = "__base_" + bs.raw_name + "__";
+                                std::string sub_name = "__base_" + bs.sanitised_name() + "__";
                                 auto sub_field = st->get_struct_type()->get_member(sub_name);
                                 if (!sub_field) continue;
                                 llvm::Value* sub_ptr = _builder->CreateStructGEP(
                                     st_llvm_type, this_ptr, (unsigned)sub_field->index,
-                                    "sub_" + bs.raw_name + "_ptr");
+                                    "sub_" + bs.sanitised_name() + "_ptr");
                                 set_vbptrs(*bs.base, sub_ptr);
                             } else {
                                 // Virtual base: stored as __vbase_X__ in st
-                                std::string vbase_sub_name = "__vbase_" + bs.raw_name + "__";
+                                std::string vbase_sub_name = "__vbase_" + bs.sanitised_name() + "__";
                                 auto vbase_sub_field = st->get_struct_type()->get_member(vbase_sub_name);
                                 if (vbase_sub_field) {
                                     llvm::Value* vbase_sub_ptr = _builder->CreateStructGEP(
                                         st_llvm_type, this_ptr, (unsigned)vbase_sub_field->index,
-                                        "vbase_" + bs.raw_name + "_sub_ptr");
+                                        "vbase_" + bs.sanitised_name() + "_sub_ptr");
                                     set_vbptrs(*bs.base, vbase_sub_ptr);
                                 }
                             }
@@ -607,7 +661,7 @@ void implementation_generator::visit_function(function &function) {
                     if (dtor_it == _context->_functions.end()) continue;
 
                     // GEP to base subobject field
-                    std::string subobj_name = "__base_" + bs.raw_name + "__";
+                    std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
                     auto base_field = st->get_struct_type()->get_member(subobj_name);
                     if (!base_field) continue;
 
@@ -615,7 +669,7 @@ void implementation_generator::visit_function(function &function) {
                         _context->get_llvm_type(st->get_struct_type()),
                         this_ptr,
                         (unsigned)base_field->index,
-                        "base_" + bs.raw_name + "_ptr"
+                        "base_" + bs.sanitised_name() + "_ptr"
                     );
                     _builder->CreateCall(dtor_it->second, {base_ptr});
                 }
@@ -773,7 +827,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
                 if (!bs.base) continue;
                 if (bs.is_virtual) {
                     // Virtual base: sub-object is __vbase_X__ (only constructed in most-derived class)
-                    std::string vbase_name = "__vbase_" + bs.raw_name + "__";
+                    std::string vbase_name = "__vbase_" + bs.sanitised_name() + "__";
                     auto vbase_var_it = st->variables().find(vbase_name);
                     if (vbase_var_it == st->variables().end()) continue; // not the most-derived class
                     auto vbase_var = std::dynamic_pointer_cast<member_variable_definition>(vbase_var_it->second);
@@ -793,7 +847,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
                     ++insert_idx1;
                 } else {
                     // Non-virtual base: embedded as __base_X__
-                    std::string subobj_name = "__base_" + bs.raw_name + "__";
+                    std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
                     auto subobj_var_it = st->variables().find(subobj_name);
                     if (subobj_var_it == st->variables().end()) continue;
                     auto subobj_var = std::dynamic_pointer_cast<member_variable_definition>(subobj_var_it->second);
@@ -975,10 +1029,10 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
     for (auto& bs : st->get_bases()) {
         if (!bs.base) continue;
         if (bs.is_virtual) {
-            std::string vbase_name = "__vbase_" + bs.raw_name + "__";
+            std::string vbase_name = "__vbase_" + bs.sanitised_name() + "__";
             if (st->variables().count(vbase_name)) ++insert_idx2;
         } else {
-            std::string sub_name = "__base_" + bs.raw_name + "__";
+            std::string sub_name = "__base_" + bs.sanitised_name() + "__";
             if (st->variables().count(sub_name)) ++insert_idx2;
         }
     }

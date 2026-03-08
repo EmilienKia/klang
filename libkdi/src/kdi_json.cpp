@@ -239,6 +239,7 @@ static json to_json(const kdi_function& f) {
         {"return_type",  to_json(f.return_type)},
         {"params",       params_to_json(f.params)},
         {"mangled_name", f.mangled_name},
+        {"llvm_def",     f.llvm_def},
     };
 }
 static kdi_function from_json_function(const json& j) {
@@ -250,6 +251,7 @@ static kdi_function from_json_function(const json& j) {
     f.return_type  = from_json_type(j.at("return_type"));
     f.params       = params_from_json(j.value("params", json::array()));
     f.mangled_name = j.value("mangled_name", "");
+    f.llvm_def     = j.at("llvm_def");
     return f;
 }
 
@@ -267,6 +269,7 @@ static json to_json(const kdi_method& m) {
         {"return_type",     to_json(m.return_type)},
         {"params",          params_to_json(m.params)},
         {"mangled_name",    m.mangled_name},
+        {"llvm_def",        m.llvm_def},
     };
 }
 static kdi_method from_json_method(const json& j) {
@@ -283,6 +286,7 @@ static kdi_method from_json_method(const json& j) {
     m.return_type     = from_json_type(j.at("return_type"));
     m.params          = params_from_json(j.value("params", json::array()));
     m.mangled_name    = j.value("mangled_name", "");
+    m.llvm_def        = j.at("llvm_def");
     return m;
 }
 
@@ -299,6 +303,7 @@ static json to_json(const kdi_constructor& c) {
         {"params",              params_to_json(c.params)},
         {"mangled_name",        c.mangled_name},
         {"mangled_name_c2",     c.mangled_name_c2},
+        {"llvm_def",            c.llvm_def},
     };
 }
 static kdi_constructor from_json_constructor(const json& j) {
@@ -310,6 +315,7 @@ static kdi_constructor from_json_constructor(const json& j) {
     c.params              = params_from_json(j.value("params", json::array()));
     c.mangled_name        = j.value("mangled_name", "");
     c.mangled_name_c2     = j.value("mangled_name_c2", "");
+    c.llvm_def            = j.at("llvm_def");
     return c;
 }
 
@@ -320,6 +326,7 @@ static json to_json(const kdi_destructor& d) {
         {"is_compiler_generated", d.is_compiler_generated},
         {"mangled_name",          d.mangled_name},
         {"mangled_name_d2",       d.mangled_name_d2},
+        {"llvm_def",              d.llvm_def},
     };
 }
 static kdi_destructor from_json_destructor(const json& j) {
@@ -329,6 +336,7 @@ static kdi_destructor from_json_destructor(const json& j) {
     d.is_compiler_generated = j.value("is_compiler_generated", false);
     d.mangled_name          = j.value("mangled_name", "");
     d.mangled_name_d2       = j.value("mangled_name_d2", "");
+    d.llvm_def              = j.at("llvm_def");
     return d;
 }
 
@@ -351,12 +359,14 @@ static json to_json(const kdi_vtable& vt) {
                        {"vtable_symbol",sv.vtable_symbol},{"thunks",thunks}});
     }
     return {{"vtable_symbol",vt.vtable_symbol},{"rtti_symbol",vt.rtti_symbol},
+            {"llvm_def",vt.llvm_def},
             {"slots",slots},{"secondary",sec}};
 }
 static kdi_vtable from_json_vtable(const json& j) {
     kdi_vtable vt;
     vt.vtable_symbol = j.value("vtable_symbol", "");
     vt.rtti_symbol   = j.value("rtti_symbol", "");
+    vt.llvm_def      = j.at("llvm_def");
     for (auto& s : j.value("slots", json::array())) {
         kdi_vtable_slot sl;
         sl.slot_index       = s.value("slot_index", 0u);
@@ -529,6 +539,7 @@ static json to_json(const kdi_aggregate& a) {
         {"methods",       methods},
         {"static_vars",   static_vars},
         {"nested",        nested},
+        {"llvm_def",      a.llvm_def},
     };
     if (a.destructor) obj["destructor"] = to_json(*a.destructor);
     if (a.vtable)     obj["vtable"]     = to_json(*a.vtable);
@@ -569,6 +580,7 @@ static kdi_aggregate from_json_aggregate(const json& j) {
         a.vtable = from_json_vtable(j.at("vtable"));
     for (auto& n : j.value("nested", json::array()))
         a.nested.push_back(from_json_aggregate(n));
+    a.llvm_def = j.at("llvm_def");
     return a;
 }
 
@@ -609,7 +621,7 @@ static kdi_namespace from_json_namespace(const json& j) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static json to_json(const kdi_header& h) {
-    return {
+    json j = {
         {"schema_major",  h.schema_major},
         {"schema_minor",  h.schema_minor},
         {"module_name",   h.module_name},
@@ -618,6 +630,12 @@ static json to_json(const kdi_header& h) {
         {"target_triple", h.target_triple},
         {"compiler_ver",  h.compiler_ver},
     };
+    if (!h.dependencies.empty()) {
+        json deps = json::array();
+        for (const auto& dep : h.dependencies) deps.push_back(dep);
+        j["dependencies"] = deps;
+    }
+    return j;
 }
 static kdi_header from_json_header(const json& j) {
     kdi_header h;
@@ -628,6 +646,11 @@ static kdi_header from_json_header(const json& j) {
     h.lib_path      = j.value("lib_path",      "");
     h.target_triple = j.value("target_triple", "");
     h.compiler_ver  = j.value("compiler_ver",  "");
+    if (j.contains("dependencies") && j["dependencies"].is_array()) {
+        for (const auto& dep : j["dependencies"]) {
+            if (dep.is_string()) h.dependencies.push_back(dep.get<std::string>());
+        }
+    }
     return h;
 }
 

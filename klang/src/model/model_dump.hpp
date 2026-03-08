@@ -80,7 +80,14 @@ public:
 
     void visit_unit(unit& unit) override {
         prefix() << "model: " << unit.get_unit_name().to_string() << std::endl;
-        // TODO Imports
+        for (const auto& imp : unit.get_imports()) {
+            prefix() << "import " << imp.module_name.to_string();
+            if (!imp.resolved_kdi_path.empty()) {
+                _stm << " [" << imp.resolved_kdi_path << "]";
+            }
+            if (imp.used) _stm << " (used)";
+            _stm << std::endl;
+        }
         unit.get_root_namespace()->accept(*this);
     }
 

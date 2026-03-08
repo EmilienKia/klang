@@ -103,10 +103,10 @@ std::shared_ptr<ast::import> parser::parse_import()
         return {};
     }
 
-    // Expect an import identifier:
-    auto lname= _lexer.get();
-    if(lex::is_not<lex::identifier>(lname)) {
-        throw_error(0x0003, _lexer.pick_current(), "Import name identifier is missing");
+    // Expect a qualified identifier (e.g. "math::vec" or "foo")
+    auto qname = parse_qualified_identifier();
+    if(!qname || qname->names.empty()) {
+        throw_error(0x0003, _lexer.pick_current(), "Import module name is missing");
     }
 
     // Expect a semicolon to end import declaration
@@ -114,7 +114,7 @@ std::shared_ptr<ast::import> parser::parse_import()
         throw_error(0x0004, _lexer.pick_current(), "Semicolon is missing after module name at end of import declaration");
     }
 
-    return std::make_shared<ast::import>(lex::as<lex::keyword>(limport), lex::as<lex::identifier>(lname));
+    return std::make_shared<ast::import>(lex::as<lex::keyword>(limport), std::move(qname));
 }
 
 std::vector<ast::decl_ptr> parser::parse_declarations()
@@ -260,12 +260,31 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
                 } else {
                     vis_holder.rollback();
                 }
-                // Expect base class name (simple identifier)
+                // Expect base class name — may be a qualified name: id ('::' id)*
                 auto lbase_name = _lexer.get();
                 if (!lex::is<lex::identifier>(lbase_name)) {
                     throw_error(0x003F, _lexer.pick_current(), "Expected base class name in inheritance clause");
                 }
-                ast::aggregate_decl::base_clause_entry entry{vis_kw, lex::as<lex::identifier>(lbase_name)};
+                auto first_id = lex::as<lex::identifier>(lbase_name);
+                std::string qualified = std::string{first_id.content};
+                // Consume optional '::' id pairs
+                while (true) {
+                    lex::lex_holder dcolon_holder(_lexer);
+                    auto maybe_dcolon = _lexer.get();
+                    if (maybe_dcolon == lex::punctuator::DOUBLE_COLON) {
+                        auto lnext = _lexer.get();
+                        if (lex::is<lex::identifier>(lnext)) {
+                            qualified += "::" + std::string{lex::as<lex::identifier>(lnext).content};
+                        } else {
+                            dcolon_holder.rollback();
+                            break;
+                        }
+                    } else {
+                        dcolon_holder.rollback();
+                        break;
+                    }
+                }
+                ast::aggregate_decl::base_clause_entry entry{vis_kw, first_id, qualified};
                 bases.push_back(std::move(entry));
                 // Check for ',' to continue
                 lex::lex_holder comma_holder(_lexer);

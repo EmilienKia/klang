@@ -23,11 +23,13 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "../lex/lexer.hpp"
 #include "../common/common.hpp"
 #include "type.hpp"
+#include "import.hpp"
 
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
@@ -59,6 +61,16 @@ class unit;
 class global_tool_function;
 class global_constructor_function;
 class global_destructor_function;
+// Forward declarations for imported model nodes (defined in imported.hpp).
+class imported_function;
+class imported_constructor;
+class imported_destructor;
+class imported_method;
+class imported_variable;
+class imported_aggregate;
+class imported_structure;
+class imported_klass;
+class imported_interface;
 
 
 namespace gen {
@@ -174,9 +186,17 @@ struct virtual_dispatch_info {
     /**
      * The klass whose vtable should be used for the dispatch lookup.
      * This is the *static* receiver type at the call site (e.g. the type of `b` in
-     * `b.speak()` where b : Animal&). Non-null when kind == VTABLE.
+     * `b.speak()` where b : Animal&). Non-null when kind == VTABLE and the receiver
+     * is a locally-defined klass.
      */
     std::shared_ptr<klass> dispatch_class;
+
+    /**
+     * Imported aggregate (imported_klass / imported_interface) to use for vtable
+     * dispatch when the receiver is an imported type (neither inherits from klass).
+     * Non-null when kind == VTABLE and dispatch_class is null.
+     */
+    std::shared_ptr<aggregate> imported_dispatch_agg;
 
     /**
      * Optional this-adjustment offset (bytes) to apply BEFORE loading the vptr.
@@ -530,6 +550,20 @@ struct base_spec {
     base_spec() = default;
     base_spec(const std::string& raw_name, visibility vis = PUBLIC)
         : vis(vis), raw_name(raw_name) {}
+
+    /**
+     * Returns a sanitised version of raw_name suitable for use as a field identifier:
+     * replaces all occurrences of "::" with "_".
+     * E.g. "my::base::Foo" → "my_base_Foo"
+     */
+    std::string sanitised_name() const {
+        std::string result = raw_name;
+        std::string::size_type pos = 0;
+        while ((pos = result.find("::", pos)) != std::string::npos) {
+            result.replace(pos, 2, "_");
+        }
+        return result;
+    }
 };
 
 /**
@@ -1073,6 +1107,12 @@ public:
     /** Set whether this function is abstract. */
     void set_abstract_func(bool v) { _is_abstract_func = v; }
 
+    /**
+     * True if this function is an external import (no body in this module).
+     * Overridden by imported_method, imported_function, etc.
+     */
+    virtual bool is_external() const { return false; }
+
     /** Vtable slot index (-1 = not in vtable). Set by symbol_resolver. */
     int get_vtable_slot() const { return _vtable_slot; }
     /** Set the vtable slot index. */
@@ -1092,23 +1132,15 @@ protected:
     friend class gen::type_reference_resolver;
 
 public:
-    /**
-     * A single explicit member initializer as provided in the constructor's mem-initializer-list.
-     */
     struct member_init_spec {
         std::string member_name;
         std::vector<std::shared_ptr<expression>> args;
-        /** True if this initializer refers to a base class (not a member variable). */
         bool is_base_init = false;
-        /** Resolved base aggregate (set during symbol resolution, only when is_base_init=true). */
         std::shared_ptr<aggregate> base_struct;
     };
 
 protected:
-    /** Explicit member initializers from the source mem-initializer-list (in declaration order). */
     std::vector<member_init_spec> _member_inits;
-
-    /** True if this constructor is a copy constructor (detected/marked during symbol resolution). */
     bool _is_copy_constructor = false;
 
     constructor(std::shared_ptr<aggregate> parent) :
@@ -1131,7 +1163,6 @@ public:
     void set_copy_constructor(bool v) { _is_copy_constructor = v; }
 };
 
-
 class destructor : public function {
 protected:
     friend class aggregate;
@@ -1146,9 +1177,7 @@ protected:
 
 public:
     void accept(model_visitor& visitor) override;
-
 };
-
 
 /**
  * Static constructor: a static no-argument void function named exactly with the aggregate name.
@@ -1339,6 +1368,7 @@ public:
 
 };
 
+
 class global_constructor_function : public global_tool_function {
 protected:
     friend class unit;
@@ -1396,6 +1426,7 @@ public:
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }
 };
+
 
 class ns : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder {
 protected:
@@ -1483,6 +1514,34 @@ protected:
     std::shared_ptr<global_constructor_function> _global_constructor_func;
     std::shared_ptr<global_destructor_function> _global_destructor_func;
 
+    /** Declared imports (populated by model_builder, resolved by kdi_importer). */
+    std::vector<imported_module> _imported_modules;
+
+    /**
+     * KDI files loaded as transitive dependencies (not direct imports of this unit).
+     * Populated by kdi_importer::import_all() to allow find_imported_type() to
+     * resolve types from indirectly-imported modules (e.g. base classes).
+     */
+    std::vector<std::shared_ptr<kdi::kdi_file>> _transitive_kdis;
+
+    /**
+     * Cache of imported_function model nodes keyed by mangled name (C1 for ctors).
+     * Created lazily by get_or_create_imported_function().
+     */
+    std::unordered_map<std::string, std::shared_ptr<imported_function>>  _imported_functions;
+
+    /**
+     * Cache of imported_aggregate model nodes keyed by fully-qualified K name.
+     * Created lazily by get_or_create_imported_aggregate().
+     */
+    std::unordered_map<std::string, std::shared_ptr<imported_aggregate>> _imported_aggregates;
+
+    /**
+     * Cache of imported_variable model nodes keyed by mangled name.
+     * Created lazily by get_or_create_imported_variable().
+     */
+    std::unordered_map<std::string, std::shared_ptr<imported_variable>>  _imported_variables;
+
     std::shared_ptr<global_main_function> _global_main_func;
 
     friend class k::model::gen::symbol_resolver;
@@ -1524,7 +1583,131 @@ public:
     //
     // Imports
     //
-    //void add_import(const std::string& import_name);
+
+    /**
+     * Register an import declaration (called by model_builder).
+     * @param module_name  Qualified name of the module to import.
+     */
+    void add_import(const k::name& module_name);
+
+    /**
+     * Read-only access to all declared imports.
+     */
+    const std::vector<imported_module>& get_imports() const {
+        return _imported_modules;
+    }
+
+    /**
+     * Mutable access to all declared imports (used by kdi_importer to fill
+     * in resolved_kdi_path, kdi and used fields).
+     */
+    std::vector<imported_module>& get_imports() {
+        return _imported_modules;
+    }
+
+    /**
+     * Find an import by module name.
+     * @return Pointer to the matching entry, or nullptr if not found.
+     */
+    imported_module* find_import(const k::name& module_name);
+    const imported_module* find_import(const k::name& module_name) const;
+
+    /**
+     * Register a KDI file loaded as a transitive dependency (not a direct
+     * import of this unit).  Called by kdi_importer so that find_imported_type()
+     * and friends can resolve symbols from indirectly-imported modules.
+     */
+    void add_transitive_kdi(std::shared_ptr<kdi::kdi_file> kdi_ptr) {
+        if (kdi_ptr) _transitive_kdis.push_back(std::move(kdi_ptr));
+    }
+
+    /** Read-only access to the list of transitive KDIs. */
+    const std::vector<std::shared_ptr<kdi::kdi_file>>& get_transitive_kdis() const {
+        return _transitive_kdis;
+    }
+
+    // ── Cross-module symbol lookup ──────────────────────────────────────────
+    //
+    // These methods search ALL loaded imports for a symbol identified by its
+    // qualified K name (e.g. name{"math", "vec", "dot"}).
+    //
+    // When a match is found, the owning imported_module is marked used=true.
+    // The current unit's own namespace is NOT searched here — callers are
+    // expected to try local resolution first.
+    //
+    // Return nullptr when no import contains the requested symbol.
+
+    /**
+     * Find a global/namespace-level function in any loaded import.
+     * @param name  Qualified name of the function (without root prefix).
+     * @return Pointer into the kdi_file's kdi_function entry, or nullptr.
+     */
+    const kdi::kdi_function*
+    find_imported_function(const k::name& name);
+
+    /**
+     * Find a global/static variable in any loaded import.
+     * @param name  Qualified name of the variable (without root prefix).
+     * @return Pointer into the kdi_file's kdi_variable entry, or nullptr.
+     */
+    const kdi::kdi_variable*
+    find_imported_variable(const k::name& name);
+
+    /**
+     * Find an aggregate type (struct/class/interface) in any loaded import.
+     * @param name  Qualified name of the aggregate (without root prefix).
+     * @return Pointer into the kdi_file's kdi_aggregate entry, or nullptr.
+     */
+    const kdi::kdi_aggregate*
+    find_imported_type(const k::name& name);
+
+    // ── Imported model-node factory methods ─────────────────────────────────
+    //
+    // Each method returns (or retrieves from cache) a fully-built model node
+    // for the corresponding KDI descriptor.  Signatures and types are resolved
+    // using kdi_type_to_model_type(); the nodes have no body / initialiser.
+    // All side-effects (struct_type registration in context, marking
+    // imported_module::used) happen here.
+
+    /**
+     * Return (or create) the imported_function model node for @p kdi_fn.
+     * Keyed by mangled_name.  Populates return type and parameter list.
+     */
+    std::shared_ptr<imported_function>
+    get_or_create_imported_function(const kdi::kdi_function* kdi_fn,
+                                    std::shared_ptr<context> ctx);
+
+    /**
+     * Return (or create) the imported_aggregate model node for the aggregate
+     * identified by its fully-qualified K name @p fq_name.
+     *
+     * Searches all loaded imports; builds the LLVM StructType from the KDI
+     * layout; materialises all public/protected members, methods (as
+     * imported_method), constructors (as imported_constructor) and destructor
+     * (as imported_destructor).
+     */
+    std::shared_ptr<imported_aggregate>
+    get_or_create_imported_aggregate(const k::name& fq_name,
+                                     std::shared_ptr<context> ctx);
+
+    /**
+     * Return (or create) the imported_variable model node for @p kdi_var.
+     * Keyed by mangled_name.  Resolves the variable type.
+     */
+    std::shared_ptr<imported_variable>
+    get_or_create_imported_variable(const kdi::kdi_variable* kdi_var,
+                                    std::shared_ptr<context> ctx);
+
+    // ── Accessors ────────────────────────────────────────────────────────────
+
+    const std::unordered_map<std::string, std::shared_ptr<imported_function>>&
+    get_imported_functions() const { return _imported_functions; }
+
+    const std::unordered_map<std::string, std::shared_ptr<imported_aggregate>>&
+    get_imported_aggregates() const { return _imported_aggregates; }
+
+    const std::unordered_map<std::string, std::shared_ptr<imported_variable>>&
+    get_imported_variables() const { return _imported_variables; }
 
 
     //

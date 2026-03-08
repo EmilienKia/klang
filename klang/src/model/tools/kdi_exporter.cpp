@@ -16,24 +16,94 @@
  * limitations under the License.
  */
 
-#include "kdi_exporter.hpp"
+#include "../tools/kdi_exporter.hpp"
 
-#include "model.hpp"
-#include "type.hpp"
-#include "mangler.hpp"
-#include "context.hpp"
+#include "../model.hpp"
+#include "../type.hpp"
+#include "../mangler.hpp"
+#include "../context.hpp"
 
-#include "../compiler.hpp"
+#include "../../compiler.hpp"
 
 #include <kdi.hpp>
 
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/GlobalVariable.h>
+#include <llvm/Support/raw_ostream.h>
 
 #include <memory>
 #include <string>
 
 namespace k::model {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+/**
+ * Capture the LLVM IR declaration line of @p fn as a string.
+ * The result is a single-line "declare <rettype> @<name>(<params>)" string,
+ * without trailing newline, suitable for storage in kdi::*::llvm_def.
+ * Returns an empty string if @p fn is null.
+ */
+std::string llvm_fn_prototype(const llvm::Function* fn) {
+    if (!fn) return {};
+    std::string out;
+    llvm::raw_string_ostream os(out);
+    fn->print(os, /*AAW=*/nullptr, /*IsForDebug=*/false, /*IsDeclaration=*/true);
+    os.flush();
+    // The print() output contains a full definition or declaration block.
+    // We only want the first line (the prototype), stripped of trailing whitespace.
+    auto nl = out.find('\n');
+    if (nl != std::string::npos) out.resize(nl);
+    // Trim trailing whitespace / '{'
+    while (!out.empty() && (out.back() == ' ' || out.back() == '{'))
+        out.pop_back();
+    while (!out.empty() && out.back() == ' ')
+        out.pop_back();
+    return out;
+}
+
+/**
+ * Capture the LLVM IR type definition of @p st as a string.
+ * Returns a string of the form "%StructName = type { ... }",
+ * suitable for storage in kdi::kdi_aggregate::llvm_def.
+ * Returns an empty string if @p st is null or anonymous.
+ */
+std::string llvm_struct_def(const llvm::StructType* st) {
+    if (!st || !st->hasName()) return {};
+    std::string out;
+    llvm::raw_string_ostream os(out);
+    st->print(os, /*IsForDebug=*/false);
+    os.flush();
+    return out;
+}
+
+/**
+ * Capture the LLVM IR global variable declaration for a vtable global.
+ * Returns "declare ... @<name>" suitable for kdi::kdi_vtable::llvm_def.
+ */
+std::string llvm_global_def(const llvm::GlobalVariable* gv) {
+    if (!gv) return {};
+    std::string out;
+    llvm::raw_string_ostream os(out);
+    gv->printAsOperand(os, /*PrintType=*/true);
+    os.flush();
+    // For vtable purposes we want the type of the global variable
+    std::string full;
+    llvm::raw_string_ostream fs(full);
+    gv->print(fs, /*IsForDebug=*/false);
+    fs.flush();
+    auto nl = full.find('\n');
+    if (nl != std::string::npos) full.resize(nl);
+    return full;
+}
+
+} // anonymous namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor
@@ -105,7 +175,20 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {
         return kdi::kdi_type{std::move(k)};
     }
     if (auto st = std::dynamic_pointer_cast<struct_type>(t)) {
-        return kdi::kdi_type::make_aggregate(st->name());
+        // Use the fully-qualified name so importing compilers can unambiguously
+        // resolve the aggregate type.  aggregate::get_fq_name() returns "::ns::Type"
+        // (with leading "::"); we strip that prefix to match the KDI convention
+        // (e.g. "geom::Vec2", not "::geom::Vec2").
+        std::string fq = st->name(); // fallback: short name
+        if (auto agg = st->get_struct()) {
+            const std::string& agg_fq = agg->get_fq_name();
+            if (!agg_fq.empty()) {
+                // Strip leading "::" if present
+                fq = (agg_fq.size() >= 2 && agg_fq[0] == ':' && agg_fq[1] == ':')
+                     ? agg_fq.substr(2) : agg_fq;
+            }
+        }
+        return kdi::kdi_type::make_aggregate(std::move(fq));
     }
     return kdi::kdi_type::make_void();
 }
@@ -205,7 +288,7 @@ std::vector<kdi::kdi_layout_field> kdi_builder::build_layout(const aggregate& ag
             std::string bname = fname.substr(7, fname.size() - 9);
             std::string bfq   = bname;
             for (auto& bs : agg.get_bases())
-                if (bs.raw_name == bname && bs.base) { bfq = bs.base->get_fq_name(); break; }
+                if (bs.sanitised_name() == bname && bs.base) { bfq = bs.base->get_fq_name(); break; }
             kdi::kdi_layout_base_subobject bso;
             bso.llvm_field_index = fi;
             bso.base_fq_name     = std::move(bfq);
@@ -289,6 +372,12 @@ std::optional<kdi::kdi_vtable> kdi_builder::build_vtable(const aggregate& agg) c
     kvt.vtable_symbol = mangler::mangle_vtable(agg.get_name());
     kvt.rtti_symbol   = mangler::mangle_rtti(agg.get_name());
 
+    // ── LLVM global variable definition for the vtable ────────────────────
+    {
+        auto* gv = _ctx.module().getNamedGlobal(kvt.vtable_symbol);
+        kvt.llvm_def = llvm_global_def(gv);
+    }
+
     for (auto& entry : vt->entries) {
         kdi::kdi_vtable_slot slot;
         slot.slot_index       = static_cast<uint32_t>(entry.slot_index);
@@ -340,6 +429,13 @@ kdi::kdi_aggregate kdi_builder::begin_aggregate(const aggregate& agg) {
     kagg.is_final        = agg.is_final();
     kagg.is_const_struct = agg.is_const_struct();
 
+    // ── LLVM struct type definition ───────────────────────────────────────
+    if (agg.get_struct_type()) {
+        auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(
+            agg.get_struct_type()->get_llvm_type());
+        kagg.llvm_def = llvm_struct_def(llvm_st);
+    }
+
     // ── Bases ────────────────────────────────────────────────────────────
     const llvm::DataLayout& dl = _ctx.module().getDataLayout();
     for (auto& bs : agg.get_bases()) {
@@ -351,7 +447,7 @@ kdi::kdi_aggregate kdi_builder::begin_aggregate(const aggregate& agg) {
         kb.base_field_index = -1;
         kb.byte_offset      = 0;
         if (!bs.is_virtual && agg.get_struct_type()) {
-            auto field = agg.get_struct_type()->get_member("__base_" + bs.raw_name + "__");
+            auto field = agg.get_struct_type()->get_member("__base_" + bs.sanitised_name() + "__");
             if (field) {
                 kb.base_field_index = static_cast<int32_t>(field->index);
                 if (auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(
@@ -395,6 +491,13 @@ void kdi_builder::visit_unit(unit& u) {
     _file.header.lib_path     = _lib_path;
     _file.header.compiler_ver = _compiler_ver;
     _file.unit.name           = _file.header.module_name;
+
+    // Record the direct imports as dependencies so that consumers can
+    // perform transitive KDI loading.
+    for (const auto& imp : u.get_imports()) {
+        if (!imp.module_name.empty())
+            _file.header.dependencies.push_back(imp.module_name.to_string());
+    }
 
     if (auto root = u.get_root_namespace())
         root->accept(*this);
@@ -477,6 +580,10 @@ void kdi_builder::visit_function(function& fn) {
         km.return_type     = to_kdi_type(std::const_pointer_cast<type>(fn.get_return_type()));
         km.params          = to_kdi_params(fn);
         km.mangled_name    = fn.get_mangled_name();
+        {
+            auto* llvm_fn = _ctx.module().getFunction(fn.get_mangled_name());
+            km.llvm_def = llvm_fn_prototype(llvm_fn);
+        }
         _agg_stack.back()->methods.push_back(std::move(km));
     } else {
         // Global function — deposit into current namespace
@@ -489,6 +596,10 @@ void kdi_builder::visit_function(function& fn) {
         kf.return_type  = to_kdi_type(std::const_pointer_cast<type>(fn.get_return_type()));
         kf.params       = to_kdi_params(fn);
         kf.mangled_name = fn.get_mangled_name();
+        {
+            auto* llvm_fn = _ctx.module().getFunction(fn.get_mangled_name());
+            kf.llvm_def = llvm_fn_prototype(llvm_fn);
+        }
         _ns_stack.back()->functions.push_back(std::move(kf));
     }
 }
@@ -508,6 +619,10 @@ void kdi_builder::visit_constructor(constructor& ctor) {
         kc.mangled_name_c2 = mangler(ctx).mangle_constructor_c2(ctor);
     else
         kc.mangled_name_c2 = kc.mangled_name;
+    {
+        auto* llvm_fn = _ctx.module().getFunction(kc.mangled_name);
+        kc.llvm_def = llvm_fn_prototype(llvm_fn);
+    }
 
     _agg_stack.back()->constructors.push_back(std::move(kc));
 }
@@ -525,6 +640,10 @@ void kdi_builder::visit_destructor(destructor& dtor) {
         kd.mangled_name_d2 = mangler(ctx).mangle_destructor_d2(dtor);
     else
         kd.mangled_name_d2 = kd.mangled_name;
+    {
+        auto* llvm_fn = _ctx.module().getFunction(kd.mangled_name);
+        kd.llvm_def = llvm_fn_prototype(llvm_fn);
+    }
 
     _agg_stack.back()->destructor = std::move(kd);
 }

@@ -122,7 +122,13 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_import(ast::import& anImport) override {
-            prefix() << "import " << anImport.name.content << std::endl;
+            prefix() << "import ";
+            if(anImport.qname) {
+                visit_qualified_identifier(*anImport.qname);
+            } else {
+                _stm << "<missing>";
+            }
+            _stm << std::endl;
         }
 
         void visit_qualified_identifier(ast::qualified_identifier& identifier) override {

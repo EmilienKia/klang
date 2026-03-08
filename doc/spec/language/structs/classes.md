@@ -947,3 +947,31 @@ test() : int {
 
 *See also:* [Types — §11.4](../basic/types.md#114-dynamic-indirection-downcast-classinterface) · [Inheritance — Dynamic downcast](inheritance.md#dynamic-indirection-downcast-classinterface-only)
 
+---
+
+## 15. Classes and library export
+
+When a class is compiled into a library, its visibility rules determine what
+is exported in the **KDI** description file:
+
+| Member visibility | Exported to `.kdi` | Accessible by consumers |
+|---|---|---|
+| `public` | ✓ Full layout + mangled name | ✓ Yes |
+| `protected` | ✓ Full layout + mangled name | Sub-classes only |
+| `private` | Opaque size-block only | ✗ No |
+
+The vtable layout, base-class offsets, and RTTI information are always
+exported (they are required to inherit from or dispatch through the class).
+
+**A consumer class may:**
+- Inherit from the exported class (virtual dispatch is preserved).
+- Instantiate it (if constructors are public).
+- Call public virtual and non-virtual methods.
+- Override virtual methods.
+
+**A consumer class may not:**
+- Access private members by name (they are hidden as opaque blocks).
+- Rely on the private block layout across library versions.
+
+See [Libraries — Export and Import](../basic/libraries.md) for worked
+examples, including cross-library inheritance and interface implementation.

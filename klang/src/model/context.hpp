@@ -101,6 +101,26 @@ public:
 
     void add_struct(std::shared_ptr<struct_type> st_type);
 
+    /**
+     * Create an opaque (body-less) LLVM StructType and assign it to @p st_type.
+     * Used for imported aggregates whose layout is already known from the KDI but
+     * whose LLVM body does not need to be resolved by context::resolve_types().
+     * After this call st_type->is_resolved() returns true.
+     */
+    void materialise_opaque_struct_type(std::shared_ptr<struct_type> st_type);
+
+    /**
+     * Build the LLVM struct body for an imported aggregate from its member
+     * variable children.  Unlike resolve_struct_type(), this method does NOT
+     * check is_resolved() first: it always (re)builds the body.
+     *
+     * Call this after all member_variable_definition children have been added
+     * to the aggregate so that get_member() queries can find them.
+     *
+     * @param st_type  The struct_type to fill (must already be in the context).
+     */
+    void build_imported_struct_body(std::shared_ptr<struct_type> st_type);
+
     llvm::Type* get_llvm_type(const std::shared_ptr<type>& type);
 
     llvm::Constant* get_llvm_constant_from_literal(const k::lex::any_literal &literal);
@@ -114,6 +134,59 @@ public:
 
     void init_module(const std::string& module_name);
     llvm::Module& module() {return *_module;}
+
+    /**
+     * Parse a '%Name = type { ... }' LLVM IR snippet and intern the named
+     * StructType into the current LLVMContext.  Returns the StructType* or
+     * nullptr on failure.  If the type is already interned it is returned as-is.
+     *
+     * NOTE: do not use this to intern types that reference other types defined
+     * in separate snippets — LLVM forward-references created in one temporary
+     * module are not resolved by later calls.  Use intern_all_llvm_struct_defs()
+     * instead when multiple inter-dependent definitions must be interned together.
+     */
+    llvm::StructType* intern_llvm_struct_from_def(const std::string& llvm_def,
+                                                  const std::string& type_name);
+
+    /**
+     * Parse a combined IR block containing multiple '%Name = type { ... }'
+     * definitions and intern all named StructTypes into the current LLVMContext.
+     *
+     * All definitions are parsed in a single LLVM IR module so that forward
+     * references between types (e.g. '%Derived = type { %Base, i32 }') are
+     * resolved correctly.  This must be called once, before any call to
+     * intern_llvm_struct_from_def() for the same types, to avoid LLVM creating
+     * separate opaque forward-references for them.
+     *
+     * @param combined_ir  Concatenated LLVM IR type definitions (one per line),
+     *                     e.g. "%A = type { ptr }\n%B = type { %A, i32 }\n".
+     */
+    void intern_all_llvm_struct_defs(const std::string& combined_ir);
+
+    /**
+     * Attach a pre-built llvm::StructType to an already-registered struct_type.
+     * Used by imported.cpp to wire the LLVM type obtained from llvm_def.
+     * No fields are registered in the model (GEP uses llvm_field_index directly).
+     */
+    void attach_llvm_struct_type(std::shared_ptr<struct_type> st_type,
+                                 llvm::StructType* llvm_st);
+
+    /**
+     * Attach a pre-built llvm::StructType to an already-registered struct_type,
+     * and also register named fields for get_member() lookups.
+     * Used by imported.cpp to wire the LLVM type and expose named members.
+     */
+    void attach_llvm_struct_type(std::shared_ptr<struct_type> st_type,
+                                 llvm::StructType* llvm_st,
+                                 std::vector<struct_type::field> named_fields);
+
+    /**
+     * Parse a 'declare ... @mangled(...)' LLVM IR snippet and create/return
+     * the corresponding llvm::Function* (ExternalLinkage) in _module.
+     * Returns nullptr if _module is not yet initialised or parsing fails.
+     */
+    llvm::Function* declare_llvm_function_from_def(const std::string& llvm_def,
+                                                   const std::string& mangled_name);
 
     /**
      * Look up the LLVM Function* for a model function.

@@ -170,3 +170,94 @@ test() : int {
 
 *See also:* [Types — §11.4](../basic/types.md#114-dynamic-indirection-downcast-classinterface) · [Classes — §14](classes.md#14-rtti-and-dynamic-downcast)
 
+---
+
+## Cross-library inheritance
+
+Inheritance from types defined in an imported library works identically to
+inheritance within the same module, provided the `.kdi` description file
+is available.  The compiler reads the exported layout, vtable slots, and
+base-class offsets from the KDI and generates correct derived code without
+access to the original source.
+
+### Rules
+
+The same cross-type restrictions apply as for local inheritance:
+
+| Local type | Imported base | Allowed? |
+|---|---|---|
+| `struct` | imported `struct` | ✓ |
+| `struct` | imported `class` | ✗ error 30035 |
+| `struct` | imported `interface` | ✗ error 30035 |
+| `class` | imported `class` | ✓ |
+| `class` | imported `interface` | ✓ |
+| `class` | imported `struct` | ✗ error 30035 |
+| `interface` | imported `interface` | ✓ |
+| `interface` | imported `class` | ✗ error |
+| `interface` | imported `struct` | ✗ error |
+
+### Struct inheriting from an imported struct
+
+```k
+module local;
+import geom;
+
+struct Point3D : public geom::Point {   // geom::Point has x, y
+    z : int;
+    Point3D(a: int, b: int, c: int) : geom::Point(a, b), z(c) {}
+    sum3() : int { return this.x + this.y + this.z; }
+}
+```
+
+### Class implementing an imported interface
+
+```k
+module local;
+import shapes;
+
+class Ellipse : public shapes::IShape {
+    a : int;  b : int;
+    Ellipse(av: int, bv: int) : a(av), b(bv) {}
+    area()      : int { return a * b; }     // implements shapes::IShape
+    perimeter() : int { return a + b; }
+    sides()     : int { return 0; }
+}
+```
+
+### Class extending an imported class
+
+```k
+module local;
+import animals;
+
+class GuideDog : public animals::Dog {
+    handler : int;
+    GuideDog(v: int, h: int) : animals::Dog(v), handler(h) {}
+    speak() : int { return handler * 10; }  // override virtual
+    guide() : int { return handler; }
+}
+```
+
+### Private member obfuscation
+
+When a base class has `private` members, those members appear in the KDI as
+*opaque blocks* (size only, no names or types).  The derived class is laid out
+with the correct total byte offset — it simply cannot name or access the
+private fields.  This is sufficient to compile, run, and link correctly.
+
+### Constructor chaining with imported base
+
+An imported constructor is called in the member initializer list exactly as
+with a local base:
+
+```k
+MyDerived(args…) : imported::Base(base_args…), local_field(val) { … }
+```
+
+The imported constructor's mangled name and signature are read from the KDI.
+
+---
+
+*See also:* [Libraries — Export and Import](../basic/libraries.md) ·
+[Classes and Virtuality](classes.md) · [Interfaces](interfaces.md) ·
+[Structures](structs.md)

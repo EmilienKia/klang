@@ -49,6 +49,17 @@ K module to call or inherit from the exported symbols.
     is derived by stripping the trailing `.json` suffix (i.e. *file.kdi*).
     Exits with code **0** on success, **2** on error.
 
+**check-symbols** *file.kdi* *file.so*
+:   Load *file.kdi* and cross-check that every mangled symbol declared in it
+    (functions, methods, constructors, destructors, static variables, vtables)
+    is actually present in *file.so* using **nm(1)**.  
+    Prints one line per missing symbol to *stderr* in the form:
+
+        MISSING SYMBOL: <mangled_name>
+
+    Exits with code **0** if all symbols are found, **1** if any are missing,
+    **2** on I/O / parse error, **3** if **nm** is not found in `PATH`.
+
 **help**
 :   Display a short usage summary.
 
@@ -117,3 +128,10 @@ Cross-check that all declared symbols are present in the binary:
 * The `validate` command performs schema-level checks only.  It does not verify
   that the described symbols actually exist in the associated binary.  Use
   `check-symbols` for that cross-check.
+
+* The `header.dependencies` field lists the direct imports of the compiled
+  module (canonical module names, e.g. `["ival_lib", "aval_lib"]`).
+  A consumer compiler (**klangc**) reads this list and loads those KDIs
+  recursively as *transitive dependencies*.  A missing transitive KDI is a
+  fatal compilation error.
+

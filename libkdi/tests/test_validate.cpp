@@ -13,6 +13,7 @@ static kdi_file make_valid_file() {
     fn.fq_name      = "valid::mod::foo";
     fn.return_type  = kdi_type::make_void();
     fn.mangled_name = "_KFN5valid3mod3fooEv";
+    fn.llvm_def     = "declare void @_KFN5valid3mod3fooEv()";
     f.unit.root_ns.functions.push_back(fn);
     return f;
 }
@@ -64,6 +65,7 @@ TEST_CASE("validate: aggregate with unresolved type ref fails", "[validate]") {
     fn.fq_name      = "bad::mod::make";
     fn.return_type  = kdi_type::make_aggregate("bad::Missing");
     fn.mangled_name = "_KFN3bad3mod4makeEv";
+    fn.llvm_def     = "declare void @_KFN3bad3mod4makeEv()";
     f.unit.root_ns.functions.push_back(fn);
     auto r = kdi_validate(f);
     REQUIRE(!r.is_valid());
@@ -80,6 +82,7 @@ TEST_CASE("validate: aggregate with resolved type ref passes", "[validate]") {
     fn.fq_name      = "ok::mod::make";
     fn.return_type  = kdi_type::make_aggregate("ok::Foo");
     fn.mangled_name = "_KFN2ok3mod4makeEv";
+    fn.llvm_def     = "declare void @_KFN2ok3mod4makeEv()";
     f.unit.root_ns.functions.push_back(fn);
     auto r = kdi_validate(f);
     REQUIRE(r.is_valid());
@@ -94,6 +97,7 @@ TEST_CASE("validate: layout with decreasing field index fails", "[validate]") {
     kdi_aggregate agg;
     agg.name    = "S";
     agg.fq_name = "layout::S";
+    agg.llvm_def = "%struct.layout.S = type { i32, i32 }";
 
     kdi_layout_member m1, m2;
     m1.llvm_field_index = 5; m1.name = "a"; m1.fq_name = "layout::S::a";
@@ -116,10 +120,12 @@ TEST_CASE("validate: vtable with non-contiguous slots fails", "[validate]") {
     kdi_aggregate agg;
     agg.kind = kdi_aggregate_kind::class_;
     agg.name = "A"; agg.fq_name = "vt::A";
+    agg.llvm_def = "%struct.vt.A = type { i8** }";
 
     kdi_vtable vt;
     vt.vtable_symbol = "_KTV";
     vt.rtti_symbol   = "_KTRI";
+    vt.llvm_def      = "@_KTV = constant [3 x i8*] zeroinitializer";
     kdi_vtable_slot s;
     s.slot_index = 3;  // not 0 — invalid
     s.introducing_func = "vt::A::f";
@@ -138,10 +144,13 @@ TEST_CASE("validate: duplicate fq_name in namespace fails", "[validate]") {
 
     kdi_aggregate a1, a2;
     a1.name = "Foo"; a1.fq_name = "dup::Foo";
+    a1.llvm_def = "%struct.dup.Foo = type { i32 }";
     a2.name = "Foo"; a2.fq_name = "dup::Foo";  // duplicate
+    a2.llvm_def = "%struct.dup.Foo = type { i32 }";
 
     kdi_constructor ctor;
     ctor.mangled_name = "_KFMC1N3dupFooE";
+    ctor.llvm_def     = "declare void @_KFMC1N3dupFooE(%struct.dup.Foo* %this)";
     a1.constructors.push_back(ctor);
     a2.constructors.push_back(ctor);
 

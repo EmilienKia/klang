@@ -7,4 +7,14 @@
 #define PROJECT_VER_MINOR "@PROJECT_VERSION_MINOR@"
 #define PTOJECT_VER_PATCH "@PROJECT_VERSION_PATCH@"
 
+// Name of the environment variable used to pass extra KDI/library search
+// directories (colon-separated list on UNIX).  Can be overridden at compile
+// time via -DKLANG_LIB_PATH_ENV_VAR=<name> or suppressed by the CLI option
+// --no-lib-path-env.
+#define KLANG_LIB_PATH_ENV_VAR "@KLANG_LIB_PATH_ENV_VAR@"
+
+// Platform-specific multiarch tuple (e.g. "x86_64-linux-gnu").
+// Empty string if not detected.
+#define KLANG_LIBRARY_ARCHITECTURE "@KLANG_LIBRARY_ARCHITECTURE@"
+
 #endif // KLANG_CONFIG_H

@@ -21,8 +21,11 @@
 #include "expressions.hpp"
 #include "model_visitor.hpp"
 #include "mangler.hpp"
+#include "tools/kdi_type_converter.hpp"
 
 #include "../common/tools.hpp"
+
+#include <kdi.hpp>  // kdi::kdi_file, kdi::kdi_namespace, kdi::kdi_function, …
 
 #include <queue>
 #include <unordered_set>
@@ -1032,8 +1035,32 @@ std::shared_ptr<global_main_function> unit::generate_main_function(std::shared_p
     return _global_main_func;
 }
 
-//void model::add_import(const std::string &import_name) {
-//}
+void unit::add_import(const k::name& module_name) {
+    // Avoid duplicates
+    for (auto& imp : _imported_modules) {
+        if (imp.module_name == module_name) return;
+    }
+    _imported_modules.push_back(imported_module{module_name});
+}
+
+imported_module* unit::find_import(const k::name& module_name) {
+    for (auto& imp : _imported_modules) {
+        if (imp.module_name == module_name) return &imp;
+    }
+    return nullptr;
+}
+
+const imported_module* unit::find_import(const k::name& module_name) const {
+    for (const auto& imp : _imported_modules) {
+        if (imp.module_name == module_name) return &imp;
+    }
+    return nullptr;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Implementations of imported_* model nodes and unit::find_imported_* /
+// unit::get_or_create_imported_* have been moved to imported.cpp.
+// ─────────────────────────────────────────────────────────────────────────────
 
 
 } // namespace k::model

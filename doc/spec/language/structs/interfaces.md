@@ -327,5 +327,26 @@ Explicitly combining `abstract` and `static` is an error (`0x20024`).
 
 ---
 
-*See also:* [Classes and Virtuality](classes.md) · [Inheritance](inheritance.md) · [Structures](structs.md) · [Types — §11.4 Dynamic downcast](../basic/types.md#114-dynamic-indirection-downcast-classinterface)
+## 11. Interfaces and library export
+
+When a module containing an interface is compiled into a library, the interface
+is exported in full in the **KDI** description file.  Interface members are
+always `public` (the only meaningful visibility), so every method signature and
+its vtable slot index are exported.
+
+**A consumer may:**
+- Implement the interface (`class MyClass : public mylib::IFoo { … }`).
+- Hold references / pointers to the interface and dispatch virtual calls.
+- Extend the interface (`interface MyIFoo : public mylib::IFoo { … }`).
+
+**A consumer may not:**
+- Instantiate an interface directly.
+- Provide a body for an interface method without implementing the full interface.
+
+See [Libraries — Export and Import](../basic/libraries.md#5-inheriting-from-imported-aggregates)
+for a worked example of implementing an imported interface.
+
+---
+
+*See also:* [Classes and Virtuality](classes.md) · [Inheritance](inheritance.md) · [Structures](structs.md) · [Libraries — Export and Import](../basic/libraries.md) · [Types — §11.4 Dynamic downcast](../basic/types.md#114-dynamic-indirection-downcast-classinterface)
 

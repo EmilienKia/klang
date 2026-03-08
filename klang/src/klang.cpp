@@ -31,6 +31,8 @@
 #include "config.h"
 
 #include "common/logger.hpp"
+#include "common/path_lookup_file_resolver.hpp"
+#include <kdi.hpp>
 #include "parse/parser.hpp"
 #include "parse/ast_dump.hpp"
 #include "model/model.hpp"
@@ -67,6 +69,11 @@ int main(int argc, const char** argv) {
     std::string target_triple;
     std::string raw_ir_file;
     std::string opt_ir_file;
+    std::vector<std::string> kdi_dirs;      // -I <dir>
+    std::vector<std::string> kdi_files;     // -i <file.kdi>
+    std::vector<std::string> lib_dirs;      // -L <dir>
+    std::vector<std::string> lib_files;     // -l <name-or-path>
+    std::string lib_path_env;               // --lib-path-env
 
     k::compiler::initialize();
 
@@ -87,6 +94,36 @@ int main(int argc, const char** argv) {
                             "Write optimised IR to <arg> file (implies --emit-opt-ir; omit value or use - for stdout)")
             ("emit-kdi-json", "Also write a .kdi.json alongside the .kdi file when producing a library")
             ("no-emit-kdi",   "Suppress .kdi generation when producing a library")
+            // ── Import / link search path options ───────────────────────────
+            ("include-path,I",
+                po::value<std::vector<std::string>>(&kdi_dirs)->composing(),
+                "Add <arg> to the list of directories searched for .kdi files "
+                "(and .so/.a when -L is not specified). May be repeated.")
+            ("include-kdi,i",
+                po::value<std::vector<std::string>>(&kdi_files)->composing(),
+                "Explicitly specify a .kdi file for an imported module "
+                "(format: <module-name>=<path> or just <path> when the module "
+                "name is embedded in the file's header). May be repeated.")
+            ("lib-path,L",
+                po::value<std::vector<std::string>>(&lib_dirs)->composing(),
+                "Add <arg> to the list of directories searched for .so/.a "
+                "binary libraries. May be repeated.")
+            ("lib,l",
+                po::value<std::vector<std::string>>(&lib_files)->composing(),
+                "Specify a library binary to link against. Accepts either a "
+                "short name (e.g. math.vec → libmath.vec.so) or a full/relative "
+                "path to a .so or .a file. May be repeated.")
+            ("lib-path-env",
+                po::value<std::string>(&lib_path_env),
+                "Override the name of the environment variable used to pass "
+                "additional KDI/library search directories "
+                "(default: " KLANG_LIB_PATH_ENV_VAR "). "
+                "The value is a colon-separated list of directories.")
+            ("no-lib-path-env",
+                "Disable the environment-variable-based search path entirely.")
+            ("enforce-ns-collision",
+                "Reject compilation if the root namespace of the unit being "
+                "compiled collides with the root namespace of any imported module.")
             ;
 
     po::options_description cli_target_options("Target options");
@@ -193,6 +230,68 @@ int main(int argc, const char** argv) {
         ir_opts.emit_kdi_json = vm.count("emit-kdi-json") > 0;
         ir_opts.no_emit_kdi   = vm.count("no-emit-kdi")   > 0;
         compiler->set_ir_output_options(ir_opts);
+
+        // ── Build the file resolver ─────────────────────────────────────────
+        {
+            auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+
+            // 1. Explicit .kdi files (-i module=path or -i path)
+            for (const auto& spec : kdi_files) {
+                auto eq = spec.find('=');
+                if (eq != std::string::npos) {
+                    // "module::name=/path/to/file.kdi"
+                    resolver->add_explicit_path(spec.substr(0, eq),
+                                               spec.substr(eq + 1));
+                } else {
+                    // bare path — read module_name from the .kdi header
+                    try {
+                        auto kf = kdi::kdi_read_cbor_file(spec);
+                        resolver->add_explicit_path(kf.header.module_name, spec);
+                    } catch (const std::exception& e) {
+                        std::cerr << "Warning: -i '" << spec
+                                  << "': cannot read KDI header: " << e.what()
+                                  << " — ignored." << std::endl;
+                    }
+                }
+            }
+
+            // 2. Current directory (always first in the search order)
+            resolver->add_search_dir(std::filesystem::current_path());
+
+            // 3. Explicit -I directories
+            for (const auto& d : kdi_dirs) {
+                resolver->add_search_dir(d);
+            }
+
+            // 4. Environment variable (unless --no-lib-path-env)
+            if (vm.count("no-lib-path-env") == 0) {
+                const std::string env_name = lib_path_env.empty()
+                    ? std::string(KLANG_LIB_PATH_ENV_VAR)
+                    : lib_path_env;
+                resolver->add_dirs_from_env(env_name);
+            }
+
+            // 5. System directories (configured by CMake via config.h)
+#if defined(KLANG_LIBRARY_ARCHITECTURE) && !defined(_WIN32)
+            const std::string arch(KLANG_LIBRARY_ARCHITECTURE);
+            if (!arch.empty()) {
+                resolver->add_search_dir("/usr/local/lib/kdi");
+                resolver->add_search_dir("/usr/lib/kdi");
+                resolver->add_search_dir("/usr/lib/" + arch + "/kdi");
+            } else
+#endif
+            {
+                resolver->add_search_dir("/usr/local/lib/kdi");
+                resolver->add_search_dir("/usr/lib/kdi");
+            }
+
+            compiler->set_file_resolver(resolver);
+        }
+
+        // ── Enforce-ns-collision flag ───────────────────────────────────────
+        if (vm.count("enforce-ns-collision") > 0) {
+            compiler->set_enforce_ns_collision(true);
+        }
 
         // Pre-resolve IR file names from the expected output path so that
         // process_generation() (called inside parse_source) can use them.

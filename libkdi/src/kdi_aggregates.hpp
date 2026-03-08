@@ -80,6 +80,10 @@ struct kdi_function {
     kdi_type                 return_type;
     std::vector<kdi_param>   params;
     std::string              mangled_name;
+    /// LLVM IR prototype for this function, e.g. "declare i32 @_ZN3foo3barEi(i32)".
+    /// Used by importing compilers to reconstruct the exact LLVM Function declaration
+    /// without re-deriving the ABI from the KDI type descriptors.
+    std::string              llvm_def;
 };
 
 /** Member method. */
@@ -96,6 +100,9 @@ struct kdi_method {
     kdi_type                 return_type;
     std::vector<kdi_param>   params;                 ///< excluding 'this'
     std::string              mangled_name;
+    /// LLVM IR prototype (with implicit 'this' pointer as first arg), e.g.
+    /// "declare i32 @_ZN3ns5Adder3addEi(%struct.ns.Adder* %this, i32)".
+    std::string              llvm_def;
 };
 
 struct kdi_constructor {
@@ -106,6 +113,9 @@ struct kdi_constructor {
     std::vector<kdi_param>   params;
     std::string              mangled_name;         ///< C1 variant
     std::string              mangled_name_c2;      ///< C2 (base-subobject) variant
+    /// LLVM IR prototype of the C1 constructor variant, e.g.
+    /// "declare void @_ZN3ns7CounterC1Ev(%struct.ns.Counter* %this)".
+    std::string              llvm_def;
 };
 
 struct kdi_destructor {
@@ -114,6 +124,9 @@ struct kdi_destructor {
     bool           is_compiler_generated  = false;
     std::string    mangled_name;           ///< D1 variant
     std::string    mangled_name_d2;        ///< D2 (base-subobject) variant
+    /// LLVM IR prototype of the D1 destructor variant, e.g.
+    /// "declare void @_ZN3ns7CounterD1Ev(%struct.ns.Counter* %this)".
+    std::string    llvm_def;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,6 +159,9 @@ struct kdi_vtable {
     std::string                       rtti_symbol;     ///< mangled name of RTTI global
     std::vector<kdi_vtable_slot>      slots;
     std::vector<kdi_secondary_vtable> secondary;
+    /// LLVM IR type declaration for the vtable struct, e.g.
+    /// "%vtable.ns.Counter = type { i8*, i8*, void (%struct.ns.Counter*)*, ... }".
+    std::string                       llvm_def;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -276,6 +292,12 @@ struct kdi_aggregate {
 
     // Nested aggregates (public/protected)
     std::vector<kdi_aggregate>    nested;
+
+    /// LLVM IR struct type definition, e.g.
+    /// "%struct.ns.Counter = type { i32*, i32 }".
+    /// Used by importing compilers to reconstruct the exact LLVM StructType
+    /// without re-deriving the layout from the KDI layout fields.
+    std::string                   llvm_def;
 };
 
 } // namespace kdi

@@ -19,9 +19,10 @@ Examples are included where they clarify the normative text.
 |------|-------------|
 | [Lexical Conventions](basic/lexical.md) | Source encoding, comments, tokens |
 | [Keywords](basic/keywords.md) | Reserved words of the language |
-| [Names, Namespaces and Lookup](basic/names.md) | Identifiers, qualified names, lookup rules, namespace visibility |
+| [Names, Namespaces and Lookup](basic/names.md) | Identifiers, qualified names, lookup rules (incl. imported symbols), namespace visibility and library export |
 | [Types](basic/types.md) | Primitive types; the four indirection types (`&` `~` `^` `*`); array and struct types; static upcast; dynamic downcast (RTTI) |
-| [Module System](basic/modules.md) | Module declarations and imports |
+| [Module System](basic/modules.md) | Module declarations, imports, transitive dependencies, using imported symbols |
+| [Libraries — Export and Import](basic/libraries.md) | Producing libraries, what is exported, importing and using symbols, cross-library inheritance, transitive deps |
 | [Main Function](basic/main.md) | Program entry point |
 
 ### Expressions

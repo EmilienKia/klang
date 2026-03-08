@@ -95,6 +95,9 @@ void validate_aggregate(const kdi_aggregate& agg,
     if (agg.fq_name.empty()) {
         result.add(path, "fq_name must not be empty");
     }
+    if (agg.llvm_def.empty()) {
+        result.add(path, "llvm_def must not be empty");
+    }
     validate_layout(agg.layout, path, result);
 
     for (size_t i = 0; i < agg.methods.size(); ++i) {
@@ -104,6 +107,9 @@ void validate_aggregate(const kdi_aggregate& agg,
         if (agg.methods[i].mangled_name.empty()) {
             result.add(mp, "mangled_name must not be empty");
         }
+        if (agg.methods[i].llvm_def.empty()) {
+            result.add(mp, "llvm_def must not be empty");
+        }
     }
     for (size_t i = 0; i < agg.constructors.size(); ++i) {
         auto cp = path + ".constructors[" + std::to_string(i) + "]";
@@ -111,9 +117,18 @@ void validate_aggregate(const kdi_aggregate& agg,
         if (agg.constructors[i].mangled_name.empty()) {
             result.add(cp, "mangled_name must not be empty");
         }
+        if (agg.constructors[i].llvm_def.empty()) {
+            result.add(cp, "llvm_def must not be empty");
+        }
+    }
+    if (agg.destructor && agg.destructor->llvm_def.empty()) {
+        result.add(path + ".destructor", "llvm_def must not be empty");
     }
     if (agg.vtable) {
         validate_vtable(*agg.vtable, path + ".vtable", result);
+        if (agg.vtable->llvm_def.empty()) {
+            result.add(path + ".vtable", "llvm_def must not be empty");
+        }
     }
     for (size_t i = 0; i < agg.nested.size(); ++i) {
         validate_aggregate(agg.nested[i],
@@ -141,6 +156,9 @@ void validate_namespace(const kdi_namespace& ns,
         validate_params(ns.functions[i].params, fp, types, result);
         if (ns.functions[i].mangled_name.empty()) {
             result.add(fp, "mangled_name must not be empty");
+        }
+        if (ns.functions[i].llvm_def.empty()) {
+            result.add(fp, "llvm_def must not be empty");
         }
     }
     for (size_t i = 0; i < ns.variables.size(); ++i) {

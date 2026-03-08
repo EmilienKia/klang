@@ -1,18 +1,3 @@
-cmake_minimum_required(VERSION 3.17)
-
-set(CMAKE_CXX_STANDARD 20)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Dependencies
-# ─────────────────────────────────────────────────────────────────────────────
-
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBCBOR REQUIRED libcbor)
-
-find_package(Catch2 REQUIRED)
-find_package(nlohmann_json REQUIRED)
-find_package(Boost REQUIRED COMPONENTS program_options)
-
 # ─────────────────────────────────────────────────────────────────────────────
 # libkdi — KDI DTO + CBOR I/O + validation + dump
 # ─────────────────────────────────────────────────────────────────────────────
@@ -73,5 +58,4 @@ add_executable(kdi-tests
 
 target_link_libraries(kdi-tests PRIVATE kdi Catch2::Catch2WithMain)
 
-enable_testing()
 add_test(NAME kdi-tests COMMAND kdi-tests)

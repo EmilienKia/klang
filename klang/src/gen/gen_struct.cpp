@@ -24,6 +24,8 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 
+#include "../model/imported.hpp"
+
 #include <llvm/IR/Verifier.h>
 
 #include <queue>
@@ -99,8 +101,58 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
         };
 
         for (auto& bs : st.get_bases_mutable()) {
-            // Resolve the base name from the current structure scope upward
-            auto base_st = scope_lookup::lookup_structure(st.shared_as<element>(), bs.raw_name);
+            // Resolve the base name from the current structure scope upward.
+            // bs.raw_name may be a simple name ("Base") or a qualified name
+            // ("ns::Base") if the base comes from an imported module.
+            std::shared_ptr<aggregate> base_st;
+
+            // Try scope-local lookup first (simple name or namespace-qualified)
+            if (bs.raw_name.find("::") == std::string::npos) {
+                // Simple name: standard scope-chain lookup
+                base_st = scope_lookup::lookup_structure(st.shared_as<element>(), bs.raw_name);
+            } else {
+                // Qualified name: split on "::" and descend namespaces from root
+                auto root_ns_ptr = scope_lookup::root_namespace(st);
+                if (root_ns_ptr) {
+                    std::vector<std::string> parts;
+                    std::size_t start = 0;
+                    while (true) {
+                        auto pos = bs.raw_name.find("::", start);
+                        if (pos == std::string::npos) {
+                            parts.push_back(bs.raw_name.substr(start));
+                            break;
+                        }
+                        parts.push_back(bs.raw_name.substr(start, pos - start));
+                        start = pos + 2;
+                    }
+                    k::name qname{false, parts};
+                    if (auto res = aggregate_type_resolver::resolve_struct_from(*root_ns_ptr, qname)) {
+                        base_st = res;
+                    }
+                }
+            }
+
+            // Fallback: search imported modules
+            if (!base_st) {
+                std::vector<std::string> parts;
+                std::size_t start = 0;
+                const auto& raw = bs.raw_name;
+                while (true) {
+                    auto pos = raw.find("::", start);
+                    if (pos == std::string::npos) {
+                        parts.push_back(raw.substr(start));
+                        break;
+                    }
+                    parts.push_back(raw.substr(start, pos - start));
+                    start = pos + 2;
+                }
+                k::name qname{false, parts};
+                if (auto imp_agg = _unit.get_or_create_imported_aggregate(qname, _context)) {
+                    // imported_aggregate is also an aggregate (via inheritance)
+                    base_st = std::dynamic_pointer_cast<aggregate>(imp_agg);
+                }
+            }
+
             if (!base_st) {
                 throw_error(0x0010, std::nullopt,
                     "Base class '{}' of struct '{}' is not found",
@@ -171,14 +223,14 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             auto& bs = *it;
             if (!bs.base || !bs.base->get_struct_type()) continue;
             if (bs.is_virtual) {
-                std::string vbptr_name = "__vbptr_" + bs.raw_name + "__";
+                std::string vbptr_name = "__vbptr_" + bs.sanitised_name() + "__";
                 if (!st._vars.count(vbptr_name)) {
                     auto vbptr_field = member_variable_definition::make_shared(st.shared_as<aggregate>(), vbptr_name);
                     st._vars.insert({vbptr_name, vbptr_field});
                     st._children.insert(st._children.begin(), vbptr_field);
                 }
             } else {
-                std::string subobj_name = "__base_" + bs.raw_name + "__";
+                std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
                 auto subobj_field = member_variable_definition::make_shared(st.shared_as<aggregate>(), subobj_name);
                 subobj_field->set_type(bs.base->get_struct_type());
                 st._vars.insert({subobj_name, subobj_field});

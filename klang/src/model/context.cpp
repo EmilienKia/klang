@@ -24,6 +24,9 @@
 #include "model.hpp"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/IRReader/IRReader.h"
+#include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 
 namespace k::model {
@@ -89,6 +92,90 @@ void context::init_primitive_types() {
 
 void context::add_struct(std::shared_ptr<struct_type> st_type) {
     _struct_types.insert({st_type->name(), st_type});
+}
+
+void context::materialise_opaque_struct_type(std::shared_ptr<struct_type> st_type) {
+    if (st_type->is_resolved()) return; // already has an LLVM type
+    // Create an opaque (body-less) LLVM StructType so that is_resolved() returns true.
+    // The body can be set later (e.g. via resolve_struct_type) if needed.
+    auto llvm_type = llvm::StructType::create(llvm_context(), st_type->name());
+    auto default_const = llvm::ConstantAggregateZero::get(llvm_type);
+    st_type->set_llvm_type({}, llvm_type, default_const);
+}
+
+void context::build_imported_struct_body(std::shared_ptr<struct_type> st_type) {
+    auto st = st_type->get_struct();
+    if (!st) {
+        // No aggregate model — fallback to opaque
+        materialise_opaque_struct_type(st_type);
+        return;
+    }
+
+    std::vector<struct_type::field> fields;
+    std::vector<llvm::Type*> llvm_types;
+
+    // Walk children in insertion order, picking member_variable_definition entries.
+    for (auto& child : st->get_children()) {
+        auto var = std::dynamic_pointer_cast<member_variable_definition>(child);
+        if (!var) continue;
+
+        const std::string var_name = var->get_short_name();
+        auto mtype = var->get_type();
+
+        if (!mtype) {
+            // Synthetic field without type (e.g. vptr placeholder) → opaque ptr
+            llvm::Type* ptr_ty = llvm::PointerType::get(llvm_context(), 0);
+            fields.emplace_back(struct_type::field{fields.size(), var_name, std::weak_ptr<k::model::type>{}});
+            llvm_types.push_back(ptr_ty);
+            continue;
+        }
+
+        // If the field type is itself an unresolved struct, ensure it has an LLVM type
+        // (opaque at minimum) so that get_llvm_type() returns non-null.
+        if (auto dep_st = std::dynamic_pointer_cast<struct_type>(mtype)) {
+            if (!dep_st->is_resolved()) {
+                materialise_opaque_struct_type(dep_st);
+            }
+        } else if (type::is_pointer(mtype) || type::is_reference(mtype)) {
+            auto sub = mtype->get_subtype();
+            if (sub) {
+                if (auto dep_st = std::dynamic_pointer_cast<struct_type>(sub)) {
+                    if (!dep_st->is_resolved()) {
+                        materialise_opaque_struct_type(dep_st);
+                    }
+                }
+            }
+        }
+
+        llvm::Type* llvm_ty = get_llvm_type(mtype);
+        if (!llvm_ty) {
+            // Cannot resolve — skip or use i8 placeholder
+            llvm_ty = llvm::Type::getInt8Ty(llvm_context());
+        }
+
+        fields.emplace_back(struct_type::field{fields.size(), var_name, mtype});
+        llvm_types.push_back(llvm_ty);
+    }
+
+    // If the struct_type already has a named LLVM opaque type, set its body.
+    // Otherwise create a new StructType.
+    if (st_type->is_resolved()) {
+        // Already has an opaque LLVM StructType — set the body on it.
+        auto* existing = llvm::dyn_cast_or_null<llvm::StructType>(st_type->get_llvm_type());
+        if (existing && existing->isOpaque()) {
+            existing->setBody(llvm::ArrayRef<llvm::Type*>(llvm_types));
+            auto default_const = llvm::ConstantAggregateZero::get(existing);
+            st_type->set_llvm_type(std::move(fields), existing, default_const);
+            return;
+        }
+    }
+
+    // Not yet resolved — create a new named StructType.
+    auto* llvm_type = llvm::StructType::create(llvm_context(),
+                                               llvm::ArrayRef<llvm::Type*>(llvm_types),
+                                               st_type->name());
+    auto* default_const = llvm::ConstantAggregateZero::get(llvm_type);
+    st_type->set_llvm_type(std::move(fields), llvm_type, default_const);
 }
 
 std::shared_ptr<primitive_type> context::from_type(primitive_type::PRIMITIVE_TYPE type){
@@ -383,6 +470,120 @@ void context::resolve_types() {
 
 void context::init_module(const std::string& module_name) {
     _module = std::make_unique<llvm::Module>(module_name, *_context);
+}
+
+// ---------------------------------------------------------------------------
+// intern_llvm_struct_from_def
+// ---------------------------------------------------------------------------
+// Parse a snippet like  '%Counter = type { ptr, %ICounter, i32 }'
+// using the current LLVMContext.  Return the StructType* identified by the
+// given type name, or nullptr on failure.
+//
+// Implementation: wrap the snippet in a minimal IR module text, parse it,
+// then import the named StructType into _module (if not already present).
+llvm::StructType*
+context::intern_llvm_struct_from_def(const std::string& llvm_def,
+                                     const std::string& type_name)
+{
+    if (llvm_def.empty() || type_name.empty()) return nullptr;
+
+    // If already interned in this LLVMContext and NOT opaque, return directly.
+    // If opaque (a forward-reference created when another type referenced this one
+    // before it was fully defined), fall through to parse the body.
+    if (auto* existing = llvm::StructType::getTypeByName(*_context, type_name)) {
+        if (!existing->isOpaque()) return existing;
+        // Fall through: need to set the body of this opaque type.
+    }
+
+    // Parse the snippet via a minimal IR module sharing *_context so that
+    // all named struct types are interned into the same context.
+    std::string ir = "; KDI import\n" + llvm_def + "\n";
+    llvm::SMDiagnostic diag;
+    auto buf = llvm::MemoryBuffer::getMemBuffer(ir, "<kdi-struct-def>");
+    auto tmp = llvm::parseIR(buf->getMemBufferRef(), diag, *_context);
+    if (!tmp) {
+        // Parsing failed — create an opaque placeholder (or return existing opaque).
+        auto* existing = llvm::StructType::getTypeByName(*_context, type_name);
+        return existing ? existing : llvm::StructType::create(*_context, type_name);
+    }
+
+    // The named StructType is now interned in *_context (shared with _module).
+    return llvm::StructType::getTypeByName(*_context, type_name);
+}
+
+// ---------------------------------------------------------------------------
+// intern_all_llvm_struct_defs
+// ---------------------------------------------------------------------------
+// Parse all type definitions contained in @p combined_ir in a single LLVM IR
+// module so that forward-references between types (e.g. base/derived pairs)
+// are resolved immediately.  All named StructTypes are therefore available in
+// *_context after this call with their full bodies — no opaque placeholders
+// will be left behind.
+//
+// This is the preferred way to import struct types from KDI files.
+// intern_llvm_struct_from_def() can still be used afterwards for individual
+// types that are not yet known (it will find them already interned if they
+// appear in the combined blob).
+void context::intern_all_llvm_struct_defs(const std::string& combined_ir) {
+    if (combined_ir.empty()) return;
+
+    std::string ir = "; KDI combined import\n" + combined_ir + "\n";
+    llvm::SMDiagnostic diag;
+    auto buf = llvm::MemoryBuffer::getMemBuffer(ir, "<kdi-combined-defs>");
+    // parseIR uses *_context, so all named StructTypes are interned into it.
+    auto tmp = llvm::parseIR(buf->getMemBufferRef(), diag, *_context);
+    // We do not need the temporary module — the types are now in *_context.
+    // Silently ignore parse failures: individual types will fall back to opaque
+    // via intern_llvm_struct_from_def() if needed.
+}
+
+void context::attach_llvm_struct_type(std::shared_ptr<struct_type> st_type,
+                                      llvm::StructType* llvm_st)
+{
+    if (!st_type || !llvm_st) return;
+    auto* default_const = llvm::ConstantAggregateZero::get(llvm_st);
+    std::vector<struct_type::field> no_fields;
+    st_type->set_llvm_type(std::move(no_fields), llvm_st, default_const);
+}
+
+void context::attach_llvm_struct_type(std::shared_ptr<struct_type> st_type,
+                                      llvm::StructType* llvm_st,
+                                      std::vector<struct_type::field> named_fields)
+{
+    if (!st_type || !llvm_st) return;
+    auto* default_const = llvm::ConstantAggregateZero::get(llvm_st);
+    st_type->set_llvm_type(std::move(named_fields), llvm_st, default_const);
+}
+
+llvm::Function*
+context::declare_llvm_function_from_def(const std::string& llvm_def,
+                                        const std::string& mangled_name)
+{
+    if (llvm_def.empty() || mangled_name.empty()) return nullptr;
+    if (!_module) return nullptr;
+
+    // If already declared in this module, return it.
+    if (auto* existing = _module->getFunction(mangled_name))
+        return existing;
+
+    // Parse the snippet in a temporary module sharing *_context so that
+    // struct types referenced in the prototype are resolved.
+    std::string ir = "; KDI import\n" + llvm_def + "\n";
+    llvm::SMDiagnostic diag;
+    auto buf = llvm::MemoryBuffer::getMemBuffer(ir, "<kdi-fn-def>");
+    auto tmp = llvm::parseIR(buf->getMemBufferRef(), diag, *_context);
+    if (!tmp) return nullptr;
+
+    auto* tmpFn = tmp->getFunction(mangled_name);
+    if (!tmpFn) return nullptr;
+
+    // Create/get the function in *_module with the same type and ExternalLinkage.
+    auto* fn = llvm::Function::Create(
+        tmpFn->getFunctionType(),
+        llvm::GlobalValue::ExternalLinkage,
+        mangled_name,
+        *_module);
+    return fn;
 }
 
 std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {

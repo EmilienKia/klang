@@ -73,6 +73,7 @@ static kdi_type rt_type(const kdi_type& t) {
     fn.fq_name      = "::f";
     fn.return_type  = t;
     fn.mangled_name = "_Kf";
+    fn.llvm_def     = "declare void @_Kf()";
     f.unit.root_ns.functions.push_back(fn);
     auto f2 = json_round_trip(f);
     return f2.unit.root_ns.functions.at(0).return_type;
@@ -153,6 +154,7 @@ TEST_CASE("JSON: function with params round-trips", "[json][function]") {
     fn.is_static    = false;
     fn.return_type  = kdi_type::make_int(32);
     fn.mangled_name = "_KFN4math3addEii";
+    fn.llvm_def     = "declare i32 @_KFN4math3addEii(i32, i32)";
     kdi_param p1; p1.name = "a"; p1.type = kdi_type::make_int(32);
     kdi_param p2; p2.name = "b"; p2.type = kdi_type::make_int(32);
     fn.params = {p1, p2};
@@ -217,8 +219,10 @@ TEST_CASE("JSON: aggregate with method and layout round-trips", "[json][aggregat
     m.is_const_member = true;
     m.return_type     = kdi_type::make_float(32);
     m.mangled_name    = "_KFN4math5Point3lenEv";
+    m.llvm_def        = "declare float @_KFN4math5Point3lenEv(%struct.math.Point* %this)";
     agg.methods.push_back(m);
 
+    agg.llvm_def = "%struct.math.Point = type { i32 }";
     f.unit.root_ns.aggregates.push_back(agg);
     auto f2 = json_round_trip(f);
 
@@ -242,6 +246,7 @@ TEST_CASE("JSON: all layout field variants round-trip", "[json][layout]") {
     kdi_file f = make_minimal_file();
     kdi_aggregate agg;
     agg.name    = "S"; agg.fq_name = "::S"; agg.mangled_name = "_KS";
+    agg.llvm_def = "%struct.S = type { i8**, i8*, i8*, i32, i32, i32 }";
 
     kdi_layout_vptr vp; vp.llvm_field_index = 0; vp.vtable_symbol = "_ZTV1S";
     agg.layout.push_back(vp);
@@ -282,12 +287,12 @@ TEST_CASE("JSON: write/read file helpers produce identical files", "[json][file-
     kdi_function fn;
     fn.name = "foo"; fn.fq_name = "::foo";
     fn.return_type = kdi_type::make_void(); fn.mangled_name = "_Kfoo";
+    fn.llvm_def    = "declare void @_Kfoo()";
     f.unit.root_ns.functions.push_back(fn);
 
     REQUIRE( kdi_write_json_file(f, tmp.string()) );
     kdi_file f2;
-    REQUIRE_NOTHROW( f2 = kdi_read_json_file(tmp.string()) );
-    REQUIRE( f2.header.module_name == f.header.module_name );
+    REQUIRE_NOTHROW( f2 = kdi_read_json_file(tmp.string()) );    REQUIRE( f2.header.module_name == f.header.module_name );
     REQUIRE( f2.unit.root_ns.functions.size() == 1 );
     REQUIRE( f2.unit.root_ns.functions[0].name == "foo" );
 

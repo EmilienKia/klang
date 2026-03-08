@@ -40,8 +40,8 @@
  *   kdi::kdi_file file = builder.take();
  */
 
-#include "model_visitor.hpp"
-#include "context.hpp"
+#include "../model_visitor.hpp"
+#include "../context.hpp"
 
 #include <kdi.hpp>
 

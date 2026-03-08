@@ -467,6 +467,7 @@ cbor_item_t* encode_function(const kdi_function& f) {
     map_push(m, "return_type",  encode_type(f.return_type));
     map_push(m, "params",       encode_params(f.params));
     map_push(m, "mangled_name", cbor_str(f.mangled_name));
+    map_push(m, "llvm_def",     cbor_str(f.llvm_def));
     return m;
 }
 
@@ -481,6 +482,7 @@ kdi_function decode_function(cbor_item_t* item, const std::string& path) {
     f.return_type  = decode_type(rt, path + ".return_type");
     f.params       = decode_params(item, "params", path);
     f.mangled_name = req_string(item, "mangled_name", path);
+    f.llvm_def     = req_string(item, "llvm_def", path);
     return f;
 }
 
@@ -498,6 +500,7 @@ cbor_item_t* encode_method(const kdi_method& m) {
     map_push(map, "return_type",  encode_type(m.return_type));
     map_push(map, "params",       encode_params(m.params));
     map_push(map, "mangled_name", cbor_str(m.mangled_name));
+    map_push(map, "llvm_def",     cbor_str(m.llvm_def));
     return map;
 }
 
@@ -517,6 +520,7 @@ kdi_method decode_method(cbor_item_t* item, const std::string& path) {
     m.return_type    = decode_type(rt, path + ".return_type");
     m.params         = decode_params(item, "params", path);
     m.mangled_name   = req_string(item, "mangled_name", path);
+    m.llvm_def       = req_string(item, "llvm_def", path);
     return m;
 }
 
@@ -529,6 +533,7 @@ cbor_item_t* encode_constructor(const kdi_constructor& c) {
     map_push(m, "params",          encode_params(c.params));
     map_push(m, "mangled_name",    cbor_str(c.mangled_name));
     map_push(m, "mangled_name_c2", cbor_str(c.mangled_name_c2));
+    map_push(m, "llvm_def",        cbor_str(c.llvm_def));
     return m;
 }
 
@@ -541,6 +546,7 @@ kdi_constructor decode_constructor(cbor_item_t* item, const std::string& path) {
     c.params             = decode_params(item, "params", path);
     c.mangled_name       = req_string(item, "mangled_name", path);
     c.mangled_name_c2    = opt_string(item, "mangled_name_c2");
+    c.llvm_def           = req_string(item, "llvm_def", path);
     return c;
 }
 
@@ -551,6 +557,7 @@ cbor_item_t* encode_destructor(const kdi_destructor& d) {
     if (d.is_compiler_generated) map_push(m, "is_compiler_generated", cbor_bool(true));
     map_push(m, "mangled_name",    cbor_str(d.mangled_name));
     map_push(m, "mangled_name_d2", cbor_str(d.mangled_name_d2));
+    map_push(m, "llvm_def",        cbor_str(d.llvm_def));
     return m;
 }
 
@@ -561,6 +568,7 @@ kdi_destructor decode_destructor(cbor_item_t* item, const std::string& path) {
     d.is_compiler_generated = opt_bool(item, "is_compiler_generated");
     d.mangled_name          = req_string(item, "mangled_name", path);
     d.mangled_name_d2       = opt_string(item, "mangled_name_d2");
+    d.llvm_def              = req_string(item, "llvm_def", path);
     return d;
 }
 
@@ -682,6 +690,7 @@ cbor_item_t* encode_vtable(const kdi_vtable& vt) {
     cbor_item_t* m = cbor_new_indefinite_map();
     map_push(m, "vtable_symbol", cbor_str(vt.vtable_symbol));
     map_push(m, "rtti_symbol",   cbor_str(vt.rtti_symbol));
+    map_push(m, "llvm_def",      cbor_str(vt.llvm_def));
 
     cbor_item_t* slots = cbor_new_indefinite_array();
     for (auto& s : vt.slots) {
@@ -720,6 +729,7 @@ kdi_vtable decode_vtable(cbor_item_t* item, const std::string& path) {
     kdi_vtable vt;
     vt.vtable_symbol = req_string(item, "vtable_symbol", path);
     vt.rtti_symbol   = req_string(item, "rtti_symbol", path);
+    vt.llvm_def      = req_string(item, "llvm_def", path);
 
     auto* sa = map_get(item, "slots");
     if (sa && cbor_isa_array(sa)) {
@@ -848,6 +858,9 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     for (auto& n : agg.nested) cbor_array_push(nested, cbor_move(encode_aggregate(n)));
     map_push(m, "nested", nested);
 
+    // llvm_def
+    map_push(m, "llvm_def", cbor_str(agg.llvm_def));
+
     return m;
 }
 
@@ -914,6 +927,7 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
             agg.nested.push_back(decode_aggregate(cbor_array_get(na, i),
                                                   path + ".nested[" + std::to_string(i) + "]"));
     }
+    agg.llvm_def = req_string(item, "llvm_def", path);
     return agg;
 }
 
@@ -1031,6 +1045,13 @@ cbor_item_t* encode_header(const kdi_header& h) {
     map_push(m, "lib_path",      cbor_str(h.lib_path));
     map_push(m, "target_triple", cbor_str(h.target_triple));
     map_push(m, "compiler_ver",  cbor_str(h.compiler_ver));
+    // Encode dependencies as an array of strings (only if non-empty)
+    if (!h.dependencies.empty()) {
+        cbor_item_t* deps = cbor_new_indefinite_array();
+        for (const auto& dep : h.dependencies)
+            cbor_array_push(deps, cbor_move(cbor_str(dep)));
+        map_push(m, "dependencies", deps);
+    }
     return m;
 }
 
@@ -1043,6 +1064,21 @@ kdi_header decode_header(cbor_item_t* item, const std::string& path) {
     h.lib_path      = opt_string(item, "lib_path");
     h.target_triple = opt_string(item, "target_triple");
     h.compiler_ver  = opt_string(item, "compiler_ver");
+    // Decode optional dependencies array
+    if (auto* deps_item = map_get(item, "dependencies")) {
+        if (cbor_isa_array(deps_item)) {
+            size_t n = cbor_array_size(deps_item);
+            h.dependencies.reserve(n);
+            for (size_t i = 0; i < n; ++i) {
+                auto* si = cbor_array_get(deps_item, i);
+                if (si && cbor_isa_string(si)) {
+                    h.dependencies.emplace_back(
+                        reinterpret_cast<const char*>(cbor_string_handle(si)),
+                        cbor_string_length(si));
+                }
+            }
+        }
+    }
     return h;
 }
 

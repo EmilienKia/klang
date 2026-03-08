@@ -21,6 +21,7 @@
 #include <string_view>
 
 #include "common/logger.hpp"
+#include "common/file_resolver.hpp"
 #include "parse/parser.hpp"
 
 namespace llvm {
@@ -72,6 +73,12 @@ protected:
 
     IrOutputOptions _ir_output_options;
 
+    /** File resolver used to locate .kdi files for imports. */
+    std::shared_ptr<k::file_resolver> _file_resolver;
+
+    /** When true, the current unit's root namespace must not collide with imports. */
+    bool _enforce_ns_collision = false;
+
     void process_generation(bool optimize = true, bool dump = true);
 
     compiler(llvm::TargetMachine* target = nullptr);
@@ -87,6 +94,11 @@ public:
 
     std::shared_ptr<const model::unit> get_unit() const {
         return _model_unit;
+    }
+
+    /** Test-only: direct access to the compilation context (LLVM module etc.). */
+    std::shared_ptr<model::context> get_context_for_test() const {
+        return _context;
     }
 
     /**
@@ -129,6 +141,20 @@ public:
     void set_ir_output_options(const IrOutputOptions& opts);
 
     /**
+     * Set the file resolver used to locate .kdi files for imports.
+     * If not set, a default path_lookup_file_resolver (current directory only)
+     * is used.
+     */
+    void set_file_resolver(std::shared_ptr<k::file_resolver> resolver);
+
+    /**
+     * When set to true, the root namespace of the unit being compiled must
+     * not collide with the root namespace of any imported module.
+     * Default: false (the current unit always prevails over imports).
+     */
+    void set_enforce_ns_collision(bool enforce);
+
+    /**
      * Resolve automatic IR file names based on the output file path.
      * Safe to call multiple times (already-set file names are not overwritten).
      * @param output_file  The object/executable output file path.
@@ -150,6 +176,20 @@ public:
      * Convenience wrapper around unit_name_to_lib_base(get_unit()->get_unit_name().to_string()).
      */
     std::string get_lib_base_name() const;
+
+    /**
+     * Build the list of linker arguments (-L<dir> and -l<base>) for all
+     * imported modules that were actually used during this compilation.
+     *
+     * For each used import whose KDI header carries a non-empty lib_base, a
+     * "-l<lib_base>" argument is added.  The directories come from the current
+     * file_resolver search paths (cast to path_lookup_file_resolver), emitted
+     * once each as "-L<dir>".
+     *
+     * Called automatically by gen_executable(), gen_shared_library() and
+     * gen_libraries() just before invoking clang.
+     */
+    std::vector<std::string> build_import_link_args() const;
 
     void dump_gen_code();
     bool verify_gen_code();

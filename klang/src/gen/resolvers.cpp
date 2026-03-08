@@ -55,6 +55,7 @@
 
 #include "resolvers.hpp"
 
+#include "../model/imported.hpp"
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
 
@@ -299,7 +300,18 @@ symbol_resolver::resolve_symbol_from_root(const name& name) {
     }
 
     // Strategy 2: resolve directly from root namespace (omit module prefix)
-    return resolve_qualified_from(*root_ns, name);
+    auto local = resolve_qualified_from(*root_ns, name);
+    if (local.index() != 0) return local;
+
+    // Strategy 3: fallback — search imported modules for a matching function or variable.
+    if (auto* kdi_fn = _unit.find_imported_function(name)) {
+        return _unit.get_or_create_imported_function(kdi_fn, _context);
+    }
+    if (auto* kdi_var = _unit.find_imported_variable(name)) {
+        return _unit.get_or_create_imported_variable(kdi_var, _context);
+    }
+
+    return std::monostate{};
 }
 
 void symbol_resolver::resolve()
@@ -380,7 +392,14 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
         // Try to find the symbol in the parent element context
         return resolve_symbol(*parent_elem, name);
     } else {
-        // No parent element, cannot resolve symbol here
+        // Reached the top of the scope chain without finding the symbol locally.
+        // Last resort: search imported modules.
+        if (auto* kdi_fn = _unit.find_imported_function(name)) {
+            return _unit.get_or_create_imported_function(kdi_fn, _context);
+        }
+        if (auto* kdi_var = _unit.find_imported_variable(name)) {
+            return _unit.get_or_create_imported_variable(kdi_var, _context);
+        }
         return std::monostate{};
     }
 }
@@ -563,6 +582,11 @@ aggregate_type_resolver::resolve_type_from_root(const k::name& name_without_pref
         }
     }
     if (auto st = resolve_struct_from(*root_ns, name_without_prefix)) return st->get_struct_type();
+
+    // Fallback: search imported modules.
+    if (auto agg = _unit.get_or_create_imported_aggregate(name_without_prefix, _context)) {
+        return agg->get_struct_type();
+    }
     return {};
 }
 
@@ -582,8 +606,15 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
     for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
         if (auto st = resolve_struct_from(*current, type_name)) return st->get_struct_type();
     }
+
+    // Fallback: search imported modules (relative name, scope chain exhausted)
+    if (auto agg = _unit.get_or_create_imported_aggregate(type_name, _context)) {
+        return agg->get_struct_type();
+    }
     return {};
 }
+
+// ── Resolve a single type reference (for parameters and member variables) ────
 
 // ── Resolve a single type reference (for parameters and member variables) ────
 
@@ -702,14 +733,44 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
     if (!type::is_resolved(param.get_type())) {
         auto res_type = _context->resolve_type(param.get_type());
         if (!type::is_resolved(res_type)) {
-            // Try name-based resolution from parameter's context
+            // Try name-based resolution.
+            // The parameter type may be a composite wrapping an unresolved_type
+            // (e.g. reference_type("iface_one::ICounter&")), so we peel wrappers to
+            // find the inner unresolved name, resolve the inner aggregate, then
+            // rebuild the composite wrapper around the resolved inner type.
             auto owner_func = param.parent<function>();
             if (owner_func) {
-                res_type = resolve_type_by_name(
-                    std::dynamic_pointer_cast<unresolved_type>(param.get_type())
-                        ? std::dynamic_pointer_cast<unresolved_type>(param.get_type())->type_id()
-                        : k::name{},
-                    *owner_func);
+                // Collect wrapper kinds (from outermost to innermost unresolved_type)
+                enum class WrapKind { Ref, Ptr, Link, Pin, Const };
+                std::vector<WrapKind> wrappers;
+                auto inner = param.get_type();
+                while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
+                    if      (type::is_reference(inner))  wrappers.push_back(WrapKind::Ref);
+                    else if (type::is_pointer(inner))    wrappers.push_back(WrapKind::Ptr);
+                    else if (type::is_link(inner))       wrappers.push_back(WrapKind::Link);
+                    else if (type::is_pinned(inner))     wrappers.push_back(WrapKind::Pin);
+                    else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
+                    else break;
+                    inner = inner->get_subtype();
+                }
+                auto unres = std::dynamic_pointer_cast<unresolved_type>(inner);
+                if (unres && !unres->type_id().empty()) {
+                    // Resolve the inner aggregate type
+                    auto inner_resolved = resolve_type_by_name(unres->type_id(), *owner_func);
+                    if (type::is_resolved(inner_resolved)) {
+                        // Re-apply wrappers in reverse order (innermost first)
+                        res_type = inner_resolved;
+                        for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
+                            switch (*it) {
+                                case WrapKind::Ref:   res_type = res_type->get_reference(); break;
+                                case WrapKind::Ptr:   res_type = res_type->get_pointer();   break;
+                                case WrapKind::Link:  res_type = res_type->get_link();      break;
+                                case WrapKind::Pin:   res_type = res_type->get_pinned();    break;
+                                case WrapKind::Const: res_type = res_type->get_const();     break;
+                            }
+                        }
+                    }
+                }
             }
         }
         if (type::is_resolved(res_type)) {
@@ -949,7 +1010,7 @@ void model_materializer::compute_secondary_vtable_specs(klass& kl) {
             if (!base_klass) continue;
 
             // Find the field in cur's LLVM struct for this base sub-object
-            std::string field_name = "__base_" + bs.raw_name + "__";
+            std::string field_name = "__base_" + bs.sanitised_name() + "__";
             auto field_opt = (cur.get_struct_type())
                 ? cur.get_struct_type()->get_member(field_name) : std::nullopt;
 
@@ -1140,6 +1201,11 @@ type_reference_resolver::resolve_type_from_root(const k::name& name_without_pref
         return st->get_struct_type();
     }
 
+    // Strategy 3: fallback — search imported modules.
+    if (auto agg = _unit.get_or_create_imported_aggregate(name_without_prefix, _context)) {
+        return agg->get_struct_type();
+    }
+
     return {};
 }
 
@@ -1170,6 +1236,11 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
         if (auto st = resolve_struct_from(*current, type_name)) {
             return st->get_struct_type();
         }
+    }
+
+    // Fallback: search imported modules (scope chain exhausted)
+    if (auto agg = _unit.get_or_create_imported_aggregate(type_name, _context)) {
+        return agg->get_struct_type();
     }
 
     return {};
@@ -1306,6 +1377,14 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             if(!resolved || !type::is_resolved(resolved)) {
                 // Fall back to context->from_string (handles primitive types by string)
                 resolved = _context->from_string(unres_type->type_id());
+            }
+            if(!resolved || !type::is_resolved(resolved)) {
+                // Fall back to imported aggregates
+                auto imported_agg = _unit.get_or_create_imported_aggregate(
+                    unres_type->type_id(), _context);
+                if (imported_agg && imported_agg->get_struct_type()) {
+                    resolved = imported_agg->get_struct_type();
+                }
             }
             if(!resolved || !type::is_resolved(resolved)) {
                 throw_error(0x0005, std::nullopt,
@@ -2679,6 +2758,15 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
 
     if(!prim_src || !prim_tgt) {
+        // For non-primitive (struct/class) value types: accept if they are the same type object.
+        auto src_nc = type::remove_const(expr->get_type());
+        if (src_nc == type_nc) return expr;
+        // Also accept struct-type upcast by value (same struct_type ptr = same type).
+        if (auto src_st = std::dynamic_pointer_cast<struct_type>(src_nc)) {
+            if (auto tgt_st = std::dynamic_pointer_cast<struct_type>(type_nc)) {
+                if (src_st.get() == tgt_st.get()) return expr;
+            }
+        }
         return {};
     }
 

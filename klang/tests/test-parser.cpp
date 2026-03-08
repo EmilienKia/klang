@@ -1469,3 +1469,75 @@ TEST_CASE("Parse -> default missing semicolon yields error", "[parser][function_
     REQUIRE_THROWS( parser.parse_function_decl() );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// import declarations
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Parse import — simple identifier", "[parser][import]") {
+    test_logger log;
+    k::source src{"import foo;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE( unit );
+    REQUIRE( unit->imports.size() == 1 );
+    auto& imp = *unit->imports[0];
+    REQUIRE( imp.qname );
+    REQUIRE( imp.qname->names.size() == 1 );
+    REQUIRE( std::string(imp.qname->names[0].content) == "foo" );
+    REQUIRE_FALSE( imp.qname->has_root_prefix() );
+}
+
+TEST_CASE("Parse import — qualified identifier two parts", "[parser][import]") {
+    test_logger log;
+    k::source src{"import math::vec;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE( unit );
+    REQUIRE( unit->imports.size() == 1 );
+    auto& imp = *unit->imports[0];
+    REQUIRE( imp.qname );
+    REQUIRE( imp.qname->names.size() == 2 );
+    REQUIRE( std::string(imp.qname->names[0].content) == "math" );
+    REQUIRE( std::string(imp.qname->names[1].content) == "vec" );
+}
+
+TEST_CASE("Parse import — qualified identifier three parts", "[parser][import]") {
+    test_logger log;
+    k::source src{"import a::b::c;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE( unit );
+    REQUIRE( unit->imports.size() == 1 );
+    auto& imp = *unit->imports[0];
+    REQUIRE( imp.qname );
+    REQUIRE( imp.qname->names.size() == 3 );
+    REQUIRE( std::string(imp.qname->names[0].content) == "a" );
+    REQUIRE( std::string(imp.qname->names[1].content) == "b" );
+    REQUIRE( std::string(imp.qname->names[2].content) == "c" );
+}
+
+TEST_CASE("Parse import — multiple imports", "[parser][import]") {
+    test_logger log;
+    k::source src{"import math::vec;\nimport math::mat;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE( unit );
+    REQUIRE( unit->imports.size() == 2 );
+    REQUIRE( std::string(unit->imports[0]->qname->names[1].content) == "vec" );
+    REQUIRE( std::string(unit->imports[1]->qname->names[1].content) == "mat" );
+}
+
+TEST_CASE("Parse import — missing name yields error", "[parser][import][error]") {
+    test_logger log;
+    k::source src{"import ;"};
+    k::parse::parser parser(log, src);
+    REQUIRE_THROWS( parser.parse_unit() );
+}
+
+TEST_CASE("Parse import — missing semicolon yields error", "[parser][import][error]") {
+    test_logger log;
+    k::source src{"import math::vec"};
+    k::parse::parser parser(log, src);
+    REQUIRE_THROWS( parser.parse_unit() );
+}
+

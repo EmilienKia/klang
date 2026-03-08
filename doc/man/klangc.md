@@ -100,6 +100,68 @@ explicitly with `--input-file=`_file_. Only one file is currently processed.
 
 ---
 
+### Import Options
+
+These options control how **klangc** locates the `.kdi` description files and
+binary libraries (`.so` / `.a`) for modules declared with `import` statements.
+
+**`-I` _dir_**, **`--include-path=`_dir_** (repeatable)  
+Add _dir_ to the list of directories searched for `.kdi` description files.
+When `-L` is not specified, _dir_ is also searched for `.so` / `.a` binaries.  
+Directories are tried in the order they are given, after the current directory
+and before the environment-variable paths and system directories.
+
+**`-i` _spec_**, **`--include-kdi=`_spec_** (repeatable)  
+Explicitly specify a `.kdi` file for an imported module. _spec_ can be either:
+- `module::name=/path/to/file.kdi` — explicit module-name → file mapping
+- `/path/to/file.kdi` — the module name is read from the file's `header.module_name`
+
+Explicit paths have the highest priority and bypass all directory searches.
+
+**`-L` _dir_**, **`--lib-path=`_dir_** (repeatable)  
+Add _dir_ to the list of directories searched for binary library files
+(`.so` / `.a`). When both `-I` and `-L` are specified, `-I` applies only to
+`.kdi` files and `-L` applies only to binaries.
+
+**`-l` _spec_**, **`--lib=`_spec_** (repeatable)  
+Specify a library binary to link against. _spec_ can be:
+- A **short name** such as `math.vec` → resolves to `libmath.vec.so`
+  (searched in `-L` directories then system library paths).
+- A **full or relative path** to a `.so` or `.a` file.
+
+**`--lib-path-env=`_name_**  
+Override the name of the environment variable used to pass additional
+KDI / library search directories (default: `KLANG_LIB_PATH`).  The variable
+value must be a colon-separated list of directory paths (UNIX) or
+semicolon-separated (Windows).
+
+**`--no-lib-path-env`**  
+Disable environment-variable-based path lookup entirely. The variable named
+by `--lib-path-env` (or `KLANG_LIB_PATH`) is ignored even if set.
+
+**`--enforce-ns-collision`**  
+By default the root namespace of the unit being compiled prevails over
+imported modules without any error.  This flag makes it an error if the
+root namespace component of the unit being compiled collides with the root
+namespace component of any imported module.
+
+#### Search order summary
+
+For each `import foo::bar;` declaration, **klangc** searches for
+`foo.bar.kdi` (description) and `libfoo.bar.so` (binary) in this order:
+
+1. Explicit paths from `-i` (highest priority)
+2. Current working directory
+3. Directories from `-I` (in order)
+4. Directories from `KLANG_LIB_PATH` environment variable (unless `--no-lib-path-env`)
+5. System KDI directories: `/usr/local/lib/kdi`, `/usr/lib/kdi`, `/usr/lib/<platform>/kdi`
+6. System library directories: `/usr/local/lib`, `/usr/lib`, `/usr/lib/<platform>`
+
+`<platform>` is determined at compile time from the compiler's
+`CMAKE_LIBRARY_ARCHITECTURE` (e.g. `x86_64-linux-gnu`).
+
+---
+
 ### Target Options
 
 **`--target=`_triple_**  
@@ -182,6 +244,18 @@ automatically (e.g. `output.opt.ll`).
 ---
 
 ## DIAGNOSTICS
+
+Error codes follow the pattern `0xCCCCC` where the leading digit indicates the
+compiler phase.
+
+| Code | Severity | Condition |
+|---|---|---|
+| `0x80001` | Error | Namespace root collision between two imported modules |
+| `0x80002` | Error | `--enforce-ns-collision`: imported root collides with the unit's own root |
+| `0x80003` | Error | **Circular import dependency detected** — message includes the full cycle path, e.g. `A → B → C → A` |
+| `0x80004` | Error | KDI file not found for an imported module |
+| `0x80005` | Error | KDI file found but failed to parse (corrupt or wrong schema version) |
+| `0x80010` | Warning | **Imported module declared but none of its symbols are used** — emitted once per unused `import` declaration after all resolver passes complete |
 
 Diagnostic messages are printed to **stderr** in the following format:
 
@@ -345,6 +419,28 @@ klangc --print-effective-triple
 
 ---
 
+**Compile a module that imports another library (direct + transitive resolution):**
+
+```sh
+# lib1: interface IVal { val() : int; }
+klangc --dyn-lib ival.k
+
+# lib2: abstract class AVal : ival::IVal  — imports ival.k
+klangc --dyn-lib -I . aval.k
+
+# lib3: class ConcreteVal : AVal  — imports ival + aval
+klangc --dyn-lib -I . cval.k
+
+# exe: imports ival + cval; aval is a transitive dep resolved from -I .
+klangc -I . -L . main.k -o myapp
+```
+
+`aval` is **never listed** in `main.k`'s `import` statements, yet **klangc**
+loads its `.kdi` automatically because `cval.kdi` declares it in its
+`dependencies` list.
+
+---
+
 ## FILES
 
 | Path | Description |
@@ -436,6 +532,29 @@ kditool validate libmath.utils.kdi
 * JIT execution (used internally in the `klang` REPL) is not exposed through
   the `klangc` command-line driver.
 
+### Transitive imports
+
+When **klangc** imports a module whose `.kdi` lists its own imports in
+`header.dependencies`, those **transitive dependencies** are resolved
+automatically — they do not need to be listed with `import` in the source file.
+The same search order applies: explicit `-i` paths, current directory, `-I`
+directories, `KLANG_LIB_PATH`, system directories.
+
+A **missing transitive dependency** is a **fatal error**: without it the
+aggregate layout and vtable slots of the direct import cannot be fully
+reconstructed, and compilation is aborted.  This is intentional — unlike
+linker warnings for unused symbols, an incomplete type graph would produce
+silently broken code.
+
+To make all transitive KDIs available, either:
+
+1. Install the transitive libraries in a system KDI directory (e.g.
+   `/usr/lib/kdi`).
+2. Pass `-I <dir>` pointing to the directory that contains the transitive
+   `.kdi` files (a canonical-name symlink `<base>.kdi` → `<random>.kdi` is
+   sufficient).
+3. Register each transitive module explicitly with `-i module::name=/path/to/it.kdi`.
+
 ---
 
 ## BUGS
@@ -446,6 +565,16 @@ kditool validate libmath.utils.kdi
   future release.
 
 Please report bugs at the project repository.
+
+---
+
+## ENVIRONMENT
+
+**`KLANG_LIB_PATH`**  
+Colon-separated (UNIX) or semicolon-separated (Windows) list of directories
+appended to the KDI and library search path, after `-I` directories and
+before the system directories.  The variable name can be overridden with
+`--lib-path-env=`_name_ or disabled entirely with `--no-lib-path-env`.
 
 ---
 

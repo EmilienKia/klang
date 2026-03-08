@@ -123,11 +123,18 @@ Every declaration inside a namespace body (function, variable, struct, nested na
 
 ### Visibility levels
 
-| Keyword     | Accessible from …                                        |
-|-------------|----------------------------------------------------------|
-| `public`    | Everywhere. This is the **default**.                     |
-| `protected` | The same **module** only (same root namespace).          |
-| `private`   | The same **namespace** only.                             |
+| Keyword     | Accessible from …                                        | Exported to `.kdi`? |
+|-------------|----------------------------------------------------------|---------------------|
+| `public`    | Everywhere. This is the **default**.                     | ✓ Full definition   |
+| `protected` | The same **module** only (same root namespace).          | ✓ Full definition   |
+| `private`   | The same **namespace** only.                             | ✗ No (opaque block) |
+
+When **klangc** compiles a module into a library, it writes a **KDI** description
+file alongside the binary.  Only `public` and `protected` entities are included
+in full — `private` entities are omitted (at struct/class member level they
+appear as size-only opaque blocks to preserve layout).  Consumers of the library
+can only call or reference `public` entities; `protected` entities are accessible
+only within the same root namespace (i.e. the same multi-file module in future).
 
 ### Ways to specify visibility
 
@@ -188,8 +195,35 @@ When the compiler encounters a name, it looks it up using the following rules (i
 5. **Enclosing struct members** (for inner/nested struct methods, outer struct members are accessible if there is an implicit `__parent__` reference).
 6. **Declarations in the current namespace** (the module namespace).
 7. **Declarations in enclosing namespaces**, outward to the root namespace.
+8. **Imported modules** — a *qualified* name whose leading component matches an imported (or transitively imported) module is resolved against that module's exported namespace tree.
 
 The first matching declaration wins. If no declaration is found, the compiler reports an error.
+
+> **Step 8 is reached only for qualified names.**  A bare identifier is never
+> implicitly resolved to an imported symbol.  Write `mylib::Foo` (or
+> `::mylib::Foo` for the absolute form), never just `Foo`.
+
+### Imported symbol resolution (step 8)
+
+An `import mylib;` declaration does **not** inject names into the current
+namespace.  It registers `mylib`'s exported API so that a subsequent
+qualified name `mylib::Something` can be resolved.
+
+```k
+module myapp;
+import math::vec;
+
+test() : int {
+    // Bare 'dot' — ERROR: 'dot' is not declared in this module
+    // math::vec::dot(1, 2)    — OK: fully qualified
+    // ::math::vec::dot(1, 2)  — OK: absolute form, always unambiguous
+    return math::vec::dot(1, 2);
+}
+```
+
+The leading-`::` form bypasses steps 1–7 and goes directly to step 8,
+resolving from the root namespace.  This is the canonical way to call
+an imported function without any risk of shadowing by a local declaration.
 
 ### `this` inside member functions
 
@@ -240,4 +274,4 @@ Outer::Inner         // type name of nested struct
 
 ---
 
-*See also:* [Lexical Conventions](lexical.md) · [Keywords](keywords.md) · [Types](types.md) · [Module System](modules.md) · [Structures](../structs/structs.md#10-member-visibility)
+*See also:* [Lexical Conventions](lexical.md) · [Keywords](keywords.md) · [Types](types.md) · [Module System](modules.md) · [Libraries — Export and Import](libraries.md) · [Structures](../structs/structs.md#10-member-visibility)

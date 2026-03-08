@@ -42,6 +42,10 @@ KdiHeader {
   lib_path     : string            -- relative path to the .so/.a (informational)
   target_triple: string            -- e.g. "x86_64-pc-linux-gnu"
   compiler_ver : string            -- klangc version string
+  dependencies : [string]          -- canonical module names of direct imports
+                                   -- (e.g. ["ival_lib", "aval_lib"]).  Used by
+                                   -- consumers to load transitive KDIs.  Optional:
+                                   -- omitted (empty) when the module has no imports.
 }
 ```
 
@@ -152,6 +156,11 @@ KdiAggregate {
 
   -- Nested aggregates
   nested       : [KdiAggregate]
+
+  -- LLVM IR struct type definition, e.g. "%struct.ns.Counter = type { i32*, i32 }"
+  -- Used by importing compilers to reconstruct the exact LLVM StructType
+  -- without re-deriving the layout from the KDI layout fields.
+  llvm_def     : string
 }
 ```
 
@@ -233,6 +242,9 @@ KdiLayoutField = one of:
 KdiVtable {
   vtable_symbol  : string          -- mangled name of primary vtable global
   rtti_symbol    : string          -- mangled name of RTTI global
+  llvm_def       : string          -- LLVM IR declaration of the vtable global,
+                                   -- e.g. "@_ZTV7Counter = constant [3 x i8*]
+                                   --   [...]"
   slots          : [KdiVtableSlot]
   secondary      : [KdiSecondaryVtable]
 }
@@ -274,6 +286,10 @@ KdiFunction {
   return_type  : KdiType
   params       : [KdiParam]
   mangled_name : string
+  llvm_def     : string            -- LLVM IR prototype, e.g.
+                                   -- "declare i32 @_ZN3foo3barEi(i32)"
+                                   -- Used by importing compilers to reconstruct
+                                   -- the exact LLVM Function declaration.
 }
 
 KdiParam {
@@ -300,6 +316,10 @@ KdiMethod {
   return_type    : KdiType
   params         : [KdiParam]     -- excluding 'this'
   mangled_name   : string
+  llvm_def       : string          -- LLVM IR prototype (with implicit 'this'
+                                   -- as first arg), e.g.
+                                   -- "declare i32 @_ZN2ns5Adder3addEi
+                                   --   (%struct.ns.Adder* %this, i32)"
 }
 ```
 
@@ -316,6 +336,9 @@ KdiConstructor {
   params             : [KdiParam]
   mangled_name       : string      -- C1 variant
   mangled_name_c2    : string      -- C2 (base-subobject) variant
+  llvm_def           : string      -- LLVM IR prototype of the C1 variant, e.g.
+                                   -- "declare void @_ZN7CounterC1Ev
+                                   --   (%struct.Counter* %this)"
 }
 ```
 
@@ -330,6 +353,9 @@ KdiDestructor {
   is_compiler_generated : bool
   mangled_name   : string          -- D1 variant
   mangled_name_d2: string          -- D2 (base-subobject) variant
+  llvm_def       : string          -- LLVM IR prototype of the D1 variant, e.g.
+                                   -- "declare void @_ZN7CounterD1Ev
+                                   --   (%struct.Counter* %this)"
 }
 ```
 
@@ -363,4 +389,14 @@ KdiVariable {
 * Arrays use CBOR **definite-length arrays** (major type 4).
 * The schema version is encoded as the very first two key/value pairs in the
   top-level map: `"schema_major"` and `"schema_minor"`.
+* The `llvm_def` field is **mandatory** on `KdiFunction`, `KdiMethod`,
+  `KdiConstructor`, `KdiDestructor`, `KdiAggregate`, and `KdiVtable`.
+  It must not be empty.  This field carries the exact LLVM IR text emitted
+  by the exporting compiler and is authoritative for ABI-faithful import.
+* The `dependencies` field in `KdiHeader` is **optional** (omitted when the
+  module has no imports).  When present, it lists the canonical module names
+  of all direct imports of the compiled module in declaration order.  A
+  consumer **must** treat a missing transitive dependency as a fatal error:
+  without all transitive KDIs the aggregate layouts and vtable slots cannot
+  be fully reconstructed.
 

@@ -22,6 +22,8 @@
 #include "../model/statements.hpp"
 #include "../model/operators.hpp"
 #include "../model/mangler.hpp"
+#include "../model/imported.hpp"
+#include "../../../libkdi/src/kdi_aggregates.hpp"
 
 #include "llvm/Support/raw_os_ostream.h"
 #include <llvm/IR/DataLayout.h>
@@ -1217,6 +1219,18 @@ void annotate_dispatch_info(function_invocation_expression& expr,
 
     auto kl = std::dynamic_pointer_cast<klass>(st_type->get_struct());
     if (!kl || !kl->has_vtable()) {
+        // Check if it is an imported aggregate with a vtable
+        // (imported_klass / imported_interface — neither derives from klass).
+        auto imp = std::dynamic_pointer_cast<aggregate>(st_type->get_struct());
+        if (imp && imp->has_vtable()) {
+            virtual_dispatch_info di;
+            di.kind                = virtual_dispatch_info::dispatch_kind::VTABLE;
+            di.slot_index          = func->get_vtable_slot();
+            di.imported_dispatch_agg = imp;
+            di.this_adjustment     = 0;
+            expr.set_dispatch_info(std::move(di));
+            return;
+        }
         virtual_dispatch_info di;
         di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
         expr.set_dispatch_info(std::move(di));
@@ -1697,10 +1711,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     auto function = callee->get_function();
     auto it = _context->_functions.find(function);
     if(it==_context->_functions.end()) {
-        // If the function is abstract and this is a virtual dispatch call,
-        // we can still dispatch through the vtable using the function's model signature.
-        // The callee's LLVM function was intentionally not emitted for abstract functions.
-        if (function && function->is_abstract_func() && function->is_virtual()) {
+        // Abstract virtual functions and imported virtual functions without a
+        // concrete LLVM declaration can still be dispatched through the vtable.
+        if (function && function->is_virtual() &&
+            (function->is_abstract_func() || function->is_external())) {
             // Fall through: llvm_func will remain null; virtual dispatch handles it below.
         } else {
             throw_internal_error(0x0010, std::nullopt,
@@ -1710,7 +1724,9 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         }
     }
     llvm::Function* llvm_func = (it != _context->_functions.end()) ? it->second : nullptr;
-    if(llvm_func == nullptr && !(function && function->is_abstract_func())) {
+    if(llvm_func == nullptr &&
+       !(function && (function->is_abstract_func() ||
+                      (function->is_virtual() && function->is_external())))) {
         throw_internal_error(0x0011, std::nullopt,
             "Internal error: LLVM function object is null for '{}'; "
             "this indicates a compiler bug in the declaration pass",
@@ -1723,31 +1739,104 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     const bool is_vtable_dispatch =
         expr.has_dispatch_info()
         && expr.get_dispatch_info().kind == virtual_dispatch_info::dispatch_kind::VTABLE
-        && expr.get_dispatch_info().dispatch_class != nullptr;
+        && (expr.get_dispatch_info().dispatch_class != nullptr
+            || expr.get_dispatch_info().imported_dispatch_agg != nullptr);
 
     if (is_vtable_dispatch) {
         const auto& di = expr.get_dispatch_info();
+
+        // ── Local klass dispatch ──────────────────────────────────────────
         auto kl = di.dispatch_class;
         if (kl && kl->has_vtable() && !args.empty()) {
-            // Build function type — from LLVM function or model parameter/return types.
             llvm::FunctionType* fn_type = nullptr;
             if (llvm_func) {
                 fn_type = llvm_func->getFunctionType();
             } else {
-                // Abstract function: build FunctionType from model parameter/return types.
                 std::vector<llvm::Type*> param_types;
-                if (function->is_member() && !function->is_static()) {
+                if (function->is_member() && !function->is_static())
                     param_types.push_back(_context->get_llvm_type(function->get_this_parameter()->get_type()));
-                }
-                for (const auto& param : function->parameters()) {
+                for (const auto& param : function->parameters())
                     param_types.push_back(_context->get_llvm_type(param->get_type()));
-                }
                 llvm::Type* ret_type = function->has_return_type()
                     ? _context->get_llvm_type(function->get_return_type())
                     : llvm::Type::getVoidTy(**_context);
                 fn_type = llvm::FunctionType::get(ret_type, param_types, false);
             }
             _value = emit_virtual_dispatch_call(*_builder, *kl, args[0], di.slot_index, fn_type, args, _context, "");
+            return;
+        }
+
+        // ── Imported aggregate dispatch (imported_klass / imported_interface) ──
+        // The LLVM struct type was interned from llvm_def — field 0 is always the
+        // primary vptr.  The vtable layout is:  { RTTI ptr, slot0 ptr, slot1 ptr, … }
+        // so the function pointer is at index  (slot_index + 1).
+        auto imp_agg = di.imported_dispatch_agg;
+        if (imp_agg && imp_agg->has_vtable() && !args.empty()) {
+            // Build the callee FunctionType from the LLVM declaration if we have it,
+            // or reconstruct from K model types as fallback.
+            llvm::FunctionType* fn_type = nullptr;
+            if (llvm_func) {
+                fn_type = llvm_func->getFunctionType();
+            } else if (function) {
+                std::vector<llvm::Type*> param_types;
+                if (function->is_member() && !function->is_static() && function->get_this_parameter())
+                    param_types.push_back(_context->get_llvm_type(function->get_this_parameter()->get_type()));
+                for (const auto& param : function->parameters())
+                    param_types.push_back(_context->get_llvm_type(param->get_type()));
+                llvm::Type* ret_type = function->has_return_type()
+                    ? _context->get_llvm_type(function->get_return_type())
+                    : llvm::Type::getVoidTy(**_context);
+                fn_type = llvm::FunctionType::get(ret_type, param_types, false);
+            }
+            if (!fn_type) {
+                throw_internal_error(0x0015, std::nullopt,
+                    "Internal error: cannot build FunctionType for imported virtual dispatch of '{}'",
+                    {function ? function->get_fq_name() : "<null>"});
+            }
+
+            auto* struct_llvm_type = imp_agg->get_struct_type()
+                                     ? imp_agg->get_struct_type()->get_llvm_type() : nullptr;
+            if (!struct_llvm_type) {
+                throw_internal_error(0x0016, std::nullopt,
+                    "Internal error: imported aggregate '{}' has no LLVM struct type",
+                    {imp_agg->get_fq_name()});
+            }
+
+            llvm::LLVMContext& llvm_ctx = **_context;
+            llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+            // Find the vptr field index from the KDI layout (first kdi_layout_vptr).
+            uint32_t vptr_field_index = 0; // default: field 0 (primary vptr)
+            auto imp_agg_cast = std::dynamic_pointer_cast<imported_aggregate>(imp_agg);
+            if (imp_agg_cast) {
+                const auto* kdi_agg = imp_agg_cast->get_kdi_aggregate();
+                if (kdi_agg) {
+                    for (const auto& lf : kdi_agg->layout) {
+                        if (auto* vp = std::get_if<kdi::kdi_layout_vptr>(&lf)) {
+                            vptr_field_index = vp->llvm_field_index;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Load the vptr
+            llvm::Value* vptr_addr = _builder->CreateStructGEP(
+                struct_llvm_type, args[0], vptr_field_index, "imp_vptr_addr");
+            llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "imp_vptr");
+
+            // The vtable layout is { RTTI, fn0, fn1, … } so slot i → index i+1.
+            // We use a byte-offset GEP because we don't have the vtable's StructType.
+            // On all supported 64-bit targets a pointer is 8 bytes.
+            const uint64_t ptr_size = 8;
+            llvm::Value* slot_offset = llvm::ConstantInt::get(
+                llvm::Type::getInt64Ty(llvm_ctx),
+                (di.slot_index + 1) * ptr_size);
+            llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
+                llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "imp_vtbl_slot");
+            llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "imp_fn_ptr");
+            _value = _builder->CreateCall(fn_type, fn_ptr, args,
+                fn_type->getReturnType()->isVoidTy() ? "" : "imp_vcall");
             return;
         }
     }
@@ -2376,8 +2465,8 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 for (auto& bs : src_st->get_bases()) {
                     if (bs.base && bs.base.get() == tgt_st.get()) {
                         subobj_name = bs.is_virtual
-                            ? "__vbase_" + bs.raw_name + "__"
-                            : "__base_" + bs.raw_name + "__";
+                            ? "__vbase_" + bs.sanitised_name() + "__"
+                            : "__base_" + bs.sanitised_name() + "__";
                         break;
                     }
                 }
@@ -2407,7 +2496,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     dfs_gep = [&](aggregate* cur_agg, struct_type* cur_st_type, llvm::Value* cur_ptr) -> bool {
                         for (auto& bs : cur_agg->get_bases()) {
                             if (!bs.base || bs.is_virtual) continue;
-                            std::string field_name = "__base_" + bs.raw_name + "__";
+                            std::string field_name = "__base_" + bs.sanitised_name() + "__";
                             auto field = cur_st_type->get_member(field_name);
                             if (!field) continue;
 
@@ -2419,7 +2508,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                             if (!cur_llvm_type) continue;
                             llvm::Value* base_ptr = _builder->CreateStructGEP(
                                 cur_llvm_type, cur_ptr, (unsigned)field->index,
-                                "trans_base_" + bs.raw_name + "_ptr");
+                                "trans_base_" + bs.sanitised_name() + "_ptr");
 
                             if (bs.base.get() == tgt_st.get()) {
                                 _value = base_ptr;
@@ -2546,8 +2635,8 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             for (auto& bs : src_st->get_bases()) {
                 if (bs.base && bs.base.get() == tgt_st.get()) {
                     subobj_name = bs.is_virtual
-                        ? "__vbase_" + bs.raw_name + "__"
-                        : "__base_" + bs.raw_name + "__";
+                        ? "__vbase_" + bs.sanitised_name() + "__"
+                        : "__base_" + bs.sanitised_name() + "__";
                     break;
                 }
             }
@@ -2571,7 +2660,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             dfs_gep = [&](aggregate* cur_agg, struct_type* cur_st_type, llvm::Value* cur_ptr) -> bool {
                 for (auto& bs : cur_agg->get_bases()) {
                     if (!bs.base || bs.is_virtual) continue;
-                    std::string field_name = "__base_" + bs.raw_name + "__";
+                    std::string field_name = "__base_" + bs.sanitised_name() + "__";
                     auto field = cur_st_type->get_member(field_name);
                     if (!field) continue;
                     // Use aggregate directly (works for both structure and klass/interface)
@@ -2582,7 +2671,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     if (!cur_llvm_type) continue;
                     llvm::Value* base_ptr = _builder->CreateStructGEP(
                         cur_llvm_type, cur_ptr, (unsigned)field->index,
-                        "trans_base_" + bs.raw_name + "_ptr");
+                        "trans_base_" + bs.sanitised_name() + "_ptr");
                     if (bs.base.get() == tgt_st.get()) {
                         _value = base_ptr;
                         return true;
@@ -2910,8 +2999,8 @@ void implementation_generator::emit_dynamic_cast(
             if (!bs.base) continue;
             if (bs.base.get() == src_st.get()) {
                 subobj_name = bs.is_virtual
-                    ? "__vbase_" + bs.raw_name + "__"
-                    : "__base_" + bs.raw_name + "__";
+                    ? "__vbase_" + bs.sanitised_name() + "__"
+                    : "__base_" + bs.sanitised_name() + "__";
                 break;
             }
         }
@@ -2936,7 +3025,7 @@ void implementation_generator::emit_dynamic_cast(
             dfs_offset = [&](aggregate* cur_agg, struct_type* cur_st_type) -> int64_t {
                 for (auto& bs : cur_agg->get_bases()) {
                     if (!bs.base || bs.is_virtual) continue;
-                    std::string fname = "__base_" + bs.raw_name + "__";
+                    std::string fname = "__base_" + bs.sanitised_name() + "__";
                     auto field = cur_st_type->get_member(fname);
                     if (!field) continue;
                     auto* cur_llvm = llvm::dyn_cast_or_null<llvm::StructType>(cur_st_type->get_llvm_type());

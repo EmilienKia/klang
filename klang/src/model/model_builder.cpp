@@ -61,8 +61,11 @@ namespace k::model {
         }
     }
 
-    void model_builder::visit_import(parse::ast::import &) {
-        // TODO Imports not supported yet
+    void model_builder::visit_import(parse::ast::import& imp) {
+        // Register the import name in the unit (resolved later by kdi_importer)
+        if(imp.qname) {
+            _unit.add_import(imp.qname->to_name());
+        }
     }
 
     void model_builder::visit_identified_type_specifier(parse::ast::identified_type_specifier &) {
@@ -205,7 +208,7 @@ namespace k::model {
                     default: break;
                 }
             }
-            agg->add_base(std::string{base_entry.name.content}, base_vis);
+            agg->add_base(base_entry.qualified_name, base_vis);
         }
 
         // Push aggregate context
