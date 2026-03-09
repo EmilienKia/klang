@@ -163,6 +163,39 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * Function reference type specifier.
+         *
+         * Represents a reference (pointer *, pin ^, or link ~) to a function.
+         * Syntax:
+         *   RefKind '(' [ TypeSpec { ',' TypeSpec } ] ')'
+         *   QualifiedIdentifier '::' RefKind '(' [ TypeSpec { ',' TypeSpec } ] ')'
+         *
+         * Examples:
+         *   *(int, double~)          — pointer to free function (int, double~)
+         *   ^(int)                   — pin to free function (int)
+         *   ~()                      — link to free function with no params
+         *   MyClass::*(int&)         — pointer to member function of MyClass taking int&
+         *
+         * No return type is specified (no overloading on return type in K).
+         */
+        struct function_ref_type_specifier : public type_specifier {
+            /** The reference qualifier operator: STAR (*), CARET (^), or TILDE (~). */
+            lex::operator_ ref_op;
+            /** Optional qualifier for member function pointer: "MyClass::" part. */
+            std::optional<qualified_identifier> owner;
+            /** Types of function parameters. */
+            std::vector<std::shared_ptr<type_specifier>> param_types;
+
+            function_ref_type_specifier(
+                const lex::operator_& ref_op,
+                const std::optional<qualified_identifier>& owner,
+                const std::vector<std::shared_ptr<type_specifier>>& param_types)
+                : ref_op(ref_op), owner(owner), param_types(param_types) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct expression;
         struct unary_expression;
         struct binary_expression;
@@ -754,6 +787,7 @@ namespace k::parse {
         virtual void visit_array_type_specifier(ast::array_type_specifier &) = 0;
         virtual void visit_pointer_type_specifier(ast::pointer_type_specifier &) = 0;
         virtual void visit_const_type_specifier(ast::const_type_specifier &) = 0;
+        virtual void visit_function_ref_type_specifier(ast::function_ref_type_specifier &) = 0;
 
         virtual void visit_parameter_specifier(ast::parameter_spec &) = 0;
 
@@ -802,6 +836,7 @@ namespace k::parse {
         void visit_array_type_specifier(ast::array_type_specifier &) override;
         void visit_pointer_type_specifier(ast::pointer_type_specifier &) override;
         void visit_const_type_specifier(ast::const_type_specifier &) override;
+        void visit_function_ref_type_specifier(ast::function_ref_type_specifier &) override;
 
         void visit_parameter_specifier(ast::parameter_spec &) override;
         void visit_qualified_identifier(ast::qualified_identifier &) override;

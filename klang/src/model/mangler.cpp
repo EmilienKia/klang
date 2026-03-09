@@ -48,6 +48,16 @@
 // 'Q' for pinned (^) : immutable nullable indirection
 #define SYMBOL_MODIFIER_PINNED     "Q"
 
+// Function reference type mangling:
+// PF<params>E       : pointer (*) to free function
+// QF<params>E       : pin (^) to free function
+// LF<params>E       : link (~) to free function
+// PM<class>F<params>E  : pointer (*) to member function of <class>
+// QM<class>F<params>E  : pin (^)
+// LM<class>F<params>E  : link (~)
+#define SYMBOL_MODIFIER_FN_REF     "F"
+#define SYMBOL_MODIFIER_MEM_FN     "M"
+
 #define SYMBOL_STATIC_CONSTRUCTOR_NAME "C"
 #define SYMBOL_STATIC_DESTRUCTOR_NAME  "D"
 
@@ -283,6 +293,46 @@ std::string mangler::mangle_type(const type& ty) const {
         return SYMBOL_MODIFIER_LINK + mangle_type(*link_ty->get_linked_type());
     } else if (auto pin_ty = dynamic_cast<const pinned_type*>(&ty)) {
         return SYMBOL_MODIFIER_PINNED + mangle_type(*pin_ty->get_pinned_type());
+    } else if (auto mem_fn_ty = dynamic_cast<const member_function_reference_type*>(&ty)) {
+        std::ostringstream s;
+        // ref_kind modifier
+        switch (mem_fn_ty->get_ref_kind()) {
+            case function_reference_type::ref_kind::pointer: s << SYMBOL_MODIFIER_PTR;    break;
+            case function_reference_type::ref_kind::pin:     s << SYMBOL_MODIFIER_PINNED; break;
+            case function_reference_type::ref_kind::link:    s << SYMBOL_MODIFIER_LINK;   break;
+        }
+        s << SYMBOL_MODIFIER_FN_REF SYMBOL_MODIFIER_MEM_FN;
+        // owner struct
+        if (mem_fn_ty->get_member_of()) {
+            s << mangle_structure(mem_fn_ty->get_member_of()->get_name());
+        }
+        // parameters
+        if (mem_fn_ty->get_parameter_types().empty()) {
+            s << TYPE_VOID;
+        } else {
+            for (const auto& p : mem_fn_ty->get_parameter_types()) {
+                s << mangle_type(*p);
+            }
+        }
+        s << SYMBOL_QUALIFIED_SUFFIX;
+        return s.str();
+    } else if (auto fn_ty = dynamic_cast<const function_reference_type*>(&ty)) {
+        std::ostringstream s;
+        switch (fn_ty->get_ref_kind()) {
+            case function_reference_type::ref_kind::pointer: s << SYMBOL_MODIFIER_PTR;    break;
+            case function_reference_type::ref_kind::pin:     s << SYMBOL_MODIFIER_PINNED; break;
+            case function_reference_type::ref_kind::link:    s << SYMBOL_MODIFIER_LINK;   break;
+        }
+        s << SYMBOL_MODIFIER_FN_REF;
+        if (fn_ty->get_parameter_types().empty()) {
+            s << TYPE_VOID;
+        } else {
+            for (const auto& p : fn_ty->get_parameter_types()) {
+                s << mangle_type(*p);
+            }
+        }
+        s << SYMBOL_QUALIFIED_SUFFIX;
+        return s.str();
     } else if (auto struct_ty = dynamic_cast<const struct_type*>(&ty)) {
         auto st = struct_ty->get_struct();
         if (!st) {

@@ -591,50 +591,105 @@ inline bool type::is_struct(const std::shared_ptr<type>& t) {
 
 
 /**
- * Function reference type
+ * Function reference type.
+ *
+ * Represents the type of a reference (pointer *, pin ^, or link ~) to a free or
+ * static function.  The "ref_kind" field records which of the three reference
+ * flavours was declared; however all three share the same LLVM representation
+ * (an opaque function pointer).
+ *
+ * A symbol that resolves to a function (without the call parentheses) has a type
+ * that is always a reference_type wrapping a function_reference_type — because a
+ * function address is non-null and immutable, which matches the semantics of a
+ * reference (& in K).  It can be assigned at construction to a pin (^) or link (~)
+ * variable, and at construction and re-assignment to a pointer (*) variable.
  */
 class function_reference_type : public type {
+public:
+    /** The reference qualifier declared in source (*, ^, ~) — informational only for LLVM. */
+    enum class ref_kind { pointer, pin, link };
+
 protected:
     friend class type;
     friend class function_reference_type_builder;
+    friend class context;
 
     std::shared_ptr<type> _return_type;
     std::vector<std::shared_ptr<type>> _parameter_types;
+    ref_kind _ref_kind = ref_kind::pointer;
 
     function_reference_type() : type(nullptr) {}
-    function_reference_type(const std::shared_ptr<type>& return_type, const std::vector<std::shared_ptr<type>>& parameter_types, llvm::Type* llvm_type):
-        type(llvm_type), _return_type(return_type), _parameter_types(parameter_types) {}
+    function_reference_type(const std::shared_ptr<type>& return_type,
+                            const std::vector<std::shared_ptr<type>>& parameter_types,
+                            ref_kind rk,
+                            llvm::Type* llvm_type):
+        type(llvm_type), _return_type(return_type), _parameter_types(parameter_types), _ref_kind(rk) {}
 
 public:
     bool is_resolved() const override;
+    llvm::Type* get_llvm_type() const override;
+    llvm::Constant* generate_default_value_initializer() const override;
     std::string to_string() const override;
 
     const std::shared_ptr<type>& get_return_type() const { return _return_type; }
+    void set_return_type(const std::shared_ptr<type>& rt) { _return_type = rt; }
     const std::vector<std::shared_ptr<type>>& get_parameter_types() const { return _parameter_types; }
+    ref_kind get_ref_kind() const { return _ref_kind; }
+
+    /** Structural equality: same return type, same parameter types, same ref_kind. */
+    bool structurally_equal(const function_reference_type& other) const;
 };
 
+/**
+ * Member function reference type (unbound method pointer).
+ *
+ * Represents the type of a reference to a non-static member function.
+ * The binding (which object to call it on) is done at the call site, following
+ * the unified calling convention of K (implicit or explicit this).
+ * LLVM representation: same as function_reference_type but with an implicit
+ * first parameter of type "reference to owner struct".
+ */
 class member_function_reference_type : public function_reference_type {
 protected:
-    std::shared_ptr<structure> _member_of;
+    friend class function_reference_type_builder;
+    friend class context;
 
-    member_function_reference_type(const std::shared_ptr<structure>& member_of, const std::shared_ptr<type>& return_type, const std::vector<std::shared_ptr<type>>& parameter_types, llvm::Type* llvm_type):
-        function_reference_type(return_type, parameter_types, llvm_type), _member_of(member_of) {}
+    std::shared_ptr<aggregate> _member_of;
 
+    member_function_reference_type(const std::shared_ptr<aggregate>& member_of,
+                                   const std::shared_ptr<type>& return_type,
+                                   const std::vector<std::shared_ptr<type>>& parameter_types,
+                                   ref_kind rk,
+                                   llvm::Type* llvm_type):
+        function_reference_type(return_type, parameter_types, rk, llvm_type),
+        _member_of(member_of) {}
+
+public:
+    llvm::Type* get_llvm_type() const override;
     std::string to_string() const override;
+
+    const std::shared_ptr<aggregate>& get_member_of() const { return _member_of; }
+
+    /** Structural equality (includes owner struct). */
+    bool structurally_equal(const member_function_reference_type& other) const;
 };
 
 
 class function_reference_type_builder {
 protected:
     std::shared_ptr<context> _context;
-    std::shared_ptr<structure> _member_of;
+    std::shared_ptr<aggregate> _member_of;
     std::shared_ptr<type> _return_type;
     std::vector<std::shared_ptr<type>> _parameter_types;
+    function_reference_type::ref_kind _ref_kind = function_reference_type::ref_kind::pointer;
 public:
-    function_reference_type_builder(const std::shared_ptr<context>& context);
-    void member_of(const std::shared_ptr<structure>& st) {_member_of = st;}
-    void return_type(const std::shared_ptr<type>& return_type) {_return_type = return_type;}
-    void append_parameter_type(const std::shared_ptr<type>& param_type) {_parameter_types.push_back(param_type);}
+    explicit function_reference_type_builder(const std::shared_ptr<context>& context);
+    void member_of(const std::shared_ptr<structure>& st) { _member_of = std::static_pointer_cast<aggregate>(st); }
+    /** Accept any aggregate (structure or klass) as member owner. */
+    void member_of(const std::shared_ptr<aggregate>& agg) { _member_of = agg; }
+    void return_type(const std::shared_ptr<type>& return_type) { _return_type = return_type; }
+    void append_parameter_type(const std::shared_ptr<type>& param_type) { _parameter_types.push_back(param_type); }
+    void ref_kind(function_reference_type::ref_kind rk) { _ref_kind = rk; }
     std::shared_ptr<function_reference_type> build() const;
 };
 
@@ -643,10 +698,62 @@ inline bool type::is_function_reference(const std::shared_ptr<type>& type) {
     return std::dynamic_pointer_cast<function_reference_type>(type) != nullptr;
 }
 
+/**
+ * Unresolved function reference type.
+ *
+ * Placeholder created by context::from_type_specifier() when parsing a
+ * function_ref_type_specifier.  Carries the raw parameter types (which may
+ * themselves contain unresolved_type entries) and the optional owner name
+ * (for member function pointers).  Resolved to function_reference_type or
+ * member_function_reference_type by type_reference_resolver.
+ */
+class unresolved_function_ref_type : public type {
+protected:
+    friend class context;
+    friend class gen::type_reference_resolver;
+
+    k::name _owner_name;        ///< Empty for free functions.
+    function_reference_type::ref_kind _ref_kind;
+    std::vector<std::shared_ptr<type>> _parameter_types;
+    std::shared_ptr<type> _resolved;
+
+    unresolved_function_ref_type(
+        const k::name& owner_name,
+        function_reference_type::ref_kind rk,
+        const std::vector<std::shared_ptr<type>>& param_types)
+        : _owner_name(owner_name), _ref_kind(rk), _parameter_types(param_types) {}
+
+    void resolve(std::shared_ptr<type> res_type) { _resolved = res_type; }
+
+public:
+    const k::name& owner_name() const { return _owner_name; }
+    function_reference_type::ref_kind get_ref_kind() const { return _ref_kind; }
+    const std::vector<std::shared_ptr<type>>& parameter_types() const { return _parameter_types; }
+
+    bool is_resolved() const override { return !!_resolved; }
+    std::shared_ptr<type> get_resolved() const { return _resolved; }
+
+    std::string to_string() const override;
+};
+
 inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2) {
-    // NOTE : this is a very basic implementation, it only checks if the two types are the same instance.
-    // TODO Improve to check for structural equality of types.
-    return type1 == type2;
+    if (type1 == type2) return true;
+    if (!type1 || !type2) return false;
+    // Structural equality for function reference types
+    if (auto f1 = std::dynamic_pointer_cast<member_function_reference_type>(type1)) {
+        if (auto f2 = std::dynamic_pointer_cast<member_function_reference_type>(type2)) {
+            return f1->structurally_equal(*f2);
+        }
+        return false;
+    }
+    if (auto f1 = std::dynamic_pointer_cast<function_reference_type>(type1)) {
+        if (auto f2 = std::dynamic_pointer_cast<function_reference_type>(type2)) {
+            if (std::dynamic_pointer_cast<member_function_reference_type>(type2)) return false;
+            return f1->structurally_equal(*f2);
+        }
+        return false;
+    }
+    return false;
 }
 
 

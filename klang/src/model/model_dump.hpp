@@ -547,6 +547,13 @@ public:
         dump_expr_type(expr);
     }
 
+    void visit_pm_expression(pm_expression& expr) override {
+        expr.left()->accept(*this);
+        _stm << (expr.is_arrow() ? "->*" : ".*");
+        expr.right()->accept(*this);
+        dump_expr_type(expr);
+    }
+
     // --- Arithmetic binary ---------------------------------------------------
 
     void visit_addition_expression(addition_expression& expr) override {

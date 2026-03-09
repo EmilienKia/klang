@@ -173,6 +173,10 @@ struct virtual_dispatch_info {
         DIRECT,
         /** Vtable dispatch through the static receiver type's vtable. */
         VTABLE,
+        /** Indirect call through a function-reference variable (fp(args)). */
+        INDIRECT,
+        /** Indirect call through a member function pointer (obj.*mfp(args) or ptr->*mfp(args)). */
+        INDIRECT_MEMBER,
     };
 
     dispatch_kind kind = dispatch_kind::DIRECT;

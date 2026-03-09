@@ -128,6 +128,7 @@ protected:
     void visit_identified_type_specifier(parse::ast::identified_type_specifier &) override;
     void visit_keyword_type_specifier(parse::ast::keyword_type_specifier &) override;
     void visit_const_type_specifier(parse::ast::const_type_specifier &) override;
+    void visit_function_ref_type_specifier(parse::ast::function_ref_type_specifier &) override;
 
     void visit_parameter_specifier(parse::ast::parameter_spec &) override;
 

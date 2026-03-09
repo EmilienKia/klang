@@ -122,6 +122,7 @@ public:
     virtual void visit_member_of_expression(member_of_expression&) =0;
     virtual void visit_member_of_object_expression(member_of_object_expression&) =0;
     virtual void visit_member_of_pointer_expression(member_of_pointer_expression&) =0;
+    virtual void visit_pm_expression(pm_expression&) =0;
 
     virtual void visit_comparison_expression(comparison_expression&) =0;
     virtual void visit_equal_expression(equal_expression&) =0;
@@ -221,6 +222,7 @@ public:
     void visit_member_of_expression(member_of_expression&) override;
     void visit_member_of_object_expression(member_of_object_expression&) override;
     void visit_member_of_pointer_expression(member_of_pointer_expression&) override;
+    void visit_pm_expression(pm_expression&) override;
 
     void visit_load_value_expression(load_value_expression&) override;
     void visit_address_of_expression(address_of_expression&) override;

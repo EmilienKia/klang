@@ -719,9 +719,39 @@ void aggregate_type_resolver::visit_member_variable_definition(member_variable_d
 
 void aggregate_type_resolver::visit_global_variable_definition(global_variable_definition& var) {
     if (!type::is_resolved(var.get_type())) {
-        auto resolved = resolve_one_type(var.get_type(), *this, var, _context);
-        if (resolved && type::is_resolved(resolved)) {
-            var.set_type(resolved);
+        if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var.get_type())) {
+            // Function reference type for a global variable: resolve it using the variable's scope.
+            // We need a type_reference_resolver to call resolve_function_ref_type, but
+            // aggregate_type_resolver is an earlier pass. We can do a best-effort resolution:
+            // parameter types that are primitive/identified are already resolved by context::from_type_specifier.
+            // Build the function_reference_type directly from the already-resolved param types.
+            function_reference_type_builder builder(_context);
+            builder.ref_kind(ufrt->get_ref_kind());
+            bool all_resolved = true;
+            for (const auto& pt : ufrt->parameter_types()) {
+                if (!type::is_resolved(pt)) {
+                    // Try to resolve via name
+                    if (auto u = std::dynamic_pointer_cast<unresolved_type>(pt)) {
+                        auto rpt = resolve_type_by_name(u->type_id(), var);
+                        if (!rpt || !type::is_resolved(rpt)) { all_resolved = false; break; }
+                        builder.append_parameter_type(rpt);
+                    } else { all_resolved = false; break; }
+                } else {
+                    builder.append_parameter_type(pt);
+                }
+            }
+            if (all_resolved) {
+                // No return type known yet (no init expression resolved), leave null for now
+                auto resolved = builder.build();
+                if (resolved) {
+                    var.set_type(resolved);
+                }
+            }
+        } else {
+            auto resolved = resolve_one_type(var.get_type(), *this, var, _context);
+            if (resolved && type::is_resolved(resolved)) {
+                var.set_type(resolved);
+            }
         }
     }
     // Do NOT register in global_constructor — that is done by type_reference_resolver
@@ -731,6 +761,45 @@ void aggregate_type_resolver::visit_global_variable_definition(global_variable_d
 void aggregate_type_resolver::visit_parameter(parameter& param) {
     // Resolve the type only (no default expressions — those are handled by type_reference_resolver)
     if (!type::is_resolved(param.get_type())) {
+        // Handle unresolved_function_ref_type (function pointer/pin/link parameter type)
+        if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(param.get_type())) {
+            function_reference_type_builder builder(_context);
+            builder.ref_kind(ufrt->get_ref_kind());
+            bool all_resolved = true;
+            auto owner_func = param.parent<function>();
+            // Resolve owner for member function reference parameters (e.g. Counter::*(int))
+            if (!ufrt->owner_name().empty()) {
+                std::shared_ptr<aggregate> owner_agg;
+                if (owner_func) owner_agg = resolve_struct_from(*owner_func, ufrt->owner_name());
+                if (!owner_agg) {
+                    auto root_ns = _unit.get_root_namespace();
+                    if (root_ns) owner_agg = resolve_struct_from(*root_ns, ufrt->owner_name());
+                }
+                if (owner_agg) {
+                    builder.member_of(owner_agg);
+                } else {
+                    all_resolved = false;
+                }
+            }
+            for (const auto& pt : ufrt->parameter_types()) {
+                if (!type::is_resolved(pt)) {
+                    if (auto u = std::dynamic_pointer_cast<unresolved_type>(pt)) {
+                        std::shared_ptr<type> rpt;
+                        if (owner_func) rpt = resolve_type_by_name(u->type_id(), *owner_func);
+                        if (!rpt || !type::is_resolved(rpt)) rpt = _context->from_string(u->type_id());
+                        if (!rpt || !type::is_resolved(rpt)) { all_resolved = false; break; }
+                        builder.append_parameter_type(rpt);
+                    } else { all_resolved = false; break; }
+                } else {
+                    builder.append_parameter_type(pt);
+                }
+            }
+            if (all_resolved) {
+                auto resolved = builder.build();
+                if (resolved) param.set_type(resolved);
+            }
+            return;
+        }
         auto res_type = _context->resolve_type(param.get_type());
         if (!type::is_resolved(res_type)) {
             // Try name-based resolution.
@@ -793,6 +862,27 @@ void aggregate_type_resolver::visit_function(function& fn) {
 
     // Resolve return type
     if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
+        // Handle unresolved_function_ref_type (function pointer return type)
+        if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(fn.get_return_type())) {
+            function_reference_type_builder builder(_context);
+            builder.ref_kind(ufrt->get_ref_kind());
+            bool all_resolved = true;
+            for (const auto& pt : ufrt->parameter_types()) {
+                if (!type::is_resolved(pt)) {
+                    if (auto u = std::dynamic_pointer_cast<unresolved_type>(pt)) {
+                        auto rpt = resolve_type_by_name(u->type_id(), fn);
+                        if (!rpt || !type::is_resolved(rpt)) { all_resolved = false; break; }
+                        builder.append_parameter_type(rpt);
+                    } else { all_resolved = false; break; }
+                } else {
+                    builder.append_parameter_type(pt);
+                }
+            }
+            if (all_resolved) {
+                auto resolved = builder.build();
+                if (resolved) fn.set_return_type(resolved);
+            }
+        } else {
         auto resolved = resolve_type_by_name(
             std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type())
                 ? std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type())->type_id()
@@ -804,6 +894,7 @@ void aggregate_type_resolver::visit_function(function& fn) {
             auto resolved2 = _context->resolve_type(fn.get_return_type());
             if (type::is_resolved(resolved2)) fn.set_return_type(resolved2);
         }
+        } // end else (not unresolved_function_ref_type)
     }
 
     // NOTE: the block / body is NOT visited here.
@@ -1343,9 +1434,93 @@ void type_reference_resolver::check_constructor_overload_collisions(aggregate& s
 }
 
 
+std::shared_ptr<type>
+type_reference_resolver::resolve_function_ref_type(
+    const std::shared_ptr<unresolved_function_ref_type>& ufrt,
+    const element& context_elem)
+{
+    if (!ufrt) return {};
+
+    // Resolve parameter types
+    std::vector<std::shared_ptr<type>> resolved_params;
+    for (const auto& pt : ufrt->parameter_types()) {
+        std::shared_ptr<type> resolved;
+        if (type::is_resolved(pt)) {
+            resolved = pt;
+        } else if (auto u = std::dynamic_pointer_cast<unresolved_type>(pt)) {
+            resolved = resolve_type_by_name(u->type_id(), context_elem);
+            if (!resolved || !type::is_resolved(resolved)) {
+                resolved = _context->from_string(u->type_id());
+            }
+        } else {
+            resolved = _context->resolve_type(pt);
+        }
+        if (!resolved || !type::is_resolved(resolved)) {
+            throw_error(0x4042, std::nullopt,
+                "Cannot resolve parameter type in function reference type",
+                {});
+        }
+        resolved_params.push_back(resolved);
+    }
+
+    function_reference_type_builder builder(_context);
+    builder.ref_kind(ufrt->get_ref_kind());
+    for (const auto& rp : resolved_params) {
+        builder.append_parameter_type(rp);
+    }
+
+    // Member function reference: resolve the owner structure
+    if (!ufrt->owner_name().empty()) {
+        auto owner_agg = resolve_struct_from(context_elem, ufrt->owner_name());
+        if (!owner_agg) {
+            // Try from root
+            auto root_ns = _unit.get_root_namespace();
+            if (root_ns) owner_agg = resolve_struct_from(*root_ns, ufrt->owner_name());
+        }
+        if (!owner_agg) {
+            throw_error(0x4043, std::nullopt,
+                "Cannot find owner struct '{}' for member function reference type",
+                {ufrt->owner_name().to_string()});
+        }
+        // Accept both structure and klass as owner aggregates
+        if (!std::dynamic_pointer_cast<structure>(owner_agg) &&
+            !std::dynamic_pointer_cast<klass>(owner_agg)) {
+            throw_error(0x4044, std::nullopt,
+                "'{}' is not a structure or class; member function pointers require a struct/class owner",
+                {ufrt->owner_name().to_string()});
+        }
+        builder.member_of(owner_agg);
+    }
+
+    auto resolved_type = builder.build();
+    // Cache the resolved type into the unresolved placeholder
+    const_cast<unresolved_function_ref_type*>(ufrt.get())->resolve(resolved_type);
+    return resolved_type;
+}
+
+
 void type_reference_resolver::visit_variable_definition(variable_definition& var)
 {
     if(!type::is_resolved(var.get_type())) {
+        // First: handle unresolved_function_ref_type (function pointer/pin/link type)
+        if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var.get_type())) {
+            // variable_definition is not an element directly; use dynamic_cast to get element context
+            const element* var_elem = dynamic_cast<const element*>(&var);
+            std::shared_ptr<type> resolved;
+            if (var_elem) {
+                resolved = resolve_function_ref_type(ufrt, *var_elem);
+            } else {
+                // Fallback: no scope context, resolve without name lookup (free functions only)
+                resolved = resolve_function_ref_type(ufrt, _unit);
+            }
+            if (resolved && type::is_resolved(resolved)) {
+                var.set_type(resolved);
+            } else {
+                throw_internal_error(0x0002, std::nullopt,
+                    "Internal error: cannot resolve function reference type for variable '{}'",
+                    {var.get_fq_name()});
+            }
+        } else {
         auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
         if(!unres_type) {
             // The type is not resolved but is not a plain unresolved_type either (e.g. it
@@ -1394,12 +1569,32 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 var.set_type(resolved);
             }
         }
+        } // end else (not unresolved_function_ref_type)
     }
 
     // Resolve init expressions if any
     auto init_expr = var.get_init_expr();
     if (init_expr) {
         init_expr->accept(*this);
+    }
+
+    // If the variable has a function_reference_type with no return type yet (e.g. 'fp : *(int) = add_one'),
+    // propagate the return type from the initializer's function symbol into the existing frt in-place.
+    // IMPORTANT: we must NOT replace the frt object (var.set_type(new_frt)) because any reference_type
+    // wrapping it (ref<frt>) holds a weak_ptr to frt — replacing frt would expire those weak_ptrs and
+    // cause use-after-free crashes in is_resolved() checks.  Mutating the existing object is safe.
+    if (auto frt = std::dynamic_pointer_cast<function_reference_type>(var.get_type())) {
+        if (!frt->get_return_type() && init_expr && !init_expr->empty()) {
+            if (auto sym = std::dynamic_pointer_cast<symbol_expression>(init_expr->argument(0))) {
+                if (sym->is_function() && sym->get_function()) {
+                    auto fn_ret = sym->get_function()->get_return_type();
+                    if (fn_ret) {
+                        // Mutate in place — preserves all existing weak_ptr references to frt
+                        frt->set_return_type(fn_ret);
+                    }
+                }
+            }
+        }
     }
 
     auto var_type = var.get_type();
@@ -1970,6 +2165,35 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     // Const-checking for assignment targets is done separately in visit_assignation_expression.
     auto tgt_nc = type::remove_const(tgt);
 
+    // ── Function reference type cases ─────────────────────────────────────────
+    // frt → frt (any ref_kind combination): free conversion (same LLVM type).
+    // ref<frt> → frt: allowed (load from variable / direct function address).
+    if (auto tgt_frt = std::dynamic_pointer_cast<function_reference_type>(tgt_nc)) {
+        if (std::dynamic_pointer_cast<function_reference_type>(type_src)) {
+            return CAST_NONE;
+        }
+        if (type::is_reference(type_src)) {
+            auto src_inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
+            if (std::dynamic_pointer_cast<function_reference_type>(src_inner)) {
+                return CAST_REF_CONV; // ref<frt> → frt: load needed
+            }
+        }
+        return CAST_IMPOSSIBLE;
+    }
+    // ref<frt> → ref<frt>: pass through.
+    if (type::is_reference(tgt_nc)) {
+        auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
+        if (std::dynamic_pointer_cast<function_reference_type>(tgt_sub_nc)) {
+            if (type_src == tgt_nc || type_src == tgt) return CAST_NONE;
+            if (type::is_reference(type_src)) {
+                auto src_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
+                if (std::dynamic_pointer_cast<function_reference_type>(src_sub)) return CAST_NONE;
+            }
+            return CAST_IMPOSSIBLE;
+        }
+    }
+    // ── End function reference type cases ─────────────────────────────────────
+
     // --- Pointer cases ---
     if (type::is_pointer(type_src)) {
         if (type::is_pointer(tgt_nc) || type::is_link(tgt_nc)) {
@@ -2122,6 +2346,23 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         auto sub = type::remove_const(ref_src->get_subtype());
         if (sub == tgt_nc) {
             return CAST_REF_CONV;
+        }
+        // ref<T> → link<T>: passing an object by reference as a link parameter (implicit borrow)
+        if (type::is_link(tgt_nc)) {
+            auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+            if (sub == tgt_sub_nc) return CAST_REF_CONV;
+            // Also check struct upcast: ref<Derived> → link<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(sub);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                return CAST_REF_CONV;
+            }
+        }
+        // ref<T> → pin<T>: passing an object as a pinned reference
+        if (type::is_pinned(tgt_nc)) {
+            auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+            if (sub == tgt_sub_nc) return CAST_REF_CONV;
         }
         // ref -> different primitive: load + cast
         auto prim_sub = std::dynamic_pointer_cast<primitive_type>(sub);
@@ -2585,6 +2826,48 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     // For value-level adaptation, strip const from both sides.
     auto type_nc = type::remove_const(type);
 
+    // ── Function reference types ────────────────────────────────────────────────
+    // Case 1: target is a function_reference_type (frt)
+    //   - If source is frt itself (direct function symbol): return as-is
+    //     (impl_gen returns llvm::Function* directly, no load needed).
+    //   - If source is ref<frt> from a direct function symbol (is_function()): return as-is —
+    //     impl_gen returns the llvm::Function* directly without going through an alloca.
+    //   - If source is ref<frt> from a variable (not is_function()): need a load.
+    if (auto tgt_frt = std::dynamic_pointer_cast<function_reference_type>(type_nc)) {
+        if (std::dynamic_pointer_cast<function_reference_type>(type_src)) {
+            // Source is already a bare frt — no load needed.
+            return expr;
+        }
+        if (type::is_reference(type_src)) {
+            auto src_inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype());
+            if (std::dynamic_pointer_cast<function_reference_type>(src_inner)) {
+                // Check if this is a direct function symbol (impl_gen returns Function* directly).
+                auto sym = std::dynamic_pointer_cast<symbol_expression>(expr);
+                if (sym && sym->is_function()) {
+                    // Direct function address: no load needed, impl_gen produces the ptr directly.
+                    return expr;
+                }
+                // Variable holding a function pointer: load the stored function pointer from the alloca.
+                return adapt_reference_load_value(expr);
+            }
+        }
+        return {};
+    }
+    // Case 2: source is ref<frt> and target is also ref<frt> — pass through unchanged.
+    if (type::is_reference(type_nc)) {
+        auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
+        if (std::dynamic_pointer_cast<function_reference_type>(tgt_sub_nc)) {
+            if (type_src == type_nc || type_src == type) return expr;
+            auto src_sub = type::is_reference(type_src)
+                ? std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype()
+                : type_src;
+            if (std::dynamic_pointer_cast<function_reference_type>(type::remove_const(src_sub))) {
+                return expr; // compatible frt ref
+            }
+        }
+    }
+    // ── End function reference types ────────────────────────────────────────────
+
     if(type::is_pointer(type_src)) {
         if(type::is_pointer(type_nc) || type::is_link(type_nc)) {
             if (type_nc == type_src || type == type_src) {
@@ -2739,6 +3022,26 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
         if(ref_subtype == type_nc) {
             // ref<T> -> T : simple load
             return adapt_reference_load_value(expr);
+        }
+        // ref<T> → link<T> or ref<T> → pin<T>: pass the address directly (LLVM ptr is compatible)
+        if (type::is_link(type_nc) || type::is_pinned(type_nc)) {
+            auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
+            if (ref_subtype == tgt_sub_nc) {
+                // Same underlying type: the ref address IS the link address — no conversion needed.
+                // Wrap in cast to change the K type annotation without emitting any IR cast.
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
+            // Struct upcast: ref<Derived> → link<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(ref_subtype);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
         }
         // ref<primA> -> primB : load first, then cast between primitives
         auto prim_sub = std::dynamic_pointer_cast<primitive_type>(ref_subtype);

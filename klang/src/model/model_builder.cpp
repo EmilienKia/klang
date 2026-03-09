@@ -80,6 +80,10 @@ namespace k::model {
         // Type resolution is handled by context::from_type_specifier; no model action needed here.
     }
 
+    void model_builder::visit_function_ref_type_specifier(parse::ast::function_ref_type_specifier &) {
+        // Type resolution is handled by context::from_type_specifier; no model action needed here.
+    }
+
     void model_builder::visit_qualified_identifier(parse::ast::qualified_identifier &) {
 
     }
@@ -875,6 +879,12 @@ namespace k::model {
                 break;
             case lex::operator_::DOUBLE_EQUAL:
                 _expr = model::equal_expression::make_shared(lexpr, rexpr);
+                break;
+            case lex::operator_::DOT_STAR:
+                _expr = model::pm_expression::make_shared(lexpr, rexpr, false);
+                break;
+            case lex::operator_::ARROW_STAR:
+                _expr = model::pm_expression::make_shared(lexpr, rexpr, true);
                 break;
             case lex::operator_::EXCLAMATION_MARK_EQUAL:
                 _expr = model::different_expression::make_shared(lexpr, rexpr);

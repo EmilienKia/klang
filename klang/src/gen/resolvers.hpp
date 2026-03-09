@@ -427,6 +427,15 @@ protected:
     /** Stack of functions currently being visited (for visibility access-site context). */
     std::vector<std::shared_ptr<function>> _function_stack;
 
+    /**
+     * Keeps function_reference_type objects alive for the duration of type resolution.
+     * A frt created in visit_symbol_expression is a temporary shared_ptr; the only
+     * strong reference to it is through fn_ref_type->reference (the cached ref_type).
+     * If fn_ref_type goes out of scope, the reference_type's weak_ptr<subtype> expires
+     * and any later is_resolved() call crashes.  Storing the frt here prevents that.
+     */
+    std::vector<std::shared_ptr<type>> _ephemeral_types;
+
 public:
 
     type_reference_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
@@ -452,6 +461,14 @@ protected:
 
     /** Resolve a struct type from the root namespace of the unit. */
     std::shared_ptr<type> resolve_type_from_root(const k::name& name_without_prefix);
+
+    /**
+     * Resolve an unresolved_function_ref_type to a concrete function_reference_type
+     * or member_function_reference_type.  The context_elem is used for scope lookup.
+     */
+    std::shared_ptr<type> resolve_function_ref_type(
+        const std::shared_ptr<unresolved_function_ref_type>& ufrt,
+        const element& context_elem);
 
     static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
 
@@ -551,6 +568,7 @@ protected:
 //    void visit_member_of_expression(member_of_expression&) override;
     void visit_member_of_object_expression(member_of_object_expression&) override;
     void visit_member_of_pointer_expression(member_of_pointer_expression&) override;
+    void visit_pm_expression(pm_expression&) override;
 
     void visit_comparison_expression(comparison_expression&) override;
 

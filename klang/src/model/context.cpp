@@ -250,6 +250,31 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             // Canonicalise immediately so that int[] and int[]& share the same type object.
             return subtype->get_array()->get_reference();
         }
+    } else if(auto frt = dynamic_cast<const k::parse::ast::function_ref_type_specifier*>(&type_spec)) {
+        // Determine ref kind from operator token
+        function_reference_type::ref_kind rk = function_reference_type::ref_kind::pointer;
+        if (frt->ref_op == lex::operator_::CARET) {
+            rk = function_reference_type::ref_kind::pin;
+        } else if (frt->ref_op == lex::operator_::TILDE) {
+            rk = function_reference_type::ref_kind::link;
+        }
+
+        // Resolve parameter types (may produce unresolved types — resolved later)
+        std::vector<std::shared_ptr<type>> param_types;
+        for (const auto& pt : frt->param_types) {
+            auto t = from_type_specifier(*pt);
+            if (!t) return {};
+            param_types.push_back(t);
+        }
+
+        // Owner structure (for member function pointer): resolved lazily
+        // We create an unresolved placeholder struct_type via create_unresolved if owner is set.
+        // The real binding happens in type_reference_resolver.
+        std::shared_ptr<unresolved_function_ref_type> result{
+            new unresolved_function_ref_type(
+                frt->owner.has_value() ? frt->owner->to_name() : k::name{},
+                rk, param_types)};
+        return result;
     } else {
         return {};
     }

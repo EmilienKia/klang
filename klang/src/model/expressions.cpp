@@ -162,6 +162,13 @@ void member_of_pointer_expression::accept(model_visitor &visitor) {
 }
 
 //
+// PM expression (.* and ->*)
+//
+void pm_expression::accept(model_visitor &visitor) {
+    visitor.visit_pm_expression(*this);
+}
+
+//
 // Cast expression
 //
 void cast_expression::accept(model_visitor &visitor) {

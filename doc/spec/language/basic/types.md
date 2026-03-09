@@ -23,14 +23,17 @@ K is a statically-typed language. Every expression has a type determined at comp
    - 8.5 [Array assignment](#85-array-assignment)
    - 8.6 [Subscript operator](#86-subscript-operator)
 9. [Struct types](#9-struct-types)
-10. [Type specifiers — grammar](#10-type-specifiers--grammar)
-11. [Implicit conversions](#11-implicit-conversions)
-    - 11.1 [Widening conversions (primitives)](#111-widening-conversions-no-data-loss)
-    - 11.2 [Narrowing conversions](#112-narrowing-conversions-possible-data-loss)
-    - 11.3 [Static indirection upcast (aggregate types)](#113-static-indirection-upcast-aggregate-types)
-    - 11.4 [Dynamic indirection downcast (class/interface)](#114-dynamic-indirection-downcast-classinterface)
-    - 11.5 [Explicit cast](#115-explicit-cast)
-12. [Const-ness](#12-const-ness)
+10. [Function reference types](#10-function-reference-types)
+    - 10.1 [Free function reference types](#101-free-function-reference-types)
+    - 10.2 [Member function reference types](#102-member-function-reference-types)
+11. [Type specifiers — grammar](#11-type-specifiers--grammar)
+12. [Implicit conversions](#12-implicit-conversions)
+    - 12.1 [Widening conversions (primitives)](#121-widening-conversions-no-data-loss)
+    - 12.2 [Narrowing conversions](#122-narrowing-conversions-possible-data-loss)
+    - 12.3 [Static indirection upcast (aggregate types)](#123-static-indirection-upcast-aggregate-types)
+    - 12.4 [Dynamic indirection downcast (class/interface)](#124-dynamic-indirection-downcast-classinterface)
+    - 12.5 [Explicit cast](#125-explicit-cast)
+13. [Const-ness](#13-const-ness)
 
 ---
 
@@ -113,13 +116,13 @@ Dereferencing (`*x` or `x->m`) a `T^` or `T*` value likewise inserts a runtime n
 
 When `Derived` inherits from `Base`, an indirection of type `T<Derived>` can be implicitly assigned to an indirection of type `T<Base>`.  
 The pointer is adjusted at compile time via a GEP to address the `Base` sub-object.  
-See [§11.3 — Static indirection upcast](#113-static-indirection-upcast-aggregate-types) for full details.
+See [§12.3 — Static indirection upcast](#113-static-indirection-upcast-aggregate-types) for full details.
 
 **Dynamic downcast (class/interface types):**
 
 When a `Base` indirection may point to a `Derived` object at runtime (and both are `class` or `interface` types), it can be assigned to a `Derived` indirection.  
 A runtime RTTI check is emitted; on mismatch, null is assigned (and fatal for non-null targets).  
-See [§11.4 — Dynamic indirection downcast](#114-dynamic-indirection-downcast-classinterface) for full details.
+See [§12.4 — Dynamic indirection downcast](#114-dynamic-indirection-downcast-classinterface) for full details.
 
 ---
 
@@ -535,7 +538,47 @@ ptr : plop*;            // pointer to 'plop'
 
 ---
 
-## 10. Type specifiers — grammar
+## 10. Function reference types
+A *function reference type* describes a variable that holds the **address of a function** and can be called later. K distinguishes free function references and member function references.
+For full details, see [Function References](../functions/function_references.md).
+### 10.1 Free function reference types
+A free function reference holds the address of a free function or a `static` member function.
+**Syntax:** `qualifier '(' [ TypeList ] ')'`
+| Qualifier | Nullable | Rebindable |
+|-----------|----------|------------|
+| `*(Params)` | Yes | Yes |
+| `^(Params)` | Yes | No  |
+| `~(Params)` | No  | Yes |
+The return type is not written — it is inferred from the target function.
+```k
+add_one(x : int) : int { return x + 1; }
+fp  : *(int) = add_one;    // nullable, rebindable pointer to (int)->?
+lnk : ~(int) = add_one;    // non-null link  to (int)->?
+pin : ^(int) = add_one;    // nullable, fixed pin to (int)->?
+result : int = fp(41);     // call through the reference -> 42
+```
+### 10.2 Member function reference types
+A member function reference holds the address of a non-static member function of a specific struct `T`.
+**Syntax:** `T '::' qualifier '(' [ TypeList ] ')'`
+The `T::` prefix identifies the struct. The implicit `this` parameter is **not** listed.
+```k
+struct Counter {
+    value : int;
+    add(x : int) : int { return value + x; }
+}
+mfp  : Counter::*(int) = Counter::add;   // pointer to Counter::add
+c : Counter;
+c.value = 40;
+result : int = (c.*mfp)(2);    // calls c.add(2) -> 42
+```
+To call through an indirection (`*`, `^`, `~`), use `->*`:
+```k
+lnk : Counter~ = c;
+result : int = (lnk->*mfp)(2);   // -> 42
+```
+See [Function References](../functions/function_references.md) for the full call syntax.
+---
+## 11. Type specifiers — grammar
 
 Types appear in variable declarations, parameter declarations, and return type annotations.
 
@@ -578,11 +621,11 @@ plop*
 
 ---
 
-## 11. Implicit conversions
+## 12. Implicit conversions
 
 The compiler performs implicit type conversions in certain contexts (e.g., function call arguments, assignments):
 
-### 11.1 Widening conversions (no data loss)
+### 13.1 Widening conversions (no data loss)
 
 A narrower integer or float type is widened to a broader one automatically.
 
@@ -594,13 +637,13 @@ A narrower integer or float type is widened to a broader one automatically.
 | `float`     | `double`               |
 | integer     | `float` or `double`    |
 
-### 11.2 Narrowing conversions (possible data loss)
+### 13.2 Narrowing conversions (possible data loss)
 
 Narrowing conversions are also accepted implicitly by the current compiler (e.g., passing an `int` where a `short` is expected). The programmer is responsible for ensuring correctness.
 
 > **Note:** This behaviour may be tightened in future versions to require an explicit cast for narrowing conversions.
 
-### 11.3 Static indirection upcast (aggregate types)
+### 13.3 Static indirection upcast (aggregate types)
 
 When the pointed-at type `Derived` inherits from `Base`, an indirection of type `T<Derived>` can be implicitly converted to an indirection of type `T<Base>`. This is a **static (compile-time) upcast** — the pointer is adjusted at compile time via a GEP instruction to point to the `Base` sub-object within the `Derived` object.
 
@@ -671,7 +714,7 @@ use() {
 }
 ```
 
-### 11.4 Dynamic indirection downcast (class/interface)
+### 13.4 Dynamic indirection downcast (class/interface)
 
 When a `Base*` (or `Base~`, `Base^`, `Base&`) indirection may actually point to a `Derived` object
 at runtime, K allows assigning it to a `Derived*` (or `Derived~`, `Derived^`, `Derived&`).
@@ -769,7 +812,7 @@ dp : Derived* = ip;  // dynamic downcast via RTTI
 
 ---
 
-### 11.5 Explicit cast
+### 13.5 Explicit cast
 
 A C-style cast converts an expression to a named type:
 
@@ -802,7 +845,7 @@ Two cases are distinguished based on the direction of the cast:
 
 **A. Explicit static upcast (Derived→Base)**
 
-When the cast target type is a *base* of the expression's pointed type, the cast is a **static (compile-time) GEP upcast** — identical to the implicit upcast (§11.3).
+When the cast target type is a *base* of the expression's pointed type, the cast is a **static (compile-time) GEP upcast** — identical to the implicit upcast (§12.3).
 
 Allowed source → target combinations:
 
@@ -828,7 +871,7 @@ lb : Base~ = (Base~) pd;    // cross-kind with null-check
 
 **B. Explicit dynamic downcast (Base→Derived)**
 
-When the cast target type is a *derived class* (or interface implementor) of the expression's pointed type, the cast is a **dynamic (RTTI) downcast** — identical to the implicit dynamic downcast (§11.4).
+When the cast target type is a *derived class* (or interface implementor) of the expression's pointed type, the cast is a **dynamic (RTTI) downcast** — identical to the implicit dynamic downcast (§12.4).
 
 Applies only to `class` and `interface` types. **Not allowed for `struct` types** (no RTTI).
 
@@ -895,14 +938,14 @@ This also works for `ref<ptr<Derived>>` when the parameter expects `ptr<Base>` �
 ---
 
 
-## 12. Const-ness
+## 13. Const-ness
 
 The `const` qualifier marks a variable or parameter as **immutable after construction**.
 Const-ness is a **compile-time** property only; it has no impact on the generated IR code.
 
 ---
 
-### 12.1 Const variables and parameters
+### 13.1 Const variables and parameters
 
 The `const` keyword is a **declaration specifier** placed before the variable name, or a **type qualifier** placed before the base type in the type specifier, or both. All three forms are **semantically identical**:
 
@@ -941,7 +984,7 @@ x++;     // Error: cannot apply '++' to a const variable
 
 ---
 
-### 12.2 Const type qualifier in type specifiers
+### 13.2 Const type qualifier in type specifiers
 
 `const` can appear as a **type qualifier** directly before the base type in any type specifier.
 This is equivalent to placing `const` as a variable specifier (see §12.1).
@@ -981,7 +1024,7 @@ const p : const int* = &x;     // both — all three mean "pointer to const int"
 
 ---
 
-### 12.3 Const and indirection types
+### 13.3 Const and indirection types
 
 For all four indirection kinds, `const` applies to the **pointed-at object**, not to the pointer/reference/link/pinned itself:
 
@@ -1002,7 +1045,7 @@ For all four indirection kinds, `const` applies to the **pointed-at object**, no
 
 ---
 
-### 12.4 Const pointer/link compatibility rules
+### 13.4 Const pointer/link compatibility rules
 
 A `const T*` (or `const T~`) **can** be initialised or assigned from a `T*` (or `T~`) — this is a safe widening:
 
@@ -1036,7 +1079,7 @@ clnk : const int~ = &x;  // OK
 
 ---
 
-### 12.5 Const and function overloading
+### 13.5 Const and function overloading
 
 `const` on a **by-value** parameter is part of the function's implementation contract (the caller's type is unaffected).
 Two functions differing only in the `const`-ness of a by-value parameter are **ambiguous** at the call site:
@@ -1054,7 +1097,7 @@ argument is rejected as ambiguous.
 
 ---
 
-### 12.6 Name mangling
+### 13.6 Name mangling
 
 The const qualifier is encoded in the mangled symbol name using the modifier prefix **`K`**:
 
@@ -1071,7 +1114,7 @@ A function `f(const n : int) : int` has its parameter encoded as `Ki` instead of
 
 ---
 
-### 12.7 Const member functions
+### 13.7 Const member functions
 
 A member function declared with the `const` specifier receives its implicit `this` parameter as a **const reference** (`const Struct&`) instead of a mutable reference.
 
@@ -1118,7 +1161,7 @@ See [Structures — §12](../structs/structs.md#12-const-member-functions) and [
 
 ---
 
-### 12.8 Const structs
+### 13.8 Const structs
 
 A struct declared `const` ensures that **all** non-static member functions are treated as const.
 Constructors and destructors are exempt.

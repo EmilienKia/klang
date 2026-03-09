@@ -459,6 +459,42 @@ public:
     }
 };
 
+/**
+ * Pointer-to-member dereference expression.
+ * Represents `obj.*mfp` (DOT_STAR) or `ptr->*mfp` (ARROW_STAR).
+ * - _left_expr  : the object (or pointer) expression
+ * - _right_expr : the member-function-pointer variable expression
+ * - _is_arrow   : true for `->*`, false for `.*`
+ */
+class pm_expression : public binary_expression {
+protected:
+    bool _is_arrow = false; ///< true for ->*, false for .*
+
+    pm_expression() = default;
+public:
+    void accept(model_visitor &visitor) override;
+
+    bool is_arrow() const { return _is_arrow; }
+
+    static std::shared_ptr<pm_expression> make_shared(
+        const std::shared_ptr<expression>& obj_expr,
+        const std::shared_ptr<expression>& mfp_expr,
+        bool is_arrow) {
+        std::shared_ptr<pm_expression> e{new pm_expression()};
+        e->_is_arrow = is_arrow;
+        e->assign(obj_expr, mfp_expr);
+        return e;
+    }
+
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<pm_expression> c{new pm_expression()};
+        c->_type = _type;
+        c->_is_arrow = _is_arrow;
+        if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
+        return c;
+    }
+};
+
 class cast_expression : public unary_expression {
 protected:
     std::shared_ptr<type> _cast_type;

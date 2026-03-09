@@ -732,6 +732,38 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             expr.assign_right(right);
         }
         return; // code generation handled in visit_simple_assignation_expression
+    } else if (type::is_function_reference(target_type)) {
+        // Assigning a function address (or another frt variable) to a function-pointer variable.
+        // target_type is a function_reference_type; source should be ref<frt> (function symbol)
+        // or frt itself (another variable). The ref wrapper is stripped below if present.
+        //
+        // Check: only pointer (*) frt is rebindable; pin (^) and link (~) are immutable.
+        auto frt_target = std::dynamic_pointer_cast<function_reference_type>(target_type);
+        if (frt_target && frt_target->get_ref_kind() != function_reference_type::ref_kind::pointer) {
+            throw_error(0x0090, std::nullopt,
+                "Cannot assign to an immutable function reference (type '{}'): "
+                "only pointer (*) function references are rebindable",
+                {target_type ? target_type->to_string() : "?"});
+        }
+        // Unwrap ref<frt> on the source side if needed.
+        // For a direct function symbol (is_function()), impl_gen returns the Function* directly —
+        // no load needed. For a frt variable, impl_gen returns the alloca address — needs a load.
+        if (type::is_reference(source_type)) {
+            auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+            if (type::is_function_reference(inner)) {
+                auto rhs_sym = std::dynamic_pointer_cast<symbol_expression>(right);
+                if (!rhs_sym || !rhs_sym->is_function()) {
+                    // Variable of frt type: load the stored function pointer from the alloca
+                    right = load_value_expression::make_shared(right);
+                    source_type = inner;
+                    right->set_type(source_type);
+                    expr.assign_right(right);
+                }
+                // else: direct function symbol → keep ref<frt>; impl_gen produces Function* directly
+            }
+        }
+        expr.set_type(ref_target_type);
+        return;
     } else if(!type::is_primitive(target_type) && !type::is_struct(target_type)) {
         throw_error(0x000D, std::nullopt,
             "Assignment to a non-primitive, non-pointer type is not yet supported: "

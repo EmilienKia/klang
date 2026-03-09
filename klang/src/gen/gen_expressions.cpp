@@ -172,9 +172,44 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
             symbol.set_type(var_type->get_reference());
         }
     } else if (symbol.is_function()) {
-        // TODO set function type
+        // A symbol resolved to a function (without call parentheses) yields the address
+        // of the function.  The type is a function_reference_type with ref_kind::link
+        // (non-null, immutable — same semantics as a reference in K).
+        // It can be freely assigned to a pointer (*), pin (^) or link (~) variable.
+        auto func = symbol.get_function();
+        if (func) {
+            // Build the function_reference_type for this function.
+            function_reference_type_builder builder(_context);
+            builder.ref_kind(function_reference_type::ref_kind::link);
+            // Return type
+            auto ret_type = func->get_return_type();
+            if (ret_type) builder.return_type(ret_type);
+            // Parameter types
+            for (size_t i = 0; i < func->get_parameter_size(); ++i) {
+                auto p = func->get_parameter(i);
+                if (p && p->get_type()) {
+                    builder.append_parameter_type(p->get_type());
+                }
+            }
+            // Owner struct (member function)
+            auto owner_st = func->parent<aggregate>();
+            if (owner_st && !func->is_static()) {
+                auto owner_struct = std::dynamic_pointer_cast<structure>(owner_st);
+                if (owner_struct) builder.member_of(owner_struct);
+            }
+            auto fn_ref_type = builder.build();
+            // Keep fn_ref_type alive for the duration of type resolution.
+            // Without this, fn_ref_type is a temporary local; the only other strong
+            // reference is fn_ref_type->reference (the cached ref_type), which does NOT
+            // own fn_ref_type.  When fn_ref_type expires, reference_type::subtype (a
+            // weak_ptr) becomes dangling, causing is_resolved() to crash.
+            _ephemeral_types.push_back(fn_ref_type);
+            // The symbol gives a reference to the function ref type (non-null, like K's ~).
+            // Wrap in a reference so that it can be assigned to any indirection kind.
+            symbol.set_type(fn_ref_type->get_reference());
+        }
     }
-    // TODO resolve other types of symbols
+    // (symbol type resolution complete)
 }
 
 void implementation_generator::visit_symbol_expression(symbol_expression &symbol) {
@@ -307,6 +342,8 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                 _value = _builder->CreateLoad(type, ptr, name + "_ref");
             } else {
                 // Value of a symbol (as a reference) is always its address.
+                // This includes function_reference_type variables: the caller that needs
+                // the actual function pointer (e.g. indirect call) must load from this address.
                 _value = ptr;
             }
         }
@@ -497,7 +534,20 @@ void type_reference_resolver::visit_load_value_expression(load_value_expression&
 void implementation_generator::visit_load_value_expression(load_value_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
-    _value = _builder->CreateLoad(_context->get_llvm_type(expr.get_type()), _value);
+    // Use the expression's own type if set; fall back to the sub-expression's referenced type.
+    auto load_type = expr.get_type();
+    if (!load_type) {
+        auto sub_t = expr.sub_expr()->get_type();
+        if (auto ref_t = std::dynamic_pointer_cast<reference_type>(sub_t)) {
+            load_type = k::model::type::remove_const(ref_t->get_subtype());
+        } else if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(sub_t)) {
+            load_type = k::model::type::remove_const(ptr_t->get_subtype());
+        }
+    }
+    if (load_type) {
+        _value = _builder->CreateLoad(_context->get_llvm_type(load_type), _value);
+    }
+    // else: leave _value as the alloca ptr (should not happen in correct IR)
 }
 
 
@@ -1048,6 +1098,95 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
 }
 
 //
+// PM expression (.* and ->*)
+//
+
+void type_reference_resolver::visit_pm_expression(pm_expression& expr) {
+    // Resolve both sub-expressions
+    expr.left()->accept(*this);
+    expr.right()->accept(*this);
+
+    // ── LHS: get the struct type ──────────────────────────────────────────────
+    auto obj_type = expr.left()->get_type();
+
+    // Unwrap ref if needed
+    if (auto ref = std::dynamic_pointer_cast<reference_type>(obj_type)) {
+        obj_type = ref->get_subtype();
+    }
+
+    // For ->*, unwrap the pointer/link/pin layer
+    if (expr.is_arrow()) {
+        if (auto ptr = std::dynamic_pointer_cast<pointer_type>(obj_type)) {
+            obj_type = ptr->get_pointed_type();
+        } else if (auto lnk = std::dynamic_pointer_cast<link_type>(obj_type)) {
+            obj_type = lnk->get_linked_type();
+        } else if (auto pin = std::dynamic_pointer_cast<pinned_type>(obj_type)) {
+            obj_type = pin->get_pinned_type();
+        } else {
+            throw_error(0x0090, std::nullopt,
+                "The '->*' operator requires a pointer (*), link (~) or pinned (^) on the LHS, "
+                "but got '{}'", {obj_type ? obj_type->to_string() : "?"});
+        }
+    }
+
+    auto struct_t = std::dynamic_pointer_cast<struct_type>(obj_type);
+    if (!struct_t) {
+        throw_error(0x0091, std::nullopt,
+            "The '{}' operator requires a struct on the LHS, but got '{}'",
+            {expr.is_arrow() ? "->*" : ".*", obj_type ? obj_type->to_string() : "?"});
+    }
+
+    // ── RHS: must be a member_function_reference_type ────────────────────────
+    auto mfp_type = expr.right()->get_type();
+    // Unwrap ref wrapper if present
+    if (auto ref = std::dynamic_pointer_cast<reference_type>(mfp_type)) {
+        mfp_type = ref->get_subtype();
+    }
+    auto mfrt = std::dynamic_pointer_cast<member_function_reference_type>(mfp_type);
+    if (!mfrt) {
+        // Also accept plain function_reference_type (for free-function pointers used in pm context)
+        if (!std::dynamic_pointer_cast<function_reference_type>(mfp_type)) {
+            throw_error(0x0092, std::nullopt,
+                "The '{}' operator requires a member function reference type on the RHS, "
+                "but got '{}'",
+                {expr.is_arrow() ? "->*" : ".*", mfp_type ? mfp_type->to_string() : "?"});
+        }
+    }
+
+    // ── Result type: return type of the member function reference ────────────
+    auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type);
+    expr.set_type(frt ? frt->get_return_type() : nullptr);
+}
+
+void implementation_generator::visit_pm_expression(pm_expression& expr) {
+    // pm_expression is used as the callee of a function_invocation_expression.
+    // The invocation handler calls this to get the (this_ptr, fn_ptr) pair it needs.
+    // Here we just produce the function pointer value; the object pointer is obtained
+    // separately by the caller via expr.left().
+    //
+    // However, if visit_pm_expression is reached standalone (e.g. result unused),
+    // produce nullptr.
+    _value = nullptr;
+
+    // Evaluate the RHS (member function pointer variable)
+    expr.right()->accept(*this);
+    auto fn_alloca = _value;
+    if (!fn_alloca) return;
+
+    // Load the actual function pointer from the variable alloca
+    auto mfp_type = expr.right()->get_type();
+    if (auto ref = std::dynamic_pointer_cast<reference_type>(mfp_type)) {
+        mfp_type = ref->get_subtype();
+    }
+    if (auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type)) {
+        auto* llvm_fn_type = frt->get_llvm_type();
+        if (llvm_fn_type) {
+            _value = _builder->CreateLoad(llvm_fn_type, fn_alloca, "mfp_load");
+        }
+    }
+}
+
+//
 // Subscript expression
 //
 
@@ -1258,16 +1397,72 @@ void annotate_dispatch_info(function_invocation_expression& expr,
 void type_reference_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
+    auto pm_callee = std::dynamic_pointer_cast<pm_expression>(expr.callee_expr());
 
-    if(!callee && !member_callee) {
+    if(!callee && !member_callee && !pm_callee) {
         throw_error(0x0022, std::nullopt,
-            "Unsupported call expression form: only direct function calls ('func(args)') and "
-            "member function calls ('obj.method(args)') are supported");
+            "Unsupported call expression form: only direct function calls ('func(args)'), "
+            "member function calls ('obj.method(args)') and pointer-to-member calls "
+            "('obj.*mfp(args)') are supported");
     }
 
     // Resolve and type-check all arguments first
     for(auto& arg : expr.arguments()) {
         arg->accept(*this);
+    }
+
+
+    // ----------------------------------------------------------------
+    // Case 0 : pointer-to-member call  "obj.*mfp(args)" or "ptr->*mfp(args)"
+    // ----------------------------------------------------------------
+    if (pm_callee) {
+        // Visit the pm_expression to resolve types of both LHS and RHS
+        pm_callee->accept(*this);
+
+        // Retrieve the member function reference type from the RHS
+        auto mfp_type = pm_callee->right()->get_type();
+        if (auto ref = std::dynamic_pointer_cast<reference_type>(mfp_type)) {
+            mfp_type = ref->get_subtype();
+        }
+        auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type);
+        if (!frt) {
+            throw_error(0x0093, std::nullopt,
+                "The '{}' call requires a member function reference type, but got '{}'",
+                {pm_callee->is_arrow() ? "->*" : ".*", mfp_type ? mfp_type->to_string() : "?"});
+        }
+
+        // Set return type of the invocation expression
+        // If the frt has no return type (e.g. it's a parameter with inferred type),
+        // propagate from the enclosing function's return type.
+        auto ret_type = frt->get_return_type();
+        if (!ret_type && !_function_stack.empty()) {
+            ret_type = _function_stack.back()->get_return_type();
+            if (ret_type) {
+                // Cache on the frt so later uses (e.g. in impl_gen) see it
+                frt->set_return_type(ret_type);
+            }
+        }
+        expr.set_type(ret_type);
+
+        // Adapt arguments against the frt's parameter types.
+        // NOTE: for member_function_reference_type, get_parameter_types() returns ONLY the
+        // explicit parameters — the implicit 'this' pointer is NOT in _parameter_types
+        // (it appears only in the LLVM FunctionType built by function_reference_type_builder).
+        // Therefore param_offset is always 0 here.
+        const auto& frt_params = frt->get_parameter_types();
+        const auto& call_args = expr.arguments();
+        for (size_t i = 0; i < call_args.size() && i < frt_params.size(); ++i) {
+            auto adapted = adapt_type(call_args[i], frt_params[i]);
+            if (adapted && adapted != call_args[i]) {
+                expr.assign_argument(i, adapted);
+            }
+        }
+
+        // Annotate dispatch info as INDIRECT_MEMBER
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::INDIRECT_MEMBER;
+        expr.set_dispatch_info(std::move(di));
+        return;
     }
 
     // ----------------------------------------------------------------
@@ -1442,6 +1637,83 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // Phase 3: annotate dispatch info
         annotate_dispatch_info(expr, best.func, member_callee);
         return;
+    }
+
+    // ----------------------------------------------------------------
+    // Case 1.5 : indirect call via a function-reference variable "fp(args)"
+    //   callee may be unresolved (symbol_resolver deferred it as a potential function call).
+    //   Try to resolve it as a variable by walking the scope chain manually.
+    //   If a variable with a function_reference_type is found, treat this as indirect.
+    // ----------------------------------------------------------------
+    if (callee && !callee->is_resolved()) {
+        // Walk up the scope chain from the callee expression to find a variable with this name.
+        const k::name& sym_name = callee->get_name();
+        if (sym_name.size() == 1) {
+            const std::string& simple_name = sym_name.back();
+            // Walk up: callee → function_invocation → ... → block → function
+            std::shared_ptr<element> cur = callee->shared_as<element>();
+            while (cur) {
+                if (auto vh = std::dynamic_pointer_cast<variable_holder>(cur)) {
+                    if (auto vdef = vh->get_variable(sym_name)) {
+                        callee->set_target(vdef);
+                        break;
+                    }
+                }
+                cur = cur->parent<element>();
+            }
+        }
+    }
+    if (callee && callee->is_variable_def()) {
+        // Make sure the callee symbol has its type resolved
+        callee->accept(*this);
+        auto callee_type = callee->get_type();
+        if (callee_type) {
+            // Unwrap reference / indirection wrapper
+            auto inner_type = callee_type;
+            while (inner_type && (type::is_reference(inner_type) || type::is_link(inner_type) ||
+                                   type::is_pointer(inner_type) || type::is_pinned(inner_type))) {
+                inner_type = inner_type->get_subtype();
+            }
+            // Also unwrap an unresolved_function_ref_type that has been resolved
+            if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(inner_type)) {
+                if (ufrt->is_resolved()) {
+                    inner_type = ufrt->get_resolved();
+                    while (inner_type && (type::is_reference(inner_type) || type::is_link(inner_type) ||
+                                           type::is_pointer(inner_type) || type::is_pinned(inner_type))) {
+                        inner_type = inner_type->get_subtype();
+                    }
+                }
+            }
+            // If the inner type is a function_reference_type, this is an indirect call
+            auto frt = std::dynamic_pointer_cast<function_reference_type>(inner_type);
+            if (frt) {
+                // Set the return type of the call expression.
+                // If the frt has no return type yet (e.g. parameter with no init expression),
+                // try to propagate the return type from the enclosing function's context.
+                auto ret_type = frt->get_return_type();
+                if (!ret_type && !_function_stack.empty()) {
+                    // Propagate from the enclosing function's return type
+                    ret_type = _function_stack.back()->get_return_type();
+                    if (ret_type) {
+                        // Mutate the frt in-place to record the inferred return type.
+                        frt->set_return_type(ret_type);
+                    }
+                }
+                expr.set_type(ret_type);
+                // Type-adapt arguments against the function_reference_type's parameter types
+                const auto& params = frt->get_parameter_types();
+                for (size_t n = 0; n < expr.arguments().size() && n < params.size(); ++n) {
+                    auto arg = expr.arguments().at(n);
+                    auto cast = adapt_type(arg, params[n]);
+                    if (cast && cast != arg) expr.assign_argument(n, cast);
+                }
+                // Mark as indirect call — no dispatch annotation needed
+                virtual_dispatch_info di;
+                di.kind = virtual_dispatch_info::dispatch_kind::INDIRECT;
+                expr.set_dispatch_info(std::move(di));
+                return;
+            }
+        }
     }
 
     // ----------------------------------------------------------------
@@ -1667,14 +1939,158 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 void implementation_generator::visit_function_invocation_expression(function_invocation_expression &expr) {
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
+    auto pm_callee = std::dynamic_pointer_cast<pm_expression>(expr.callee_expr());
 
-    if(!callee && !member_callee) {
+    if(!callee && !member_callee && !pm_callee) {
         throw_internal_error(0x000C, std::nullopt,
             "Internal error: unsupported call expression form during code generation; "
-            "only direct and member function calls are supported");
+            "only direct, member and pointer-to-member function calls are supported");
     }
 
-    // Generate arguments and add the to the args list
+    // ── INDIRECT_MEMBER call via pointer-to-member  obj.*mfp(args) ────────────
+    if (expr.has_dispatch_info() &&
+        expr.get_dispatch_info().kind == virtual_dispatch_info::dispatch_kind::INDIRECT_MEMBER) {
+        // pm_callee->left() = object expression (this), pm_callee->right() = mfp variable
+        if (!pm_callee) {
+            throw_internal_error(0x0048, std::nullopt,
+                "Internal error: INDIRECT_MEMBER dispatch without a pm_expression callee");
+        }
+
+        // 1. Evaluate the object (this) pointer
+        _value = nullptr;
+        pm_callee->left()->accept(*this);
+        llvm::Value* this_val = _value;
+
+        // If the object is a ref/indirection, load the actual pointer
+        auto obj_type = pm_callee->left()->get_type();
+        if (auto ref = std::dynamic_pointer_cast<reference_type>(obj_type)) {
+            auto inner = ref->get_subtype();
+            if (pm_callee->is_arrow()) {
+                // ->*: load the pointer value from the ref, then we have a ptr-to-struct
+                this_val = _builder->CreateLoad(_context->get_llvm_type(inner), this_val, "pm_ptr_load");
+                // Null-check for nullable indirections
+                if (std::dynamic_pointer_cast<pointer_type>(inner) ||
+                    std::dynamic_pointer_cast<pinned_type>(inner)) {
+                    auto* fatal = get_or_declare_fatal_null_function("__fatal_null_dereference");
+                    emit_null_check(this_val, fatal, "pm_arrow");
+                }
+            }
+            // For .*, this_val is already the struct alloca address (which is what we want as `this`)
+        }
+
+        // 2. Evaluate the member function pointer variable (load fn pointer)
+        _value = nullptr;
+        pm_callee->right()->accept(*this);
+        llvm::Value* mfp_alloca = _value;
+
+        auto mfp_type = pm_callee->right()->get_type();
+        if (auto ref = std::dynamic_pointer_cast<reference_type>(mfp_type)) {
+            mfp_type = ref->get_subtype();
+        }
+        auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type);
+        if (!frt || !mfp_alloca) {
+            throw_internal_error(0x0049, std::nullopt,
+                "Internal error: INDIRECT_MEMBER call: could not obtain function pointer");
+        }
+
+        // Load the actual function pointer from the alloca
+        llvm::Type* frt_llvm = frt->get_llvm_type();
+        llvm::Value* fn_ptr = _builder->CreateLoad(frt_llvm, mfp_alloca, "mfp_fn_ptr");
+
+        // 3. Build LLVM function type from frt parameter types
+        //    For member_function_reference_type the first param is implicit `this` (ptr)
+        std::vector<llvm::Type*> param_llvm_types;
+        // Always prepend `this` as opaque ptr
+        param_llvm_types.push_back(llvm::PointerType::getUnqual(**_context));
+        for (const auto& pt : frt->get_parameter_types()) {
+            // Skip the implicit this param if it's already in get_parameter_types()
+            auto llt = _context->get_llvm_type(pt);
+            if (!llt) continue;
+            param_llvm_types.push_back(llt);
+        }
+        llvm::Type* ret_llvm = frt->get_return_type()
+            ? _context->get_llvm_type(frt->get_return_type())
+            : llvm::Type::getVoidTy(**_context);
+        auto llvm_fn_type = llvm::FunctionType::get(ret_llvm, param_llvm_types, false);
+
+        // 4. Build call arguments: this_val first, then expression arguments
+        std::vector<llvm::Value*> call_args;
+        call_args.push_back(this_val);
+        for (auto& arg : expr.arguments()) {
+            _value = nullptr;
+            arg->accept(*this);
+            if (_value) call_args.push_back(_value);
+        }
+
+        _value = _builder->CreateCall(llvm_fn_type, fn_ptr, call_args, "mfp_call");
+        return;
+    }
+
+    // ── INDIRECT call via function-reference variable ─────────────────────────
+    if (expr.has_dispatch_info() &&
+        expr.get_dispatch_info().kind == virtual_dispatch_info::dispatch_kind::INDIRECT) {
+        // callee is a symbol_expression that holds a variable of function_reference_type.
+        // We already visited the callee in type_reference_resolver, so its type is set.
+        // In impl_gen, visiting a variable symbol gives us the *address* of the variable (alloca).
+        // For function-reference variables, we must load the function pointer from that address.
+        _value = nullptr;
+        if (callee) callee->accept(*this);
+        llvm::Value* var_addr = _value;
+        if (!var_addr) {
+            throw_internal_error(0x0041, std::nullopt,
+                "Internal error: indirect call through function reference produced no LLVM value");
+        }
+
+        // Build the LLVM function type from the function_reference_type in the call expression.
+        auto callee_type = callee ? callee->get_type() : nullptr;
+        auto inner_type = callee_type;
+        while (inner_type && (type::is_reference(inner_type) || type::is_link(inner_type) ||
+                               type::is_pointer(inner_type) || type::is_pinned(inner_type))) {
+            inner_type = inner_type->get_subtype();
+        }
+        auto frt = std::dynamic_pointer_cast<function_reference_type>(inner_type);
+        if (!frt) {
+            throw_internal_error(0x0042, std::nullopt,
+                "Internal error: indirect call without a function_reference_type annotation");
+        }
+
+        // The function_reference_type has a ptr (opaque pointer) as its LLVM type.
+        // Load the actual function pointer from the variable's address.
+        llvm::Type* frt_llvm = _context->get_llvm_type(inner_type); // = opaque ptr
+        llvm::Value* fn_ptr = _builder->CreateLoad(frt_llvm, var_addr, "fn_ptr_load");
+
+        // Build LLVM parameter types from the function_reference_type
+        std::vector<llvm::Type*> param_llvm_types;
+        for (const auto& pt : frt->get_parameter_types()) {
+            auto llt = _context->get_llvm_type(pt);
+            if (!llt) {
+                throw_internal_error(0x0043, std::nullopt,
+                    "Internal error: could not map K parameter type to LLVM type for indirect call");
+            }
+            param_llvm_types.push_back(llt);
+        }
+        llvm::Type* ret_llvm_type = frt->get_return_type()
+            ? _context->get_llvm_type(frt->get_return_type())
+            : llvm::Type::getVoidTy(**_context);
+        auto llvm_fn_type = llvm::FunctionType::get(ret_llvm_type, param_llvm_types, false);
+
+        // Generate arguments
+        std::vector<llvm::Value*> call_args;
+        for (auto& arg : expr.arguments()) {
+            _value = nullptr;
+            arg->accept(*this);
+            if (!_value) {
+                throw_internal_error(0x0044, std::nullopt,
+                    "Internal error: an argument for an indirect call produced no LLVM value");
+            }
+            call_args.push_back(_value);
+        }
+
+        _value = _builder->CreateCall(llvm_fn_type, fn_ptr, call_args, "ind_call");
+        return;
+    }
+
+    // Generate arguments and add them to the args list (for non-indirect calls)
     std::vector<llvm::Value*> args;
     if (member_callee) {
         callee = std::dynamic_pointer_cast<symbol_expression>(member_callee->symbol().shared_as<symbol_expression>());
@@ -2036,16 +2452,19 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         _value = _builder->CreateCall(llvm_func, args);
 
     } else if (auto ptr_var_type = std::dynamic_pointer_cast<pointer_type>(var_type)) {
-        // Pointer (*) variable: store the address.
+        // Pointer (*) variable: store the address of the pointed-to object.
+        // For ref<indirection> source, load the indirection value; for ref<struct>, the alloca address IS the pointer.
         if (!expr.empty()) {
             _value = nullptr;
             expr.argument(0)->accept(*this);
             if (_value) {
-                // Unwrap ref if argument is ref<indirection>
                 auto arg_type = expr.argument(0)->get_type();
                 if (arg_type && type::is_reference(arg_type)) {
                     auto inner = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
-                    _value = _builder->CreateLoad(_context->get_llvm_type(inner), _value, "ptr_init_load");
+                    // Only load if inner is an indirection (ptr/link/pin); for a plain struct the alloca IS the pointer.
+                    if (type::is_any_indirection(inner)) {
+                        _value = _builder->CreateLoad(_context->get_llvm_type(inner), _value, "ptr_init_load");
+                    }
                 }
                 _builder->CreateStore(_value, object_ref);
             }
@@ -2053,16 +2472,22 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         _value = object_ref;
 
     } else if (type::is_link(var_type) || type::is_pinned(var_type)) {
-        // Link (~) or pinned (^) variable: store the raw address.
+        // Link (~) or pinned (^) variable: store the address of the linked object.
         if (!expr.empty()) {
             _value = nullptr;
             expr.argument(0)->accept(*this);
             if (_value) {
-                // Unwrap ref if argument is ref<indirection>
+                // If the argument type is ref<link/pin/ptr<T>>, load the stored indirection value.
+                // If the argument type is ref<struct_T> (a direct object reference), the alloca
+                // address IS the link value — no load needed.
                 auto arg_type = expr.argument(0)->get_type();
                 if (arg_type && type::is_reference(arg_type)) {
                     auto inner = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
-                    _value = _builder->CreateLoad(_context->get_llvm_type(inner), _value, "ind_init_load");
+                    if (type::is_any_indirection(inner)) {
+                        // ref<link/pin/ptr<T>>: load the stored pointer value
+                        _value = _builder->CreateLoad(_context->get_llvm_type(inner), _value, "ind_init_load");
+                    }
+                    // else: ref<struct T> — _value is already the address of the object (= the link)
                 }
                 if (type::is_link(var_type)) {
                     // Non-null required: emit null-check if source is nullable.
@@ -2259,6 +2684,22 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             size_field_ptr);
         // Field 1 (data) is now zeroed — primitives are ready.
         // TODO: call default constructors for struct element types.
+    } else if (type::is_function_reference(var_type)) {
+        // Function-reference variable (*(T), ^(T), ~(T)): store the function pointer value.
+        // The variable is an alloca of type ptr (opaque pointer).
+        // After visiting the argument, _value is already the raw function pointer (ptr):
+        // - if the arg is a symbol_expression resolving to a function, impl_gen sets _value=llvm_func directly.
+        // - if the arg is a symbol_expression resolving to a function_reference_type variable,
+        //   our modified visit_symbol_expression already loads the value from the alloca.
+        if (!expr.empty()) {
+            _value = nullptr;
+            expr.argument(0)->accept(*this);
+            if (_value) {
+                _builder->CreateStore(_value, object_ref);
+            }
+        }
+        _value = object_ref;
+
     } else {
         // TODO This is probably a non-primitive primary type, so direct construction will be done
     }
@@ -2440,6 +2881,19 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         throw_internal_error(0x0019, std::nullopt,
             "Internal error: cast expression has an unresolved source or target type; "
             "type resolution must complete before code generation");
+    }
+
+    // ── ref<T> → link<T> or ref<T> → pin<T>: no-op (same LLVM ptr) ────────────
+    if (type::is_reference(source_type) &&
+        (type::is_link(target_type) || type::is_pinned(target_type))) {
+        auto src_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype());
+        auto tgt_sub = type::remove_const(target_type->get_subtype());
+        if (src_sub == tgt_sub) {
+            // ref<T> and link<T>/pin<T> are both LLVM pointers — no IR conversion needed.
+            _value = nullptr;
+            expr.sub_expr()->accept(*this);
+            return;
+        }
     }
 
     // ── Struct reference upcast: ref<Derived> → ref<Base> ────────────────────

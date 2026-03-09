@@ -168,6 +168,19 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             ct.subtype->visit(*this);
         }
 
+        void visit_function_ref_type_specifier(ast::function_ref_type_specifier &frt) override {
+            if (frt.owner.has_value()) {
+                frt.owner->visit(*this);
+                _stm << "::";
+            }
+            _stm << frt.ref_op.content << "(";
+            for (size_t i = 0; i < frt.param_types.size(); ++i) {
+                if (i > 0) _stm << ", ";
+                frt.param_types[i]->visit(*this);
+            }
+            _stm << ")";
+        }
+
         void visit_visibility_decl(ast::visibility_decl& decl) override {
             prefix() << "visibility " << decl.scope.content << std::endl;
         }

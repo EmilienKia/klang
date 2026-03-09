@@ -317,6 +317,10 @@ void default_model_visitor::visit_member_of_pointer_expression(member_of_pointer
     visit_member_of_expression(expr);
 }
 
+void default_model_visitor::visit_pm_expression(pm_expression& expr) {
+    visit_binary_expression(expr);
+}
+
 void default_model_visitor::visit_load_value_expression(load_value_expression& expr) {
     visit_unary_expression(expr);
 }

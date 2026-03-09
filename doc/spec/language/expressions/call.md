@@ -12,6 +12,7 @@ This page covers postfix expression forms: function invocation, array subscript,
 3. [Subscript operator](#3-subscript-operator)
 4. [Member access — dot operator `.`](#4-member-access--dot-operator-)
 5. [Member access through pointer — arrow operator `->`](#5-member-access-through-pointer--arrow-operator--)
+6. [Pointer-to-member call — operators `.*` and `->*`](#6-pointer-to-member-call--operators--and--)
 ---
 ## 1. Function call
 A function call evaluates the callee expression (resolving it to a function), evaluates the arguments, and invokes the function.
@@ -128,4 +129,47 @@ p->value = 42;          // equivalent to (*p).value = 42
 p->next = null;
 ```
 ---
-*See also:* [Expressions](expressions.md) · [Functions](../functions/functions.md) · [Structures](../structs/structs.md) · [Overloading](../functions/overloading.md)
+## 6. Pointer-to-member call — operators `.*` and `->*`
+These operators call a *member function reference* (a variable of type `T::*(Params)`, `T::^(Params)` or `T::~(Params)`) on a specific receiver object.
+### Grammar
+```
+MemberRefCallExpr:
+    '(' ObjExpr '.*'   MfpExpr ')' '(' [ ExpressionList ] ')'
+  | '(' IndirExpr '->*' MfpExpr ')' '(' [ ExpressionList ] ')'
+```
+The outer parentheses around `(obj.*mfp)` are **required** — `.*` and `->*` have lower precedence than the function-call operator `()`.
+### `.*` — call on an object value or reference
+`ObjExpr` must be of struct type `T` (a variable, parameter, or reference `T&`).
+```k
+struct Counter {
+    value : int;
+    add(x : int) : int { return value + x; }
+}
+test() : int {
+    mfp : Counter::*(int) = Counter::add;
+    c   : Counter;
+    c.value = 40;
+    return (c.*mfp)(2);     // calls c.add(2) -> 42
+}
+```
+### `->*` — call through a pointer, link, or pin
+`IndirExpr` must be of type `T*`, `T^`, or `T~`.
+```k
+test_link() : int {
+    mfp : Counter::*(int) = Counter::add;
+    c   : Counter;
+    c.value = 40;
+    lnk : Counter~ = c;
+    return (lnk->*mfp)(2);  // -> 42  (via link)
+}
+test_ptr() : int {
+    mfp : Counter::*(int) = Counter::add;
+    c   : Counter;
+    c.value = 40;
+    ptr : Counter* = c;
+    return (ptr->*mfp)(2);  // -> 42  (via pointer)
+}
+```
+For the full specification of member function reference types and call semantics, see [Function References](../functions/function_references.md).
+---
+*See also:* [Expressions](expressions.md) · [Functions](../functions/functions.md) · [Function References](../functions/function_references.md) · [Structures](../structs/structs.md) · [Overloading](../functions/overloading.md)

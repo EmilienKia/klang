@@ -127,6 +127,15 @@ Grammar notation used here:
 <a id="typespec"></a>**TypeSpec:**
     [FundamentalTypeSpec](#fundamentaltypespec) {{ [TypeSuffix](#typesuffix) }}
     | [QualifiedIdentifier](#qualifiedidentifier) {{ [TypeSuffix](#typesuffix) }}
+    | [FunctionRefType](#functionreftype)
+    | [QualifiedIdentifier](#qualifiedidentifier) `'::'` [FunctionRefType](#functionreftype)
+<a id="functionreftype"></a>**FunctionRefType:**
+    [FunctionRefQualifier](#functionrefqualifier) `'('` `[` [TypeList](#typelist) `]` `')'`
+<a id="functionrefqualifier"></a>**FunctionRefQualifier:**
+    `'*'` | `'^'` | `'~'`
+<a id="typelist"></a>**TypeList:**
+    [TypeSpec](#typespec) {{ `','` [TypeSpec](#typespec) }}
+*Full description:* [Function References](functions/function_references.md)
 <a id="fundamentaltypespec"></a>**FundamentalTypeSpec:**
     `[` `'unsigned'` `]` `(` `'byte'` | `'char'` | `'short'` | `'int'` | `'long'` | `'float'` | `'double'` `)`
     | `'bool'`
@@ -216,6 +225,7 @@ Grammar notation used here:
     [PmExpr](#pmexpr) {{ `(` `'*'` | `'/'` | `'%'` `)` [PmExpr](#pmexpr) }}
 <a id="pmexpr"></a>**PmExpr:**
     [CastExpr](#castexpr) {{ `(` `'.*'` | `'->*'` `)` [CastExpr](#castexpr) }}
+*The `.*` and `->*` operators are used for pointer-to-member calls; see [Function References](functions/function_references.md#5-calling-through-a-member-function-reference--operators--and--).*
 <a id="castexpr"></a>**CastExpr:**
     `'('` [TypeSpec](#typespec) `')'` [CastExpr](#castexpr)
     | [UnaryExpr](#unaryexpr)

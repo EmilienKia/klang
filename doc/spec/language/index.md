@@ -20,7 +20,7 @@ Examples are included where they clarify the normative text.
 | [Lexical Conventions](basic/lexical.md) | Source encoding, comments, tokens |
 | [Keywords](basic/keywords.md) | Reserved words of the language |
 | [Names, Namespaces and Lookup](basic/names.md) | Identifiers, qualified names, lookup rules (incl. imported symbols), namespace visibility and library export |
-| [Types](basic/types.md) | Primitive types; the four indirection types (`&` `~` `^` `*`); array and struct types; static upcast; dynamic downcast (RTTI) |
+| [Types](basic/types.md) | Primitive types; the four indirection types (`&` `~` `^` `*`); function reference types (`*(P)`, `T::*(P)`, …); array and struct types; static upcast; dynamic downcast (RTTI) |
 | [Module System](basic/modules.md) | Module declarations, imports, transitive dependencies, using imported symbols |
 | [Libraries — Export and Import](basic/libraries.md) | Producing libraries, what is exported, importing and using symbols, cross-library inheritance, transitive deps |
 | [Main Function](basic/main.md) | Program entry point |
@@ -35,7 +35,7 @@ Examples are included where they clarify the normative text.
 | [Unary Operators](expressions/unary.md) | `+`, `-`, `~`, `!`, `&` (address-of), `*` (dereference), cast |
 | [Binary Operators](expressions/binary.md) | Arithmetic, bitwise, shift, comparison, logical |
 | [Assignment Operators](expressions/assignment.md) | `=` and compound assignment |
-| [Function Call and Subscript](expressions/call.md) | Invocation, subscript `[]`, member access `.` and `->` |
+| [Function Call and Subscript](expressions/call.md) | Invocation, subscript `[]`, member access `.` and `->`, pointer-to-member operators `.*` and `->*` |
 
 ### Statements
 
@@ -52,6 +52,7 @@ Examples are included where they clarify the normative text.
 | Page | Description |
 |------|-------------|
 | [Functions](functions/functions.md) | Declaration, parameters, return type, body |
+| [Function References](functions/function_references.md) | Free and member function reference types (`*(P)`, `T::*(P)`, …), obtaining addresses, calling via `.*` / `->*` |
 | [Function Overloading](functions/overloading.md) | Multiple functions with the same name |
 | [Static Functions](functions/static.md) | Static member functions |
 
@@ -85,6 +86,7 @@ K is a statically-typed, compiled programming language with syntax inspired by C
 - **Namespace-scoped** — code is organised in namespaces; a source file begins with a `module` declaration that establishes the namespace.
 - **Struct-based OOP** — user-defined types are structures with fields, member functions, constructors and destructors.
 - **Manual memory control** — pointers (`*`), references (`&`), and arrays are first-class.
+- **Function references** — free and member function reference types (`*(P)`, `T::*(P)`) allow storing and invoking function addresses; member function pointers use `.*` and `->*`.
 - **Compiled to native code** — the compiler emits LLVM IR and produces native executables or libraries.
 
 ### Hello, World equivalent

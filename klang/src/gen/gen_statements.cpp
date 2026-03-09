@@ -562,6 +562,14 @@ void type_reference_resolver::visit_variable_statement(variable_statement& var)
     // For local variables, first try to resolve qualified types using the statement's
     // element context (which allows walking up the scope chain).
     if (!type::is_resolved(var.get_type())) {
+        if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var.get_type())) {
+            // Function reference type (*(int), ^(int), ~()): resolve using the variable's
+            // element context for scope-based type lookup.
+            auto resolved = resolve_function_ref_type(ufrt, static_cast<const element&>(var));
+            if (resolved && type::is_resolved(resolved)) {
+                var.set_type(resolved);
+            }
+        } else {
         auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
         if (unres_type) {
             std::shared_ptr<type> resolved;
@@ -582,6 +590,7 @@ void type_reference_resolver::visit_variable_statement(variable_statement& var)
                 var.set_type(resolved);
             }
         }
+        } // end else (not unresolved_function_ref_type)
     }
     visit_variable_definition(var);
 }

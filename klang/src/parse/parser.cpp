@@ -962,6 +962,124 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
 
 std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
 {
+    // ── Try function-reference type first (standalone or member) ──────────────
+    // Syntax: [ QualId '::' ] ('*'|'^'|'~') '(' [ TypeSpec {',' TypeSpec} ] ')'
+    // A RefKind immediately followed by '(' (when there is no preceding base type)
+    // is a function reference type, not a dereference/unary op.
+    {
+        lex::lex_holder fn_holder(_lexer);
+
+        // Attempt to parse an optional owner prefix of the form "Ident (:: Ident)* ::"
+        // followed by a ref-kind operator and '('.
+        // We MUST NOT call parse_qualified_identifier() here because it throws when
+        // the token after '::' is not an identifier (e.g. when it is '*').
+        std::optional<ast::qualified_identifier> owner_opt;
+
+        // Peek ahead: is there a "Ident ... :: RefKind (" sequence?
+        // Strategy: collect identifiers separated by "::", stopping when we see
+        //   ":: RefKind(" (found owner), or a non-identifier/non-"::" (no owner).
+        bool is_function_ref = false;
+        {
+            lex::lex_holder peek_holder(_lexer);
+            std::vector<lex::identifier> names;
+
+            // Try to collect qualified identifier parts
+            auto t = _lexer.get();
+            if (lex::is<lex::identifier>(t)) {
+                names.push_back(lex::as<lex::identifier>(t));
+                // Try additional ":: Ident" parts — stop on ":: RefKind("
+                while (true) {
+                    lex::lex_holder seg(_lexer);
+                    auto dc = _lexer.get();
+                    if (dc != lex::punctuator::DOUBLE_COLON) {
+                        _lexer.unget();
+                        // No more ::, names is a qualified identifier WITHOUT the "::" owner suffix.
+                        // This means no owner — just a plain identifier, not a function ref prefix.
+                        break;
+                    }
+                    auto next = _lexer.get();
+                    if (next == lex::operator_::STAR || next == lex::operator_::CARET || next == lex::operator_::TILDE) {
+                        // ":: RefKind" — check for '('
+                        auto par = _lexer.get();
+                        if (par == lex::punctuator::PARENTHESIS_OPEN) {
+                            // Found "names :: RefKind (" → owner = names, function ref found
+                            _lexer.unget(); // unget '('
+                            _lexer.unget(); // unget RefKind
+                            // :: is consumed — that's intentional (we're past it)
+                            owner_opt = ast::qualified_identifier(std::nullopt, names);
+                            seg.sync();
+                            is_function_ref = true;
+                            break;
+                        } else {
+                            _lexer.unget(); // unget par
+                            _lexer.unget(); // unget RefKind
+                            _lexer.unget(); // unget ::
+                            break;
+                        }
+                    } else if (lex::is<lex::identifier>(next)) {
+                        names.push_back(lex::as<lex::identifier>(next));
+                        seg.sync();
+                    } else {
+                        _lexer.unget(); // unget next
+                        _lexer.unget(); // unget ::
+                        break;
+                    }
+                }
+            } else {
+                _lexer.unget(); // put back first token (not an identifier)
+            }
+            if (!is_function_ref) {
+                peek_holder.rollback(); // restore all
+            } else {
+                peek_holder.sync();
+            }
+        }
+
+        // Now try to read the ref-kind operator (with or without owner)
+        auto ref_tok = _lexer.get();
+        if (ref_tok == lex::operator_::STAR ||
+            ref_tok == lex::operator_::CARET ||
+            ref_tok == lex::operator_::TILDE) {
+            // Must be immediately followed by '(' to be a function ref type
+            auto par_tok = _lexer.get();
+            if (par_tok == lex::punctuator::PARENTHESIS_OPEN) {
+                lex::operator_ ref_op = lex::as<lex::operator_>(ref_tok);
+                std::vector<std::shared_ptr<ast::type_specifier>> params;
+
+                // Parse parameter type list (may be empty)
+                auto close_par = _lexer.get();
+                if (close_par != lex::punctuator::PARENTHESIS_CLOSE) {
+                    _lexer.unget(); // put back first token of first type
+                    while (true) {
+                        auto pt = parse_type_spec();
+                        if (!pt) {
+                            throw_error(0x1040, _lexer.pick_current(),
+                                "Expected a type specifier in function reference type parameter list");
+                        }
+                        params.push_back(pt);
+                        auto sep = _lexer.get();
+                        if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                            break; // end of param list
+                        } else if (sep == lex::punctuator::COMMA) {
+                            continue; // next param
+                        } else {
+                            throw_error(0x1041, sep,
+                                "Expected ',' or ')' in function reference type parameter list");
+                        }
+                    }
+                }
+                fn_holder.sync();
+                return std::make_shared<ast::function_ref_type_specifier>(ref_op, owner_opt, params);
+            } else {
+                _lexer.unget(); // unget par_tok
+                _lexer.unget(); // unget ref_tok
+            }
+        } else {
+            _lexer.unget(); // unget ref_tok
+        }
+        fn_holder.rollback();
+    }
+
     std::shared_ptr<ast::type_specifier> res;
 
     // Optional 'const' prefix: 'const' applies to the base type only (not to pointer suffixes).

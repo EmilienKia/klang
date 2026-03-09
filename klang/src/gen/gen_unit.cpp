@@ -342,6 +342,7 @@ void type_reference_resolver::visit_global_variable_definition(global_variable_d
 void declaration_generator::visit_global_variable_definition(global_variable_definition& var) {
     auto type = var.get_type();
     llvm::Type *llvm_type = _context->get_llvm_type(type);
+    if (!llvm_type) return; // type not yet resolved or unsupported
 
     auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, nullptr, var.get_mangled_name());
     _context->_global_vars.insert({var.shared_as<global_variable_definition>(), variable});
@@ -368,6 +369,16 @@ void implementation_generator::visit_global_variable_definition(global_variable_
     if (!constInitValue) {
         // If no explicit initialization, or complex initialization, lets have 0-filled initialization:
         constInitValue = type->generate_default_value_initializer();
+    }
+
+    // Final fallback: if the type is an opaque pointer (e.g. function_reference_type),
+    // use ConstantPointerNull; otherwise zeroinitializer.
+    if (!constInitValue && llvm_type) {
+        if (auto* ptr_ty = llvm::dyn_cast<llvm::PointerType>(llvm_type)) {
+            constInitValue = llvm::ConstantPointerNull::get(ptr_ty);
+        } else {
+            constInitValue = llvm::Constant::getNullValue(llvm_type);
+        }
     }
 
     auto variable_it = _context->_global_vars.find(var.shared_as<global_variable_definition>());

@@ -122,6 +122,27 @@ std::string unresolved_type::to_string() const {
 }
 
 //
+// Unresolved function reference type
+//
+
+std::string unresolved_function_ref_type::to_string() const {
+    std::ostringstream stm;
+    stm << "<<unresolved_fn_ref:";
+    if (!_owner_name.empty()) stm << _owner_name.to_string() << "::";
+    switch (_ref_kind) {
+        case function_reference_type::ref_kind::pointer: stm << "*("; break;
+        case function_reference_type::ref_kind::pin:     stm << "^("; break;
+        case function_reference_type::ref_kind::link:    stm << "~("; break;
+    }
+    for (size_t i = 0; i < _parameter_types.size(); ++i) {
+        if (i > 0) stm << ", ";
+        stm << _parameter_types[i]->to_string();
+    }
+    stm << ")>>";
+    return stm.str();
+}
+
+//
 // Primitive type
 //
 
@@ -537,50 +558,85 @@ llvm::Constant* struct_type::generate_default_value_initializer() const {
 // Function reference type
 //
 bool function_reference_type::is_resolved() const {
-    // NOTE: is it relevant to check subtypes resolution each time ?
-    /*if(!_return_type->is_resolved()) {
-        return false;
+    if (_return_type && !_return_type->is_resolved()) return false;
+    for (const auto& p : _parameter_types) {
+        if (p && !p->is_resolved()) return false;
     }
-    for(const auto& param_type : _parameter_types) {
-        if(!param_type->is_resolved()) {
-            return false;
-        }
-    }*/
     return true;
+}
+
+llvm::Type* function_reference_type::get_llvm_type() const {
+    if (_llvm_type) return _llvm_type;
+    // Build lazily: should have been built by the builder.
+    return nullptr;
+}
+
+llvm::Constant* function_reference_type::generate_default_value_initializer() const {
+    // A function reference variable is an opaque pointer; default to null pointer.
+    if (!_llvm_type) return nullptr;
+    if (auto* ptr_ty = llvm::dyn_cast<llvm::PointerType>(_llvm_type)) {
+        return llvm::ConstantPointerNull::get(ptr_ty);
+    }
+    return nullptr;
 }
 
 std::string function_reference_type::to_string() const {
     std::ostringstream stm;
-    stm << "fn:((";
-    for(size_t n=0; n<_parameter_types.size(); ++n) {
-        if(n>0) {
-            stm << ", ";
-        }
-        auto param_type = _parameter_types[n];
-        stm << param_type->to_string();
+    switch (_ref_kind) {
+        case ref_kind::pointer: stm << "*("; break;
+        case ref_kind::pin:     stm << "^("; break;
+        case ref_kind::link:    stm << "~("; break;
     }
-    stm << "):" ;
-    stm << _return_type->to_string();
+    for (size_t n = 0; n < _parameter_types.size(); ++n) {
+        if (n > 0) stm << ", ";
+        stm << _parameter_types[n]->to_string();
+    }
     stm << ")";
     return stm.str();
+}
+
+bool function_reference_type::structurally_equal(const function_reference_type& other) const {
+    if (_ref_kind != other._ref_kind) return false;
+    if (_parameter_types.size() != other._parameter_types.size()) return false;
+    // Compare return types
+    if (_return_type != other._return_type) {
+        if (!_return_type || !other._return_type) return false;
+        // Simple pointer equality for now (types are cached)
+        if (_return_type.get() != other._return_type.get()) return false;
+    }
+    for (size_t i = 0; i < _parameter_types.size(); ++i) {
+        if (_parameter_types[i].get() != other._parameter_types[i].get()) return false;
+    }
+    return true;
+}
+
+llvm::Type* member_function_reference_type::get_llvm_type() const {
+    if (_llvm_type) return _llvm_type;
+    return nullptr;
 }
 
 std::string member_function_reference_type::to_string() const {
     std::ostringstream stm;
-    stm << "memfn:((" << _member_of->get_short_name() << ")(";
-    for(size_t n=0; n<_parameter_types.size(); ++n) {
-        if(n>0) {
-            stm << ", ";
-        }
-        auto param_type = _parameter_types[n];
-        stm << param_type->to_string();
+    if (_member_of) {
+        stm << _member_of->get_short_name() << "::";
     }
-    stm << "):" ;
-    stm << _return_type->to_string();
+    switch (_ref_kind) {
+        case ref_kind::pointer: stm << "*("; break;
+        case ref_kind::pin:     stm << "^("; break;
+        case ref_kind::link:    stm << "~("; break;
+    }
+    for (size_t n = 0; n < _parameter_types.size(); ++n) {
+        if (n > 0) stm << ", ";
+        stm << _parameter_types[n]->to_string();
+    }
     stm << ")";
     return stm.str();
 }
 
+bool member_function_reference_type::structurally_equal(const member_function_reference_type& other) const {
+    if (_member_of.get() != other._member_of.get()) return false;
+    return function_reference_type::structurally_equal(other);
+}
 
 //
 // Function reference type builder
@@ -592,16 +648,28 @@ function_reference_type_builder::function_reference_type_builder(const std::shar
 std::shared_ptr<function_reference_type> function_reference_type_builder::build() const {
     std::vector<llvm::Type*> params;
     if (_member_of) {
+        // First parameter is an implicit reference to the owner struct (the 'this' pointer).
         params.push_back(_member_of->get_struct_type()->get_reference()->get_llvm_type());
     }
     for (auto& param : _parameter_types) {
         params.push_back(_context->get_llvm_type(param));
     }
-    llvm::Type* ret_type = _return_type ? _context->get_llvm_type(_return_type) : llvm::Type::getVoidTy(**_context);
+    llvm::Type* ret_type = _return_type
+        ? _context->get_llvm_type(_return_type)
+        : llvm::Type::getVoidTy(**_context);
     llvm::FunctionType* fn_type = llvm::FunctionType::get(ret_type, params, false);
 
-    std::shared_ptr<function_reference_type> fn_ref_type{new function_reference_type(_return_type, _parameter_types, fn_type)};
-    return fn_ref_type;
+    llvm::Type* ptr_type = llvm::PointerType::get(fn_type->getContext(), 0);
+
+    if (_member_of) {
+        auto fn_ref = std::shared_ptr<member_function_reference_type>(
+            new member_function_reference_type(_member_of, _return_type, _parameter_types, _ref_kind, ptr_type));
+        return fn_ref;
+    } else {
+        auto fn_ref = std::shared_ptr<function_reference_type>(
+            new function_reference_type(_return_type, _parameter_types, _ref_kind, ptr_type));
+        return fn_ref;
+    }
 }
 
 
