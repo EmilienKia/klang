@@ -634,6 +634,11 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     }
 
     if(type::is_pointer(target_type)) {
+        // Null literal: always compatible with any pointer type.
+        if(type::is_null(effective_source_type) || type::is_null(source_type)) {
+            expr.set_type(ref_target_type);
+            return;
+        }
         if(type::is_pointer(effective_source_type) || type::is_link(effective_source_type)
            || type::is_pinned(effective_source_type)) {
             auto src_sub = effective_source_type->get_subtype();
@@ -802,12 +807,14 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         //   - owner<T>       → direct (from new_expression or already an owner value)
 
         // Detect null literal (both parsed 'null' and programmatic nullptr)
-        bool rhs_is_null = false;
-        if (auto ve = std::dynamic_pointer_cast<value_expression>(right)) {
-            if (ve->is_literal() && ve->any_literal().has_value()) {
-                rhs_is_null = std::holds_alternative<lex::null>(ve->any_literal());
-            } else {
-                rhs_is_null = std::holds_alternative<std::nullptr_t>(ve->get_value());
+        bool rhs_is_null = type::is_null(source_type);
+        if (!rhs_is_null) {
+            if (auto ve = std::dynamic_pointer_cast<value_expression>(right)) {
+                if (ve->is_literal() && ve->any_literal().has_value()) {
+                    rhs_is_null = std::holds_alternative<lex::null>(ve->any_literal());
+                } else {
+                    rhs_is_null = std::holds_alternative<std::nullptr_t>(ve->get_value());
+                }
             }
         }
         if (rhs_is_null) {
@@ -1871,22 +1878,49 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
     auto left_type = left->get_type();
     auto right_type = right->get_type();
 
+    // Helper: is the type boolean-compatible? (primitive or indirection/null → bool via adapt_type)
+    auto is_bool_compatible = [](const std::shared_ptr<type>& t) {
+        if (type::is_primitive(t)) return true;
+        if (type::is_pointer(t) || type::is_link(t) || type::is_pinned(t)
+            || type::is_owner(t) || type::is_null(t)) return true;
+        // Also accept ref<indirection>
+        if (type::is_reference(t)) {
+            auto inner = t->get_subtype();
+            if (type::is_pointer(inner) || type::is_link(inner) ||
+                type::is_pinned(inner) || type::is_owner(inner)) return true;
+        }
+        return false;
+    };
+
     if(type::is_reference(left_type)) {
-        left = adapt_reference_load_value(left);
-        expr.assign_left(left);
-        left_type = left_type->get_subtype();
+        // For ref<indirection>, don't unwrap — adapt_type handles ref<indirection>→bool.
+        auto inner = left_type->get_subtype();
+        if (type::is_pointer(inner) || type::is_link(inner) || type::is_pinned(inner)
+            || type::is_owner(inner)) {
+            // Leave as-is; adapt_type will handle ref<indirection>→bool.
+        } else {
+            left = adapt_reference_load_value(left);
+            expr.assign_left(left);
+            left_type = left_type->get_subtype();
+        }
     }
 
     if(type::is_reference(right_type)) {
-        right = adapt_reference_load_value(right);
-        expr.assign_right(right);
-        right_type = right_type->get_subtype();
+        auto inner = right_type->get_subtype();
+        if (type::is_pointer(inner) || type::is_link(inner) || type::is_pinned(inner)
+            || type::is_owner(inner)) {
+            // Leave as-is; adapt_type will handle ref<indirection>→bool.
+        } else {
+            right = adapt_reference_load_value(right);
+            expr.assign_right(right);
+            right_type = right_type->get_subtype();
+        }
     }
 
-    if(!type::is_primitive( left->get_type()) || !type::is_primitive(right->get_type())) {
+    if(!is_bool_compatible(left->get_type()) || !is_bool_compatible(right->get_type())) {
         throw_error(0x0024, std::nullopt,
             "Logical operators ('&&', '||') are not supported for non-primitive types: "
-            "operands must be of a primitive type convertible to boolean, "
+            "operands must be of a primitive type or indirection type convertible to boolean, "
             "but found '{}' and '{}'",
             {left->get_type() ? left->get_type()->to_string() : "?",
              right->get_type() ? right->get_type()->to_string() : "?"});
@@ -1988,14 +2022,31 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
     auto type = sub->get_type();
 
     if(type::is_reference(type)) {
-        // Dereference type
-        type = type->get_subtype();
+        // For ref<indirection>, don't unwrap — adapt_type handles it.
+        auto inner = type->get_subtype();
+        if (!type::is_pointer(inner) && !type::is_link(inner) &&
+            !type::is_pinned(inner) && !type::is_owner(inner)) {
+            type = type->get_subtype();
+        }
     }
 
-    if(!type::is_primitive(type)) {
+    // Check bool-compatibility: primitive, indirection, or null.
+    auto is_bool_compatible = [](const std::shared_ptr<k::model::type>& t) {
+        if (type::is_primitive(t)) return true;
+        if (type::is_pointer(t) || type::is_link(t) || type::is_pinned(t)
+            || type::is_owner(t) || type::is_null(t)) return true;
+        // Also accept ref<indirection>
+        if (type::is_reference(t)) {
+            auto inner = t->get_subtype();
+            if (type::is_pointer(inner) || type::is_link(inner) ||
+                type::is_pinned(inner) || type::is_owner(inner)) return true;
+        }
+        return false;
+    };
+    if(!is_bool_compatible(type)) {
         throw_error(0x0029, std::nullopt,
             "Logical NOT ('!') is not supported for non-primitive types: "
-            "the operand has type '{}'; only primitive types convertible to boolean are supported",
+            "the operand has type '{}'; only primitive or indirection types convertible to boolean are supported",
             {type ? type->to_string() : "?"});
     }
 
@@ -2056,6 +2107,61 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
     auto left_type = left->get_type();
     auto right_type = right->get_type();
 
+    // ── Helper: is this type address-comparable? ─────────────────────────────
+    // Pointer, link, pinned, owner, and the null literal type can all participate
+    // in address equality/inequality comparisons.
+    auto is_address_comparable = [](const std::shared_ptr<type>& t) -> bool {
+        return type::is_pointer(t) || type::is_link(t) || type::is_pinned(t)
+            || type::is_owner(t)   || type::is_null(t);
+    };
+
+    // Strip one level of reference to get the underlying type.
+    // For ref<ptr<T>>, ref<link<T>>, ref<pin<T>>, ref<owner<T>>:
+    //   load the stored pointer/link/pin/owner so we can compare addresses.
+    auto unwrap_ref_indirection = [&](std::shared_ptr<expression>& operand,
+                                      std::shared_ptr<type>& operand_type) {
+        if (type::is_reference(operand_type)) {
+            auto inner = std::dynamic_pointer_cast<reference_type>(operand_type)->get_subtype();
+            if (is_address_comparable(inner)) {
+                operand = adapt_reference_load_value(operand);
+                operand_type = inner;
+            }
+        }
+    };
+
+    unwrap_ref_indirection(left, left_type);
+    unwrap_ref_indirection(right, right_type);
+
+    // ── Address comparison path ──────────────────────────────────────────────
+    if (is_address_comparable(left_type) || is_address_comparable(right_type)) {
+        // Both sides must be address-comparable.
+        if (!is_address_comparable(left_type) || !is_address_comparable(right_type)) {
+            throw_error(0x002C, std::nullopt,
+                "Address comparison requires both operands to be indirections "
+                "(pointer, link, pinned, owner) or null, but found '{}' and '{}'",
+                {left_type ? left_type->to_string() : "?",
+                 right_type ? right_type->to_string() : "?"});
+        }
+        // Only == and != are valid for address comparison (not <, >, <=, >=).
+        if (!dynamic_cast<equal_expression*>(&expr) &&
+            !dynamic_cast<different_expression*>(&expr)) {
+            throw_error(0x002E, std::nullopt,
+                "Only '==' and '!=' are valid for address comparison between indirections; "
+                "relational operators (<, >, <=, >=) are not supported for types '{}' and '{}'",
+                {left_type ? left_type->to_string() : "?",
+                 right_type ? right_type->to_string() : "?"});
+        }
+        // Update the expression operands if unwrapped
+        expr.assign_left(left);
+        expr.assign_right(right);
+
+        static auto bool_type = _context->from_type(primitive_type::BOOL);
+        expr.set_type(bool_type);
+        return;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ── Primitive comparison (existing path) ─────────────────────────────────
     if(type::is_reference(left_type)) {
         left = adapt_reference_load_value(left);
         expr.assign_left(left);
@@ -2127,16 +2233,35 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
             "this indicates a code-generation bug in an operand expression");
     }
 
+    auto left_type = expr.left()->get_type();
+    auto right_type = expr.right()->get_type();
+
+    // ── Address comparison for indirection types ─────────────────────────────
+    auto is_addr = [](const std::shared_ptr<type>& t) {
+        return type::is_pointer(t) || type::is_link(t) || type::is_pinned(t)
+            || type::is_owner(t)   || type::is_null(t);
+    };
+    if (is_addr(left_type) || is_addr(right_type)) {
+        // Both are pointer-sized values; null is ConstantPointerNull.
+        // Ensure both are ptr-typed for ICmpEQ.
+        auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+        if (left->getType() != ptr_ty) left = _builder->CreateBitCast(left, ptr_ty);
+        if (right->getType() != ptr_ty) right = _builder->CreateBitCast(right, ptr_ty);
+        _value = _builder->CreateICmpEQ(left, right);
+        return;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     // If operands are references, dereference them.
     llvm::Type* type = _context->get_llvm_type(expr.get_type());
-    if(type::is_reference(expr.left()->get_type())) {
+    if(type::is_reference(left_type)) {
         left = _builder->CreateLoad(type, left);
     }
-    if(type::is_reference(expr.right()->get_type())) {
+    if(type::is_reference(right_type)) {
         right = _builder->CreateLoad(type, right);
     }
 
-    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
+    if(!type::is_primitive(left_type) || !type::is_primitive(right_type)) {
         throw_internal_error(0x002A, std::nullopt,
             "Internal error: '==' operator has non-primitive operand during code generation; "
             "this should have been rejected during type resolution");
@@ -2144,7 +2269,7 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+    auto prim = std::dynamic_pointer_cast<primitive_type>(left_type);
 
     if(prim->is_integer_or_bool()) {
         _value = _builder->CreateICmpEQ(left, right);
@@ -2167,16 +2292,33 @@ void implementation_generator::visit_different_expression(different_expression& 
             "this indicates a code-generation bug in an operand expression");
     }
 
+    auto left_type = expr.left()->get_type();
+    auto right_type = expr.right()->get_type();
+
+    // ── Address comparison for indirection types ─────────────────────────────
+    auto is_addr = [](const std::shared_ptr<type>& t) {
+        return type::is_pointer(t) || type::is_link(t) || type::is_pinned(t)
+            || type::is_owner(t)   || type::is_null(t);
+    };
+    if (is_addr(left_type) || is_addr(right_type)) {
+        auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+        if (left->getType() != ptr_ty) left = _builder->CreateBitCast(left, ptr_ty);
+        if (right->getType() != ptr_ty) right = _builder->CreateBitCast(right, ptr_ty);
+        _value = _builder->CreateICmpNE(left, right);
+        return;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     // If operands are references, dereference them.
     llvm::Type* type = _context->get_llvm_type(expr.get_type());
-    if(type::is_reference(expr.left()->get_type())) {
+    if(type::is_reference(left_type)) {
         left = _builder->CreateLoad(type, left);
     }
-    if(type::is_reference(expr.right()->get_type())) {
+    if(type::is_reference(right_type)) {
         right = _builder->CreateLoad(type, right);
     }
 
-    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
+    if(!type::is_primitive(left_type) || !type::is_primitive(right_type)) {
         throw_internal_error(0x002C, std::nullopt,
             "Internal error: '!=' operator has non-primitive operand during code generation; "
             "this should have been rejected during type resolution");
@@ -2184,7 +2326,7 @@ void implementation_generator::visit_different_expression(different_expression& 
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+    auto prim = std::dynamic_pointer_cast<primitive_type>(left_type);
 
     if(prim->is_integer_or_bool()) {
         _value = _builder->CreateICmpNE(left, right);

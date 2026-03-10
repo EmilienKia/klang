@@ -86,6 +86,39 @@ a > b        // true if a is strictly greater than b
 a <= b       // true if a is less than or equal to b
 a >= b       // true if a is greater than or equal to b
 ```
+
+### Address comparison for indirection types
+
+The `==` and `!=` operators can be used to compare the **addresses** held by
+indirection types: pointer (`T*`), link (`T~`), pinned (`T^`), and owner (`T!`).
+The `null` literal may appear on either side.
+
+These operators compare the raw pointer addresses, **not** the pointed-to objects.
+Two indirections are equal if they point to the same memory address.
+
+```k
+x : int = 42;
+p1 : int* = &x;
+p2 : int* = &x;
+p1 == p2     // true — same address
+p1 == null   // false — p1 is non-null
+null == null  // true
+```
+
+| Left type | Right type | Result | Semantics |
+|---|---|---|---|
+| `T*`, `T~`, `T^`, `T!` | `T*`, `T~`, `T^`, `T!` | `bool` | Address comparison |
+| `T*`, `T~`, `T^`, `T!` | `null` | `bool` | Null check |
+| `null` | `T*`, `T~`, `T^`, `T!` | `bool` | Null check |
+| `null` | `null` | `bool` | Always `true` for `==`, `false` for `!=` |
+
+> **Note:** References (`T&`) are **excluded** from address comparison. When `==`
+> or `!=` is applied to references, the comparison is on the **pointed-to values**
+> (existing primitive/struct comparison semantics).
+
+> **Note:** Only `==` and `!=` are supported for address comparison. Relational
+> operators (`<`, `>`, `<=`, `>=`) on indirections are a compile-time error.
+
 **Examples:**
 ```k
 min(a: int, b: int) : int {
@@ -110,6 +143,41 @@ a || b       // true if at least one of a or b is true
 `||` does not evaluate the right operand if the left is `true`.
 ```k
 if (p != null && *p > 0) { ... }
+```
+
+### Implicit boolean conversion for indirection types
+
+Indirection types — pointer (`T*`), link (`T~`), pinned (`T^`), and owner (`T!`) —
+are **implicitly convertible to `bool`**. A non-null indirection converts to `true`;
+a null indirection converts to `false`.
+
+This implicit conversion applies wherever a `bool` is expected:
+- `if` / `while` / `for` conditions
+- logical operators `&&`, `||`, `!`
+- any expression context requiring `bool`
+
+| Source type | Conversion | Result |
+|---|---|---|
+| `T*`, `T~`, `T^`, `T!` (non-null) | → `bool` | `true` |
+| `T*`, `T~`, `T^`, `T!` (null) | → `bool` | `false` |
+| `null` literal | → `bool` | `false` |
+
+> **Note:** References (`T&`) are **not** implicitly convertible to `bool`.
+> A reference can never be null, so such a conversion would be meaningless.
+
+**Examples:**
+```k
+p : int* = get_ptr();
+if (p) {
+    // p is non-null — safe to dereference
+    val : int = *p;
+}
+if (!p) {
+    // p is null
+}
+// Combine with logical operators:
+if (p && q) { ... }   // both non-null
+if (p || q) { ... }   // at least one non-null
 ```
 ---
 ## 6. Conditional (ternary) operator

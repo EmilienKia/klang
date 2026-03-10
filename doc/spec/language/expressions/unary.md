@@ -41,6 +41,10 @@ neg : double = -3.14d;
 ## 2. Logical NOT
 `!` returns `true` if its operand is zero or `false`, and `false` otherwise.  
 The result type is `bool`.
+
+The operand must be of a boolean-compatible type: `bool`, any numeric primitive, or
+an indirection type (`T*`, `T~`, `T^`, `T!`). For indirection types, `!ptr` is
+equivalent to `ptr == null`.
 ```
 LogicalNotExpr:
     '!' CastExpr
@@ -48,6 +52,8 @@ LogicalNotExpr:
 ```k
 b : bool = !flag;
 if (!done) { ... }
+p : int* = get_ptr();
+if (!p) { /* p is null */ }
 ```
 ---
 ## 3. Bitwise NOT

@@ -64,6 +64,7 @@ protected:
 
     // Types:
     std::map<primitive_type::PRIMITIVE_TYPE, std::shared_ptr<primitive_type>> _primitive_types;
+    std::shared_ptr<null_type> _null_type;
     std::map<std::string, std::shared_ptr<struct_type>> _struct_types;
     std::vector<std::shared_ptr<unresolved_type>> _unresolved;
 
@@ -93,6 +94,8 @@ public:
     inline llvm::LLVMContext& operator *() {return *_context.get();}
 
     std::shared_ptr<primitive_type> from_type(primitive_type::PRIMITIVE_TYPE type);
+    /** Return the singleton null literal type. */
+    std::shared_ptr<k::model::null_type> get_null_type() const { return _null_type; }
 
     std::shared_ptr<type> from_string(const std::string& type_name);
     std::shared_ptr<type> from_keyword(const lex::keyword& kw, bool is_unsigned = false);

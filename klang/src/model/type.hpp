@@ -57,6 +57,7 @@ class context;
 class aggregate;
 class structure;
 
+class null_type;
 class reference_type;
 class pointer_type;
 class link_type;
@@ -133,6 +134,8 @@ public:
     inline static bool is_sized_array(const std::shared_ptr<type>& type);
     inline static bool is_array(const std::shared_ptr<type>& type);
     inline static bool is_function_reference(const std::shared_ptr<type>& type);
+    /** True if the type is the null literal type. */
+    inline static bool is_null(const std::shared_ptr<type>& type);
 
     inline static bool are_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2);
 
@@ -177,6 +180,32 @@ public:
     std::shared_ptr<type> get_resolved()const {return _resolved;}
 
 };
+
+/**
+ * Null literal type.
+ *
+ * Sentinel type representing the `null` literal.  It is implicitly convertible
+ * to any nullable indirection type (pointer, pinned, owner) and can appear on
+ * either side of an address-equality comparison (==, !=) with any indirection.
+ *
+ * A single instance is held by `context` (singleton pattern).
+ * The LLVM representation is an opaque pointer (ptr, address-space 0).
+ */
+class null_type : public type {
+protected:
+    friend class context;
+    null_type() : type(nullptr) {}
+
+public:
+    bool is_resolved() const override { return true; }
+    llvm::Type* get_llvm_type() const override;
+    llvm::Constant* generate_default_value_initializer() const override;
+    std::string to_string() const override { return "null"; }
+};
+
+inline bool type::is_null(const std::shared_ptr<type>& t) {
+    return std::dynamic_pointer_cast<null_type>(t) != nullptr;
+}
 
 /**
  * Primitive type

@@ -63,6 +63,7 @@ std::unique_ptr<llvm::LLVMContext> context::move_llvm_context() {
 void context::reset() {
     _context = std::make_unique<llvm::LLVMContext>();
     _primitive_types.clear();
+    _null_type = std::shared_ptr<k::model::null_type>(new k::model::null_type());
     _struct_types.clear();
     _unresolved.clear();
     _global_vars.clear();
@@ -318,9 +319,8 @@ std::shared_ptr<type> context::from_literal(const k::lex::any_literal &literal) 
     } else if (std::holds_alternative<lex::boolean>(literal)) {
         return from_type(primitive_type::BOOL);
     } else if (std::holds_alternative<lex::null>(literal)) {
-        // null literal: give it a resolved pointer-to-byte type as a placeholder.
-        // The actual null semantics (ConstantPointerNull) are emitted in get_llvm_constant_from_literal.
-        return from_type(primitive_type::BYTE)->get_pointer();
+        // null literal: return the dedicated null_type singleton.
+        return _null_type;
     } else {
         // TODO handle other literal types
         return nullptr;

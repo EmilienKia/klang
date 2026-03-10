@@ -130,6 +130,22 @@ std::string unresolved_type::to_string() const {
 }
 
 //
+// Null literal type
+//
+
+llvm::Type* null_type::get_llvm_type() const {
+    // Opaque pointer — same representation as all other indirections.
+    // _llvm_type is not cached because null_type has no subtype to anchor
+    // a context; we return a fresh PointerType each time (LLVM deduplicates).
+    // Note: this requires an LLVMContext, so callers must ensure the context is available.
+    return nullptr; // will be provided by ConstantPointerNull at codegen time
+}
+
+llvm::Constant* null_type::generate_default_value_initializer() const {
+    return nullptr;
+}
+
+//
 // Unresolved function reference type
 //
 

@@ -207,7 +207,9 @@ msg : char* = "line1\nline2";
 
 ## 6. Null literal
 
-`null` represents the null pointer value.
+`null` represents the null pointer value.  It has a dedicated type (`null`) that
+is distinct from every other type.  `null` is implicitly convertible to any
+nullable indirection type: pointer (`T*`), pinned (`T^`), and owner (`T!`).
 
 ### Grammar
 
@@ -216,12 +218,25 @@ NullLiteral:
     'null'
 ```
 
-`null` is assignable to any pointer type.
+### Type rules
 
-### Example
+| Context | Behaviour |
+|---|---|
+| Initialise `T*`, `T^`, `T!` | `null` is accepted; stored as a null pointer |
+| Assign `T*`, `T!` | `null` is accepted; stored as a null pointer |
+| Assign `T^` | **Compile-time error** — pinned cannot be re-assigned after initialisation |
+| Compare with `==` / `!=` against any indirection (`T*`, `T~`, `T^`, `T!`) | Address comparison; result is `bool` |
+| Boolean context (`if`, `while`, `&&`, `\|\|`, `!`) | `null` converts to `false` |
+| Initialise/assign `T&` or `T~` | **Compile-time error** — references and links are non-null |
+
+### Examples
 
 ```k
 p : int* = null;
+o : Foo! = null;
+pin : Bar^ = null;
+
+if (p == null) { /* ... */ }
 ```
 
 ---

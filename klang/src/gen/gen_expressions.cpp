@@ -3153,9 +3153,11 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
             // If source or target does not point to a struct/class: allowed (opaque ptr reinterpret).
         }
 
-        // ── Case: ptr/lnk/pin/ref source → bool target ────────────────────────
-        else if (type::is_pointer(effective_source) && type::is_prim_bool(target_type)) {
-            // Pointer-to-bool: valid (null check). No model transformation needed.
+        // ── Case: indirection/null source → bool target ───────────────────────
+        else if ((type::is_pointer(effective_source) || type::is_link(effective_source) ||
+                  type::is_pinned(effective_source) || type::is_owner(effective_source) ||
+                  type::is_null(effective_source)) && type::is_prim_bool(target_type)) {
+            // Indirection-to-bool or null-to-bool: valid (null check). No model transformation needed.
         }
 
         // ── Case: ref<Struct> → ref<Struct> (same handling as implicit upcast/downcast) ──
@@ -3542,8 +3544,22 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         // ref<ptr/lnk/pin> → fall through to dynamic cast block
     }
 
-    if(type::is_pointer(source_type) && type::is_prim_bool(target_type)) {
-        // TODO add pointer to boolean casting
+    // ── Indirection → bool: emit ICmpNE(ptr, null) ─────────────────────────
+    if((type::is_pointer(source_type) || type::is_link(source_type) ||
+        type::is_pinned(source_type) || type::is_owner(source_type)) &&
+       type::is_prim_bool(target_type)) {
+        _value = nullptr;
+        expr.sub_expr()->accept(*this);
+        if (!_value) return;
+        auto null_ptr = llvm::ConstantPointerNull::get(
+            llvm::PointerType::get(_builder->getContext(), 0));
+        _value = _builder->CreateICmpNE(_value, null_ptr, "ind_to_bool");
+        return;
+    }
+    // ── null → bool: always false ────────────────────────────────────────────
+    if(type::is_null(source_type) && type::is_prim_bool(target_type)) {
+        _value = _builder->getFalse();
+        return;
     }
 
     // ── Dynamic cast (RTTI-based): Base→Derived for klass/interface indirections ──

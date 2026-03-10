@@ -101,10 +101,12 @@ To modify the pointed-to object, use dereference.
 ```k
 p : int* = &x;
 p = &y;             // rebind: p now points to y
+p = null;           // rebind: p now points to nothing (null)
 *p = 99;            // modifies y (with null-check)
 ```
 
-The RHS of a pointer assignment must be a pointer (`T*`) or a link (`T~`). Assigning a plain value is a compile-time error.
+The RHS of a pointer assignment must be a pointer (`T*`), a link (`T~`), a pinned (`T^`),
+or `null`.  Assigning a plain value is a compile-time error.
 
 ### Owner (`T!`) — move semantics
 

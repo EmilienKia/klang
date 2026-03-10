@@ -35,6 +35,7 @@ K is a statically-typed language. Every expression has a type determined at comp
     - 13.4 [Dynamic indirection downcast (class/interface)](#134-dynamic-indirection-downcast-classinterface)
     - 13.5 [Owner upcast and downcast](#135-owner-upcast-and-downcast)
     - 13.6 [Explicit cast](#136-explicit-cast)
+    - 13.7 [Implicit indirection-to-bool conversion](#137-implicit-indirection-to-bool-conversion)
 14. [Const-ness](#14-const-ness)
 
 ---
@@ -166,6 +167,21 @@ TypeSuffix:
     | '^'                        -- pinned (immutable binding, nullable)
     | '*'                        -- pointer (mutable binding, nullable)
 ```
+
+### Null literal type
+
+The `null` keyword is a literal with a dedicated type, distinct from every other type
+in the type system.  It represents a null pointer value — an indirection that points to
+no object.
+
+`null` is implicitly convertible to **nullable** indirection types: `T*`, `T^`, and `T!`.
+It is **not** convertible to non-null types: `T&` (reference) and `T~` (link).
+
+In a boolean context (`if`, `while`, `for`, `&&`, `||`, `!`), `null` converts to `false`.
+When compared with `==` or `!=` against any indirection (including `T~` and `T^`), `null`
+participates in address comparison.
+
+See also: [Null literal](../expressions/literals.md#6-null-literal).
 
 ---
 
@@ -1222,6 +1238,30 @@ test() : int {
 ```
 
 This also works for `ref<ptr<Derived>>` when the parameter expects `ptr<Base>` — the reference is automatically loaded and the pointer is upcast.
+
+### 13.7 Implicit indirection-to-bool conversion
+
+Indirection types — `T*`, `T~`, `T^`, `T!` — and the `null` literal are implicitly
+convertible to `bool` wherever a boolean is expected:
+
+| Source | Result |
+|---|---|
+| Non-null `T*`, `T~`, `T^`, `T!` | `true` |
+| Null `T*`, `T^`, `T!` | `false` |
+| `null` literal | `false` |
+
+This applies in `if`/`while`/`for` conditions, logical operators (`&&`, `||`, `!`),
+and any other `adapt_type(expr, bool)` context.
+
+References (`T&`) are **not** implicitly convertible to `bool` — they can never be null.
+
+```k
+p : int* = get_ptr();
+if (p) { val : int = *p; }   // p is non-null → true
+if (!p) { /* null */ }        // !p → p == null
+```
+
+See also: [Logical operators — implicit boolean conversion](../expressions/binary.md#implicit-boolean-conversion-for-indirection-types).
 
 ---
 

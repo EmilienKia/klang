@@ -1957,10 +1957,12 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         if (has_single_init_arg()) {
             if (auto arg = get_single_init_arg()) {
                 // Null literal is always compatible with any pointer type — skip type checks.
-                bool is_null_init = false;
-                if (auto ve = std::dynamic_pointer_cast<value_expression>(arg)) {
-                    is_null_init = std::holds_alternative<std::nullptr_t>(ve->get_value())
-                                   || (ve->is_literal() && std::holds_alternative<lex::null>(ve->any_literal()));
+                bool is_null_init = type::is_null(arg->get_type());
+                if (!is_null_init) {
+                    if (auto ve = std::dynamic_pointer_cast<value_expression>(arg)) {
+                        is_null_init = std::holds_alternative<std::nullptr_t>(ve->get_value())
+                                       || (ve->is_literal() && std::holds_alternative<lex::null>(ve->any_literal()));
+                    }
                 }
                 if (!is_null_init) {
                 auto arg_type = arg->get_type();
@@ -2158,9 +2160,11 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             return;
         }
         auto arg_type = arg->get_type();
-        bool is_null_init = false;
-        if (auto ve = std::dynamic_pointer_cast<value_expression>(arg)) {
-            is_null_init = std::holds_alternative<std::nullptr_t>(ve->get_value());
+        bool is_null_init = type::is_null(arg_type);
+        if (!is_null_init) {
+            if (auto ve = std::dynamic_pointer_cast<value_expression>(arg)) {
+                is_null_init = std::holds_alternative<std::nullptr_t>(ve->get_value());
+            }
         }
         if (!is_null_init && !type::is_any_indirection(arg_type) && !type::is_owner(arg_type)) {
             throw_error(0x4604, std::nullopt,
@@ -2233,9 +2237,11 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             if (arg) {
                 auto arg_type = arg->get_type();
                 // Accept: new_expression (owner<T>), null literal, or ref<owner<T>> / owner<compatible_T>
-                bool is_null_init = false;
-                if (auto ve = std::dynamic_pointer_cast<value_expression>(arg)) {
-                    is_null_init = std::holds_alternative<std::nullptr_t>(ve->get_value());
+                bool is_null_init = type::is_null(arg_type);
+                if (!is_null_init) {
+                    if (auto ve = std::dynamic_pointer_cast<value_expression>(arg)) {
+                        is_null_init = std::holds_alternative<std::nullptr_t>(ve->get_value());
+                    }
                 }
                 if (!is_null_init) {
                     // Unwrap ref<owner<T>> to owner<T> for type checks
@@ -3395,8 +3401,36 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             cast->set_type(prim_tgt);
             return cast;
         }
+        // ref<indirection> → bool: load the pointer then compare to null.
+        if (type::is_prim_bool(type_nc)) {
+            if (type::is_pointer(ref_subtype) || type::is_link(ref_subtype) ||
+                type::is_pinned(ref_subtype) || type::is_owner(ref_subtype)) {
+                auto loaded = adapt_reference_load_value(expr);
+                if (!loaded) return {};
+                auto bool_type = _context->from_type(primitive_type::BOOL);
+                auto cast = cast_expression::make_shared(loaded, bool_type);
+                cast->set_type(bool_type);
+                return cast;
+            }
+        }
         return {};
     }
+
+    // ── Indirection/null → bool: implicit null check ─────────────────────────
+    // If the target is bool and the source is an indirection (ptr, link, pin, owner)
+    // or the null literal type, emit a cast_expression that will be lowered to
+    // ICmpNE(value, null) at codegen time.
+    if (type::is_prim_bool(type_nc)) {
+        if (type::is_pointer(type_src) || type::is_link(type_src) ||
+            type::is_pinned(type_src) || type::is_owner(type_src) ||
+            type::is_null(type_src)) {
+            auto bool_type = _context->from_type(primitive_type::BOOL);
+            auto cast = cast_expression::make_shared(expr, bool_type);
+            cast->set_type(bool_type);
+            return cast;
+        }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     auto prim_src = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr->get_type()));
     auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
