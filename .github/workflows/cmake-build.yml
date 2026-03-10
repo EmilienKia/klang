@@ -38,8 +38,7 @@ jobs:
             nlohmann-json3-dev \
             libfmt-dev \
             catch2 \
-            llvm-dev \
-            libllvm-ocaml-dev \
+            llvm-18-dev \
             clang
 
       # ── Configure ───────────────────────────────────────────────────────────
