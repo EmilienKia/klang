@@ -1,0 +1,60 @@
+name: CMake build on Ubuntu
+
+on:
+  push:
+    branches:
+      - feature/github-actions-ci
+  pull_request:
+    branches:
+      - feature/github-actions-ci
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      # ── Dependencies ────────────────────────────────────────────────────────
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            pkg-config \
+            build-essential \
+            libcbor-dev \
+            libboost-all-dev \
+            nlohmann-json3-dev \
+            libfmt-dev \
+            catch2 \
+            llvm-dev \
+            libllvm-ocaml-dev \
+            clang
+
+      # ── Configure ───────────────────────────────────────────────────────────
+      - name: Configure CMake
+        run: |
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+
+      # ── Build ────────────────────────────────────────────────────────────────
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      # ── Tests ────────────────────────────────────────────────────────────────
+      - name: Run CTest
+        working-directory: build
+        run: ctest --output-on-failure --parallel $(nproc)
+
