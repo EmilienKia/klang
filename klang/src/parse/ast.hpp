@@ -196,6 +196,21 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * Owner type specifier: owning pointer (unique ownership) using '!' suffix.
+         * Syntax: TypeSpec '!'
+         * Semantics: like std::unique_ptr — single owner, auto-delete on scope exit.
+         */
+        struct owner_type_specifier : public type_specifier {
+            std::shared_ptr<type_specifier> subtype;
+            lex::operator_ owner_op; ///< The '!' operator token
+
+            owner_type_specifier(const std::shared_ptr<type_specifier>& subtype, const lex::operator_& owner_op)
+                : subtype(subtype), owner_op(owner_op) {}
+
+            virtual void visit(ast_visitor& visitor) override;
+        };
+
         struct expression;
         struct unary_expression;
         struct binary_expression;
@@ -402,6 +417,36 @@ namespace k::parse {
             cast_expr(std::shared_ptr<ast::type_specifier>&& type, expr_ptr &&expr) : unary_expression(expr), type(type) {}
 
             virtual void visit(ast_visitor &visitor) override;
+        };
+
+        /**
+         * New expression: allocates an object on the heap and returns an owner.
+         * Syntax: 'new' TypeSpec '(' [args] ')'
+         */
+        struct new_expr : public expression {
+            lex::keyword new_kw;
+            std::shared_ptr<ast::type_specifier> type;
+            std::vector<expr_ptr> args;
+
+            new_expr(const lex::keyword& new_kw,
+                     const std::shared_ptr<ast::type_specifier>& type,
+                     const std::vector<expr_ptr>& args)
+                : new_kw(new_kw), type(type), args(args) {}
+
+            virtual void visit(ast_visitor& visitor) override;
+        };
+
+        /**
+         * Delete expression: explicitly deallocates an owner's object.
+         * Syntax: 'delete' expr
+         */
+        struct delete_expr : public unary_expression {
+            lex::keyword delete_kw;
+
+            delete_expr(const lex::keyword& delete_kw, const expr_ptr& expr)
+                : unary_expression(expr), delete_kw(delete_kw) {}
+
+            virtual void visit(ast_visitor& visitor) override;
         };
 
         struct unary_prefix_expr : public unary_expression {
@@ -788,6 +833,7 @@ namespace k::parse {
         virtual void visit_pointer_type_specifier(ast::pointer_type_specifier &) = 0;
         virtual void visit_const_type_specifier(ast::const_type_specifier &) = 0;
         virtual void visit_function_ref_type_specifier(ast::function_ref_type_specifier &) = 0;
+        virtual void visit_owner_type_specifier(ast::owner_type_specifier &) = 0;
 
         virtual void visit_parameter_specifier(ast::parameter_spec &) = 0;
 
@@ -821,6 +867,9 @@ namespace k::parse {
         virtual void visit_member_access_postfix_expr(ast::member_access_postfix_expr &) = 0;
         virtual void visit_identifier_expr(ast::identifier_expr &) = 0;
 
+        virtual void visit_new_expr(ast::new_expr &) = 0;
+        virtual void visit_delete_expr(ast::delete_expr &) = 0;
+
         virtual void visit_comma_expr(ast::expr_list_expr &) = 0;
 
     };
@@ -837,6 +886,7 @@ namespace k::parse {
         void visit_pointer_type_specifier(ast::pointer_type_specifier &) override;
         void visit_const_type_specifier(ast::const_type_specifier &) override;
         void visit_function_ref_type_specifier(ast::function_ref_type_specifier &) override;
+        void visit_owner_type_specifier(ast::owner_type_specifier &) override;
 
         void visit_parameter_specifier(ast::parameter_spec &) override;
         void visit_qualified_identifier(ast::qualified_identifier &) override;
@@ -868,6 +918,9 @@ namespace k::parse {
         void visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr &) override;
         void visit_member_access_postfix_expr(ast::member_access_postfix_expr &) override;
         void visit_identifier_expr(ast::identifier_expr &) override;
+
+        void visit_new_expr(ast::new_expr &) override;
+        void visit_delete_expr(ast::delete_expr &) override;
 
         void visit_comma_expr(ast::expr_list_expr &) override;
     };

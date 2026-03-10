@@ -50,6 +50,7 @@ namespace k::lex {
         {"interface", keyword::INTERFACE},
         {"default", keyword::DEFAULT},
         {"delete", keyword::DELETE},
+        {"new", keyword::NEW},
 
         {"bool", keyword::BOOL},
         {"byte", keyword::BYTE},

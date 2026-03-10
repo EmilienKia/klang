@@ -478,6 +478,27 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             visit_qualified_identifier(expr.qident);
             _stm << ">>";
         }
+
+        void visit_owner_type_specifier(ast::owner_type_specifier& spec) override {
+            if (spec.subtype) spec.subtype->visit(*this);
+            _stm << "!";
+        }
+
+        void visit_new_expr(ast::new_expr& expr) override {
+            _stm << "new ";
+            if (expr.type) expr.type->visit(*this);
+            _stm << "(";
+            for (size_t i = 0; i < expr.args.size(); ++i) {
+                if (i > 0) _stm << ", ";
+                if (expr.args[i]) expr.args[i]->visit(*this);
+            }
+            _stm << ")";
+        }
+
+        void visit_delete_expr(ast::delete_expr& expr) override {
+            _stm << "delete ";
+            if (expr.expr()) expr.expr()->visit(*this);
+        }
 };
 
 

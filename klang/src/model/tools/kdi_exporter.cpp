@@ -156,6 +156,11 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {
         kdi::kdi_pinned_type k; k.inner = std::make_shared<kdi::kdi_type>(to_kdi_type(pt->get_subtype()));
         return kdi::kdi_type{std::move(k)};
     }
+    if (auto ot = std::dynamic_pointer_cast<owner_type>(t)) {
+        // owner (!) exported as kdi_ptr_type for now (KDI has no owner type yet)
+        kdi::kdi_ptr_type k; k.inner = std::make_shared<kdi::kdi_type>(to_kdi_type(ot->get_subtype()));
+        return kdi::kdi_type{std::move(k)};
+    }
     if (auto sat = std::dynamic_pointer_cast<sized_array_type>(t)) {
         kdi::kdi_sized_array_type k;
         k.elem = std::make_shared<kdi::kdi_type>(to_kdi_type(sat->get_subtype()));

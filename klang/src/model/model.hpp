@@ -405,7 +405,7 @@ protected:
     bool _is_const = false;
 
     /** Optional initialization statement */
-    std::shared_ptr<constructor_invocation_expression> _init_expr;
+    std::shared_ptr<expression> _init_expr;
 
     // Not sure useful here :
     // Real constructor is already stored in the init expression, but we need to store it here for the case of a variable definition without initialization (like "var x: MyStruct;")
@@ -428,7 +428,9 @@ public:
     bool is_const() const { return _is_const; }
     variable_definition& set_const(bool c) { _is_const = c; return *this; }
 
-    virtual std::shared_ptr<constructor_invocation_expression> get_init_expr() const;
+    virtual std::shared_ptr<expression> get_init_expr() const;
+    virtual variable_definition& set_init_expr(std::shared_ptr<expression> init_expr);
+    // Convenience overload for constructor-invocation init (most common case)
     virtual variable_definition& set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr);
 };
 

@@ -35,6 +35,37 @@ inline STM& operator << (STM& stm, const llvm::Value& value) {
 
 namespace k::model::gen {
 
+// ── Helper: emit dtor-call + free for an owner pointer value ─────────────────
+// (Duplicated from gen_statements.cpp / gen_expressions.cpp — no shared header.)
+static void emit_owner_object_destroy(
+    llvm::IRBuilder<>* builder,
+    llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* ptr_value,
+    const std::shared_ptr<type>& alloc_type)
+{
+    auto& llvm_ctx = builder->getContext();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
+        auto st = st_type->get_struct();
+        auto dtor = st ? st->get_destructor() : nullptr;
+        if (dtor) {
+            auto dtor_it = functions.find(dtor->shared_as<function>());
+            if (dtor_it != functions.end()) {
+                builder->CreateCall(dtor_it->second, {ptr_value});
+            }
+        }
+    }
+    llvm::Function* free_fn = mod.getFunction("free");
+    if (!free_fn) {
+        auto* free_type = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
+        free_fn = llvm::Function::Create(
+            free_type, llvm::Function::ExternalLinkage, "free", mod);
+    }
+    builder->CreateCall(free_fn, {ptr_value});
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 //
 // Arithmetic binary expression
@@ -764,6 +795,64 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         }
         expr.set_type(ref_target_type);
         return;
+    } else if (type::is_owner(target_type)) {
+        // ── Owner assignment: destroy old object (if any), transfer ownership ─────
+        //   - null literal    → destroy current + set null
+        //   - ref<owner<T>>  → move (load + null source), same or compatible subtype
+        //   - owner<T>       → direct (from new_expression or already an owner value)
+
+        // Detect null literal (both parsed 'null' and programmatic nullptr)
+        bool rhs_is_null = false;
+        if (auto ve = std::dynamic_pointer_cast<value_expression>(right)) {
+            if (ve->is_literal() && ve->any_literal().has_value()) {
+                rhs_is_null = std::holds_alternative<lex::null>(ve->any_literal());
+            } else {
+                rhs_is_null = std::holds_alternative<std::nullptr_t>(ve->get_value());
+            }
+        }
+        if (rhs_is_null) {
+            // Assign null: destroy current owned object and store null
+            expr.set_type(ref_target_type);
+            return;
+        }
+
+        if (type::is_reference(source_type)) {
+            auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+            if (type::is_owner(inner)) {
+                // Move: wrap source in owner_move_expression (load + null source alloca)
+                auto own_src_nc = type::remove_const(inner->get_subtype());
+                auto own_tgt_nc = type::remove_const(target_type->get_subtype());
+                auto move = owner_move_expression::make_shared(right);
+                move->set_type(inner);
+                std::shared_ptr<expression> new_right = move;
+                if (!type::are_equal(own_src_nc, own_tgt_nc)) {
+                    // Check upcast: owner<Derived> → owner<Base>
+                    auto src_st = std::dynamic_pointer_cast<struct_type>(own_src_nc);
+                    auto tgt_st = std::dynamic_pointer_cast<struct_type>(own_tgt_nc);
+                    if (!src_st || !tgt_st || !src_st->get_struct() || !tgt_st->get_struct() ||
+                        !src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                        throw_error(0x00A1, std::nullopt,
+                            "Owner assignment type mismatch: cannot move '{}' into '{}'",
+                            {source_type->to_string(), target_type->to_string()});
+                    }
+                    auto upcast = cast_expression::make_shared(move, target_type);
+                    upcast->set_type(target_type);
+                    new_right = upcast;
+                }
+                expr.assign_right(new_right);
+                expr.set_type(ref_target_type);
+                return;
+            }
+        }
+        if (type::is_owner(source_type)) {
+            // Direct owner value (e.g. from new_expression or already an owner_move_expression)
+            expr.set_type(ref_target_type);
+            return;
+        }
+        throw_error(0x00A0, std::nullopt,
+            "Owner assignment: right-hand side must be an owner value, "
+            "another owner variable (move), or null; got type '{}'",
+            {source_type ? source_type->to_string() : "?"});
     } else if(!type::is_primitive(target_type) && !type::is_struct(target_type)) {
         throw_error(0x000D, std::nullopt,
             "Assignment to a non-primitive, non-pointer type is not yet supported: "
@@ -882,6 +971,43 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         _builder->CreateCondBr(_builder->CreateICmpULT(nxt, copy_n), loop_bb, done_bb);
 
         _builder->SetInsertPoint(done_bb);
+        _value = left;
+        return;
+    }
+
+    // ------------------------------------------------------------------
+    // Owner assignment: delete old object (if any), store new pointer
+    // ------------------------------------------------------------------
+    if (target_type && type::is_owner(target_type)) {
+        auto& llvm_ctx = _builder->getContext();
+        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+        // Load the existing pointer from the LHS owner alloca
+        llvm::Value* old_ptr = _builder->CreateLoad(ptr_ty, left, "owner_asgn_old");
+
+        // If non-null, destroy + free the existing object
+        auto* fn = _builder->GetInsertBlock()->getParent();
+        auto* nonnull_bb = llvm::BasicBlock::Create(llvm_ctx, "owner_asgn_dtor", fn);
+        auto* done_bb    = llvm::BasicBlock::Create(llvm_ctx, "owner_asgn_done",  fn);
+        auto* is_null = _builder->CreateICmpEQ(
+            old_ptr, llvm::ConstantPointerNull::get(ptr_ty), "owner_asgn_null");
+        _builder->CreateCondBr(is_null, done_bb, nonnull_bb);
+        _builder->SetInsertPoint(nonnull_bb);
+        auto own_type = std::dynamic_pointer_cast<owner_type>(target_type);
+        emit_owner_object_destroy(_builder.get(), get_module(), _context->_functions,
+                                  old_ptr, own_type->get_owned_type());
+        _builder->CreateBr(done_bb);
+        _builder->SetInsertPoint(done_bb);
+
+        // Determine the new pointer value to store:
+        // - right may be null (from null literal → visit_value_expression returns nullptr LLVM val)
+        // - right may be an owner ptr (from owner_move_expression)
+        llvm::Value* new_ptr = right;
+        if (!new_ptr) {
+            // null literal case
+            new_ptr = llvm::ConstantPointerNull::get(ptr_ty);
+        }
+        _builder->CreateStore(new_ptr, left);
         _value = left;
         return;
     }

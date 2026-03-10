@@ -39,6 +39,8 @@ They may **not** be used as ordinary identifiers.
 | `else`      | Alternative branch of an `if` statement |
 | `while`     | Condition-controlled loop |
 | `for`       | Counter-controlled loop |
+| `new`       | Dynamic allocation operator — allocates and constructs an object, returns a `T!` owner |
+| `delete`    | Dynamic deallocation operator — destroys and frees the object owned by a `T!` variable |
 
 ### Grammar
 
@@ -51,6 +53,7 @@ Keyword: (one of)
     public   protected   private
     this     return
     if       else     while    for
+    new      delete
 ```
 
 ---
@@ -60,9 +63,11 @@ Keyword: (one of)
 - `struct`, `class`, and `interface` declare user-defined aggregate types. See [Structures](../structs/structs.md), [Classes and Virtuality](../structs/classes.md), and [Interfaces](../structs/interfaces.md).
 - `abstract` is valid on a `class` or its methods to mark them as requiring overriding. On an `interface` or its methods it is accepted but redundant (warning).
 - `final` prevents further inheritance or overriding. See the relevant sections in [Classes and Virtuality](../structs/classes.md).
-- `const` marks a variable or parameter as immutable. See [Const-ness](types.md#12-const-ness) for the full specification.
+- `const` marks a variable or parameter as immutable. See [Const-ness](types.md#14-const-ness) for the full specification.
 - `public`, `protected`, and `private` are parsed as visibility declarations inside namespace and struct bodies; they end with a colon (e.g., `public:`).
 - `unsigned` is used as a type modifier: `unsigned int`, `unsigned short`, etc. It is not a standalone type.
+- `new` allocates a dynamic object and returns a `T!` owner. See [Dynamic Allocation](../memory/new-delete.md).
+- `delete` destroys and frees the object owned by a `T!` variable. See [Dynamic Allocation](../memory/new-delete.md).
 - All other keywords are used in declarations or statements as described in the relevant reference sections.
 
 ---

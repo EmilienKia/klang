@@ -77,6 +77,10 @@ void ast::function_ref_type_specifier::visit(ast_visitor &visitor) {
     visitor.visit_function_ref_type_specifier(*this);
 }
 
+void ast::owner_type_specifier::visit(ast_visitor &visitor) {
+    visitor.visit_owner_type_specifier(*this);
+}
+
 void ast::parameter_spec::visit(ast_visitor &visitor) {
     visitor.visit_parameter_specifier(*this);
 }
@@ -168,6 +172,14 @@ void ast::identifier_expr::visit(ast_visitor &visitor) {
     visitor.visit_identifier_expr(*this);
 }
 
+void ast::new_expr::visit(ast_visitor &visitor) {
+    visitor.visit_new_expr(*this);
+}
+
+void ast::delete_expr::visit(ast_visitor &visitor) {
+    visitor.visit_delete_expr(*this);
+}
+
 //
 // Default AST visitor
 //
@@ -213,6 +225,10 @@ void default_ast_visitor::visit_const_type_specifier(ast::const_type_specifier &
 }
 
 void default_ast_visitor::visit_function_ref_type_specifier(ast::function_ref_type_specifier &) {
+
+}
+
+void default_ast_visitor::visit_owner_type_specifier(ast::owner_type_specifier &) {
 
 }
 
@@ -321,6 +337,14 @@ void default_ast_visitor::visit_member_access_postfix_expr(ast::member_access_po
 }
 
 void default_ast_visitor::visit_identifier_expr(ast::identifier_expr &) {
+
+}
+
+void default_ast_visitor::visit_new_expr(ast::new_expr &) {
+
+}
+
+void default_ast_visitor::visit_delete_expr(ast::delete_expr &) {
 
 }
 

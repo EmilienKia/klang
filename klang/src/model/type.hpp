@@ -61,6 +61,7 @@ class reference_type;
 class pointer_type;
 class link_type;
 class pinned_type;
+class owner_type;
 class const_type;
 class sized_array_type;
 class array_type;
@@ -78,6 +79,7 @@ protected:
     std::shared_ptr<pointer_type> pointer;
     std::shared_ptr<link_type> link;
     std::shared_ptr<pinned_type> pinned;
+    std::shared_ptr<owner_type> owner;
     std::shared_ptr<const_type> const_;
     std::shared_ptr<array_type> array;
 
@@ -113,6 +115,7 @@ public:
     inline static bool is_pointer(const std::shared_ptr<type>& type);
     inline static bool is_link(const std::shared_ptr<type>& type);
     inline static bool is_pinned(const std::shared_ptr<type>& type);
+    inline static bool is_owner(const std::shared_ptr<type>& type);
     /** True if the type is a const-qualified type. */
     inline static bool is_const(const std::shared_ptr<type>& type);
     /** Remove const qualifier if present, return the inner type. If not const, return as-is. */
@@ -137,6 +140,7 @@ public:
     std::shared_ptr<pointer_type> get_pointer();
     std::shared_ptr<link_type> get_link();
     std::shared_ptr<pinned_type> get_pinned();
+    std::shared_ptr<owner_type> get_owner();
     std::shared_ptr<const_type> get_const();
     std::shared_ptr<array_type> get_array();
     std::shared_ptr<sized_array_type> get_array(unsigned long size);
@@ -379,6 +383,34 @@ inline bool type::is_pinned(const std::shared_ptr<type>& type) {
 }
 
 /**
+ * Owner type (!) — owning pointer (unique ownership), nullable, mutable.
+ * Like std::unique_ptr: the single owner of a heap-allocated object.
+ * When the owner goes out of scope or is assigned null, the object is destroyed (dtor + free).
+ * Assignment transfers ownership (move semantics): source becomes null.
+ * Represented in LLVM as an opaque pointer (same as pointer_type).
+ * Mangling modifier: 'W' (owner)
+ */
+class owner_type : public type {
+protected:
+    friend class type;
+
+    owner_type(const std::shared_ptr<type> &subtype);
+
+public:
+    bool is_resolved() const override;
+
+    llvm::Type* get_llvm_type() const override;
+
+    std::string to_string() const override;
+
+    std::shared_ptr<type> get_owned_type() const { return get_subtype(); }
+};
+
+inline bool type::is_owner(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<owner_type>(type) != nullptr;
+}
+
+/**
  * Const type — compile-time-only qualifier.
  * Wraps another type and marks it as immutable: no assignment or mutation is allowed
  * through a variable or indirection of this type.
@@ -414,7 +446,7 @@ inline std::shared_ptr<type> type::remove_const(const std::shared_ptr<type>& t) 
 }
 
 inline bool type::is_any_indirection(const std::shared_ptr<type>& t) {
-    return is_reference(t) || is_pointer(t) || is_link(t) || is_pinned(t);
+    return is_reference(t) || is_pointer(t) || is_link(t) || is_pinned(t) || is_owner(t);
 }
 
 inline bool type::is_strong_indirection(const std::shared_ptr<type>& t) {
@@ -422,11 +454,11 @@ inline bool type::is_strong_indirection(const std::shared_ptr<type>& t) {
 }
 
 inline bool type::is_mutable_indirection(const std::shared_ptr<type>& t) {
-    return is_link(t) || is_pointer(t);
+    return is_link(t) || is_pointer(t) || is_owner(t);
 }
 
 inline bool type::is_nullable_indirection(const std::shared_ptr<type>& t) {
-    return is_pointer(t) || is_pinned(t);
+    return is_pointer(t) || is_pinned(t) || is_owner(t);
 }
 
 inline bool type::is_immutable_indirection(const std::shared_ptr<type>& t) {

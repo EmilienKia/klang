@@ -281,7 +281,20 @@ namespace k::model {
 
         if(decl.init) {
             std::vector<std::shared_ptr<model::expression>> args;
-            if (decl.is_constructor) {
+            if (type::is_owner(var_type)
+                || type::is_pointer(var_type)
+                || type::is_link(var_type)
+                || type::is_pinned(var_type)) {
+                // Owner/pointer/link/pin variable: the init expression is an address-valued
+                // expression (new_expression, symbol, &expr, null …).
+                // Store it directly — no constructor_invocation_expression wrapper.
+                _expr.reset();
+                decl.init->visit(*this);
+                if (_expr) {
+                    var->set_init_expr(_expr);
+                    _expr.reset();
+                }
+            } else if (decl.is_constructor) {
                 _expr.reset();
                 if(auto list = std::dynamic_pointer_cast<parse::ast::expr_list_expr>(decl.init)) {
                     for(auto arg : list->exprs()) {
@@ -293,13 +306,18 @@ namespace k::model {
                     decl.init->visit(*this);
                     args.push_back(_expr);
                 }
+                var->set_init_expr(model::constructor_invocation_expression::make_shared(var, args));
             } else {
                 _expr.reset();
                 decl.init->visit(*this);
                 args.push_back(_expr);
+                var->set_init_expr(model::constructor_invocation_expression::make_shared(var, args));
             }
-            var->set_init_expr(model::constructor_invocation_expression::make_shared(var, args));
-        } else {
+        } else if (!type::is_owner(var_type)
+                   && !type::is_pointer(var_type)
+                   && !type::is_link(var_type)
+                   && !type::is_pinned(var_type)) {
+            // Non-indirection with no initializer: use empty constructor_invocation.
             var->set_init_expr(model::constructor_invocation_expression::make_shared(var, {}));
         }
     }
@@ -1032,6 +1050,38 @@ namespace k::model {
             idents.emplace_back(ident.content);
         }
         _expr = model::symbol_expression::from_identifier(name(has_prefix, std::move(idents)));
+    }
+
+    void model_builder::visit_new_expr(parse::ast::new_expr& expr) {
+        // Resolve the allocated type from the AST type specifier
+        auto alloc_type = _context->from_type_specifier(*expr.type);
+
+        // Build argument expressions.
+        // parse_expression() may return an expr_list_expr for multi-arg lists ("3, 4").
+        // Flatten those so that new_expression always holds individual argument expressions.
+        std::vector<std::shared_ptr<model::expression>> args;
+        for (auto& arg : expr.args) {
+            if (auto list = std::dynamic_pointer_cast<parse::ast::expr_list_expr>(arg)) {
+                for (auto& sub : list->exprs()) {
+                    _expr = nullptr;
+                    sub->visit(*this);
+                    args.push_back(_expr);
+                }
+            } else {
+                _expr = nullptr;
+                arg->visit(*this);
+                args.push_back(_expr);
+            }
+        }
+
+        _expr = model::new_expression::make_shared(alloc_type, args);
+    }
+
+    void model_builder::visit_delete_expr(parse::ast::delete_expr& expr) {
+        _expr = nullptr;
+        expr.expr()->visit(*this);
+        auto target = _expr;
+        _expr = model::delete_expression::make_shared(target);
     }
 
     void model_builder::visit_comma_expr(parse::ast::expr_list_expr &) {

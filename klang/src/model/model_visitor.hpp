@@ -71,6 +71,8 @@ public:
     virtual void visit_value_expression(value_expression&) =0;
     virtual void visit_symbol_expression(symbol_expression&) =0;
     virtual void visit_constructor_invocation_expression(constructor_invocation_expression&) =0;
+    virtual void visit_new_expression(new_expression&) =0;
+    virtual void visit_delete_expression(delete_expression&) =0;
 
     virtual void visit_unary_expression(unary_expression&) =0;
     virtual void visit_cast_expression(cast_expression&) =0;
@@ -117,6 +119,7 @@ public:
     virtual void visit_logical_not_expression(logical_not_expression&) =0;
 
     virtual void visit_load_value_expression(load_value_expression&) =0;
+    virtual void visit_owner_move_expression(owner_move_expression&) =0;
     virtual void visit_address_of_expression(address_of_expression&) =0;
     virtual void visit_dereference_expression(dereference_expression&) =0;
     virtual void visit_member_of_expression(member_of_expression&) =0;
@@ -174,6 +177,8 @@ public:
     void visit_value_expression(value_expression&) override;
     void visit_symbol_expression(symbol_expression&) override;
     void visit_constructor_invocation_expression(constructor_invocation_expression&) override;
+    void visit_new_expression(new_expression&) override;
+    void visit_delete_expression(delete_expression&) override;
 
     void visit_unary_expression(unary_expression&) override;
     void visit_cast_expression(cast_expression&) override;
@@ -225,6 +230,7 @@ public:
     void visit_pm_expression(pm_expression&) override;
 
     void visit_load_value_expression(load_value_expression&) override;
+    void visit_owner_move_expression(owner_move_expression&) override;
     void visit_address_of_expression(address_of_expression&) override;
     void visit_dereference_expression(dereference_expression&) override;
 

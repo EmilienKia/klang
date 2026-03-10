@@ -128,7 +128,7 @@ void collect_in_stmt(k::model::statement* stmt,
     }
     if (auto* vs = dynamic_cast<variable_statement*>(stmt)) {
         // variable_statement inherits variable_definition — check for init expression (constructor call)
-        if (auto ctor = vs->get_init_expr()) {
+        if (auto ctor = std::dynamic_pointer_cast<constructor_invocation_expression>(vs->get_init_expr())) {
             for (auto& arg : ctor->arguments()) collect_in_expr(arg.get(), out);
         }
         return;

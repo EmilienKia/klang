@@ -105,6 +105,7 @@ add_executable(klang-tests
         tests/test-file-resolver.cpp
         tests/test-import.cpp
         tests/test-gen-func-ref.cpp
+        tests/test-gen-owner.cpp
 )
 target_link_libraries(klang-tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain kdi)
 target_include_directories(klang-tests PRIVATE ${CMAKE_SOURCE_DIR}/libkdi/src)

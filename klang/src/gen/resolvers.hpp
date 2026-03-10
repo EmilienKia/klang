@@ -248,12 +248,9 @@ protected:
     void visit_member_of_expression(member_of_expression &) override;
     void visit_function_invocation_expression(function_invocation_expression &) override;
     void visit_constructor_invocation_expression(constructor_invocation_expression &) override;
-
-    /**
-     * Adapt a reference expression to load its value.
-     * @param expr Reference expression.
-     * @return The given arg if already not a reference or the newly loaded-value expr if is a reference.
-     */
+    void visit_new_expression(new_expression &) override;
+    void visit_delete_expression(delete_expression &) override;
+    void visit_owner_move_expression(owner_move_expression &) override;
     std::shared_ptr<expression> adapt_reference_load_value(const std::shared_ptr<expression>& expr);
 
     /**
@@ -575,6 +572,9 @@ protected:
     void visit_subscript_expression(subscript_expression&) override;
     void visit_function_invocation_expression(function_invocation_expression &) override;
     void visit_constructor_invocation_expression(constructor_invocation_expression &) override;
+    void visit_new_expression(new_expression &) override;
+    void visit_delete_expression(delete_expression &) override;
+    void visit_owner_move_expression(owner_move_expression &) override;
 
     void visit_cast_expression(cast_expression&)override;
 

@@ -40,6 +40,7 @@ Grammar notation used here:
     `public` `protected` `private`
     `this` `return`
     `if` `else` `while` `for`
+    `new` `delete`
 ### Literals
 *Full description:* [Literals](expressions/literals.md)
 <a id="literal"></a>**Literal:**
@@ -76,6 +77,10 @@ Grammar notation used here:
     `+=` `-=` `*=` `/=` `&=` `|=` `^=` `%=` `<<=` `>>=`
     `==` `!=` `<` `>` `<=` `>=`
     `&&` `||` `++` `--` `**`
+
+    *Note: `!` is context-sensitive.  In an expression context it is the logical-NOT unary
+    operator.  In a type context (after a type name in a [TypeSpec](#typespec)) it is the
+    owner suffix — exactly as `*` is both the dereference operator and the pointer suffix.*
 ---
 ## Syntactic grammar
 ### Compilation unit
@@ -141,6 +146,7 @@ Grammar notation used here:
     | `'bool'`
 <a id="typesuffix"></a>**TypeSuffix:**
     `'['` `[` [IntegerLiteral](#integerliteral) `]` `']'`     -- array (sized or unsized)
+    | `'!'`                                 -- owner (move-only, nullable, exclusive ownership)
     | `'*'`                                 -- pointer (mutable, nullable)
     | `'&'`                                 -- reference (immutable binding, non-null)
     | `'~'`                                 -- link (mutable binding, non-null)
@@ -230,8 +236,18 @@ Grammar notation used here:
     `'('` [TypeSpec](#typespec) `')'` [CastExpr](#castexpr)
     | [UnaryExpr](#unaryexpr)
 <a id="unaryexpr"></a>**UnaryExpr:**
-    `(` `'++'` | `'--'` | `'*'` | `'&'` | `'+'` | `'-'` | `'!'` | `'~'` `)` [CastExpr](#castexpr)
+    `'new'` [TypeName](#typename) `'('` `[` [ExpressionList](#expressionlist) `]` `')'`
+    | `'delete'` [CastExpr](#castexpr)
+    | `(` `'++'` | `'--'` | `'*'` | `'&'` | `'+'` | `'-'` | `'!'` | `'~'` `)` [CastExpr](#castexpr)
     | [PostfixExpr](#postfixexpr)
+
+    *Note: `'new' TypeName '(' … ')'` returns a `T!` owner.  `'delete' CastExpr` returns `void` and may only appear as an expression statement.*
+
+<a id="typename"></a>**TypeName:**
+    [QualifiedIdentifier](#qualifiedidentifier)
+    | [FundamentalTypeSpec](#fundamentaltypespec)
+
+    *Note: `TypeName` is a bare type identifier — indirection suffixes (`*`, `!`, `&`, …) are not permitted in a `new` expression.*
 <a id="postfixexpr"></a>**PostfixExpr:**
     [PrimaryExpr](#primaryexpr) {{ [PostfixOp](#postfixop) }}
 <a id="postfixop"></a>**PostfixOp:**

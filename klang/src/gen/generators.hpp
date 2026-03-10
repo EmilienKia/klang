@@ -141,6 +141,9 @@ protected:
     /** Parallel stack: for each cleanup block, the list of variable_statements to destroy (declaration order). */
     std::stack<std::vector<std::shared_ptr<variable_statement>>> _cleanup_vars_stack;
 
+    /** Parallel stack: for each cleanup block, the list of owner-typed PARAMETERS to destroy (function body only). */
+    std::stack<std::vector<std::shared_ptr<parameter>>> _owner_params_stack;
+
     /** Per-function alloca for return value (used when destructions must happen before a return). */
     llvm::AllocaInst* _retval_alloca = nullptr;
 
@@ -269,6 +272,9 @@ public:
     void visit_subscript_expression(subscript_expression&) override;
     void visit_function_invocation_expression(function_invocation_expression&) override;
     void visit_constructor_invocation_expression(constructor_invocation_expression&) override;
+    void visit_new_expression(new_expression&) override;
+    void visit_delete_expression(delete_expression&) override;
+    void visit_owner_move_expression(owner_move_expression&) override;
 
     void visit_cast_expression(cast_expression&) override;
 

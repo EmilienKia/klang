@@ -1520,13 +1520,89 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     "Internal error: cannot resolve function reference type for variable '{}'",
                     {var.get_fq_name()});
             }
+        } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(var.get_type())) {
+            // owner<UnresolvedType> — resolve the inner type then rebuild the owner wrapper
+            auto inner = own_type->get_subtype();
+            if (!type::is_resolved(inner)) {
+                auto unres_inner = std::dynamic_pointer_cast<unresolved_type>(inner);
+                std::shared_ptr<type> resolved_inner;
+                if (unres_inner) {
+                    const element* var_elem = dynamic_cast<const element*>(&var);
+                    if (var_elem) {
+                        resolved_inner = resolve_type_by_name(unres_inner->type_id(), *var_elem);
+                    }
+                    if (!resolved_inner || !type::is_resolved(resolved_inner)) {
+                        resolved_inner = _context->from_string(unres_inner->type_id());
+                    }
+                    if (!resolved_inner || !type::is_resolved(resolved_inner)) {
+                        auto imported_agg = _unit.get_or_create_imported_aggregate(
+                            unres_inner->type_id(), _context);
+                        if (imported_agg && imported_agg->get_struct_type()) {
+                            resolved_inner = imported_agg->get_struct_type();
+                        }
+                    }
+                } else {
+                    resolved_inner = _context->resolve_type(inner);
+                }
+                if (resolved_inner && type::is_resolved(resolved_inner)) {
+                    var.set_type(resolved_inner->get_owner());
+                } else {
+                    throw_error(0x0005, std::nullopt,
+                        "Unknown inner type for owner variable '{}': cannot resolve '{}'",
+                        {var.get_fq_name(), inner ? inner->to_string() : "?"});
+                }
+            }
         } else {
         auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
         if(!unres_type) {
-            // The type is not resolved but is not a plain unresolved_type either (e.g. it
-            // is a sized_array_type or reference_type whose subtype is still unresolved).
-            // Delegate to context->resolve_type which recursively resolves composite types.
-            auto resolved = _context->resolve_type(var.get_type());
+            // The type is not resolved but is not a plain unresolved_type either.
+            // It may be a pointer/link/pin/reference wrapping an unresolved inner type
+            // (e.g. Point*, Point~, Point^).  context::resolve_type has no scope context,
+            // so we first try to resolve the inner unresolved_type using resolve_type_by_name,
+            // then rebuild the wrapper.
+            auto try_resolve_wrapped = [&](std::shared_ptr<k::model::type> inner)
+                -> std::shared_ptr<k::model::type>
+            {
+                if (type::is_resolved(inner)) return inner;
+                if (auto unres_inner = std::dynamic_pointer_cast<unresolved_type>(inner)) {
+                    std::shared_ptr<type> resolved_inner;
+                    const element* var_elem = dynamic_cast<const element*>(&var);
+                    if (var_elem) {
+                        resolved_inner = resolve_type_by_name(unres_inner->type_id(), *var_elem);
+                    }
+                    if (!resolved_inner || !type::is_resolved(resolved_inner)) {
+                        resolved_inner = _context->from_string(unres_inner->type_id());
+                    }
+                    if (!resolved_inner || !type::is_resolved(resolved_inner)) {
+                        auto imported_agg = _unit.get_or_create_imported_aggregate(
+                            unres_inner->type_id(), _context);
+                        if (imported_agg && imported_agg->get_struct_type()) {
+                            resolved_inner = imported_agg->get_struct_type();
+                        }
+                    }
+                    return resolved_inner;
+                }
+                return _context->resolve_type(inner);
+            };
+
+            std::shared_ptr<type> resolved;
+            if (type::is_pointer(var.get_type())) {
+                auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
+                if (inner && type::is_resolved(inner)) resolved = inner->get_pointer();
+            } else if (type::is_link(var.get_type())) {
+                auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
+                if (inner && type::is_resolved(inner)) resolved = inner->get_link();
+            } else if (type::is_pinned(var.get_type())) {
+                auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
+                if (inner && type::is_resolved(inner)) resolved = inner->get_pinned();
+            } else if (type::is_reference(var.get_type())) {
+                auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
+                if (inner && type::is_resolved(inner)) resolved = inner->get_reference();
+            } else {
+                // Fallback: delegate to context->resolve_type
+                resolved = _context->resolve_type(var.get_type());
+            }
+
             if (resolved && type::is_resolved(resolved)) {
                 var.set_type(resolved);
             } else {
@@ -1573,10 +1649,35 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
     }
 
     // Resolve init expressions if any
-    auto init_expr = var.get_init_expr();
-    if (init_expr) {
-        init_expr->accept(*this);
+    auto init_expr_base = var.get_init_expr();
+    if (init_expr_base) {
+        init_expr_base->accept(*this);
     }
+
+    // For owner-type and indirection-type (pointer/link/pin) variables, the init_expr is stored
+    // directly as a plain expression (symbol_expression, new_expression, etc.).
+    // For all other variables it is a constructor_invocation_expression.
+    auto init_expr = std::dynamic_pointer_cast<constructor_invocation_expression>(init_expr_base);
+
+    // Helper: get the single init argument regardless of storage form.
+    // For direct-stored expressions (owner/pointer/link/pin), init_expr is null but init_expr_base holds the arg.
+    // For constructor_invocation_expression, use argument(0).
+    auto get_single_init_arg = [&]() -> std::shared_ptr<expression> {
+        if (init_expr && !init_expr->empty()) return init_expr->argument(0);
+        if (!init_expr && init_expr_base) return init_expr_base;
+        return nullptr;
+    };
+    auto has_single_init_arg = [&]() -> bool {
+        return get_single_init_arg() != nullptr;
+    };
+    auto assign_single_init_arg = [&](std::shared_ptr<expression> new_arg) {
+        if (init_expr && !init_expr->empty()) {
+            init_expr->assign_argument(0, new_arg);
+        } else {
+            // direct-stored: update in-place
+            var.set_init_expr(new_arg);
+        }
+    };
 
     // If the variable has a function_reference_type with no return type yet (e.g. 'fp : *(int) = add_one'),
     // propagate the return type from the initializer's function symbol into the existing frt in-place.
@@ -1853,18 +1954,25 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         }
     } else if (type::is_pointer(var.get_type())) {
         // Pointer variable (*): validate const-compatibility of initializer and type compatibility.
-        // A pointer-to-const (*K) cannot be initialized from a pointer-to-mutable if const-ness
-        // would be lost (i.e. const T* ← T* is OK; T* ← const T* is forbidden).
-        if (init_expr && !init_expr->empty()) {
-            if (auto arg = init_expr->argument(0)) {
+        if (has_single_init_arg()) {
+            if (auto arg = get_single_init_arg()) {
+                // Null literal is always compatible with any pointer type — skip type checks.
+                bool is_null_init = false;
+                if (auto ve = std::dynamic_pointer_cast<value_expression>(arg)) {
+                    is_null_init = std::holds_alternative<std::nullptr_t>(ve->get_value())
+                                   || (ve->is_literal() && std::holds_alternative<lex::null>(ve->any_literal()));
+                }
+                if (!is_null_init) {
                 auto arg_type = arg->get_type();
-                // Unwrap ref if the init expression is a reference to a pointer/link/pin
                 auto effective_arg = arg_type;
                 if (type::is_reference(arg_type)) {
                     effective_arg = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
                 }
+                // Also accept owner as source
+                if (auto own_t = std::dynamic_pointer_cast<owner_type>(effective_arg)) {
+                    effective_arg = own_t->get_owned_type()->get_pointer();
+                }
                 auto tgt_ptr = std::dynamic_pointer_cast<pointer_type>(var.get_type());
-                // Accept pointer, link and pinned sources
                 std::shared_ptr<type> src_sub;
                 if (auto src_ptr = std::dynamic_pointer_cast<pointer_type>(effective_arg)) {
                     src_sub = src_ptr->get_subtype();
@@ -1872,41 +1980,37 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     src_sub = src_lnk->get_linked_type();
                 } else if (auto src_pin = std::dynamic_pointer_cast<pinned_type>(effective_arg)) {
                     src_sub = src_pin->get_pinned_type();
+                } else if (auto src_own = std::dynamic_pointer_cast<owner_type>(effective_arg)) {
+                    src_sub = src_own->get_owned_type();
                 }
                 if (tgt_ptr && src_sub) {
                     auto tgt_sub = tgt_ptr->get_subtype();
-                    // Const check
                     if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
                         throw_error(0x0081, std::nullopt,
                             "Cannot initialise a pointer-to-mutable ('{}') from a pointer-to-const ('{}'): "
                             "this would allow modification of a const object through the mutable pointer",
                             {var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
                     }
-                    // Type compatibility check: same or upcast-compatible
                     auto src_sub_nc = type::remove_const(src_sub);
                     auto tgt_sub_nc = type::remove_const(tgt_sub);
                     if (!type::are_equal(src_sub_nc, tgt_sub_nc)) {
-                        // Check static upcast compatibility: Derived → Base
                         auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
                         auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
                         bool is_static_upcast = src_st && tgt_st &&
                                          src_st->get_struct() && tgt_st->get_struct() &&
                                          src_st->get_struct()->is_derived_from(tgt_st->get_struct());
                         if (is_static_upcast) {
-                            // Insert a cast_expression so IR can GEP to the right subobject
                             auto upcast = cast_expression::make_shared(arg, var.get_type());
                             upcast->set_type(var.get_type());
-                            init_expr->assign_argument(0, upcast);
+                            assign_single_init_arg(upcast);
                         } else {
-                            // Check dynamic downcast compatibility: Base → Derived (klass/interface only)
                             bool is_dynamic_downcast = src_st && tgt_st &&
                                 src_st->get_struct() && tgt_st->get_struct() &&
                                 tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
                                 std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
                             if (is_dynamic_downcast) {
-                                // ptr can be null — not fatal on null result
                                 auto dc = cast_expression::make_shared(arg, var.get_type(), /*null_is_fatal=*/false);
-                                init_expr->assign_argument(0, dc);
+                                assign_single_init_arg(dc);
                             } else {
                                 throw_error(0x4700, std::nullopt,
                                     "Pointer variable '{}' of type '{}' cannot be initialised from an expression of type '{}': "
@@ -1917,29 +2021,22 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                             }
                         }
                     }
-                }
+                } // if (tgt_ptr && src_sub)
+                } // if (!is_null_init)
             }
         }
     } else if (type::is_link(var.get_type())) {
         // Link variable (~): validate const-compatibility of initializer (for rebind semantics).
         auto link_var_type = std::dynamic_pointer_cast<link_type>(var.get_type());
 
-        if (!init_expr || init_expr->empty()) {
+        if (!has_single_init_arg()) {
             throw_error(0x4501, std::nullopt,
                 "Link variable '{}' of type '{}' must be initialised at its declaration: "
                 "a link is non-null and cannot be left unbound",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
             return;
         }
-        if (init_expr->size() > 1) {
-            throw_error(0x4502, std::nullopt,
-                "Link variable '{}' of type '{}' must be initialised with exactly one expression, "
-                "but {} were provided",
-                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
-                 std::to_string(init_expr->size())});
-            return;
-        }
-        auto arg = init_expr->argument(0);
+        auto arg = get_single_init_arg();
         if (!arg) {
             throw_internal_error(0x4503, std::nullopt,
                 "Link variable '{}': initialisation argument is null; "
@@ -1948,11 +2045,11 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             return;
         }
         auto arg_type = arg->get_type();
-        // The initialiser must provide an address: reference, link, pinned or pointer.
-        if (!type::is_any_indirection(arg_type)) {
+        // The initialiser must provide an address: reference, link, pinned, pointer or owner.
+        if (!type::is_any_indirection(arg_type) && !type::is_owner(arg_type)) {
             throw_error(0x4504, std::nullopt,
                 "Link variable '{}' of type '{}' must be initialised with an addressable expression "
-                "(reference, link, pinned or pointer), but the initialiser has type '{}' "
+                "(reference, link, pinned, pointer or owner), but the initialiser has type '{}' "
                 "which is not an indirection type",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?",
                  arg_type ? arg_type->to_string() : "?"});
@@ -1961,9 +2058,8 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         // Const-compatibility: link-to-mutable cannot be init from link/pointer/ref-to-const
         {
             auto link_sub = link_var_type->get_linked_type();
-            std::shared_ptr<type> src_pointed_type; // what the source points to
+            std::shared_ptr<type> src_pointed_type;
             auto effective_arg = arg_type;
-            // Unwrap ref if init expr is ref<link> or ref<pointer>
             if (auto ref_t = std::dynamic_pointer_cast<reference_type>(arg_type)) {
                 effective_arg = ref_t->get_subtype();
             }
@@ -1971,8 +2067,10 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 src_pointed_type = lnk_t->get_linked_type();
             } else if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(effective_arg)) {
                 src_pointed_type = ptr_t->get_pointed_type();
+            } else if (auto own_t = std::dynamic_pointer_cast<owner_type>(effective_arg)) {
+                src_pointed_type = own_t->get_owned_type();
             } else if (auto ref_t2 = std::dynamic_pointer_cast<reference_type>(effective_arg)) {
-                src_pointed_type = ref_t2->get_subtype(); // &const_var → const T
+                src_pointed_type = ref_t2->get_subtype();
             } else if (type::is_const(effective_arg)) {
                 src_pointed_type = effective_arg;
             }
@@ -1983,8 +2081,8 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     {var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
             }
         }
-        // If initialising from a nullable indirection (pinned or pointer), emit a warning:
-        if (type::is_nullable_indirection(arg_type)) {
+        // If initialising from a nullable indirection (pinned, pointer or owner), emit a warning:
+        if (type::is_nullable_indirection(arg_type) || type::is_owner(arg_type)) {
             auto diag = k::log::diagnostic::make_warning(with_flag(0x4505),
                 "Link variable '{}' of type '{}' is being initialised from a nullable source "
                 "(type '{}'): a runtime null-check will be inserted",
@@ -1992,10 +2090,9 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                  arg_type ? arg_type->to_string() : "?"});
             logger_relay::report(diag);
         }
-        // Type compatibility: the linked type must match exactly or be an upcast-compatible struct type.
+        // Type compatibility
         {
             auto link_sub_nc = type::remove_const(link_var_type->get_linked_type());
-            // Unwrap the source indirection to get its pointed-at type
             auto effective_arg = arg_type;
             if (auto ref_t = std::dynamic_pointer_cast<reference_type>(arg_type)) {
                 effective_arg = ref_t->get_subtype();
@@ -2007,31 +2104,29 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 src_pointed_nc = type::remove_const(ptr_t->get_pointed_type());
             } else if (auto pin_t = std::dynamic_pointer_cast<pinned_type>(effective_arg)) {
                 src_pointed_nc = type::remove_const(pin_t->get_pinned_type());
+            } else if (auto own_t = std::dynamic_pointer_cast<owner_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(own_t->get_owned_type());
             } else if (auto ref_t2 = std::dynamic_pointer_cast<reference_type>(effective_arg)) {
                 src_pointed_nc = type::remove_const(ref_t2->get_subtype());
             }
             if (src_pointed_nc && !type::are_equal(src_pointed_nc, link_sub_nc)) {
-                // Check static upcast compatibility: Derived → Base
                 auto src_st = std::dynamic_pointer_cast<struct_type>(src_pointed_nc);
                 auto tgt_st = std::dynamic_pointer_cast<struct_type>(link_sub_nc);
                 bool is_static_upcast = src_st && tgt_st &&
                                  src_st->get_struct() && tgt_st->get_struct() &&
                                  src_st->get_struct()->is_derived_from(tgt_st->get_struct());
                 if (is_static_upcast) {
-                    // Insert a cast_expression so IR can GEP to the right subobject
                     auto upcast = cast_expression::make_shared(arg, var_type);
                     upcast->set_type(var_type);
-                    init_expr->assign_argument(0, upcast);
+                    assign_single_init_arg(upcast);
                 } else {
-                    // Check dynamic downcast: Base → Derived (klass/interface only)
                     bool is_dynamic_downcast = src_st && tgt_st &&
                         src_st->get_struct() && tgt_st->get_struct() &&
                         tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
                         std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
                     if (is_dynamic_downcast) {
-                        // lien is non-null — fatal if RTTI check fails
                         auto dc = cast_expression::make_shared(arg, var_type, /*null_is_fatal=*/true);
-                        init_expr->assign_argument(0, dc);
+                        assign_single_init_arg(dc);
                     } else {
                         throw_error(0x4506, std::nullopt,
                             "Link variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
@@ -2046,23 +2141,15 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
 
     } else if (type::is_pinned(var.get_type())) {
         // Pinned variable (^): immutable (not rebindable after init), nullable.
-        // Must be initialised at declaration; initialiser can be any indirection or null.
-        if (!init_expr || init_expr->empty()) {
+        // Must be initialised at declaration; initialiser can be any indirection, owner or null.
+        if (!has_single_init_arg()) {
             throw_error(0x4601, std::nullopt,
                 "Pinned variable '{}' of type '{}' must be initialised at its declaration: "
                 "a pinned indirection cannot be left unbound",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
             return;
         }
-        if (init_expr->size() > 1) {
-            throw_error(0x4602, std::nullopt,
-                "Pinned variable '{}' of type '{}' must be initialised with exactly one expression, "
-                "but {} were provided",
-                {var.get_fq_name(), var_type ? var_type->to_string() : "?",
-                 std::to_string(init_expr->size())});
-            return;
-        }
-        auto arg = init_expr->argument(0);
+        auto arg = get_single_init_arg();
         if (!arg) {
             throw_internal_error(0x4603, std::nullopt,
                 "Pinned variable '{}': initialisation argument is null; "
@@ -2071,22 +2158,20 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             return;
         }
         auto arg_type = arg->get_type();
-        // Initialiser must be an indirection or null literal.
         bool is_null_init = false;
         if (auto ve = std::dynamic_pointer_cast<value_expression>(arg)) {
             is_null_init = std::holds_alternative<std::nullptr_t>(ve->get_value());
         }
-        if (!is_null_init && !type::is_any_indirection(arg_type)) {
+        if (!is_null_init && !type::is_any_indirection(arg_type) && !type::is_owner(arg_type)) {
             throw_error(0x4604, std::nullopt,
                 "Pinned variable '{}' of type '{}' must be initialised with an addressable expression "
-                "(reference, link, pinned, pointer or null), but the initialiser has type '{}' "
+                "(reference, link, pinned, pointer, owner or null), but the initialiser has type '{}' "
                 "which is not an indirection type",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?",
                  arg_type ? arg_type->to_string() : "?"});
             return;
         }
-        // Type compatibility: the pinned type must match exactly or be an upcast-compatible struct type.
-        if (!is_null_init && type::is_any_indirection(arg_type)) {
+        if (!is_null_init && (type::is_any_indirection(arg_type) || type::is_owner(arg_type))) {
             auto pin_var_type = std::dynamic_pointer_cast<pinned_type>(var.get_type());
             auto pin_sub_nc = type::remove_const(pin_var_type->get_pinned_type());
             auto effective_arg = arg_type;
@@ -2100,6 +2185,8 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 src_pointed_nc = type::remove_const(ptr_t->get_pointed_type());
             } else if (auto pin_t = std::dynamic_pointer_cast<pinned_type>(effective_arg)) {
                 src_pointed_nc = type::remove_const(pin_t->get_pinned_type());
+            } else if (auto own_t = std::dynamic_pointer_cast<owner_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(own_t->get_owned_type());
             } else if (auto ref_t2 = std::dynamic_pointer_cast<reference_type>(effective_arg)) {
                 src_pointed_nc = type::remove_const(ref_t2->get_subtype());
             }
@@ -2110,20 +2197,17 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                                  src_st->get_struct() && tgt_st->get_struct() &&
                                  src_st->get_struct()->is_derived_from(tgt_st->get_struct());
                 if (is_static_upcast) {
-                    // Insert a cast_expression so IR can GEP to the right subobject
                     auto upcast = cast_expression::make_shared(arg, var_type);
                     upcast->set_type(var_type);
-                    init_expr->assign_argument(0, upcast);
+                    assign_single_init_arg(upcast);
                 } else {
-                    // Check dynamic downcast: Base → Derived (klass/interface only)
                     bool is_dynamic_downcast = src_st && tgt_st &&
                         src_st->get_struct() && tgt_st->get_struct() &&
                         tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
                         std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
                     if (is_dynamic_downcast) {
-                        // pin can be null — not fatal on null result
                         auto dc = cast_expression::make_shared(arg, var_type, /*null_is_fatal=*/false);
-                        init_expr->assign_argument(0, dc);
+                        assign_single_init_arg(dc);
                     } else {
                         throw_error(0x4605, std::nullopt,
                             "Pinned variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
@@ -2136,6 +2220,76 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             }
         }
 
+    } else if (type::is_owner(var.get_type())) {
+        // Owner variable (!): owns a heap-allocated object.
+        // Accepted initialisers:
+        //   - new_expression       → type owner<T>
+        //   - another owner var    → type ref<owner<T>>  (move: wrap in owner_move_expression)
+        //   - null literal         → no type (is_null_init)
+        // Note: for owner variables, init_expr (constructor_invocation_expression) is null;
+        // the initialiser is stored directly in init_expr_base.
+        if (has_single_init_arg()) {
+            auto arg = get_single_init_arg();
+            if (arg) {
+                auto arg_type = arg->get_type();
+                // Accept: new_expression (owner<T>), null literal, or ref<owner<T>> / owner<compatible_T>
+                bool is_null_init = false;
+                if (auto ve = std::dynamic_pointer_cast<value_expression>(arg)) {
+                    is_null_init = std::holds_alternative<std::nullptr_t>(ve->get_value());
+                }
+                if (!is_null_init) {
+                    // Unwrap ref<owner<T>> to owner<T> for type checks
+                    auto effective_arg_type = arg_type;
+                    bool is_ref_owner = false;
+                    if (type::is_reference(arg_type)) {
+                        auto inner = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
+                        if (type::is_owner(inner)) {
+                            effective_arg_type = inner;
+                            is_ref_owner = true;
+                        }
+                    }
+                    if (!type::is_owner(effective_arg_type)) {
+                        throw_error(0x4802, std::nullopt,
+                            "Owner variable '{}' of type '{}' must be initialised with a 'new' expression, "
+                            "another owner variable, or null, but the initialiser has type '{}' which is not "
+                            "an owner type",
+                            {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                             arg_type ? arg_type->to_string() : "?"});
+                        return;
+                    }
+                    // Check owned-type compatibility
+                    auto own_var = std::dynamic_pointer_cast<owner_type>(var_type);
+                    auto own_arg = std::dynamic_pointer_cast<owner_type>(effective_arg_type);
+                    if (own_var && own_arg) {
+                        auto var_sub = type::remove_const(own_var->get_owned_type());
+                        auto arg_sub = type::remove_const(own_arg->get_owned_type());
+                        if (!type::are_equal(var_sub, arg_sub)) {
+                            // Allow static upcast for polymorphic types
+                            auto src_st = std::dynamic_pointer_cast<struct_type>(arg_sub);
+                            auto tgt_st = std::dynamic_pointer_cast<struct_type>(var_sub);
+                            bool is_upcast = src_st && tgt_st &&
+                                src_st->get_struct() && tgt_st->get_struct() &&
+                                src_st->get_struct()->is_derived_from(tgt_st->get_struct());
+                            if (!is_upcast) {
+                                throw_error(0x4803, std::nullopt,
+                                    "Owner variable '{}' of type '{}' cannot be initialised from "
+                                    "an owner of incompatible type '{}'",
+                                    {var.get_fq_name(), var_type ? var_type->to_string() : "?",
+                                     arg_type ? arg_type->to_string() : "?"});
+                                return;
+                            }
+                        }
+                    }
+                    // If the source is ref<owner<T>>, wrap it in owner_move_expression
+                    // (load + null source = transfer ownership)
+                    if (is_ref_owner) {
+                        auto move = owner_move_expression::make_shared(arg);
+                        move->set_type(effective_arg_type);
+                        assign_single_init_arg(move);
+                    }
+                }
+            }
+        }
     } else if (type::is_sized_array(var.get_type())) {
         // Sized array variable: int[N]
         // No initializer = zero-init (always valid for any element type).
@@ -2272,6 +2426,72 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             return CAST_IMPOSSIBLE;
         }
         return CAST_IMPOSSIBLE;
+    }
+
+    // --- Owner cases ---
+    // owner<T> → owner<T>  : move (CAST_NONE)
+    // owner<T> → owner<Base>: implicit upcast-move (CAST_REF_CONV)
+    // owner<T> → ptr<T>    : borrow/observer view (CAST_WIDENING, no ownership transfer)
+    if (type::is_owner(type_src)) {
+        auto src_sub = type_src->get_subtype();
+        auto src_sub_nc = type::remove_const(src_sub);
+        if (type::is_owner(tgt_nc)) {
+            auto tgt_sub = tgt_nc->get_subtype();
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (src_sub_nc == tgt_sub_nc) {
+                return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
+            }
+            // Upcast: owner<Derived> → owner<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                return CAST_REF_CONV;
+            }
+            return CAST_IMPOSSIBLE;
+        }
+        if (type::is_pointer(tgt_nc)) {
+            // owner<T> as an observer pointer: address is borrowed, no ownership change
+            auto tgt_sub = tgt_nc->get_subtype();
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (src_sub_nc == tgt_sub_nc) {
+                return CAST_WIDENING;
+            }
+            // Upcast observer: owner<Derived> → ptr<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                return CAST_REF_CONV;
+            }
+            return CAST_IMPOSSIBLE;
+        }
+        return CAST_IMPOSSIBLE;
+    }
+
+    // ref<owner<T>> → ptr<T>: load owner and borrow as pointer
+    if (type::is_reference(type_src) && !type::is_double_reference(type_src)) {
+        auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
+        auto inner = ref_src->get_subtype();
+        if (type::is_owner(inner)) {
+            auto own_sub = inner->get_subtype();
+            auto own_sub_nc = type::remove_const(own_sub);
+            if (type::is_pointer(tgt_nc)) {
+                auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+                if (own_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+                auto src_st = std::dynamic_pointer_cast<struct_type>(own_sub_nc);
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                    src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                    return CAST_REF_CONV;
+                }
+            }
+            if (type::is_owner(tgt_nc)) {
+                // Move from ref<owner>: allowed (load the owner, move it)
+                auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+                if (own_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+            }
+        }
     }
 
     // --- ref<ptr/lnk/pin> → ptr/lnk/pin: unwrap the ref and delegate ─────────
@@ -2960,6 +3180,103 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
         }
     }
 
+    // --- Owner type adaptation ---
+    // owner<T> → owner<T>     : same type, return as-is (move semantics at IR level)
+    // owner<T> → owner<Base>  : static upcast, insert cast_expression
+    // owner<T> → ptr<T>       : borrow as observer pointer (just a value copy of the address)
+    if (type::is_owner(type_src)) {
+        auto src_sub = type_src->get_subtype();
+        auto src_sub_nc = type::remove_const(src_sub);
+        if (type::is_owner(type_nc)) {
+            if (type_nc == type_src || type == type_src) return expr;
+            auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) return expr;
+            // Upcast owner<Derived> → owner<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                auto upcast = cast_expression::make_shared(expr, type_nc);
+                upcast->set_type(type_nc);
+                return upcast;
+            }
+            return {};
+        }
+        if (type::is_pointer(type_nc)) {
+            // Borrow as pointer observer — address is used, ownership stays in the owner
+            auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) {
+                // Same subtype: reinterpret owner value as pointer (same LLVM representation)
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
+            // Upcast: owner<Derived> → ptr<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                auto upcast = cast_expression::make_shared(expr, type_nc);
+                upcast->set_type(type_nc);
+                return upcast;
+            }
+            return {};
+        }
+        return {};
+    }
+
+    // ref<owner<T>> → ptr<T>: load the owner value (address) as an observer pointer
+    if (type::is_reference(type_src) && !type::is_double_reference(type_src)) {
+        auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
+        auto inner = ref_src->get_subtype();
+        if (type::is_owner(inner)) {
+            auto own_sub_nc = type::remove_const(inner->get_subtype());
+            // ── ref<owner<T>> → owner<T>: move ownership (load + null source) ──────
+            if (type::is_owner(type_nc)) {
+                auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
+                if (type::are_equal(own_sub_nc, tgt_sub_nc)) {
+                    auto move = owner_move_expression::make_shared(expr);
+                    move->set_type(inner);  // owner<T>
+                    return move;
+                }
+                // Upcast: ref<owner<Derived>> → owner<Base>
+                auto src_st = std::dynamic_pointer_cast<struct_type>(own_sub_nc);
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                    src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                    auto move = owner_move_expression::make_shared(expr);
+                    move->set_type(inner);  // owner<Derived>
+                    auto upcast = cast_expression::make_shared(move, type_nc);
+                    upcast->set_type(type_nc);
+                    return upcast;
+                }
+            }
+            if (type::is_pointer(type_nc)) {
+                auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
+                if (own_sub_nc == tgt_sub_nc) {
+                    // Load the stored pointer from the owner slot
+                    auto loaded = load_value_expression::make_shared(expr);
+                    loaded->set_type(inner);
+                    // Reinterpret as pointer
+                    auto cast = cast_expression::make_shared(loaded, type_nc);
+                    cast->set_type(type_nc);
+                    return cast;
+                }
+                // Upcast variant
+                auto src_st = std::dynamic_pointer_cast<struct_type>(own_sub_nc);
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                    src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                    auto loaded = load_value_expression::make_shared(expr);
+                    loaded->set_type(inner);
+                    auto upcast = cast_expression::make_shared(loaded, type_nc);
+                    upcast->set_type(type_nc);
+                    return upcast;
+                }
+            }
+        }
+    }
+
     if(type::is_double_reference(type_src)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
         auto deref = load_value_expression::make_shared(expr);
@@ -3019,6 +3336,30 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
         }
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
         auto ref_subtype = type::remove_const(ref_src->get_subtype());
+        // ── Owner move: ref<owner<T>> → owner<T> ─────────────────────────────
+        // Transfer of ownership: load raw ptr AND null out the source alloca.
+        if (type::is_owner(ref_subtype) && type::is_owner(type_nc)) {
+            auto own_src_nc = type::remove_const(ref_subtype->get_subtype());
+            auto own_tgt_nc = type::remove_const(type_nc->get_subtype());
+            if (type::are_equal(own_src_nc, own_tgt_nc)) {
+                auto move = owner_move_expression::make_shared(expr);
+                move->set_type(type_nc);
+                return move;
+            }
+            // Upcast owner: ref<owner<Derived>> → owner<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(own_src_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(own_tgt_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                auto move = owner_move_expression::make_shared(expr);
+                move->set_type(ref_subtype); // owner<Derived>
+                auto upcast = cast_expression::make_shared(move, type_nc);
+                upcast->set_type(type_nc);   // owner<Base>
+                return upcast;
+            }
+            return {}; // incompatible owner types
+        }
+        // ─────────────────────────────────────────────────────────────────────
         if(ref_subtype == type_nc) {
             // ref<T> -> T : simple load
             return adapt_reference_load_value(expr);
@@ -3216,8 +3557,10 @@ void init_order_resolver::collect_deps_for_global(
     }
 
     // Rules 4–6: inspect init expression
-    auto init_expr = gv->get_init_expr();
-    if (!init_expr) return;
+    auto init_expr_base = gv->get_init_expr();
+    if (!init_expr_base) return;
+    auto init_expr = std::dynamic_pointer_cast<constructor_invocation_expression>(init_expr_base);
+    if (!init_expr) return; // owner or other non-ctor init — no global deps to track
 
     std::vector<std::shared_ptr<global_variable_definition>> dep_globals;
     std::vector<std::shared_ptr<struct_type>> dep_structs;

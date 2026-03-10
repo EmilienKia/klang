@@ -46,7 +46,9 @@
 // 'L' for link (~) : mutable strong (non-null) indirection
 #define SYMBOL_MODIFIER_LINK       "L"
 // 'Q' for pinned (^) : immutable nullable indirection
+// 'W' for owner (!) : owning pointer (unique ownership)
 #define SYMBOL_MODIFIER_PINNED     "Q"
+#define SYMBOL_MODIFIER_OWNER      "W"
 
 // Function reference type mangling:
 // PF<params>E       : pointer (*) to free function
@@ -293,6 +295,8 @@ std::string mangler::mangle_type(const type& ty) const {
         return SYMBOL_MODIFIER_LINK + mangle_type(*link_ty->get_linked_type());
     } else if (auto pin_ty = dynamic_cast<const pinned_type*>(&ty)) {
         return SYMBOL_MODIFIER_PINNED + mangle_type(*pin_ty->get_pinned_type());
+    } else if (auto own_ty = dynamic_cast<const owner_type*>(&ty)) {
+        return SYMBOL_MODIFIER_OWNER + mangle_type(*own_ty->get_owned_type());
     } else if (auto mem_fn_ty = dynamic_cast<const member_function_reference_type*>(&ty)) {
         std::ostringstream s;
         // ref_kind modifier

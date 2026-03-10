@@ -73,6 +73,8 @@ protected:
     friend class member_of_expression;
     friend class function_invocation_expression;
     friend class constructor_invocation_expression;
+    friend class new_expression;
+    friend class delete_expression;
 
     void set_parent_expression(const std::shared_ptr<expression> &expression) {
         set_parent(expression);
@@ -349,6 +351,33 @@ public:
         c->_type = _type;
         c->_ast_unary_expr = _ast_unary_expr;
         if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
+    }
+};
+
+/**
+ * Owner move expression — transfers ownership from a ref<owner<T>> source.
+ * Loads the raw pointer from the source alloca AND nulls out the source alloca.
+ * Source expression type: ref<owner<T>>.  Result type: owner<T>.
+ * Used internally during type resolution for ownership-transferring contexts:
+ *   - return p;  (when function return type is owner<T>)
+ *   - a = b;     (when both a and b are owner<T>)
+ *   - foo(p);    (when the parameter type is owner<T>)
+ *   - q : T! = p;  (owner variable initialisation from another owner variable)
+ */
+class owner_move_expression : public unary_expression {
+protected:
+    owner_move_expression() = default;
+public:
+    void accept(model_visitor& visitor) override;
+    static std::shared_ptr<owner_move_expression> make_shared(const std::shared_ptr<expression>& src) {
+        std::shared_ptr<owner_move_expression> expr{new owner_move_expression()};
+        if (src) expr->assign(src);
+        return expr;
+    }
+    std::shared_ptr<expression> clone() const override {
+        auto c = make_shared(_sub_expr ? _sub_expr->clone() : nullptr);
+        c->_type = _type;
         return c;
     }
 };
@@ -738,6 +767,87 @@ public:
         std::vector<std::shared_ptr<expression>> args;
         for (auto& a : _arguments) args.push_back(a->clone());
         if (sym) c->assign(sym, args);
+        return c;
+    }
+};
+
+/**
+ * New expression — allocates a heap object and returns an owner.
+ * Corresponds to AST new_expr.
+ * Type of this expression: owner_type<T>.
+ */
+class new_expression : public expression {
+protected:
+    /** The type to allocate (resolved). */
+    std::shared_ptr<type> _allocated_type;
+    /** Constructor arguments (resolved). */
+    std::vector<std::shared_ptr<expression>> _arguments;
+    /** The selected constructor (resolved in phase 4). */
+    std::shared_ptr<constructor> _constructor;
+
+    new_expression() = default;
+    new_expression(const new_expression&) = delete;
+
+    friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
+
+    void set_constructor(const std::shared_ptr<constructor>& ctor) { _constructor = ctor; }
+
+public:
+    void accept(model_visitor& visitor) override;
+
+    const std::shared_ptr<type>& allocated_type() const { return _allocated_type; }
+    void allocated_type(const std::shared_ptr<type>& t) { _allocated_type = t; }
+
+    const std::vector<std::shared_ptr<expression>>& arguments() const { return _arguments; }
+
+    void assign_arguments(const std::vector<std::shared_ptr<expression>>& args) {
+        _arguments = args;
+        for (auto& a : _arguments) if (a) a->set_parent_expression(shared_as<expression>());
+    }
+
+    void assign_argument(size_t index, const std::shared_ptr<expression>& arg) {
+        _arguments[index] = arg;
+        if (arg) arg->set_parent_expression(shared_as<expression>());
+    }
+
+    std::shared_ptr<constructor> get_constructor() const { return _constructor; }
+
+    static std::shared_ptr<new_expression> make_shared(
+        const std::shared_ptr<type>& allocated_type,
+        const std::vector<std::shared_ptr<expression>>& args);
+
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<new_expression> c{new new_expression()};
+        c->_type = _type;
+        c->_allocated_type = _allocated_type;
+        c->_constructor = _constructor;
+        std::vector<std::shared_ptr<expression>> args;
+        for (auto& a : _arguments) args.push_back(a->clone());
+        c->assign_arguments(args);
+        return c;
+    }
+};
+
+/**
+ * Delete expression — explicitly destroys an owner's object.
+ * Corresponds to AST delete_expr.
+ * Type of this expression: void.
+ */
+class delete_expression : public unary_expression {
+protected:
+    delete_expression() = default;
+    delete_expression(const delete_expression&) = delete;
+
+public:
+    void accept(model_visitor& visitor) override;
+
+    static std::shared_ptr<delete_expression> make_shared(const std::shared_ptr<expression>& target);
+
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<delete_expression> c{new delete_expression()};
+        c->_type = _type;
+        if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
 };

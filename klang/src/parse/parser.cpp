@@ -393,6 +393,17 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
 
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
+    // Consume optional 'fun' keyword (lexed as identifier) — syntactic sugar for function declarations
+    {
+        lex::lex_holder fun_holder(_lexer);
+        auto lfun = _lexer.get();
+        if (lex::is<lex::identifier>(lfun) && std::string{lex::as<lex::identifier>(lfun).content} == "fun") {
+            fun_holder.sync(); // consume 'fun'
+        } else {
+            fun_holder.rollback();
+        }
+    }
+
     // Check for destructor syntax: ~identifier
     bool is_destructor = false;
     auto lname= _lexer.get();
@@ -1125,6 +1136,11 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec()
             continue;
         }
 
+        if(lex == lex::operator_::EXCLAMATION_MARK) {
+            res = std::make_shared<ast::owner_type_specifier>(res, lex::as<lex::operator_>(lex));
+            continue;
+        }
+
         if(lex == lex::punctuator::BRACKET_OPEN) {
 
             auto lint = _lexer.get();
@@ -1607,6 +1623,68 @@ ast::expr_ptr parser::parse_cast_expr()
 ast::expr_ptr parser::parse_unary_expr()
 {
     lex::lex_holder holder(_lexer);
+
+    // Handle 'new TypeSpec(args)' — keyword expression producing an owner
+    if (auto lkw = _lexer.get(); lkw == lex::keyword::NEW) {
+        lex::keyword new_kw = lex::as<lex::keyword>(lkw);
+        auto type = parse_type_spec();
+        if (!type) {
+            throw_error(0x0050, _lexer.pick_current(), "'new' expects a type specifier");
+        }
+        // Parse argument list '(' args ')'
+        if (auto lpar = _lexer.get(); lpar != lex::punctuator::PARENTHESIS_OPEN) {
+            throw_error(0x0051, _lexer.pick_current(), "'new' expects '(' after the type specifier");
+        }
+        std::vector<ast::expr_ptr> args;
+        auto lclose = _lexer.get();
+        if (lclose != lex::punctuator::PARENTHESIS_CLOSE) {
+            _lexer.unget();
+            while (true) {
+                auto arg = parse_expression();
+                if (!arg) {
+                    throw_error(0x0052, _lexer.pick_current(), "'new' argument list expects an expression");
+                }
+                args.push_back(arg);
+                auto sep = _lexer.get();
+                if (sep == lex::punctuator::PARENTHESIS_CLOSE) break;
+                if (sep != lex::punctuator::COMMA) {
+                    throw_error(0x0053, _lexer.pick_current(), "'new' argument list expects ',' or ')'");
+                }
+            }
+        }
+        holder.sync();
+        return std::make_shared<ast::new_expr>(new_kw, type, args);
+    } else {
+        _lexer.unget();
+    }
+
+    // Handle 'delete expr' — keyword expression that destroys an owner.
+    // Note: 'delete' is also used in '-> delete ;' for function aliasing but
+    // that context is parsed in parse_function_decl, not here. Here, 'delete'
+    // is always followed by an expression (not by ';').
+    {
+        lex::lex_holder del_holder(_lexer);
+        if (auto lkw = _lexer.get(); lkw == lex::keyword::DELETE) {
+            lex::keyword delete_kw = lex::as<lex::keyword>(lkw);
+            // Peek: if next is ';' this is NOT an expression-delete (safety guard)
+            auto peek = _lexer.get();
+            if (peek == lex::punctuator::SEMICOLON) {
+                // Not an expression-level delete, roll back
+                _lexer.unget();
+                del_holder.rollback();
+            } else {
+                _lexer.unget();
+                del_holder.sync();
+                ast::expr_ptr expr = parse_unary_expr();
+                if (!expr) {
+                    throw_error(0x0054, _lexer.pick_current(), "'delete' expects an expression");
+                }
+                return std::make_shared<ast::delete_expr>(delete_kw, expr);
+            }
+        } else {
+            _lexer.unget();
+        }
+    }
 
     if(auto lop = _lexer.get();
             lex::is_one_of<

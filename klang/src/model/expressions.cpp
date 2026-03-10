@@ -260,6 +260,45 @@ std::shared_ptr<constructor_invocation_expression> constructor_invocation_expres
     return expr;
 }
 
+//
+// New expression
+//
+
+void new_expression::accept(model_visitor& visitor) {
+    visitor.visit_new_expression(*this);
+}
+
+std::shared_ptr<new_expression> new_expression::make_shared(
+    const std::shared_ptr<type>& allocated_type,
+    const std::vector<std::shared_ptr<expression>>& args)
+{
+    std::shared_ptr<new_expression> expr{new new_expression()};
+    expr->_allocated_type = allocated_type;
+    expr->assign_arguments(args);
+    return expr;
+}
+
+//
+// Delete expression
+//
+
+void delete_expression::accept(model_visitor& visitor) {
+    visitor.visit_delete_expression(*this);
+}
+
+std::shared_ptr<delete_expression> delete_expression::make_shared(const std::shared_ptr<expression>& target) {
+    std::shared_ptr<delete_expression> expr{new delete_expression()};
+    expr->assign(target);
+    return expr;
+}
+
+//
+// Owner move expression
+//
+
+void owner_move_expression::accept(model_visitor& visitor) {
+    visitor.visit_owner_move_expression(*this);
+}
 
 
 

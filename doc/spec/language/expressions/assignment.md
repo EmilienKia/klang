@@ -9,6 +9,11 @@ Assignment operators store a value into a variable or memory location.
 ## Contents
 1. [Simple assignment](#1-simple-assignment)
 2. [Assignment through indirection types](#2-assignment-through-indirection-types)
+   - [Reference (`T&`)](#reference-t--transparent-object-semantics)
+   - [Link (`T~`)](#link-t--rebind-or-transparent-depending-on-rhs-type)
+   - [Pinned (`T^`)](#pinned-t--immutable-binding)
+   - [Pointer (`T*`)](#pointer-t--rebind)
+   - [Owner (`T!`)](#owner-t--move-semantics)
 3. [Compound assignment operators](#3-compound-assignment-operators)
 4. [Operand requirements](#4-operand-requirements)
 
@@ -101,14 +106,48 @@ p = &y;             // rebind: p now points to y
 
 The RHS of a pointer assignment must be a pointer (`T*`) or a link (`T~`). Assigning a plain value is a compile-time error.
 
-### Summary table
+### Owner (`T!`) — move semantics
 
-| LHS type | `x = val` (val is `T`) | `x = &y` / `x = lnk` (val is `T~`, `T*`, `T^`) |
-|---|---|---|
-| `T&` | Assigns `val` to the referenced object | Compile-time error (no rebind) |
-| `T~` | Assigns `val` to the linked object | **Rebinds** `x` to point to `y` |
-| `T^` | Compile-time error (no rebind) | Compile-time error (no rebind) |
-| `T*` | Compile-time error (must use `*x = val`) | **Rebinds** `x` to point to `y` |
+Assignment to an owner variable always performs a **move**: ownership is transferred from the
+source to the destination.  The source owner is set to `null` after the transfer.  If the
+destination already held an object, that object is **deleted first** (destructor called +
+`free` issued).
+
+```k
+a : Foo! = new Foo(1);   // a owns Foo(1)
+b : Foo!;                // b is null
+
+b = a;                   // MOVE: a ← null; b now owns Foo(1)
+b = new Foo(2);          // Foo(1) deleted; b now owns Foo(2)
+b = null;                // Foo(2) deleted; b ← null
+```
+
+The right-hand side of a `T!` assignment must be:
+- another `T!` variable (move from it), or
+- `null` (deletes the current object if any), or
+- a `new T(args)` expression.
+
+Assigning a raw pointer/link/pinned to a `T!` variable is a **compile-time error** — an owner
+can only be populated by `new` or by a move from another owner.
+
+**Summary of owner assignment:**
+
+| RHS type | Effect |
+|---|---|
+| `T!` variable | Move: RHS ← null; LHS takes ownership (LHS previous object deleted) |
+| `new T(args)` | LHS takes ownership of fresh object (LHS previous object deleted) |
+| `null` | LHS previous object deleted; LHS ← null |
+| `T*`, `T~`, `T^`, `T&` | **Compile-time error** |
+
+### Summary table (all indirection types)
+
+| LHS type | `x = val` (val is `T`) | `x = &y` / `x = lnk` (val is `T~`, `T*`, `T^`) | `x = owner` (val is `T!`) |
+|---|---|---|---|
+| `T&` | Assigns `val` to the referenced object | Compile-time error (no rebind) | Compile-time error |
+| `T~` | Assigns `val` to the linked object | **Rebinds** `x` to point to `y` | Copies raw address (observer; owner retains ownership) |
+| `T^` | Compile-time error (no rebind) | Compile-time error (no rebind) | Compile-time error |
+| `T*` | Compile-time error (must use `*x = val`) | **Rebinds** `x` to point to `y` | Copies raw address (observer; owner retains ownership) |
+| `T!` | Compile-time error | Compile-time error | **Move**: source ← null; destination takes ownership |
 
 ### Upcast (aggregate types)
 
@@ -149,7 +188,7 @@ use() {
 }
 ```
 
-See [Types — §11.3](../basic/types.md#113-static-indirection-upcast-aggregate-types) for the complete specification.
+See [Types — §13.3](../basic/types.md#133-static-indirection-upcast-aggregate-types) for the complete specification.
 
 ---
 ## 3. Compound assignment operators
@@ -185,7 +224,7 @@ n += 1;        // increment by 1 (same as ++n)
 - The left-hand side (`lhs`) must be an assignable location (lvalue): a variable, a parameter, a dereferenced pointer/link/pinned, an array subscript, or a struct field access.
 - Assigning to a `T^` (pinned) variable directly (rebind) is a compile-time error.
 - The right-hand side (`rhs`) is an expression of a compatible type.
-- Implicit widening or narrowing conversions are applied as described in [Types — Implicit conversions](../basic/types.md#11-implicit-conversions).
+- Implicit widening or narrowing conversions are applied as described in [Types — Implicit conversions](../basic/types.md#13-implicit-conversions).
 
 ---
-*See also:* [Binary Operators](binary.md) · [Expressions](expressions.md) · [Types](../basic/types.md) · [Unary Operators](unary.md)
+*See also:* [Binary Operators](binary.md) · [Expressions](expressions.md) · [Types](../basic/types.md) · [Unary Operators](unary.md) · [Dynamic Allocation](../memory/new-delete.md)

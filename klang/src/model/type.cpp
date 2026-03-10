@@ -83,6 +83,14 @@ std::shared_ptr<pinned_type> type::get_pinned()
     return pinned;
 }
 
+std::shared_ptr<owner_type> type::get_owner()
+{
+    if(!owner) {
+        owner = std::shared_ptr<owner_type>(new owner_type(shared_from_this()));
+    }
+    return owner;
+}
+
 std::shared_ptr<const_type> type::get_const()
 {
     if(!const_) {
@@ -306,6 +314,34 @@ std::string pinned_type::to_string() const {
         return sub->to_string() + "^";
     } else {
         return "<<nosub>>^";
+    }
+}
+
+//
+// Owner type (!) — owning pointer, unique ownership
+//
+owner_type::owner_type(const std::shared_ptr<type> &subtype):
+type(subtype)
+{}
+
+bool owner_type::is_resolved() const
+{
+    return subtype.lock()->is_resolved();
+}
+
+llvm::Type* owner_type::get_llvm_type() const {
+    if(_llvm_type==nullptr && is_resolved()) {
+        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0);
+    }
+    return _llvm_type;
+}
+
+std::string owner_type::to_string() const {
+    auto sub = subtype.lock();
+    if(sub) {
+        return sub->to_string() + "!";
+    } else {
+        return "<<nosub>>!";
     }
 }
 

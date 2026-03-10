@@ -564,12 +564,13 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
         auto sub = ref_type->get_subtype();
         if(std::dynamic_pointer_cast<pointer_type>(sub) ||
            std::dynamic_pointer_cast<link_type>(sub) ||
-           std::dynamic_pointer_cast<pinned_type>(sub)) {
+           std::dynamic_pointer_cast<pinned_type>(sub) ||
+           std::dynamic_pointer_cast<owner_type>(sub)) {
             type = sub;
         } else {
             throw_error(0x001A, std::nullopt,
                 "Cannot dereference a reference to a non-pointer type: "
-                "the dereference operator ('*') requires pointer (*), link (~) or pinned (^), "
+                "the dereference operator ('*') requires pointer (*), link (~), pinned (^) or owner (!), "
                 "but '{}' is not a pointer-like type",
                 {sub ? sub->to_string() : "?"});
         }
@@ -581,10 +582,13 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
         expr.set_type(lnk_type->get_linked_type()->get_reference());
     } else if(auto pin_type = std::dynamic_pointer_cast<pinned_type>(type)) {
         expr.set_type(pin_type->get_pinned_type()->get_reference());
+    } else if(auto own_type = std::dynamic_pointer_cast<owner_type>(type)) {
+        // Dereferencing an owner gives a reference to the owned object
+        expr.set_type(own_type->get_owned_type()->get_reference());
     } else {
         throw_error(0x001B, std::nullopt,
             "Cannot dereference a non-pointer expression: "
-            "the dereference operator ('*') requires a pointer (*), link (~) or pinned (^), "
+            "the dereference operator ('*') requires a pointer (*), link (~), pinned (^) or owner (!), "
             "but the operand has type '{}'",
             {type ? type->to_string() : "?"});
     }
@@ -608,7 +612,8 @@ void implementation_generator::visit_dereference_expression(dereference_expressi
 
     // For nullable indirections, emit a null-check before use
     if (std::dynamic_pointer_cast<pointer_type>(inner_type) ||
-        std::dynamic_pointer_cast<pinned_type>(inner_type)) {
+        std::dynamic_pointer_cast<pinned_type>(inner_type) ||
+        std::dynamic_pointer_cast<owner_type>(inner_type)) {
         auto* fatal = get_or_declare_fatal_null_function("__fatal_null_dereference");
         emit_null_check(_value, fatal, "deref");
     }
@@ -1000,9 +1005,12 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
         pointed_type = lnk_t->get_linked_type();
     } else if (auto pin_t = std::dynamic_pointer_cast<pinned_type>(type)) {
         pointed_type = pin_t->get_pinned_type();
+    } else if (auto own_t = std::dynamic_pointer_cast<owner_type>(type)) {
+        // Allow -> on owner: syntactic sugar for (*owner).member
+        pointed_type = own_t->get_owned_type();
     } else {
         throw_error(0x0080, std::nullopt,
-            "The '->' operator requires a pointer (*), link (~) or pinned (^) on the LHS, "
+            "The '->' operator requires a pointer (*), link (~), pinned (^) or owner (!) on the LHS, "
             "but got '{}'", {type ? type->to_string() : "?"});
     }
 
@@ -1073,9 +1081,10 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
         inner_type = sub_type;
     }
 
-    // Null-check for nullable indirections
+    // Null-check for nullable indirections (pointer, pin, owner)
     if (std::dynamic_pointer_cast<pointer_type>(inner_type) ||
-        std::dynamic_pointer_cast<pinned_type>(inner_type)) {
+        std::dynamic_pointer_cast<pinned_type>(inner_type) ||
+        std::dynamic_pointer_cast<owner_type>(inner_type)) {
         auto* fatal = get_or_declare_fatal_null_function("__fatal_null_dereference");
         emit_null_check(_value, fatal, "arrow");
     }
@@ -1084,6 +1093,7 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
     if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(inner_type)) pointed_type = ptr_t->get_pointed_type();
     else if (auto lnk_t = std::dynamic_pointer_cast<link_type>(inner_type)) pointed_type = lnk_t->get_linked_type();
     else if (auto pin_t = std::dynamic_pointer_cast<pinned_type>(inner_type)) pointed_type = pin_t->get_pinned_type();
+    else if (auto own_t = std::dynamic_pointer_cast<owner_type>(inner_type)) pointed_type = own_t->get_owned_type();
     if (!pointed_type) return;
 
     auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_type);
@@ -1398,8 +1408,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
     auto pm_callee = std::dynamic_pointer_cast<pm_expression>(expr.callee_expr());
+    auto ptr_member_callee = std::dynamic_pointer_cast<member_of_pointer_expression>(expr.callee_expr());
 
-    if(!callee && !member_callee && !pm_callee) {
+    if(!callee && !member_callee && !pm_callee && !ptr_member_callee) {
         throw_error(0x0022, std::nullopt,
             "Unsupported call expression form: only direct function calls ('func(args)'), "
             "member function calls ('obj.method(args)') and pointer-to-member calls "
@@ -1411,6 +1422,18 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         arg->accept(*this);
     }
 
+    // ── Pre-process: ptr->method(args) → (*ptr).method(args) ─────────────────
+    // When the callee is a member_of_pointer_expression (ptr->method), transform it
+    // into member_of_object_expression(dereference(ptr), method) so that the existing
+    // member_callee path handles dispatch uniformly (including vtable dispatch).
+    if (ptr_member_callee) {
+        auto sym = ptr_member_callee->symbol().shared_as<symbol_expression>();
+        auto sub = ptr_member_callee->sub_expr();
+        auto deref = dereference_expression::make_shared(sub);
+        auto obj_member = member_of_object_expression::make_shared(deref, sym);
+        expr.callee_expr(obj_member);
+        member_callee = obj_member;
+    }
 
     // ----------------------------------------------------------------
     // Case 0 : pointer-to-member call  "obj.*mfp(args)" or "ptr->*mfp(args)"
@@ -2268,6 +2291,312 @@ void symbol_resolver::visit_constructor_invocation_expression(constructor_invoca
     for (auto arg : expr.arguments()) {
         arg->accept(*this);
     }
+}
+
+//
+// New expression
+//
+
+void symbol_resolver::visit_new_expression(new_expression& expr) {
+    for (auto& arg : expr.arguments()) {
+        arg->accept(*this);
+    }
+}
+
+void type_reference_resolver::visit_new_expression(new_expression& expr) {
+    // Resolve arguments first
+    for (auto& arg : expr.arguments()) {
+        arg->accept(*this);
+    }
+
+    auto alloc_type = expr.allocated_type();
+    if (!type::is_resolved(alloc_type)) {
+        // Try to resolve unresolved type
+        if (auto unres = std::dynamic_pointer_cast<unresolved_type>(alloc_type)) {
+            auto resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
+            if (!resolved || !type::is_resolved(resolved)) {
+                auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                if (imported_agg) resolved = imported_agg->get_struct_type();
+            }
+            if (resolved && type::is_resolved(resolved)) {
+                expr.allocated_type(resolved);
+                alloc_type = resolved;
+            }
+        }
+    }
+
+    if (!type::is_resolved(alloc_type)) {
+        throw_error(0x0055, std::nullopt,
+            "Cannot resolve the type of 'new' expression: type '{}' is unknown",
+            {alloc_type ? alloc_type->to_string() : "<null>"});
+    }
+
+    // Set the expression type to owner<allocated_type>
+    expr.set_type(alloc_type->get_owner());
+
+    // If the allocated type is a struct, find the best matching constructor
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
+        auto st = st_type->get_struct();
+        if (!st) {
+            throw_error(0x0056, std::nullopt,
+                "Cannot 'new' a struct type '{}': the aggregate is not resolved",
+                {st_type->to_string()});
+        }
+        if (st->is_abstract()) {
+            throw_error(0x0057, std::nullopt,
+                "Cannot 'new' abstract class '{}': abstract classes cannot be directly instantiated",
+                {st->get_short_name()});
+        }
+        auto [best_ctor, adapted_args] = get_best_matching_constructor(st->constructors(), expr.arguments());
+        if (!best_ctor) {
+            throw_error(0x0058, std::nullopt,
+                "No matching constructor found for 'new {}': none of the available constructors "
+                "can be called with the provided arguments",
+                {st_type->to_string()});
+        }
+        check_constructor_visibility(*best_ctor, expr);
+        expr.set_constructor(best_ctor);
+        expr.assign_arguments(adapted_args);
+    } else if (type::is_primitive(alloc_type)) {
+        // Primitive type: adapt the single argument if any
+        if (!expr.arguments().empty()) {
+            auto cast = adapt_type(expr.arguments()[0], alloc_type);
+            if (cast && cast != expr.arguments()[0]) {
+                expr.assign_argument(0, cast);
+            }
+        }
+    }
+}
+
+void symbol_resolver::visit_delete_expression(delete_expression& expr) {
+    if (expr.sub_expr()) expr.sub_expr()->accept(*this);
+}
+
+void type_reference_resolver::visit_delete_expression(delete_expression& expr) {
+    if (expr.sub_expr()) {
+        expr.sub_expr()->accept(*this);
+    }
+    // The sub-expression must be an owner (directly or via reference-to-owner)
+    auto sub = expr.sub_expr();
+    if (!sub) {
+        throw_error(0x0059, std::nullopt, "'delete' requires an expression");
+    }
+    auto sub_type = sub->get_type();
+    // Unwrap reference-to-owner if needed
+    if (type::is_reference(sub_type)) {
+        auto ref = std::dynamic_pointer_cast<reference_type>(sub_type);
+        sub_type = ref->get_subtype();
+    }
+    if (!type::is_owner(sub_type)) {
+        throw_error(0x005A, std::nullopt,
+            "'delete' can only be applied to an owner ('!') type, got '{}'",
+            {sub->get_type() ? sub->get_type()->to_string() : "<null>"});
+    }
+    // Result type is void
+    expr.set_type(nullptr); // void
+}
+
+//
+// Owner move expression
+//
+
+void symbol_resolver::visit_owner_move_expression(owner_move_expression& expr) {
+    if (expr.sub_expr()) expr.sub_expr()->accept(*this);
+}
+
+void type_reference_resolver::visit_owner_move_expression(owner_move_expression& expr) {
+    if (expr.sub_expr()) expr.sub_expr()->accept(*this);
+    auto src_type = expr.sub_expr() ? expr.sub_expr()->get_type() : nullptr;
+    if (!src_type) return;
+    // Source must be ref<owner<T>> → result type is owner<T>
+    if (type::is_reference(src_type)) {
+        auto inner = std::dynamic_pointer_cast<reference_type>(src_type)->get_subtype();
+        if (type::is_owner(inner)) {
+            expr.set_type(inner);
+            return;
+        }
+    }
+    // If already owner<T> (e.g., wrapping a new_expression rvalue), pass through
+    if (type::is_owner(src_type)) {
+        expr.set_type(src_type);
+    }
+}
+
+void implementation_generator::visit_owner_move_expression(owner_move_expression& expr) {
+    _value = nullptr;
+    if (expr.sub_expr()) expr.sub_expr()->accept(*this);
+    if (!_value) return;
+
+    auto& llvm_ctx = _builder->getContext();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    auto src_type = expr.sub_expr() ? expr.sub_expr()->get_type() : nullptr;
+    if (src_type && type::is_reference(src_type)) {
+        // Source is ref<owner<T>>: _value is the alloca (pointer to owner slot)
+        llvm::Value* alloca_ptr = _value;
+        // Load the raw owner pointer from the alloca
+        _value = _builder->CreateLoad(ptr_ty, alloca_ptr, "own_move_val");
+        // Null out the source alloca (ownership transferred)
+        _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), alloca_ptr);
+    }
+    // else: _value is already the raw owner pointer (e.g., from new_expression)
+}
+
+void implementation_generator::visit_new_expression(new_expression& expr) {
+    auto alloc_type = expr.allocated_type();
+    if (!alloc_type) { _value = nullptr; return; }
+
+    auto& llvm_ctx = _builder->getContext();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    // Call malloc(sizeof(T))
+    llvm::Module& mod = get_module();
+    llvm::Function* malloc_fn = mod.getFunction("malloc");
+    if (!malloc_fn) {
+        auto* malloc_type = llvm::FunctionType::get(
+            ptr_ty,
+            {llvm::Type::getInt64Ty(llvm_ctx)},
+            false);
+        malloc_fn = llvm::Function::Create(
+            malloc_type, llvm::Function::ExternalLinkage, "malloc", mod);
+    }
+
+    llvm::Type* llvm_type = _context->get_llvm_type(alloc_type);
+    if (!llvm_type) { _value = nullptr; return; }
+
+    auto* size_val = llvm::ConstantInt::get(
+        llvm::Type::getInt64Ty(llvm_ctx),
+        mod.getDataLayout().getTypeAllocSize(llvm_type));
+    std::vector<llvm::Value*> malloc_args = {size_val};
+    llvm::Value* raw_ptr = _builder->CreateCall(
+        malloc_fn->getFunctionType(), malloc_fn, malloc_args, "new_raw");
+
+    // Call constructor if struct
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
+        auto ctor = expr.get_constructor();
+        if (ctor) {
+            auto ctor_it = _context->_functions.find(ctor->shared_as<function>());
+            if (ctor_it != _context->_functions.end()) {
+                std::vector<llvm::Value*> args;
+                args.push_back(raw_ptr);
+                for (auto& arg : expr.arguments()) {
+                    _value = nullptr;
+                    arg->accept(*this);
+                    if (_value) args.push_back(_value);
+                }
+                _builder->CreateCall(ctor_it->second, args);
+            }
+        }
+    } else if (type::is_primitive(alloc_type)) {
+        // Store the argument value if provided
+        if (!expr.arguments().empty()) {
+            _value = nullptr;
+            expr.arguments()[0]->accept(*this);
+            if (_value) _builder->CreateStore(_value, raw_ptr);
+        } else {
+            // Zero-init
+            _builder->CreateStore(llvm::Constant::getNullValue(llvm_type), raw_ptr);
+        }
+    }
+
+    _value = raw_ptr;
+}
+
+// Helper: emit the destroy+free sequence for an owner pointer value.
+// ptr_value: the raw pointer (LLVM opaque ptr) to the object.
+// alloc_type: the K model type of the pointed-to object.
+static void emit_owner_object_destroy(
+    llvm::IRBuilder<>* builder,
+    llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* ptr_value,
+    const std::shared_ptr<type>& alloc_type)
+{
+    auto& llvm_ctx = builder->getContext();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    // Call destructor if struct
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
+        auto st = st_type->get_struct();
+        auto dtor = st ? st->get_destructor() : nullptr;
+        if (dtor) {
+            auto dtor_it = functions.find(dtor->shared_as<function>());
+            if (dtor_it != functions.end()) {
+                builder->CreateCall(dtor_it->second, {ptr_value});
+            }
+        }
+    }
+
+    // Call free(ptr)
+    llvm::Function* free_fn = mod.getFunction("free");
+    if (!free_fn) {
+        auto* free_type = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
+        free_fn = llvm::Function::Create(
+            free_type, llvm::Function::ExternalLinkage, "free", mod);
+    }
+    builder->CreateCall(free_fn, {ptr_value});
+}
+
+void implementation_generator::visit_delete_expression(delete_expression& expr) {
+    auto sub = expr.sub_expr();
+    if (!sub) { _value = nullptr; return; }
+
+    auto sub_type = sub->get_type();
+
+    // Determine the owner type and the alloca holding it
+    std::shared_ptr<owner_type> own_type;
+    llvm::Value* owner_alloca = nullptr; // alloca of the owner variable (opaque ptr to owner slot)
+
+    bool is_ref_to_owner = false;
+    if (type::is_reference(sub_type)) {
+        auto ref = std::dynamic_pointer_cast<reference_type>(sub_type);
+        own_type = std::dynamic_pointer_cast<owner_type>(ref->get_subtype());
+        is_ref_to_owner = (own_type != nullptr);
+    } else {
+        own_type = std::dynamic_pointer_cast<owner_type>(sub_type);
+    }
+
+    if (!own_type) { _value = nullptr; return; }
+    auto alloc_type = own_type->get_owned_type();
+
+    // Get the alloca (address of the owner slot)
+    _value = nullptr;
+    // We need the address (reference), not the value — so we evaluate the sub_expr
+    // as an lvalue (address). For a symbol_expression this gives us the alloca directly.
+    if (is_ref_to_owner) {
+        // sub_expr already produced a reference (address of owner slot)
+        sub->accept(*this);
+        owner_alloca = _value;
+    } else {
+        sub->accept(*this);
+        owner_alloca = _value;
+    }
+
+    if (!owner_alloca) { _value = nullptr; return; }
+
+    auto& llvm_ctx = _builder->getContext();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    // Load the current pointer value from the owner slot
+    llvm::Value* cur_ptr = _builder->CreateLoad(ptr_ty, owner_alloca, "owner_ptr");
+
+    // Only destroy if non-null: if (cur_ptr != null) { destroy; free; owner_slot = null; }
+    auto* fn = _builder->GetInsertBlock()->getParent();
+    auto* non_null_bb = llvm::BasicBlock::Create(llvm_ctx, "delete_nonnull", fn);
+    auto* done_bb     = llvm::BasicBlock::Create(llvm_ctx, "delete_done",    fn);
+    auto* is_null = _builder->CreateICmpEQ(
+        cur_ptr, llvm::ConstantPointerNull::get(ptr_ty), "owner_is_null");
+    _builder->CreateCondBr(is_null, done_bb, non_null_bb);
+
+    // Non-null branch: destroy + free + null-out
+    _builder->SetInsertPoint(non_null_bb);
+    emit_owner_object_destroy(_builder.get(), get_module(), _context->_functions, cur_ptr, alloc_type);
+    _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), owner_alloca);
+    _builder->CreateBr(done_bb);
+
+    _builder->SetInsertPoint(done_bb);
+    _value = nullptr;
 }
 
 void type_reference_resolver::visit_constructor_invocation_expression(constructor_invocation_expression& expr) {

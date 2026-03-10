@@ -53,7 +53,9 @@ CastExpr:
     '(' TypeSpec ')' CastExpr
     | UnaryExpr
 UnaryExpr:
-    ( '++' | '--' | '*' | '&' | '+' | '-' | '!' | '~' ) CastExpr
+    'new' TypeName '(' [ ExpressionList ] ')'
+    | 'delete' CastExpr
+    | ( '++' | '--' | '*' | '&' | '+' | '-' | '!' | '~' ) CastExpr
     | PostfixExpr
 PostfixExpr:
     PrimaryExpr { PostfixOp }
@@ -91,6 +93,11 @@ See [Function Call](call.md).
 ### Constructor invocation expressions
 Construct a struct-typed variable with explicit arguments.  
 See [Constructors](../structs/constructors.md).
+### Dynamic allocation expressions
+`new T(args)` allocates and constructs an object of type `T` and returns a `T!` owner.  
+`delete owner` destroys and frees the object held by a `T!` variable.  
+See [Dynamic Allocation](../memory/new-delete.md).
+
 ### Member access expressions
 Access a field or member function of a struct.  
 See [Function Call and Member Access](call.md).
@@ -100,7 +107,7 @@ Higher rows bind more tightly (higher precedence).
 | Precedence | Operators | Associativity |
 |------------|-----------|---------------|
 | 1 (highest) | `()` (call), `[]` (subscript), `.`, `->`, `++` (post), `--` (post) | Left-to-right |
-| 2 | `++` (pre), `--` (pre), unary `+`, unary `-`, `!`, `~`, `&` (address-of), `*` (dereference), `(type)` (cast) | Right-to-left |
+| 2 | `++` (pre), `--` (pre), unary `+`, unary `-`, `!`, `~`, `&` (address-of), `*` (dereference), `(type)` (cast), `new`, `delete` | Right-to-left |
 | 3 | `.*`, `->*` | Left-to-right |
 | 4 | `*`, `/`, `%` | Left-to-right |
 | 5 | `+`, `-` | Left-to-right |
@@ -149,4 +156,4 @@ result : int = (a + b) * c;
 A bare name or qualified name refers to a declared variable or function.  
 See [Identifiers and Name Expressions](identifiers.md).
 ---
-*See also:* [Literals](literals.md) · [Unary Operators](unary.md) · [Binary Operators](binary.md) · [Assignment Operators](assignment.md) · [Function Call](call.md)
+*See also:* [Literals](literals.md) · [Unary Operators](unary.md) · [Binary Operators](binary.md) · [Assignment Operators](assignment.md) · [Function Call](call.md) · [Dynamic Allocation](../memory/new-delete.md)

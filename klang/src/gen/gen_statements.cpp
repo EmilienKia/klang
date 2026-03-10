@@ -24,6 +24,41 @@ namespace k::model::gen {
 
 using namespace k::model;
 
+// Shared helper: destroy+free an owner's pointed object (conditional on non-null done by caller).
+// Called from cleanup blocks and return statements.
+static void emit_owner_object_destroy(
+    llvm::IRBuilder<>* builder,
+    llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* ptr_value,
+    const std::shared_ptr<type>& alloc_type)
+{
+    auto& llvm_ctx = builder->getContext();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    // Call destructor if struct
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
+        auto st = st_type->get_struct();
+        auto dtor = st ? st->get_destructor() : nullptr;
+        if (dtor) {
+            auto dtor_it = functions.find(dtor->shared_as<function>());
+            if (dtor_it != functions.end()) {
+                builder->CreateCall(dtor_it->second, {ptr_value});
+            }
+        }
+    }
+
+    // Call free(ptr)
+    llvm::Function* free_fn = mod.getFunction("free");
+    if (!free_fn) {
+        auto* free_type = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
+        free_fn = llvm::Function::Create(
+            free_type, llvm::Function::ExternalLinkage, "free", mod);
+    }
+    builder->CreateCall(free_fn, {ptr_value});
+}
+
 //
 // Block
 //
@@ -77,14 +112,21 @@ void implementation_generator::visit_block(block& blk) {
         }
     }
 
-    // Collect local variable_statements whose type is a struct with a destructor, in declaration order.
+    // Collect local variable_statements whose type is a struct with a destructor,
+    // or an owner type (owner variables must be freed at scope exit), in declaration order.
     std::vector<std::shared_ptr<variable_statement>> dtor_vars;
     for (auto& stmt : blk.get_statements()) {
         if (auto var_stmt = std::dynamic_pointer_cast<variable_statement>(stmt)) {
-            if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_stmt->get_type())) {
+            auto vt = var_stmt->get_type();
+            // Struct with destructor
+            if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
                 if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
                     dtor_vars.push_back(var_stmt);
                 }
+            }
+            // Owner type — always needs cleanup (destroy + free on scope exit)
+            if (type::is_owner(vt)) {
+                dtor_vars.push_back(var_stmt);
             }
         }
     }
@@ -118,17 +160,35 @@ void implementation_generator::visit_block(block& blk) {
 
         for (auto it = dtor_vars.rbegin(); it != dtor_vars.rend(); ++it) {
             auto& var_stmt = *it;
-            auto st_type = std::dynamic_pointer_cast<struct_type>(var_stmt->get_type());
-            auto dtor = st_type->get_struct()->get_destructor();
+            auto vt = var_stmt->get_type();
 
             auto var_it = _context->_variables.find(var_stmt);
             if (var_it == _context->_variables.end()) continue;
             llvm::AllocaInst* alloca = var_it->second;
 
-            auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-            if (dtor_it == _context->_functions.end()) continue;
-
-            _builder->CreateCall(dtor_it->second, {alloca});
+            if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
+                // Struct destructor
+                auto dtor = st_type->get_struct()->get_destructor();
+                if (!dtor) continue;
+                auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                if (dtor_it == _context->_functions.end()) continue;
+                _builder->CreateCall(dtor_it->second, {alloca});
+            } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
+                // Owner: emit conditional destroy+free (only if non-null)
+                auto& llvm_ctx = _builder->getContext();
+                auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                llvm::Value* cur_ptr = _builder->CreateLoad(ptr_ty, alloca, "owner_cleanup_ptr");
+                auto* cleanup_fn_bb = llvm::BasicBlock::Create(llvm_ctx, "owner_cleanup_nonnull", func);
+                auto* cleanup_done_bb = llvm::BasicBlock::Create(llvm_ctx, "owner_cleanup_done", func);
+                auto* is_null = _builder->CreateICmpEQ(
+                    cur_ptr, llvm::ConstantPointerNull::get(ptr_ty), "owner_cleanup_null");
+                _builder->CreateCondBr(is_null, cleanup_done_bb, cleanup_fn_bb);
+                _builder->SetInsertPoint(cleanup_fn_bb);
+                emit_owner_object_destroy(_builder.get(), get_module(), _context->_functions, cur_ptr, own_type->get_owned_type());
+                _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), alloca);
+                _builder->CreateBr(cleanup_done_bb);
+                _builder->SetInsertPoint(cleanup_done_bb);
+            }
         }
 
         // On normal path, branch to continue
@@ -197,7 +257,7 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
 
     // Emit destructor calls for all active scopes, from innermost to outermost.
     // We use a copy of the cleanup vars stack to iterate without modifying the live stack.
-    if (!_cleanup_vars_stack.empty()) {
+    if (!_cleanup_vars_stack.empty() || !_owner_params_stack.empty()) {
         // Collect all scope variable lists from innermost to outermost
         std::vector<std::vector<std::shared_ptr<variable_statement>>> all_scopes;
         std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
@@ -209,19 +269,60 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
         for (auto& scope_vars : all_scopes) {
             for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
                 auto& var_stmt = *it;
-                auto st_type = std::dynamic_pointer_cast<struct_type>(var_stmt->get_type());
-                if (!st_type) continue;
-                auto dtor = st_type->get_struct()->get_destructor();
-                if (!dtor) continue;
+                auto vt = var_stmt->get_type();
 
                 auto var_it = _context->_variables.find(var_stmt);
                 if (var_it == _context->_variables.end()) continue;
                 llvm::AllocaInst* alloca = var_it->second;
 
-                auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                if (dtor_it == _context->_functions.end()) continue;
-
-                _builder->CreateCall(dtor_it->second, {alloca});
+                if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
+                    auto dtor = st_type->get_struct()->get_destructor();
+                    if (!dtor) continue;
+                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                    if (dtor_it == _context->_functions.end()) continue;
+                    _builder->CreateCall(dtor_it->second, {alloca});
+                } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
+                    auto& llvm_ctx = _builder->getContext();
+                    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                    llvm::Value* cur_ptr = _builder->CreateLoad(ptr_ty, alloca, "ret_owner_ptr");
+                    auto* fn = _builder->GetInsertBlock()->getParent();
+                    auto* nonnull_bb = llvm::BasicBlock::Create(llvm_ctx, "ret_owner_nonnull", fn);
+                    auto* done_bb    = llvm::BasicBlock::Create(llvm_ctx, "ret_owner_done",    fn);
+                    auto* is_null = _builder->CreateICmpEQ(
+                        cur_ptr, llvm::ConstantPointerNull::get(ptr_ty), "ret_owner_null");
+                    _builder->CreateCondBr(is_null, done_bb, nonnull_bb);
+                    _builder->SetInsertPoint(nonnull_bb);
+                    emit_owner_object_destroy(_builder.get(), get_module(), _context->_functions, cur_ptr, own_type->get_owned_type());
+                    _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), alloca);
+                    _builder->CreateBr(done_bb);
+                    _builder->SetInsertPoint(done_bb);
+                }
+            }
+        }
+        // Also clean up owner-typed parameters (outermost scope, reverse order)
+        if (!_owner_params_stack.empty()) {
+            auto params_copy = _owner_params_stack.top(); // only outermost (function body) scope
+            for (auto it = params_copy.rbegin(); it != params_copy.rend(); ++it) {
+                auto& param = *it;
+                auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
+                if (!own_type) continue;
+                auto param_it = _context->_parameter_variables.find(param);
+                if (param_it == _context->_parameter_variables.end()) continue;
+                llvm::AllocaInst* alloca = param_it->second;
+                auto& llvm_ctx = _builder->getContext();
+                auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                llvm::Value* cur_ptr = _builder->CreateLoad(ptr_ty, alloca, "ret_param_ptr");
+                auto* fn = _builder->GetInsertBlock()->getParent();
+                auto* nonnull_bb = llvm::BasicBlock::Create(llvm_ctx, "ret_param_nonnull", fn);
+                auto* done_bb    = llvm::BasicBlock::Create(llvm_ctx, "ret_param_done",    fn);
+                _builder->CreateCondBr(
+                    _builder->CreateICmpEQ(cur_ptr, llvm::ConstantPointerNull::get(ptr_ty), "ret_param_null"),
+                    done_bb, nonnull_bb);
+                _builder->SetInsertPoint(nonnull_bb);
+                emit_owner_object_destroy(_builder.get(), get_module(), _context->_functions, cur_ptr, own_type->get_owned_type());
+                _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), alloca);
+                _builder->CreateBr(done_bb);
+                _builder->SetInsertPoint(done_bb);
             }
         }
     }
@@ -612,7 +713,38 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
 
     // But initialize at the decl place
     auto init = var.get_init_expr();
-    if (init != nullptr) {
+    if (k::model::type::is_owner(var_type)
+        || k::model::type::is_pointer(var_type)
+        || k::model::type::is_link(var_type)
+        || k::model::type::is_pinned(var_type)) {
+        // Indirection variables (owner/pointer/link/pin): null-initialize first, then store
+        // the init expression result (an address) if present.
+        auto& llvm_ctx = _builder->getContext();
+        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+        _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), alloca);
+        if (init != nullptr) {
+            _value = nullptr;
+            init->accept(*this);
+            if (_value) {
+                // For link/pin/pointer the init expression is a pointer-valued expression.
+                // We need the raw pointer value to store into the alloca.
+                auto init_type = init->get_type();
+                llvm::Value* addr_val = _value;
+                if (k::model::type::is_reference(init_type)) {
+                    auto sub = std::dynamic_pointer_cast<k::model::reference_type>(init_type);
+                    auto inner = sub->get_subtype();
+                    if (k::model::type::is_any_indirection(inner)) {
+                        // ref<ptr/link/pin/owner> → load the stored indirection value
+                        llvm::Type* inner_llvm = _context->get_llvm_type(inner);
+                        addr_val = _builder->CreateLoad(inner_llvm, _value, "indir_init_load");
+                    }
+                    // else: ref<struct T> or ref<primitive> — _value IS the alloca address,
+                    // which is exactly what we want to store as the link/pin/pointer value.
+                }
+                _builder->CreateStore(addr_val, alloca);
+            }
+        }
+    } else if (init != nullptr) {
         _value = nullptr;
         init->accept(*this);
 

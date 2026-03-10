@@ -20,7 +20,7 @@ Examples are included where they clarify the normative text.
 | [Lexical Conventions](basic/lexical.md) | Source encoding, comments, tokens |
 | [Keywords](basic/keywords.md) | Reserved words of the language |
 | [Names, Namespaces and Lookup](basic/names.md) | Identifiers, qualified names, lookup rules (incl. imported symbols), namespace visibility and library export |
-| [Types](basic/types.md) | Primitive types; the four indirection types (`&` `~` `^` `*`); function reference types (`*(P)`, `T::*(P)`, …); array and struct types; static upcast; dynamic downcast (RTTI) |
+| [Types](basic/types.md) | Primitive types; the five indirection types (`&` `~` `^` `*` `!`); owner (`T!`) — move-only exclusive-ownership type; function reference types (`*(P)`, `T::*(P)`, …); array and struct types; static upcast; dynamic downcast (RTTI); owner upcast/downcast |
 | [Module System](basic/modules.md) | Module declarations, imports, transitive dependencies, using imported symbols |
 | [Libraries — Export and Import](basic/libraries.md) | Producing libraries, what is exported, importing and using symbols, cross-library inheritance, transitive deps |
 | [Main Function](basic/main.md) | Program entry point |
@@ -33,6 +33,7 @@ Examples are included where they clarify the normative text.
 | [Literals](expressions/literals.md) | Integer, floating-point, boolean, character, string, null literals |
 | [Identifiers and Name Expressions](expressions/identifiers.md) | Symbol expressions, qualified access |
 | [Unary Operators](expressions/unary.md) | `+`, `-`, `~`, `!`, `&` (address-of), `*` (dereference), cast |
+| [Dynamic Allocation](memory/new-delete.md) | `new T(args)` — allocate and construct, returns `T!`; `delete owner` — destroy and free |
 | [Binary Operators](expressions/binary.md) | Arithmetic, bitwise, shift, comparison, logical |
 | [Assignment Operators](expressions/assignment.md) | `=` and compound assignment |
 | [Function Call and Subscript](expressions/call.md) | Invocation, subscript `[]`, member access `.` and `->`, pointer-to-member operators `.*` and `->*` |
@@ -68,6 +69,12 @@ Examples are included where they clarify the normative text.
 | [Destructors](structs/destructors.md) | Instance and static destructors |
 | [Nested Structures](structs/nested.md) | Static nested and non-static inner structures |
 
+### Dynamic Memory
+
+| Page | Description |
+|------|-------------|
+| [Dynamic Allocation — `new` and `delete`](memory/new-delete.md) | `new T(args)` allocation and construction; `delete owner` destruction and deallocation; owner lifetime rules; observer assignment |
+
 ### Grammar Reference
 
 | Page | Description |
@@ -85,7 +92,7 @@ K is a statically-typed, compiled programming language with syntax inspired by C
 - **Statically typed** — all types are known at compile time.
 - **Namespace-scoped** — code is organised in namespaces; a source file begins with a `module` declaration that establishes the namespace.
 - **Struct-based OOP** — user-defined types are structures with fields, member functions, constructors and destructors.
-- **Manual memory control** — pointers (`*`), references (`&`), and arrays are first-class.
+- **Manual memory management** — five indirection types: references (`&`), links (`~`), pinned (`^`), pointers (`*`), and owners (`!`). Dynamic allocation via `new`/`delete`; owners enforce single-ownership and automatic destruction at scope exit.
 - **Function references** — free and member function reference types (`*(P)`, `T::*(P)`) allow storing and invoking function addresses; member function pointers use `.*` and `->*`.
 - **Compiled to native code** — the compiler emits LLVM IR and produces native executables or libraries.
 

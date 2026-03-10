@@ -41,6 +41,42 @@
 namespace k::model::gen {
 
 
+// Shared helper: destroy+free an owner's pointed object.
+// Precondition: ptr_value is non-null (caller must check).
+static void emit_owner_object_destroy(
+    llvm::IRBuilder<>* builder,
+    llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* ptr_value,
+    const std::shared_ptr<type>& alloc_type)
+{
+    auto& llvm_ctx = builder->getContext();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    // Call destructor if struct
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
+        auto st = st_type->get_struct();
+        auto dtor = st ? st->get_destructor() : nullptr;
+        if (dtor) {
+            auto dtor_it = functions.find(dtor->shared_as<function>());
+            if (dtor_it != functions.end()) {
+                builder->CreateCall(dtor_it->second, {ptr_value});
+            }
+        }
+    }
+
+    // Call free(ptr)
+    llvm::Function* free_fn = mod.getFunction("free");
+    if (!free_fn) {
+        auto* free_type = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
+        free_fn = llvm::Function::Create(
+            free_type, llvm::Function::ExternalLinkage, "free", mod);
+    }
+    builder->CreateCall(free_fn, {ptr_value});
+}
+
+
 void emit_vptr_store(llvm::IRBuilder<>& builder,
                      klass& st,
                      llvm::Value* this_ptr,
@@ -181,7 +217,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
             // Fallback for composite types wrapping an imported aggregate
             // (e.g. reference_type(unresolved("ns::Type"))).
             // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.
-            enum class WrapKind { Ref, Ptr, Link, Pin, Const };
+            enum class WrapKind { Ref, Ptr, Link, Pin, Const, Owner };
             std::vector<WrapKind> wrappers;
             auto inner = var_type;
             while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
@@ -190,6 +226,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
                 else if (type::is_link(inner))       wrappers.push_back(WrapKind::Link);
                 else if (type::is_pinned(inner))     wrappers.push_back(WrapKind::Pin);
                 else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
+                else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
                 else break;
                 inner = inner->get_subtype();
             }
@@ -205,6 +242,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
                             case WrapKind::Link:  res_type = res_type->get_link();      break;
                             case WrapKind::Pin:   res_type = res_type->get_pinned();    break;
                             case WrapKind::Const: res_type = res_type->get_const();     break;
+                            case WrapKind::Owner: res_type = res_type->get_owner();     break;
                         }
                     }
                 }
@@ -351,6 +389,7 @@ void implementation_generator::visit_function(function &function) {
     _retval_alloca = nullptr;
     while (!_cleanup_blocks.empty()) _cleanup_blocks.pop();
     while (!_cleanup_vars_stack.empty()) _cleanup_vars_stack.pop();
+    while (!_owner_params_stack.empty()) _owner_params_stack.pop();
 
     // If function has a non-void return type, pre-create an alloca for the return value
     // so that destructor calls can happen before the actual ret instruction.
@@ -382,6 +421,21 @@ void implementation_generator::visit_function(function &function) {
         _context->_parameter_variables.insert({param, alloca});
         // Read param value and store it in dedicated local var
         _builder->CreateStore(arg, alloca);
+    }
+
+    // Collect owner-typed parameters for end-of-function cleanup (destroy + free on scope exit).
+    // This enables RAII semantics for owner parameters: when a function receives an owner,
+    // it takes ownership, and the object is destroyed when the function returns.
+    {
+        std::vector<std::shared_ptr<parameter>> owner_params;
+        for (const auto& param : function.parameters()) {
+            if (type::is_owner(param->get_type())) {
+                owner_params.push_back(param);
+            }
+        }
+        if (!owner_params.empty()) {
+            _owner_params_stack.push(owner_params);
+        }
     }
 
     if (auto ctor = function.shared_as<constructor>()) {
@@ -717,6 +771,35 @@ void implementation_generator::visit_function(function &function) {
     }
 
     // Force adding a terminator as last instruction guard (will be eliminated if unreachable).
+    // Before that, emit cleanup for owner-typed parameters (fall-through exit path).
+    // For functions with an explicit return statement, this code is unreachable and will be
+    // removed by optimize_function_dead_inst_elimination.
+    if (!_owner_params_stack.empty()) {
+        auto params = _owner_params_stack.top();
+        _owner_params_stack.pop();
+        auto& llvm_ctx = _builder->getContext();
+        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+        for (auto it = params.rbegin(); it != params.rend(); ++it) {
+            auto& param = *it;
+            auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
+            if (!own_type) continue;
+            auto param_it = _context->_parameter_variables.find(param);
+            if (param_it == _context->_parameter_variables.end()) continue;
+            llvm::AllocaInst* alloca = param_it->second;
+            llvm::Value* cur_ptr = _builder->CreateLoad(ptr_ty, alloca, "exit_param_ptr");
+            auto* nonnull_bb = llvm::BasicBlock::Create(llvm_ctx, "exit_param_nonnull", func);
+            auto* done_bb    = llvm::BasicBlock::Create(llvm_ctx, "exit_param_done",    func);
+            _builder->CreateCondBr(
+                _builder->CreateICmpEQ(cur_ptr, llvm::ConstantPointerNull::get(ptr_ty), "exit_param_null"),
+                done_bb, nonnull_bb);
+            _builder->SetInsertPoint(nonnull_bb);
+            emit_owner_object_destroy(_builder.get(), get_module(), _context->_functions, cur_ptr, own_type->get_owned_type());
+            _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), alloca);
+            _builder->CreateBr(done_bb);
+            _builder->SetInsertPoint(done_bb);
+        }
+    }
+
     if (function.has_return_type()) {
         llvm::Type* ret_type = _context->get_llvm_type(function.get_return_type());
         _builder->CreateRet(llvm::UndefValue::get(ret_type));

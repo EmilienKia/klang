@@ -14,26 +14,28 @@ K is a statically-typed language. Every expression has a type determined at comp
 4. [Link (`~`)](#4-link-)
 5. [Pinned (`^`)](#5-pinned-)
 6. [Pointer (`*`)](#6-pointer-)
-7. [Indirection operators](#7-indirection-operators)
-8. [Array types](#8-array-types)
-   - 8.1 [Internal representation](#81-internal-representation)
-   - 8.2 [Sized array value — `T[N]`](#82-sized-array-value--tn)
-   - 8.3 [Sized array reference — `T[N]&`](#83-sized-array-reference--tn)
-   - 8.4 [Unsized array reference — `T[]`](#84-unsized-array-reference--t)
-   - 8.5 [Array assignment](#85-array-assignment)
-   - 8.6 [Subscript operator](#86-subscript-operator)
-9. [Struct types](#9-struct-types)
-10. [Function reference types](#10-function-reference-types)
-    - 10.1 [Free function reference types](#101-free-function-reference-types)
-    - 10.2 [Member function reference types](#102-member-function-reference-types)
-11. [Type specifiers — grammar](#11-type-specifiers--grammar)
-12. [Implicit conversions](#12-implicit-conversions)
-    - 12.1 [Widening conversions (primitives)](#121-widening-conversions-no-data-loss)
-    - 12.2 [Narrowing conversions](#122-narrowing-conversions-possible-data-loss)
-    - 12.3 [Static indirection upcast (aggregate types)](#123-static-indirection-upcast-aggregate-types)
-    - 12.4 [Dynamic indirection downcast (class/interface)](#124-dynamic-indirection-downcast-classinterface)
-    - 12.5 [Explicit cast](#125-explicit-cast)
-13. [Const-ness](#13-const-ness)
+7. [Owner (`!`)](#7-owner-)
+8. [Indirection operators](#8-indirection-operators)
+9. [Array types](#9-array-types)
+   - 9.1 [Internal representation](#91-internal-representation)
+   - 9.2 [Sized array value — `T[N]`](#92-sized-array-value--tn)
+   - 9.3 [Sized array reference — `T[N]&`](#93-sized-array-reference--tn)
+   - 9.4 [Unsized array reference — `T[]`](#94-unsized-array-reference--t)
+   - 9.5 [Array assignment](#95-array-assignment)
+   - 9.6 [Subscript operator](#96-subscript-operator)
+10. [Struct types](#10-struct-types)
+11. [Function reference types](#11-function-reference-types)
+    - 11.1 [Free function reference types](#111-free-function-reference-types)
+    - 11.2 [Member function reference types](#112-member-function-reference-types)
+12. [Type specifiers — grammar](#12-type-specifiers--grammar)
+13. [Implicit conversions](#13-implicit-conversions)
+    - 13.1 [Widening conversions (primitives)](#131-widening-conversions-no-data-loss)
+    - 13.2 [Narrowing conversions](#132-narrowing-conversions-possible-data-loss)
+    - 13.3 [Static indirection upcast (aggregate types)](#133-static-indirection-upcast-aggregate-types)
+    - 13.4 [Dynamic indirection downcast (class/interface)](#134-dynamic-indirection-downcast-classinterface)
+    - 13.5 [Owner upcast and downcast](#135-owner-upcast-and-downcast)
+    - 13.6 [Explicit cast](#136-explicit-cast)
+14. [Const-ness](#14-const-ness)
 
 ---
 
@@ -75,19 +77,26 @@ Primitive types are built-in types that represent scalar values.
 
 ## 2. Indirection types — overview
 
-K has four distinct indirection types, forming a 2×2 matrix along two independent axes:
+K has five indirection types.  Four of them form a 2×2 matrix along two independent axes; the
+fifth — the *owner* — has additional ownership semantics and is described separately.
+
+### The four observer indirections
 
 |              | **Non-null** (strong) | **Nullable** |
 |--------------|-----------------------|--------------|
 | **Immutable binding** | `T&` — reference      | `T^` — pinned |
 | **Mutable binding**   | `T~` — link           | `T*` — pointer |
 
-* **Binding mutability** — whether the indirection variable can be *rebound* after initialisation (i.e. made to point to a different object).
+* **Binding mutability** — whether the indirection variable can be *rebound* after
+  initialisation (i.e. made to point to a different object).
 * **Nullability** — whether the indirection may hold a null address at runtime.
 
-All four types carry the address of an object of type `T`. They differ only in the above properties; their bit-width and calling convention are identical.
+All four observer types carry the address of an object of type `T`. They differ only in the
+above properties; their bit-width and calling convention are identical.  They are called
+**observers** because they do not own the pointed-to object — they are never responsible for
+deleting it.
 
-**Grammar:**
+**Grammar (observer types):**
 
 ```
 TypeSuffix:
@@ -108,21 +117,55 @@ TypeSuffix:
 
 **Null safety:**
 
-Assigning or initialising a `T~` (link) from a nullable source (`T^` or `T*`) emits a **compile-time warning** and inserts a **runtime null-check**; if the source is null at runtime, `__fatal_null_assignation()` is called (which traps).
+Assigning or initialising a `T~` (link) from a nullable source (`T^` or `T*`) emits a
+**compile-time warning** and inserts a **runtime null-check**; if the source is null at
+runtime, `__fatal_null_assignation()` is called (which traps).
 
-Dereferencing (`*x` or `x->m`) a `T^` or `T*` value likewise inserts a runtime null-check; if null, `__fatal_null_dereference()` is called.
+Dereferencing (`*x` or `x->m`) a `T^` or `T*` value likewise inserts a runtime null-check;
+if null, `__fatal_null_dereference()` is called.
 
 **Static upcast (aggregate types):**
 
-When `Derived` inherits from `Base`, an indirection of type `T<Derived>` can be implicitly assigned to an indirection of type `T<Base>`.  
+When `Derived` inherits from `Base`, an indirection of type `T<Derived>` can be implicitly
+assigned to an indirection of type `T<Base>`.  
 The pointer is adjusted at compile time via a GEP to address the `Base` sub-object.  
-See [§12.3 — Static indirection upcast](#113-static-indirection-upcast-aggregate-types) for full details.
+See [§13.3 — Static indirection upcast](#133-static-indirection-upcast-aggregate-types) for full details.
 
 **Dynamic downcast (class/interface types):**
 
-When a `Base` indirection may point to a `Derived` object at runtime (and both are `class` or `interface` types), it can be assigned to a `Derived` indirection.  
-A runtime RTTI check is emitted; on mismatch, null is assigned (and fatal for non-null targets).  
-See [§12.4 — Dynamic indirection downcast](#114-dynamic-indirection-downcast-classinterface) for full details.
+When a `Base` indirection may point to a `Derived` object at runtime (and both are `class` or
+`interface` types), it can be assigned to a `Derived` indirection.  
+A runtime RTTI check is emitted; on mismatch, null is assigned (and fatal for non-null
+targets).  
+See [§13.4 — Dynamic indirection downcast](#134-dynamic-indirection-downcast-classinterface) for full details.
+
+### The owner (`T!`)
+
+`T!` is a **move-only**, **nullable** indirection that carries **exclusive ownership** of a
+dynamically allocated object.  It differs from the four observer types in several key ways:
+
+| Property | `T*` (pointer) | `T!` (owner) |
+|---|---|---|
+| Nullable | yes | yes |
+| Mutable binding | yes | yes (move only) |
+| Owns the object | no | **yes** |
+| Can `delete` object | no | **yes** |
+| Copy semantics | copy address | **move** (source → null) |
+| Auto-delete on scope exit | no | **yes** |
+
+See [§7 — Owner (`!`)](#7-owner-) for full details.
+
+**Grammar (full type suffix, including owner):**
+
+```
+TypeSuffix:
+    '[' [ IntegerLiteral ] ']'   -- array (sized or unsized)
+    | '!'                        -- owner (move-only, nullable, exclusive ownership)
+    | '&'                        -- reference (immutable binding, non-null)
+    | '~'                        -- link (mutable binding, non-null)
+    | '^'                        -- pinned (immutable binding, nullable)
+    | '*'                        -- pointer (mutable binding, nullable)
+```
 
 ---
 
@@ -304,9 +347,187 @@ test() : int {
 
 ---
 
-## 7. Indirection operators
+## 7. Owner (`!`)
 
-The following operators apply to all four indirection types.
+An *owner* is a **move-only**, **nullable** indirection that holds the address of a
+**dynamically allocated** object and is **solely responsible for its lifetime**.  Only an
+owner can delete (destroy and free) the object it points to.
+
+**Syntax:** `T!`
+
+**Properties:**
+
+- **Mutable binding** — an owner variable can be reassigned at any time.  Reassignment is
+  always a *move*, not a copy.
+- **Nullable** — may hold `null`; a null owner manages no object.
+- **Exclusive ownership** — at most one `T!` variable points to a given dynamically
+  allocated object at any time.
+- **Move semantics** — assigning one owner to another *transfers* ownership; the source is
+  set to `null`.  If the destination already held an object, that object is deleted first.
+- **Automatic destruction** — when an owner variable goes out of scope while non-null, its
+  object is automatically deleted (destructor called + `free` issued).
+- **Observer-safe** — the four non-owner indirection types (`T&`, `T~`, `T^`, `T*`) may
+  hold the address of the owned object; the owner retains exclusive responsibility for
+  deletion.  These types are *non-owning observers* and must not outlive the owner.
+
+**Default initialisation:**
+
+An owner declared without an explicit initialiser is implicitly initialised to `null`:
+
+```k
+p : Foo!;             // OK: p is null
+q : Foo! = null;      // identical
+```
+
+**Examples:**
+
+```k
+test() {
+    obj : Foo! = new Foo(42);    // dynamic allocation; obj owns the Foo
+    p   : Foo* = obj;            // observer pointer: raw address, no ownership
+    ref : Foo& = *obj;           // observer reference: transparent alias
+    // p and ref must not be used after obj is deleted
+}   // obj goes out of scope → destructor called + memory freed
+```
+
+**Move semantics:**
+
+Assignment between two owners always transfers ownership (implicit move).  The source owner
+becomes `null` after the transfer, regardless of whether the destination had a previous
+object.  If the destination was non-null, its previous object is deleted first:
+
+```k
+a : Foo! = new Foo(1);   // a owns Foo(1)
+b : Foo!;                // b is null
+
+b = a;                   // MOVE: a ← null; b now owns Foo(1)
+
+c : Foo! = new Foo(2);   // c owns Foo(2)
+b = c;                   // Foo(1) deleted first; c ← null; b now owns Foo(2)
+```
+
+**Assigning `null`:**
+
+Assigning `null` to a non-null owner deletes the owned object and sets the owner to `null`.
+Assigning `null` to an already-null owner is a no-op:
+
+```k
+p : Foo! = new Foo();
+p = null;                // Foo deleted; p ← null
+p = null;                // no-op
+```
+
+**Owner as function parameter or return type:**
+
+When an owner is passed to a function parameter of owner type, or returned from a function,
+ownership is transferred.  If a returned owner is not assigned to an owner variable, the
+object is deleted immediately:
+
+```k
+make_foo() : Foo! { return new Foo(99); }   // caller receives ownership
+consume(f : Foo!)  { /* f deleted on return if still non-null */ }
+
+test() {
+    obj : Foo! = make_foo();   // ownership transferred to obj
+    consume(obj);              // MOVE: obj ← null; f owns Foo inside consume
+    // obj is null here
+    make_foo();                // Warning 0x5010: Foo(99) deleted immediately
+}
+```
+
+**Observer assignment (owner → non-owner):**
+
+An owner may be assigned to a non-owner indirection type.  The address is copied but the
+owner **retains ownership**.  The receiving type is a non-owning observer:
+
+```k
+owner : Foo! = new Foo(7);
+obs   : Foo* = owner;          // raw address; owner still owns Foo
+lnk   : Foo~ = owner;          // non-null check inserted at binding
+ref   : Foo& = *owner;         // reference (via dereference, with null-check)
+```
+
+> **Note:** passing an owner to a `Foo*` parameter passes the raw address only; it does
+> **not** transfer ownership.  To transfer ownership, the parameter must be `Foo!`.
+
+**Upcast and downcast:**
+
+*Non-polymorphic types (primitives, arrays, `struct`):*
+
+An owner of a non-polymorphic type may only be assigned to an owner of the **exact same
+type**.  No implicit conversion is performed.
+
+```k
+struct Pt { x : int; y : int; }
+a : Pt! = new Pt();
+b : Pt! = a;          // OK: same type (move)
+// c : int! = a;      // ERROR: Pt! cannot be converted to int!
+```
+
+*Polymorphic types (`class`, `interface`) — static upcast (derived → base):*
+
+An owner of a derived class can be implicitly assigned to an owner of a base class.  The
+pointer is adjusted at compile time (GEP).  Ownership is transferred; the source becomes
+`null`.
+
+```k
+class Animal { Animal() {} }
+class Dog : public Animal { Dog() : Animal() {} }
+
+d : Dog!    = new Dog();
+a : Animal! = d;           // static upcast; d ← null; a owns the Dog
+```
+
+*Polymorphic types — dynamic downcast (base → derived):*
+
+An owner of a base class or interface can be assigned to an owner of a derived class, but
+this requires a runtime RTTI check.  A **compile-time Warning 0x5001** is always emitted.
+
+| RTTI result | Effect |
+|---|---|
+| **Match** (object is actually `Derived`) | pointer adjusted (GEP); ownership transferred; source ← `null` |
+| **No match** | owned object deleted (destructor + `free`); source ← `null`; destination ← `null` |
+
+```k
+a : Animal! = new Dog();  // a owns a Dog (stored as Animal!)
+d : Dog!;                 // Warning 0x5001: dynamic owner downcast
+d = a;                    // RTTI OK → a ← null; d owns Dog
+
+a2 : Animal! = new Cat();
+d2 : Dog!;                // Warning 0x5001
+d2 = a2;                  // RTTI fail → Cat deleted; a2 ← null; d2 ← null
+```
+
+**Dereference and member access:**
+
+| Expression | Result | Null-check |
+|---|---|---|
+| `*owner` | `T&` — reference to owned object | Yes — calls `__fatal_null_dereference()` if null |
+| `owner->m` | member `m` of owned object | Yes — calls `__fatal_null_dereference()` if null |
+
+**Constraints:**
+
+1. An owner is **not copyable** — it can only be moved.  `T!` never appears as the source
+   of a copy; any assignment of a `T!` to a `T!` variable is a move.
+2. An explicit cast `(T!) expr` is not permitted — owner values may only be produced by
+   `new` or transferred from another `T!` variable.
+3. Observers derived from an owner **must not** be used after the owner has been moved or
+   deleted (use-after-free is a programmer responsibility; no compile-time lifetime tracking
+   is performed beyond the null-check on dereference).
+
+**Internal representation:**
+
+An owner variable is stored as a single pointer-sized slot (identical bit-width to `T*`).
+Ownership semantics are enforced entirely at compile time; no runtime header or reference
+count is added.
+
+*See also:* [Dynamic Allocation — `new` and `delete`](../memory/new-delete.md)
+
+---
+
+## 8. Indirection operators
+
+The following operators apply to all five indirection types (including owner).
 
 ### Address-of (`&expr`)
 
@@ -358,12 +579,12 @@ test() : int {
 
 ---
 
-## 8. Array types
+## 9. Array types
 
 An array type represents a fixed-size sequence of elements of the same type.
 Arrays in K are **value types** — each array variable holds its own storage.
 
-### 8.1 Internal representation
+### 9.1 Internal representation
 
 A sized array of type `T[N]` is represented internally as a struct:
 
@@ -379,7 +600,7 @@ This layout is opaque to the programmer; it is specified here for documentation 
 
 ---
 
-### 8.2 Sized array value — `T[N]`
+### 9.2 Sized array value — `T[N]`
 
 A sized array **value** variable declares and allocates a concrete array of `N` elements.
 
@@ -406,7 +627,7 @@ g   : double[100];      // global array of 100 doubles, zero-initialised
 
 ---
 
-### 8.3 Sized array reference — `T[N]&`
+### 9.3 Sized array reference — `T[N]&`
 
 A sized array **reference** is a reference that **owns a fresh copy** of the source array.
 It is semantically equivalent to binding the alias name to a privately owned copy.
@@ -454,7 +675,7 @@ Let `dst : T[N]& = src` where `src` has type `T[M]` or `T[M]&`:
 
 ---
 
-### 8.4 Unsized array reference — `T[]` (= `T[]&`)
+### 9.4 Unsized array reference — `T[]` (= `T[]&`)
 
 An unsized array type `T[]` is a reference to an array whose size is not known at the
 declaration site.  It is exactly equivalent to `T[]&` (the explicit reference form).
@@ -483,7 +704,7 @@ b : int[]&;     // same — explicit & is optional but permitted
 
 ---
 
-### 8.5 Array assignment
+### 9.5 Array assignment
 
 Assigning one array to another performs an **element-wise copy**.  The destination array
 never changes its size.
@@ -508,7 +729,7 @@ a[0] = 99;         // does not affect b
 
 ---
 
-### 8.6 Subscript operator
+### 9.6 Subscript operator
 
 Elements are accessed via the subscript operator `[]`.
 
@@ -524,7 +745,7 @@ x = arr[i];
 ---
 
 
-## 9. Struct types
+## 10. Struct types
 
 A struct type is a user-defined composite type. See the [Structures](../structs/structs.md) reference for full details.
 
@@ -538,10 +759,10 @@ ptr : plop*;            // pointer to 'plop'
 
 ---
 
-## 10. Function reference types
+## 11. Function reference types
 A *function reference type* describes a variable that holds the **address of a function** and can be called later. K distinguishes free function references and member function references.
 For full details, see [Function References](../functions/function_references.md).
-### 10.1 Free function reference types
+### 11.1 Free function reference types
 A free function reference holds the address of a free function or a `static` member function.
 **Syntax:** `qualifier '(' [ TypeList ] ')'`
 | Qualifier | Nullable | Rebindable |
@@ -557,7 +778,7 @@ lnk : ~(int) = add_one;    // non-null link  to (int)->?
 pin : ^(int) = add_one;    // nullable, fixed pin to (int)->?
 result : int = fp(41);     // call through the reference -> 42
 ```
-### 10.2 Member function reference types
+### 11.2 Member function reference types
 A member function reference holds the address of a non-static member function of a specific struct `T`.
 **Syntax:** `T '::' qualifier '(' [ TypeList ] ')'`
 The `T::` prefix identifies the struct. The implicit `this` parameter is **not** listed.
@@ -578,7 +799,7 @@ result : int = (lnk->*mfp)(2);   // -> 42
 ```
 See [Function References](../functions/function_references.md) for the full call syntax.
 ---
-## 11. Type specifiers — grammar
+## 12. Type specifiers — grammar
 
 Types appear in variable declarations, parameter declarations, and return type annotations.
 
@@ -595,13 +816,18 @@ FundamentalTypeSpec:
 
 TypeSuffix:
     '[' [ IntegerLiteral ] ']'     -- array suffix (sized or unsized)
+    | '!'                          -- owner (move-only, nullable, exclusive ownership)
     | '&'                          -- reference (immutable binding, non-null)
     | '~'                          -- link (mutable binding, non-null)
     | '^'                          -- pinned (immutable binding, nullable)
     | '*'                          -- pointer (mutable binding, nullable)
 ```
 
-Suffixes may be chained: `int*` is a pointer to int; `int[4]` is a 4-element int array; `int[4]&` is a reference to a 4-element int array.
+Suffixes may be chained: `int*` is a pointer to int; `int[4]` is a 4-element int array;
+`int[4]&` is a reference to a 4-element int array.
+
+Note: `T!` (owner) does **not** compose with further suffixes — `Foo!*` or `Foo!!` are not
+valid type expressions.  An owner is always a top-level type suffix.
 
 **Examples:**
 
@@ -617,11 +843,12 @@ int[4]&
 plop&
 plop~
 plop*
+plop!       -- owner of a dynamically allocated plop
 ```
 
 ---
 
-## 12. Implicit conversions
+## 13. Implicit conversions
 
 The compiler performs implicit type conversions in certain contexts (e.g., function call arguments, assignments):
 
@@ -812,7 +1039,65 @@ dp : Derived* = ip;  // dynamic downcast via RTTI
 
 ---
 
-### 13.5 Explicit cast
+### 13.5 Owner upcast and downcast
+
+The rules for assigning between owner types depend on whether the pointed type is
+*polymorphic* (`class` or `interface`) or *non-polymorphic* (primitive, array, `struct`).
+
+#### Non-polymorphic types
+
+An owner may only be assigned to an owner of the **exact same type**:
+
+| Source | Destination | Result |
+|---|---|---|
+| `T!` | `T!` | OK — implicit move |
+| `T!` | `U!` (U ≠ T) | **Compile error** |
+
+#### Polymorphic types — static upcast (derived → base)
+
+When `Derived` inherits from `Base` (`class` or `interface` only), a `Derived!` can be
+implicitly assigned to a `Base!`.  The pointer is adjusted at compile time (GEP).
+Ownership is transferred; the source becomes `null`.
+
+No warning is emitted — the relationship is verified at compile time.
+
+```k
+class Animal { Animal() {} }
+class Dog : public Animal { Dog() : Animal() {} }
+
+d : Dog!    = new Dog();
+a : Animal! = d;           // static upcast; d ← null; a owns the Dog
+```
+
+#### Polymorphic types — dynamic downcast (base → derived)
+
+When a `Base!` is assigned to a `Derived!`, a runtime RTTI check is required.  The compiler
+always emits **Warning 0x5001** for such assignments.
+
+Behaviour at runtime:
+
+| RTTI result | Effect on source | Effect on destination |
+|---|---|---|
+| **Match** | source ← `null` | destination receives ownership; pointer adjusted (GEP) |
+| **No match** | owned object deleted (destructor + `free`); source ← `null` | destination ← `null` |
+
+```k
+class Animal { Animal() {} }
+class Dog    : public Animal { Dog()    : Animal() {} }
+class Cat    : public Animal { Cat()    : Animal() {} }
+
+a  : Animal! = new Dog();
+d  : Dog!;                  // Warning 0x5001: dynamic owner downcast
+d  = a;                     // RTTI OK: Dog → a ← null; d owns Dog
+
+a2 : Animal! = new Cat();
+d2 : Dog!;                  // Warning 0x5001
+d2 = a2;                    // RTTI fail: Cat deleted; a2 ← null; d2 ← null
+```
+
+---
+
+### 13.6 Explicit cast
 
 A C-style cast converts an expression to a named type:
 
@@ -827,10 +1112,10 @@ CastExpr:
     '(' TypeSpec ')' CastExpr
 ```
 
-#### 11.5.1 Explicit cast for primitive types
+#### 13.6.1 Explicit cast for primitive types
 
 The standard numeric conversion rules apply (truncation, sign extension, float↔int, etc.).  
-See §11.1 and §11.2 for widening and narrowing rules.
+See §13.1 and §13.2 for widening and narrowing rules.
 
 ```k
 d : double = 3.99d;
@@ -838,14 +1123,14 @@ i : int = (int) d;          // truncates to 3
 b : byte = (byte) largeInt; // narrow
 ```
 
-#### 11.5.2 Explicit cast for indirection types (ref / lnk / pin / ptr)
+#### 13.6.2 Explicit cast for indirection types (ref / lnk / pin / ptr)
 
-An explicit cast may be applied to any indirection type.  
+An explicit cast may be applied to any observer indirection type.  
 Two cases are distinguished based on the direction of the cast:
 
 **A. Explicit static upcast (Derived→Base)**
 
-When the cast target type is a *base* of the expression's pointed type, the cast is a **static (compile-time) GEP upcast** — identical to the implicit upcast (§12.3).
+When the cast target type is a *base* of the expression's pointed type, the cast is a **static (compile-time) GEP upcast** — identical to the implicit upcast (§13.3).
 
 Allowed source → target combinations:
 
@@ -871,7 +1156,10 @@ lb : Base~ = (Base~) pd;    // cross-kind with null-check
 
 **B. Explicit dynamic downcast (Base→Derived)**
 
-When the cast target type is a *derived class* (or interface implementor) of the expression's pointed type, the cast is a **dynamic (RTTI) downcast** — identical to the implicit dynamic downcast (§12.4).
+When the cast target type is a *derived class* (or interface implementor) of the expression's pointed type, the cast is a **dynamic (RTTI) downcast** — identical to the implicit dynamic downcast (§13.4).
+
+Note: explicit cast to `(T!)` is **not permitted** — owner values may only be produced by
+`new` or transferred from another owner variable.
 
 Applies only to `class` and `interface` types. **Not allowed for `struct` types** (no RTTI).
 
@@ -919,7 +1207,7 @@ test() : int {
 | Ref source and target have no inheritance relationship | Compile error `0x40034` |
 | Target type name cannot be resolved | Compile error `0x40035` |
 
-#### 11.5.3 Implicit cast in function call arguments
+#### 13.6.3 Implicit cast in function call arguments
 
 When a function expects a `Base*`, `Base~`, `Base^`, or `Base&` parameter, and the caller passes a `Derived*`, `Derived~`, `Derived^`, or `Derived&` expression, the compiler automatically inserts a **static upcast** — no explicit cast syntax is needed.
 
@@ -938,14 +1226,14 @@ This also works for `ref<ptr<Derived>>` when the parameter expects `ptr<Base>` �
 ---
 
 
-## 13. Const-ness
+## 14. Const-ness
 
 The `const` qualifier marks a variable or parameter as **immutable after construction**.
 Const-ness is a **compile-time** property only; it has no impact on the generated IR code.
 
 ---
 
-### 13.1 Const variables and parameters
+### 14.1 Const variables and parameters
 
 The `const` keyword is a **declaration specifier** placed before the variable name, or a **type qualifier** placed before the base type in the type specifier, or both. All three forms are **semantically identical**:
 
@@ -984,10 +1272,10 @@ x++;     // Error: cannot apply '++' to a const variable
 
 ---
 
-### 13.2 Const type qualifier in type specifiers
+### 14.2 Const type qualifier in type specifiers
 
 `const` can appear as a **type qualifier** directly before the base type in any type specifier.
-This is equivalent to placing `const` as a variable specifier (see §12.1).
+This is equivalent to placing `const` as a variable specifier (see §14.1).
 
 ```k
 x   : int      = 10;
@@ -1024,7 +1312,7 @@ const p : const int* = &x;     // both — all three mean "pointer to const int"
 
 ---
 
-### 13.3 Const and indirection types
+### 14.3 Const and indirection types
 
 For all four indirection kinds, `const` applies to the **pointed-at object**, not to the pointer/reference/link/pinned itself:
 
@@ -1045,7 +1333,7 @@ For all four indirection kinds, `const` applies to the **pointed-at object**, no
 
 ---
 
-### 13.4 Const pointer/link compatibility rules
+### 14.4 Const pointer/link compatibility rules
 
 A `const T*` (or `const T~`) **can** be initialised or assigned from a `T*` (or `T~`) — this is a safe widening:
 
@@ -1079,7 +1367,7 @@ clnk : const int~ = &x;  // OK
 
 ---
 
-### 13.5 Const and function overloading
+### 14.5 Const and function overloading
 
 `const` on a **by-value** parameter is part of the function's implementation contract (the caller's type is unaffected).
 Two functions differing only in the `const`-ness of a by-value parameter are **ambiguous** at the call site:
@@ -1097,7 +1385,7 @@ argument is rejected as ambiguous.
 
 ---
 
-### 13.6 Name mangling
+### 14.6 Name mangling
 
 The const qualifier is encoded in the mangled symbol name using the modifier prefix **`K`**:
 
@@ -1114,7 +1402,7 @@ A function `f(const n : int) : int` has its parameter encoded as `Ki` instead of
 
 ---
 
-### 13.7 Const member functions
+### 14.7 Const member functions
 
 A member function declared with the `const` specifier receives its implicit `this` parameter as a **const reference** (`const Struct&`) instead of a mutable reference.
 
@@ -1161,7 +1449,7 @@ See [Structures — §12](../structs/structs.md#12-const-member-functions) and [
 
 ---
 
-### 13.8 Const structs
+### 14.8 Const structs
 
 A struct declared `const` ensures that **all** non-static member functions are treated as const.
 Constructors and destructors are exempt.

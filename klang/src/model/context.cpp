@@ -241,6 +241,9 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             return subtype->get_pinned();
         } else
             return {}; // Shall not happen
+    } else if(auto own = dynamic_cast<const k::parse::ast::owner_type_specifier*>(&type_spec)) {
+        auto subtype = from_type_specifier(*own->subtype);
+        return subtype->get_owner();
     } else if(auto arr = dynamic_cast<const k::parse::ast::array_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*arr->subtype);
         if(arr->lex_int) {
@@ -314,6 +317,10 @@ std::shared_ptr<type> context::from_literal(const k::lex::any_literal &literal) 
         return from_type(primitive_type::CHAR);
     } else if (std::holds_alternative<lex::boolean>(literal)) {
         return from_type(primitive_type::BOOL);
+    } else if (std::holds_alternative<lex::null>(literal)) {
+        // null literal: give it a resolved pointer-to-byte type as a placeholder.
+        // The actual null semantics (ConstantPointerNull) are emitted in get_llvm_constant_from_literal.
+        return from_type(primitive_type::BYTE)->get_pointer();
     } else {
         // TODO handle other literal types
         return nullptr;
@@ -346,6 +353,9 @@ llvm::Constant* context::get_llvm_constant_from_literal(const k::lex::any_litera
         } else {
             return llvm::ConstantInt::getFalse(*_context);
         }
+    } else if (std::holds_alternative<lex::null>(literal)) {
+        // null literal: emit a null opaque pointer constant
+        return llvm::ConstantPointerNull::get(llvm::PointerType::get(*_context, 0));
     } else {
         // TODO handle other literal types
         return nullptr;
@@ -656,6 +666,14 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
             return nullptr;
         } else {
             return res->get_pinned();
+        }
+    } else if (type::is_owner(type)) {
+        auto res = resolve_type(type->get_subtype());
+        if (!res) {
+            std::cerr << "Error: cannot resolve owner subtype." << std::endl;
+            return nullptr;
+        } else {
+            return res->get_owner();
         }
     } else if (type::is_array(type)) {
         auto res = resolve_type(type->get_subtype());

@@ -207,17 +207,16 @@ std::shared_ptr<type> variable_definition::get_type() const {
     return _type;
 }
 
-std::shared_ptr<constructor_invocation_expression> variable_definition::get_init_expr() const {
+std::shared_ptr<expression> variable_definition::get_init_expr() const {
     return _init_expr;
 }
-
 
 variable_definition& variable_definition::set_type(std::shared_ptr<type> type) {
     _type = type;
     return *this;
 }
 
-variable_definition& variable_definition::set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr) {
+variable_definition& variable_definition::set_init_expr(std::shared_ptr<expression> init_expr) {
     _init_expr = init_expr;
     if (_init_expr) {
         if (auto self = dynamic_cast<element*>(this)) {
@@ -225,6 +224,10 @@ variable_definition& variable_definition::set_init_expr(std::shared_ptr<construc
         }
     }
     return *this;
+}
+
+variable_definition& variable_definition::set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr) {
+    return set_init_expr(std::static_pointer_cast<expression>(init_expr));
 }
 
 

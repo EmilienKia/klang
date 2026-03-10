@@ -147,6 +147,18 @@ void default_model_visitor::visit_constructor_invocation_expression(constructor_
     visit_expression(expr);
 }
 
+void default_model_visitor::visit_new_expression(new_expression& expr) {
+    visit_expression(expr);
+}
+
+void default_model_visitor::visit_delete_expression(delete_expression& expr) {
+    visit_unary_expression(expr);
+}
+
+void default_model_visitor::visit_owner_move_expression(owner_move_expression& expr) {
+    visit_unary_expression(expr);
+}
+
 void default_model_visitor::visit_unary_expression(unary_expression &expr) {
     visit_expression(expr);
 }
