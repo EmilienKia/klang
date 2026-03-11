@@ -573,6 +573,15 @@ test() : int {
 }
 ```
 
+This also applies to dynamic allocation with `new` (**Error 0x0057**):
+
+```k
+test() : int {
+    s : Shape! = new Shape();   // error 0x0057: cannot 'new' abstract class 'Shape'
+    return 0;
+}
+```
+
 ### 12.3 Deriving from an abstract class
 
 A derived class becomes **concrete** (instantiable) once it provides concrete (non-abstract) implementations for **all** abstract methods, directly or transitively.

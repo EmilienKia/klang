@@ -87,7 +87,19 @@ arr[0] = 1;
 x : int = arr[2];
 p[i] = v;
 ```
-Array indices are zero-based. No runtime bounds check is performed.
+Array indices are zero-based.
+
+**Runtime bounds checking:** every subscript access on a sized array (`T[N]`,
+`T[N]&`, or `T[N]!`) is checked at runtime. The index is compared (unsigned)
+against the element count stored in the array header. If the index is out of
+bounds, the program prints a diagnostic to `stderr` and calls `abort()`.
+
+```
+runtime error: array index out of bounds (index=5, size=3)
+```
+
+> **Note:** the bounds check uses an unsigned comparison, so negative indices
+> (which wrap to large unsigned values) are caught as well.
 ---
 ## 4. Member access — dot operator `.`
 Access a field or call a member function of a struct object (by value or by reference).

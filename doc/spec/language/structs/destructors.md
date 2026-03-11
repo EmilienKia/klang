@@ -50,6 +50,40 @@ A `return` statement:
 3. Returns control to the caller.
 ### Global variables
 The destructor of a global struct variable is called by the global destructor function, in reverse initialisation order, **after** `main` returns.
+
+### Owner variables (`T!`)
+
+When an owner variable goes out of scope (or is explicitly deleted with `delete`), the
+destructor of the owned object is called before the memory is freed.  The same scope-exit
+rules apply: if multiple owners exist in the same scope, they are destroyed in reverse
+declaration order.
+
+```k
+{
+    p : Foo! = new Foo(1);
+    q : Foo! = new Foo(2);
+}   // ~Foo() called on q first, then on p
+```
+
+An explicit `delete` calls the destructor immediately and sets the owner to `null`:
+
+```k
+p : Foo! = new Foo(42);
+delete p;                // ~Foo() called; memory freed; p ← null
+delete p;                // no-op: p is already null
+```
+
+See [Dynamic Allocation — `new` and `delete`](../memory/new-delete.md) for the full specification.
+
+### Dynamically allocated arrays (`T[N]!`)
+
+When a dynamically allocated array of structs is deleted (explicitly or at scope exit),
+destructors are called on each element in **reverse order** (last element first):
+
+```k
+items : Item[3]! = new Item[3]{Item(1), Item(2), Item(3)};
+delete items;    // ~Item() called on items[2], then items[1], then items[0]
+```
 ---
 ## 3. Static destructors (class finalizers)
 A *static destructor* is a static no-argument void function whose name is `~` followed by the struct name.  
@@ -144,4 +178,4 @@ get_val() : int { return dtor_called; }
 // After finalization: dtor_called == 99
 ```
 ---
-*See also:* [Structures](structs.md) · [Constructors](constructors.md) · [Return Statement](../statements/return.md)
+*See also:* [Structures](structs.md) · [Constructors](constructors.md) · [Dynamic Allocation](../memory/new-delete.md) · [Return Statement](../statements/return.md)

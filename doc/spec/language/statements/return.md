@@ -40,6 +40,23 @@ test_local_dtor() : int {
 }                        // ~counter() called here → dtor_count becomes 1
 ```
 After `test_local_dtor()` returns, `dtor_count` is 1, but the returned value is 0.
+
+### Owner return (move semantics)
+
+When a function returns an owner variable (`T!`), ownership is **transferred** to the caller.
+The local owner alloca is set to `null` before scope cleanup runs, so the object is not
+double-freed:
+
+```k
+make() : Foo! {
+    f : Foo! = new Foo(42);
+    return f;           // f moved to caller; f's alloca ← null
+}                       // scope cleanup: f is null → no-op
+```
+
+If the caller does not assign the returned owner to a variable, the compiler emits
+**Warning 0x5010** and the object is immediately deleted at the call site.
+See [Dynamic Allocation — Ownership and lifetime](../memory/new-delete.md#4-ownership-and-lifetime).
 ---
 ## 4. Examples
 ### Return with expression
@@ -71,4 +88,4 @@ main() : int {
 }
 ```
 ---
-*See also:* [Statements](statements.md) · [Functions](../functions/functions.md) · [Destructors](../structs/destructors.md)
+*See also:* [Statements](statements.md) · [Functions](../functions/functions.md) · [Destructors](../structs/destructors.md) · [Dynamic Allocation](../memory/new-delete.md)

@@ -17,6 +17,7 @@
  */
 #include "resolvers.hpp"
 #include "generators.hpp"
+#include "gen_helpers.hpp"
 
 #include "llvm/Support/raw_os_ostream.h"
 template<typename STM>
@@ -35,37 +36,6 @@ inline STM& operator << (STM& stm, const llvm::Value& value) {
 
 namespace k::model::gen {
 
-// ── Helper: emit dtor-call + free for an owner pointer value ─────────────────
-// (Duplicated from gen_statements.cpp / gen_expressions.cpp — no shared header.)
-static void emit_owner_object_destroy(
-    llvm::IRBuilder<>* builder,
-    llvm::Module& mod,
-    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
-    llvm::Value* ptr_value,
-    const std::shared_ptr<type>& alloc_type)
-{
-    auto& llvm_ctx = builder->getContext();
-    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
-    if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
-        auto st = st_type->get_struct();
-        auto dtor = st ? st->get_destructor() : nullptr;
-        if (dtor) {
-            auto dtor_it = functions.find(dtor->shared_as<function>());
-            if (dtor_it != functions.end()) {
-                builder->CreateCall(dtor_it->second, {ptr_value});
-            }
-        }
-    }
-    llvm::Function* free_fn = mod.getFunction("free");
-    if (!free_fn) {
-        auto* free_type = llvm::FunctionType::get(
-            llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
-        free_fn = llvm::Function::Create(
-            free_type, llvm::Function::ExternalLinkage, "free", mod);
-    }
-    builder->CreateCall(free_fn, {ptr_value});
-}
-// ─────────────────────────────────────────────────────────────────────────────
 
 //
 // Arithmetic binary expression
@@ -989,22 +959,10 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         auto& llvm_ctx = _builder->getContext();
         auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
-        // Load the existing pointer from the LHS owner alloca
-        llvm::Value* old_ptr = _builder->CreateLoad(ptr_ty, left, "owner_asgn_old");
-
-        // If non-null, destroy + free the existing object
-        auto* fn = _builder->GetInsertBlock()->getParent();
-        auto* nonnull_bb = llvm::BasicBlock::Create(llvm_ctx, "owner_asgn_dtor", fn);
-        auto* done_bb    = llvm::BasicBlock::Create(llvm_ctx, "owner_asgn_done",  fn);
-        auto* is_null = _builder->CreateICmpEQ(
-            old_ptr, llvm::ConstantPointerNull::get(ptr_ty), "owner_asgn_null");
-        _builder->CreateCondBr(is_null, done_bb, nonnull_bb);
-        _builder->SetInsertPoint(nonnull_bb);
+        // If non-null, destroy + free the existing object (don't null-out, we're about to store the new value)
         auto own_type = std::dynamic_pointer_cast<owner_type>(target_type);
-        emit_owner_object_destroy(_builder.get(), get_module(), _context->_functions,
-                                  old_ptr, own_type->get_owned_type());
-        _builder->CreateBr(done_bb);
-        _builder->SetInsertPoint(done_bb);
+        emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+            left, own_type->get_owned_type(), "owner_asgn", /*null_out=*/false);
 
         // Determine the new pointer value to store:
         // - right may be null (from null literal → visit_value_expression returns nullptr LLVM val)

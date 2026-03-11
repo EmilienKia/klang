@@ -773,7 +773,13 @@ x = arr[i];
 
 * Indices are zero-based.
 * The index expression must be implicitly convertible to `unsigned int`.
-* Bounds checking is **not** performed at runtime in the current implementation.
+* **Runtime bounds checking** is performed on every subscript access: the index
+  is compared (unsigned) against the element count stored in the array header.
+  An out-of-bounds access prints a diagnostic to `stderr` and calls `abort()`.
+
+  ```
+  runtime error: array index out of bounds (index=5, size=3)
+  ```
 
 ---
 

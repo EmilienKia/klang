@@ -487,12 +487,19 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         void visit_new_expr(ast::new_expr& expr) override {
             _stm << "new ";
             if (expr.type) expr.type->visit(*this);
-            _stm << "(";
-            for (size_t i = 0; i < expr.args.size(); ++i) {
-                if (i > 0) _stm << ", ";
-                if (expr.args[i]) expr.args[i]->visit(*this);
+            if (expr.is_array) {
+                _stm << "[";
+                if (expr.array_size_expr) expr.array_size_expr->visit(*this);
+                _stm << "]";
+                if (expr.brace_init) expr.brace_init->visit(*this);
+            } else {
+                _stm << "(";
+                for (size_t i = 0; i < expr.args.size(); ++i) {
+                    if (i > 0) _stm << ", ";
+                    if (expr.args[i]) expr.args[i]->visit(*this);
+                }
+                _stm << ")";
             }
-            _stm << ")";
         }
 
         void visit_delete_expr(ast::delete_expr& expr) override {

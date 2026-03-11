@@ -1090,25 +1090,55 @@ namespace k::model {
         // Resolve the allocated type from the AST type specifier
         auto alloc_type = _context->from_type_specifier(*expr.type);
 
-        // Build argument expressions.
-        // parse_expression() may return an expr_list_expr for multi-arg lists ("3, 4").
-        // Flatten those so that new_expression always holds individual argument expressions.
-        std::vector<std::shared_ptr<model::expression>> args;
-        for (auto& arg : expr.args) {
-            if (auto list = std::dynamic_pointer_cast<parse::ast::expr_list_expr>(arg)) {
-                for (auto& sub : list->exprs()) {
+        if (expr.is_array) {
+            // ── Array form: new T[N]{e0, e1, ...} ──
+
+            // Build array size expression (may be nullptr for inferred size)
+            std::shared_ptr<model::expression> size_expr;
+            if (expr.array_size_expr) {
+                _expr = nullptr;
+                expr.array_size_expr->visit(*this);
+                size_expr = _expr;
+            }
+
+            // Build per-element initializer expressions
+            std::vector<std::shared_ptr<model::expression>> init_elements;
+            if (expr.brace_init) {
+                for (auto& elem : expr.brace_init->elements) {
+                    if (elem) {
+                        _expr = nullptr;
+                        elem->visit(*this);
+                        init_elements.push_back(_expr);
+                    } else {
+                        init_elements.push_back(nullptr); // empty slot → default init
+                    }
+                }
+            }
+
+            _expr = model::new_expression::make_array_shared(alloc_type, size_expr, init_elements, expr.brace_init != nullptr);
+        } else {
+            // ── Single-object form: new T(args...) ──
+
+            // Build argument expressions.
+            // parse_expression() may return an expr_list_expr for multi-arg lists ("3, 4").
+            // Flatten those so that new_expression always holds individual argument expressions.
+            std::vector<std::shared_ptr<model::expression>> args;
+            for (auto& arg : expr.args) {
+                if (auto list = std::dynamic_pointer_cast<parse::ast::expr_list_expr>(arg)) {
+                    for (auto& sub : list->exprs()) {
+                        _expr = nullptr;
+                        sub->visit(*this);
+                        args.push_back(_expr);
+                    }
+                } else {
                     _expr = nullptr;
-                    sub->visit(*this);
+                    arg->visit(*this);
                     args.push_back(_expr);
                 }
-            } else {
-                _expr = nullptr;
-                arg->visit(*this);
-                args.push_back(_expr);
             }
-        }
 
-        _expr = model::new_expression::make_shared(alloc_type, args);
+            _expr = model::new_expression::make_shared(alloc_type, args);
+        }
     }
 
     void model_builder::visit_delete_expr(parse::ast::delete_expr& expr) {

@@ -17,6 +17,7 @@
  */
 #include "resolvers.hpp"
 #include "generators.hpp"
+#include "gen_helpers.hpp"
 
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
@@ -1223,6 +1224,12 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
     }
     left_type = std::dynamic_pointer_cast<reference_type>(left_type)->get_subtype();
 
+    // Handle owner<sized_array_type>: dereference through the owner to the inner array
+    if (type::is_owner(left_type)) {
+        auto own = std::dynamic_pointer_cast<owner_type>(left_type);
+        left_type = own->get_owned_type();
+    }
+
     if(!type::is_array(left_type)) {
         throw_error(0x0020, std::nullopt,
             "Subscript operator '[]' can only be applied to an array type, "
@@ -1262,9 +1269,17 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
         left = _builder->CreateLoad(_context->get_llvm_type(left_type), left, "arr_ref");
     }
 
-    // At this point left_type is ref<array<T>> or ref<sized_array<T>>.
-    // left is the pointer to the { i32, [N x T] } struct.
-    auto arr_type_inner = left_type->get_subtype(); // sized_array_type or array_type
+    // At this point left_type is ref<array<T>>, ref<sized_array<T>>, or ref<owner<sized_array<T>>>.
+    auto arr_type_inner = left_type->get_subtype(); // sized_array_type, array_type, or owner_type
+
+    // Handle owner<sized_array_type>: load the owner pointer, then treat it as ptr to array struct
+    if (auto own_type = std::dynamic_pointer_cast<owner_type>(arr_type_inner)) {
+        auto& llvm_ctx = _builder->getContext();
+        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+        // left is alloca of the owner variable — load the raw pointer
+        left = _builder->CreateLoad(ptr_ty, left, "own_arr_ptr");
+        arr_type_inner = own_type->get_owned_type();
+    }
 
     // Dereference index if needed
     auto right_type = expr.right()->get_type();
@@ -1282,6 +1297,15 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
             throw_internal_error(0x000C, std::nullopt,
                 "Internal error: sized array has no LLVM struct type during subscript code generation");
         }
+
+        // ── Runtime bounds check ─────────────────────────────────────────
+        // Load the element count from field 0 and verify index < count.
+        llvm::Value* count_ptr = _builder->CreateStructGEP(struct_llvm, left,
+            sized_array_type::FIELD_SIZE, "arr_count_ptr");
+        llvm::Value* count_val = _builder->CreateLoad(
+            _builder->getInt32Ty(), count_ptr, "arr_count");
+        emit_array_bounds_check(_builder.get(), get_module(), right, count_val, "subscript");
+
         // Two-step GEP: first into the struct field 1, then into the array element
         llvm::Value* field_data_ptr = _builder->CreateStructGEP(struct_llvm, left,
             sized_array_type::FIELD_DATA, "arr_data_ptr");
@@ -2298,12 +2322,209 @@ void symbol_resolver::visit_constructor_invocation_expression(constructor_invoca
 //
 
 void symbol_resolver::visit_new_expression(new_expression& expr) {
-    for (auto& arg : expr.arguments()) {
-        arg->accept(*this);
+    if (expr.is_array()) {
+        if (expr.array_size_expr()) expr.array_size_expr()->accept(*this);
+        for (auto& e : expr.array_init_elements()) {
+            if (e) e->accept(*this);
+        }
+    } else {
+        for (auto& arg : expr.arguments()) {
+            arg->accept(*this);
+        }
     }
 }
 
 void type_reference_resolver::visit_new_expression(new_expression& expr) {
+    if (expr.is_array()) {
+        // ── Array form: new T[N]{e0, e1, ...} ──
+
+        // Resolve array size expression
+        if (expr._array_size_expr) {
+            expr._array_size_expr->accept(*this);
+        }
+
+        // Resolve element init expressions
+        // For function_invocation_expression elements, only resolve their arguments
+        // (the callee is a struct name, not a function — constructor resolution happens below)
+        for (size_t i = 0; i < expr._array_init_elements.size(); ++i) {
+            if (auto& e = expr._array_init_elements[i]) {
+                auto func_inv = std::dynamic_pointer_cast<function_invocation_expression>(e);
+                if (func_inv) {
+                    // Only resolve the arguments, not the callee
+                    for (auto& arg : func_inv->arguments()) {
+                        if (arg) arg->accept(*this);
+                    }
+                } else {
+                    e->accept(*this);
+                }
+            }
+        }
+
+        // Resolve the element type
+        auto elem_type = expr.allocated_type();
+        if (!type::is_resolved(elem_type)) {
+            if (auto unres = std::dynamic_pointer_cast<unresolved_type>(elem_type)) {
+                auto resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
+                if (!resolved || !type::is_resolved(resolved)) {
+                    auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                    if (imported_agg) resolved = imported_agg->get_struct_type();
+                }
+                if (resolved && type::is_resolved(resolved)) {
+                    expr.allocated_type(resolved);
+                    elem_type = resolved;
+                }
+            }
+        }
+        if (!type::is_resolved(elem_type)) {
+            throw_error(0x0055, std::nullopt,
+                "Cannot resolve element type of 'new[]' expression: type '{}' is unknown",
+                {elem_type ? elem_type->to_string() : "<null>"});
+            return;
+        }
+
+        // Determine the array size
+        size_t init_count = expr._array_init_elements.size();
+        size_t arr_size = 0;
+        bool has_explicit_size = (expr._array_size_expr != nullptr);
+
+        if (has_explicit_size) {
+            // Try to evaluate the size expression as a compile-time constant
+            auto size_val = std::dynamic_pointer_cast<value_expression>(expr._array_size_expr);
+            if (size_val && size_val->is_literal()
+                && std::holds_alternative<lex::integer>(size_val->any_literal())) {
+                auto& int_lit = size_val->any_literal().get<lex::integer>();
+                arr_size = int_lit.to_unsigned_int();
+            } else {
+                throw_error(0x4221, std::nullopt,
+                    "Array size for 'new[]' must be a compile-time integer constant");
+                return;
+            }
+        } else {
+            // Size inferred from init list (or empty brace init → 0 elements)
+            arr_size = init_count;
+            if (arr_size == 0 && !expr._has_brace_init) {
+                // new T[] with no brace init at all → cannot infer the size
+                throw_error(0x4229, std::nullopt,
+                    "Cannot infer array size for 'new[]': "
+                    "either provide an explicit size or a brace initializer list");
+                return;
+            }
+            // new T[]{} → arr_size == 0 is valid (empty array)
+        }
+
+        // Validate init count vs array size
+        if (init_count > arr_size) {
+            throw_error(0x4222, std::nullopt,
+                "Array initializer list for 'new {}[{}]' has {} elements: too many initializers",
+                {elem_type->to_string(), std::to_string(arr_size), std::to_string(init_count)});
+            return;
+        }
+        if (init_count < arr_size && init_count > 0) {
+            warn(0x4223,
+                "Array initializer list for 'new {}[{}]' has only {} elements: "
+                "remaining {} elements will be default-initialized",
+                {elem_type->to_string(), std::to_string(arr_size), std::to_string(init_count),
+                 std::to_string(arr_size - init_count)});
+        }
+
+        expr._array_size = arr_size;
+
+        // Type-check and adapt each element + resolve constructors
+        expr._element_constructors.resize(arr_size, nullptr);
+
+        if (type::is_primitive(elem_type)) {
+            for (size_t i = 0; i < init_count; ++i) {
+                auto e = expr._array_init_elements[i];
+                if (!e) continue;
+                auto cast = adapt_type(e, elem_type);
+                if (!cast) {
+                    throw_error(0x4224, std::nullopt,
+                        "Cannot convert element {} to type '{}' in 'new[]' initializer",
+                        {std::to_string(i), elem_type->to_string()});
+                } else if (cast != e) {
+                    expr.assign_array_init_element(i, cast);
+                }
+            }
+        } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+            auto struct_model = st_type->get_struct();
+            if (!struct_model) {
+                throw_error(0x4225, std::nullopt,
+                    "Cannot resolve struct for 'new {}[]': aggregate not resolved",
+                    {st_type->to_string()});
+                return;
+            }
+            if (struct_model->is_abstract()) {
+                throw_error(0x4226, std::nullopt,
+                    "Cannot 'new' array of abstract class '{}'",
+                    {struct_model->get_short_name()});
+                return;
+            }
+            for (size_t i = 0; i < init_count; ++i) {
+                auto e = expr._array_init_elements[i];
+                if (!e) continue; // default-init
+
+                auto func_inv = std::dynamic_pointer_cast<function_invocation_expression>(e);
+                if (func_inv) {
+                    // Explicit constructor call
+                    std::vector<std::shared_ptr<expression>> ctor_args;
+                    for (auto& arg : func_inv->arguments()) ctor_args.push_back(arg);
+                    auto [best_ctor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
+                    if (!best_ctor) {
+                        throw_error(0x4227, std::nullopt,
+                            "No matching constructor for element {} of type '{}' in 'new[]'",
+                            {std::to_string(i), st_type->to_string()});
+                    }
+                    check_constructor_visibility(*best_ctor, expr);
+                    expr._element_constructors[i] = best_ctor;
+                    func_inv->assign_arguments(adapted_args);
+                } else {
+                    // Implicit single-param constructor
+                    std::vector<std::shared_ptr<expression>> ctor_args = {e};
+                    auto [best_ctor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
+                    if (!best_ctor) {
+                        throw_error(0x4228, std::nullopt,
+                            "No matching single-parameter constructor for element {} of type '{}' "
+                            "with argument type '{}' in 'new[]'",
+                            {std::to_string(i), st_type->to_string(),
+                             e->get_type() ? e->get_type()->to_string() : "?"});
+                    }
+                    check_constructor_visibility(*best_ctor, expr);
+                    expr._element_constructors[i] = best_ctor;
+                    if (!adapted_args.empty() && adapted_args[0] != e) {
+                        expr.assign_array_init_element(i, adapted_args[0]);
+                    }
+                }
+            }
+            // For uninitialized elements, find default constructor
+            // Only search if there are actually elements that need default-init
+            bool needs_default_ctor = false;
+            for (size_t i = 0; i < arr_size; ++i) {
+                if (i >= init_count || !expr._array_init_elements[i]) {
+                    needs_default_ctor = true;
+                    break;
+                }
+            }
+            if (needs_default_ctor) {
+                auto [default_ctor, default_args] = get_best_matching_constructor(
+                    struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
+                for (size_t i = 0; i < arr_size; ++i) {
+                    if (i >= init_count || !expr._array_init_elements[i]) {
+                        expr._element_constructors[i] = default_ctor;
+                    }
+                }
+            }
+        }
+
+        // Build the sized_array_type and set the expression type to owner<sized_array_type>
+        auto arr_type_unsized = elem_type->get_array();
+        auto sized_arr_type = arr_type_unsized->with_size(arr_size);
+        expr.set_type(sized_arr_type->get_owner());
+
+        return;
+    }
+
+    // ── Single-object form (unchanged) ──
+
     // Resolve arguments first
     for (auto& arg : expr.arguments()) {
         arg->accept(*this);
@@ -2613,7 +2834,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
     auto& llvm_ctx = _builder->getContext();
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
-    // Call malloc(sizeof(T))
+    // Ensure malloc is declared
     llvm::Module& mod = get_module();
     llvm::Function* malloc_fn = mod.getFunction("malloc");
     if (!malloc_fn) {
@@ -2624,6 +2845,100 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
         malloc_fn = llvm::Function::Create(
             malloc_type, llvm::Function::ExternalLinkage, "malloc", mod);
     }
+
+    if (expr.is_array()) {
+        // ── Array form: new T[N]{e0, e1, ...} ──
+        size_t arr_size = expr.array_size();
+        auto elem_type = alloc_type;
+
+        // Get the sized_array_type from the expression type (owner<sized_array_type>)
+        auto own_type = std::dynamic_pointer_cast<owner_type>(expr.get_type());
+        auto sized_arr_type = own_type
+            ? std::dynamic_pointer_cast<sized_array_type>(own_type->get_owned_type())
+            : nullptr;
+        if (!sized_arr_type) { _value = nullptr; return; }
+
+        // Get LLVM types
+        auto* struct_llvm = sized_arr_type->get_llvm_struct_type();
+        if (!struct_llvm) { _value = nullptr; return; }
+        llvm::Type* llvm_elem_type = _context->get_llvm_type(elem_type);
+
+        // malloc(sizeof(struct { i32, [N x T] }))
+        auto* size_val = llvm::ConstantInt::get(
+            llvm::Type::getInt64Ty(llvm_ctx),
+            mod.getDataLayout().getTypeAllocSize(struct_llvm));
+        llvm::Value* raw_ptr = _builder->CreateCall(
+            malloc_fn->getFunctionType(), malloc_fn, {size_val}, "new_arr_raw");
+
+        // Zero-init the entire struct
+        auto* zero_init = llvm::ConstantAggregateZero::get(struct_llvm);
+        _builder->CreateStore(zero_init, raw_ptr);
+
+        // Store the element count in field 0
+        llvm::Value* size_ptr = _builder->CreateStructGEP(struct_llvm, raw_ptr,
+            sized_array_type::FIELD_SIZE, "arr_size");
+        _builder->CreateStore(
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), arr_size, false),
+            size_ptr);
+
+        // Get pointer to the data array (field 1)
+        llvm::Value* data_ptr = _builder->CreateStructGEP(struct_llvm, raw_ptr,
+            sized_array_type::FIELD_DATA, "arr_data");
+        auto* llvm_arr_type = sized_arr_type->get_llvm_data_array_type();
+
+        // Initialize each element
+        size_t init_count = expr.array_init_elements().size();
+        for (size_t i = 0; i < arr_size; ++i) {
+            llvm::Value* elem_ptr = _builder->CreateConstInBoundsGEP2_32(
+                llvm_arr_type, data_ptr, 0, i, "arr_elem_" + std::to_string(i));
+
+            std::shared_ptr<expression> elem_expr = (i < init_count) ? expr.array_init_elements()[i] : nullptr;
+
+            if (type::is_primitive(elem_type)) {
+                if (elem_expr) {
+                    _value = nullptr;
+                    elem_expr->accept(*this);
+                    if (_value) _builder->CreateStore(_value, elem_ptr);
+                }
+                // else: already zero-inited
+            } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+                auto ctor = (i < expr.element_constructors().size())
+                    ? expr.element_constructors()[i] : nullptr;
+                if (ctor) {
+                    auto ctor_it = _context->_functions.find(ctor->shared_as<function>());
+                    if (ctor_it != _context->_functions.end()) {
+                        std::vector<llvm::Value*> args;
+                        args.push_back(elem_ptr); // 'this' pointer for the element
+
+                        if (elem_expr) {
+                            auto func_inv = std::dynamic_pointer_cast<function_invocation_expression>(elem_expr);
+                            if (func_inv) {
+                                // Explicit constructor call: pass all arguments
+                                for (auto& arg : func_inv->arguments()) {
+                                    _value = nullptr;
+                                    arg->accept(*this);
+                                    if (_value) args.push_back(_value);
+                                }
+                            } else {
+                                // Implicit single-param constructor
+                                _value = nullptr;
+                                elem_expr->accept(*this);
+                                if (_value) args.push_back(_value);
+                            }
+                        }
+                        // else: default constructor (no extra args)
+
+                        _builder->CreateCall(ctor_it->second, args);
+                    }
+                }
+            }
+        }
+
+        _value = raw_ptr;
+        return;
+    }
+
+    // ── Single-object form (unchanged) ──
 
     llvm::Type* llvm_type = _context->get_llvm_type(alloc_type);
     if (!llvm_type) { _value = nullptr; return; }
@@ -2666,41 +2981,6 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
     _value = raw_ptr;
 }
 
-// Helper: emit the destroy+free sequence for an owner pointer value.
-// ptr_value: the raw pointer (LLVM opaque ptr) to the object.
-// alloc_type: the K model type of the pointed-to object.
-static void emit_owner_object_destroy(
-    llvm::IRBuilder<>* builder,
-    llvm::Module& mod,
-    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
-    llvm::Value* ptr_value,
-    const std::shared_ptr<type>& alloc_type)
-{
-    auto& llvm_ctx = builder->getContext();
-    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
-
-    // Call destructor if struct
-    if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
-        auto st = st_type->get_struct();
-        auto dtor = st ? st->get_destructor() : nullptr;
-        if (dtor) {
-            auto dtor_it = functions.find(dtor->shared_as<function>());
-            if (dtor_it != functions.end()) {
-                builder->CreateCall(dtor_it->second, {ptr_value});
-            }
-        }
-    }
-
-    // Call free(ptr)
-    llvm::Function* free_fn = mod.getFunction("free");
-    if (!free_fn) {
-        auto* free_type = llvm::FunctionType::get(
-            llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
-        free_fn = llvm::Function::Create(
-            free_type, llvm::Function::ExternalLinkage, "free", mod);
-    }
-    builder->CreateCall(free_fn, {ptr_value});
-}
 
 void implementation_generator::visit_delete_expression(delete_expression& expr) {
     auto sub = expr.sub_expr();
@@ -2728,38 +3008,15 @@ void implementation_generator::visit_delete_expression(delete_expression& expr) 
     _value = nullptr;
     // We need the address (reference), not the value — so we evaluate the sub_expr
     // as an lvalue (address). For a symbol_expression this gives us the alloca directly.
-    if (is_ref_to_owner) {
-        // sub_expr already produced a reference (address of owner slot)
-        sub->accept(*this);
-        owner_alloca = _value;
-    } else {
-        sub->accept(*this);
-        owner_alloca = _value;
-    }
+    // Note: for both direct owner and reference-to-owner, accept() on a
+    // symbol_expression produces the alloca (address of the owner slot).
+    sub->accept(*this);
+    owner_alloca = _value;
 
     if (!owner_alloca) { _value = nullptr; return; }
 
-    auto& llvm_ctx = _builder->getContext();
-    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
-
-    // Load the current pointer value from the owner slot
-    llvm::Value* cur_ptr = _builder->CreateLoad(ptr_ty, owner_alloca, "owner_ptr");
-
-    // Only destroy if non-null: if (cur_ptr != null) { destroy; free; owner_slot = null; }
-    auto* fn = _builder->GetInsertBlock()->getParent();
-    auto* non_null_bb = llvm::BasicBlock::Create(llvm_ctx, "delete_nonnull", fn);
-    auto* done_bb     = llvm::BasicBlock::Create(llvm_ctx, "delete_done",    fn);
-    auto* is_null = _builder->CreateICmpEQ(
-        cur_ptr, llvm::ConstantPointerNull::get(ptr_ty), "owner_is_null");
-    _builder->CreateCondBr(is_null, done_bb, non_null_bb);
-
-    // Non-null branch: destroy + free + null-out
-    _builder->SetInsertPoint(non_null_bb);
-    emit_owner_object_destroy(_builder.get(), get_module(), _context->_functions, cur_ptr, alloc_type);
-    _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), owner_alloca);
-    _builder->CreateBr(done_bb);
-
-    _builder->SetInsertPoint(done_bb);
+    emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+        owner_alloca, alloc_type, "delete");
     _value = nullptr;
 }
 

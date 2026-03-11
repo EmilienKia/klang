@@ -23,6 +23,7 @@
 
 #include "resolvers.hpp"
 #include "generators.hpp"
+#include "gen_helpers.hpp"
 
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
@@ -40,41 +41,6 @@
 
 namespace k::model::gen {
 
-
-// Shared helper: destroy+free an owner's pointed object.
-// Precondition: ptr_value is non-null (caller must check).
-static void emit_owner_object_destroy(
-    llvm::IRBuilder<>* builder,
-    llvm::Module& mod,
-    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
-    llvm::Value* ptr_value,
-    const std::shared_ptr<type>& alloc_type)
-{
-    auto& llvm_ctx = builder->getContext();
-    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
-
-    // Call destructor if struct
-    if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
-        auto st = st_type->get_struct();
-        auto dtor = st ? st->get_destructor() : nullptr;
-        if (dtor) {
-            auto dtor_it = functions.find(dtor->shared_as<function>());
-            if (dtor_it != functions.end()) {
-                builder->CreateCall(dtor_it->second, {ptr_value});
-            }
-        }
-    }
-
-    // Call free(ptr)
-    llvm::Function* free_fn = mod.getFunction("free");
-    if (!free_fn) {
-        auto* free_type = llvm::FunctionType::get(
-            llvm::Type::getVoidTy(llvm_ctx), {ptr_ty}, false);
-        free_fn = llvm::Function::Create(
-            free_type, llvm::Function::ExternalLinkage, "free", mod);
-    }
-    builder->CreateCall(free_fn, {ptr_value});
-}
 
 
 void emit_vptr_store(llvm::IRBuilder<>& builder,
@@ -777,8 +743,6 @@ void implementation_generator::visit_function(function &function) {
     if (!_owner_params_stack.empty()) {
         auto params = _owner_params_stack.top();
         _owner_params_stack.pop();
-        auto& llvm_ctx = _builder->getContext();
-        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
         for (auto it = params.rbegin(); it != params.rend(); ++it) {
             auto& param = *it;
             auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
@@ -786,17 +750,8 @@ void implementation_generator::visit_function(function &function) {
             auto param_it = _context->_parameter_variables.find(param);
             if (param_it == _context->_parameter_variables.end()) continue;
             llvm::AllocaInst* alloca = param_it->second;
-            llvm::Value* cur_ptr = _builder->CreateLoad(ptr_ty, alloca, "exit_param_ptr");
-            auto* nonnull_bb = llvm::BasicBlock::Create(llvm_ctx, "exit_param_nonnull", func);
-            auto* done_bb    = llvm::BasicBlock::Create(llvm_ctx, "exit_param_done",    func);
-            _builder->CreateCondBr(
-                _builder->CreateICmpEQ(cur_ptr, llvm::ConstantPointerNull::get(ptr_ty), "exit_param_null"),
-                done_bb, nonnull_bb);
-            _builder->SetInsertPoint(nonnull_bb);
-            emit_owner_object_destroy(_builder.get(), get_module(), _context->_functions, cur_ptr, own_type->get_owned_type());
-            _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_ty), alloca);
-            _builder->CreateBr(done_bb);
-            _builder->SetInsertPoint(done_bb);
+            emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                alloca, own_type->get_owned_type(), "exit_param");
         }
     }
 

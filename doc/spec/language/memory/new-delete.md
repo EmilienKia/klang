@@ -1,6 +1,6 @@
 # Dynamic Allocation — `new` and `delete`
 
-[← Index](../index.md) · [Types — Owner (`!`)](../basic/types.md#7-owner-)
+[← Index](../index.md) · [Types — Owner (`!`)](../basic/types.md#7-owner-) · [Array Types](../basic/types.md#9-array-types)
 
 K provides two operators for managing dynamically allocated memory: `new` (allocation and
 construction) and `delete` (destruction and deallocation).
@@ -14,17 +14,18 @@ the C runtime.
 
 ## Contents
 
-1. [`new` expression](#1-new-expression)
-2. [`delete` expression](#2-delete-expression)
-3. [Ownership and lifetime](#3-ownership-and-lifetime)
-4. [Interaction with other indirection types](#4-interaction-with-other-indirection-types)
-5. [Grammar](#5-grammar)
+1. [`new` expression — single object](#1-new-expression--single-object)
+2. [`new` expression — array](#2-new-expression--array)
+3. [`delete` expression](#3-delete-expression)
+4. [Ownership and lifetime](#4-ownership-and-lifetime)
+5. [Interaction with other indirection types](#5-interaction-with-other-indirection-types)
+6. [Grammar](#6-grammar)
 
 ---
 
-## 1. `new` expression
+## 1. `new` expression — single object
 
-The `new` expression dynamically allocates memory for an object of the specified type,
+The `new` expression dynamically allocates memory for a single object of the specified type,
 invokes its constructor, and returns an [owner (`T!`)](../basic/types.md#7-owner-) that
 manages the allocated object.
 
@@ -36,11 +37,11 @@ manages the allocated object.
 
 `TypeName` is a plain type name (a qualified identifier or a primitive type keyword) — not a
 type with indirection suffixes.  Allocating an abstract class or an interface directly is
-forbidden (they cannot be instantiated); the compiler emits **Error 0x5000** in that case.
+forbidden (they cannot be instantiated); the compiler emits **Error 0x0057** in that case.
 
 **Semantics (in order):**
 
-1. `malloc(sizeof(T))` is called to allocate a raw memory block.  
+1. `malloc(sizeof(T))` is called to allocate a raw memory block.
    If `malloc` returns null (allocation failure), behaviour is currently undefined.
 2. The constructor of `T` matching the provided argument list is invoked on the allocated
    memory.
@@ -75,7 +76,145 @@ new Foo(1);          // Warning 0x5010: result of 'new' immediately discarded
 
 ---
 
-## 2. `delete` expression
+## 2. `new` expression — array
+
+The array form of `new` dynamically allocates a fixed-size array of elements and returns an
+owner of the corresponding [sized array type](../basic/types.md#9-array-types).
+
+**Syntax:**
+
+```
+'new' TypeName '[' [ IntegerLiteral ] ']' [ '{' [ InitList ] '}' ]
+'new' TypeName '{' [ InitList ] '}'
+```
+
+- `TypeName` is the **element** type (primitive, struct, or class — not abstract).
+- The optional `IntegerLiteral` between the brackets is the **explicit array size** (a
+  compile-time integer constant).
+- The optional brace-enclosed `InitList` provides per-element initializers.
+- The **bare-brace** form (`new T{…}`) is syntactic sugar for `new T[]{…}` — an array with
+  size inferred from the initializer list.  In particular, `new T{}` creates a valid empty
+  array with 0 elements.
+
+**Return type:** `T[N]!` — an owner of a sized array of `N` elements of type `T`.
+
+### 2.1 Size determination
+
+The array size is determined by exactly one of the following rules:
+
+| Form | Size | Description |
+|------|------|-------------|
+| `new T[N]{…}` | `N` | Explicit size; init list may have 0 to `N` elements. |
+| `new T[N]` | `N` | Explicit size, no init list; all elements default-initialized. |
+| `new T[]{e₀, e₁, …, eₖ}` | `k` | Size inferred from non-empty init list (must have ≥ 1 element). |
+| `new T[]{}` | `0` | Empty init list; valid empty array (0 elements). |
+| `new T{e₀, e₁, …, eₖ}` | `k` | Bare-brace form; equivalent to `new T[]{e₀, …, eₖ}`. |
+| `new T{}` | `0` | Bare-brace empty; equivalent to `new T[]{}` — valid empty array. |
+| `new T[]` | — | **Error 0x4229**: no explicit size and no init list — size cannot be inferred. |
+
+The array size must be a **compile-time integer literal**.  Using a variable or non-literal
+expression as the size is **Error 0x4221**.  Runtime-sized arrays are not currently supported.
+
+### 2.2 Element initialization
+
+**Primitive element types:**
+
+- Elements with an explicit initializer expression are set to that value.
+- Elements without an initializer (beyond the init list, or empty slots) are
+  **zero-initialized**.
+- Expressions are permitted: `new int[3]{1+2, 3*4, 10/2}`.
+
+**Struct / class element types:**
+
+- An explicit element must be a constructor invocation: `new Point[2]{Point(1,2), Point(3,4)}`.
+- Empty slots (`, ,`) or elements beyond the init list use the **default constructor** (zero
+  arguments).  If no default constructor exists, this is a compile-time error.
+- The element type must not be abstract (**Error 0x4226**).
+
+**Empty slots in the init list:**
+
+Two consecutive commas represent an empty slot — the corresponding element is
+default-initialized:
+
+```k
+arr : int[3]! = new int[3]{1, , 3};    // arr[1] = 0 (default)
+```
+
+**Too many initializers:**
+
+If the init list has more elements than the explicit array size, the compiler emits
+**Error 0x4222**.
+
+**Fewer initializers:**
+
+If the init list has fewer elements than the explicit array size (but at least one), the
+compiler emits **Warning 0x4223** and the remaining elements are default-initialized.
+
+### 2.3 Internal representation
+
+A dynamically allocated array of type `T[N]` is stored as:
+
+```
+{ uint32 count; T[N] data; }
+```
+
+This is the same [internal representation](../basic/types.md#91-internal-representation) used
+for stack-allocated arrays.  The entire struct (including the `count` header) is allocated with
+a single `malloc` call.  Elements are initialized in order (index 0 first).
+
+### 2.4 Element access
+
+Elements of a dynamically allocated array are accessed with the standard subscript operator:
+
+```k
+arr : int[3]! = new int[3]{10, 20, 30};
+x : int = arr[1];       // x = 20
+arr[2] = 99;            // arr[2] is now 99
+```
+
+A **runtime bounds check** is performed on every subscript access: the index is compared
+(unsigned) against the element count stored in the array header.  If the index is out of
+bounds, the program prints a diagnostic to `stderr` and calls `abort()`:
+
+```
+runtime error: array index out of bounds (index=5, size=3)
+```
+
+### 2.5 Examples
+
+```k
+// Primitive array — explicit size
+a : int[5]! = new int[5]{1, 2, 3, 4, 5};
+delete a;
+
+// Primitive array — size inferred from init list
+b : int[3]! = new int[]{10, 20, 30};
+
+// Primitive array — no init (all zeros)
+c : int[4]! = new int[4];
+
+// Primitive array — empty array
+d : int[0]! = new int[]{};
+
+// Bare-brace form — size inferred (equivalent to new int[]{10, 20, 30})
+e : int[3]! = new int{10, 20, 30};
+
+// Bare-brace form — empty array (equivalent to new int[]{})
+f : int[0]! = new int{};
+
+// Struct array — constructor calls
+struct Pair { x : int; y : int; Pair(a : int, b : int) : x(a), y(b) {} }
+pairs : Pair[2]! = new Pair[]{Pair(1, 2), Pair(3, 4)};
+
+// Struct array — default construction
+struct Item { val : int = 0; Item() { val = 42; } ~Item() {} }
+items : Item[3]! = new Item[3]{};     // 3 Items, each default-constructed
+delete items;                          // 3 destructors called in reverse order
+```
+
+---
+
+## 3. `delete` expression
 
 The `delete` expression explicitly destroys and frees the object held by an owner, then sets
 the owner to `null`.
@@ -86,10 +225,12 @@ the owner to `null`.
 'delete' OwnerExpr
 ```
 
-`OwnerExpr` must be a **modifiable lvalue** of an owner type (`T!`).  Passing a non-owner
-indirection to `delete` is a **compile-time error**.
+`OwnerExpr` must be a **modifiable lvalue** of an owner type (`T!` or `T[N]!`).  Passing a
+non-owner indirection to `delete` is a **compile-time error** (**Error 0x005A**).
 
 **Semantics (only when the owner is non-null; no-op otherwise):**
+
+### 3.1 Single-object delete
 
 1. The destructor of the **dynamic type** of the owned object is called:
    - For `class` and `interface` types: virtual dispatch — the most-derived destructor is
@@ -98,20 +239,29 @@ indirection to `delete` is a **compile-time error**.
 2. `free(ptr)` is called to release the memory block.
 3. The owner variable is set to `null`.
 
-If the owner is already `null`, `delete` is a **no-op** — no destructor is called, no
-`free` is issued.
+### 3.2 Array delete
 
-**Examples:**
+When the owner holds a dynamically allocated array (`T[N]!`):
+
+1. Destructors are called on each element **in reverse order** (last element first, down to
+   index 0).  For primitive element types, no destructor call is needed.
+2. `free(ptr)` is called to release the entire array allocation (header + data).
+3. The owner variable is set to `null`.
+
+The reverse destruction order mirrors the forward construction order used by `new`.
+
+### 3.3 Null safety
+
+If the owner is already `null`, `delete` is a **no-op** — no destructor is called, no
+`free` is issued.  This makes double-delete safe:
 
 ```k
-test() {
-    p : Foo! = new Foo(10);
-    delete p;              // destructor called; memory freed; p ← null
-    delete p;              // no-op: p is already null
-}
+p : Foo! = new Foo(10);
+delete p;              // destructor called; memory freed; p ← null
+delete p;              // no-op: p is already null
 ```
 
-**Virtual dispatch on delete:**
+### 3.4 Virtual dispatch on delete
 
 When the owned object's static type is a base class or interface, but the dynamic type is a
 derived class, the derived destructor is invoked first:
@@ -131,7 +281,7 @@ cannot be used in a larger expression.
 
 ---
 
-## 3. Ownership and lifetime
+## 4. Ownership and lifetime
 
 ### Scope-based deletion
 
@@ -144,6 +294,20 @@ an owner is declared:
     p : Foo! = new Foo(1);
     // ... use p ...
 }   // implicit: delete p;
+```
+
+This applies equally to single-object owners and array owners:
+
+```k
+{
+    arr : int[3]! = new int[3]{1, 2, 3};
+}   // implicit: delete arr;  (free is called, no element destructors for primitives)
+```
+
+```k
+{
+    items : Item[2]! = new Item[2]{};
+}   // implicit: delete items;  (~Item() called on element 1, then element 0, then free)
 ```
 
 This applies to:
@@ -193,7 +357,7 @@ test() {
 
 ---
 
-## 4. Interaction with other indirection types
+## 5. Interaction with other indirection types
 
 ### Observer assignment (owner → non-owner)
 
@@ -247,7 +411,7 @@ test() {
 
 ---
 
-## 5. Grammar
+## 6. Grammar
 
 `new` and `delete` are **keywords**.
 
@@ -260,20 +424,50 @@ They appear in the `UnaryExpr` production as special prefix forms:
 
 ```
 UnaryExpr:
-    'new' TypeName '(' [ ExpressionList ] ')'    -- NewExpr
-    | 'delete' CastExpr                           -- DeleteExpr
+    'new' TypeName '(' [ ExpressionList ] ')'                        -- NewExpr (single object)
+    | 'new' TypeName '[' [ IntegerLiteral ] ']' [ BraceInitList ]    -- NewArrayExpr
+    | 'delete' CastExpr                                              -- DeleteExpr
     | ( '++' | '--' | '*' | '&' | '+' | '-' | '!' | '~' ) CastExpr
     | PostfixExpr
 
 TypeName:
     QualifiedIdentifier
     | FundamentalTypeSpec
+
+BraceInitList:
+    '{' [ InitList ] '}'
+
+InitList:
+    [ Expression ] { ',' [ Expression ] }
 ```
 
-`TypeName` accepts only a bare type name — indirection suffixes (`*`, `!`, `&`, …) are not
-permitted inside a `new` expression.  The result type of `new T(...)` is always `T!`.
+**How `new` is parsed:**
 
-`delete` returns `void`.  `new T(...)` returns `T!`.
+After consuming the `new` keyword and calling `parse_type_spec()`, the parser inspects the
+resulting type specifier:
+
+- If the type is an `array_type_specifier` (i.e. `T[N]` or `T[]`), this is the **array form
+  with brackets**.  The element type and optional size are extracted from the array type
+  specifier, then an optional brace initializer list `{ … }` is parsed.
+- If the type is a plain type and the next token is `{`, this is the **bare-brace array form**
+  (`new T{…}`).  The size is inferred from the initializer list.  This is equivalent to
+  `new T[]{…}`.
+- Otherwise, this is the **single-object form**, and a parenthesised argument list `( … )` is
+  expected.
+
+`TypeName` accepts only a bare type name — indirection suffixes (`*`, `!`, `&`, …) are not
+permitted inside a `new` expression.
+
+**Result types:**
+
+| Form | Result type |
+|------|-------------|
+| `new T(args)` | `T!` |
+| `new T[N]{…}` | `T[N]!` |
+| `new T{e₀, …, eₖ}` | `T[k]!` |
+| `new T{}` | `T[0]!` |
+
+`delete` returns `void`.
 
 The `!` type suffix used to declare owner variables is part of the `TypeSuffix` production:
 
@@ -289,5 +483,24 @@ TypeSuffix:
 
 ---
 
-*See also:* [Types — Owner (`!`)](../basic/types.md#7-owner-) · [Unary Operators](unary.md) · [Assignment Operators](assignment.md) · [Destructors](../structs/destructors.md)
+## Error and warning codes
+
+| Code | Severity | Condition |
+|------|----------|-----------|
+| 0x0057 | Error | Cannot `new` an abstract class (single-object form). |
+| 0x005A | Error | `delete` applied to a non-owner type. |
+| 0x4221 | Error | Array size for `new[]` is not a compile-time integer constant. |
+| 0x4222 | Error | Init list has more elements than the explicit array size. |
+| 0x4223 | Warning | Init list has fewer elements than the array size; remaining elements are default-initialized. |
+| 0x4224 | Error | Cannot convert an init list element to the array element type. |
+| 0x4225 | Error | Struct for array element type is not resolved. |
+| 0x4226 | Error | Cannot `new` an array of an abstract class. |
+| 0x4227 | Error | No matching constructor for an element in the init list. |
+| 0x4228 | Error | No matching single-parameter constructor for an implicit element. |
+| 0x4229 | Error | Cannot infer array size: no explicit size and no init list provided. |
+| 0x5010 | Warning | Result of `new` (or function returning `T!`) is immediately discarded — the object is deleted right after construction. |
+
+---
+
+*See also:* [Types — Owner (`!`)](../basic/types.md#7-owner-) · [Array Types](../basic/types.md#9-array-types) · [Unary Operators](../expressions/unary.md) · [Assignment Operators](../expressions/assignment.md) · [Destructors](../structs/destructors.md)
 

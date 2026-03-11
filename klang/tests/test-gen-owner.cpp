@@ -32,6 +32,16 @@
  *  - new/delete of class type (vtable + virtual-dispatch methods)
  *  - owner in nested block scope: dtor at inner scope exit, not outer
  *  - multiple owners at same scope: cleanup in reverse declaration order
+ *
+ *  Warning 0x5010 — result of 'new' immediately discarded:
+ *  - bare new struct expression statement: ctor+dtor both called
+ *  - bare new primitive expression statement: no leak
+ *  - function returning owner, result discarded: ctor+dtor called
+ *  - bare new array expression statement: elements allocated and freed
+ *
+ *  Error tests:
+ *  - Error 0x005A: delete applied to non-owner type
+ *  - Error 0x0057: new on abstract class
  */
 
 #include <catch2/catch_all.hpp>
@@ -716,5 +726,135 @@ TEST_CASE("Multiple owners at scope exit: cleanup in reverse declaration order",
     REQUIRE(fn);
     // Second destroyed first: g_order = 2; First destroyed next: g_order = 21
     REQUIRE(fn() == 21);
+}
+
+// =============================================================================
+// Warning 0x5010: result of 'new' immediately discarded
+// =============================================================================
+
+// When 'new Foo()' is used as a bare expression statement, the compiler emits
+// Warning 0x5010 and immediately destroys the object after construction.
+// This test verifies the semantics: ctor is called, then dtor immediately.
+
+TEST_CASE("Bare new expression statement: ctor+dtor both called (Warning 0x5010 semantics)", "[gen][owner][w5010][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __own_bare_new__;
+
+        g_ctors : int = 0;
+        g_dtors : int = 0;
+
+        struct Ephemeral {
+            Ephemeral() { g_ctors = g_ctors + 1; }
+            ~Ephemeral() { g_dtors = g_dtors + 1; }
+        }
+
+        test() : int {
+            new Ephemeral();   // Warning 0x5010: immediately discarded
+            return g_ctors * 10 + g_dtors;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16__own_bare_new__4testEv");
+    REQUIRE(fn);
+    // ctor called once, dtor called once (immediately after construction)
+    REQUIRE(fn() == 11);
+}
+
+TEST_CASE("Bare new primitive expression statement: no leak (Warning 0x5010 semantics)", "[gen][owner][w5010][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __own_bare_prim__;
+        test() : int {
+            new int(42);       // Warning 0x5010: allocated then freed immediately
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__own_bare_prim__4testEv");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("Function returning owner, result discarded: ctor+dtor (Warning 0x5010 semantics)", "[gen][owner][w5010][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __own_discard_ret__;
+
+        g_ctors : int = 0;
+        g_dtors : int = 0;
+
+        struct Temp {
+            Temp() { g_ctors = g_ctors + 1; }
+            ~Temp() { g_dtors = g_dtors + 1; }
+        }
+
+        make() : Temp! {
+            return new Temp();
+        }
+
+        test() : int {
+            make();            // Warning 0x5010: owner return value discarded
+            return g_ctors * 10 + g_dtors;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN19__own_discard_ret__4testEv");
+    REQUIRE(fn);
+    // ctor called once (in make), dtor called once (at expression statement end)
+    REQUIRE(fn() == 11);
+}
+
+TEST_CASE("Bare new array expression statement: elements allocated and freed (Warning 0x5010 semantics)", "[gen][owner][w5010][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __own_bare_arr__;
+
+        g_ctors : int = 0;
+        g_dtors : int = 0;
+
+        struct Item {
+            Item() { g_ctors = g_ctors + 1; }
+            ~Item() { g_dtors = g_dtors + 1; }
+        }
+
+        test() : int {
+            new Item[3]{};     // Warning 0x5010: 3 elements constructed, then all destructed
+            return g_ctors * 10 + g_dtors;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN16__own_bare_arr__4testEv");
+    REQUIRE(fn);
+    // 3 ctors, 3 dtors (all immediate)
+    REQUIRE(fn() == 33);
+}
+
+// =============================================================================
+// Error tests: delete on non-owner, new abstract class
+// =============================================================================
+
+TEST_CASE("delete on non-owner type — error 0x005A", "[gen][owner][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __own_err_del_nonowner__;
+        test() : int {
+            x : int = 42;
+            p : int* = &x;
+            delete p;
+            return 0;
+        }
+    )SRC"));
+}
+
+TEST_CASE("new abstract class — error 0x0057", "[gen][owner][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __own_err_new_abstract__;
+
+        abstract class Shape {
+            Shape() {}
+            abstract area() : int;
+        }
+
+        test() : int {
+            s : Shape! = new Shape();
+            return s->area();
+        }
+    )SRC"));
 }
 

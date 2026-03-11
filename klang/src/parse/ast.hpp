@@ -56,6 +56,7 @@ namespace k::parse {
 
         // Forward declaration (full definition follows)
         struct qualified_identifier;
+        struct brace_init_list;
 
         struct import : public ast_node {
             lex::keyword import_kw;
@@ -421,17 +422,34 @@ namespace k::parse {
 
         /**
          * New expression: allocates an object on the heap and returns an owner.
-         * Syntax: 'new' TypeSpec '(' [args] ')'
+         * Syntax (single object): 'new' TypeSpec '(' [args] ')'
+         * Syntax (array):         'new' TypeSpec '[' [size_expr] ']' [ '{' [init_list] '}' ]
          */
         struct new_expr : public expression {
             lex::keyword new_kw;
             std::shared_ptr<ast::type_specifier> type;
             std::vector<expr_ptr> args;
 
+            /** True when this is an array allocation: new T[N]{...} */
+            bool is_array = false;
+            /** Array size expression (inside []), nullptr if size is inferred from init list. */
+            expr_ptr array_size_expr;
+            /** Array brace initializer list, nullptr if no brace init provided. */
+            std::shared_ptr<brace_init_list> brace_init;
+
+            // Single-object constructor
             new_expr(const lex::keyword& new_kw,
                      const std::shared_ptr<ast::type_specifier>& type,
                      const std::vector<expr_ptr>& args)
-                : new_kw(new_kw), type(type), args(args) {}
+                : new_kw(new_kw), type(type), args(args), is_array(false) {}
+
+            // Array constructor
+            new_expr(const lex::keyword& new_kw,
+                     const std::shared_ptr<ast::type_specifier>& type,
+                     const expr_ptr& array_size_expr,
+                     const std::shared_ptr<brace_init_list>& brace_init)
+                : new_kw(new_kw), type(type), is_array(true),
+                  array_size_expr(array_size_expr), brace_init(brace_init) {}
 
             virtual void visit(ast_visitor& visitor) override;
         };

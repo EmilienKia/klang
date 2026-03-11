@@ -64,6 +64,11 @@ p.add(8);
 i++;
 ++counter;
 ```
+
+> **Note:** If an expression statement produces an owner type (`T!`) — for example a bare
+> `new Foo();` or a call to a function returning `T!` — the compiler emits
+> **Warning 0x5010** and the object is deleted immediately after construction.
+> See [Dynamic Allocation — Unassigned result](../memory/new-delete.md#1-new-expression--single-object).
 ---
 ## 4. Variable declaration statement
 A local variable declaration introduces a named variable in the current scope.  
@@ -102,6 +107,8 @@ arr3 : int[] {10, 20};       // array with size inferred from init list
 ptr : int* = &x;             // pointer initialized to address of x
 cptr : const int* = &x;      // pointer to const int — pointed value cannot be modified
 ref : int& = x;              // reference bound to x — x must be an addressable variable
+own : Foo! = new Foo(42);    // owner — Foo allocated on the heap
+arrOwn : int[3]! = new int[3]{1, 2, 3};  // owner of a dynamically allocated array
 ```
 
 > **Note on const:** A `const` variable must be initialised at declaration and cannot be
@@ -134,6 +141,11 @@ test_local_dtor() : int {
     return dtor_count;     // return expression evaluated BEFORE c is destroyed
 }                          // destructor called here (after return value is captured)
 ```
+
+For owner-typed local variables (`T!`, `T[N]!`):
+- If the owner is still non-null at scope exit, it is automatically deleted (destructor called + memory freed).
+- Multiple owners in the same scope are destroyed in reverse declaration order.
+- See [Dynamic Allocation — Ownership and lifetime](../memory/new-delete.md#4-ownership-and-lifetime).
 ---
 ## 5. Statement list and links
 | Statement | Page |
@@ -146,4 +158,4 @@ test_local_dtor() : int {
 | `for`     | [For Statement](for.md) |
 | `return`  | [Return Statement](return.md) |
 ---
-*See also:* [Expressions](../expressions/expressions.md) · [Functions](../functions/functions.md) · [Types](../basic/types.md)
+*See also:* [Expressions](../expressions/expressions.md) · [Functions](../functions/functions.md) · [Types](../basic/types.md) · [Dynamic Allocation](../memory/new-delete.md)

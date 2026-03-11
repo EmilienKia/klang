@@ -243,17 +243,24 @@ Grammar notation used here:
     | [UnaryExpr](#unaryexpr)
 <a id="unaryexpr"></a>**UnaryExpr:**
     `'new'` [TypeName](#typename) `'('` `[` [ExpressionList](#expressionlist) `]` `')'`
+    | `'new'` [TypeName](#typename) `'['` `[` [IntegerLiteral](#integerliteral) `]` `']'` `[` [BraceInitList](#braceinitlist) `]`
+    | `'new'` [TypeName](#typename) [BraceInitList](#braceinitlist)
     | `'delete'` [CastExpr](#castexpr)
     | `(` `'++'` | `'--'` | `'*'` | `'&'` | `'+'` | `'-'` | `'!'` | `'~'` `)` [CastExpr](#castexpr)
     | [PostfixExpr](#postfixexpr)
 
-    *Note: `'new' TypeName '(' … ')'` returns a `T!` owner.  `'delete' CastExpr` returns `void` and may only appear as an expression statement.*
+    *Note: `'new' TypeName '(' … ')'` returns a `T!` owner.  `'new' TypeName '[' … ']' …` and `'new' TypeName '{' … '}'` return a `T[N]!` array owner.  `'delete' CastExpr` returns `void` and may only appear as an expression statement.*
 
 <a id="typename"></a>**TypeName:**
     [QualifiedIdentifier](#qualifiedidentifier)
     | [FundamentalTypeSpec](#fundamentaltypespec)
 
     *Note: `TypeName` is a bare type identifier — indirection suffixes (`*`, `!`, `&`, …) are not permitted in a `new` expression.*
+
+<a id="braceinitlist"></a>**BraceInitList:**
+    `'{'` `[` [InitList](#initlist) `]` `'}'`
+<a id="initlist"></a>**InitList:**
+    `[` [Expression](#expression) `]` {{ `','` `[` [Expression](#expression) `]` }}
 <a id="postfixexpr"></a>**PostfixExpr:**
     [PrimaryExpr](#primaryexpr) {{ [PostfixOp](#postfixop) }}
 <a id="postfixop"></a>**PostfixOp:**

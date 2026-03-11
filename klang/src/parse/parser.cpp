@@ -1674,16 +1674,138 @@ ast::expr_ptr parser::parse_unary_expr()
 {
     lex::lex_holder holder(_lexer);
 
-    // Handle 'new TypeSpec(args)' — keyword expression producing an owner
+    // Handle 'new TypeSpec(args)' or 'new TypeSpec[size]{init}' — keyword expression producing an owner
     if (auto lkw = _lexer.get(); lkw == lex::keyword::NEW) {
         lex::keyword new_kw = lex::as<lex::keyword>(lkw);
         auto type = parse_type_spec();
         if (!type) {
             throw_error(0x0050, _lexer.pick_current(), "'new' expects a type specifier");
         }
+
+        // Check if the type spec is an array type (e.g. int[5], Foo[]).
+        // parse_type_spec() already consumed the '[N]' suffix as part of the type.
+        // If so, this is an array-new: we strip the array suffix from the type
+        // and handle the brace init list.
+        if (auto arr_type = std::dynamic_pointer_cast<ast::array_type_specifier>(type)) {
+            // Extract base element type and size expression from the array type spec
+            auto elem_type = arr_type->subtype;
+            ast::expr_ptr size_expr;
+            if (arr_type->lex_int.has_value()) {
+                // Build a literal expression from the integer token
+                size_expr = std::make_shared<ast::literal_expr>(lex::any_literal{arr_type->lex_int.value()});
+            }
+            // else: unsized array [], size will be inferred from brace init
+
+            // Optionally parse brace initializer list { ... }
+            std::shared_ptr<ast::brace_init_list> brace_init;
+            auto peek_brace = _lexer.get();
+            if (peek_brace == lex::punctuator::BRACE_OPEN) {
+                auto open_brace = lex::as<lex::punctuator>(peek_brace);
+                std::vector<ast::expr_ptr> elements;
+                auto peek_close_brace = _lexer.get();
+                if (peek_close_brace != lex::punctuator::BRACE_CLOSE) {
+                    _lexer.unget();
+                    // Parse comma-separated initializer expressions
+                    bool expect_more = true;
+                    while (expect_more) {
+                        auto next = _lexer.get();
+                        if (next == lex::punctuator::COMMA) {
+                            // Empty element (default construction)
+                            elements.push_back(nullptr);
+                        } else if (next == lex::punctuator::BRACE_CLOSE) {
+                            _lexer.unget();
+                            break;
+                        } else {
+                            _lexer.unget();
+                            auto elem_expr = parse_conditional_expr();
+                            elements.push_back(elem_expr);
+                            auto sep = _lexer.get();
+                            if (sep == lex::punctuator::COMMA) {
+                                // Continue parsing
+                            } else if (sep == lex::punctuator::BRACE_CLOSE) {
+                                _lexer.unget();
+                                break;
+                            } else {
+                                throw_error(0x0064, sep, "'new' array brace initializer expects ',' or '}' after expression");
+                            }
+                        }
+                    }
+                    auto close = _lexer.get();
+                    if (close != lex::punctuator::BRACE_CLOSE) {
+                        throw_error(0x0065, close, "'new' array brace initializer expects a closing brace '}'");
+                    }
+                    auto close_brace = lex::as<lex::punctuator>(close);
+                    brace_init = std::make_shared<ast::brace_init_list>(open_brace, close_brace, elements);
+                } else {
+                    // Empty brace list {}
+                    auto close_brace = lex::as<lex::punctuator>(peek_close_brace);
+                    brace_init = std::make_shared<ast::brace_init_list>(open_brace, close_brace, std::vector<ast::expr_ptr>{});
+                }
+            } else {
+                _lexer.unget(); // no brace init
+            }
+
+            holder.sync();
+            return std::make_shared<ast::new_expr>(new_kw, elem_type, size_expr, brace_init);
+        }
+
+        // Check for brace initializer without array brackets: new T{...}
+        // This is treated as an array-new with size inferred from the brace init list.
+        // new T{} → empty array (0 elements); new T{1,2,3} → array of 3 elements.
+        if (auto peek_brace = _lexer.get(); peek_brace == lex::punctuator::BRACE_OPEN) {
+            auto open_brace = lex::as<lex::punctuator>(peek_brace);
+            std::vector<ast::expr_ptr> elements;
+            auto peek_close_brace = _lexer.get();
+            if (peek_close_brace != lex::punctuator::BRACE_CLOSE) {
+                _lexer.unget();
+                // Parse comma-separated initializer expressions
+                bool expect_more = true;
+                while (expect_more) {
+                    auto next = _lexer.get();
+                    if (next == lex::punctuator::COMMA) {
+                        // Empty element (default construction)
+                        elements.push_back(nullptr);
+                    } else if (next == lex::punctuator::BRACE_CLOSE) {
+                        _lexer.unget();
+                        break;
+                    } else {
+                        _lexer.unget();
+                        auto elem_expr = parse_conditional_expr();
+                        elements.push_back(elem_expr);
+                        auto sep = _lexer.get();
+                        if (sep == lex::punctuator::COMMA) {
+                            // Continue parsing
+                        } else if (sep == lex::punctuator::BRACE_CLOSE) {
+                            _lexer.unget();
+                            break;
+                        } else {
+                            throw_error(0x0064, sep, "'new' array brace initializer expects ',' or '}' after expression");
+                        }
+                    }
+                }
+                auto close = _lexer.get();
+                if (close != lex::punctuator::BRACE_CLOSE) {
+                    throw_error(0x0065, close, "'new' array brace initializer expects a closing brace '}'");
+                }
+                auto close_brace = lex::as<lex::punctuator>(close);
+                auto brace_init = std::make_shared<ast::brace_init_list>(open_brace, close_brace, elements);
+                holder.sync();
+                return std::make_shared<ast::new_expr>(new_kw, type, /*size_expr=*/nullptr, brace_init);
+            } else {
+                // Empty brace list {}
+                auto close_brace = lex::as<lex::punctuator>(peek_close_brace);
+                auto brace_init = std::make_shared<ast::brace_init_list>(open_brace, close_brace, std::vector<ast::expr_ptr>{});
+                holder.sync();
+                return std::make_shared<ast::new_expr>(new_kw, type, /*size_expr=*/nullptr, brace_init);
+            }
+        } else {
+            _lexer.unget();
+        }
+
+        // Single-object form: new T(args)
         // Parse argument list '(' args ')'
         if (auto lpar = _lexer.get(); lpar != lex::punctuator::PARENTHESIS_OPEN) {
-            throw_error(0x0051, _lexer.pick_current(), "'new' expects '(' after the type specifier");
+            throw_error(0x0051, _lexer.pick_current(), "'new' expects '(' after the type specifier, '[' for array allocation, or '{' for brace-initialized array");
         }
         std::vector<ast::expr_ptr> args;
         auto lclose = _lexer.get();

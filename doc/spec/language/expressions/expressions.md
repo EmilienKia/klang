@@ -94,8 +94,8 @@ See [Function Call](call.md).
 Construct a struct-typed variable with explicit arguments.  
 See [Constructors](../structs/constructors.md).
 ### Dynamic allocation expressions
-`new T(args)` allocates and constructs an object of type `T` and returns a `T!` owner.  
-`delete owner` destroys and frees the object held by a `T!` variable.  
+`new T(args)` allocates and constructs an object of type `T` and returns a `T!` owner.
+`delete owner` destroys and frees the object held by a `T!` variable.
 See [Dynamic Allocation](../memory/new-delete.md).
 
 ### Member access expressions

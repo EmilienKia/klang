@@ -773,18 +773,40 @@ public:
 };
 
 /**
- * New expression — allocates a heap object and returns an owner.
+ * New expression — allocates a heap object (or array) and returns an owner.
  * Corresponds to AST new_expr.
- * Type of this expression: owner_type<T>.
+ *
+ * Single-object form:  new T(args...)      → owner_type<T>
+ * Array form:          new T[N]{e0,e1,...}  → owner_type<sized_array_type<T,N>>
+ *
+ * For the array form:
+ *   - _is_array is true
+ *   - _array_size_expr is the expression for the array size (may be nullptr if inferred)
+ *   - _array_init_elements holds the per-element initializer expressions (nullptr = default-init)
+ *   - _array_size is the resolved integer array size (set during type resolution)
+ *   - _element_constructors[i] is the constructor chosen for element i (for struct elements)
  */
 class new_expression : public expression {
 protected:
-    /** The type to allocate (resolved). */
+    /** The type to allocate (resolved element type for arrays, object type for single). */
     std::shared_ptr<type> _allocated_type;
-    /** Constructor arguments (resolved). */
+    /** Constructor arguments for single-object new (resolved). */
     std::vector<std::shared_ptr<expression>> _arguments;
-    /** The selected constructor (resolved in phase 4). */
+    /** The selected constructor for single-object new (resolved in phase 4). */
     std::shared_ptr<constructor> _constructor;
+
+    /** True when this is an array allocation: new T[N]{...} */
+    bool _is_array = false;
+    /** Array size expression (from brackets), nullptr if inferred from init list. */
+    std::shared_ptr<expression> _array_size_expr;
+    /** Per-element initializer expressions for array form. nullptr = default-init. */
+    std::vector<std::shared_ptr<expression>> _array_init_elements;
+    /** True when a brace initializer was explicitly provided (even if empty: new T[]{}). */
+    bool _has_brace_init = false;
+    /** Resolved array size (set during type resolution). */
+    size_t _array_size = 0;
+    /** Per-element constructor (for struct element types). Index matches _array_init_elements. */
+    std::vector<std::shared_ptr<constructor>> _element_constructors;
 
     new_expression() = default;
     new_expression(const new_expression&) = delete;
@@ -814,18 +836,68 @@ public:
 
     std::shared_ptr<constructor> get_constructor() const { return _constructor; }
 
+    // --- Array accessors ---
+
+    bool is_array() const { return _is_array; }
+
+    const std::shared_ptr<expression>& array_size_expr() const { return _array_size_expr; }
+
+    /** True when a brace initializer was explicitly provided (even if empty). */
+    bool has_brace_init() const { return _has_brace_init; }
+
+    const std::vector<std::shared_ptr<expression>>& array_init_elements() const { return _array_init_elements; }
+
+    void set_array_init_elements(const std::vector<std::shared_ptr<expression>>& elems) {
+        _array_init_elements = elems;
+        for (auto& e : _array_init_elements) {
+            if (e) e->set_parent_expression(shared_as<expression>());
+        }
+    }
+
+    void assign_array_init_element(size_t index, const std::shared_ptr<expression>& elem) {
+        _array_init_elements[index] = elem;
+        if (elem) elem->set_parent_expression(shared_as<expression>());
+    }
+
+    size_t array_size() const { return _array_size; }
+
+    const std::vector<std::shared_ptr<constructor>>& element_constructors() const { return _element_constructors; }
+
+    // --- Factory methods ---
+
     static std::shared_ptr<new_expression> make_shared(
         const std::shared_ptr<type>& allocated_type,
         const std::vector<std::shared_ptr<expression>>& args);
+
+    /** Create a new-array expression. */
+    static std::shared_ptr<new_expression> make_array_shared(
+        const std::shared_ptr<type>& element_type,
+        const std::shared_ptr<expression>& array_size_expr,
+        const std::vector<std::shared_ptr<expression>>& init_elements,
+        bool has_brace_init);
 
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<new_expression> c{new new_expression()};
         c->_type = _type;
         c->_allocated_type = _allocated_type;
         c->_constructor = _constructor;
-        std::vector<std::shared_ptr<expression>> args;
-        for (auto& a : _arguments) args.push_back(a->clone());
-        c->assign_arguments(args);
+        c->_is_array = _is_array;
+        c->_array_size = _array_size;
+        c->_has_brace_init = _has_brace_init;
+        if (!_is_array) {
+            std::vector<std::shared_ptr<expression>> args;
+            for (auto& a : _arguments) args.push_back(a->clone());
+            c->assign_arguments(args);
+        } else {
+            if (_array_size_expr) {
+                c->_array_size_expr = _array_size_expr->clone();
+                c->_array_size_expr->set_parent_expression(c);
+            }
+            std::vector<std::shared_ptr<expression>> elems;
+            for (auto& e : _array_init_elements) elems.push_back(e ? e->clone() : nullptr);
+            c->set_array_init_elements(elems);
+            c->_element_constructors = _element_constructors;
+        }
         return c;
     }
 };

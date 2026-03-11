@@ -278,6 +278,24 @@ std::shared_ptr<new_expression> new_expression::make_shared(
     return expr;
 }
 
+std::shared_ptr<new_expression> new_expression::make_array_shared(
+    const std::shared_ptr<type>& element_type,
+    const std::shared_ptr<expression>& array_size_expr,
+    const std::vector<std::shared_ptr<expression>>& init_elements,
+    bool has_brace_init)
+{
+    std::shared_ptr<new_expression> expr{new new_expression()};
+    expr->_is_array = true;
+    expr->_allocated_type = element_type;
+    expr->_has_brace_init = has_brace_init;
+    if (array_size_expr) {
+        expr->_array_size_expr = array_size_expr;
+        array_size_expr->set_parent_expression(expr);
+    }
+    expr->set_array_init_elements(init_elements);
+    return expr;
+}
+
 //
 // Delete expression
 //
