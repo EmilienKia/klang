@@ -138,11 +138,22 @@ Logical operators work on boolean values (or values implicitly convertible to `b
 a && b       // true only if both a and b are true
 a || b       // true if at least one of a or b is true
 ```
-**Short-circuit evaluation:**  
-`&&` does not evaluate the right operand if the left is `false`.  
-`||` does not evaluate the right operand if the left is `true`.
+**Short-circuit evaluation (and-then / or-else):**
+
+`&&` and `||` use **short-circuit evaluation**: the right operand is only evaluated
+if its value could change the result.
+
+- `&&` (**and-then**): if the left operand is `false`, the result is `false` without
+  evaluating the right operand.
+- `||` (**or-else**): if the left operand is `true`, the result is `true` without
+  evaluating the right operand.
+
+This makes null-guard patterns safe — the dereference is only reached when the
+pointer is known to be non-null:
 ```k
-if (p != null && *p > 0) { ... }
+if (p != null && *p > 0) { ... }   // *p only evaluated if p is non-null
+if (p && *p > 0) { ... }           // same, using implicit bool conversion
+if (failed || *fallback == 0) { ... }  // *fallback skipped if failed is true
 ```
 
 ### Implicit boolean conversion for indirection types

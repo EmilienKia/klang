@@ -1963,52 +1963,106 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
 //
 
 void implementation_generator::visit_logical_and_expression(logical_and_expression& expr) {
-    auto [left, right] = process_binary_expression(expr);
-    if(!left || !right) {
-        // TODO throw exception ?
+    // ── Short-circuit evaluation (and-then) ─────────────────────────────────
+    // Evaluate left first; if false, skip right entirely and yield false.
+
+    // 1. Evaluate left operand
+    _value = nullptr;
+    expr.left()->accept(*this);
+    llvm::Value* left = _value;
+    if (!left) {
         _value = nullptr;
         return;
     }
 
     // If left operand is a reference, dereference it.
-    // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type());
-        left = _builder->CreateLoad(type, left);
+    if (type::is_reference(expr.left()->get_type())) {
+        llvm::Type* ty = _context->get_llvm_type(expr.left()->get_type());
+        left = _builder->CreateLoad(ty, left);
     }
 
-    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        throw_internal_error(0x0026, std::nullopt,
-            "Internal error: '&&' operator has non-primitive operand during code generation; "
-            "this should have been rejected during type resolution");
-    }
+    // 2. Create basic blocks for short-circuit
+    llvm::Function* func = _builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* entry_bb = _builder->GetInsertBlock();
+    llvm::BasicBlock* rhs_bb   = llvm::BasicBlock::Create(**_context, "land-rhs", func);
+    llvm::BasicBlock* merge_bb = llvm::BasicBlock::Create(**_context, "land-merge");
 
-    _value = _builder->CreateAnd(left, right);
+    // 3. Branch: if left is true, evaluate right; otherwise skip to merge with false
+    _builder->CreateCondBr(left, rhs_bb, merge_bb);
+
+    // 4. Evaluate right operand (only reached if left was true)
+    _builder->SetInsertPoint(rhs_bb);
+    _value = nullptr;
+    expr.right()->accept(*this);
+    llvm::Value* right = _value;
+    if (!right) {
+        _value = nullptr;
+        return;
+    }
+    // Capture the actual block after visiting right (it may have created sub-blocks)
+    llvm::BasicBlock* rhs_end_bb = _builder->GetInsertBlock();
+    _builder->CreateBr(merge_bb);
+
+    // 5. Merge block with PHI
+    func->insert(func->end(), merge_bb);
+    _builder->SetInsertPoint(merge_bb);
+    llvm::PHINode* phi = _builder->CreatePHI(_builder->getInt1Ty(), 2, "land");
+    phi->addIncoming(_builder->getFalse(), entry_bb);  // left was false → result is false
+    phi->addIncoming(right, rhs_end_bb);               // left was true → result is right
+
+    _value = phi;
 }
 
 
 void implementation_generator::visit_logical_or_expression(logical_or_expression& expr) {
-    auto [left, right] = process_binary_expression(expr);
-    if(!left || !right) {
-        // TODO throw exception ?
+    // ── Short-circuit evaluation (or-else) ─────────────────────────────────
+    // Evaluate left first; if true, skip right entirely and yield true.
+
+    // 1. Evaluate left operand
+    _value = nullptr;
+    expr.left()->accept(*this);
+    llvm::Value* left = _value;
+    if (!left) {
         _value = nullptr;
         return;
     }
 
     // If left operand is a reference, dereference it.
-    // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type());
-        left = _builder->CreateLoad(type, left);
+    if (type::is_reference(expr.left()->get_type())) {
+        llvm::Type* ty = _context->get_llvm_type(expr.left()->get_type());
+        left = _builder->CreateLoad(ty, left);
     }
 
-    if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        throw_internal_error(0x0027, std::nullopt,
-            "Internal error: '||' operator has non-primitive operand during code generation; "
-            "this should have been rejected during type resolution");
-    }
+    // 2. Create basic blocks for short-circuit
+    llvm::Function* func = _builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* entry_bb = _builder->GetInsertBlock();
+    llvm::BasicBlock* rhs_bb   = llvm::BasicBlock::Create(**_context, "lor-rhs", func);
+    llvm::BasicBlock* merge_bb = llvm::BasicBlock::Create(**_context, "lor-merge");
 
-    _value = _builder->CreateOr(left, right);
+    // 3. Branch: if left is true, skip to merge with true; otherwise evaluate right
+    _builder->CreateCondBr(left, merge_bb, rhs_bb);
+
+    // 4. Evaluate right operand (only reached if left was false)
+    _builder->SetInsertPoint(rhs_bb);
+    _value = nullptr;
+    expr.right()->accept(*this);
+    llvm::Value* right = _value;
+    if (!right) {
+        _value = nullptr;
+        return;
+    }
+    // Capture the actual block after visiting right (it may have created sub-blocks)
+    llvm::BasicBlock* rhs_end_bb = _builder->GetInsertBlock();
+    _builder->CreateBr(merge_bb);
+
+    // 5. Merge block with PHI
+    func->insert(func->end(), merge_bb);
+    _builder->SetInsertPoint(merge_bb);
+    llvm::PHINode* phi = _builder->CreatePHI(_builder->getInt1Ty(), 2, "lor");
+    phi->addIncoming(_builder->getTrue(), entry_bb);   // left was true → result is true
+    phi->addIncoming(right, rhs_end_bb);               // left was false → result is right
+
+    _value = phi;
 }
 
 //
@@ -2263,7 +2317,7 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
 
     if(!type::is_primitive(left_type) || !type::is_primitive(right_type)) {
         throw_internal_error(0x002A, std::nullopt,
-            "Internal error: '==' operator has non-primitive operand during code generation; "
+            "Internal error: '==' operator has a non-primitive operand during code generation; "
             "this should have been rejected during type resolution");
     }
 

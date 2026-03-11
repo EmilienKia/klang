@@ -701,3 +701,200 @@ TEST_CASE("Pointer assign null then check", "[gen][null][bool][assignment]") {
     // 1 (first if) + 0 (p is null) + 100 (!p is true) = 101
     REQUIRE(fn() == 101);
 }
+
+// =============================================================================
+// SHORT-CIRCUIT EVALUATION — && (and-then) and || (or-else)
+// =============================================================================
+
+TEST_CASE("&& short-circuit: null ptr skips dereference", "[gen][null][shortcircuit]") {
+    // Critical test: if && were eager, *p would segfault because p is null.
+    // With short-circuit, p is false so *p is never evaluated.
+    auto jit = gen_jit(R"SRC(
+        module __sc_and_null__;
+        test() : int {
+            p : int* = null;
+            if (p != null && *p == 42) { return 1; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 0);  // p is null, right side never evaluated, result is false
+}
+
+TEST_CASE("&& short-circuit: non-null ptr evaluates both sides", "[gen][null][shortcircuit]") {
+    auto jit = gen_jit(R"SRC(
+        module __sc_and_nonnull__;
+        test() : int {
+            x : int = 42;
+            p : int* = &x;
+            if (p != null && *p == 42) { return 1; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);  // p is non-null, *p == 42 is true
+}
+
+TEST_CASE("&& short-circuit with implicit bool: null ptr skips dereference", "[gen][null][shortcircuit]") {
+    // Same as above but using implicit bool conversion instead of explicit != null
+    auto jit = gen_jit(R"SRC(
+        module __sc_and_implicit__;
+        test() : int {
+            p : int* = null;
+            if (p && *p == 42) { return 1; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 0);  // p is null (false), right side skipped
+}
+
+TEST_CASE("|| short-circuit: true left skips right", "[gen][null][shortcircuit]") {
+    // If || were eager, *q would segfault because q is null.
+    // With short-circuit, p != null is true so *q is never evaluated.
+    auto jit = gen_jit(R"SRC(
+        module __sc_or_skip__;
+        test() : int {
+            x : int = 42;
+            p : int* = &x;
+            q : int* = null;
+            if (p != null || *q == 99) { return 1; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);  // p != null is true, right side never evaluated
+}
+
+TEST_CASE("|| short-circuit: false left evaluates right", "[gen][null][shortcircuit]") {
+    auto jit = gen_jit(R"SRC(
+        module __sc_or_eval__;
+        test() : int {
+            x : int = 42;
+            p : int* = null;
+            q : int* = &x;
+            if (p != null || *q == 42) { return 1; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);  // p is null (false), evaluates right: *q == 42 is true
+}
+
+TEST_CASE("Chained && short-circuit: a && b && c", "[gen][null][shortcircuit]") {
+    auto jit = gen_jit(R"SRC(
+        module __sc_chain_and__;
+        test() : int {
+            x : int = 1;
+            y : int = 2;
+            p : int* = &x;
+            q : int* = &y;
+            r : int* = null;
+            if (p != null && q != null && *p == 1 && *q == 2) { return 1; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("Chained && short-circuit: stops at first false", "[gen][null][shortcircuit]") {
+    // r is null, so the third && is false and *r is never evaluated
+    auto jit = gen_jit(R"SRC(
+        module __sc_chain_stop__;
+        test() : int {
+            x : int = 1;
+            p : int* = &x;
+            r : int* = null;
+            if (p != null && r != null && *r == 99) { return 1; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 0);  // r is null, third operand skipped
+}
+
+TEST_CASE("Chained || short-circuit: stops at first true", "[gen][null][shortcircuit]") {
+    auto jit = gen_jit(R"SRC(
+        module __sc_chain_or__;
+        test() : int {
+            x : int = 42;
+            p : int* = &x;
+            q : int* = null;
+            if (*p == 42 || q != null || *q == 99) { return 1; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);  // first condition true, rest skipped
+}
+
+TEST_CASE("Mixed && || short-circuit", "[gen][null][shortcircuit]") {
+    auto jit = gen_jit(R"SRC(
+        module __sc_mixed__;
+        test() : int {
+            x : int = 42;
+            p : int* = &x;
+            q : int* = null;
+            if ((p != null && *p == 42) || (q != null && *q == 99)) { return 1; }
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);  // left side of || is true, right || side skipped (q is null)
+}
+
+TEST_CASE("&& truth table preserved", "[gen][null][shortcircuit]") {
+    auto jit = gen_jit(R"SRC(
+        module __sc_truth_and__;
+        test() : int {
+            result : int = 0;
+            if (false && false) { result = result + 1; }
+            if (false && true)  { result = result + 10; }
+            if (true && false)  { result = result + 100; }
+            if (true && true)   { result = result + 1000; }
+            return result;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1000);  // only true&&true yields true
+}
+
+TEST_CASE("|| truth table preserved", "[gen][null][shortcircuit]") {
+    auto jit = gen_jit(R"SRC(
+        module __sc_truth_or__;
+        test() : int {
+            result : int = 0;
+            if (false || false) { result = result + 1; }
+            if (false || true)  { result = result + 10; }
+            if (true || false)  { result = result + 100; }
+            if (true || true)   { result = result + 1000; }
+            return result;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1110);  // all except false||false
+}
+
