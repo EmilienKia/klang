@@ -633,9 +633,26 @@ g   : double[100];      // global array of 100 doubles, zero-initialised
 ```
 
 **Initialisation:**
-- A sized array variable is always **zero-initialised** at its declaration (primitives are set to
-  `0`; struct elements will be default-constructed in a future version).
-- Explicit initialiser expressions at declaration are not supported.
+- A sized array variable is **zero-initialised** at its declaration by default (primitives are set to
+  `0`; struct elements will be default-constructed).
+- Explicit initialisation with a brace initializer list is supported:
+  ```k
+  arr : int[3] {1, 2, 3};           // each element explicitly initialised
+  arr : int[5] {1, 1+1, 2+1, 2*2, 10/2};  // expressions are allowed
+  arr : int[] {10, 20, 30};         // size inferred from the number of elements (3)
+  arr : int[0] {};                  // empty array
+  ```
+- An empty slot in the list represents default construction:
+  ```k
+  arr : int[3] {1, , 3};            // element 1 is zero-initialised
+  ```
+- If fewer elements are provided than the array size, remaining elements are default-initialised
+  and a **warning** is emitted.
+- If more elements are provided than the array size, a **compile error** is emitted.
+- For aggregate element types, each element can be a constructor invocation:
+  ```k
+  arr : Point[3] { Point(1,2), Point(3,4), Point(5,6) };
+  ```
 
 **Lifetime:**
 - An array never changes its size or type during its lifetime.

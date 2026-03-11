@@ -155,6 +155,10 @@ void default_model_visitor::visit_delete_expression(delete_expression& expr) {
     visit_unary_expression(expr);
 }
 
+void default_model_visitor::visit_array_init_expression(array_init_expression& expr) {
+    visit_expression(expr);
+}
+
 void default_model_visitor::visit_owner_move_expression(owner_move_expression& expr) {
     visit_unary_expression(expr);
 }

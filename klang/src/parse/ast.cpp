@@ -180,6 +180,10 @@ void ast::delete_expr::visit(ast_visitor &visitor) {
     visitor.visit_delete_expr(*this);
 }
 
+void ast::brace_init_list::visit(ast_visitor &visitor) {
+    visitor.visit_brace_init_list(*this);
+}
+
 //
 // Default AST visitor
 //
@@ -345,6 +349,10 @@ void default_ast_visitor::visit_new_expr(ast::new_expr &) {
 }
 
 void default_ast_visitor::visit_delete_expr(ast::delete_expr &) {
+
+}
+
+void default_ast_visitor::visit_brace_init_list(ast::brace_init_list &) {
 
 }
 

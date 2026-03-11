@@ -2298,15 +2298,20 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         }
     } else if (type::is_sized_array(var.get_type())) {
         // Sized array variable: int[N]
-        // No initializer = zero-init (always valid for any element type).
-        // An explicit initializer is not yet supported at declaration for value arrays.
-        if (init_expr && !init_expr->empty()) {
+        // Check if it has an array_init_expression (brace init)
+        auto arr_init = std::dynamic_pointer_cast<array_init_expression>(init_expr_base);
+        if (arr_init) {
+            // Array brace init — resolve handled in visit_array_init_expression
+            arr_init->accept(*this);
+        } else if (init_expr && !init_expr->empty()) {
+            // Non-brace-init explicit initializer is not supported
             throw_error(0x4201, std::nullopt,
                 "Array variable '{}' of type '{}' cannot have an explicit initialiser at declaration; "
-                "arrays are always zero-initialised at construction",
+                "use brace initialization syntax: arr : T[N] {{elem1, elem2, ...}}",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
             return;
         }
+        // No initializer = zero-init (always valid for any element type).
     } else {
         // Unsupported construction for other types for now
         // TODO Support construction for other types (array, etc.)

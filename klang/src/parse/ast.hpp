@@ -700,19 +700,40 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * Brace initializer list expression.
+         * Represents a comma-separated list of expressions inside braces: { e1, e2, ..., eN }
+         * An empty slot (two consecutive commas, or trailing comma before '}') yields a nullptr entry
+         * to represent default construction.
+         * Used for array initialization: arr : int[3] { 1, 2, 3 };
+         */
+        struct brace_init_list : public expression {
+            lex::punctuator open_brace, close_brace;
+            /** Element initializer expressions. nullptr entries represent empty (default-init) slots. */
+            std::vector<expr_ptr> elements;
+
+            brace_init_list(const lex::punctuator& open_brace,
+                            const lex::punctuator& close_brace,
+                            const std::vector<expr_ptr>& elements)
+                : open_brace(open_brace), close_brace(close_brace), elements(elements) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct variable_decl : public declaration, public statement {
             std::vector <lex::keyword> specifiers;
             lex::identifier name;
             std::shared_ptr<ast::type_specifier> type;
             expr_ptr init;
             bool is_constructor = false;
+            bool is_brace_init = false;
 
             variable_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
-                          const std::shared_ptr<ast::type_specifier> &type, expr_ptr init = nullptr, bool is_constructor = false) :
-                    specifiers(specifiers), name(name), type(type), init(init), is_constructor(is_constructor) {}
+                          const std::shared_ptr<ast::type_specifier> &type, expr_ptr init = nullptr, bool is_constructor = false, bool is_brace_init = false) :
+                    specifiers(specifiers), name(name), type(type), init(init), is_constructor(is_constructor), is_brace_init(is_brace_init) {}
 
-            variable_decl(std::vector <lex::keyword> &&specifiers, lex::identifier &&name, std::shared_ptr<ast::type_specifier> &&type, expr_ptr init, bool is_constructor) :
-                    specifiers(specifiers), name(name), type(type), init(init), is_constructor(is_constructor) {}
+            variable_decl(std::vector <lex::keyword> &&specifiers, lex::identifier &&name, std::shared_ptr<ast::type_specifier> &&type, expr_ptr init, bool is_constructor, bool is_brace_init = false) :
+                    specifiers(specifiers), name(name), type(type), init(init), is_constructor(is_constructor), is_brace_init(is_brace_init) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -870,6 +891,8 @@ namespace k::parse {
         virtual void visit_new_expr(ast::new_expr &) = 0;
         virtual void visit_delete_expr(ast::delete_expr &) = 0;
 
+        virtual void visit_brace_init_list(ast::brace_init_list &) = 0;
+
         virtual void visit_comma_expr(ast::expr_list_expr &) = 0;
 
     };
@@ -921,6 +944,8 @@ namespace k::parse {
 
         void visit_new_expr(ast::new_expr &) override;
         void visit_delete_expr(ast::delete_expr &) override;
+
+        void visit_brace_init_list(ast::brace_init_list &) override;
 
         void visit_comma_expr(ast::expr_list_expr &) override;
     };

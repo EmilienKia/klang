@@ -499,6 +499,16 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             _stm << "delete ";
             if (expr.expr()) expr.expr()->visit(*this);
         }
+
+        void visit_brace_init_list(ast::brace_init_list& init) override {
+            _stm << "{";
+            for (size_t i = 0; i < init.elements.size(); ++i) {
+                if (i > 0) _stm << ", ";
+                if (init.elements[i]) init.elements[i]->visit(*this);
+                // else: empty slot (default init) — nothing printed
+            }
+            _stm << "}";
+        }
 };
 
 

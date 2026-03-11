@@ -275,6 +275,7 @@ public:
     void visit_new_expression(new_expression&) override;
     void visit_delete_expression(delete_expression&) override;
     void visit_owner_move_expression(owner_move_expression&) override;
+    void visit_array_init_expression(array_init_expression&) override;
 
     void visit_cast_expression(cast_expression&) override;
 

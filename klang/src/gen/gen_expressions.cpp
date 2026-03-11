@@ -2442,6 +2442,170 @@ void implementation_generator::visit_owner_move_expression(owner_move_expression
     // else: _value is already the raw owner pointer (e.g., from new_expression)
 }
 
+//
+// Array init expression
+//
+
+void symbol_resolver::visit_array_init_expression(array_init_expression& expr) {
+    if (expr.constructed_symbol()) expr.constructed_symbol()->accept(*this);
+    for (size_t i = 0; i < expr.size(); ++i) {
+        if (auto e = expr.element(i)) e->accept(*this);
+    }
+}
+
+void type_reference_resolver::visit_array_init_expression(array_init_expression& expr) {
+    // Resolve sub-expressions
+    for (size_t i = 0; i < expr.size(); ++i) {
+        if (auto e = expr.element(i)) e->accept(*this);
+    }
+
+    // Get the array variable's type
+    auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
+    if (!var_def) return;
+    auto var_type = var_def->get_type();
+    if (!type::is_sized_array(var_type)) return;
+
+    auto arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type);
+    auto elem_type = arr_type->get_subtype();
+
+    // Validate element count
+    size_t arr_size = arr_type->get_size();
+    size_t init_count = expr.size();
+
+    if (init_count > arr_size) {
+        throw_error(0x4210, std::nullopt,
+            "Array initializer list has {} elements, but the array '{}' has size {}: too many initializers",
+            {std::to_string(init_count), var_def->get_fq_name(), std::to_string(arr_size)});
+        return;
+    }
+    if (init_count < arr_size && init_count > 0) {
+        warn(0x4211,
+            "Array initializer list has {} elements, but the array '{}' has size {}: "
+            "remaining {} elements will be default-initialized",
+            {std::to_string(init_count), var_def->get_fq_name(), std::to_string(arr_size),
+             std::to_string(arr_size - init_count)});
+    }
+
+    // Type-check and adapt each element
+    if (type::is_primitive(elem_type)) {
+        for (size_t i = 0; i < init_count; ++i) {
+            auto e = expr.element(i);
+            if (!e) continue; // default-init slot
+            auto cast = adapt_type(e, elem_type);
+            if (!cast) {
+                throw_error(0x4212, std::nullopt,
+                    "Cannot convert array element {} to type '{}' for array '{}'",
+                    {std::to_string(i), elem_type->to_string(), var_def->get_fq_name()});
+            } else if (cast != e) {
+                expr.assign_element(i, cast);
+            }
+        }
+    } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+        auto struct_model = st_type->get_struct();
+        for (size_t i = 0; i < init_count; ++i) {
+            auto e = expr.element(i);
+            if (!e) continue; // default-init slot, will use default ctor
+
+            // Check if element is a function invocation (explicit constructor call)
+            // The model_builder creates function_invocation_expression for Name(args...) patterns
+            auto func_inv = std::dynamic_pointer_cast<function_invocation_expression>(e);
+            if (func_inv) {
+                // Explicit constructor call — resolve constructor
+                std::vector<std::shared_ptr<expression>> ctor_args;
+                for (auto& arg : func_inv->arguments()) {
+                    ctor_args.push_back(arg);
+                }
+                auto [best_ctor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
+                if (!best_ctor) {
+                    throw_error(0x4213, std::nullopt,
+                        "No matching constructor for array element {} of type '{}'",
+                        {std::to_string(i), st_type->to_string()});
+                }
+                // Store ctor info in the expression for later use by codegen
+                // For now, adapt the arguments
+                func_inv->assign_arguments(adapted_args);
+            } else {
+                // Implicit single-param constructor
+                std::vector<std::shared_ptr<expression>> ctor_args = {e};
+                auto [best_ctor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
+                if (!best_ctor) {
+                    throw_error(0x4214, std::nullopt,
+                        "No matching single-parameter constructor for array element {} of type '{}' "
+                        "with argument type '{}'",
+                        {std::to_string(i), st_type->to_string(),
+                         e->get_type() ? e->get_type()->to_string() : "?"});
+                }
+                if (!adapted_args.empty() && adapted_args[0] != e) {
+                    expr.assign_element(i, adapted_args[0]);
+                }
+            }
+        }
+    }
+}
+
+void implementation_generator::visit_array_init_expression(array_init_expression& expr) {
+    auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
+    if (!var_def) return;
+
+    auto var_type = var_def->get_type();
+    auto arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type);
+    if (!arr_type) return;
+
+    // Get the alloca for the array variable
+    _value = nullptr;
+    expr.constructed_symbol()->accept(*this);
+    llvm::Value* arr_alloca = _value;
+    _value = nullptr;
+    if (!arr_alloca) return;
+
+    auto* struct_llvm = arr_type->get_llvm_struct_type();
+    auto elem_type = arr_type->get_subtype();
+    llvm::Type* llvm_elem_type = _context->get_llvm_type(elem_type);
+    size_t arr_size = arr_type->get_size();
+
+    // Zero-init the entire array struct first
+    _builder->CreateStore(llvm::ConstantAggregateZero::get(struct_llvm), arr_alloca);
+
+    // Write the element count into field 0
+    llvm::Value* size_ptr = _builder->CreateStructGEP(struct_llvm, arr_alloca,
+        sized_array_type::FIELD_SIZE, "arr_size");
+    _builder->CreateStore(
+        llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()),
+            arr_size, false),
+        size_ptr);
+
+    // Get pointer to the data array (field 1)
+    llvm::Value* data_ptr = _builder->CreateStructGEP(struct_llvm, arr_alloca,
+        sized_array_type::FIELD_DATA, "arr_data");
+    auto* llvm_arr_type = arr_type->get_llvm_data_array_type();
+
+    // Initialize each element
+    for (size_t i = 0; i < expr.size() && i < arr_size; ++i) {
+        auto elem_expr = expr.element(i);
+        if (!elem_expr) continue; // default-init (already zeroed)
+
+        llvm::Value* elem_ptr = _builder->CreateConstInBoundsGEP2_32(
+            llvm_arr_type, data_ptr, 0, i, "arr_elem_" + std::to_string(i));
+
+        if (type::is_primitive(elem_type)) {
+            _value = nullptr;
+            elem_expr->accept(*this);
+            if (_value) {
+                _builder->CreateStore(_value, elem_ptr);
+            }
+        } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+            // For struct elements, we need to call the constructor
+            // TODO: Full struct element initialization in Phase 4
+            _value = nullptr;
+            elem_expr->accept(*this);
+            if (_value) {
+                _builder->CreateStore(_value, elem_ptr);
+            }
+        }
+    }
+    _value = arr_alloca;
+}
+
 void implementation_generator::visit_new_expression(new_expression& expr) {
     auto alloc_type = expr.allocated_type();
     if (!alloc_type) { _value = nullptr; return; }

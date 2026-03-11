@@ -945,6 +945,7 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
     }
 
     bool is_constructor = false;
+    bool is_brace_init = false;
     ast::expr_ptr expr;
     auto lequal_or_openp = _lexer.get();
     if(lequal_or_openp==lex::operator_::EQUAL) {
@@ -959,6 +960,55 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
             throw_error(0x003D, lclosep, "Variable declaration through constructor with parenthesis initialization expects a closing parenthesis ')'");
         }
         is_constructor = true;
+    } else if (lequal_or_openp==lex::punctuator::BRACE_OPEN) {
+        // Brace initializer list: { expr, expr, ... }
+        auto open_brace = lex::as<lex::punctuator>(lequal_or_openp);
+        std::vector<ast::expr_ptr> elements;
+        // Check for empty brace list {}
+        auto peek = _lexer.get();
+        if (peek != lex::punctuator::BRACE_CLOSE) {
+            _lexer.unget();
+            // Parse comma-separated initializer expressions
+            // An empty slot (consecutive commas or leading comma) yields a nullptr entry
+            bool expect_more = true;
+            while(expect_more) {
+                auto next = _lexer.get();
+                if (next == lex::punctuator::COMMA) {
+                    // Empty element (default construction)
+                    elements.push_back(nullptr);
+                } else if (next == lex::punctuator::BRACE_CLOSE) {
+                    // Trailing comma before }
+                    _lexer.unget();
+                    break;
+                } else {
+                    _lexer.unget();
+                    auto elem_expr = parse_conditional_expr();
+                    elements.push_back(elem_expr);
+                    // Check for comma or closing brace
+                    auto sep = _lexer.get();
+                    if (sep == lex::punctuator::COMMA) {
+                        // Continue parsing
+                    } else if (sep == lex::punctuator::BRACE_CLOSE) {
+                        _lexer.unget();
+                        break;
+                    } else {
+                        throw_error(0x0060, sep, "Brace initializer list expects ',' or '}' after expression");
+                    }
+                }
+            }
+            // Consume closing brace
+            auto close = _lexer.get();
+            if (close != lex::punctuator::BRACE_CLOSE) {
+                throw_error(0x0061, close, "Brace initializer list expects a closing brace '}'");
+            }
+            auto close_brace = lex::as<lex::punctuator>(close);
+            expr = std::make_shared<ast::brace_init_list>(open_brace, close_brace, elements);
+        } else {
+            // Empty brace list {}
+            auto close_brace = lex::as<lex::punctuator>(peek);
+            expr = std::make_shared<ast::brace_init_list>(open_brace, close_brace, std::vector<ast::expr_ptr>{});
+        }
+        is_brace_init = true;
     } else {
         _lexer.unget();
     }
@@ -968,7 +1018,7 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
         throw_error(0x0014, _lexer.pick_current(), "Variable declaration expects to finish by a semicolon ';'");
     }
 
-    return std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, expr, is_constructor);
+    return std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type, expr, is_constructor, is_brace_init);
 }
 
 std::shared_ptr<ast::type_specifier> parser::parse_type_spec()

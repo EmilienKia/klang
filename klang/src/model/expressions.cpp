@@ -300,6 +300,31 @@ void owner_move_expression::accept(model_visitor& visitor) {
     visitor.visit_owner_move_expression(*this);
 }
 
+//
+// Array init expression
+//
+
+void array_init_expression::accept(model_visitor& visitor) {
+    visitor.visit_array_init_expression(*this);
+}
+
+std::shared_ptr<array_init_expression> array_init_expression::make_shared(
+    const std::shared_ptr<symbol_expression>& constructed_symbol,
+    const std::vector<std::shared_ptr<expression>>& elements)
+{
+    std::shared_ptr<array_init_expression> expr{new array_init_expression()};
+    expr->_constructed_symbol = constructed_symbol;
+    if (constructed_symbol) constructed_symbol->set_parent_expression(expr);
+    expr->set_elements(elements);
+    return expr;
+}
+
+std::shared_ptr<array_init_expression> array_init_expression::make_shared(
+    const std::shared_ptr<variable_definition>& variable,
+    const std::vector<std::shared_ptr<expression>>& elements)
+{
+    return make_shared(symbol_expression::from_variable(variable), elements);
+}
 
 
 } // namespace k::model

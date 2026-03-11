@@ -281,7 +281,41 @@ namespace k::model {
 
         if(decl.init) {
             std::vector<std::shared_ptr<model::expression>> args;
-            if (type::is_owner(var_type)
+            if (decl.is_brace_init) {
+                // Brace initializer list: { expr, expr, ... }
+                auto brace_list = std::dynamic_pointer_cast<parse::ast::brace_init_list>(decl.init);
+                if (!brace_list) {
+                    throw_error(0x0062, decl.name, "Internal error: brace init flag set but init is not a brace_init_list");
+                }
+
+                // If the type is an unsized array reference (T[]&, from T[] without a size),
+                // re-create it as a sized array using the brace list element count.
+                if (type::is_reference(var_type)) {
+                    auto ref_type = std::dynamic_pointer_cast<reference_type>(var_type);
+                    auto inner = ref_type ? ref_type->get_subtype() : nullptr;
+                    if (type::is_array(inner) && !type::is_sized_array(inner)) {
+                        auto unsized = std::dynamic_pointer_cast<array_type>(inner);
+                        auto elem_type = unsized->get_subtype();
+                        auto sized = elem_type->get_array(brace_list->elements.size());
+                        var->set_type(sized);
+                        var_type = sized;
+                    }
+                }
+
+                // Build model element expressions from the AST
+                std::vector<std::shared_ptr<model::expression>> elements;
+                for (auto& elem_ast : brace_list->elements) {
+                    if (elem_ast) {
+                        _expr.reset();
+                        elem_ast->visit(*this);
+                        elements.push_back(_expr);
+                        _expr.reset();
+                    } else {
+                        elements.push_back(nullptr); // default-init slot
+                    }
+                }
+                var->set_init_expr(model::array_init_expression::make_shared(var, elements));
+            } else if (type::is_owner(var_type)
                 || type::is_pointer(var_type)
                 || type::is_link(var_type)
                 || type::is_pinned(var_type)) {

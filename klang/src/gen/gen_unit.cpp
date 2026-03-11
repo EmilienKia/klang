@@ -367,6 +367,52 @@ void implementation_generator::visit_global_variable_definition(global_variable_
         }
     }
 
+    // For sized arrays with brace init, try to build a static constant initializer
+    if (!constInitValue && type::is_sized_array(var.get_type())) {
+        auto arr_init = std::dynamic_pointer_cast<array_init_expression>(var.get_init_expr());
+        auto arr_type = std::dynamic_pointer_cast<sized_array_type>(var.get_type());
+        if (arr_type) {
+            auto elem_type = arr_type->get_subtype();
+            auto* struct_llvm = arr_type->get_llvm_struct_type();
+            auto* arr_data_type = arr_type->get_llvm_data_array_type();
+            llvm::Type* llvm_elem_type = _context->get_llvm_type(elem_type);
+            size_t arr_size = arr_type->get_size();
+
+            bool all_constant = true;
+            std::vector<llvm::Constant*> elem_constants;
+
+            if (arr_init) {
+                for (size_t i = 0; i < arr_size; ++i) {
+                    auto elem = (i < arr_init->size()) ? arr_init->element(i) : nullptr;
+                    if (!elem) {
+                        // Default-init = zero
+                        elem_constants.push_back(llvm::Constant::getNullValue(llvm_elem_type));
+                    } else if (auto value = std::dynamic_pointer_cast<value_expression>(elem)) {
+                        auto c = get_llvm_constant_from_value_expr(*value);
+                        if (c) {
+                            elem_constants.push_back(c);
+                        } else {
+                            all_constant = false;
+                            break;
+                        }
+                    } else {
+                        all_constant = false;
+                        break;
+                    }
+                }
+            }
+
+            if (all_constant && elem_constants.size() == arr_size) {
+                auto* size_const = llvm::ConstantInt::get(
+                    llvm::Type::getInt32Ty(_context->llvm_context()), arr_size, false);
+                auto* arr_const = llvm::ConstantArray::get(arr_data_type, elem_constants);
+                llvm::Constant* struct_fields[] = {size_const, arr_const};
+                constInitValue = llvm::ConstantStruct::get(struct_llvm, struct_fields);
+            }
+            // else: fall through to default zero init; dynamic init handled by global ctor
+        }
+    }
+
     if (!constInitValue) {
         // If no explicit initialization, or complex initialization, lets have 0-filled initialization:
         constInitValue = type->generate_default_value_initializer();

@@ -171,6 +171,12 @@ Grammar notation used here:
 <a id="initialiser"></a>**Initialiser:**
     `'='` [ConditionalExpr](#conditionalexpr)
     | `'('` `[` [ExpressionList](#expressionlist) `]` `')'`
+    | [BraceInitList](#braceinitlist)
+<a id="braceinitlist"></a>**BraceInitList:**
+    `'{'` `[` [InitElement](#initelement) {{ `','` [InitElement](#initelement) }} `]` `'}'`
+<a id="initelement"></a>**InitElement:**
+    [ConditionalExpr](#conditionalexpr)
+    | *empty*
 ### Statements
 *Full description:* [Statements](statements/statements.md)
 <a id="statement"></a>**Statement:**

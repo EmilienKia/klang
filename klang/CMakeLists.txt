@@ -107,6 +107,7 @@ add_executable(klang-tests
         tests/test-gen-func-ref.cpp
         tests/test-gen-owner.cpp
         tests/test-gen-null-semantics.cpp
+        tests/test-gen-array-init.cpp
 )
 target_link_libraries(klang-tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain kdi)
 target_include_directories(klang-tests PRIVATE ${CMAKE_SOURCE_DIR}/libkdi/src)

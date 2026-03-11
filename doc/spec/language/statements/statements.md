@@ -78,6 +78,12 @@ Specifier: (one of)
 Initialiser:
     '=' ConditionalExpr                     -- value initialisation
     | '(' [ ExpressionList ] ')'            -- constructor initialisation
+    | BraceInitList                         -- brace initialisation (arrays)
+BraceInitList:
+    '{' [ InitElement { ',' InitElement } ] '}'
+InitElement:
+    ConditionalExpr
+    | (empty)                               -- default construction
 ```
 The type specifier follows a colon (`:`) after the variable name.
 **Examples:**
@@ -91,6 +97,8 @@ flag : bool = true;
 p : plop;                    // default-constructed struct
 q : plop(5);                 // struct constructed with argument
 arr : int[4];                // array of 4 ints
+arr2 : int[3] {1, 2, 3};    // array with brace initializer list
+arr3 : int[] {10, 20};       // array with size inferred from init list
 ptr : int* = &x;             // pointer initialized to address of x
 cptr : const int* = &x;      // pointer to const int — pointed value cannot be modified
 ref : int& = x;              // reference bound to x — x must be an addressable variable

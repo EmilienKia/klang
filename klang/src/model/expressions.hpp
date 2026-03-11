@@ -75,6 +75,7 @@ protected:
     friend class constructor_invocation_expression;
     friend class new_expression;
     friend class delete_expression;
+    friend class array_init_expression;
 
     void set_parent_expression(const std::shared_ptr<expression> &expression) {
         set_parent(expression);
@@ -848,6 +849,79 @@ public:
         std::shared_ptr<delete_expression> c{new delete_expression()};
         c->_type = _type;
         if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
+    }
+};
+
+/**
+ * Array initializer expression.
+ * Represents a brace-init list used to initialize an array variable.
+ * Each element is an expression (or nullptr for default-init slots).
+ * For aggregate element types, each non-null element may be a function_invocation_expression
+ * (explicit constructor call) or a plain expression (implicit single-param constructor).
+ *
+ * The constructed_symbol is set to the variable being initialized (as for constructor_invocation_expression).
+ */
+class array_init_expression : public expression {
+protected:
+    /** The variable being initialized. */
+    std::shared_ptr<symbol_expression> _constructed_symbol;
+
+    /** Per-element initializer expressions. nullptr = default-init. */
+    std::vector<std::shared_ptr<expression>> _elements;
+
+    array_init_expression() = default;
+    array_init_expression(const array_init_expression&) = delete;
+
+    friend class gen::type_reference_resolver;
+    friend class gen::implementation_generator;
+
+public:
+    const std::shared_ptr<symbol_expression>& constructed_symbol() const { return _constructed_symbol; }
+
+    const std::vector<std::shared_ptr<expression>>& elements() const { return _elements; }
+
+    size_t size() const { return _elements.size(); }
+
+    std::shared_ptr<expression> element(size_t index) const {
+        return index < _elements.size() ? _elements[index] : nullptr;
+    }
+
+    void assign_element(size_t index, const std::shared_ptr<expression>& elem) {
+        _elements[index] = elem;
+        if (elem) elem->set_parent_expression(shared_as<expression>());
+    }
+
+    void set_elements(const std::vector<std::shared_ptr<expression>>& elems) {
+        _elements = elems;
+        for (auto& e : _elements) {
+            if (e) e->set_parent_expression(shared_as<expression>());
+        }
+    }
+
+    static std::shared_ptr<array_init_expression> make_shared(
+        const std::shared_ptr<symbol_expression>& constructed_symbol,
+        const std::vector<std::shared_ptr<expression>>& elements);
+
+    static std::shared_ptr<array_init_expression> make_shared(
+        const std::shared_ptr<variable_definition>& variable,
+        const std::vector<std::shared_ptr<expression>>& elements);
+
+    void accept(model_visitor& visitor) override;
+
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<array_init_expression> c{new array_init_expression()};
+        c->_type = _type;
+        auto sym = _constructed_symbol
+            ? std::dynamic_pointer_cast<symbol_expression>(_constructed_symbol->clone())
+            : nullptr;
+        std::vector<std::shared_ptr<expression>> elems;
+        for (auto& e : _elements) elems.push_back(e ? e->clone() : nullptr);
+        if (sym) {
+            c->_constructed_symbol = sym;
+            sym->set_parent_expression(c);
+        }
+        c->set_elements(elems);
         return c;
     }
 };
