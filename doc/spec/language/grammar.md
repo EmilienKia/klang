@@ -151,6 +151,10 @@ Grammar notation used here:
     | `'&'`                                 -- reference (immutable binding, non-null)
     | `'~'`                                 -- link (mutable binding, non-null)
     | `'^'`                                 -- pinned (immutable binding, nullable)
+
+*Suffixes are applied left-to-right. An indirection suffix followed by an array suffix
+creates an array of indirections: `int~[3]` = array of 3 links to int.
+See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
 ### Parameters
 *Full description:* [Functions - Parameters](functions/functions.md#2-parameters)
 <a id="parameterlist"></a>**ParameterList:**

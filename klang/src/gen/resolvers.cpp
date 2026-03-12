@@ -3225,7 +3225,7 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     }
 
     if(type::is_link(type_src)) {
-        if(type::is_link(type_nc) || type::is_pointer(type_nc)) {
+        if(type::is_link(type_nc) || type::is_pointer(type_nc) || type::is_pinned(type_nc)) {
             if (type_nc == type_src || type == type_src) {
                 return expr;
             }

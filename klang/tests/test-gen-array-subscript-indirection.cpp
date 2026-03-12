@@ -320,3 +320,150 @@ TEST_CASE("Subscript on non-array pointer — error", "[gen][subscript-indirecti
     )SRC"));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Arrays of links (~)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Array of links — read", "[gen][subscript-indirection][array-of-indir]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            a : int = 3;
+            b : int = 5;
+            c : int = 7;
+            arr : int~[]{&a, &b, &c};
+            return *arr[0] + *arr[1] + *arr[2];
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == (3+5+7));
+}
+
+TEST_CASE("Array of links — write-through", "[gen][subscript-indirection][array-of-indir]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            a : int = 1;
+            b : int = 2;
+            arr : int~[]{&a, &b};
+            *arr[0] = 10;
+            *arr[1] = 20;
+            return a + b;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 30);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Arrays of pointers (*)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Array of pointers — read", "[gen][subscript-indirection][array-of-indir]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            arr : int*[]{&a, &b, &c};
+            return *arr[0] + *arr[1] + *arr[2];
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 60);
+}
+
+TEST_CASE("Array of pointers — write-through", "[gen][subscript-indirection][array-of-indir]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            a : int = 1;
+            b : int = 2;
+            arr : int*[]{&a, &b};
+            *arr[0] = 100;
+            *arr[1] = 200;
+            return a + b;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 300);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Arrays of pinned (^)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Array of pinned — read", "[gen][subscript-indirection][array-of-indir]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            a : int = 4;
+            b : int = 5;
+            c : int = 6;
+            arr : int^[]{&a, &b, &c};
+            return *arr[0] + *arr[1] + *arr[2];
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 15);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Arrays of owners (!)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Array of owners — read", "[gen][subscript-indirection][array-of-indir]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            arr : int![]{new int(10), new int(20), new int(30)};
+            r : int = *arr[0] + *arr[1] + *arr[2];
+            delete arr[0];
+            delete arr[1];
+            delete arr[2];
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 60);
+}
+
+TEST_CASE("Array of owners — write-through", "[gen][subscript-indirection][array-of-indir]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        test() : int {
+            arr : int![]{new int(1), new int(2)};
+            *arr[0] = 50;
+            *arr[1] = 60;
+            r : int = *arr[0] + *arr[1];
+            delete arr[0];
+            delete arr[1];
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 110);
+}
+

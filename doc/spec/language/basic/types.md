@@ -23,6 +23,7 @@ K is a statically-typed language. Every expression has a type determined at comp
    - 9.4 [Unsized array reference — `T[]`](#94-unsized-array-reference--t)
    - 9.5 [Array assignment](#95-array-assignment)
    - 9.6 [Subscript operator](#96-subscript-operator)
+   - 9.7 [Arrays of indirection types](#97-arrays-of-indirection-types)
 10. [Struct types](#10-struct-types)
 11. [Function reference types](#11-function-reference-types)
     - 11.1 [Free function reference types](#111-free-function-reference-types)
@@ -800,6 +801,89 @@ p[1] = 42;           // subscript through pointer — modifies arr[1]
 
 ---
 
+### 9.7 Arrays of indirection types
+
+An array's element type can itself be an indirection type.
+This creates an array whose slots hold addresses (links, pointers, pinned references, or
+owners) rather than plain values.
+
+Type suffixes are applied **left-to-right**, so `int~[3]` is parsed as `(int~)[3]` — a
+3-element array of links to `int`.
+
+| Type expression | Meaning |
+|-----------------|---------|
+| `T~[N]`  | Array of `N` links to `T` |
+| `T*[N]`  | Array of `N` pointers to `T` |
+| `T^[N]`  | Array of `N` pinned to `T` |
+| `T![N]`  | Array of `N` owners of `T` |
+
+**Internal representation:**
+
+An array of indirections has the standard array struct layout (§9.1).  Each element
+slot stores an opaque pointer — all indirection types share the same LLVM
+representation (`ptr`).
+
+**Initialisation:**
+
+Each element must be initialised with an expression whose type is compatible with the
+element indirection type.  The `&` (address-of) operator produces a `T~` (link) which
+is implicitly convertible to `T*`, `T^`, or `T~` (see §13.3).  Owners are initialised
+with `new` expressions.
+
+```k
+a : int = 3;
+b : int = 5;
+c : int = 7;
+
+// Array of links — elements initialised with &var (produces T~)
+arr_lnk : int~[] {&a, &b, &c};
+
+// Array of pointers — links implicitly widened to pointers
+arr_ptr : int*[] {&a, &b, &c};
+
+// Array of pinned — links implicitly widened to pinned
+arr_pin : int^[] {&a, &b, &c};
+
+// Array of owners — elements initialised with new expressions
+arr_own : int![] {new int(10), new int(20), new int(30)};
+```
+
+**Access and dereference:**
+
+The subscript operator returns a reference to the element, which is itself an
+indirection.  To reach the underlying value, apply the dereference operator `*`:
+
+```k
+arr : int~[] {&a, &b, &c};
+val : int = *arr[0];     // dereference the link at index 0 → 3
+```
+
+**Write-through:**
+
+For mutable indirections (link `~`, pointer `*`, owner `!`), `*arr[i] = expr` modifies
+the object pointed to by the indirection, not the indirection itself:
+
+```k
+arr : int~[] {&a, &b};
+*arr[0] = 100;           // modifies 'a' to 100
+*arr[1] = 200;           // modifies 'b' to 200
+```
+
+**Lifetime (owners):**
+
+Each owner element must be individually `delete`d before the array goes out of scope,
+or the owned objects will leak:
+
+```k
+arr : int![] {new int(1), new int(2), new int(3)};
+// ... use arr ...
+delete arr[0];
+delete arr[1];
+delete arr[2];
+```
+
+---
+
 
 ## 10. Struct types
 
@@ -880,10 +964,13 @@ TypeSuffix:
 ```
 
 Suffixes may be chained: `int*` is a pointer to int; `int[4]` is a 4-element int array;
-`int[4]&` is a reference to a 4-element int array.
+`int[4]&` is a reference to a 4-element int array.  An indirection suffix followed by
+an array suffix creates an **array of indirections**: `int~[3]` is a 3-element array of
+links to int (see §9.7).
 
 Note: `T!` (owner) does **not** compose with further suffixes — `Foo!*` or `Foo!!` are not
 valid type expressions.  An owner is always a top-level type suffix.
+However, `T!` may appear as an array element type: `T![N]` is a valid array of `N` owners.
 
 **Examples:**
 
@@ -896,10 +983,15 @@ int~
 int^
 int[4]
 int[4]&
+int~[3]         -- array of 3 links to int (see §9.7)
+int*[5]         -- array of 5 pointers to int
+int^[2]         -- array of 2 pinned to int
+int![4]         -- array of 4 owners of int
 plop&
 plop~
 plop*
-plop!       -- owner of a dynamically allocated plop
+plop!           -- owner of a dynamically allocated plop
+plop~[3]        -- array of 3 links to plop
 ```
 
 ---
@@ -936,9 +1028,11 @@ This applies to all four indirection types:
 |-----------------------|--------------------------|-------|
 | `Derived&`            | `Base&`                  | Only at construction (ref is immutable binding) |
 | `Derived~`            | `Base~`                  | Init and rebind |
+| `Derived~`            | `Base^`                  | Init only (link widened to pinned) |
 | `Derived^`            | `Base^`                  | Only at construction (pin is immutable binding) |
 | `Derived*`            | `Base*`                  | Init and rebind |
 | `Derived*` or `Derived~` | `Base~`               | Initialisation only (link is non-null; null-check inserted if source is nullable) |
+| `Derived~`            | `Base*`                  | Init and rebind (link widened to pointer) |
 | `Derived^` or `Derived*` | `Base*`               | Rebind |
 
 **Rules:**
@@ -953,7 +1047,31 @@ This applies to all four indirection types:
 5. Transitive upcasts (e.g. `C*→A*` where `C→B→A`) are supported via chained GEP.
 6. Virtual base upcasts are supported via the vbptr mechanism.
 
-**Examples:**
+**Cross-indirection widening (same pointed-at type):**
+
+In addition to the aggregate upcasts above, the compiler performs implicit
+cross-indirection widening when the pointed-at type is identical.  The following
+conversions are safe because they either relax mutability or add nullability:
+
+| Source   | Destination | Notes |
+|----------|-------------|-------|
+| `T~` (link) | `T*` (pointer) | Mutable→mutable; adds nullability |
+| `T~` (link) | `T^` (pinned)  | Mutable→immutable; adds nullability |
+| `ref<T>`    | `T~` (link)    | Immutable binding→mutable address (pointer values are identical in IR) |
+| `ref<T>`    | `T^` (pinned)  | Immutable binding→immutable nullable address |
+
+These conversions require no code at the LLVM IR level — all indirections are opaque
+pointers (`ptr`); only the K-level type annotation changes.
+
+This is particularly useful when initialising arrays of indirections (§9.7), where the
+address-of operator `&` (which produces a link `T~`) can be used to fill arrays of
+pointers, pinned, or links:
+
+```k
+a : int = 5;
+arr_ptr : int*[] {&a};   // &a → int~ → int* (link widened to pointer)
+arr_pin : int^[] {&a};   // &a → int~ → int^ (link widened to pinned)
+```
 
 ```k
 struct Animal {

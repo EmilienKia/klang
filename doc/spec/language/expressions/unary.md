@@ -92,6 +92,16 @@ bad    : int~       = &b;  // Error: '&b' has type 'const int~'; cannot bind to 
 
 > **Note:** `&expr` always produces a non-null address. It can be implicitly widened to a nullable type (`T*`, `T^`) but not the other way around.
 
+This makes `&` the natural way to populate arrays of indirections (see [Types — §9.7](../basic/types.md#97-arrays-of-indirection-types)):
+
+```k
+a : int = 1;
+b : int = 2;
+arr : int~[] {&a, &b};   // array of links
+ptrs : int*[] {&a, &b};  // array of pointers (link widened to pointer)
+pins : int^[] {&a, &b};  // array of pinned (link widened to pinned)
+```
+
 Applied to a reference variable `r : T&`, `&r` returns a `T~` pointing to the same object as `r`.
 Applied to a reference variable `r : const T&`, `&r` returns a `const T~`.
 

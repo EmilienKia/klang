@@ -105,6 +105,20 @@ p[1] = 42;           // subscript through pointer
 ```
 Array indices are zero-based.
 
+**Arrays of indirections:**
+
+When the element type of the array is itself an indirection (see [Types — §9.7](../basic/types.md#97-arrays-of-indirection-types)),
+the subscript returns a reference to the element slot, which holds an address.
+Apply `*` to dereference the pointed-to value:
+
+```k
+a : int = 10;
+b : int = 20;
+arr : int~[] {&a, &b};
+val : int = *arr[0];     // dereference the link at index 0 → 10
+*arr[1] = 99;            // write-through: modifies 'b' to 99
+```
+
 **Runtime bounds checking:** every subscript access on an array (through any indirection)
 is checked at runtime. The index is compared (unsigned) against the element count stored
 in the array header. If the index is out of bounds, the program prints a diagnostic to
