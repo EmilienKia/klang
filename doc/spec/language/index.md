@@ -53,6 +53,7 @@ Examples are included where they clarify the normative text.
 | Page | Description |
 |------|-------------|
 | [Functions](functions/functions.md) | Declaration, parameters, return type, body |
+| [Function Redirectors](functions/redirectors.md) | Alias a function to another implementation (`-> target;`), chaining, vtable interaction |
 | [Function References](functions/function_references.md) | Free and member function reference types (`*(P)`, `T::*(P)`, …), obtaining addresses, calling via `.*` / `->*` |
 | [Function Overloading](functions/overloading.md) | Multiple functions with the same name |
 | [Static Functions](functions/static.md) | Static member functions |

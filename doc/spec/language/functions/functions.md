@@ -21,7 +21,12 @@ There are no forward declarations without a body in the current language version
 ### Grammar
 ```
 FunctionDecl:
-    { Specifier } [ '~' ] Identifier '(' [ ParameterList ] ')' [ ':' TypeSpec ] BlockStatement
+    { Specifier } [ '~' ] Identifier '(' [ ParameterList ] ')' [ ':' TypeSpec ] FunctionBody
+FunctionBody: (one of)
+    BlockStatement
+    '->' QualifiedIdentifier [ '(' [ TypeSpecList ] ')' ] ';'
+    '->' 'default' ';'
+    '->' 'delete' ';'
 ParameterList:
     ParameterSpec { ',' ParameterSpec }
 ParameterSpec:
@@ -33,6 +38,7 @@ Specifier: (one of)
 - Parameters are enclosed in parentheses, separated by commas.
 - The optional return type follows a `:`.
 - If the return type is omitted, the function returns nothing (void).
+- Instead of a body block, a function may redirect to another function with `-> target;` (see [Function Redirectors](redirectors.md)).
 - The body follows immediately as a block statement.
 **Forward references:**  
 Functions may call other functions that are defined later in the same file; the compiler does not require top-down ordering.
@@ -145,4 +151,4 @@ For non-trivial initialisers (calling functions), the order of initialisation fo
 | `private`  | Sets default visibility to private. |
 > **Note:** `const` is reserved but not yet enforced in the current version.
 ---
-*See also:* [Function Overloading](overloading.md) · [Static Functions](static.md) · [Structures](../structs/structs.md) · [Main Function](../basic/main.md) · [Return Statement](../statements/return.md)
+*See also:* [Function Redirectors](redirectors.md) · [Function Overloading](overloading.md) · [Static Functions](static.md) · [Structures](../structs/structs.md) · [Main Function](../basic/main.md) · [Return Statement](../statements/return.md)

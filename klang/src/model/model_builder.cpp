@@ -396,9 +396,23 @@ namespace k::model {
             function->set_const_member(true);
         }
 
-        // Propagate aliasing specifier (-> default / -> delete)
-        if(func.aliasing_spec != parse::ast::function_decl::aliasing_spec_t::NONE) {
-            // Validated at parse time: only non-static constructors may carry this specifier.
+        // Propagate aliasing specifier (-> default / -> delete / -> target)
+        if(func.aliasing_spec == parse::ast::function_decl::aliasing_spec_t::REDIRECT) {
+            // Function redirect: -> qualifiedId ;
+            if(func.content) {
+                throw_error(0x0022, func.name,
+                    "Function redirector '{}' must not have a body; the body is provided by the target function",
+                    {func_name});
+            }
+            if(!func.member_inits.empty()) {
+                throw_error(0x0023, func.name,
+                    "Function redirector '{}' must not have a member initializer list",
+                    {func_name});
+            }
+            function->set_aliasing(model::function::function_aliasing::REDIRECT);
+            function->set_redirect_target_name(func.redirect_target->to_name());
+        } else if(func.aliasing_spec != parse::ast::function_decl::aliasing_spec_t::NONE) {
+            // Validated at parse time: only non-static constructors may carry DEFAULT/DELETE.
             // Here we double-check at model level and emit a clearer error if the context is wrong.
             if(!std::dynamic_pointer_cast<constructor>(function)) {
                 throw_error(0x0021, func.name,
@@ -598,7 +612,7 @@ namespace k::model {
         } else if (!function->is_abstract_func()
                    && func.aliasing_spec == parse::ast::function_decl::aliasing_spec_t::NONE) {
             // A non-abstract function with no body is only valid inside an interface
-            // (where it is implicitly abstract) or when using '-> default'/'-> delete'.
+            // (where it is implicitly abstract) or when using '-> default'/'-> delete'/'-> target'.
             throw_error(0x002C, func.name,
                 "Function '{}' has no body; a function body is required unless the function is abstract or declared inside an interface",
                 {func_name});

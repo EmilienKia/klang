@@ -317,6 +317,89 @@ symbol_resolver::resolve_symbol_from_root(const name& name) {
 void symbol_resolver::resolve()
 {
     visit_unit(_unit);
+
+    // Resolve chained redirects: follow redirect targets transitively.
+    // After visit_unit, each redirected function has its immediate target set.
+    // Now resolve chains: a -> b -> c becomes a -> c, b -> c.
+    resolve_redirect_chains(_unit);
+}
+
+static void collect_all_functions_from_aggregate(aggregate& agg, std::vector<std::shared_ptr<function>>& out) {
+    for (auto& fn : agg.functions()) {
+        out.push_back(fn);
+    }
+    // Recurse into nested aggregates
+    for (auto& [name, nested] : agg.aggregates()) {
+        collect_all_functions_from_aggregate(*nested, out);
+    }
+}
+
+static void collect_all_functions(const ns& nspc, std::vector<std::shared_ptr<function>>& out) {
+    for (auto& child : nspc.get_children()) {
+        if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+            out.push_back(fn);
+        } else if (auto agg = std::dynamic_pointer_cast<aggregate>(child)) {
+            collect_all_functions_from_aggregate(*agg, out);
+        } else if (auto child_ns = std::dynamic_pointer_cast<ns>(child)) {
+            collect_all_functions(*child_ns, out);
+        }
+    }
+}
+
+void symbol_resolver::resolve_redirect_chains(unit& unit) {
+    // Collect all functions from the unit
+    std::vector<std::shared_ptr<function>> all_functions;
+    if (auto root = unit.get_root_namespace()) {
+        collect_all_functions(*root, all_functions);
+    }
+
+    // For each redirected function, follow the chain to the final target
+    for (auto& fn : all_functions) {
+        if (fn->is_redirected() && fn->get_redirect_target()) {
+            std::unordered_set<function*> visited;
+            fn->set_redirect_target(resolve_redirect_chain(*fn, visited));
+        }
+    }
+}
+
+std::shared_ptr<function> symbol_resolver::resolve_redirect_chain(function& fn, std::unordered_set<function*>& visited) {
+    if (visited.count(&fn)) {
+        throw_error(0x0051, std::nullopt,
+            "Circular redirect chain detected involving function '{}'",
+            {fn.get_short_name()});
+    }
+    visited.insert(&fn);
+
+    auto target = fn.get_redirect_target();
+    if (!target) {
+        throw_error(0x0052, std::nullopt,
+            "Function redirector '{}' has no resolved target",
+            {fn.get_short_name()});
+    }
+
+    // If the target is itself a redirect, follow the chain
+    if (target->is_redirected()) {
+        if (!target->get_redirect_target()) {
+            throw_error(0x0053, std::nullopt,
+                "Function redirector '{}' targets '{}', which is itself a redirector with no resolved target",
+                {fn.get_short_name(), target->get_short_name()});
+        }
+        return resolve_redirect_chain(*target, visited);
+    }
+
+    // Target is a concrete function — check it's not abstract or deleted
+    if (target->is_abstract_func()) {
+        throw_error(0x0054, std::nullopt,
+            "Function redirector '{}' targets abstract function '{}', which has no implementation",
+            {fn.get_short_name(), target->get_short_name()});
+    }
+    if (target->is_deleted()) {
+        throw_error(0x0055, std::nullopt,
+            "Function redirector '{}' targets deleted function '{}'",
+            {fn.get_short_name(), target->get_short_name()});
+    }
+
+    return target;
 }
 
 std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>> // TODO Add traversal direction flag

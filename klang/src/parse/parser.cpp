@@ -505,7 +505,8 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 auto next = _lexer.get();
                 peek_holder.rollback();
                 bool is_return_type = (next == lex::punctuator::BRACE_OPEN)
-                    || (next == lex::punctuator::SEMICOLON);
+                    || (next == lex::punctuator::SEMICOLON)
+                    || (next == lex::operator_::ARROW);
                 if(is_return_type) {
                     // It really is a return type
                     restype = candidate_type;
@@ -585,32 +586,83 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
 
     auto statements = parse_statement_block();
     if(!statements) {
-        // Try to parse a function-aliasing declaration: -> ('default'|'delete') ';'
+        // Try to parse a function-aliasing declaration: -> ('default'|'delete'|qualifiedId) ';'
         lex::lex_holder alias_holder(_lexer);
         auto larrow = _lexer.get();
         if(larrow == lex::operator_::ARROW) {
+            // First, try 'default' or 'delete' (only for constructors)
             auto lkw = _lexer.get();
-            ast::function_decl::aliasing_spec_t aliasing;
-            if(lkw == lex::keyword::DEFAULT) {
-                aliasing = ast::function_decl::aliasing_spec_t::DEFAULT;
-            } else if(lkw == lex::keyword::DELETE) {
-                aliasing = ast::function_decl::aliasing_spec_t::DELETE;
-            } else {
-                throw_error(0x0045, _lexer.pick_current(), "Function aliasing declaration expects 'default' or 'delete' after '->'");
+            if(lkw == lex::keyword::DEFAULT || lkw == lex::keyword::DELETE) {
+                ast::function_decl::aliasing_spec_t aliasing;
+                if(lkw == lex::keyword::DEFAULT) {
+                    aliasing = ast::function_decl::aliasing_spec_t::DEFAULT;
+                } else {
+                    aliasing = ast::function_decl::aliasing_spec_t::DELETE;
+                }
+                if(auto lsemi = _lexer.get(); lsemi != lex::punctuator::SEMICOLON) {
+                    throw_error(0x0046, _lexer.pick_current(), "Function aliasing declaration expects ';' after 'default'/'delete'");
+                }
+                // Only constructors (non-static) may use -> default / -> delete
+                if(is_destructor) {
+                    throw_error(0x0047, _lexer.pick_current(),
+                        "The '-> default' / '-> delete' specifier is only allowed on non-static constructors, not on destructors");
+                }
+                if(lex::keyword::has(specifiers, lex::keyword::STATIC)) {
+                    throw_error(0x0048, _lexer.pick_current(),
+                        "The '-> default' / '-> delete' specifier is only allowed on non-static constructors; static constructors cannot be defaulted or deleted");
+                }
+                return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), params, aliasing);
             }
+
+            // Not default/delete — try to parse a redirect target: qualifiedId [ '(' type_list ')' ] ';'
+            _lexer.unget(); // put back the token we just read
+            auto redirect_target = parse_qualified_identifier();
+            if(!redirect_target) {
+                throw_error(0x0049, _lexer.pick_current(), "Function redirect declaration expects a target function name, 'default', or 'delete' after '->'");
+            }
+
+            // Optional parameter types for disambiguation: '(' [type_spec {',' type_spec}] ')'
+            std::vector<std::shared_ptr<ast::type_specifier>> redirect_param_types;
+            bool redirect_has_param_types = false;
+            {
+                lex::lex_holder paren_holder(_lexer);
+                auto maybe_open = _lexer.get();
+                if(maybe_open == lex::punctuator::PARENTHESIS_OPEN) {
+                    redirect_has_param_types = true;
+                    // Check for immediate close
+                    lex::lex_holder close_holder(_lexer);
+                    auto maybe_close = _lexer.get();
+                    if(maybe_close == lex::punctuator::PARENTHESIS_CLOSE) {
+                        // empty param type list — disambiguation with zero params
+                    } else {
+                        close_holder.rollback();
+                        // Parse comma-separated type list
+                        while(true) {
+                            auto ts = parse_type_spec();
+                            if(!ts) {
+                                throw_error(0x004A, _lexer.pick_current(), "Function redirect disambiguation expects a type specifier or ')'");
+                            }
+                            redirect_param_types.push_back(ts);
+                            lex::lex_holder comma_holder(_lexer);
+                            auto next = _lexer.get();
+                            if(next == lex::punctuator::PARENTHESIS_CLOSE) {
+                                break;
+                            }
+                            if(next != lex::punctuator::COMMA) {
+                                throw_error(0x004B, _lexer.pick_current(), "Function redirect disambiguation expects ',' or ')' after type specifier");
+                            }
+                        }
+                    }
+                } else {
+                    paren_holder.rollback();
+                }
+            }
+
             if(auto lsemi = _lexer.get(); lsemi != lex::punctuator::SEMICOLON) {
-                throw_error(0x0046, _lexer.pick_current(), "Function aliasing declaration expects ';' after 'default'/'delete'");
+                throw_error(0x004C, _lexer.pick_current(), "Function redirect declaration expects ';' after target");
             }
-            // Only constructors (non-static) may use -> default / -> delete
-            if(is_destructor) {
-                throw_error(0x0047, _lexer.pick_current(),
-                    "The '-> default' / '-> delete' specifier is only allowed on non-static constructors, not on destructors");
-            }
-            if(lex::keyword::has(specifiers, lex::keyword::STATIC)) {
-                throw_error(0x0048, _lexer.pick_current(),
-                    "The '-> default' / '-> delete' specifier is only allowed on non-static constructors; static constructors cannot be defaulted or deleted");
-            }
-            return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), params, aliasing);
+            return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params,
+                redirect_target, redirect_param_types, redirect_has_param_types);
         }
         alias_holder.rollback();
 

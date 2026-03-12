@@ -108,6 +108,24 @@ public:
      */
     void emit_vtable_stub(klass& st);
 
+    /**
+     * Emit LLVM GlobalAlias entries for all redirected functions
+     * in the given namespace and its children (aggregates, sub-namespaces).
+     */
+    void emit_redirect_aliases(ns& nspc);
+
+    /**
+     * Emit LLVM GlobalAlias entries for all redirected functions
+     * in the given aggregate and its nested aggregates.
+     */
+    void emit_redirect_aliases_from_aggregate(aggregate& agg);
+
+    /**
+     * Emit a single LLVM GlobalAlias for a redirected function.
+     * No-op if the function is not redirected.
+     */
+    void emit_redirect_alias(function& fn);
+
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;
     void visit_if_else_statement(if_else_statement&) override;

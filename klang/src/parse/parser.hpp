@@ -127,10 +127,12 @@ public:
     std::shared_ptr<ast::qualified_identifier> parse_qualified_identifier();
 
     /**
-     * Current support : FUNCTION_DECL := SPECIFIERS ?[~] identifier '(' [ PARAMETER *[',' PARAMETER ] ] ')' ?([':' [MEMBER_INIT_LIST|TYPE_SPEC]]) (STATEMENT_BLOCK|FUNCTION_ALIASING_DECL)
+     * Current support : FUNCTION_DECL := SPECIFIERS ?[~] identifier '(' [ PARAMETER *[',' PARAMETER ] ] ')' ?([':' [MEMBER_INIT_LIST|TYPE_SPEC]]) (STATEMENT_BLOCK|FUNCTION_ALIASING_DECL|FUNCTION_REDIRECT_DECL)
      * With: MEMBER_INIT_LIST := ':' MEMBER_INIT [',' MEMBER_INIT]*
      *       MEMBER_INIT := QUALIFIED_IDENTIFIER '(' ?[EXPRESSION_LIST] ')'
      *       FUNCTION_ALIASING_DECL := '->' ('default'|'delete') ';'
+     *       FUNCTION_REDIRECT_DECL := '->' QUALIFIED_IDENTIFIER ?['(' TYPE_SPEC_LIST ')'] ';'
+     *       TYPE_SPEC_LIST := TYPE_SPEC [',' TYPE_SPEC]*
      * @return
      */
     std::shared_ptr<ast::function_decl> parse_function_decl();

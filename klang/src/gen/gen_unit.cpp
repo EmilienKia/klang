@@ -25,6 +25,7 @@
 #include "../model/expressions.hpp"
 
 #include <llvm/IR/Verifier.h>
+#include <llvm/IR/GlobalAlias.h>
 
 #include <queue>
 #include <unordered_map>
@@ -216,6 +217,61 @@ void declaration_generator::visit_unit(unit &unit) {
             var->get_mangled_name());
         _context->_global_vars.insert({var, gv});
     }
+
+    // ── Emit GlobalAlias for redirected functions ─────────────────────────
+    // After all normal function declarations are emitted, create LLVM
+    // GlobalAlias entries for redirected functions pointing to their
+    // resolved targets.
+    emit_redirect_aliases(*_unit.get_root_namespace());
+}
+
+void declaration_generator::emit_redirect_aliases(ns& nspc) {
+    for (auto& child : nspc.get_children()) {
+        if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+            emit_redirect_alias(*fn);
+        } else if (auto agg = std::dynamic_pointer_cast<aggregate>(child)) {
+            emit_redirect_aliases_from_aggregate(*agg);
+        } else if (auto child_ns = std::dynamic_pointer_cast<ns>(child)) {
+            emit_redirect_aliases(*child_ns);
+        }
+    }
+}
+
+void declaration_generator::emit_redirect_aliases_from_aggregate(aggregate& agg) {
+    for (auto& fn : agg.functions()) {
+        emit_redirect_alias(*fn);
+    }
+    // Recurse into nested aggregates
+    for (auto& [name, nested] : agg.aggregates()) {
+        emit_redirect_aliases_from_aggregate(*nested);
+    }
+}
+
+void declaration_generator::emit_redirect_alias(function& fn) {
+    if (!fn.is_redirected()) return;
+    auto target = fn.get_redirect_target();
+    if (!target) return;
+
+    // Find the LLVM function for the target
+    auto target_it = _context->_functions.find(target);
+    if (target_it == _context->_functions.end()) {
+        // Target not yet declared — shouldn't happen after full declaration pass
+        return;
+    }
+    llvm::Function* target_llvm = target_it->second;
+
+    // Create GlobalAlias with the redirector's mangled name pointing to the target
+    auto* alias = llvm::GlobalAlias::create(
+        target_llvm->getValueType(),
+        target_llvm->getAddressSpace(),
+        llvm::GlobalValue::ExternalLinkage,
+        fn.get_mangled_name(),
+        target_llvm,
+        _context->_module.get());
+
+    // Register in the context so the alias can be found by symbol name
+    _context->_functions.insert({fn.shared_as<k::model::function>(), target_llvm});
+    (void)alias; // alias is owned by the module
 }
 
 void implementation_generator::visit_unit(unit &unit) {

@@ -132,6 +132,7 @@ public:
         if(func.is_static())            _stm << "static ";
         if(func.is_member())            _stm << "member ";
         if(func.is_compiler_generated()) _stm << "[compiler-generated] ";
+        if(func.is_redirected())         _stm << "[redirect -> " << func.get_redirect_target_name().to_string() << "] ";
     }
 
     // -------------------------------------------------------------------------

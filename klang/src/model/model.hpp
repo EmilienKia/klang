@@ -957,10 +957,13 @@ public:
 class function : public element, public named_element, public variable_holder {
 public:
     /**
-     * Aliasing specifier set by '-> default' or '-> delete' on constructor declarations.
-     * NONE means a regular user-defined body is present.
+     * Aliasing specifier for function declarations.
+     * NONE     = regular user-defined body.
+     * DEFAULT  = '-> default ;' on constructors (compiler-generated body).
+     * DELETE   = '-> delete ;' on constructors (call is forbidden).
+     * REDIRECT = '-> target ;' on any function (alias to another function).
      */
-    enum class function_aliasing { NONE, DEFAULT, DELETE };
+    enum class function_aliasing { NONE, DEFAULT, DELETE, REDIRECT };
 
 protected:
     friend class ns;
@@ -1014,6 +1017,19 @@ protected:
      * nullptr if no override.
      */
     std::shared_ptr<function> _overrides = nullptr;
+
+    /**
+     * Unresolved target name for REDIRECT aliasing.
+     * Set by model_builder, consumed by symbol_resolver.
+     */
+    k::name _redirect_target_name;
+
+    /**
+     * Resolved redirect target function.
+     * After chained resolution, this points to the final concrete implementation.
+     * Set by symbol_resolver (redirect resolution phase).
+     */
+    std::shared_ptr<function> _redirect_target = nullptr;
 
     std::shared_ptr<type> _return_type;
     std::vector<std::shared_ptr<parameter>> _parameters;
@@ -1086,7 +1102,7 @@ public:
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }
 
-    /** Returns the aliasing specifier (NONE / DEFAULT / DELETE). */
+    /** Returns the aliasing specifier (NONE / DEFAULT / DELETE / REDIRECT). */
     function_aliasing get_aliasing() const { return _aliasing; }
     /** Set the aliasing specifier. */
     void set_aliasing(function_aliasing a) { _aliasing = a; }
@@ -1094,6 +1110,19 @@ public:
     bool is_defaulted() const { return _aliasing == function_aliasing::DEFAULT; }
     /** True if the constructor was declared with '-> delete ;'. */
     bool is_deleted() const { return _aliasing == function_aliasing::DELETE; }
+
+    /** True if this function is a redirect (-> target ;). */
+    bool is_redirected() const { return _aliasing == function_aliasing::REDIRECT; }
+
+    /** Returns the unresolved redirect target name (set by model_builder). */
+    const k::name& get_redirect_target_name() const { return _redirect_target_name; }
+    /** Set the unresolved redirect target name. */
+    void set_redirect_target_name(const k::name& n) { _redirect_target_name = n; }
+
+    /** Returns the resolved redirect target function (set by symbol_resolver). */
+    std::shared_ptr<function> get_redirect_target() const { return _redirect_target; }
+    /** Set the resolved redirect target function. */
+    void set_redirect_target(std::shared_ptr<function> f) { _redirect_target = std::move(f); }
 
     /** True if this function is virtual (dispatched through vtable). Set by symbol_resolver. */
     bool is_virtual() const { return _is_virtual; }

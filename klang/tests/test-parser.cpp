@@ -1540,6 +1540,154 @@ TEST_CASE("Parse -> default missing semicolon yields error", "[parser][function_
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Function redirect declarations (-> target ;)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Parse function redirect — simple", "[parser][function_decl][redirect]") {
+    test_logger log;
+    k::source src{"foo() -> bar;"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+    REQUIRE( std::string{decl->name.content} == "foo" );
+    REQUIRE( decl->aliasing_spec == ast::function_decl::aliasing_spec_t::REDIRECT );
+    REQUIRE( decl->redirect_target );
+    REQUIRE( decl->redirect_target->names.size() == 1 );
+    REQUIRE( std::string{decl->redirect_target->names[0].content} == "bar" );
+    REQUIRE_FALSE( decl->redirect_has_param_types );
+    REQUIRE( decl->redirect_param_types.empty() );
+    REQUIRE_FALSE( decl->content );
+}
+
+TEST_CASE("Parse function redirect — with return type", "[parser][function_decl][redirect]") {
+    test_logger log;
+    k::source src{"foo() : int -> bar;"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+    REQUIRE( std::string{decl->name.content} == "foo" );
+    REQUIRE( decl->type );  // return type was parsed
+    REQUIRE( decl->aliasing_spec == ast::function_decl::aliasing_spec_t::REDIRECT );
+    REQUIRE( decl->redirect_target );
+    REQUIRE( decl->redirect_target->names.size() == 1 );
+    REQUIRE( std::string{decl->redirect_target->names[0].content} == "bar" );
+}
+
+TEST_CASE("Parse function redirect — qualified target", "[parser][function_decl][redirect]") {
+    test_logger log;
+    k::source src{"foo(v: int) -> ns::bar;"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+    REQUIRE( std::string{decl->name.content} == "foo" );
+    REQUIRE( decl->params.size() == 1 );
+    REQUIRE( decl->aliasing_spec == ast::function_decl::aliasing_spec_t::REDIRECT );
+    REQUIRE( decl->redirect_target );
+    REQUIRE( decl->redirect_target->names.size() == 2 );
+    REQUIRE( std::string{decl->redirect_target->names[0].content} == "ns" );
+    REQUIRE( std::string{decl->redirect_target->names[1].content} == "bar" );
+    REQUIRE_FALSE( decl->redirect_has_param_types );
+}
+
+TEST_CASE("Parse function redirect — with disambiguation types", "[parser][function_decl][redirect]") {
+    test_logger log;
+    k::source src{"foo() -> bar(int, int);"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+    REQUIRE( decl->aliasing_spec == ast::function_decl::aliasing_spec_t::REDIRECT );
+    REQUIRE( decl->redirect_target );
+    REQUIRE( std::string{decl->redirect_target->names[0].content} == "bar" );
+    REQUIRE( decl->redirect_has_param_types );
+    REQUIRE( decl->redirect_param_types.size() == 2 );
+}
+
+TEST_CASE("Parse function redirect — empty disambiguation types", "[parser][function_decl][redirect]") {
+    test_logger log;
+    k::source src{"foo() -> bar();"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+    REQUIRE( decl->aliasing_spec == ast::function_decl::aliasing_spec_t::REDIRECT );
+    REQUIRE( decl->redirect_target );
+    REQUIRE( std::string{decl->redirect_target->names[0].content} == "bar" );
+    REQUIRE( decl->redirect_has_param_types );
+    REQUIRE( decl->redirect_param_types.empty() );
+}
+
+TEST_CASE("Parse function redirect — qualified target with disambiguation", "[parser][function_decl][redirect]") {
+    test_logger log;
+    k::source src{"foo(a: int) -> Base::method(int);"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_function_decl();
+    REQUIRE( decl );
+    REQUIRE( decl->aliasing_spec == ast::function_decl::aliasing_spec_t::REDIRECT );
+    REQUIRE( decl->redirect_target->names.size() == 2 );
+    REQUIRE( std::string{decl->redirect_target->names[0].content} == "Base" );
+    REQUIRE( std::string{decl->redirect_target->names[1].content} == "method" );
+    REQUIRE( decl->redirect_has_param_types );
+    REQUIRE( decl->redirect_param_types.size() == 1 );
+}
+
+TEST_CASE("Parse function redirect — in struct", "[parser][function_decl][redirect][struct]") {
+    test_logger log;
+    k::source src{R"SRC(
+        struct Foo {
+            bar() : int -> baz;
+        }
+    )SRC"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_aggregate_decl();
+    REQUIRE( decl );
+    REQUIRE( decl->declarations.size() == 1 );
+    auto func = std::dynamic_pointer_cast<ast::function_decl>(decl->declarations[0]);
+    REQUIRE( func );
+    REQUIRE( std::string{func->name.content} == "bar" );
+    REQUIRE( func->aliasing_spec == ast::function_decl::aliasing_spec_t::REDIRECT );
+    REQUIRE( func->redirect_target );
+    REQUIRE( std::string{func->redirect_target->names[0].content} == "baz" );
+}
+
+TEST_CASE("Parse function redirect — in class with specifier", "[parser][function_decl][redirect][class]") {
+    test_logger log;
+    k::source src{R"SRC(
+        class Derived : public Base {
+            public speak() : int -> Base::speak;
+        }
+    )SRC"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_aggregate_decl();
+    REQUIRE( decl );
+    REQUIRE( decl->declarations.size() == 1 );
+    auto func = std::dynamic_pointer_cast<ast::function_decl>(decl->declarations[0]);
+    REQUIRE( func );
+    REQUIRE( std::string{func->name.content} == "speak" );
+    REQUIRE( func->aliasing_spec == ast::function_decl::aliasing_spec_t::REDIRECT );
+    REQUIRE( func->redirect_target->names.size() == 2 );
+}
+
+TEST_CASE("Parse -> redirect missing target yields error", "[parser][function_decl][redirect][error]") {
+    test_logger log;
+    k::source src{"foo() -> ;"};
+    k::parse::parser parser(log, src);
+    REQUIRE_THROWS( parser.parse_function_decl() );
+}
+
+TEST_CASE("Parse -> redirect missing semicolon yields error", "[parser][function_decl][redirect][error]") {
+    test_logger log;
+    k::source src{"foo() -> bar"};
+    k::parse::parser parser(log, src);
+    REQUIRE_THROWS( parser.parse_function_decl() );
+}
+
+TEST_CASE("Parse -> redirect bad disambiguation yields error", "[parser][function_decl][redirect][error]") {
+    test_logger log;
+    k::source src{"foo() -> bar(int,);"};
+    k::parse::parser parser(log, src);
+    REQUIRE_THROWS( parser.parse_function_decl() );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // import declarations
 // ─────────────────────────────────────────────────────────────────────────────
 

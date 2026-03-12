@@ -570,6 +570,13 @@ void kdi_builder::visit_function(function& fn) {
     if (fn.is_compiler_generated()) return;
     if (!is_exported(fn.get_visibility())) return;
 
+    // For redirected functions, resolve the LLVM function via the redirect target's mangled name
+    // (since the redirector is emitted as a GlobalAlias, not an llvm::Function).
+    std::string llvm_lookup_name = fn.get_mangled_name();
+    if (fn.is_redirected() && fn.get_redirect_target()) {
+        llvm_lookup_name = fn.get_redirect_target()->get_mangled_name();
+    }
+
     if (in_aggregate()) {
         // Member method
         kdi::kdi_method km;
@@ -586,7 +593,7 @@ void kdi_builder::visit_function(function& fn) {
         km.params          = to_kdi_params(fn);
         km.mangled_name    = fn.get_mangled_name();
         {
-            auto* llvm_fn = _ctx.module().getFunction(fn.get_mangled_name());
+            auto* llvm_fn = _ctx.module().getFunction(llvm_lookup_name);
             km.llvm_def = llvm_fn_prototype(llvm_fn);
         }
         _agg_stack.back()->methods.push_back(std::move(km));
@@ -602,7 +609,7 @@ void kdi_builder::visit_function(function& fn) {
         kf.params       = to_kdi_params(fn);
         kf.mangled_name = fn.get_mangled_name();
         {
-            auto* llvm_fn = _ctx.module().getFunction(fn.get_mangled_name());
+            auto* llvm_fn = _ctx.module().getFunction(llvm_lookup_name);
             kf.llvm_def = llvm_fn_prototype(llvm_fn);
         }
         _ns_stack.back()->functions.push_back(std::move(kf));

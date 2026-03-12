@@ -252,6 +252,21 @@ void symbol_resolver::visit_function(function& fn) {
         param->accept(*this);
     }
 
+    // Resolve redirect target if this is a redirected function
+    if (fn.is_redirected()) {
+        auto target_name = fn.get_redirect_target_name();
+        auto result = resolve_symbol(fn, target_name);
+        if (auto* target_fn = std::get_if<std::shared_ptr<function>>(&result)) {
+            fn.set_redirect_target(*target_fn);
+        } else {
+            throw_error(0x0050, std::nullopt,
+                "Function redirector '{}' targets '{}', which could not be resolved to a function",
+                {fn.get_short_name(), target_name.to_string()});
+        }
+        // No body to visit for a redirect
+        return;
+    }
+
     _function_stack.push_back(fn.shared_as<function>());
     if(auto block = fn.get_block()) {
         visit_block(*block);
@@ -269,6 +284,11 @@ void type_reference_resolver::visit_function(function& fn) {
         param->accept(*this);
     }
 
+    // Redirected functions have no body to visit
+    if (fn.is_redirected()) {
+        return;
+    }
+
     _function_stack.push_back(fn.shared_as<function>());
     if(auto block = fn.get_block()) {
         visit_block(*block);
@@ -283,6 +303,11 @@ void declaration_generator::visit_function(function &function) {
     }
     // Abstract functions have no body and must not be materialized (similar to deleted).
     if (function.is_abstract_func()) {
+        return;
+    }
+
+    // Redirected functions: skip normal declaration, alias is created after all declarations
+    if (function.is_redirected()) {
         return;
     }
 
@@ -334,6 +359,10 @@ void implementation_generator::visit_function(function &function) {
     }
     // Abstract functions have no body and must not be materialized.
     if (function.is_abstract_func()) {
+        return;
+    }
+    // Redirected functions are handled via GlobalAlias in declaration pass.
+    if (function.is_redirected()) {
         return;
     }
 

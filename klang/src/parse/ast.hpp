@@ -789,8 +789,8 @@ namespace k::parse {
         };
 
         struct function_decl : public declaration {
-            /** Specifier for function-aliasing declarations (-> default ; / -> delete ;). */
-            enum class aliasing_spec_t { NONE, DEFAULT, DELETE };
+            /** Specifier for function-aliasing declarations (-> default ; / -> delete ; / -> target ;). */
+            enum class aliasing_spec_t { NONE, DEFAULT, DELETE, REDIRECT };
 
             std::vector<lex::keyword> specifiers;
             lex::identifier name;
@@ -800,8 +800,15 @@ namespace k::parse {
             std::vector<member_initializer> member_inits;
             std::shared_ptr<block_statement> content;
             bool is_destructor = false;
-            /** Aliasing specifier: NONE = regular body, DEFAULT = -> default ;, DELETE = -> delete ; */
+            /** Aliasing specifier: NONE = regular body, DEFAULT = -> default ;, DELETE = -> delete ;, REDIRECT = -> target ; */
             aliasing_spec_t aliasing_spec = aliasing_spec_t::NONE;
+
+            /** Target function for REDIRECT aliasing: the qualified identifier of the target function. */
+            std::shared_ptr<qualified_identifier> redirect_target;
+            /** Optional parameter types for disambiguation when redirecting to an overloaded function. */
+            std::vector<std::shared_ptr<type_specifier>> redirect_param_types;
+            /** True if redirect_param_types was explicitly provided (even if empty). */
+            bool redirect_has_param_types = false;
 
             function_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
                           const std::shared_ptr<ast::type_specifier> &type, const std::vector<std::shared_ptr<parameter_spec>> &params,
@@ -825,6 +832,19 @@ namespace k::parse {
                           const std::vector<std::shared_ptr<parameter_spec>> &params,
                           aliasing_spec_t aliasing) :
                     specifiers(specifiers), name(name), params(params), aliasing_spec(aliasing) {}
+
+            /** Constructor for redirect declarations (-> qualifiedId ; or -> qualifiedId(types...) ;). */
+            function_decl(const std::vector<lex::keyword> &specifiers, const lex::identifier &name,
+                          const std::shared_ptr<ast::type_specifier> &type,
+                          const std::vector<std::shared_ptr<parameter_spec>> &params,
+                          const std::shared_ptr<qualified_identifier> &redirect_target,
+                          const std::vector<std::shared_ptr<type_specifier>> &redirect_param_types,
+                          bool redirect_has_param_types) :
+                    specifiers(specifiers), name(name), type(type), params(params),
+                    aliasing_spec(aliasing_spec_t::REDIRECT),
+                    redirect_target(redirect_target),
+                    redirect_param_types(redirect_param_types),
+                    redirect_has_param_types(redirect_has_param_types) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
