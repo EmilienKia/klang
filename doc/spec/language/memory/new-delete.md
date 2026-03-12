@@ -78,42 +78,63 @@ new Foo(1);          // Warning 0x5010: result of 'new' immediately discarded
 
 ## 2. `new` expression — array
 
-The array form of `new` dynamically allocates a fixed-size array of elements and returns an
-owner of the corresponding [sized array type](../basic/types.md#9-array-types).
+The array form of `new` dynamically allocates an array of elements and returns an owner of
+the corresponding [array type](../basic/types.md#9-array-types).
 
 **Syntax:**
 
 ```
-'new' TypeName '[' [ IntegerLiteral ] ']' [ '{' [ InitList ] '}' ]
+'new' TypeName '[' [ Expression ] ']' [ '{' [ InitList ] '}' ]
 'new' TypeName '{' [ InitList ] '}'
 ```
 
 - `TypeName` is the **element** type (primitive, struct, or class — not abstract).
-- The optional `IntegerLiteral` between the brackets is the **explicit array size** (a
-  compile-time integer constant).
-- The optional brace-enclosed `InitList` provides per-element initializers.
+- The optional `Expression` between the brackets is the **array size** — either a
+  compile-time integer constant (**static** allocation) or a runtime expression
+  (**dynamic** allocation).
+- The optional brace-enclosed `InitList` provides per-element initializers (only for static
+  allocations).
 - The **bare-brace** form (`new T{…}`) is syntactic sugar for `new T[]{…}` — an array with
   size inferred from the initializer list.  In particular, `new T{}` creates a valid empty
   array with 0 elements.
 
-**Return type:** `T[N]!` — an owner of a sized array of `N` elements of type `T`.
+**Return type:**
+
+| Kind | Return type | Description |
+|------|-------------|-------------|
+| Static (size known at compile time) | `T[N]!` | Owner of a sized array of `N` elements. |
+| Dynamic (size is a runtime expression) | `T[]!` | Owner of an unsized array. |
 
 ### 2.1 Size determination
 
 The array size is determined by exactly one of the following rules:
 
+**Static (compile-time) forms:**
+
 | Form | Size | Description |
 |------|------|-------------|
-| `new T[N]{…}` | `N` | Explicit size; init list may have 0 to `N` elements. |
-| `new T[N]` | `N` | Explicit size, no init list; all elements default-initialized. |
+| `new T[N]{…}` | `N` | Explicit compile-time size; init list may have 0 to `N` elements. |
+| `new T[N]` | `N` | Explicit compile-time size, no init list; all elements default-initialized. |
 | `new T[]{e₀, e₁, …, eₖ}` | `k` | Size inferred from non-empty init list (must have ≥ 1 element). |
 | `new T[]{}` | `0` | Empty init list; valid empty array (0 elements). |
 | `new T{e₀, e₁, …, eₖ}` | `k` | Bare-brace form; equivalent to `new T[]{e₀, …, eₖ}`. |
 | `new T{}` | `0` | Bare-brace empty; equivalent to `new T[]{}` — valid empty array. |
 | `new T[]` | — | **Error 0x4229**: no explicit size and no init list — size cannot be inferred. |
 
-The array size must be a **compile-time integer literal**.  Using a variable or non-literal
-expression as the size is **Error 0x4221**.  Runtime-sized arrays are not currently supported.
+**Dynamic (runtime) forms:**
+
+| Form | Size | Description |
+|------|------|-------------|
+| `new T[expr]` | runtime | `expr` is a runtime expression; all elements default-initialized. |
+
+When the bracket expression is not a compile-time integer literal, it is treated as a
+**dynamic-sized** allocation:
+
+- The size expression must be convertible to `unsigned int` (**Error 0x4221** if not).
+- **Brace initializer lists are forbidden** with dynamic-sized arrays (**Error 0x422A**).
+  All elements are default-initialized (zero for primitives, default constructor for structs).
+- For struct element types, a default constructor (zero arguments) must exist.
+- The result type is `T[]!` — an owner of an **unsized** array type.
 
 ### 2.2 Element initialization
 
@@ -152,15 +173,19 @@ compiler emits **Warning 0x4223** and the remaining elements are default-initial
 
 ### 2.3 Internal representation
 
-A dynamically allocated array of type `T[N]` is stored as:
+A dynamically allocated array is stored as:
 
 ```
-{ uint32 count; T[N] data; }
+{ uint32 count; T[N] data; }     // static (compile-time size N)
+{ uint32 count; T[0] data; }     // dynamic (runtime size; data extends past the struct)
 ```
 
 This is the same [internal representation](../basic/types.md#91-internal-representation) used
 for stack-allocated arrays.  The entire struct (including the `count` header) is allocated with
-a single `malloc` call.  Elements are initialized in order (index 0 first).
+a single `malloc` call.  For dynamic-sized arrays, the allocation size is
+`header_size + sizeof(T) * n` where `n` is the runtime size value.
+
+Elements are initialized in order (index 0 first).
 
 ### 2.4 Element access
 
@@ -210,6 +235,17 @@ pairs : Pair[2]! = new Pair[]{Pair(1, 2), Pair(3, 4)};
 struct Item { val : int = 0; Item() { val = 42; } ~Item() {} }
 items : Item[3]! = new Item[3]{};     // 3 Items, each default-constructed
 delete items;                          // 3 destructors called in reverse order
+
+// Dynamic-sized array — size from runtime expression
+n : unsigned int = 10;
+dyn : int[]! = new int[n];            // 10 ints, all zero-initialized
+dyn[0] = 42;
+delete dyn;
+
+// Dynamic-sized struct array — default ctor called for each element
+count : unsigned int = 5;
+dynItems : Item[]! = new Item[count]; // 5 Items, each default-constructed
+delete dynItems;                       // 5 destructors called in reverse order
 ```
 
 ---
@@ -225,8 +261,8 @@ the owner to `null`.
 'delete' OwnerExpr
 ```
 
-`OwnerExpr` must be a **modifiable lvalue** of an owner type (`T!` or `T[N]!`).  Passing a
-non-owner indirection to `delete` is a **compile-time error** (**Error 0x005A**).
+`OwnerExpr` must be a **modifiable lvalue** of an owner type (`T!`, `T[N]!`, or `T[]!`).
+Passing a non-owner indirection to `delete` is a **compile-time error** (**Error 0x005A**).
 
 **Semantics (only when the owner is non-null; no-op otherwise):**
 
@@ -241,10 +277,11 @@ non-owner indirection to `delete` is a **compile-time error** (**Error 0x005A**)
 
 ### 3.2 Array delete
 
-When the owner holds a dynamically allocated array (`T[N]!`):
+When the owner holds a dynamically allocated array (`T[N]!` or `T[]!`):
 
 1. Destructors are called on each element **in reverse order** (last element first, down to
-   index 0).  For primitive element types, no destructor call is needed.
+   index 0).  For static arrays, the loop is unrolled at compile time; for dynamic arrays,
+   an IR loop is emitted.  For primitive element types, no destructor call is needed.
 2. `free(ptr)` is called to release the entire array allocation (header + data).
 3. The owner variable is set to `null`.
 
@@ -425,7 +462,8 @@ They appear in the `UnaryExpr` production as special prefix forms:
 ```
 UnaryExpr:
     'new' TypeName '(' [ ExpressionList ] ')'                        -- NewExpr (single object)
-    | 'new' TypeName '[' [ IntegerLiteral ] ']' [ BraceInitList ]    -- NewArrayExpr
+    | 'new' TypeName '[' [ Expression ] ']' [ BraceInitList ]        -- NewArrayExpr
+    | 'new' TypeName BraceInitList                                   -- NewBareArrayExpr
     | 'delete' CastExpr                                              -- DeleteExpr
     | ( '++' | '--' | '*' | '&' | '+' | '-' | '!' | '~' ) CastExpr
     | PostfixExpr
@@ -443,15 +481,14 @@ InitList:
 
 **How `new` is parsed:**
 
-After consuming the `new` keyword and calling `parse_type_spec()`, the parser inspects the
-resulting type specifier:
+After consuming the `new` keyword, the parser calls `parse_type_spec(stop_before_bracket=true)`
+to parse the base type without consuming any trailing `[`:
 
-- If the type is an `array_type_specifier` (i.e. `T[N]` or `T[]`), this is the **array form
-  with brackets**.  The element type and optional size are extracted from the array type
-  specifier, then an optional brace initializer list `{ … }` is parsed.
-- If the type is a plain type and the next token is `{`, this is the **bare-brace array form**
-  (`new T{…}`).  The size is inferred from the initializer list.  This is equivalent to
-  `new T[]{…}`.
+- If the next token is `[`, this is the **array form with brackets**.  The parser reads the
+  optional size expression (any expression, not just a literal) and the closing `]`, then
+  optionally parses a brace initializer list `{ … }`.
+- If the next token is `{`, this is the **bare-brace array form** (`new T{…}`).  The size is
+  inferred from the initializer list.  This is equivalent to `new T[]{…}`.
 - Otherwise, this is the **single-object form**, and a parenthesised argument list `( … )` is
   expected.
 
@@ -463,7 +500,8 @@ permitted inside a `new` expression.
 | Form | Result type |
 |------|-------------|
 | `new T(args)` | `T!` |
-| `new T[N]{…}` | `T[N]!` |
+| `new T[N]{…}` (N = compile-time constant) | `T[N]!` |
+| `new T[expr]` (expr = runtime expression) | `T[]!` |
 | `new T{e₀, …, eₖ}` | `T[k]!` |
 | `new T{}` | `T[0]!` |
 
@@ -489,7 +527,7 @@ TypeSuffix:
 |------|----------|-----------|
 | 0x0057 | Error | Cannot `new` an abstract class (single-object form). |
 | 0x005A | Error | `delete` applied to a non-owner type. |
-| 0x4221 | Error | Array size for `new[]` is not a compile-time integer constant. |
+| 0x4221 | Error | Array size expression for `new[]` is not convertible to `unsigned int`. |
 | 0x4222 | Error | Init list has more elements than the explicit array size. |
 | 0x4223 | Warning | Init list has fewer elements than the array size; remaining elements are default-initialized. |
 | 0x4224 | Error | Cannot convert an init list element to the array element type. |
@@ -498,6 +536,7 @@ TypeSuffix:
 | 0x4227 | Error | No matching constructor for an element in the init list. |
 | 0x4228 | Error | No matching single-parameter constructor for an implicit element. |
 | 0x4229 | Error | Cannot infer array size: no explicit size and no init list provided. |
+| 0x422A | Error | Brace initializer lists are not allowed for dynamically-sized `new[]` arrays. |
 | 0x5010 | Warning | Result of `new` (or function returning `T!`) is immediately discarded — the object is deleted right after construction. |
 
 ---

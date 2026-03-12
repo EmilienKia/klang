@@ -496,7 +496,10 @@ inline bool type::is_immutable_indirection(const std::shared_ptr<type>& t) {
 
 
 /**
- * Array type, without size
+ * Array type, without size.
+ * LLVM representation: { i32, [0 x T] } — a trailing-array struct.
+ * Field 0 (i32): element count (set at runtime).
+ * Field 1 ([0 x T]): variable-length element data (accessed via GEP).
  */
 class array_type : public type {
 protected:
@@ -513,7 +516,22 @@ public:
 
     virtual std::shared_ptr<sized_array_type> with_size(unsigned long size);
 
+    /** Index of the size/capacity field in the LLVM struct (always 0). */
+    static constexpr unsigned FIELD_SIZE = 0;
+    /** Index of the data array field in the LLVM struct (always 1). */
+    static constexpr unsigned FIELD_DATA = 1;
+
+    /**
+     * Returns the LLVM struct type { i32, [0 x T] } for this unsized array.
+     * Used for GEP-based element access when the size is unknown at compile time.
+     */
     llvm::Type* get_llvm_type() const override;
+
+    /** Returns the LLVM struct type cast, or nullptr. */
+    llvm::StructType* get_llvm_struct_type() const;
+
+    /** Returns the LLVM [0 x T] array type (field 1 of the struct). */
+    llvm::ArrayType* get_llvm_data_array_type() const;
 
     std::string to_string() const override;
 };
@@ -800,6 +818,33 @@ public:
 inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2) {
     if (type1 == type2) return true;
     if (!type1 || !type2) return false;
+
+    // Structural equality for array types: compare element types recursively
+    if (auto a1 = std::dynamic_pointer_cast<sized_array_type>(type1)) {
+        auto a2 = std::dynamic_pointer_cast<sized_array_type>(type2);
+        return a2 && a1->get_size() == a2->get_size()
+            && are_equal(a1->get_subtype(), a2->get_subtype());
+    }
+    if (auto a1 = std::dynamic_pointer_cast<array_type>(type1)) {
+        auto a2 = std::dynamic_pointer_cast<array_type>(type2);
+        if (!a2) return false;
+        // Both must be unsized (sized_array_type was checked above)
+        if (a1->is_sized() || a2->is_sized()) return false;
+        return are_equal(a1->get_subtype(), a2->get_subtype());
+    }
+
+    // Structural equality for owner types: compare owned types recursively
+    if (auto o1 = std::dynamic_pointer_cast<owner_type>(type1)) {
+        auto o2 = std::dynamic_pointer_cast<owner_type>(type2);
+        return o2 && are_equal(o1->get_owned_type(), o2->get_owned_type());
+    }
+
+    // Structural equality for reference types
+    if (auto r1 = std::dynamic_pointer_cast<reference_type>(type1)) {
+        auto r2 = std::dynamic_pointer_cast<reference_type>(type2);
+        return r2 && are_equal(r1->get_subtype(), r2->get_subtype());
+    }
+
     // Structural equality for function reference types
     if (auto f1 = std::dynamic_pointer_cast<member_function_reference_type>(type1)) {
         if (auto f2 = std::dynamic_pointer_cast<member_function_reference_type>(type2)) {

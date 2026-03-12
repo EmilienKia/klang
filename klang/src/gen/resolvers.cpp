@@ -1628,6 +1628,16 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     resolved_inner = _context->resolve_type(inner);
                 }
                 if (resolved_inner && type::is_resolved(resolved_inner)) {
+                    // Unsized arrays are canonicalised to ref<array<T>> by resolve_type,
+                    // but inside an owner we want owner(array(T)), not owner(ref<array<T>>).
+                    // Unwrap the spurious reference layer.
+                    if (auto ref = std::dynamic_pointer_cast<reference_type>(resolved_inner)) {
+                        if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                            if (!arr->is_sized()) {
+                                resolved_inner = arr;
+                            }
+                        }
+                    }
                     var.set_type(resolved_inner->get_owner());
                 } else {
                     throw_error(0x0005, std::nullopt,

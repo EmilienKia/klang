@@ -797,13 +797,15 @@ protected:
 
     /** True when this is an array allocation: new T[N]{...} */
     bool _is_array = false;
+    /** True when the array size is a runtime expression (not a compile-time constant). */
+    bool _is_dynamic_size = false;
     /** Array size expression (from brackets), nullptr if inferred from init list. */
     std::shared_ptr<expression> _array_size_expr;
     /** Per-element initializer expressions for array form. nullptr = default-init. */
     std::vector<std::shared_ptr<expression>> _array_init_elements;
     /** True when a brace initializer was explicitly provided (even if empty: new T[]{}). */
     bool _has_brace_init = false;
-    /** Resolved array size (set during type resolution). */
+    /** Resolved array size (set during type resolution, only valid when !_is_dynamic_size). */
     size_t _array_size = 0;
     /** Per-element constructor (for struct element types). Index matches _array_init_elements. */
     std::vector<std::shared_ptr<constructor>> _element_constructors;
@@ -839,6 +841,9 @@ public:
     // --- Array accessors ---
 
     bool is_array() const { return _is_array; }
+
+    /** True when the array size is a runtime expression (dynamic allocation). */
+    bool is_dynamic_size() const { return _is_dynamic_size; }
 
     const std::shared_ptr<expression>& array_size_expr() const { return _array_size_expr; }
 
@@ -882,6 +887,7 @@ public:
         c->_allocated_type = _allocated_type;
         c->_constructor = _constructor;
         c->_is_array = _is_array;
+        c->_is_dynamic_size = _is_dynamic_size;
         c->_array_size = _array_size;
         c->_has_brace_init = _has_brace_init;
         if (!_is_array) {

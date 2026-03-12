@@ -56,19 +56,20 @@ inline void emit_owner_object_destroy(
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
     // Handle array types: call destructors on each element in reverse order
-    if (auto arr_type = std::dynamic_pointer_cast<sized_array_type>(alloc_type)) {
-        auto elem_type = arr_type->get_subtype();
+    if (auto sized_arr = std::dynamic_pointer_cast<sized_array_type>(alloc_type)) {
+        // ── Sized (static) array: unrolled destructor loop ──
+        auto elem_type = sized_arr->get_subtype();
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
             auto st = st_type->get_struct();
             auto dtor = st ? st->get_destructor() : nullptr;
             if (dtor) {
                 auto dtor_it = functions.find(dtor->shared_as<function>());
                 if (dtor_it != functions.end()) {
-                    auto* struct_llvm = arr_type->get_llvm_struct_type();
-                    auto* llvm_arr_type = arr_type->get_llvm_data_array_type();
+                    auto* struct_llvm = sized_arr->get_llvm_struct_type();
+                    auto* llvm_arr_type = sized_arr->get_llvm_data_array_type();
                     llvm::Value* data_ptr = builder->CreateStructGEP(struct_llvm, ptr_value,
                         sized_array_type::FIELD_DATA, "arr_dtor_data");
-                    size_t arr_size = arr_type->get_size();
+                    size_t arr_size = sized_arr->get_size();
                     // Call destructors in REVERSE order
                     for (size_t ri = arr_size; ri > 0; --ri) {
                         size_t i = ri - 1;
@@ -76,6 +77,59 @@ inline void emit_owner_object_destroy(
                             llvm_arr_type, data_ptr, 0, i, "arr_dtor_elem_" + std::to_string(i));
                         builder->CreateCall(dtor_it->second, {elem_ptr});
                     }
+                }
+            }
+        }
+    } else if (auto unsized_arr = std::dynamic_pointer_cast<array_type>(alloc_type)) {
+        // ── Unsized (dynamic) array: IR loop for destructors ──
+        auto elem_type = unsized_arr->get_subtype();
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+            auto st = st_type->get_struct();
+            auto dtor = st ? st->get_destructor() : nullptr;
+            if (dtor) {
+                auto dtor_it = functions.find(dtor->shared_as<function>());
+                if (dtor_it != functions.end()) {
+                    auto* struct_llvm = unsized_arr->get_llvm_struct_type();
+                    auto* llvm_arr_type = unsized_arr->get_llvm_data_array_type();
+                    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+                    // Load count from field 0
+                    llvm::Value* count_ptr = builder->CreateStructGEP(struct_llvm, ptr_value,
+                        array_type::FIELD_SIZE, "dynarr_dtor_count_ptr");
+                    llvm::Value* count_val = builder->CreateLoad(i32_ty, count_ptr, "dynarr_dtor_count");
+
+                    llvm::Value* data_ptr = builder->CreateStructGEP(struct_llvm, ptr_value,
+                        array_type::FIELD_DATA, "dynarr_dtor_data");
+
+                    // Emit reverse-order IR loop: for (i = count; i > 0; --i) dtor(&data[i-1])
+                    auto* fn = builder->GetInsertBlock()->getParent();
+                    auto* loop_header = llvm::BasicBlock::Create(llvm_ctx, "dynarr_dtor_hdr", fn);
+                    auto* loop_body   = llvm::BasicBlock::Create(llvm_ctx, "dynarr_dtor_body", fn);
+                    auto* loop_end    = llvm::BasicBlock::Create(llvm_ctx, "dynarr_dtor_end", fn);
+
+                    auto* pre_bb = builder->GetInsertBlock();
+                    builder->CreateBr(loop_header);
+
+                    // Header: %ri = phi [count, pre], [%ri_next, body]; if ri > 0 goto body else end
+                    builder->SetInsertPoint(loop_header);
+                    llvm::PHINode* ri_phi = builder->CreatePHI(i32_ty, 2, "dynarr_dtor_ri");
+                    ri_phi->addIncoming(count_val, pre_bb);
+                    llvm::Value* cmp = builder->CreateICmpUGT(ri_phi,
+                        llvm::ConstantInt::get(i32_ty, 0), "dynarr_dtor_cmp");
+                    builder->CreateCondBr(cmp, loop_body, loop_end);
+
+                    // Body: index = ri - 1; dtor(&data[index]); ri_next = index
+                    builder->SetInsertPoint(loop_body);
+                    llvm::Value* idx = builder->CreateSub(ri_phi,
+                        llvm::ConstantInt::get(i32_ty, 1), "dynarr_dtor_idx");
+                    llvm::Value* indices[] = {llvm::ConstantInt::get(i32_ty, 0), idx};
+                    llvm::Value* elem_ptr = builder->CreateGEP(
+                        llvm_arr_type, data_ptr, indices, "dynarr_dtor_elem");
+                    builder->CreateCall(dtor_it->second, {elem_ptr});
+                    ri_phi->addIncoming(idx, loop_body);
+                    builder->CreateBr(loop_header);
+
+                    builder->SetInsertPoint(loop_end);
                 }
             }
         }

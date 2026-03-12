@@ -23,12 +23,14 @@
  * Phase 2-5: Model, resolver, codegen, end-to-end JIT tests
  * Bounds-check tests: runtime bounds checking for array subscript
  * Error code coverage:
- *   - Error 0x4221: non-constant array size
+ *   - Error 0x4221: array size expression not convertible to unsigned int
  *   - Error 0x4222: too many initializers
+ *   - Error 0x4224: cannot convert init list element to array element type
  *   - Error 0x4226: abstract class element type
  *   - Error 0x4227: no matching explicit constructor for element
  *   - Error 0x4228: no matching single-param constructor for implicit element
  *   - Error 0x4229: cannot infer array size
+ *   - Error 0x422A: brace init forbidden for dynamic-sized arrays
  */
 
 #include <catch2/catch_all.hpp>
@@ -894,7 +896,8 @@ TEST_CASE("Bounds check: negative index (unsigned wrap) on array aborts", "[gen]
 // Error code coverage for array new expressions
 // =============================================================================
 
-TEST_CASE("new array — non-constant size — error 0x4221", "[gen][new-array][error]") {
+TEST_CASE("new array — dynamic size with brace init — error 0x422A", "[gen][new-array][error]") {
+    // n is not a compile-time constant → dynamic size; brace init {} is forbidden → error 0x422A
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __na_err_nonconst__;
         test() : int {
@@ -950,6 +953,289 @@ TEST_CASE("new struct array — no matching single-param ctor — error 0x4228",
 
         test() : int {
             arr : TwoArgs[1]! = new TwoArgs[1]{42};
+            return 0;
+        }
+    )SRC"));
+}
+
+TEST_CASE("new dynamic array — brace init forbidden — error 0x422A", "[gen][new-array][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __na_err_dynbrace__;
+        test() : int {
+            n : int = 5;
+            arr : int[]! = new int[n]{};
+            return 0;
+        }
+    )SRC"));
+}
+
+// =============================================================================
+// Dynamic-sized array allocation tests
+// =============================================================================
+
+TEST_CASE("new int[n] — dynamic primitive array, default-init", "[gen][new-array][dynamic][jit]") {
+    auto jit = gen_jit_throws(R"SRC(
+        module __na_dyn_prim__;
+        test() : int {
+            n : unsigned int = 5;
+            arr : int[]! = new int[n];
+            r : int = arr[0] + arr[1] + arr[2] + arr[3] + arr[4];
+            delete arr;
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN15__na_dyn_prim__4testEv");
+    REQUIRE(fn);
+    REQUIRE(fn() == 0);  // all default-initialized to 0
+}
+
+TEST_CASE("new int[n] — dynamic array, write and read back", "[gen][new-array][dynamic][jit]") {
+    auto jit = gen_jit_throws(R"SRC(
+        module __na_dyn_rw__;
+        test() : int {
+            n : unsigned int = 3;
+            arr : int[]! = new int[n];
+            arr[0] = 10;
+            arr[1] = 20;
+            arr[2] = 30;
+            r : int = arr[0] + arr[1] + arr[2];
+            delete arr;
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN13__na_dyn_rw__4testEv");
+    REQUIRE(fn);
+    REQUIRE(fn() == 60);
+}
+
+TEST_CASE("new int[n] — size from signed int (implicit cast)", "[gen][new-array][dynamic][jit]") {
+    auto jit = gen_jit_throws(R"SRC(
+        module __na_dyn_signed__;
+        test() : int {
+            n : int = 4;
+            arr : int[]! = new int[n];
+            arr[0] = 1;
+            arr[1] = 2;
+            arr[2] = 3;
+            arr[3] = 4;
+            r : int = arr[0] + arr[1] + arr[2] + arr[3];
+            delete arr;
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__na_dyn_signed__4testEv");
+    REQUIRE(fn);
+    REQUIRE(fn() == 10);
+}
+
+TEST_CASE("new int[expr] — size from expression", "[gen][new-array][dynamic][jit]") {
+    auto jit = gen_jit_throws(R"SRC(
+        module __na_dyn_expr__;
+        test(n : unsigned int) : int {
+            arr : int[]! = new int[n];
+            i : unsigned int = 0;
+            arr[i] = 42;
+            r : int = arr[0];
+            delete arr;
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)(unsigned int)>("_KFN15__na_dyn_expr__4testEj");
+    REQUIRE(fn);
+    REQUIRE(fn(1) == 42);
+    REQUIRE(fn(5) == 42);
+}
+
+TEST_CASE("new Struct[n] — dynamic struct array with default ctor", "[gen][new-array][dynamic][jit]") {
+    auto jit = gen_jit_throws(R"SRC(
+        module __na_dyn_struct__;
+
+        struct Point {
+            x : int = 0;
+            y : int = 0;
+            Point() { x = 7; y = 3; }
+        }
+
+        test() : int {
+            n : unsigned int = 3;
+            arr : Point[]! = new Point[n];
+            r : int = arr[0].x + arr[1].x + arr[2].y;
+            delete arr;
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__na_dyn_struct__4testEv");
+    REQUIRE(fn);
+    REQUIRE(fn() == 17);  // 7 + 7 + 3
+}
+
+TEST_CASE("new Struct[n] — dynamic struct array with destructor", "[gen][new-array][dynamic][jit]") {
+    auto jit = gen_jit_throws(R"SRC(
+        module __na_dyn_dtor__;
+
+        counter : int = 0;
+
+        struct Tracked {
+            Tracked() { counter = counter + 1; }
+            ~Tracked() { counter = counter - 1; }
+        }
+
+        test() : int {
+            n : unsigned int = 5;
+            arr : Tracked[]! = new Tracked[n];
+            c1 : int = counter;
+            delete arr;
+            c2 : int = counter;
+            return c1 * 10 + c2;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN15__na_dyn_dtor__4testEv");
+    REQUIRE(fn);
+    REQUIRE(fn() == 50);  // c1=5, c2=0 → 5*10+0 = 50
+}
+
+// =============================================================================
+// Additional coverage: edge cases
+// =============================================================================
+
+TEST_CASE("new int[0] — zero-size static array without braces", "[gen][new-array][jit]") {
+    auto jit = gen_jit_throws(R"SRC(
+        module __na_zero_nobraces__;
+        test() : int {
+            arr : int[0]! = new int[0];
+            delete arr;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN20__na_zero_nobraces__4testEv");
+    REQUIRE(fn);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("new Struct[n] — dynamic struct array scope auto-cleanup", "[gen][new-array][dynamic][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __na_dyn_autoclean__;
+
+        g_dtor : int = 0;
+
+        struct AutoWidget {
+            id : int = 0;
+            AutoWidget() { id = 7; }
+            ~AutoWidget() { g_dtor = g_dtor + 1; }
+        }
+
+        get_dtor_count() : int { return g_dtor; }
+
+        test() : int {
+            n : unsigned int = 3;
+            arr : AutoWidget[]! = new AutoWidget[n];
+            return arr[0].id + arr[1].id + arr[2].id;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN20__na_dyn_autoclean__4testEv");
+    auto get_dtor = jit->lookup_symbol<int(*)()>("_KFN20__na_dyn_autoclean__14get_dtor_countEv");
+    REQUIRE(fn);
+    REQUIRE(get_dtor);
+
+    int r = fn();
+    REQUIRE(r == 21);  // 7+7+7
+    REQUIRE(get_dtor() == 3);  // 3 dtors at scope exit (implicit delete)
+}
+
+TEST_CASE("delete on null owner dynamic array — no crash", "[gen][new-array][dynamic][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __na_dyn_delnull__;
+        test() : int {
+            n : unsigned int = 2;
+            arr : int[]! = new int[n];
+            arr[0] = 10;
+            arr[1] = 20;
+            delete arr;
+            delete arr;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("_KFN18__na_dyn_delnull__4testEv");
+    REQUIRE(fn);
+    REQUIRE(fn() == 42);  // double delete is a no-op (already null)
+}
+
+TEST_CASE("Parse new array — complex expression as size", "[parser][new-array]") {
+    test_logger log;
+    k::source src{"new int[a + b]"};
+    k::parse::parser parser(log, src);
+    auto expr = parser.parse_unary_expr();
+    REQUIRE(expr);
+    auto ne = std::dynamic_pointer_cast<k::parse::ast::new_expr>(expr);
+    REQUIRE(ne);
+    REQUIRE(ne->is_array == true);
+    REQUIRE(ne->array_size_expr != nullptr);
+    // The size expression should be a binary expression (a + b)
+    auto binexpr = std::dynamic_pointer_cast<k::parse::ast::binary_expression>(ne->array_size_expr);
+    REQUIRE(binexpr);
+    REQUIRE(ne->brace_init == nullptr);
+}
+
+TEST_CASE("Bounds check: out-of-bounds on dynamic owner array aborts", "[gen][bounds][new-array][dynamic][oob]") {
+    auto res = build_and_exec(R"SRC(
+        module __bc_dyn_oob__;
+        main() : int {
+            n : unsigned int = 3;
+            arr : int[]! = new int[n];
+            arr[0] = 10;
+            x : int = arr[5];
+            delete arr;
+            return x;
+        }
+    )SRC");
+    REQUIRE(res.exit_code != 0);
+}
+
+// =============================================================================
+// Additional error code coverage
+// =============================================================================
+
+TEST_CASE("new array — struct as size expression — error 0x4221", "[gen][new-array][error]") {
+    // A struct value cannot be converted to unsigned int → error 0x4221
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __na_err_sizetyp__;
+
+        struct Foo {
+            x : int = 0;
+            Foo() {}
+        }
+
+        test() : int {
+            f : Foo;
+            arr : int[]! = new int[f];
+            return 0;
+        }
+    )SRC"));
+}
+
+TEST_CASE("new array — struct value in primitive init list — error 0x4224", "[gen][new-array][error]") {
+    // A struct value cannot be converted to the primitive element type → error 0x4224
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __na_err_elemtyp__;
+
+        struct Bar {
+            x : int = 0;
+            Bar() {}
+        }
+
+        test() : int {
+            b : Bar;
+            arr : int[1]! = new int[1]{b};
             return 0;
         }
     )SRC"));

@@ -229,7 +229,7 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
     } else if(auto ident = dynamic_cast<const k::parse::ast::identified_type_specifier*>(&type_spec)) {
         return create_unresolved(ident->name.to_name());
     } else if(auto kw = dynamic_cast<const k::parse::ast::keyword_type_specifier*>(&type_spec)) {
-        return from_keyword(kw->keyword);
+        return from_keyword(kw->keyword, kw->is_unsigned);
     } else if(auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*ptr->subtype);
         if(ptr->pointer_type==lex::operator_::STAR) {
@@ -244,6 +244,16 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             return {}; // Shall not happen
     } else if(auto own = dynamic_cast<const k::parse::ast::owner_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*own->subtype);
+        // int[] is canonicalized to reference(array(int)) for stack/parameter use,
+        // but for ownership (int[]!) we need owner(array(int)), not owner(ref(array(int))).
+        // Unwrap the reference when it wraps an unsized array inside an owner.
+        if (auto ref = std::dynamic_pointer_cast<reference_type>(subtype)) {
+            if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                if (!arr->is_sized()) {
+                    subtype = arr;
+                }
+            }
+        }
         return subtype->get_owner();
     } else if(auto arr = dynamic_cast<const k::parse::ast::array_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*arr->subtype);
@@ -673,6 +683,16 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
             std::cerr << "Error: cannot resolve owner subtype." << std::endl;
             return nullptr;
         } else {
+            // Unsized arrays are canonicalised to ref<array<T>> by the array branch
+            // of resolve_type, but inside an owner we want owner(array(T)), not
+            // owner(ref<array<T>>).  Unwrap the spurious reference layer.
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(res)) {
+                if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                    if (!arr->is_sized()) {
+                        res = arr;
+                    }
+                }
+            }
             return res->get_owner();
         }
     } else if (type::is_array(type)) {

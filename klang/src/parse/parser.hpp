@@ -151,8 +151,11 @@ public:
      * TYPE_SPEC := ( FUNDAMENTAL_TYPE_SPEC | QUALIFIED_IDENTIFIER ) *[ ARRAY_TYPE_SUFFIX | POINTER_TYPE_SUFFIX ]
      * ARRAY_TYPE_SUFFIX := '['  ?[ integer ] ']'
      * POINTER_TYPE_SUFFIX := '*' | '&'
+     *
+     * @param stop_before_bracket  When true, the parser will NOT consume array suffixes '[...]'.
+     *        Used by the 'new' expression handler to parse base types separately from array sizes.
      */
-    std::shared_ptr<ast::type_specifier> parse_type_spec();
+    std::shared_ptr<ast::type_specifier> parse_type_spec(bool stop_before_bracket = false);
 
     /**
      * FUNDAMENTAL_TYPE_SPEC := ?('unsigned') ('byte'|'char'|'short'|'int'|'long'|'float'|'double')
@@ -326,11 +329,22 @@ public:
 
     /**
      * UNARY_EXPR := ('++'|'--'|'*'|'&'|'+'|'-'|'!'|'~') CAST_EXPR
+     *             | 'new' TYPE_NAME '[' [EXPRESSION] ']' [BRACE_INIT_LIST]
+     *             | 'new' TYPE_NAME BRACE_INIT_LIST
+     *             | 'new' TYPE_NAME '(' [EXPRESSION_LIST] ')'
+     *             | 'delete' CAST_EXPR
      *             | POSTFIX_EXPR
-     * TODO: support keyword operators like new, delete, sizeof ...
      * @return
      */
     ast::expr_ptr parse_unary_expr();
+
+    /**
+     * Parse a brace-enclosed initializer list: '{' [ expr { ',' expr } ] '}'
+     * Each element is a conditional expression (or nullptr for empty slots).
+     * The opening brace token has already been consumed (passed as open_brace).
+     * @return A brace_init_list AST node, or nullptr on parse error.
+     */
+    std::shared_ptr<ast::brace_init_list> parse_brace_init_list(const lex::punctuator& open_brace);
 
     /**
      * POSTFIX_EXPR := PRIMARY_EXPR *[ '++'|'--'

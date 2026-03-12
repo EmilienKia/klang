@@ -412,12 +412,28 @@ std::shared_ptr<sized_array_type> array_type::with_size(unsigned long size) {
 }
 
 llvm::Type* array_type::get_llvm_type() const {
-    // An unsized array (int[]) is a reference to a sized-array struct.
-    // Its LLVM type is an opaque pointer (ptr), just like reference_type.
-    // The actual struct layout is { i32, [N x T] } but since the size is unknown,
-    // we use an opaque pointer here.
-    return llvm::PointerType::get(llvm::Type::getInt8Ty(
-        const_cast<array_type*>(this)->subtype.lock()->get_llvm_type()->getContext()), 0);
+    // Unsized array: { i32, [0 x T] } — trailing-array struct.
+    // The [0 x T] is a zero-length array, used for GEP-based element access
+    // when the actual size is only known at runtime.
+    if (_llvm_type == nullptr) {
+        auto* elem_llvm = subtype.lock()->get_llvm_type();
+        if (!elem_llvm) return nullptr;
+        auto& ctx = elem_llvm->getContext();
+        auto* i32_t  = llvm::Type::getInt32Ty(ctx);
+        auto* data_t = llvm::ArrayType::get(elem_llvm, 0);
+        _llvm_type = llvm::StructType::get(ctx, {i32_t, data_t}, /*isPacked=*/false);
+    }
+    return _llvm_type;
+}
+
+llvm::StructType* array_type::get_llvm_struct_type() const {
+    return llvm::dyn_cast_or_null<llvm::StructType>(get_llvm_type());
+}
+
+llvm::ArrayType* array_type::get_llvm_data_array_type() const {
+    auto* st = get_llvm_struct_type();
+    if (!st) return nullptr;
+    return llvm::dyn_cast_or_null<llvm::ArrayType>(st->getElementType(FIELD_DATA));
 }
 
 std::string array_type::to_string() const {

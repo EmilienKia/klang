@@ -122,8 +122,8 @@ namespace k::parse {
             lex::keyword keyword;
             bool is_unsigned = false;
 
-            keyword_type_specifier(const lex::keyword & keyword, bool is_unsigned = false) : keyword(keyword) {}
-            keyword_type_specifier(lex::keyword && keyword, bool is_unsigned = false) : keyword(keyword) {}
+            keyword_type_specifier(const lex::keyword & keyword, bool is_unsigned = false) : keyword(keyword), is_unsigned(is_unsigned) {}
+            keyword_type_specifier(lex::keyword && keyword, bool is_unsigned = false) : keyword(keyword), is_unsigned(is_unsigned) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

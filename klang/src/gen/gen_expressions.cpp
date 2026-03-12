@@ -1311,13 +1311,27 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
             sized_array_type::FIELD_DATA, "arr_data_ptr");
         llvm::Value* indices[] = {_builder->getInt32(0), right};
         _value = _builder->CreateGEP(data_arr_llvm, field_data_ptr, indices, "elem_ptr");
-    } else {
-        // Unsized array ref (int[]) — ptr to opaque struct; use i8* arithmetic for now
-        // Fall back to generic GEP via element type
-        auto elem_type = arr_type_inner->get_subtype();
-        auto* elem_llvm = _context->get_llvm_type(elem_type);
-        llvm::Value* indices[] = {right};
-        _value = _builder->CreateGEP(elem_llvm, left, indices, "elem_ptr");
+    } else if (auto unsized_arr = std::dynamic_pointer_cast<array_type>(arr_type_inner)) {
+        // Unsized (dynamic) array: layout { i32, [0 x T] } — same GEP pattern as sized.
+        auto* struct_llvm = unsized_arr->get_llvm_struct_type();
+        auto* data_arr_llvm = unsized_arr->get_llvm_data_array_type();
+        if (!struct_llvm || !data_arr_llvm) {
+            throw_internal_error(0x000C, std::nullopt,
+                "Internal error: unsized array has no LLVM struct type during subscript code generation");
+        }
+
+        // Runtime bounds check: load count from field 0, verify index < count
+        llvm::Value* count_ptr = _builder->CreateStructGEP(struct_llvm, left,
+            array_type::FIELD_SIZE, "dynarr_count_ptr");
+        llvm::Value* count_val = _builder->CreateLoad(
+            _builder->getInt32Ty(), count_ptr, "dynarr_count");
+        emit_array_bounds_check(_builder.get(), get_module(), right, count_val, "subscript");
+
+        // GEP into field 1 (data), then index into the [0 x T] trailing array
+        llvm::Value* field_data_ptr = _builder->CreateStructGEP(struct_llvm, left,
+            array_type::FIELD_DATA, "dynarr_data_ptr");
+        llvm::Value* indices[] = {_builder->getInt32(0), right};
+        _value = _builder->CreateGEP(data_arr_llvm, field_data_ptr, indices, "elem_ptr");
     }
 }
 
@@ -2386,6 +2400,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         size_t init_count = expr._array_init_elements.size();
         size_t arr_size = 0;
         bool has_explicit_size = (expr._array_size_expr != nullptr);
+        bool is_dynamic = false;
 
         if (has_explicit_size) {
             // Try to evaluate the size expression as a compile-time constant
@@ -2395,9 +2410,31 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 auto& int_lit = size_val->any_literal().get<lex::integer>();
                 arr_size = int_lit.to_unsigned_int();
             } else {
-                throw_error(0x4221, std::nullopt,
-                    "Array size for 'new[]' must be a compile-time integer constant");
-                return;
+                // ── Dynamic size: runtime expression ──
+                is_dynamic = true;
+
+                // The size expression must be convertible to unsigned int
+                auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
+                auto adapted_size = adapt_type(expr._array_size_expr, uint_type);
+                if (!adapted_size) {
+                    throw_error(0x4221, std::nullopt,
+                        "Array size expression for 'new[]' must be convertible to an unsigned integer; "
+                        "expression has type '{}'",
+                        {expr._array_size_expr->get_type() ? expr._array_size_expr->get_type()->to_string() : "?"});
+                    return;
+                }
+                if (adapted_size != expr._array_size_expr) {
+                    expr._array_size_expr = adapted_size;
+                    adapted_size->set_parent_expression(expr.shared_as<expression>());
+                }
+
+                // Brace initializers are not allowed for dynamic-sized arrays
+                if (expr._has_brace_init) {
+                    throw_error(0x422A, std::nullopt,
+                        "Brace initializer lists are not allowed for dynamically-sized 'new[]' arrays; "
+                        "all elements will be default-initialized");
+                    return;
+                }
             }
         } else {
             // Size inferred from init list (or empty brace init → 0 elements)
@@ -2411,6 +2448,43 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             }
             // new T[]{} → arr_size == 0 is valid (empty array)
         }
+
+        if (is_dynamic) {
+            // ── Dynamic-sized array: new T[expr] ──
+            // No brace init, no static size. All elements default-initialized.
+            expr._is_dynamic_size = true;
+            expr._array_size = 0; // not meaningful for dynamic
+
+            // For struct element types, resolve the default constructor
+            if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+                auto struct_model = st_type->get_struct();
+                if (!struct_model) {
+                    throw_error(0x4225, std::nullopt,
+                        "Cannot resolve struct for 'new {}[]': aggregate not resolved",
+                        {st_type->to_string()});
+                    return;
+                }
+                if (struct_model->is_abstract()) {
+                    throw_error(0x4226, std::nullopt,
+                        "Cannot 'new' array of abstract class '{}'",
+                        {struct_model->get_short_name()});
+                    return;
+                }
+                // Resolve default constructor (needed for each element)
+                auto [default_ctor, default_args] = get_best_matching_constructor(
+                    struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
+                // Store in element_constructors[0] as the single default ctor to use
+                expr._element_constructors.resize(1, nullptr);
+                expr._element_constructors[0] = default_ctor;
+            }
+
+            // Result type: owner<array_type> (unsized) → T[]!
+            auto arr_type_unsized = elem_type->get_array();
+            expr.set_type(arr_type_unsized->get_owner());
+            return;
+        }
+
+        // ── Static-sized array: new T[N]{...} ──
 
         // Validate init count vs array size
         if (init_count > arr_size) {
@@ -2846,8 +2920,111 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
             malloc_type, llvm::Function::ExternalLinkage, "malloc", mod);
     }
 
+    if (expr.is_array() && expr.is_dynamic_size()) {
+        // ── Dynamic array form: new T[expr] ──
+        // Size is a runtime value. No brace initializers. All elements default-initialized.
+        auto elem_type = alloc_type;
+        llvm::Type* llvm_elem_type = _context->get_llvm_type(elem_type);
+
+        // Get the unsized array_type from the expression type (owner<array_type>)
+        auto own_type = std::dynamic_pointer_cast<owner_type>(expr.get_type());
+        auto unsized_arr_type = own_type
+            ? std::dynamic_pointer_cast<array_type>(own_type->get_owned_type())
+            : nullptr;
+        if (!unsized_arr_type) { _value = nullptr; return; }
+
+        auto* struct_llvm = unsized_arr_type->get_llvm_struct_type();
+        auto* llvm_arr_type = unsized_arr_type->get_llvm_data_array_type();
+        if (!struct_llvm || !llvm_arr_type) { _value = nullptr; return; }
+
+        // Evaluate the size expression → i32 runtime value
+        _value = nullptr;
+        expr.array_size_expr()->accept(*this);
+        llvm::Value* n_val = _value; // i32
+        if (!n_val) { _value = nullptr; return; }
+
+        // Compute allocation size: header_size + sizeof(T) * n
+        // header_size = offset of field 1 in { i32, [0 x T] }
+        auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+        auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+        uint64_t header_size = mod.getDataLayout().getStructLayout(struct_llvm)->getElementOffset(array_type::FIELD_DATA);
+        uint64_t elem_size = mod.getDataLayout().getTypeAllocSize(llvm_elem_type);
+
+        llvm::Value* n_i64 = _builder->CreateZExt(n_val, i64_ty, "n_i64");
+        llvm::Value* data_bytes = _builder->CreateMul(
+            n_i64,
+            llvm::ConstantInt::get(i64_ty, elem_size),
+            "data_bytes");
+        llvm::Value* alloc_size = _builder->CreateAdd(
+            data_bytes,
+            llvm::ConstantInt::get(i64_ty, header_size),
+            "alloc_size");
+
+        // malloc
+        llvm::Value* raw_ptr = _builder->CreateCall(
+            malloc_fn->getFunctionType(), malloc_fn, {alloc_size}, "new_dynarr_raw");
+
+        // memset to zero
+        _builder->CreateMemSet(raw_ptr,
+            llvm::ConstantInt::get(llvm::Type::getInt8Ty(llvm_ctx), 0),
+            alloc_size, llvm::MaybeAlign(1));
+
+        // Store the element count in field 0
+        llvm::Value* size_ptr = _builder->CreateStructGEP(struct_llvm, raw_ptr,
+            array_type::FIELD_SIZE, "dynarr_size");
+        _builder->CreateStore(n_val, size_ptr);
+
+        // Get pointer to the data area (field 1)
+        llvm::Value* data_ptr = _builder->CreateStructGEP(struct_llvm, raw_ptr,
+            array_type::FIELD_DATA, "dynarr_data");
+
+        // For struct element types with a constructor, emit an IR loop to call
+        // the default constructor on each element.
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+            auto default_ctor = (!expr.element_constructors().empty())
+                ? expr.element_constructors()[0] : nullptr;
+            if (default_ctor) {
+                auto ctor_it = _context->_functions.find(default_ctor->shared_as<function>());
+                if (ctor_it != _context->_functions.end()) {
+                    // Emit IR loop: for (i = 0; i < n; ++i) ctor(&data[i])
+                    auto* fn = _builder->GetInsertBlock()->getParent();
+                    auto* loop_header = llvm::BasicBlock::Create(llvm_ctx, "dynarr_init_hdr", fn);
+                    auto* loop_body   = llvm::BasicBlock::Create(llvm_ctx, "dynarr_init_body", fn);
+                    auto* loop_end    = llvm::BasicBlock::Create(llvm_ctx, "dynarr_init_end", fn);
+
+                    _builder->CreateBr(loop_header);
+
+                    // Loop header: %i = phi [0, entry], [%i_next, body]; if i < n goto body else end
+                    _builder->SetInsertPoint(loop_header);
+                    auto* entry_bb = loop_header->getSinglePredecessor();
+                    llvm::PHINode* i_phi = _builder->CreatePHI(i32_ty, 2, "dynarr_i");
+                    i_phi->addIncoming(llvm::ConstantInt::get(i32_ty, 0), entry_bb);
+                    llvm::Value* cmp = _builder->CreateICmpULT(i_phi, n_val, "dynarr_cmp");
+                    _builder->CreateCondBr(cmp, loop_body, loop_end);
+
+                    // Loop body: GEP to element, call ctor, increment
+                    _builder->SetInsertPoint(loop_body);
+                    llvm::Value* indices[] = {llvm::ConstantInt::get(i32_ty, 0), i_phi};
+                    llvm::Value* elem_ptr = _builder->CreateGEP(
+                        llvm_arr_type, data_ptr, indices, "dynarr_elem");
+                    _builder->CreateCall(ctor_it->second, {elem_ptr});
+                    llvm::Value* i_next = _builder->CreateAdd(
+                        i_phi, llvm::ConstantInt::get(i32_ty, 1), "dynarr_i_next");
+                    i_phi->addIncoming(i_next, loop_body);
+                    _builder->CreateBr(loop_header);
+
+                    _builder->SetInsertPoint(loop_end);
+                }
+            }
+        }
+        // For primitive types: memset already zero-initialized everything.
+
+        _value = raw_ptr;
+        return;
+    }
+
     if (expr.is_array()) {
-        // ── Array form: new T[N]{e0, e1, ...} ──
+        // ── Static array form: new T[N]{e0, e1, ...} ──
         size_t arr_size = expr.array_size();
         auto elem_type = alloc_type;
 
