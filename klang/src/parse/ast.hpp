@@ -432,6 +432,10 @@ namespace k::parse {
 
             /** True when this is an array allocation: new T[N]{...} */
             bool is_array = false;
+            /** True when this is a uniform array allocation: new T(args)[N] */
+            bool is_uniform_array = false;
+            /** Constructor arguments for uniform array init (each element gets these). */
+            std::vector<expr_ptr> uniform_ctor_args;
             /** Array size expression (inside []), nullptr if size is inferred from init list. */
             expr_ptr array_size_expr;
             /** Array brace initializer list, nullptr if no brace init provided. */
@@ -450,6 +454,15 @@ namespace k::parse {
                      const std::shared_ptr<brace_init_list>& brace_init)
                 : new_kw(new_kw), type(type), is_array(true),
                   array_size_expr(array_size_expr), brace_init(brace_init) {}
+
+            // Uniform array constructor: new T(args)[N]
+            new_expr(const lex::keyword& new_kw,
+                     const std::shared_ptr<ast::type_specifier>& type,
+                     const std::vector<expr_ptr>& uniform_ctor_args,
+                     const expr_ptr& array_size_expr,
+                     bool /*uniform_tag*/)
+                : new_kw(new_kw), type(type), is_array(true), is_uniform_array(true),
+                  uniform_ctor_args(uniform_ctor_args), array_size_expr(array_size_expr) {}
 
             virtual void visit(ast_visitor& visitor) override;
         };
@@ -745,6 +758,13 @@ namespace k::parse {
             expr_ptr init;
             bool is_constructor = false;
             bool is_brace_init = false;
+
+            /** True when this is a uniform array init: var : T(args)[N]; */
+            bool is_uniform_array_init = false;
+            /** Constructor arguments for uniform array init (each element gets these). */
+            std::vector<expr_ptr> uniform_ctor_args;
+            /** Array size expression for uniform array init. */
+            expr_ptr uniform_array_size;
 
             variable_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
                           const std::shared_ptr<ast::type_specifier> &type, expr_ptr init = nullptr, bool is_constructor = false, bool is_brace_init = false) :

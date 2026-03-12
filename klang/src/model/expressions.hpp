@@ -810,6 +810,13 @@ protected:
     /** Per-element constructor (for struct element types). Index matches _array_init_elements. */
     std::vector<std::shared_ptr<constructor>> _element_constructors;
 
+    /** True when this is a uniform array init: new T(args)[N] — all elements same ctor. */
+    bool _is_uniform_array = false;
+    /** Constructor arguments for uniform array init (applied to every element). */
+    std::vector<std::shared_ptr<expression>> _uniform_ctor_args;
+    /** Resolved constructor for uniform array init (struct element types). */
+    std::shared_ptr<constructor> _uniform_constructor;
+
     new_expression() = default;
     new_expression(const new_expression&) = delete;
 
@@ -881,6 +888,30 @@ public:
         const std::vector<std::shared_ptr<expression>>& init_elements,
         bool has_brace_init);
 
+    /** Create a new-uniform-array expression: new T(args)[size]. */
+    static std::shared_ptr<new_expression> make_uniform_array_shared(
+        const std::shared_ptr<type>& element_type,
+        const std::shared_ptr<expression>& array_size_expr,
+        const std::vector<std::shared_ptr<expression>>& uniform_ctor_args);
+
+    // --- Uniform array accessors ---
+
+    bool is_uniform_array() const { return _is_uniform_array; }
+
+    const std::vector<std::shared_ptr<expression>>& uniform_ctor_args() const { return _uniform_ctor_args; }
+
+    void set_uniform_ctor_args(const std::vector<std::shared_ptr<expression>>& args) {
+        _uniform_ctor_args = args;
+        for (auto& a : _uniform_ctor_args) if (a) a->set_parent_expression(shared_as<expression>());
+    }
+
+    void assign_uniform_ctor_arg(size_t index, const std::shared_ptr<expression>& arg) {
+        _uniform_ctor_args[index] = arg;
+        if (arg) arg->set_parent_expression(shared_as<expression>());
+    }
+
+    std::shared_ptr<constructor> uniform_constructor() const { return _uniform_constructor; }
+
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<new_expression> c{new new_expression()};
         c->_type = _type;
@@ -890,10 +921,20 @@ public:
         c->_is_dynamic_size = _is_dynamic_size;
         c->_array_size = _array_size;
         c->_has_brace_init = _has_brace_init;
+        c->_is_uniform_array = _is_uniform_array;
+        c->_uniform_constructor = _uniform_constructor;
         if (!_is_array) {
             std::vector<std::shared_ptr<expression>> args;
             for (auto& a : _arguments) args.push_back(a->clone());
             c->assign_arguments(args);
+        } else if (_is_uniform_array) {
+            if (_array_size_expr) {
+                c->_array_size_expr = _array_size_expr->clone();
+                c->_array_size_expr->set_parent_expression(c);
+            }
+            std::vector<std::shared_ptr<expression>> uargs;
+            for (auto& a : _uniform_ctor_args) uargs.push_back(a ? a->clone() : nullptr);
+            c->set_uniform_ctor_args(uargs);
         } else {
             if (_array_size_expr) {
                 c->_array_size_expr = _array_size_expr->clone();
@@ -948,6 +989,15 @@ protected:
     /** Per-element initializer expressions. nullptr = default-init. */
     std::vector<std::shared_ptr<expression>> _elements;
 
+    /** True when this is a uniform array init: var : T(args)[N]; */
+    bool _is_uniform = false;
+    /** Constructor arguments for uniform array init (applied to every element). */
+    std::vector<std::shared_ptr<expression>> _uniform_ctor_args;
+    /** Resolved constructor for uniform array init (struct element types). */
+    std::shared_ptr<constructor> _uniform_constructor;
+    /** Resolved array size (set during type resolution for uniform mode). */
+    size_t _array_size = 0;
+
     array_init_expression() = default;
     array_init_expression(const array_init_expression&) = delete;
 
@@ -977,6 +1027,28 @@ public:
         }
     }
 
+    // --- Uniform mode accessors ---
+
+    bool is_uniform() const { return _is_uniform; }
+
+    const std::vector<std::shared_ptr<expression>>& uniform_ctor_args() const { return _uniform_ctor_args; }
+
+    void set_uniform_ctor_args(const std::vector<std::shared_ptr<expression>>& args) {
+        _uniform_ctor_args = args;
+        for (auto& a : _uniform_ctor_args) if (a) a->set_parent_expression(shared_as<expression>());
+    }
+
+    void assign_uniform_ctor_arg(size_t index, const std::shared_ptr<expression>& arg) {
+        _uniform_ctor_args[index] = arg;
+        if (arg) arg->set_parent_expression(shared_as<expression>());
+    }
+
+    std::shared_ptr<constructor> uniform_constructor() const { return _uniform_constructor; }
+
+    size_t array_size() const { return _array_size; }
+
+    // --- Factory methods ---
+
     static std::shared_ptr<array_init_expression> make_shared(
         const std::shared_ptr<symbol_expression>& constructed_symbol,
         const std::vector<std::shared_ptr<expression>>& elements);
@@ -985,21 +1057,42 @@ public:
         const std::shared_ptr<variable_definition>& variable,
         const std::vector<std::shared_ptr<expression>>& elements);
 
+    /** Create a uniform array init expression: var : T(args)[N]; */
+    static std::shared_ptr<array_init_expression> make_uniform_shared(
+        const std::shared_ptr<symbol_expression>& constructed_symbol,
+        const std::vector<std::shared_ptr<expression>>& uniform_ctor_args,
+        size_t array_size);
+
+    /** Create a uniform array init expression from a variable definition. */
+    static std::shared_ptr<array_init_expression> make_uniform_shared(
+        const std::shared_ptr<variable_definition>& variable,
+        const std::vector<std::shared_ptr<expression>>& uniform_ctor_args,
+        size_t array_size);
+
     void accept(model_visitor& visitor) override;
 
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<array_init_expression> c{new array_init_expression()};
         c->_type = _type;
+        c->_is_uniform = _is_uniform;
+        c->_uniform_constructor = _uniform_constructor;
+        c->_array_size = _array_size;
         auto sym = _constructed_symbol
             ? std::dynamic_pointer_cast<symbol_expression>(_constructed_symbol->clone())
             : nullptr;
-        std::vector<std::shared_ptr<expression>> elems;
-        for (auto& e : _elements) elems.push_back(e ? e->clone() : nullptr);
         if (sym) {
             c->_constructed_symbol = sym;
             sym->set_parent_expression(c);
         }
-        c->set_elements(elems);
+        if (_is_uniform) {
+            std::vector<std::shared_ptr<expression>> uargs;
+            for (auto& a : _uniform_ctor_args) uargs.push_back(a ? a->clone() : nullptr);
+            c->set_uniform_ctor_args(uargs);
+        } else {
+            std::vector<std::shared_ptr<expression>> elems;
+            for (auto& e : _elements) elems.push_back(e ? e->clone() : nullptr);
+            c->set_elements(elems);
+        }
         return c;
     }
 };

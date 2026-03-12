@@ -171,6 +171,7 @@ Grammar notation used here:
 <a id="initialiser"></a>**Initialiser:**
     `'='` [ConditionalExpr](#conditionalexpr)
     | `'('` `[` [ExpressionList](#expressionlist) `]` `')'`
+    | `'('` `[` [ExpressionList](#expressionlist) `]` `')'` `'['` [Expression](#expression) `']'`
     | [BraceInitList](#braceinitlist)
 <a id="braceinitlist"></a>**BraceInitList:**
     `'{'` `[` [InitElement](#initelement) {{ `','` [InitElement](#initelement) }} `]` `'}'`
@@ -243,13 +244,14 @@ Grammar notation used here:
     | [UnaryExpr](#unaryexpr)
 <a id="unaryexpr"></a>**UnaryExpr:**
     `'new'` [TypeName](#typename) `'('` `[` [ExpressionList](#expressionlist) `]` `')'`
+    | `'new'` [TypeName](#typename) `'('` `[` [ExpressionList](#expressionlist) `]` `')'` `'['` [Expression](#expression) `']'`
     | `'new'` [TypeName](#typename) `'['` `[` [IntegerLiteral](#integerliteral) `]` `']'` `[` [BraceInitList](#braceinitlist) `]`
     | `'new'` [TypeName](#typename) [BraceInitList](#braceinitlist)
     | `'delete'` [CastExpr](#castexpr)
     | `(` `'++'` | `'--'` | `'*'` | `'&'` | `'+'` | `'-'` | `'!'` | `'~'` `)` [CastExpr](#castexpr)
     | [PostfixExpr](#postfixexpr)
 
-    *Note: `'new' TypeName '(' … ')'` returns a `T!` owner.  `'new' TypeName '[' … ']' …` and `'new' TypeName '{' … '}'` return a `T[N]!` array owner.  `'delete' CastExpr` returns `void` and may only appear as an expression statement.*
+    *Note: `'new' TypeName '(' … ')'` returns a `T!` owner.  `'new' TypeName '(' … ')' '[' … ']'` returns a `T[N]!` or `T[]!` uniform array owner (see [Uniform Array Initialization](memory/uniform-array-init.md)).  `'new' TypeName '[' … ']' …` and `'new' TypeName '{' … '}'` return a `T[N]!` array owner.  `'delete' CastExpr` returns `void` and may only appear as an expression statement.*
 
 <a id="typename"></a>**TypeName:**
     [QualifiedIdentifier](#qualifiedidentifier)

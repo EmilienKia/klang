@@ -2336,7 +2336,12 @@ void symbol_resolver::visit_constructor_invocation_expression(constructor_invoca
 //
 
 void symbol_resolver::visit_new_expression(new_expression& expr) {
-    if (expr.is_array()) {
+    if (expr.is_uniform_array()) {
+        if (expr.array_size_expr()) expr.array_size_expr()->accept(*this);
+        for (auto& a : expr.uniform_ctor_args()) {
+            if (a) a->accept(*this);
+        }
+    } else if (expr.is_array()) {
         if (expr.array_size_expr()) expr.array_size_expr()->accept(*this);
         for (auto& e : expr.array_init_elements()) {
             if (e) e->accept(*this);
@@ -2349,6 +2354,137 @@ void symbol_resolver::visit_new_expression(new_expression& expr) {
 }
 
 void type_reference_resolver::visit_new_expression(new_expression& expr) {
+    if (expr.is_uniform_array()) {
+        // ── Uniform array form: new T(args)[N] ──
+
+        // Resolve uniform ctor args
+        for (auto& a : expr._uniform_ctor_args) {
+            if (a) a->accept(*this);
+        }
+
+        // Resolve the array size expression
+        if (expr._array_size_expr) {
+            expr._array_size_expr->accept(*this);
+        }
+
+        // Resolve the element type
+        auto elem_type = expr.allocated_type();
+        if (!type::is_resolved(elem_type)) {
+            if (auto unres = std::dynamic_pointer_cast<unresolved_type>(elem_type)) {
+                auto resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
+                if (!resolved || !type::is_resolved(resolved)) {
+                    auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                    if (imported_agg) resolved = imported_agg->get_struct_type();
+                }
+                if (resolved && type::is_resolved(resolved)) {
+                    expr.allocated_type(resolved);
+                    elem_type = resolved;
+                }
+            }
+        }
+        if (!type::is_resolved(elem_type)) {
+            throw_error(0x0055, std::nullopt,
+                "Cannot resolve element type of 'new' uniform array expression: type '{}' is unknown",
+                {elem_type ? elem_type->to_string() : "<null>"});
+            return;
+        }
+
+        // Determine the array size (static or dynamic)
+        size_t arr_size = 0;
+        bool is_dynamic = false;
+
+        if (expr._array_size_expr) {
+            auto size_val = std::dynamic_pointer_cast<value_expression>(expr._array_size_expr);
+            if (size_val && size_val->is_literal()
+                && std::holds_alternative<lex::integer>(size_val->any_literal())) {
+                auto& int_lit = size_val->any_literal().get<lex::integer>();
+                arr_size = int_lit.to_unsigned_int();
+            } else {
+                // Dynamic size
+                is_dynamic = true;
+                auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
+                auto adapted_size = adapt_type(expr._array_size_expr, uint_type);
+                if (!adapted_size) {
+                    throw_error(0x4233, std::nullopt,
+                        "Uniform array size expression must be convertible to an unsigned integer; "
+                        "expression has type '{}'",
+                        {expr._array_size_expr->get_type() ? expr._array_size_expr->get_type()->to_string() : "?"});
+                    return;
+                }
+                if (adapted_size != expr._array_size_expr) {
+                    expr._array_size_expr = adapted_size;
+                    adapted_size->set_parent_expression(expr.shared_as<expression>());
+                }
+            }
+        }
+
+        // Check for abstract types
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+            auto struct_model = st_type->get_struct();
+            if (struct_model && struct_model->is_abstract()) {
+                throw_error(0x4230, std::nullopt,
+                    "Cannot create uniform array of abstract class '{}'",
+                    {struct_model->get_short_name()});
+                return;
+            }
+        }
+
+        // Resolve the constructor / type-check for the uniform args
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+            auto struct_model = st_type->get_struct();
+            if (!struct_model) {
+                throw_error(0x4225, std::nullopt,
+                    "Cannot resolve struct for uniform 'new {}(...)[]': aggregate not resolved",
+                    {st_type->to_string()});
+                return;
+            }
+            auto [best_ctor, adapted_args] = get_best_matching_constructor(
+                struct_model->constructors(), expr._uniform_ctor_args);
+            if (!best_ctor) {
+                throw_error(0x4231, std::nullopt,
+                    "No matching constructor for uniform array init of type '{}'",
+                    {st_type->to_string()});
+                return;
+            }
+            check_constructor_visibility(*best_ctor, expr);
+            expr._uniform_constructor = best_ctor;
+            expr.set_uniform_ctor_args(adapted_args);
+        } else if (type::is_primitive(elem_type)) {
+            // Primitive: must have exactly one arg convertible to the element type
+            if (expr._uniform_ctor_args.size() > 1) {
+                throw_error(0x4232, std::nullopt,
+                    "Uniform array init for primitive type '{}' expects at most one argument, got {}",
+                    {elem_type->to_string(), std::to_string(expr._uniform_ctor_args.size())});
+                return;
+            }
+            if (!expr._uniform_ctor_args.empty() && expr._uniform_ctor_args[0]) {
+                auto cast = adapt_type(expr._uniform_ctor_args[0], elem_type);
+                if (!cast) {
+                    throw_error(0x4232, std::nullopt,
+                        "Cannot convert uniform init value to primitive element type '{}'",
+                        {elem_type->to_string()});
+                    return;
+                }
+                if (cast != expr._uniform_ctor_args[0]) {
+                    expr.assign_uniform_ctor_arg(0, cast);
+                }
+            }
+        }
+
+        if (is_dynamic) {
+            expr._is_dynamic_size = true;
+            expr._array_size = 0;
+            auto arr_type_unsized = elem_type->get_array();
+            expr.set_type(arr_type_unsized->get_owner());
+        } else {
+            expr._array_size = arr_size;
+            auto arr_type_unsized = elem_type->get_array();
+            auto sized_arr_type = arr_type_unsized->with_size(arr_size);
+            expr.set_type(sized_arr_type->get_owner());
+        }
+        return;
+    }
+
     if (expr.is_array()) {
         // ── Array form: new T[N]{e0, e1, ...} ──
 
@@ -2743,12 +2879,86 @@ void implementation_generator::visit_owner_move_expression(owner_move_expression
 
 void symbol_resolver::visit_array_init_expression(array_init_expression& expr) {
     if (expr.constructed_symbol()) expr.constructed_symbol()->accept(*this);
-    for (size_t i = 0; i < expr.size(); ++i) {
-        if (auto e = expr.element(i)) e->accept(*this);
+    if (expr.is_uniform()) {
+        for (auto& a : expr.uniform_ctor_args()) {
+            if (a) a->accept(*this);
+        }
+    } else {
+        for (size_t i = 0; i < expr.size(); ++i) {
+            if (auto e = expr.element(i)) e->accept(*this);
+        }
     }
 }
 
 void type_reference_resolver::visit_array_init_expression(array_init_expression& expr) {
+    if (expr.is_uniform()) {
+        // ── Uniform array init: var : T(args)[N]; ──
+        // Resolve uniform ctor args
+        for (auto& a : expr._uniform_ctor_args) {
+            if (a) a->accept(*this);
+        }
+
+        auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
+        if (!var_def) return;
+        auto var_type = var_def->get_type();
+        if (!type::is_sized_array(var_type)) return;
+
+        auto arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type);
+        auto elem_type = arr_type->get_subtype();
+        size_t arr_size = arr_type->get_size();
+
+        // Update stored array size
+        expr._array_size = arr_size;
+
+        // Check for abstract types
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+            auto struct_model = st_type->get_struct();
+            if (struct_model && struct_model->is_abstract()) {
+                throw_error(0x4230, std::nullopt,
+                    "Cannot create uniform array of abstract class '{}'",
+                    {struct_model->get_short_name()});
+                return;
+            }
+        }
+
+        // Resolve the constructor / type-check for the uniform args
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+            auto struct_model = st_type->get_struct();
+            if (!struct_model) return;
+            auto [best_ctor, adapted_args] = get_best_matching_constructor(
+                struct_model->constructors(), expr._uniform_ctor_args);
+            if (!best_ctor) {
+                throw_error(0x4231, std::nullopt,
+                    "No matching constructor for uniform array init of type '{}'",
+                    {st_type->to_string()});
+                return;
+            }
+            expr._uniform_constructor = best_ctor;
+            expr.set_uniform_ctor_args(adapted_args);
+        } else if (type::is_primitive(elem_type)) {
+            // Primitive: must have exactly one arg convertible to the element type
+            if (expr._uniform_ctor_args.size() > 1) {
+                throw_error(0x4232, std::nullopt,
+                    "Uniform array init for primitive type '{}' expects at most one argument, got {}",
+                    {elem_type->to_string(), std::to_string(expr._uniform_ctor_args.size())});
+                return;
+            }
+            if (!expr._uniform_ctor_args.empty() && expr._uniform_ctor_args[0]) {
+                auto cast = adapt_type(expr._uniform_ctor_args[0], elem_type);
+                if (!cast) {
+                    throw_error(0x4232, std::nullopt,
+                        "Cannot convert uniform init value to primitive element type '{}'",
+                        {elem_type->to_string()});
+                    return;
+                }
+                if (cast != expr._uniform_ctor_args[0]) {
+                    expr.assign_uniform_ctor_arg(0, cast);
+                }
+            }
+        }
+        return;
+    }
+
     // Resolve sub-expressions
     for (size_t i = 0; i < expr.size(); ++i) {
         if (auto e = expr.element(i)) e->accept(*this);
@@ -2874,27 +3084,59 @@ void implementation_generator::visit_array_init_expression(array_init_expression
         sized_array_type::FIELD_DATA, "arr_data");
     auto* llvm_arr_type = arr_type->get_llvm_data_array_type();
 
-    // Initialize each element
-    for (size_t i = 0; i < expr.size() && i < arr_size; ++i) {
-        auto elem_expr = expr.element(i);
-        if (!elem_expr) continue; // default-init (already zeroed)
+    if (expr.is_uniform()) {
+        // ── Uniform mode: initialize all elements with the same ctor args ──
+        for (size_t i = 0; i < arr_size; ++i) {
+            llvm::Value* elem_ptr = _builder->CreateConstInBoundsGEP2_32(
+                llvm_arr_type, data_ptr, 0, i, "uarr_elem_" + std::to_string(i));
 
-        llvm::Value* elem_ptr = _builder->CreateConstInBoundsGEP2_32(
-            llvm_arr_type, data_ptr, 0, i, "arr_elem_" + std::to_string(i));
-
-        if (type::is_primitive(elem_type)) {
-            _value = nullptr;
-            elem_expr->accept(*this);
-            if (_value) {
-                _builder->CreateStore(_value, elem_ptr);
+            if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+                auto ctor = expr.uniform_constructor();
+                if (ctor) {
+                    auto ctor_it = _context->_functions.find(ctor->shared_as<function>());
+                    if (ctor_it != _context->_functions.end()) {
+                        std::vector<llvm::Value*> args;
+                        args.push_back(elem_ptr);
+                        for (auto& arg : expr.uniform_ctor_args()) {
+                            _value = nullptr;
+                            arg->accept(*this);
+                            if (_value) args.push_back(_value);
+                        }
+                        _builder->CreateCall(ctor_it->second, args);
+                    }
+                }
+            } else if (type::is_primitive(elem_type)) {
+                if (!expr.uniform_ctor_args().empty() && expr.uniform_ctor_args()[0]) {
+                    _value = nullptr;
+                    expr.uniform_ctor_args()[0]->accept(*this);
+                    if (_value) _builder->CreateStore(_value, elem_ptr);
+                }
+                // else: already zero-inited
             }
-        } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
-            // For struct elements, we need to call the constructor
-            // TODO: Full struct element initialization in Phase 4
-            _value = nullptr;
-            elem_expr->accept(*this);
-            if (_value) {
-                _builder->CreateStore(_value, elem_ptr);
+        }
+    } else {
+        // ── Per-element mode (existing behavior) ──
+        // Initialize each element
+        for (size_t i = 0; i < expr.size() && i < arr_size; ++i) {
+            auto elem_expr = expr.element(i);
+            if (!elem_expr) continue; // default-init (already zeroed)
+
+            llvm::Value* elem_ptr = _builder->CreateConstInBoundsGEP2_32(
+                llvm_arr_type, data_ptr, 0, i, "arr_elem_" + std::to_string(i));
+
+            if (type::is_primitive(elem_type)) {
+                _value = nullptr;
+                elem_expr->accept(*this);
+                if (_value) {
+                    _builder->CreateStore(_value, elem_ptr);
+                }
+            } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+                // For struct elements, we need to call the constructor
+                _value = nullptr;
+                elem_expr->accept(*this);
+                if (_value) {
+                    _builder->CreateStore(_value, elem_ptr);
+                }
             }
         }
     }
@@ -2920,7 +3162,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
             malloc_type, llvm::Function::ExternalLinkage, "malloc", mod);
     }
 
-    if (expr.is_array() && expr.is_dynamic_size()) {
+    if (expr.is_array() && expr.is_dynamic_size() && !expr.is_uniform_array()) {
         // ── Dynamic array form: new T[expr] ──
         // Size is a runtime value. No brace initializers. All elements default-initialized.
         auto elem_type = alloc_type;
@@ -3021,6 +3263,184 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
 
         _value = raw_ptr;
         return;
+    }
+
+    if (expr.is_uniform_array()) {
+        // ── Uniform array form: new T(args)[N] ──
+        auto elem_type = alloc_type;
+        llvm::Type* llvm_elem_type = _context->get_llvm_type(elem_type);
+
+        if (expr.is_dynamic_size()) {
+            // ── Dynamic uniform array: new T(args)[expr] ──
+            auto own_type = std::dynamic_pointer_cast<owner_type>(expr.get_type());
+            auto unsized_arr_type = own_type
+                ? std::dynamic_pointer_cast<array_type>(own_type->get_owned_type())
+                : nullptr;
+            if (!unsized_arr_type) { _value = nullptr; return; }
+
+            auto* struct_llvm = unsized_arr_type->get_llvm_struct_type();
+            auto* llvm_arr_type = unsized_arr_type->get_llvm_data_array_type();
+            if (!struct_llvm || !llvm_arr_type) { _value = nullptr; return; }
+
+            // Evaluate the size expression → i32 runtime value
+            _value = nullptr;
+            expr.array_size_expr()->accept(*this);
+            llvm::Value* n_val = _value;
+            if (!n_val) { _value = nullptr; return; }
+
+            // Compute allocation size: header_size + sizeof(T) * n
+            auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+            auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+            uint64_t header_size = mod.getDataLayout().getStructLayout(struct_llvm)->getElementOffset(array_type::FIELD_DATA);
+            uint64_t elem_size = mod.getDataLayout().getTypeAllocSize(llvm_elem_type);
+
+            llvm::Value* n_i64 = _builder->CreateZExt(n_val, i64_ty, "n_i64");
+            llvm::Value* data_bytes = _builder->CreateMul(
+                n_i64,
+                llvm::ConstantInt::get(i64_ty, elem_size),
+                "data_bytes");
+            llvm::Value* alloc_size = _builder->CreateAdd(
+                data_bytes,
+                llvm::ConstantInt::get(i64_ty, header_size),
+                "alloc_size");
+
+            // malloc
+            llvm::Value* raw_ptr = _builder->CreateCall(
+                malloc_fn->getFunctionType(), malloc_fn, {alloc_size}, "new_uarr_raw");
+
+            // memset to zero
+            _builder->CreateMemSet(raw_ptr,
+                llvm::ConstantInt::get(llvm::Type::getInt8Ty(llvm_ctx), 0),
+                alloc_size, llvm::MaybeAlign(1));
+
+            // Store the element count in field 0
+            llvm::Value* size_ptr = _builder->CreateStructGEP(struct_llvm, raw_ptr,
+                array_type::FIELD_SIZE, "uarr_size");
+            _builder->CreateStore(n_val, size_ptr);
+
+            // Get pointer to the data area (field 1)
+            llvm::Value* data_ptr = _builder->CreateStructGEP(struct_llvm, raw_ptr,
+                array_type::FIELD_DATA, "uarr_data");
+
+            // Emit IR loop: for (i = 0; i < n; ++i) init element i with ctor args
+            auto* fn = _builder->GetInsertBlock()->getParent();
+            auto* loop_header = llvm::BasicBlock::Create(llvm_ctx, "uarr_init_hdr", fn);
+            auto* loop_body   = llvm::BasicBlock::Create(llvm_ctx, "uarr_init_body", fn);
+            auto* loop_end    = llvm::BasicBlock::Create(llvm_ctx, "uarr_init_end", fn);
+
+            _builder->CreateBr(loop_header);
+
+            _builder->SetInsertPoint(loop_header);
+            auto* entry_bb = loop_header->getSinglePredecessor();
+            llvm::PHINode* i_phi = _builder->CreatePHI(i32_ty, 2, "uarr_i");
+            i_phi->addIncoming(llvm::ConstantInt::get(i32_ty, 0), entry_bb);
+            llvm::Value* cmp = _builder->CreateICmpULT(i_phi, n_val, "uarr_cmp");
+            _builder->CreateCondBr(cmp, loop_body, loop_end);
+
+            _builder->SetInsertPoint(loop_body);
+            llvm::Value* indices[] = {llvm::ConstantInt::get(i32_ty, 0), i_phi};
+            llvm::Value* elem_ptr = _builder->CreateGEP(
+                llvm_arr_type, data_ptr, indices, "uarr_elem");
+
+            if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+                auto ctor = expr.uniform_constructor();
+                if (ctor) {
+                    auto ctor_it = _context->_functions.find(ctor->shared_as<function>());
+                    if (ctor_it != _context->_functions.end()) {
+                        std::vector<llvm::Value*> args;
+                        args.push_back(elem_ptr);
+                        for (auto& arg : expr.uniform_ctor_args()) {
+                            _value = nullptr;
+                            arg->accept(*this);
+                            if (_value) args.push_back(_value);
+                        }
+                        _builder->CreateCall(ctor_it->second, args);
+                    }
+                }
+            } else if (type::is_primitive(elem_type)) {
+                if (!expr.uniform_ctor_args().empty() && expr.uniform_ctor_args()[0]) {
+                    _value = nullptr;
+                    expr.uniform_ctor_args()[0]->accept(*this);
+                    if (_value) _builder->CreateStore(_value, elem_ptr);
+                }
+            }
+
+            llvm::Value* i_next = _builder->CreateAdd(
+                i_phi, llvm::ConstantInt::get(i32_ty, 1), "uarr_i_next");
+            i_phi->addIncoming(i_next, loop_body);
+            _builder->CreateBr(loop_header);
+
+            _builder->SetInsertPoint(loop_end);
+            _value = raw_ptr;
+            return;
+        } else {
+            // ── Static uniform array: new T(args)[N] ──
+            size_t arr_size = expr.array_size();
+
+            auto own_type = std::dynamic_pointer_cast<owner_type>(expr.get_type());
+            auto sized_arr_type = own_type
+                ? std::dynamic_pointer_cast<sized_array_type>(own_type->get_owned_type())
+                : nullptr;
+            if (!sized_arr_type) { _value = nullptr; return; }
+
+            auto* struct_llvm = sized_arr_type->get_llvm_struct_type();
+            if (!struct_llvm) { _value = nullptr; return; }
+
+            // malloc(sizeof(struct { i32, [N x T] }))
+            auto* size_val = llvm::ConstantInt::get(
+                llvm::Type::getInt64Ty(llvm_ctx),
+                mod.getDataLayout().getTypeAllocSize(struct_llvm));
+            llvm::Value* raw_ptr = _builder->CreateCall(
+                malloc_fn->getFunctionType(), malloc_fn, {size_val}, "new_uarr_raw");
+
+            // Zero-init the entire struct
+            auto* zero_init = llvm::ConstantAggregateZero::get(struct_llvm);
+            _builder->CreateStore(zero_init, raw_ptr);
+
+            // Store the element count in field 0
+            llvm::Value* size_ptr2 = _builder->CreateStructGEP(struct_llvm, raw_ptr,
+                sized_array_type::FIELD_SIZE, "uarr_size");
+            _builder->CreateStore(
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), arr_size, false),
+                size_ptr2);
+
+            // Get pointer to the data array (field 1)
+            llvm::Value* data_ptr = _builder->CreateStructGEP(struct_llvm, raw_ptr,
+                sized_array_type::FIELD_DATA, "uarr_data");
+            auto* llvm_arr_type2 = sized_arr_type->get_llvm_data_array_type();
+
+            // Initialize each element
+            for (size_t i = 0; i < arr_size; ++i) {
+                llvm::Value* elem_ptr = _builder->CreateConstInBoundsGEP2_32(
+                    llvm_arr_type2, data_ptr, 0, i, "uarr_elem_" + std::to_string(i));
+
+                if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+                    auto ctor = expr.uniform_constructor();
+                    if (ctor) {
+                        auto ctor_it = _context->_functions.find(ctor->shared_as<function>());
+                        if (ctor_it != _context->_functions.end()) {
+                            std::vector<llvm::Value*> args;
+                            args.push_back(elem_ptr);
+                            for (auto& arg : expr.uniform_ctor_args()) {
+                                _value = nullptr;
+                                arg->accept(*this);
+                                if (_value) args.push_back(_value);
+                            }
+                            _builder->CreateCall(ctor_it->second, args);
+                        }
+                    }
+                } else if (type::is_primitive(elem_type)) {
+                    if (!expr.uniform_ctor_args().empty() && expr.uniform_ctor_args()[0]) {
+                        _value = nullptr;
+                        expr.uniform_ctor_args()[0]->accept(*this);
+                        if (_value) _builder->CreateStore(_value, elem_ptr);
+                    }
+                }
+            }
+
+            _value = raw_ptr;
+            return;
+        }
     }
 
     if (expr.is_array()) {

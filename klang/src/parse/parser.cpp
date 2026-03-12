@@ -1006,10 +1006,51 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
             throw_error(0x0013, _lexer.pick_current(), "Variable declaration expects an initialization expression after the equal operator '='");
         }
     } else if (lequal_or_openp==lex::punctuator::PARENTHESIS_OPEN) {
-        expr = parse_expression_list();
-        auto lclosep = _lexer.get();
-        if(lclosep!=lex::punctuator::PARENTHESIS_CLOSE) {
-            throw_error(0x003D, lclosep, "Variable declaration through constructor with parenthesis initialization expects a closing parenthesis ')'");
+        // Parse arguments inside parentheses (could be constructor init or uniform array init)
+        std::vector<ast::expr_ptr> paren_args;
+        auto lclose_or_first = _lexer.get();
+        if (lclose_or_first != lex::punctuator::PARENTHESIS_CLOSE) {
+            _lexer.unget();
+            while (true) {
+                auto arg = parse_conditional_expr();
+                paren_args.push_back(arg);
+                auto sep = _lexer.get();
+                if (sep == lex::punctuator::PARENTHESIS_CLOSE) break;
+                if (sep != lex::punctuator::COMMA) {
+                    throw_error(0x003D, sep, "Variable declaration through constructor with parenthesis initialization expects ',' or closing parenthesis ')'");
+                }
+            }
+        }
+
+        // Check for uniform array init: T(args)[N]
+        auto peek_bracket = _lexer.get();
+        if (peek_bracket == lex::punctuator::BRACKET_OPEN) {
+            // Uniform array init: parse array size expression inside [N]
+            auto size_expr = parse_conditional_expr();
+            auto close_bracket = _lexer.get();
+            if (close_bracket != lex::punctuator::BRACKET_CLOSE) {
+                throw_error(0x0063, close_bracket, "Uniform array init expects a closing bracket ']' after size expression");
+            }
+            auto var = std::make_shared<ast::variable_decl>(specifiers, lex::as<lex::identifier>(lname), type);
+            var->is_uniform_array_init = true;
+            var->uniform_ctor_args = std::move(paren_args);
+            var->uniform_array_size = size_expr;
+
+            auto lsemicolon = _lexer.get();
+            if(lsemicolon!=lex::punctuator::SEMICOLON) {
+                throw_error(0x0014, _lexer.pick_current(), "Variable declaration expects to finish by a semicolon ';'");
+            }
+            return var;
+        } else {
+            _lexer.unget();
+        }
+
+        // Regular constructor init: T(args)
+        // Flatten paren_args into a single expression list if needed
+        if (paren_args.size() == 1) {
+            expr = paren_args[0];
+        } else if (paren_args.size() > 1) {
+            expr = std::make_shared<ast::expr_list_expr>(paren_args);
         }
         is_constructor = true;
     } else if (lequal_or_openp==lex::punctuator::BRACE_OPEN) {
@@ -1781,7 +1822,7 @@ ast::expr_ptr parser::parse_unary_expr()
             _lexer.unget();
         }
 
-        // Single-object form: new T(args)
+        // Single-object form: new T(args)  OR  uniform array form: new T(args)[N]
         // Parse argument list '(' args ')'
         if (auto lpar = _lexer.get(); lpar != lex::punctuator::PARENTHESIS_OPEN) {
             throw_error(0x0051, _lexer.pick_current(), "'new' expects '(' after the type specifier, '[' for array allocation, or '{' for brace-initialized array");
@@ -1803,6 +1844,20 @@ ast::expr_ptr parser::parse_unary_expr()
                 }
             }
         }
+
+        // Check for uniform array form: new T(args)[N]
+        if (auto peek_bracket = _lexer.get(); peek_bracket == lex::punctuator::BRACKET_OPEN) {
+            ast::expr_ptr size_expr = parse_conditional_expr();
+            auto close_bracket = _lexer.get();
+            if (close_bracket != lex::punctuator::BRACKET_CLOSE) {
+                throw_error(0x0054, close_bracket, "'new' uniform array expects a closing bracket ']' after size expression");
+            }
+            holder.sync();
+            return std::make_shared<ast::new_expr>(new_kw, type, args, size_expr, /*uniform_tag=*/true);
+        } else {
+            _lexer.unget();
+        }
+
         holder.sync();
         return std::make_shared<ast::new_expr>(new_kw, type, args);
     } else {

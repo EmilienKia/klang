@@ -83,6 +83,7 @@ Specifier: (one of)
 Initialiser:
     '=' ConditionalExpr                     -- value initialisation
     | '(' [ ExpressionList ] ')'            -- constructor initialisation
+    | '(' [ ExpressionList ] ')' '[' Expression ']'  -- uniform array init
     | BraceInitList                         -- brace initialisation (arrays)
 BraceInitList:
     '{' [ InitElement { ',' InitElement } ] '}'
@@ -91,6 +92,11 @@ InitElement:
     | (empty)                               -- default construction
 ```
 The type specifier follows a colon (`:`) after the variable name.
+
+After parsing `( args )`, if the next token is `[`, it is a
+[uniform array init](../memory/uniform-array-init.md) — all elements are initialized with
+the same constructor arguments.  Otherwise, it is a single-variable constructor init.
+
 **Examples:**
 ```k
 x : int;                     // uninitialized (zero for primitives)
@@ -104,6 +110,8 @@ q : plop(5);                 // struct constructed with argument
 arr : int[4];                // array of 4 ints
 arr2 : int[3] {1, 2, 3};    // array with brace initializer list
 arr3 : int[] {10, 20};       // array with size inferred from init list
+arr4 : int(42)[5];           // uniform array init — all 5 elements set to 42
+pts : Point(1, 2)[3];        // uniform array init — all 3 Points constructed with (1, 2)
 ptr : int* = &x;             // pointer initialized to address of x
 cptr : const int* = &x;      // pointer to const int — pointed value cannot be modified
 ref : int& = x;              // reference bound to x — x must be an addressable variable

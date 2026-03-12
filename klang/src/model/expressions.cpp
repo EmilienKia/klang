@@ -296,6 +296,23 @@ std::shared_ptr<new_expression> new_expression::make_array_shared(
     return expr;
 }
 
+std::shared_ptr<new_expression> new_expression::make_uniform_array_shared(
+    const std::shared_ptr<type>& element_type,
+    const std::shared_ptr<expression>& array_size_expr,
+    const std::vector<std::shared_ptr<expression>>& uniform_ctor_args)
+{
+    std::shared_ptr<new_expression> expr{new new_expression()};
+    expr->_is_array = true;
+    expr->_is_uniform_array = true;
+    expr->_allocated_type = element_type;
+    if (array_size_expr) {
+        expr->_array_size_expr = array_size_expr;
+        array_size_expr->set_parent_expression(expr);
+    }
+    expr->set_uniform_ctor_args(uniform_ctor_args);
+    return expr;
+}
+
 //
 // Delete expression
 //
@@ -342,6 +359,28 @@ std::shared_ptr<array_init_expression> array_init_expression::make_shared(
     const std::vector<std::shared_ptr<expression>>& elements)
 {
     return make_shared(symbol_expression::from_variable(variable), elements);
+}
+
+std::shared_ptr<array_init_expression> array_init_expression::make_uniform_shared(
+    const std::shared_ptr<symbol_expression>& constructed_symbol,
+    const std::vector<std::shared_ptr<expression>>& uniform_ctor_args,
+    size_t array_size)
+{
+    std::shared_ptr<array_init_expression> expr{new array_init_expression()};
+    expr->_is_uniform = true;
+    expr->_array_size = array_size;
+    expr->_constructed_symbol = constructed_symbol;
+    if (constructed_symbol) constructed_symbol->set_parent_expression(expr);
+    expr->set_uniform_ctor_args(uniform_ctor_args);
+    return expr;
+}
+
+std::shared_ptr<array_init_expression> array_init_expression::make_uniform_shared(
+    const std::shared_ptr<variable_definition>& variable,
+    const std::vector<std::shared_ptr<expression>>& uniform_ctor_args,
+    size_t array_size)
+{
+    return make_uniform_shared(symbol_expression::from_variable(variable), uniform_ctor_args, array_size);
 }
 
 

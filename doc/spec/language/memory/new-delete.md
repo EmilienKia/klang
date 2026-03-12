@@ -248,6 +248,10 @@ dynItems : Item[]! = new Item[count]; // 5 Items, each default-constructed
 delete dynItems;                       // 5 destructors called in reverse order
 ```
 
+> **See also:** [Uniform Array Initialization](uniform-array-init.md) — the `new T(args)[N]` form
+> initializes all array elements with the same constructor arguments, as an alternative to
+> per-element brace initialization.
+
 ---
 
 ## 3. `delete` expression
@@ -462,6 +466,7 @@ They appear in the `UnaryExpr` production as special prefix forms:
 ```
 UnaryExpr:
     'new' TypeName '(' [ ExpressionList ] ')'                        -- NewExpr (single object)
+    | 'new' TypeName '(' [ ExpressionList ] ')' '[' Expression ']'   -- NewUniformArrayExpr
     | 'new' TypeName '[' [ Expression ] ']' [ BraceInitList ]        -- NewArrayExpr
     | 'new' TypeName BraceInitList                                   -- NewBareArrayExpr
     | 'delete' CastExpr                                              -- DeleteExpr
@@ -489,8 +494,10 @@ to parse the base type without consuming any trailing `[`:
   optionally parses a brace initializer list `{ … }`.
 - If the next token is `{`, this is the **bare-brace array form** (`new T{…}`).  The size is
   inferred from the initializer list.  This is equivalent to `new T[]{…}`.
-- Otherwise, this is the **single-object form**, and a parenthesised argument list `( … )` is
-  expected.
+- Otherwise, this is the **single-object or uniform array form**, and a parenthesised argument
+  list `( … )` is expected.  After the closing `)`, if the next token is `[`, this is a
+  **uniform array allocation** (`new T(args)[N]`); otherwise, it is a single-object allocation.
+  See [Uniform Array Initialization](uniform-array-init.md).
 
 `TypeName` accepts only a bare type name — indirection suffixes (`*`, `!`, `&`, …) are not
 permitted inside a `new` expression.
@@ -500,6 +507,8 @@ permitted inside a `new` expression.
 | Form | Result type |
 |------|-------------|
 | `new T(args)` | `T!` |
+| `new T(args)[N]` (N = compile-time constant) | `T[N]!` |
+| `new T(args)[expr]` (expr = runtime expression) | `T[]!` |
 | `new T[N]{…}` (N = compile-time constant) | `T[N]!` |
 | `new T[expr]` (expr = runtime expression) | `T[]!` |
 | `new T{e₀, …, eₖ}` | `T[k]!` |

@@ -236,7 +236,16 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             _stm << var.name.content << " : ";
             var.type->visit(*this);
 
-            if(var.init) {
+            if (var.is_uniform_array_init) {
+                _stm << "(";
+                for (size_t i = 0; i < var.uniform_ctor_args.size(); ++i) {
+                    if (i > 0) _stm << ", ";
+                    if (var.uniform_ctor_args[i]) var.uniform_ctor_args[i]->visit(*this);
+                }
+                _stm << ")[";
+                if (var.uniform_array_size) var.uniform_array_size->visit(*this);
+                _stm << "]";
+            } else if(var.init) {
                 _stm << " = ";
                 var.init->visit(*this);
             }
@@ -487,7 +496,16 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         void visit_new_expr(ast::new_expr& expr) override {
             _stm << "new ";
             if (expr.type) expr.type->visit(*this);
-            if (expr.is_array) {
+            if (expr.is_uniform_array) {
+                _stm << "(";
+                for (size_t i = 0; i < expr.uniform_ctor_args.size(); ++i) {
+                    if (i > 0) _stm << ", ";
+                    if (expr.uniform_ctor_args[i]) expr.uniform_ctor_args[i]->visit(*this);
+                }
+                _stm << ")[";
+                if (expr.array_size_expr) expr.array_size_expr->visit(*this);
+                _stm << "]";
+            } else if (expr.is_array) {
                 _stm << "[";
                 if (expr.array_size_expr) expr.array_size_expr->visit(*this);
                 _stm << "]";

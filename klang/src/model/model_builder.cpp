@@ -279,7 +279,59 @@ namespace k::model {
             }
         }
 
-        if(decl.init) {
+        if (decl.is_uniform_array_init) {
+            // ── Uniform array init: var : T(args)[N]; ──
+
+            // Build model expression for array size
+            std::shared_ptr<model::expression> size_expr;
+            if (decl.uniform_array_size) {
+                _expr.reset();
+                decl.uniform_array_size->visit(*this);
+                size_expr = _expr;
+                _expr.reset();
+            }
+
+            // Try to evaluate the array size as a compile-time constant
+            size_t arr_size = 0;
+            if (size_expr) {
+                if (auto val = std::dynamic_pointer_cast<model::value_expression>(size_expr)) {
+                    if (val->is_literal()
+                        && std::holds_alternative<lex::integer>(val->any_literal())) {
+                        arr_size = val->any_literal().get<lex::integer>().to_unsigned_int();
+                    }
+                }
+            }
+
+            // If we got a compile-time size, create a sized array type
+            if (arr_size > 0) {
+                // The type specifier gives us the element type; build sized_array_type
+                auto elem_type = var_type;
+                // Unwrap reference if present (e.g. T[] gives ref<array<T>>)
+                if (type::is_reference(elem_type)) {
+                    auto ref = std::dynamic_pointer_cast<reference_type>(elem_type);
+                    elem_type = ref->get_subtype();
+                }
+                // If it's already an unsized array, extract element type
+                if (type::is_array(elem_type) && !type::is_sized_array(elem_type)) {
+                    auto arr = std::dynamic_pointer_cast<array_type>(elem_type);
+                    elem_type = arr->get_subtype();
+                }
+                auto sized = elem_type->get_array(arr_size);
+                var->set_type(sized);
+                var_type = sized;
+            }
+
+            // Build model ctor arg expressions
+            std::vector<std::shared_ptr<model::expression>> ctor_args;
+            for (auto& arg : decl.uniform_ctor_args) {
+                _expr.reset();
+                arg->visit(*this);
+                ctor_args.push_back(_expr);
+                _expr.reset();
+            }
+
+            var->set_init_expr(model::array_init_expression::make_uniform_shared(var, ctor_args, arr_size));
+        } else if(decl.init) {
             std::vector<std::shared_ptr<model::expression>> args;
             if (decl.is_brace_init) {
                 // Brace initializer list: { expr, expr, ... }
@@ -1104,7 +1156,35 @@ namespace k::model {
         // Resolve the allocated type from the AST type specifier
         auto alloc_type = _context->from_type_specifier(*expr.type);
 
-        if (expr.is_array) {
+        if (expr.is_uniform_array) {
+            // ── Uniform array form: new T(args)[N] ──
+
+            // Build the array size expression
+            std::shared_ptr<model::expression> size_expr;
+            if (expr.array_size_expr) {
+                _expr = nullptr;
+                expr.array_size_expr->visit(*this);
+                size_expr = _expr;
+            }
+
+            // Build constructor argument expressions (flatten expr_list_expr)
+            std::vector<std::shared_ptr<model::expression>> ctor_args;
+            for (auto& arg : expr.uniform_ctor_args) {
+                if (auto list = std::dynamic_pointer_cast<parse::ast::expr_list_expr>(arg)) {
+                    for (auto& sub : list->exprs()) {
+                        _expr = nullptr;
+                        sub->visit(*this);
+                        ctor_args.push_back(_expr);
+                    }
+                } else {
+                    _expr = nullptr;
+                    arg->visit(*this);
+                    ctor_args.push_back(_expr);
+                }
+            }
+
+            _expr = model::new_expression::make_uniform_array_shared(alloc_type, size_expr, ctor_args);
+        } else if (expr.is_array) {
             // ── Array form: new T[N]{e0, e1, ...} ──
 
             // Build array size expression (may be nullptr for inferred size)

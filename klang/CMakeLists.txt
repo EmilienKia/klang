@@ -109,6 +109,7 @@ add_executable(klang-tests
         tests/test-gen-null-semantics.cpp
         tests/test-gen-array-init.cpp
         tests/test-gen-new-array.cpp
+        tests/test-gen-uniform-array-init.cpp
         tests/test-gen-redirector.cpp
 )
 target_link_libraries(klang-tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain kdi)
