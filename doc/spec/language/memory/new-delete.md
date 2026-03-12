@@ -197,6 +197,10 @@ x : int = arr[1];       // x = 20
 arr[2] = 99;            // arr[2] is now 99
 ```
 
+The subscript operator works uniformly through any indirection type pointing to an array
+(reference, pointer, link, pinned, owner).  See [Subscript operator](../basic/types.md#96-subscript-operator)
+for the full list of supported types.
+
 A **runtime bounds check** is performed on every subscript access: the index is compared
 (unsigned) against the element count stored in the array header.  If the index is out of
 bounds, the program prints a diagnostic to `stderr` and calls `abort()`:

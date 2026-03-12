@@ -74,25 +74,41 @@ This is equivalent to a variable declaration with constructor arguments (not a s
 See [Constructors](../structs/constructors.md) for the full constructor syntax.
 ---
 ## 3. Subscript operator
-The subscript operator accesses an element of an array (or pointer).
+The subscript operator accesses an element of an array through any supported type.
 ### Grammar
 ```
 PostfixOp (subscript):
     '[' Expression ']'
 ```
-The left operand must be of array or pointer type; the right operand must be an integer.  
-The result is a reference to the element at the given index.
+The left operand must be an array or an indirection to an array; the right operand must be
+an integer.  The result is a reference (`&`) to the element at the given index.
+
+**Supported left operand types:**
+
+| Left operand type | Description |
+|-------------------|-------------|
+| `T[N]` | Sized array value |
+| `T[N]&` / `T[]&` | Reference to an array |
+| `T[N]!` / `T[]!` | Owner of an array |
+| `T[N]*` / `T[]*` | Pointer to an array |
+| `T[N]~` / `T[]~` | Link to an array |
+| `T[N]^` / `T[]^` | Pinned to an array |
+
+For all indirection types, the subscript operator transparently dereferences the indirection
+to access the underlying array element.
+
 ```k
 arr[0] = 1;
 x : int = arr[2];
-p[i] = v;
+p : int[3]* = &arr;
+p[1] = 42;           // subscript through pointer
 ```
 Array indices are zero-based.
 
-**Runtime bounds checking:** every subscript access on a sized array (`T[N]`,
-`T[N]&`, or `T[N]!`) is checked at runtime. The index is compared (unsigned)
-against the element count stored in the array header. If the index is out of
-bounds, the program prints a diagnostic to `stderr` and calls `abort()`.
+**Runtime bounds checking:** every subscript access on an array (through any indirection)
+is checked at runtime. The index is compared (unsigned) against the element count stored
+in the array header. If the index is out of bounds, the program prints a diagnostic to
+`stderr` and calls `abort()`.
 
 ```
 runtime error: array index out of bounds (index=5, size=3)

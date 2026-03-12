@@ -1224,10 +1224,15 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
     }
     left_type = std::dynamic_pointer_cast<reference_type>(left_type)->get_subtype();
 
-    // Handle owner<sized_array_type>: dereference through the owner to the inner array
+    // Unwrap any indirection type (owner, pointer, link, pinned) to reach the inner array
     if (type::is_owner(left_type)) {
-        auto own = std::dynamic_pointer_cast<owner_type>(left_type);
-        left_type = own->get_owned_type();
+        left_type = std::dynamic_pointer_cast<owner_type>(left_type)->get_owned_type();
+    } else if (type::is_pointer(left_type)) {
+        left_type = std::dynamic_pointer_cast<pointer_type>(left_type)->get_pointed_type();
+    } else if (type::is_link(left_type)) {
+        left_type = std::dynamic_pointer_cast<link_type>(left_type)->get_linked_type();
+    } else if (type::is_pinned(left_type)) {
+        left_type = std::dynamic_pointer_cast<pinned_type>(left_type)->get_pinned_type();
     }
 
     if(!type::is_array(left_type)) {
@@ -1269,16 +1274,29 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
         left = _builder->CreateLoad(_context->get_llvm_type(left_type), left, "arr_ref");
     }
 
-    // At this point left_type is ref<array<T>>, ref<sized_array<T>>, or ref<owner<sized_array<T>>>.
-    auto arr_type_inner = left_type->get_subtype(); // sized_array_type, array_type, or owner_type
+    // At this point left_type is ref<X> where X can be:
+    //   - sized_array_type or array_type (direct array)
+    //   - owner_type, pointer_type, link_type, pinned_type wrapping an array
+    auto arr_type_inner = left_type->get_subtype();
 
-    // Handle owner<sized_array_type>: load the owner pointer, then treat it as ptr to array struct
+    // Handle any indirection wrapping an array: load the raw pointer, then treat it as ptr to array struct
+    // All indirection types (owner, pointer, link, pinned) are opaque pointers in LLVM IR.
     if (auto own_type = std::dynamic_pointer_cast<owner_type>(arr_type_inner)) {
-        auto& llvm_ctx = _builder->getContext();
-        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
-        // left is alloca of the owner variable — load the raw pointer
+        auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
         left = _builder->CreateLoad(ptr_ty, left, "own_arr_ptr");
         arr_type_inner = own_type->get_owned_type();
+    } else if (auto ptr_type = std::dynamic_pointer_cast<pointer_type>(arr_type_inner)) {
+        auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+        left = _builder->CreateLoad(ptr_ty, left, "ptr_arr_ptr");
+        arr_type_inner = ptr_type->get_pointed_type();
+    } else if (auto lnk_type = std::dynamic_pointer_cast<link_type>(arr_type_inner)) {
+        auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+        left = _builder->CreateLoad(ptr_ty, left, "lnk_arr_ptr");
+        arr_type_inner = lnk_type->get_linked_type();
+    } else if (auto pin_type = std::dynamic_pointer_cast<pinned_type>(arr_type_inner)) {
+        auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+        left = _builder->CreateLoad(ptr_ty, left, "pin_arr_ptr");
+        arr_type_inner = pin_type->get_pinned_type();
     }
 
     // Dereference index if needed

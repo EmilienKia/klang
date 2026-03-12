@@ -771,6 +771,23 @@ arr[0] = 42;
 x = arr[i];
 ```
 
+The subscript operator works uniformly on arrays accessed through any indirection type:
+
+| Left operand type | Description |
+|-------------------|-------------|
+| `T[N]` | Sized array value |
+| `T[N]&` / `T[]&` | Reference to an array |
+| `T[N]!` / `T[]!` | Owner of an array |
+| `T[N]*` / `T[]*` | Pointer to an array |
+| `T[N]~` / `T[]~` | Link to an array |
+| `T[N]^` / `T[]^` | Pinned to an array |
+
+```k
+arr : int[3]{10, 20, 30};
+p : int[3]* = &arr;
+p[1] = 42;           // subscript through pointer — modifies arr[1]
+```
+
 * Indices are zero-based.
 * The index expression must be implicitly convertible to `unsigned int`.
 * **Runtime bounds checking** is performed on every subscript access: the index
