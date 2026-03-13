@@ -232,6 +232,16 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
         return from_keyword(kw->keyword, kw->is_unsigned);
     } else if(auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*ptr->subtype);
+        // int[] is canonicalized to reference(array(int)) for standalone use,
+        // but for indirections (int[]*, int[]~, int[]^) we need ptr/link/pin(array(int)),
+        // not ptr/link/pin(ref(array(int))).  Unwrap the spurious reference layer.
+        if (auto ref = std::dynamic_pointer_cast<reference_type>(subtype)) {
+            if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                if (!arr->is_sized()) {
+                    subtype = arr;
+                }
+            }
+        }
         if(ptr->pointer_type==lex::operator_::STAR) {
             return subtype->get_pointer();
         } else if(ptr->pointer_type==lex::operator_::AMPERSAND) {
@@ -651,6 +661,15 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
             std::cerr << "Error: cannot resolve pointer subtype." << std::endl;
             return nullptr;
         } else {
+            // Unsized arrays are canonicalised to ref<array<T>>;
+            // for pointer(array(T)) we unwrap the spurious reference.
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(res)) {
+                if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                    if (!arr->is_sized()) {
+                        res = arr;
+                    }
+                }
+            }
             return res->get_pointer();
         }
     } else if (type::is_reference(type)) {
@@ -667,6 +686,13 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
             std::cerr << "Error: cannot resolve link subtype." << std::endl;
             return nullptr;
         } else {
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(res)) {
+                if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                    if (!arr->is_sized()) {
+                        res = arr;
+                    }
+                }
+            }
             return res->get_link();
         }
     } else if (type::is_pinned(type)) {
@@ -675,6 +701,13 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
             std::cerr << "Error: cannot resolve pinned subtype." << std::endl;
             return nullptr;
         } else {
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(res)) {
+                if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                    if (!arr->is_sized()) {
+                        res = arr;
+                    }
+                }
+            }
             return res->get_pinned();
         }
     } else if (type::is_owner(type)) {

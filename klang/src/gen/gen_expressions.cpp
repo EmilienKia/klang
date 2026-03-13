@@ -4721,6 +4721,35 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         }
     }
 
+    // ── Sized→unsized array widening cast (no-op at LLVM level) ──────────────
+    // All array indirections are opaque pointers in LLVM, so sized→unsized
+    // widening (e.g. int[3]~ → int[]~, ref<int[4]> → ref<int[]>) is just
+    // a K type annotation change — no IR instruction needed.
+    {
+        auto extract_array = [](const std::shared_ptr<type>& t) -> std::shared_ptr<array_type> {
+            if (auto arr = std::dynamic_pointer_cast<array_type>(t)) return arr;
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(t))
+                return std::dynamic_pointer_cast<array_type>(type::remove_const(ref->get_subtype()));
+            if (auto lnk = std::dynamic_pointer_cast<link_type>(t))
+                return std::dynamic_pointer_cast<array_type>(type::remove_const(lnk->get_linked_type()));
+            if (auto ptr = std::dynamic_pointer_cast<pointer_type>(t))
+                return std::dynamic_pointer_cast<array_type>(type::remove_const(ptr->get_pointed_type()));
+            if (auto pin = std::dynamic_pointer_cast<pinned_type>(t))
+                return std::dynamic_pointer_cast<array_type>(type::remove_const(pin->get_pinned_type()));
+            if (auto own = std::dynamic_pointer_cast<owner_type>(t))
+                return std::dynamic_pointer_cast<array_type>(type::remove_const(own->get_owned_type()));
+            return nullptr;
+        };
+        auto src_arr = extract_array(source_type);
+        auto tgt_arr = extract_array(target_type);
+        if (src_arr && tgt_arr) {
+            // No-op: just evaluate the sub-expression; the LLVM value is already correct.
+            _value = nullptr;
+            expr.sub_expr()->accept(*this);
+            return;
+        }
+    }
+
     if(!type::is_primitive(source_type) || !type::is_primitive(target_type)) {
         throw_error(0x001A, std::nullopt,
             "Casting between non-primitive types is not yet supported: "

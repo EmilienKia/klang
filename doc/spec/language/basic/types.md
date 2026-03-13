@@ -1143,6 +1143,54 @@ arr_ptr : int*[] {&a};   // &a → int~ → int* (link widened to pointer)
 arr_pin : int^[] {&a};   // &a → int~ → int^ (link widened to pinned)
 ```
 
+**Sized→unsized array widening:**
+
+A sized array `T[N]` can be implicitly widened to a reference to an unsized
+array `T[]` (= `T[]&`).  This extends to all indirection types:
+
+| Source   | Destination | Notes |
+|----------|-------------|-------|
+| `T[N]` / `T[N]&` | `T[]` / `T[]&` | Pass sized array to unsized parameter |
+| `T[N]~`  | `T[]~`  | Link to sized → link to unsized |
+| `T[N]*`  | `T[]*`  | Pointer to sized → pointer to unsized |
+| `T[N]^`  | `T[]^`  | Pinned to sized → pinned to unsized |
+| `T[N]!`  | `T[]!`  | Owner of sized → owner of unsized |
+
+These conversions require no code at the LLVM IR level — both sized and unsized
+array structs share the same layout (`{ i32, [? x T] }`) and all indirections
+are opaque pointers.
+
+This is the primary mechanism for writing generic array-processing functions:
+
+```k
+// Works with any int array regardless of size:
+array_sum(a : int[]) : int {
+    s : int = 0;
+    i : unsigned int = 0u;
+    while (i < a.size) {
+        s = s + a[i];
+        i = i + 1u;
+    }
+    return s;
+}
+
+test() : int {
+    arr : int[5]{1, 2, 3, 4, 5};
+    return array_sum(arr);              // int[5] → int[]  ✓
+}
+```
+
+Arrays of unsized indirections can also hold references to different-sized
+arrays:
+
+```k
+a : int[2]{1, 2};
+b : int[4]{3, 4, 5, 6};
+outer : int[]~[]{&a, &b};   // int[2]~ → int[]~, int[4]~ → int[]~
+outer[0]->size;              // 2
+outer[1]->size;              // 4
+```
+
 ```k
 struct Animal {
     legs : int;
