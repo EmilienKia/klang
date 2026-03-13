@@ -152,6 +152,19 @@ struct Counter {
     getEx() : int { return this.n; }   // explicit this.n
 }
 ```
+
+**Array virtual member — `size`:**
+
+The `.` operator also provides access to the virtual `size` member on arrays.
+This returns the element count as an `unsigned int`:
+
+```k
+arr : int[5]{10, 20, 30, 40, 50};
+sz : unsigned int = arr.size;   // 5
+```
+
+See [Types — §9.8](../basic/types.md#98-virtual-member-size) for full details.
+
 ---
 ## 5. Member access through pointer — arrow operator `->`
 Access a field or call a member function of a struct through a pointer.
@@ -170,6 +183,18 @@ p : Node*;
 p->value = 42;          // equivalent to (*p).value = 42
 p->next = null;
 ```
+
+**Array virtual member — `size`:**
+
+The `->` operator also provides access to the virtual `size` member on arrays
+accessed through any indirection type (pointer, link, pinned, owner):
+
+```k
+o : int[3]! = new int[]{1, 2, 3};
+sz : unsigned int = o->size;    // 3
+```
+
+See [Types — §9.8](../basic/types.md#98-virtual-member-size) for full details.
 ---
 ## 6. Pointer-to-member call — operators `.*` and `->*`
 These operators call a *member function reference* (a variable of type `T::*(Params)`, `T::^(Params)` or `T::~(Params)`) on a specific receiver object.

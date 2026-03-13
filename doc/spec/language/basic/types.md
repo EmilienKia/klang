@@ -24,6 +24,7 @@ K is a statically-typed language. Every expression has a type determined at comp
    - 9.5 [Array assignment](#95-array-assignment)
    - 9.6 [Subscript operator](#96-subscript-operator)
    - 9.7 [Arrays of indirection types](#97-arrays-of-indirection-types)
+   - 9.8 [Virtual member `size`](#98-virtual-member-size)
 10. [Struct types](#10-struct-types)
 11. [Function reference types](#11-function-reference-types)
     - 11.1 [Free function reference types](#111-free-function-reference-types)
@@ -881,6 +882,75 @@ delete arr[0];
 delete arr[1];
 delete arr[2];
 ```
+
+---
+
+
+### 9.8 Virtual member `size`
+
+Arrays expose a virtual read-only member **`size`** that returns the number of
+elements as an `unsigned int` (32-bit unsigned integer).  The value is read from
+field 0 of the underlying LLVM struct (see §9.1).
+
+**Direct / reference access (`.`):**
+
+```k
+arr : int[5]{10, 20, 30, 40, 50};
+sz : unsigned int = arr.size;   // 5
+```
+
+When the array is accessed through a reference (`&`), the `.` operator works
+identically:
+
+```k
+get_size(a : int[3]&) : unsigned int {
+    return a.size;
+}
+```
+
+**Indirection access (`->`):**
+
+When the array is accessed through a pointer (`*`), link (`~`), pinned (`^`),
+or owner (`!`), the `->` operator is used:
+
+```k
+p : int[4]* = &arr;
+sz : unsigned int = p->size;    // 4
+
+o : int[3]! = new int[]{1, 2, 3};
+sz2 : unsigned int = o->size;   // 3
+```
+
+**Usage in expressions:**
+
+`size` returns a plain value (not a reference) and can be used in any
+expression context — arithmetic, comparisons, function arguments, etc.:
+
+```k
+arr : int[4]{10, 20, 30, 40};
+sum : int = 0;
+i : unsigned int = 0u;
+while (i < arr.size) {
+    sum = sum + arr[i];
+    i = i + 1u;
+}
+```
+
+**Array of arrays:**
+
+For nested arrays (e.g. arrays of links or owners to arrays), `.size` gives
+the outer element count, while `->size` on an element gives the inner count:
+
+```k
+a : int[3]{1, 2, 3};
+b : int[3]{4, 5, 6};
+outer : int[3]~[]{&a, &b};
+outer.size;            // 2 (outer array has 2 elements)
+outer[0]->size;        // 3 (inner array has 3 elements)
+```
+
+> **Note:** `size` is the only virtual member currently available on arrays.
+> Accessing any other member name on an array produces a compile-time error.
 
 ---
 

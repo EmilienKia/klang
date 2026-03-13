@@ -664,6 +664,21 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
     // Strip const to get the actual struct_type for member lookup
     auto bare_subtype = type::remove_const(subtype);
 
+    // ── Virtual member: array.size ──────────────────────────────────────────
+    // Arrays (sized or unsized) expose a virtual read-only member "size"
+    // that returns the element count (unsigned int, stored in LLVM struct field 0).
+    if (auto arr_subtype = std::dynamic_pointer_cast<array_type>(bare_subtype)) {
+        const std::string& name_str = expr.symbol().get_name().to_string();
+        if (name_str == "size") {
+            // "size" is an unsigned int value (not a reference — it is loaded, not addressable)
+            expr.set_type(_context->from_type(primitive_type::UNSIGNED_INT));
+            return;
+        }
+        throw_error(0x001D, std::nullopt,
+            "Arrays have no member named '{}'; only 'size' is available",
+            {name_str});
+    }
+
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
         const auto& member_name = expr.symbol();
         const std::string& name_str = member_name.get_name().to_string();
@@ -966,6 +981,20 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
 
     // Strip const from the subtype to get the bare struct_type for GEP/method lookup.
     auto bare_subtype = type::remove_const(type->get_subtype());
+
+    // ── Virtual member: array.size ──────────────────────────────────────────
+    if (auto arr_subtype = std::dynamic_pointer_cast<array_type>(bare_subtype)) {
+        const std::string& name_str = expr.symbol().get_name().to_string();
+        if (name_str == "size") {
+            // _value is a pointer to the array struct { i32, [N x T] }.
+            // GEP into field 0 (size), then load.
+            auto* struct_ty = arr_subtype->get_llvm_struct_type();
+            auto* size_ptr = _builder->CreateStructGEP(struct_ty, _value, array_type::FIELD_SIZE, "arr_size_ptr");
+            _value = _builder->CreateLoad(llvm::Type::getInt32Ty(_builder->getContext()), size_ptr, "arr_size");
+            return;
+        }
+    }
+
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
         const auto& member_name =  expr.symbol();
         if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
@@ -1015,10 +1044,28 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
             "but got '{}'", {type ? type->to_string() : "?"});
     }
 
+    // ── Virtual member: array->size ─────────────────────────────────────────
+    // pointed_type is array_type directly for sized arrays (e.g. int[3]*),
+    // or reference<array_type> for unsized arrays (e.g. int[]* since int[] = int[]&).
+    auto arr_pointed = pointed_type;
+    if (auto ref_wrap = std::dynamic_pointer_cast<reference_type>(arr_pointed)) {
+        arr_pointed = ref_wrap->get_subtype();
+    }
+    if (auto arr_subtype = std::dynamic_pointer_cast<array_type>(arr_pointed)) {
+        const std::string& name_str = expr.symbol().get_name().to_string();
+        if (name_str == "size") {
+            expr.set_type(_context->from_type(primitive_type::UNSIGNED_INT));
+            return;
+        }
+        throw_error(0x001D, std::nullopt,
+            "Arrays have no member named '{}'; only 'size' is available",
+            {name_str});
+    }
+
     auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_type);
     if (!struct_subtype) {
         throw_error(0x0081, std::nullopt,
-            "The '->' operator requires a pointer to a struct, "
+            "The '->' operator requires a pointer to a struct or array, "
             "but the pointed-to type is '{}'",
             {pointed_type ? pointed_type->to_string() : "?"});
     }
@@ -1096,6 +1143,31 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
     else if (auto pin_t = std::dynamic_pointer_cast<pinned_type>(inner_type)) pointed_type = pin_t->get_pinned_type();
     else if (auto own_t = std::dynamic_pointer_cast<owner_type>(inner_type)) pointed_type = own_t->get_owned_type();
     if (!pointed_type) return;
+
+    // ── Virtual member: array->size ─────────────────────────────────────────
+    // For unsized arrays (int[] = int[]&), pointed_type is reference<array_type>.
+    // We must unwrap the reference and add an extra load to follow the double
+    // indirection (ptr → ref → array struct).
+    auto arr_pointed = pointed_type;
+    bool arr_needs_ref_load = false;
+    if (auto ref_wrap = std::dynamic_pointer_cast<reference_type>(arr_pointed)) {
+        arr_pointed = ref_wrap->get_subtype();
+        arr_needs_ref_load = true;
+    }
+    if (auto arr_subtype = std::dynamic_pointer_cast<array_type>(arr_pointed)) {
+        const std::string& name_str = expr.symbol().get_name().to_string();
+        if (name_str == "size") {
+            if (arr_needs_ref_load) {
+                // Extra load: dereference the reference to get the actual array struct pointer
+                _value = _builder->CreateLoad(
+                    llvm::PointerType::get(_builder->getContext(), 0), _value, "arr_ref_load");
+            }
+            auto* struct_ty = arr_subtype->get_llvm_struct_type();
+            auto* size_ptr = _builder->CreateStructGEP(struct_ty, _value, array_type::FIELD_SIZE, "arr_size_ptr");
+            _value = _builder->CreateLoad(llvm::Type::getInt32Ty(_builder->getContext()), size_ptr, "arr_size");
+            return;
+        }
+    }
 
     auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_type);
     if (!struct_subtype) return;
