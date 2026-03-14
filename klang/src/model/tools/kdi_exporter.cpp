@@ -471,6 +471,24 @@ kdi::kdi_aggregate kdi_builder::begin_aggregate(const aggregate& agg) {
     // ── Vtable ───────────────────────────────────────────────────────────
     kagg.vtable = build_vtable(agg);
 
+    // ── Default constructor reference ────────────────────────────────────
+    // Find the default (0-parameter, excluding 'this') constructor for
+    // designated init support of imported types.
+    for (auto& ctor : agg.constructors()) {
+        if (!ctor) continue;
+        // Count non-this parameters
+        size_t user_params = 0;
+        for (auto& p : ctor->parameters()) {
+            if (p->get_short_name() != "this" && p->get_short_name() != "__parent__") {
+                ++user_params;
+            }
+        }
+        if (user_params == 0 && is_exported(ctor->get_visibility())) {
+            kagg.default_constructor_mangled_name = ctor->get_mangled_name();
+            break;
+        }
+    }
+
     return kagg;
 }
 

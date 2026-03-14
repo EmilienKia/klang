@@ -184,6 +184,10 @@ void ast::brace_init_list::visit(ast_visitor &visitor) {
     visitor.visit_brace_init_list(*this);
 }
 
+void ast::designated_init_element::visit(ast_visitor &visitor) {
+    visitor.visit_designated_init_element(*this);
+}
+
 //
 // Default AST visitor
 //
@@ -353,6 +357,10 @@ void default_ast_visitor::visit_delete_expr(ast::delete_expr &) {
 }
 
 void default_ast_visitor::visit_brace_init_list(ast::brace_init_list &) {
+
+}
+
+void default_ast_visitor::visit_designated_init_element(ast::designated_init_element &) {
 
 }
 

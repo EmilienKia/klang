@@ -294,6 +294,7 @@ public:
     void visit_delete_expression(delete_expression&) override;
     void visit_owner_move_expression(owner_move_expression&) override;
     void visit_array_init_expression(array_init_expression&) override;
+    void visit_designated_struct_init_expression(designated_struct_init_expression&) override;
 
     void visit_cast_expression(cast_expression&) override;
 

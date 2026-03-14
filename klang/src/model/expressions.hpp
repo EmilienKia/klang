@@ -35,6 +35,7 @@
  * +- subscript_expression
  * +- function_invocation_expression
  * +- constructor_invocation_expression
+ * +- designated_struct_init_expression
  */
 
 #ifndef KLANG_MODEL_EXPRESSIONS_HPP
@@ -76,6 +77,7 @@ protected:
     friend class new_expression;
     friend class delete_expression;
     friend class array_init_expression;
+    friend class designated_struct_init_expression;
 
     void set_parent_expression(const std::shared_ptr<expression> &expression) {
         set_parent(expression);
@@ -1092,6 +1094,110 @@ public:
             std::vector<std::shared_ptr<expression>> elems;
             for (auto& e : _elements) elems.push_back(e ? e->clone() : nullptr);
             c->set_elements(elems);
+        }
+        return c;
+    }
+};
+
+/**
+ * Designated struct initializer expression.
+ * Represents brace-init with named member designators: s : S { .x = 1, .y(2, 3) };
+ *
+ * Each member initializer is stored as a (name, expression) pair.
+ * Members not listed are default-initialized.
+ * This expression is only valid for struct types (no virtual inheritance).
+ *
+ * If a member name is qualified (e.g. ".Base::x"), the qualifier is stored
+ * alongside the member name for disambiguation of inherited members.
+ */
+class designated_struct_init_expression : public expression {
+public:
+    /**
+     * A single member initializer entry.
+     * Either assignment form (.member = expr) or constructor form (.member(args...)).
+     */
+    struct member_init_entry {
+        std::string member_name;                       ///< Simple member name (e.g. "x")
+        std::string qualifier;                         ///< Optional qualifier for disambiguation (e.g. "BaseA")
+        bool is_call_form = false;                     ///< true → .m(args), false → .m = expr
+        std::shared_ptr<expression> value;             ///< Assignment form: the value expression
+        std::vector<std::shared_ptr<expression>> args; ///< Constructor form: argument expressions
+        /** Resolved member variable definition (set during type resolution). */
+        std::shared_ptr<member_variable_definition> resolved_member;
+        /** Resolved owning aggregate for this member (set during type resolution).
+         *  Differs from target_aggregate when the member is inherited from a base. */
+        std::shared_ptr<aggregate> resolved_owner;
+        /** Resolved constructor for this member's type (set during type resolution, if applicable). */
+        std::shared_ptr<constructor> resolved_constructor;
+    };
+
+protected:
+    /** The variable being initialized. */
+    std::shared_ptr<symbol_expression> _constructed_symbol;
+
+    /** The target struct type. */
+    std::shared_ptr<aggregate> _target_aggregate;
+
+    /** Member initializers in declaration order. */
+    std::vector<member_init_entry> _members;
+
+    designated_struct_init_expression() = default;
+    designated_struct_init_expression(const designated_struct_init_expression&) = delete;
+
+    friend class gen::type_reference_resolver;
+    friend class gen::implementation_generator;
+
+public:
+    const std::shared_ptr<symbol_expression>& constructed_symbol() const { return _constructed_symbol; }
+
+    std::shared_ptr<aggregate> target_aggregate() const { return _target_aggregate; }
+
+    const std::vector<member_init_entry>& members() const { return _members; }
+    std::vector<member_init_entry>& members_mutable() { return _members; }
+
+    size_t size() const { return _members.size(); }
+
+    static std::shared_ptr<designated_struct_init_expression> make_shared(
+        const std::shared_ptr<symbol_expression>& constructed_symbol,
+        const std::shared_ptr<aggregate>& target_aggregate,
+        const std::vector<member_init_entry>& members);
+
+    static std::shared_ptr<designated_struct_init_expression> make_shared(
+        const std::shared_ptr<variable_definition>& variable,
+        const std::shared_ptr<aggregate>& target_aggregate,
+        const std::vector<member_init_entry>& members);
+
+    void accept(model_visitor& visitor) override;
+
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<designated_struct_init_expression> c{new designated_struct_init_expression()};
+        c->_type = _type;
+        c->_target_aggregate = _target_aggregate;
+        auto sym = _constructed_symbol
+            ? std::dynamic_pointer_cast<symbol_expression>(_constructed_symbol->clone())
+            : nullptr;
+        if (sym) {
+            c->_constructed_symbol = sym;
+            sym->set_parent_expression(c);
+        }
+        for (auto& m : _members) {
+            member_init_entry entry;
+            entry.member_name = m.member_name;
+            entry.qualifier = m.qualifier;
+            entry.is_call_form = m.is_call_form;
+            entry.resolved_member = m.resolved_member;
+            entry.resolved_owner = m.resolved_owner;
+            entry.resolved_constructor = m.resolved_constructor;
+            if (m.value) {
+                entry.value = m.value->clone();
+                entry.value->set_parent_expression(c);
+            }
+            for (auto& a : m.args) {
+                auto ac = a ? a->clone() : nullptr;
+                if (ac) ac->set_parent_expression(c);
+                entry.args.push_back(ac);
+            }
+            c->_members.push_back(std::move(entry));
         }
         return c;
     }

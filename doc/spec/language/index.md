@@ -67,6 +67,7 @@ Examples are included where they clarify the normative text.
 | [Interfaces](structs/interfaces.md) | The `interface` keyword, implicit abstraction, virtual dispatch through interfaces |
 | [Inheritance](structs/inheritance.md) | Single and multiple inheritance, diamond patterns, cross-type restrictions, static upcast, dynamic downcast |
 | [Constructors](structs/constructors.md) | Instance and static constructors |
+| [Designated Struct Initializers](structs/designated-init.md) | Named-field initialization with `.member = expr` and `.member(args…)` forms |
 | [Destructors](structs/destructors.md) | Instance and static destructors |
 | [Nested Structures](structs/nested.md) | Static nested and non-static inner structures |
 
@@ -127,4 +128,3 @@ main() : int {
 ---
 
 *This reference evolves with the language. Pages marked with a note indicate areas that may change in future language versions.*
-

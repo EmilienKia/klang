@@ -85,11 +85,20 @@ Initialiser:
     | '(' [ ExpressionList ] ')'            -- constructor initialisation
     | '(' [ ExpressionList ] ')' '[' Expression ']'  -- uniform array init
     | BraceInitList                         -- brace initialisation (arrays)
+    | DesignatedBraceInitList               -- designated struct init
 BraceInitList:
     '{' [ InitElement { ',' InitElement } ] '}'
 InitElement:
     ConditionalExpr
     | (empty)                               -- default construction
+DesignatedBraceInitList:
+    '{' DesignatedInitElement { ',' DesignatedInitElement } '}'
+DesignatedInitElement:
+    '.' DesignatedMemberName '=' ConditionalExpr
+  | '.' DesignatedMemberName '(' [ ExpressionList ] ')'
+  | '.' DesignatedMemberName '=' DesignatedBraceInitList
+DesignatedMemberName:
+    [ Identifier '::' { Identifier '::' } ] Identifier
 ```
 The type specifier follows a colon (`:`) after the variable name.
 
@@ -121,7 +130,13 @@ arrLnk : int~[] {&x, &n};   // array of links to int (see Types §9.7)
 arrPtr : int*[] {&x, &n};   // array of pointers to int
 arrPin : int^[] {&x, &n};   // array of pinned to int
 arrOwnI : int![] {new int(1), new int(2)};  // array of owners of int
+pt : Point { .x = 10, .y = 20 };            // designated struct init
+tr : Trio { .b = 42 };                       // partial designated init (a, c default to 0)
+d : D { .Base::v = 42, .w = 10 };           // qualified designated init (inheritance)
+o : Outer { .inner = { .a = 1, .b = 2 } };  // nested designated init
 ```
+
+> **Note:** See [Designated Struct Initializers](../structs/designated-init.md) for the full reference on the `.member = expr` and `.member(args…)` syntax.
 
 > **Note on const:** A `const` variable must be initialised at declaration and cannot be
 > subsequently assigned, incremented or decremented. See [Types — Const-ness](../basic/types.md#12-const-ness).

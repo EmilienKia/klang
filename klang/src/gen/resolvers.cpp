@@ -1823,6 +1823,14 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         }
 
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var.get_type())) {
+        // Check for designated struct init first
+        auto desig_init = std::dynamic_pointer_cast<designated_struct_init_expression>(init_expr_base);
+        if (desig_init) {
+            // Designated struct init — resolve handled in visit_designated_struct_init_expression
+            desig_init->accept(*this);
+            return;
+        }
+
         // Structure, try to find the right constructor
         auto struct_model = st_type->get_struct();
         std::vector<std::shared_ptr<expression>> ctor_args = init_expr ? init_expr->arguments() : std::vector<std::shared_ptr<expression>>{};
@@ -2094,12 +2102,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                         bool is_static_upcast = src_st && tgt_st &&
                                          src_st->get_struct() && tgt_st->get_struct() &&
                                          src_st->get_struct()->is_derived_from(tgt_st->get_struct());
-                        // Sized→unsized array widening: ptr<T[N]> → ptr<T[]>
-                        auto src_sized_arr = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
-                        auto tgt_arr       = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-                        bool is_array_widen = src_sized_arr && tgt_arr && !tgt_arr->is_sized()
-                            && src_sized_arr->get_subtype() == tgt_arr->get_subtype();
-                        if (is_static_upcast || is_array_widen) {
+                        if (is_static_upcast) {
                             auto upcast = cast_expression::make_shared(arg, var.get_type());
                             upcast->set_type(var.get_type());
                             assign_single_init_arg(upcast);
@@ -2215,12 +2218,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 bool is_static_upcast = src_st && tgt_st &&
                                  src_st->get_struct() && tgt_st->get_struct() &&
                                  src_st->get_struct()->is_derived_from(tgt_st->get_struct());
-                // Sized→unsized array widening: lnk<T[N]> → lnk<T[]>
-                auto src_sized_arr = std::dynamic_pointer_cast<sized_array_type>(src_pointed_nc);
-                auto tgt_arr       = std::dynamic_pointer_cast<array_type>(link_sub_nc);
-                bool is_array_widen = src_sized_arr && tgt_arr && !tgt_arr->is_sized()
-                    && src_sized_arr->get_subtype() == tgt_arr->get_subtype();
-                if (is_static_upcast || is_array_widen) {
+                if (is_static_upcast) {
                     auto upcast = cast_expression::make_shared(arg, var_type);
                     upcast->set_type(var_type);
                     assign_single_init_arg(upcast);
@@ -2303,12 +2301,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 bool is_static_upcast = src_st && tgt_st &&
                                  src_st->get_struct() && tgt_st->get_struct() &&
                                  src_st->get_struct()->is_derived_from(tgt_st->get_struct());
-                // Sized→unsized array widening: pin<T[N]> → pin<T[]>
-                auto src_sized_arr = std::dynamic_pointer_cast<sized_array_type>(src_pointed_nc);
-                auto tgt_arr       = std::dynamic_pointer_cast<array_type>(pin_sub_nc);
-                bool is_array_widen = src_sized_arr && tgt_arr && !tgt_arr->is_sized()
-                    && src_sized_arr->get_subtype() == tgt_arr->get_subtype();
-                if (is_static_upcast || is_array_widen) {
+                if (is_static_upcast) {
                     auto upcast = cast_expression::make_shared(arg, var_type);
                     upcast->set_type(var_type);
                     assign_single_init_arg(upcast);
@@ -2384,12 +2377,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                             bool is_upcast = src_st && tgt_st &&
                                 src_st->get_struct() && tgt_st->get_struct() &&
                                 src_st->get_struct()->is_derived_from(tgt_st->get_struct());
-                            // Sized→unsized array widening: owner<T[N]> → owner<T[]>
-                            auto src_sized_arr = std::dynamic_pointer_cast<sized_array_type>(arg_sub);
-                            auto tgt_arr       = std::dynamic_pointer_cast<array_type>(var_sub);
-                            bool is_array_widen = src_sized_arr && tgt_arr && !tgt_arr->is_sized()
-                                && src_sized_arr->get_subtype() == tgt_arr->get_subtype();
-                            if (!is_upcast && !is_array_widen) {
+                            if (!is_upcast) {
                                 throw_error(0x4803, std::nullopt,
                                     "Owner variable '{}' of type '{}' cannot be initialised from "
                                     "an owner of incompatible type '{}'",
@@ -2495,15 +2483,6 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     return CAST_REF_CONV;
                 }
             }
-            // Sized→unsized array widening: ptr<T[N]> → ptr<T[]>
-            {
-                auto src_sized = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
-                auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-                if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                    && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                    return CAST_WIDENING;
-                }
-            }
             return CAST_IMPOSSIBLE;
         }
         return CAST_IMPOSSIBLE;
@@ -2528,15 +2507,6 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 auto tgt_st = tgt_st_type->get_struct();
                 if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
                     return CAST_REF_CONV;
-                }
-            }
-            // Sized→unsized array widening: lnk<T[N]> → lnk<T[]> (or → ptr<T[]>)
-            {
-                auto src_sized = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
-                auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-                if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                    && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                    return CAST_WIDENING;
                 }
             }
             return CAST_IMPOSSIBLE;
@@ -2565,15 +2535,6 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     return CAST_REF_CONV;
                 }
             }
-            // Sized→unsized array widening: pin<T[N]> → pin<T[]> (or → ptr<T[]>)
-            {
-                auto src_sized = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
-                auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-                if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                    && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                    return CAST_WIDENING;
-                }
-            }
             return CAST_IMPOSSIBLE;
         }
         return CAST_IMPOSSIBLE;
@@ -2598,15 +2559,6 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
                 src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
                 return CAST_REF_CONV;
-            }
-            // Sized→unsized array widening: owner<T[N]> → owner<T[]>
-            {
-                auto src_sized = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
-                auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-                if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                    && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                    return CAST_WIDENING;
-                }
             }
             return CAST_IMPOSSIBLE;
         }
@@ -2720,13 +2672,6 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     return CAST_REF_CONV;
                 }
             }
-            // Sized→unsized array widening: ref<T[N]> → ref<T[]>
-            auto src_sized = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
-            auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-            if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                return CAST_WIDENING;
-            }
             return CAST_IMPOSSIBLE;
         }
         // ref -> value: need a load
@@ -2745,25 +2690,11 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
                 return CAST_REF_CONV;
             }
-            // Sized→unsized array widening: ref<T[N]> → link<T[]>
-            auto src_sized = std::dynamic_pointer_cast<sized_array_type>(sub);
-            auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-            if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                return CAST_WIDENING;
-            }
         }
         // ref<T> → pin<T>: passing an object as a pinned reference
         if (type::is_pinned(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
             if (sub == tgt_sub_nc) return CAST_REF_CONV;
-            // Sized→unsized array widening: ref<T[N]> → pin<T[]>
-            auto src_sized = std::dynamic_pointer_cast<sized_array_type>(sub);
-            auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-            if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                return CAST_WIDENING;
-            }
         }
         // ref -> different primitive: load + cast
         auto prim_sub = std::dynamic_pointer_cast<primitive_type>(sub);
@@ -3292,15 +3223,6 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                         return upcast;
                     }
                 }
-                // Sized→unsized array widening: ptr<T[N]> → ptr<T[]>
-                auto src_sized = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
-                auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-                if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                    && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                    auto cast = cast_expression::make_shared(expr, type_nc);
-                    cast->set_type(type_nc);
-                    return cast;
-                }
                 return {};
             }
             return expr;
@@ -3332,15 +3254,6 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                         return upcast;
                     }
                 }
-                // Sized→unsized array widening: lnk<T[N]> → lnk<T[]> (or → ptr/pin<T[]>)
-                auto src_sized = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
-                auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-                if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                    && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                    auto cast = cast_expression::make_shared(expr, type_nc);
-                    cast->set_type(type_nc);
-                    return cast;
-                }
                 return {};
             }
             return expr;
@@ -3371,15 +3284,6 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                         return upcast;
                     }
                 }
-                // Sized→unsized array widening: pin<T[N]> → pin<T[]>
-                auto src_sized = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
-                auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-                if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                    && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                    auto cast = cast_expression::make_shared(expr, type_nc);
-                    cast->set_type(type_nc);
-                    return cast;
-                }
                 return {};
             }
             return expr;
@@ -3407,17 +3311,6 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                 auto upcast = cast_expression::make_shared(expr, type_nc);
                 upcast->set_type(type_nc);
                 return upcast;
-            }
-            // Sized→unsized array widening: owner<T[N]> → owner<T[]>
-            {
-                auto src_sized = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
-                auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-                if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                    && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                    auto cast = cast_expression::make_shared(expr, type_nc);
-                    cast->set_type(type_nc);
-                    return cast;
-                }
             }
             return {};
         }
@@ -3551,18 +3444,6 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                     return upcast;
                 }
             }
-            // Sized→unsized array widening: ref<T[N]> → ref<T[]>
-            {
-                auto src_sized = std::dynamic_pointer_cast<sized_array_type>(src_sub_nc);
-                auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-                if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                    && src_sized->get_subtype() == tgt_arr->get_subtype()) {
-                    // Bitwise-identical in LLVM (both are opaque ptrs to the same struct layout)
-                    auto cast = cast_expression::make_shared(expr, type_nc);
-                    cast->set_type(type_nc);
-                    return cast;
-                }
-            }
             return {};
         }
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
@@ -3610,15 +3491,6 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
                 src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
-                auto cast = cast_expression::make_shared(expr, type_nc);
-                cast->set_type(type_nc);
-                return cast;
-            }
-            // Sized→unsized array widening: ref<T[N]> → link<T[]> or ref<T[N]> → pin<T[]>
-            auto src_sized = std::dynamic_pointer_cast<sized_array_type>(ref_subtype);
-            auto tgt_arr   = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
-            if (src_sized && tgt_arr && !tgt_arr->is_sized()
-                && src_sized->get_subtype() == tgt_arr->get_subtype()) {
                 auto cast = cast_expression::make_shared(expr, type_nc);
                 cast->set_type(type_nc);
                 return cast;

@@ -861,6 +861,10 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     // llvm_def
     map_push(m, "llvm_def", cbor_str(agg.llvm_def));
 
+    // default_constructor_mangled_name
+    if (!agg.default_constructor_mangled_name.empty())
+        map_push(m, "default_constructor_mangled_name", cbor_str(agg.default_constructor_mangled_name));
+
     return m;
 }
 
@@ -928,6 +932,7 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
                                                   path + ".nested[" + std::to_string(i) + "]"));
     }
     agg.llvm_def = req_string(item, "llvm_def", path);
+    agg.default_constructor_mangled_name = opt_string(item, "default_constructor_mangled_name");
     return agg;
 }
 

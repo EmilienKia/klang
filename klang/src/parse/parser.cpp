@@ -1054,53 +1054,9 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
         }
         is_constructor = true;
     } else if (lequal_or_openp==lex::punctuator::BRACE_OPEN) {
-        // Brace initializer list: { expr, expr, ... }
+        // Brace initializer list: { expr, expr, ... } or designated: { .a = expr, .b(args) }
         auto open_brace = lex::as<lex::punctuator>(lequal_or_openp);
-        std::vector<ast::expr_ptr> elements;
-        // Check for empty brace list {}
-        auto peek = _lexer.get();
-        if (peek != lex::punctuator::BRACE_CLOSE) {
-            _lexer.unget();
-            // Parse comma-separated initializer expressions
-            // An empty slot (consecutive commas or leading comma) yields a nullptr entry
-            bool expect_more = true;
-            while(expect_more) {
-                auto next = _lexer.get();
-                if (next == lex::punctuator::COMMA) {
-                    // Empty element (default construction)
-                    elements.push_back(nullptr);
-                } else if (next == lex::punctuator::BRACE_CLOSE) {
-                    // Trailing comma before }
-                    _lexer.unget();
-                    break;
-                } else {
-                    _lexer.unget();
-                    auto elem_expr = parse_conditional_expr();
-                    elements.push_back(elem_expr);
-                    // Check for comma or closing brace
-                    auto sep = _lexer.get();
-                    if (sep == lex::punctuator::COMMA) {
-                        // Continue parsing
-                    } else if (sep == lex::punctuator::BRACE_CLOSE) {
-                        _lexer.unget();
-                        break;
-                    } else {
-                        throw_error(0x0060, sep, "Brace initializer list expects ',' or '}' after expression");
-                    }
-                }
-            }
-            // Consume closing brace
-            auto close = _lexer.get();
-            if (close != lex::punctuator::BRACE_CLOSE) {
-                throw_error(0x0061, close, "Brace initializer list expects a closing brace '}'");
-            }
-            auto close_brace = lex::as<lex::punctuator>(close);
-            expr = std::make_shared<ast::brace_init_list>(open_brace, close_brace, elements);
-        } else {
-            // Empty brace list {}
-            auto close_brace = lex::as<lex::punctuator>(peek);
-            expr = std::make_shared<ast::brace_init_list>(open_brace, close_brace, std::vector<ast::expr_ptr>{});
-        }
+        expr = parse_brace_init_list(open_brace);
         is_brace_init = true;
     } else {
         _lexer.unget();
@@ -2006,37 +1962,144 @@ std::shared_ptr<ast::brace_init_list> parser::parse_brace_init_list(const lex::p
     auto peek_close_brace = _lexer.get();
     if (peek_close_brace != lex::punctuator::BRACE_CLOSE) {
         _lexer.unget();
-        // Parse comma-separated initializer expressions
+
+        // Peek ahead to determine if this is a designated init list.
+        // A designated init starts with '.' followed by an identifier.
+        enum class init_mode { UNKNOWN, POSITIONAL, DESIGNATED };
+        init_mode mode = init_mode::UNKNOWN;
+
         bool expect_more = true;
         while (expect_more) {
             auto next = _lexer.get();
-            if (next == lex::punctuator::COMMA) {
-                // Empty element (default construction)
+
+            // Check for designated initializer: '.' IDENTIFIER
+            if (next == lex::operator_::DOT) {
+                auto peek_ident = _lexer.get();
+                if (lex::is<lex::identifier>(peek_ident)) {
+                    // This is a designated init element
+                    if (mode == init_mode::POSITIONAL) {
+                        throw_error(0x0067, next, "Cannot mix positional and designated initializers in the same brace-init list");
+                    }
+                    mode = init_mode::DESIGNATED;
+
+                    auto dot = lex::as<lex::operator_>(next);
+                    auto ident = lex::as<lex::identifier>(peek_ident);
+
+                    // Check for qualified name: '.' Ident '::' Ident ['::' Ident ...]
+                    std::vector<lex::identifier> qualifier;
+                    lex::identifier member_name = ident;
+                    while (true) {
+                        lex::lex_holder qual_holder(_lexer);
+                        auto maybe_dc = _lexer.get();
+                        if (maybe_dc == lex::punctuator::DOUBLE_COLON) {
+                            auto maybe_next_id = _lexer.get();
+                            if (lex::is<lex::identifier>(maybe_next_id)) {
+                                qualifier.push_back(member_name);
+                                member_name = lex::as<lex::identifier>(maybe_next_id);
+                                qual_holder.sync();
+                            } else {
+                                // Not an identifier after :: — roll back
+                                qual_holder.rollback();
+                                break;
+                            }
+                        } else {
+                            qual_holder.rollback();
+                            break;
+                        }
+                    }
+
+                    // Now expect '=' (assignment form) or '(' (constructor form)
+                    auto after_name = _lexer.get();
+                    if (after_name == lex::operator_::EQUAL) {
+                        // Assignment form: .member = expr
+                        // The value can be a brace_init_list (for nested structs/arrays)
+                        ast::expr_ptr value;
+                        auto peek_brace = _lexer.get();
+                        if (peek_brace == lex::punctuator::BRACE_OPEN) {
+                            value = parse_brace_init_list(lex::as<lex::punctuator>(peek_brace));
+                        } else {
+                            _lexer.unget();
+                            value = parse_conditional_expr();
+                        }
+                        elements.push_back(std::make_shared<ast::designated_init_element>(
+                            dot, member_name, qualifier, value));
+                    } else if (after_name == lex::punctuator::PARENTHESIS_OPEN) {
+                        // Constructor form: .member(args...)
+                        std::vector<ast::expr_ptr> args;
+                        auto peek_close = _lexer.get();
+                        if (peek_close != lex::punctuator::PARENTHESIS_CLOSE) {
+                            _lexer.unget();
+                            while (true) {
+                                auto arg = parse_conditional_expr();
+                                args.push_back(arg);
+                                auto sep = _lexer.get();
+                                if (sep == lex::punctuator::PARENTHESIS_CLOSE) break;
+                                if (sep != lex::punctuator::COMMA) {
+                                    throw_error(0x0068, sep, "Designated initializer constructor form expects ',' or ')' after argument");
+                                }
+                            }
+                        }
+                        elements.push_back(std::make_shared<ast::designated_init_element>(
+                            dot, member_name, qualifier, args));
+                    } else {
+                        throw_error(0x0066, after_name, "Expected '=' or '(' after designated member name '." + std::string{member_name.content} + "'");
+                    }
+
+                    // Check for comma or closing brace
+                    auto sep = _lexer.get();
+                    if (sep == lex::punctuator::COMMA) {
+                        // continue
+                    } else if (sep == lex::punctuator::BRACE_CLOSE) {
+                        _lexer.unget();
+                        break;
+                    } else {
+                        throw_error(0x0060, sep, "Brace initializer list expects ',' or '}' after designated initializer");
+                    }
+                } else {
+                    // '.' not followed by an identifier — this is an error in designated context,
+                    // or this could be a positional expression starting with '.' (unlikely but rollback)
+                    _lexer.unget(); // unget the non-identifier
+                    _lexer.unget(); // unget the '.'
+                    // Fall through to positional parsing below
+                    goto parse_positional_element;
+                }
+            } else if (next == lex::punctuator::COMMA) {
+                // Empty element (default construction) — positional only
+                if (mode == init_mode::DESIGNATED) {
+                    throw_error(0x0067, next, "Cannot mix positional and designated initializers in the same brace-init list");
+                }
+                mode = init_mode::POSITIONAL;
                 elements.push_back(nullptr);
             } else if (next == lex::punctuator::BRACE_CLOSE) {
                 _lexer.unget();
                 break;
             } else {
                 _lexer.unget();
+                parse_positional_element:
+                if (mode == init_mode::DESIGNATED) {
+                    throw_error(0x0067, next, "Cannot mix positional and designated initializers in the same brace-init list");
+                }
+                mode = init_mode::POSITIONAL;
                 auto elem_expr = parse_conditional_expr();
                 elements.push_back(elem_expr);
                 auto sep = _lexer.get();
                 if (sep == lex::punctuator::COMMA) {
-                    // Continue parsing
+                    // continue
                 } else if (sep == lex::punctuator::BRACE_CLOSE) {
                     _lexer.unget();
                     break;
                 } else {
-                    throw_error(0x0064, sep, "'new' array brace initializer expects ',' or '}' after expression");
+                    throw_error(0x0064, sep, "Brace initializer list expects ',' or '}' after expression");
                 }
             }
         }
         auto close = _lexer.get();
         if (close != lex::punctuator::BRACE_CLOSE) {
-            throw_error(0x0065, close, "'new' array brace initializer expects a closing brace '}'");
+            throw_error(0x0065, close, "Brace initializer list expects a closing brace '}'");
         }
         auto close_brace = lex::as<lex::punctuator>(close);
-        return std::make_shared<ast::brace_init_list>(open_brace, close_brace, elements);
+        return std::make_shared<ast::brace_init_list>(open_brace, close_brace, elements,
+            mode == init_mode::DESIGNATED);
     } else {
         // Empty brace list {}
         auto close_brace = lex::as<lex::punctuator>(peek_close_brace);

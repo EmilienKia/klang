@@ -601,4 +601,4 @@ This applies regardless of whether the struct itself is declared `const`.
 
 ---
 
-*See also:* [Constructors](constructors.md) · [Destructors](destructors.md) · [Nested Structures](nested.md) · [Inheritance](../structs/structs.md) · [Namespace visibility](../basic/names.md#5-visibility-of-namespace-members) · [Types — Const-ness](../basic/types.md#12-const-ness)
+*See also:* [Constructors](constructors.md) · [Destructors](destructors.md) · [Designated Struct Initializers](designated-init.md) · [Nested Structures](nested.md) · [Inheritance](../structs/structs.md) · [Namespace visibility](../basic/names.md#5-visibility-of-namespace-members) · [Types — Const-ness](../basic/types.md#12-const-ness)

@@ -159,6 +159,10 @@ void default_model_visitor::visit_array_init_expression(array_init_expression& e
     visit_expression(expr);
 }
 
+void default_model_visitor::visit_designated_struct_init_expression(designated_struct_init_expression& expr) {
+    visit_expression(expr);
+}
+
 void default_model_visitor::visit_owner_move_expression(owner_move_expression& expr) {
     visit_unary_expression(expr);
 }

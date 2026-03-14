@@ -534,6 +534,25 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             }
             _stm << "}";
         }
+
+        void visit_designated_init_element(ast::designated_init_element& elem) override {
+            _stm << ".";
+            for (auto& q : elem.qualifier) {
+                _stm << q.content << "::";
+            }
+            _stm << elem.member_name.content;
+            if (elem.is_call_form) {
+                _stm << "(";
+                for (size_t i = 0; i < elem.args.size(); ++i) {
+                    if (i > 0) _stm << ", ";
+                    if (elem.args[i]) elem.args[i]->visit(*this);
+                }
+                _stm << ")";
+            } else {
+                _stm << " = ";
+                if (elem.value) elem.value->visit(*this);
+            }
+        }
 };
 
 

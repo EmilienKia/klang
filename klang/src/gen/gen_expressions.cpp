@@ -681,7 +681,22 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
 
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
         const auto& member_name = expr.symbol();
-        const std::string& name_str = member_name.get_name().to_string();
+        const k::name& sym_name = member_name.get_name();
+        const std::string& name_str = sym_name.to_string();
+
+        // ── Detect qualified member access (e.g. d.A::v where sym_name has parts ["A", "v"]) ──
+        // If the name has more than one part, the last part is the member name and
+        // the preceding parts form the qualifier (base class name).
+        bool is_qualified = sym_name.size() > 1;
+        std::string simple_name = is_qualified ? sym_name.back() : name_str;
+        std::string qualifier_name;
+        if (is_qualified) {
+            // Build qualifier from all parts except the last
+            for (size_t i = 0; i + 1 < sym_name.size(); ++i) {
+                if (i > 0) qualifier_name += "::";
+                qualifier_name += sym_name[i];
+            }
+        }
 
         // ── Helper: search a struct and its bases for a named field or function,
         //    returning (struct_type*, field) or (struct_type*, nullptr=function).
@@ -736,9 +751,35 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
             return hits;
         };
 
-        auto hits = search_member(struct_subtype, name_str, PUBLIC, true, false);
+        auto hits = search_member(struct_subtype, simple_name, PUBLIC, true, false);
         if (hits.size() > 1) {
-            std::cerr << "[DEBUG] Ambiguous: " << hits.size() << " hits for '" << name_str << "' in '" << struct_subtype->name() << "'\n" << std::flush;
+            std::cerr << "[DEBUG] Ambiguous: " << hits.size() << " hits for '" << simple_name << "' in '" << struct_subtype->name() << "'\n" << std::flush;
+        }
+
+        // If qualified, filter hits to only those in the named base
+        if (is_qualified && !hits.empty()) {
+            std::vector<MemberHit> filtered;
+            for (auto& h : hits) {
+                auto h_agg = h.in_struct_type->get_struct();
+                if (h_agg && h_agg->get_short_name() == qualifier_name) {
+                    filtered.push_back(h);
+                }
+            }
+            if (filtered.empty()) {
+                // If this is a function callee (e.g. this.Base::method()), defer
+                // to function_invocation_expression which handles qualified calls.
+                auto parent_expr = expr.get_parent_expression();
+                if (auto parent_invoc = std::dynamic_pointer_cast<function_invocation_expression>(parent_expr)) {
+                    if (parent_invoc->callee_expr().get() == &expr) {
+                        return; // defer to function_invocation_expression
+                    }
+                }
+                throw_error(0x001D, std::nullopt,
+                    "No member named '{}' in struct '{}' or any of its bases",
+                    {name_str, struct_subtype->name()});
+                return;
+            }
+            hits = std::move(filtered);
         }
 
         if (hits.empty()) {
@@ -767,7 +808,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
 
         // Check visibility of the accessed member
         if (auto st_model = hit.in_struct_type->get_struct()) {
-            auto mv = st_model->get_variable(name_str);
+            auto mv = st_model->get_variable(simple_name);
             if (auto member_var = std::dynamic_pointer_cast<member_variable_definition>(mv)) {
                 auto vis = member_var->get_visibility();
                 if (vis != PUBLIC) {
@@ -997,15 +1038,18 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
 
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
         const auto& member_name =  expr.symbol();
-        if(auto field = struct_subtype->get_member(member_name.get_name()); field) {
+        // For qualified names like A::v, use only the last part (the field name)
+        const k::name& sym_name = member_name.get_name();
+        std::string simple_name = sym_name.size() > 1 ? sym_name.back() : sym_name.to_string();
+        if(auto field = struct_subtype->get_member(simple_name); field) {
             _value = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), _value, field->index);
-        } else if(auto method = struct_subtype->get_struct()->get_function(member_name.get_name())) {
+        } else if(auto method = struct_subtype->get_struct()->get_function(simple_name)) {
             // Note return the already-assigned address of the struct onto which the function is applied to
         } else {
             throw_internal_error(0x000A, std::nullopt,
                 "Internal error: struct '{}' has no member named '{}' during code generation; "
                 "the model is inconsistent — type resolution should have caught this earlier",
-                {struct_subtype->name(), member_name.get_name().to_string()});
+                {struct_subtype->name(), simple_name});
         }
     } else {
         throw_internal_error(0x000B, std::nullopt,
@@ -2980,6 +3024,16 @@ void symbol_resolver::visit_array_init_expression(array_init_expression& expr) {
     }
 }
 
+void symbol_resolver::visit_designated_struct_init_expression(designated_struct_init_expression& expr) {
+    if (expr.constructed_symbol()) expr.constructed_symbol()->accept(*this);
+    for (auto& m : expr.members_mutable()) {
+        if (m.value) m.value->accept(*this);
+        for (auto& a : m.args) {
+            if (a) a->accept(*this);
+        }
+    }
+}
+
 void type_reference_resolver::visit_array_init_expression(array_init_expression& expr) {
     if (expr.is_uniform()) {
         // ── Uniform array init: var : T(args)[N]; ──
@@ -3148,6 +3202,222 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
                 if (!adapted_args.empty() && adapted_args[0] != e) {
                     expr.assign_element(i, adapted_args[0]);
                 }
+             }
+        }
+    }
+}
+
+void type_reference_resolver::visit_designated_struct_init_expression(designated_struct_init_expression& expr) {
+    // Resolve sub-expressions in each member initializer
+    for (auto& m : expr.members_mutable()) {
+        if (m.value) m.value->accept(*this);
+        for (auto& a : m.args) {
+            if (a) a->accept(*this);
+        }
+    }
+
+    // Determine the target struct type.
+    // For top-level designated inits, derive from the constructed variable's type.
+    // For nested designated inits (no constructed_symbol), _target_aggregate is pre-set by the parent.
+    std::shared_ptr<struct_type> st_type;
+    std::shared_ptr<aggregate> target_struct = expr._target_aggregate;
+
+    if (!target_struct) {
+        auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
+        if (!var_def) return;
+        auto var_type = var_def->get_type();
+
+        // Unwrap reference if needed
+        if (type::is_reference(var_type)) {
+            var_type = std::dynamic_pointer_cast<reference_type>(var_type)->get_subtype();
+        }
+
+        st_type = std::dynamic_pointer_cast<struct_type>(var_type);
+        if (!st_type) {
+            throw_error(0x4250, std::nullopt,
+                "Designated initializer can only be used with struct types, but '{}' has type '{}'",
+                {var_def->get_fq_name(), var_type ? var_type->to_string() : "?"});
+            return;
+        }
+        target_struct = st_type->get_struct();
+        if (!target_struct) return;
+
+        // Only valid for structs, not classes with virtual inheritance
+        if (target_struct->is_class() && target_struct->has_virtual_bases()) {
+            throw_error(0x4251, std::nullopt,
+                "Designated initializer cannot be used with class '{}' which has virtual bases",
+                {target_struct->get_short_name()});
+            return;
+        }
+
+        // Store the resolved aggregate in the expression
+        expr._target_aggregate = target_struct;
+    } else {
+        // Nested designated init: _target_aggregate already set
+        st_type = target_struct->get_struct_type();
+    }
+
+    // Collect all accessible member variables from the struct and its bases
+    // Map: member_name -> (member_var, owning_aggregate)
+    struct member_info {
+        std::shared_ptr<member_variable_definition> var;
+        std::shared_ptr<aggregate> owner;
+    };
+    std::map<std::string, std::vector<member_info>> all_members;
+
+    // Helper: skip synthetic members (__base_X__, __vbptr_X__, __vbase_X__, __parent__)
+    auto is_synthetic = [](const std::string& name) {
+        return name.size() >= 4 && name[0] == '_' && name[1] == '_'
+            && name[name.size()-1] == '_' && name[name.size()-2] == '_';
+    };
+
+    // Gather members from the struct itself
+    for (auto& [name, var] : target_struct->variables()) {
+        auto mem = std::dynamic_pointer_cast<member_variable_definition>(var);
+        if (!mem) continue;
+        if (is_synthetic(name)) continue;
+        all_members[name].push_back({mem, target_struct});
+    }
+
+    // Gather inherited members from base classes
+    auto all_bases = target_struct->get_all_bases();
+    for (auto& base : all_bases) {
+        if (!base.base) continue;
+        for (auto& [name, var] : base.base->variables()) {
+            auto mem = std::dynamic_pointer_cast<member_variable_definition>(var);
+            if (!mem) continue;
+            if (is_synthetic(name)) continue;
+            all_members[name].push_back({mem, base.base});
+        }
+    }
+
+    // Validate and resolve each designated member
+    std::set<std::string> seen_members;
+    for (auto& m : expr.members_mutable()) {
+        std::string full_name = m.qualifier.empty()
+            ? m.member_name
+            : m.qualifier + "::" + m.member_name;
+
+        // Check for duplicate designators
+        if (seen_members.count(full_name)) {
+            throw_error(0x4252, std::nullopt,
+                "Duplicate designated initializer for member '.{}'",
+                {full_name});
+            continue;
+        }
+        seen_members.insert(full_name);
+
+        // Find the member
+        auto it = all_members.find(m.member_name);
+        if (it == all_members.end()) {
+            throw_error(0x4253, std::nullopt,
+                "No member '{}' in struct '{}' for designated initializer",
+                {m.member_name, target_struct->get_short_name()});
+            continue;
+        }
+
+        auto& candidates = it->second;
+
+        // Resolve ambiguity using qualifier if needed
+        std::shared_ptr<member_variable_definition> resolved_mem;
+        std::shared_ptr<aggregate> resolved_owner;
+        if (candidates.size() > 1 && m.qualifier.empty()) {
+            throw_error(0x4254, std::nullopt,
+                "Ambiguous member '{}' in struct '{}': "
+                "use a qualified name (e.g. '.Base::{}') to disambiguate",
+                {m.member_name, target_struct->get_short_name(), m.member_name});
+            continue;
+        } else if (!m.qualifier.empty()) {
+            // Find the candidate matching the qualifier
+            bool found = false;
+            for (auto& cand : candidates) {
+                if (cand.owner->get_short_name() == m.qualifier) {
+                    resolved_mem = cand.var;
+                    resolved_owner = cand.owner;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                throw_error(0x4255, std::nullopt,
+                    "No member '{}::{}' found in struct '{}'",
+                    {m.qualifier, m.member_name, target_struct->get_short_name()});
+                continue;
+            }
+        } else {
+            resolved_mem = candidates[0].var;
+            resolved_owner = candidates[0].owner;
+        }
+
+        // Check accessibility
+        if (resolved_mem->get_visibility() == PRIVATE || resolved_mem->get_visibility() == PROTECTED) {
+            throw_error(0x4256, std::nullopt,
+                "Member '{}' is {} in struct '{}' and cannot be used in a designated initializer",
+                {full_name,
+                 resolved_mem->get_visibility() == PRIVATE ? "private" : "protected",
+                 target_struct->get_short_name()});
+            continue;
+        }
+
+        m.resolved_member = resolved_mem;
+        m.resolved_owner = resolved_owner;
+
+        // Type-check the initializer value
+        auto member_type = resolved_mem->get_type();
+        if (m.is_call_form) {
+            // Constructor form: .member(args...)
+            if (auto mem_st_type = std::dynamic_pointer_cast<struct_type>(member_type)) {
+                auto mem_struct = mem_st_type->get_struct();
+                if (mem_struct) {
+                    auto [best_ctor, adapted_args] = get_best_matching_constructor(
+                        mem_struct->constructors(), m.args);
+                    if (!best_ctor) {
+                        throw_error(0x4257, std::nullopt,
+                            "No matching constructor for member '{}' of type '{}'",
+                            {full_name, mem_st_type->to_string()});
+                    } else {
+                        m.resolved_constructor = best_ctor;
+                        m.args = adapted_args;
+                    }
+                }
+            } else {
+                // Primitive or indirection: constructor form is like a single-arg init
+                if (m.args.size() != 1) {
+                    throw_error(0x4258, std::nullopt,
+                        "Constructor form for non-aggregate member '{}' of type '{}' expects exactly one argument",
+                        {full_name, member_type ? member_type->to_string() : "?"});
+                } else if (m.args[0]) {
+                    auto cast = adapt_type(m.args[0], member_type);
+                    if (!cast) {
+                        throw_error(0x4259, std::nullopt,
+                            "Cannot convert argument to type '{}' for member '{}'",
+                            {member_type->to_string(), full_name});
+                    } else if (cast != m.args[0]) {
+                        m.args[0] = cast;
+                    }
+                }
+            }
+        } else {
+            // Assignment form: .member = expr
+            if (m.value) {
+                // Check if value is a brace_init_list (nested designated init) — handled as sub-struct
+                if (auto desig_sub = std::dynamic_pointer_cast<designated_struct_init_expression>(m.value)) {
+                    // Pre-set target aggregate from the member type for nested resolution
+                    if (auto mem_st_type = std::dynamic_pointer_cast<struct_type>(member_type)) {
+                        desig_sub->_target_aggregate = mem_st_type->get_struct();
+                    }
+                    // Resolve recursively
+                    desig_sub->accept(*this);
+                } else {
+                    auto cast = adapt_type(m.value, member_type);
+                    if (!cast) {
+                        throw_error(0x425A, std::nullopt,
+                            "Cannot convert initializer value to type '{}' for member '{}'",
+                            {member_type ? member_type->to_string() : "?", full_name});
+                    } else if (cast != m.value) {
+                        m.value = cast;
+                    }
+                }
             }
         }
     }
@@ -3246,6 +3516,235 @@ void implementation_generator::visit_array_init_expression(array_init_expression
         }
     }
     _value = arr_alloca;
+}
+
+void implementation_generator::visit_designated_struct_init_expression(designated_struct_init_expression& expr) {
+    auto target_struct = expr.target_aggregate();
+    if (!target_struct) return;
+
+    std::shared_ptr<struct_type> st_type;
+    llvm::Value* struct_alloca = nullptr;
+
+    if (expr.constructed_symbol()) {
+        // Top-level designated init: get alloca from variable
+        auto var_def = expr.constructed_symbol()->get_variable_def();
+        if (!var_def) return;
+        st_type = std::dynamic_pointer_cast<struct_type>(var_def->get_type());
+        if (!st_type) return;
+
+        _value = nullptr;
+        expr.constructed_symbol()->accept(*this);
+        struct_alloca = _value;
+        _value = nullptr;
+        if (!struct_alloca) return;
+
+        // Zero-init the entire struct first (default initialization for all members)
+        auto* llvm_type = st_type->get_llvm_type();
+        if (llvm_type) {
+            _builder->CreateStore(llvm::ConstantAggregateZero::get(llvm_type), struct_alloca);
+        }
+    } else {
+        // Nested designated init: _value is the pre-computed mem_ptr from outer caller
+        struct_alloca = _value;
+        if (!struct_alloca) return;
+        st_type = target_struct->get_struct_type();
+        if (!st_type) return;
+        _value = nullptr;
+
+        // Zero-init the nested struct sub-object
+        auto* llvm_type = st_type->get_llvm_type();
+        if (llvm_type) {
+            _builder->CreateStore(llvm::ConstantAggregateZero::get(llvm_type), struct_alloca);
+        }
+    }
+
+    // ── Helper: DFS to find GEP path from a source aggregate to a target aggregate
+    //    through __base_X__ sub-objects. Returns the sequence of (struct_type, field_index)
+    //    pairs to GEP through.
+    struct GepStep {
+        llvm::Type* llvm_type;
+        unsigned field_index;
+        std::string name;
+    };
+    std::function<bool(aggregate*, struct_type*, aggregate*, std::vector<GepStep>&)> find_base_path;
+    find_base_path = [&](aggregate* cur_agg, struct_type* cur_st, aggregate* target_agg,
+                          std::vector<GepStep>& path) -> bool {
+        if (cur_agg == target_agg) return true;
+        for (auto& bs : cur_agg->get_bases()) {
+            if (!bs.base || bs.is_virtual) continue;
+            std::string field_name = "__base_" + bs.sanitised_name() + "__";
+            auto field = cur_st->get_member(field_name);
+            if (!field) continue;
+            auto base_st = bs.base->get_struct_type();
+            if (!base_st) continue;
+            path.push_back(GepStep{cur_st->get_llvm_type(), (unsigned)field->index, field_name});
+            if (find_base_path(bs.base.get(), base_st.get(), target_agg, path)) {
+                return true;
+            }
+            path.pop_back();
+        }
+        return false;
+    };
+
+    // ── Helper: Get a pointer to a member, navigating through base sub-objects if needed.
+    //    Returns nullptr if the path cannot be found.
+    auto get_member_ptr = [&](const std::string& member_name,
+                               aggregate* member_owner,
+                               const std::string& label_prefix) -> llvm::Value* {
+        if (member_owner == target_struct.get()) {
+            // Direct member of the target struct
+            auto field = st_type->get_member(member_name);
+            if (!field) return nullptr;
+            return _builder->CreateStructGEP(st_type->get_llvm_type(), struct_alloca, field->index,
+                                              label_prefix + member_name);
+        }
+        // Inherited member: navigate __base_X__ chain
+        std::vector<GepStep> path;
+        if (!find_base_path(target_struct.get(), st_type.get(), member_owner, path)) {
+            return nullptr;
+        }
+        // Walk the GEP path to reach the base sub-object
+        llvm::Value* ptr = struct_alloca;
+        for (auto& step : path) {
+            ptr = _builder->CreateStructGEP(step.llvm_type, ptr, step.field_index,
+                                             label_prefix + step.name);
+        }
+        // Now GEP to the field within the base sub-object
+        auto owner_st_type = member_owner->get_struct_type();
+        if (!owner_st_type) return nullptr;
+        auto field = owner_st_type->get_member(member_name);
+        if (!field) return nullptr;
+        return _builder->CreateStructGEP(owner_st_type->get_llvm_type(), ptr, field->index,
+                                          label_prefix + member_name);
+    };
+
+    // Build set of designated member keys for quick lookup
+    // Use "qualifier::name" as key to handle qualified members correctly
+    std::set<std::string> designated_keys;
+    for (auto& m : expr.members()) {
+        std::string key = m.qualifier.empty() ? m.member_name : m.qualifier + "::" + m.member_name;
+        designated_keys.insert(key);
+    }
+
+    // ── Helper: call default constructor for an aggregate-typed member
+    auto call_default_ctor = [&](aggregate* mem_struct, llvm::Value* mem_ptr) {
+        for (auto& ctor : mem_struct->constructors()) {
+            if (ctor->parameters().empty() ||
+                (ctor->parameters().size() == 1 /* this */)) {
+                auto ctor_it = _context->_functions.find(ctor->shared_as<function>());
+                if (ctor_it != _context->_functions.end()) {
+                    _builder->CreateCall(ctor_it->second, {mem_ptr});
+                }
+                break;
+            }
+        }
+    };
+
+    // Helper: skip synthetic members (__base_X__, __vbptr_X__, __vbase_X__, __parent__)
+    auto is_synthetic = [](const std::string& name) {
+        return name.size() >= 4 && name[0] == '_' && name[1] == '_'
+            && name[name.size()-1] == '_' && name[name.size()-2] == '_';
+    };
+
+    // For each member in the struct (and its bases) that has a default constructor
+    // and is NOT designated, call its default constructor.
+    // Process direct members first
+    for (auto& [name, var] : target_struct->variables()) {
+        auto mem = std::dynamic_pointer_cast<member_variable_definition>(var);
+        if (!mem) continue;
+        if (is_synthetic(name)) continue;
+        if (designated_keys.count(name)) continue;
+
+        auto mem_type = mem->get_type();
+        if (auto mem_st_type = std::dynamic_pointer_cast<struct_type>(mem_type)) {
+            auto mem_struct = mem_st_type->get_struct();
+            if (mem_struct) {
+                auto field = st_type->get_member(name);
+                if (field) {
+                    llvm::Value* mem_ptr = _builder->CreateStructGEP(
+                        st_type->get_llvm_type(), struct_alloca, field->index,
+                        "desig_default_" + name);
+                    call_default_ctor(mem_struct.get(), mem_ptr);
+                }
+            }
+        }
+    }
+
+    // Process inherited members from all bases
+    auto all_bases = target_struct->get_all_bases();
+    for (auto& base : all_bases) {
+        if (!base.base) continue;
+        for (auto& [name, var] : base.base->variables()) {
+            auto mem = std::dynamic_pointer_cast<member_variable_definition>(var);
+            if (!mem) continue;
+            if (is_synthetic(name)) continue;
+            // Check if this member is designated (with or without qualifier)
+            bool is_designated = designated_keys.count(name)
+                || designated_keys.count(base.base->get_short_name() + "::" + name);
+            if (is_designated) continue;
+
+            auto mem_type = mem->get_type();
+            if (auto mem_st_type = std::dynamic_pointer_cast<struct_type>(mem_type)) {
+                auto mem_struct = mem_st_type->get_struct();
+                if (mem_struct) {
+                    llvm::Value* mem_ptr = get_member_ptr(name, base.base.get(), "desig_default_");
+                    if (mem_ptr) {
+                        call_default_ctor(mem_struct.get(), mem_ptr);
+                    }
+                }
+            }
+        }
+    }
+
+    // Now initialize each designated member
+    for (auto& m : expr.members()) {
+        auto resolved_mem = m.resolved_member;
+        if (!resolved_mem) continue;
+
+        // Determine the owning aggregate for this member
+        aggregate* owner = m.resolved_owner ? m.resolved_owner.get() : target_struct.get();
+
+        llvm::Value* mem_ptr = get_member_ptr(m.member_name, owner, "desig_");
+        if (!mem_ptr) continue;
+
+        auto mem_type = resolved_mem->get_type();
+
+        if (m.is_call_form) {
+            // Constructor form: .member(args...)
+            if (m.resolved_constructor) {
+                auto ctor_it = _context->_functions.find(m.resolved_constructor->shared_as<function>());
+                if (ctor_it != _context->_functions.end()) {
+                    std::vector<llvm::Value*> args;
+                    args.push_back(mem_ptr); // 'this' pointer
+                    for (auto& a : m.args) {
+                        _value = nullptr;
+                        if (a) a->accept(*this);
+                        if (_value) args.push_back(_value);
+                    }
+                    _builder->CreateCall(ctor_it->second, args);
+                }
+            } else if (type::is_primitive(mem_type) && !m.args.empty() && m.args[0]) {
+                _value = nullptr;
+                m.args[0]->accept(*this);
+                if (_value) _builder->CreateStore(_value, mem_ptr);
+            }
+        } else {
+            // Assignment form: .member = expr
+            if (m.value) {
+                if (auto desig_sub = std::dynamic_pointer_cast<designated_struct_init_expression>(m.value)) {
+                    // Nested designated init — pass mem_ptr as the alloca via _value
+                    _value = mem_ptr;
+                    desig_sub->accept(*this);
+                } else {
+                    _value = nullptr;
+                    m.value->accept(*this);
+                    if (_value) _builder->CreateStore(_value, mem_ptr);
+                }
+            }
+        }
+    }
+
+    _value = struct_alloca;
 }
 
 void implementation_generator::visit_new_expression(new_expression& expr) {
@@ -4718,35 +5217,6 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 emit_dynamic_cast(expr, src_st_type, tgt_st_type);
                 return;
             }
-        }
-    }
-
-    // ── Sized→unsized array widening cast (no-op at LLVM level) ──────────────
-    // All array indirections are opaque pointers in LLVM, so sized→unsized
-    // widening (e.g. int[3]~ → int[]~, ref<int[4]> → ref<int[]>) is just
-    // a K type annotation change — no IR instruction needed.
-    {
-        auto extract_array = [](const std::shared_ptr<type>& t) -> std::shared_ptr<array_type> {
-            if (auto arr = std::dynamic_pointer_cast<array_type>(t)) return arr;
-            if (auto ref = std::dynamic_pointer_cast<reference_type>(t))
-                return std::dynamic_pointer_cast<array_type>(type::remove_const(ref->get_subtype()));
-            if (auto lnk = std::dynamic_pointer_cast<link_type>(t))
-                return std::dynamic_pointer_cast<array_type>(type::remove_const(lnk->get_linked_type()));
-            if (auto ptr = std::dynamic_pointer_cast<pointer_type>(t))
-                return std::dynamic_pointer_cast<array_type>(type::remove_const(ptr->get_pointed_type()));
-            if (auto pin = std::dynamic_pointer_cast<pinned_type>(t))
-                return std::dynamic_pointer_cast<array_type>(type::remove_const(pin->get_pinned_type()));
-            if (auto own = std::dynamic_pointer_cast<owner_type>(t))
-                return std::dynamic_pointer_cast<array_type>(type::remove_const(own->get_owned_type()));
-            return nullptr;
-        };
-        auto src_arr = extract_array(source_type);
-        auto tgt_arr = extract_array(target_type);
-        if (src_arr && tgt_arr) {
-            // No-op: just evaluate the sub-expression; the LLVM value is already correct.
-            _value = nullptr;
-            expr.sub_expr()->accept(*this);
-            return;
         }
     }
 

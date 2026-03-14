@@ -177,11 +177,22 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     | `'('` `[` [ExpressionList](#expressionlist) `]` `')'`
     | `'('` `[` [ExpressionList](#expressionlist) `]` `')'` `'['` [Expression](#expression) `']'`
     | [BraceInitList](#braceinitlist)
+    | [DesignatedBraceInitList](#designatedbraceinitlist)
 <a id="braceinitlist"></a>**BraceInitList:**
     `'{'` `[` [InitElement](#initelement) {{ `','` [InitElement](#initelement) }} `]` `'}'`
 <a id="initelement"></a>**InitElement:**
     [ConditionalExpr](#conditionalexpr)
     | *empty*
+
+*Full description:* [Designated Struct Initializers](structs/designated-init.md)
+<a id="designatedbraceinitlist"></a>**DesignatedBraceInitList:**
+    `'{'` [DesignatedInitElement](#designatedinitelement) {{ `','` [DesignatedInitElement](#designatedinitelement) }} `'}'`
+<a id="designatedinitelement"></a>**DesignatedInitElement:**
+    `'.'` [DesignatedMemberName](#designatedmembername) `'='` [ConditionalExpr](#conditionalexpr)
+    | `'.'` [DesignatedMemberName](#designatedmembername) `'('` `[` [ExpressionList](#expressionlist) `]` `')'`
+    | `'.'` [DesignatedMemberName](#designatedmembername) `'='` [DesignatedBraceInitList](#designatedbraceinitlist)
+<a id="designatedmembername"></a>**DesignatedMemberName:**
+    `[` [Identifier](#identifier) `'::'` {{ [Identifier](#identifier) `'::'` }} `]` [Identifier](#identifier)
 ### Statements
 *Full description:* [Statements](statements/statements.md)
 <a id="statement"></a>**Statement:**
@@ -285,3 +296,4 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
 *Full description of operators:* [Unary](expressions/unary.md) - [Binary](expressions/binary.md) - [Assignment](expressions/assignment.md) - [Call and member access](expressions/call.md)
 ---
 *See also:* [Index](index.md) for per-topic reference pages.
+

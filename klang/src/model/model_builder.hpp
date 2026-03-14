@@ -165,6 +165,8 @@ protected:
     void visit_new_expr(parse::ast::new_expr &) override;
     void visit_delete_expr(parse::ast::delete_expr &) override;
 
+    void visit_brace_init_list(parse::ast::brace_init_list &) override;
+
     void visit_comma_expr(parse::ast::expr_list_expr &) override;
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {

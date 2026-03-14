@@ -541,6 +541,8 @@ static json to_json(const kdi_aggregate& a) {
         {"nested",        nested},
         {"llvm_def",      a.llvm_def},
     };
+    if (!a.default_constructor_mangled_name.empty())
+        obj["default_constructor_mangled_name"] = a.default_constructor_mangled_name;
     if (a.destructor) obj["destructor"] = to_json(*a.destructor);
     if (a.vtable)     obj["vtable"]     = to_json(*a.vtable);
     return obj;
@@ -581,6 +583,7 @@ static kdi_aggregate from_json_aggregate(const json& j) {
     for (auto& n : j.value("nested", json::array()))
         a.nested.push_back(from_json_aggregate(n));
     a.llvm_def = j.at("llvm_def");
+    a.default_constructor_mangled_name = j.value("default_constructor_mangled_name", "");
     return a;
 }
 

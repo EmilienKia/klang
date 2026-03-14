@@ -290,6 +290,12 @@ struct kdi_aggregate {
     // Vtable (class/interface only)
     std::optional<kdi_vtable>     vtable;
 
+    /// Mangled name of the default (0-param) constructor, if one exists.
+    /// Empty string if the aggregate has no public default constructor.
+    /// Used by importing compilers to call the default constructor for
+    /// designated struct initialization of inaccessible/unspecified members.
+    std::string                   default_constructor_mangled_name;
+
     // Nested aggregates (public/protected)
     std::vector<kdi_aggregate>    nested;
 

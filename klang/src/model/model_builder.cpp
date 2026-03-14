@@ -334,39 +334,91 @@ namespace k::model {
         } else if(decl.init) {
             std::vector<std::shared_ptr<model::expression>> args;
             if (decl.is_brace_init) {
-                // Brace initializer list: { expr, expr, ... }
+                // Brace initializer list: { expr, expr, ... } or designated { .x = expr, ... }
                 auto brace_list = std::dynamic_pointer_cast<parse::ast::brace_init_list>(decl.init);
                 if (!brace_list) {
                     throw_error(0x0062, decl.name, "Internal error: brace init flag set but init is not a brace_init_list");
                 }
 
-                // If the type is an unsized array reference (T[]&, from T[] without a size),
-                // re-create it as a sized array using the brace list element count.
-                if (type::is_reference(var_type)) {
-                    auto ref_type = std::dynamic_pointer_cast<reference_type>(var_type);
-                    auto inner = ref_type ? ref_type->get_subtype() : nullptr;
-                    if (type::is_array(inner) && !type::is_sized_array(inner)) {
-                        auto unsized = std::dynamic_pointer_cast<array_type>(inner);
-                        auto elem_type = unsized->get_subtype();
-                        auto sized = elem_type->get_array(brace_list->elements.size());
-                        var->set_type(sized);
-                        var_type = sized;
+                if (brace_list->is_designated) {
+                    // Designated struct initializer: { .member = expr, .member(args) }
+                    // Build model member init entries from the AST designated elements
+                    std::vector<model::designated_struct_init_expression::member_init_entry> members;
+                    for (auto& elem_ast : brace_list->elements) {
+                        auto desig = std::dynamic_pointer_cast<parse::ast::designated_init_element>(elem_ast);
+                        if (!desig) {
+                            throw_error(0x0069, decl.name, "Internal error: designated init element expected but got something else");
+                            continue;
+                        }
+                        model::designated_struct_init_expression::member_init_entry entry;
+                        entry.member_name = std::string{desig->member_name.content};
+                        // Build qualifier string
+                        std::string qual;
+                        for (auto& q : desig->qualifier) {
+                            if (!qual.empty()) qual += "::";
+                            qual += std::string{q.content};
+                        }
+                        entry.qualifier = qual;
+                        entry.is_call_form = desig->is_call_form;
+                        if (desig->is_call_form) {
+                            for (auto& arg_ast : desig->args) {
+                                _expr.reset();
+                                arg_ast->visit(*this);
+                                entry.args.push_back(_expr);
+                                _expr.reset();
+                            }
+                        } else {
+                            if (desig->value) {
+                                _expr.reset();
+                                desig->value->visit(*this);
+                                entry.value = _expr;
+                                _expr.reset();
+                            }
+                        }
+                        members.push_back(std::move(entry));
                     }
-                }
+                    // target_aggregate will be resolved later during type resolution
+                    var->set_init_expr(model::designated_struct_init_expression::make_shared(var, nullptr, members));
+                } else {
+                    // Positional brace initializer list: { expr, expr, ... }
 
-                // Build model element expressions from the AST
-                std::vector<std::shared_ptr<model::expression>> elements;
-                for (auto& elem_ast : brace_list->elements) {
-                    if (elem_ast) {
-                        _expr.reset();
-                        elem_ast->visit(*this);
-                        elements.push_back(_expr);
-                        _expr.reset();
+                    // Empty brace init on non-array types (e.g. S {}): treat as designated
+                    // init with 0 members so that the struct is zero-initialized and
+                    // default constructors for struct-typed members are called.
+                    if (brace_list->elements.empty()
+                        && !type::is_sized_array(var_type)
+                        && !type::is_array(var_type)) {
+                        var->set_init_expr(model::designated_struct_init_expression::make_shared(var, nullptr, {}));
                     } else {
-                        elements.push_back(nullptr); // default-init slot
+                        // If the type is an unsized array reference (T[]&, from T[] without a size),
+                        // re-create it as a sized array using the brace list element count.
+                        if (type::is_reference(var_type)) {
+                            auto ref_type = std::dynamic_pointer_cast<reference_type>(var_type);
+                            auto inner = ref_type ? ref_type->get_subtype() : nullptr;
+                            if (type::is_array(inner) && !type::is_sized_array(inner)) {
+                                auto unsized = std::dynamic_pointer_cast<array_type>(inner);
+                                auto elem_type = unsized->get_subtype();
+                                auto sized = elem_type->get_array(brace_list->elements.size());
+                                var->set_type(sized);
+                                var_type = sized;
+                            }
+                        }
+
+                        // Build model element expressions from the AST
+                        std::vector<std::shared_ptr<model::expression>> elements;
+                        for (auto& elem_ast : brace_list->elements) {
+                            if (elem_ast) {
+                                _expr.reset();
+                                elem_ast->visit(*this);
+                                elements.push_back(_expr);
+                                _expr.reset();
+                            } else {
+                                elements.push_back(nullptr); // default-init slot
+                            }
+                        }
+                        var->set_init_expr(model::array_init_expression::make_shared(var, elements));
                     }
                 }
-                var->set_init_expr(model::array_init_expression::make_shared(var, elements));
             } else if (type::is_owner(var_type)
                 || type::is_pointer(var_type)
                 || type::is_link(var_type)
@@ -1240,6 +1292,49 @@ namespace k::model {
         expr.expr()->visit(*this);
         auto target = _expr;
         _expr = model::delete_expression::make_shared(target);
+    }
+
+    void model_builder::visit_brace_init_list(parse::ast::brace_init_list& init) {
+        if (init.is_designated) {
+            // Nested designated init: { .a = expr, .b(args) }
+            // Build model member init entries from the AST designated elements
+            std::vector<model::designated_struct_init_expression::member_init_entry> members;
+            for (auto& elem_ast : init.elements) {
+                auto desig = std::dynamic_pointer_cast<parse::ast::designated_init_element>(elem_ast);
+                if (!desig) continue;
+                model::designated_struct_init_expression::member_init_entry entry;
+                entry.member_name = std::string{desig->member_name.content};
+                std::string qual;
+                for (auto& q : desig->qualifier) {
+                    if (!qual.empty()) qual += "::";
+                    qual += std::string{q.content};
+                }
+                entry.qualifier = qual;
+                entry.is_call_form = desig->is_call_form;
+                if (desig->is_call_form) {
+                    for (auto& arg_ast : desig->args) {
+                        _expr.reset();
+                        arg_ast->visit(*this);
+                        entry.args.push_back(_expr);
+                        _expr.reset();
+                    }
+                } else {
+                    if (desig->value) {
+                        _expr.reset();
+                        desig->value->visit(*this);
+                        entry.value = _expr;
+                        _expr.reset();
+                    }
+                }
+                members.push_back(std::move(entry));
+            }
+            // No constructed_symbol for nested inits — target_aggregate resolved later
+            _expr = model::designated_struct_init_expression::make_shared(
+                std::shared_ptr<model::symbol_expression>{}, nullptr, members);
+        } else {
+            // Non-designated brace init list used as expression — not yet supported
+            _expr = nullptr;
+        }
     }
 
     void model_builder::visit_comma_expr(parse::ast::expr_list_expr &) {

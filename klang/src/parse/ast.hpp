@@ -732,21 +732,71 @@ namespace k::parse {
         };
 
         /**
+         * A single designated member initializer inside a brace-init list.
+         * Represents either:
+         *   - Assignment form:    .member = expr
+         *   - Constructor form:   .member(args...)
+         *   - Qualified form:     .Base::member = expr  or  .Base::member(args...)
+         */
+        struct designated_init_element : public expression {
+            lex::operator_ dot;             ///< The '.' token
+            lex::identifier member_name;    ///< The member name (last component)
+            /** Optional qualifier for disambiguating inherited members (e.g. "Base" in ".Base::member"). */
+            std::vector<lex::identifier> qualifier;
+            bool is_call_form;              ///< true → .m(args), false → .m = expr
+            expr_ptr value;                 ///< Assignment form: the expression after '='
+            std::vector<expr_ptr> args;     ///< Constructor form: the arguments between '(' ')'
+
+            // Assignment form constructor
+            designated_init_element(const lex::operator_& dot,
+                                    const lex::identifier& member_name,
+                                    const std::vector<lex::identifier>& qualifier,
+                                    const expr_ptr& value)
+                : dot(dot), member_name(member_name), qualifier(qualifier),
+                  is_call_form(false), value(value) {}
+
+            // Constructor form constructor
+            designated_init_element(const lex::operator_& dot,
+                                    const lex::identifier& member_name,
+                                    const std::vector<lex::identifier>& qualifier,
+                                    const std::vector<expr_ptr>& args)
+                : dot(dot), member_name(member_name), qualifier(qualifier),
+                  is_call_form(true), args(args) {}
+
+            /** Returns the fully-qualified member name string (e.g. "Base::x" or just "x"). */
+            std::string qualified_member_name() const {
+                std::string result;
+                for (auto& q : qualifier) {
+                    result += std::string{q.content} + "::";
+                }
+                result += std::string{member_name.content};
+                return result;
+            }
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
+        /**
          * Brace initializer list expression.
          * Represents a comma-separated list of expressions inside braces: { e1, e2, ..., eN }
          * An empty slot (two consecutive commas, or trailing comma before '}') yields a nullptr entry
          * to represent default construction.
          * Used for array initialization: arr : int[3] { 1, 2, 3 };
+         * When is_designated is true, every element is a designated_init_element.
          */
         struct brace_init_list : public expression {
             lex::punctuator open_brace, close_brace;
             /** Element initializer expressions. nullptr entries represent empty (default-init) slots. */
             std::vector<expr_ptr> elements;
+            /** True when this brace-init list uses designated member initializers (.member = expr). */
+            bool is_designated = false;
 
             brace_init_list(const lex::punctuator& open_brace,
                             const lex::punctuator& close_brace,
-                            const std::vector<expr_ptr>& elements)
-                : open_brace(open_brace), close_brace(close_brace), elements(elements) {}
+                            const std::vector<expr_ptr>& elements,
+                            bool is_designated = false)
+                : open_brace(open_brace), close_brace(close_brace), elements(elements),
+                  is_designated(is_designated) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -950,6 +1000,7 @@ namespace k::parse {
         virtual void visit_delete_expr(ast::delete_expr &) = 0;
 
         virtual void visit_brace_init_list(ast::brace_init_list &) = 0;
+        virtual void visit_designated_init_element(ast::designated_init_element &) = 0;
 
         virtual void visit_comma_expr(ast::expr_list_expr &) = 0;
 
@@ -1004,6 +1055,7 @@ namespace k::parse {
         void visit_delete_expr(ast::delete_expr &) override;
 
         void visit_brace_init_list(ast::brace_init_list &) override;
+        void visit_designated_init_element(ast::designated_init_element &) override;
 
         void visit_comma_expr(ast::expr_list_expr &) override;
     };
