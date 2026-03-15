@@ -64,6 +64,31 @@ std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool du
     return comp->to_jit();
 }
 
+std::unique_ptr<k::model::gen::jit> gen_jit_multi(
+    std::vector<std::pair<std::string, std::string>> sources,
+    bool dump, bool optimize,
+    const std::string& forced_module_name) {
+    auto comp = k::compiler::create();
+    try {
+        comp->parse_sources(std::move(sources), optimize, dump, forced_module_name);
+        return comp->to_jit();
+    } catch (const k::log::compiler_error&) {
+        return nullptr;
+    } catch (std::exception& ex) {
+        std::cerr << "Unexpected error during multi-source compilation: " << ex.what() << std::endl;
+        return nullptr;
+    }
+}
+
+std::unique_ptr<k::model::gen::jit> gen_jit_multi_throws(
+    std::vector<std::pair<std::string, std::string>> sources,
+    bool dump, bool optimize,
+    const std::string& forced_module_name) {
+    auto comp = k::compiler::create();
+    comp->parse_sources(std::move(sources), optimize, dump, forced_module_name);
+    return comp->to_jit();
+}
+
 
 bool compile_text(const std::string_view& source, const std::string& out_file) {
     // Ensure LLVM targets are registered before any target lookup.

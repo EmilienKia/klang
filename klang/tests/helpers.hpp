@@ -40,6 +40,27 @@ llvm::TargetMachine* make_pic_target_machine();
 std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = false, bool optimize = true);
 
 /**
+ * Like gen_jit() but compiles multiple source files as a single compilation unit.
+ * @param sources   Pairs of {path, content} for every source file in the unit.
+ * @param dump      Dump intermediate representations.
+ * @param optimize  Run optimisation passes.
+ * @param forced_module_name  Override module name (empty = use source declarations).
+ */
+std::unique_ptr<k::model::gen::jit> gen_jit_multi(
+    std::vector<std::pair<std::string, std::string>> sources,
+    bool dump = false, bool optimize = true,
+    const std::string& forced_module_name = "");
+
+/**
+ * Like gen_jit_multi() but lets compiler exceptions propagate to the caller.
+ * Use in tests that expect compilation to fail.
+ */
+std::unique_ptr<k::model::gen::jit> gen_jit_multi_throws(
+    std::vector<std::pair<std::string, std::string>> sources,
+    bool dump = false, bool optimize = true,
+    const std::string& forced_module_name = "");
+
+/**
  * Like gen_jit() but lets k::log::compiler_error (and its subclasses) propagate
  * to the caller instead of catching them.  Use this in tests that verify the
  * compiler throws the expected exception for invalid input:

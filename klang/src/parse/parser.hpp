@@ -35,6 +35,19 @@
 
 namespace k::parse {
 
+/**
+ * Lightweight lookup: lex + parse only the module declaration from a source.
+ * Returns the module name if present, std::nullopt otherwise.
+ * Does not report errors when the declaration is simply absent.
+ * The source's line index is populated as a side-effect (lexing).
+ *
+ * @param src    Source to scan (must remain alive while the returned name is used).
+ * @param logger Logger for potential lexer/parser errors.
+ * @return       The module name, or std::nullopt if no 'module' declaration was found.
+ */
+std::optional<k::name> lookup_module_name(k::source& src, k::log::logger& logger);
+
+
 
 class parsing_error : public k::log::compiler_error {
 public:

@@ -74,6 +74,7 @@ int main(int argc, const char** argv) {
     std::vector<std::string> lib_dirs;      // -L <dir>
     std::vector<std::string> lib_files;     // -l <name-or-path>
     std::string lib_path_env;               // --lib-path-env
+    std::string forced_module_name;         // --module-name
 
     k::compiler::initialize();
 
@@ -121,6 +122,10 @@ int main(int argc, const char** argv) {
                 "The value is a colon-separated list of directories.")
             ("no-lib-path-env",
                 "Disable the environment-variable-based search path entirely.")
+            ("module-name",
+                po::value<std::string>(&forced_module_name),
+                "Override the module name regardless of any 'module' declaration "
+                "in the source files.")
             ("enforce-ns-collision",
                 "Reject compilation if the root namespace of the unit being "
                 "compiled collides with the root namespace of any imported module.")
@@ -210,12 +215,14 @@ int main(int argc, const char** argv) {
         return -1;
     }
 
-    if(input_files.size() > 1) {
-        std::cout << "klangc is supporting only one input file yet. Additional files will be ignored." << std::endl;
+    // Read all input files before compilation starts (needed to know the
+    // total count for the internal reserve() that keeps string_views valid).
+    std::vector<std::pair<std::string, std::string>> sources;
+    sources.reserve(input_files.size());
+    for (const auto& path : input_files) {
+        std::cout << "Reading : " << path << std::endl;
+        sources.emplace_back(path, read_text_file_content(path));
     }
-
-    std::cout << "Parsing : " << input_files[0] << std::endl;
-    std::string source = read_text_file_content(input_files[0]);
 
     try {
 
@@ -312,7 +319,7 @@ int main(int argc, const char** argv) {
             }
         }
 
-        compiler->parse_source(input_files[0], source, true, false);
+        compiler->parse_sources(std::move(sources), true, false, forced_module_name);
 
         const bool want_compile    = vm.count("compile")     > 0;
         const bool want_dyn_lib    = vm.count("dyn-lib")     > 0;

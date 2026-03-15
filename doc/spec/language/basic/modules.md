@@ -3,17 +3,18 @@
 [← Index](../index.md)
 
 A *module* is the primary compilation unit of K.
-Every source file may declare a module name; this declaration establishes the namespace that all top-level declarations in the file belong to.
+A module may be composed of one or more source files; all files in the same module share the same root namespace and have global visibility of each other's declarations (there is no file-private scope).
 
 ---
 
 ## Contents
 
 1. [Module declaration](#1-module-declaration)
-2. [Import declarations](#2-import-declarations)
-3. [Using imported symbols](#3-using-imported-symbols)
-4. [Effect on namespace hierarchy](#4-effect-on-namespace-hierarchy)
-5. [Name mangling](#5-name-mangling)
+2. [Multi-file modules](#2-multi-file-modules)
+3. [Import declarations](#3-import-declarations)
+4. [Using imported symbols](#4-using-imported-symbols)
+5. [Effect on namespace hierarchy](#5-effect-on-namespace-hierarchy)
+6. [Name mangling](#6-name-mangling)
 
 ---
 
@@ -50,7 +51,55 @@ If a module declaration is absent, declarations are placed in the root namespace
 
 ---
 
-## 2. Import declarations
+## 2. Multi-file modules
+
+A module may span multiple source files.  All files passed to the compiler in a
+single invocation contribute to the same compilation unit.
+
+### Module name resolution
+
+The compiler scans all source files for `module` declarations before full
+parsing begins.  The following rules apply:
+
+1. **One file declares a module name** — this is the normal case.  The declared
+   name becomes the module name and root namespace for the entire unit.  Files
+   without a `module` declaration implicitly belong to this module.
+2. **Several files declare the same module name** — this is allowed.  Duplicate
+   identical declarations are silently accepted.
+3. **Several files declare different module names** — this is an **error**.
+4. **No file declares a module name** — a warning is emitted and a random
+   anonymous name is generated, as for single-file compilation.
+5. **The `--module-name` CLI flag** overrides any source-file declaration.
+
+### Visibility
+
+All top-level declarations are globally visible across all files of the module.
+There is no file-private scope: a symbol declared in file A can be referenced
+from file B without any additional qualifier.
+
+### Duplicate symbols
+
+If a symbol (function, variable, type) with the same fully-qualified name and
+signature is defined in more than one file, it is a **compilation error**.
+
+> **Note (current limitation):** Duplicate symbol detection across files of the
+> same module is not yet enforced by the compiler.  Duplicate definitions may
+> silently overwrite each other.  This will be addressed in a future release.
+
+### Imports
+
+Each file may have its own `import` declarations.  Imports with the same module
+name across different files are automatically deduplicated.
+
+### Compilation output
+
+Regardless of how many source files compose a module, the compiler produces a
+single output: one object file, one executable, one shared library, or one
+static library, along with a single `.kdi` description file.
+
+---
+
+## 3. Import declarations
 
 An import declaration makes the public API of another compiled K module visible
 in the current file.  The compiler will locate the corresponding `.kdi`
@@ -135,7 +184,7 @@ the root of the unit being compiled and any imported module.
 
 ---
 
-## 3. Using imported symbols
+## 4. Using imported symbols
 
 An `import` declaration does **not** inject names into the current namespace.
 Every imported symbol must be referenced by its **fully qualified name** —
@@ -192,7 +241,7 @@ from imported types, see [Libraries — Export and Import](libraries.md).
 
 ---
 
-## 4. Effect on namespace hierarchy
+## 5. Effect on namespace hierarchy
 
 The module name is mapped directly to a namespace path.
 Each `::`-separated component of the module name becomes a level of nested namespace.
@@ -212,7 +261,7 @@ Its mangled name encodes the namespace path.
 
 ---
 
-## 5. Name mangling
+## 6. Name mangling
 
 The K compiler produces mangled names for all global symbols to avoid link-time conflicts across modules.
 

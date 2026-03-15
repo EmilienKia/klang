@@ -21,6 +21,7 @@
 #include "config.h"
 #include "common/path_lookup_file_resolver.hpp"
 
+#include <cassert>
 #include <filesystem>
 #include <iostream>
 #include <unordered_set>
@@ -201,13 +202,111 @@ std::string compiler::get_element_mangled_name(const name& name) const {
 }
 
 void compiler::parse_source(const std::string_view& path, const std::string_view& src, bool optimize, bool dump) {
-    // TODO : what to do if _source, _ast_unit and so on are already filled (by previous call)
-    _source.path = path;
-    _source.content = src;
+    std::vector<std::pair<std::string, std::string>> sources;
+    sources.emplace_back(std::string(path), std::string(src));
+    parse_sources(std::move(sources), optimize, dump);
+}
+
+void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> sources,
+                              bool optimize, bool dump,
+                              const std::string& forced_module_name) {
+    // ── Phase 0 — Load all sources into _sources with a single reserve ─────
+    assert(!_sources_locked && "Cannot add sources after lexing/parsing has started");
+    _sources.clear();
+    _sources.reserve(sources.size());
+    for (auto& [path, content] : sources) {
+        _sources.emplace_back(std::string_view(path), std::string_view(content));
+    }
+    _sources_locked = true;
+
     try {
-        k::parse::parser parser(*this);
-        parser.parse(_source);
-        _ast_unit = parser.parse_unit();
+        // ── Phase 1 — Pre-lookup: discover the module name ─────────────────
+        k::name resolved_unit_name;
+        bool found_module_decl = false;
+        size_t module_decl_file_idx = 0; // index of (first) file with module decl
+
+        if (!forced_module_name.empty()) {
+            // CLI --module-name overrides everything
+            resolved_unit_name = k::name::from(forced_module_name);
+            found_module_decl = true;
+        } else {
+            // Scan each source for a module declaration
+            for (size_t i = 0; i < _sources.size(); ++i) {
+                // We need a temporary copy of the source for lookup because
+                // the real lexing pass will re-lex the source from scratch.
+                k::source tmp_src(_sources[i].path, _sources[i].content);
+                auto mod_name = k::parse::lookup_module_name(tmp_src, *this);
+                if (mod_name) {
+                    if (!found_module_decl) {
+                        resolved_unit_name = *mod_name;
+                        found_module_decl = true;
+                        module_decl_file_idx = i;
+                    } else if (!(*mod_name == resolved_unit_name)) {
+                        // Conflicting module declarations
+                        auto diag = k::log::diagnostic::make_error(
+                            0x0001,
+                            "Conflicting module declarations: '{}' vs '{}'",
+                            {resolved_unit_name.to_string(), mod_name->to_string()});
+                        report(diag);
+                        _has_compilation_error = true;
+                        throw k::log::compiler_error(std::move(diag));
+                    }
+                    // else same name — OK, ignore duplicate
+                }
+            }
+            if (!found_module_decl) {
+                // No module declaration in any file — warning, generate random name
+                auto diag = k::log::diagnostic::make_warning(
+                    0x0002,
+                    "No module declaration found in any source file; generating a random unit name");
+                report(diag);
+            }
+        }
+
+        // ── Phase 2 — Full parse of each source, merge into single AST ─────
+        // Parse files that declare the module first so the unit name / root
+        // namespace is established before other files are processed.
+        // Build a parsing order: file with module decl first (if any), then the rest.
+        std::vector<size_t> parse_order;
+        parse_order.reserve(_sources.size());
+        if (found_module_decl && !forced_module_name.empty()) {
+            // CLI override: no specific ordering needed
+            for (size_t i = 0; i < _sources.size(); ++i)
+                parse_order.push_back(i);
+        } else if (found_module_decl) {
+            parse_order.push_back(module_decl_file_idx);
+            for (size_t i = 0; i < _sources.size(); ++i)
+                if (i != module_decl_file_idx) parse_order.push_back(i);
+        } else {
+            for (size_t i = 0; i < _sources.size(); ++i)
+                parse_order.push_back(i);
+        }
+
+        _ast_unit = std::make_shared<k::parse::ast::unit>();
+
+        // Keep per-file AST units alive so that their lexeme string_views stay valid
+        std::vector<std::shared_ptr<k::parse::ast::unit>> per_file_asts;
+        per_file_asts.reserve(_sources.size());
+
+        for (size_t idx : parse_order) {
+            k::parse::parser parser(*this);
+            parser.parse(_sources[idx]);
+            auto file_ast = parser.parse_unit();
+            per_file_asts.push_back(file_ast);
+
+            // Merge module_name
+            if (file_ast->module_name && !_ast_unit->module_name) {
+                _ast_unit->module_name = file_ast->module_name;
+            }
+            // Merge imports
+            for (auto& imp : file_ast->imports) {
+                _ast_unit->imports.push_back(imp);
+            }
+            // Merge declarations
+            for (auto& decl : file_ast->declarations) {
+                _ast_unit->declarations.push_back(decl);
+            }
+        }
 
         if(dump) {
             std::cout << "#" << std::endl << "# Parsing" << std::endl << "#" << std::endl;
@@ -215,9 +314,20 @@ void compiler::parse_source(const std::string_view& path, const std::string_view
             visit.visit_unit(*_ast_unit);
         }
 
+        // ── Phase 3 — Model building ───────────────────────────────────────
         if(dump) {
             std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
         }
+
+        // If we have a forced module name from the CLI, strip the module_name
+        // from the merged AST so that model_builder::visit_module_name() does
+        // not overwrite it, then pre-set the unit name.
+        if (!forced_module_name.empty()) {
+            _ast_unit->module_name.reset();
+            _model_unit->set_unit_name(resolved_unit_name);
+        }
+        // Otherwise model_builder::visit_module_name will pick it up from the AST.
+
         k::model::model_builder::visit(*this, _context, *_ast_unit, *_model_unit);
 
         // ── Import resolution ──────────────────────────────────────────────
@@ -717,16 +827,33 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
     return ok;
 }
 
+const source* compiler::source_for_position(const char* ptr) const {
+    if (!ptr) return nullptr;
+    for (const auto& src : _sources) {
+        const char* begin = src.content.data();
+        const char* end   = begin + src.content.size();
+        if (ptr >= begin && ptr <= end) {
+            return &src;
+        }
+    }
+    return nullptr;
+}
+
 char_coord compiler::coordinates_from_pos(const k::char_pos& coord) const {
-    return _source.get_coordinates(coord);
+    if (auto* src = source_for_position(coord.pos)) {
+        return src->get_coordinates(coord);
+    }
+    return char_coord::INVALID();
 }
 
 std::pair<char_coord,char_coord> compiler::coordinates_from_lex(const lex::lexeme& lex) const {
     if (lex.content.empty()) {
         return {char_coord::INVALID(), char_coord::INVALID()};
-    } else {
-        return {_source.get_coordinates({&lex.content.front()}), _source.get_coordinates({&lex.content.back()})};
     }
+    if (auto* src = source_for_position(&lex.content.front())) {
+        return {src->get_coordinates({&lex.content.front()}), src->get_coordinates({&lex.content.back()})};
+    }
+    return {char_coord::INVALID(), char_coord::INVALID()};
 }
 
 static const char* severity_str[] = {
@@ -741,17 +868,28 @@ void compiler::report(const k::log::diagnostic& diag) {
     const auto sev = (int)diag.level;
     const char* sev_str = severity_str[sev < 4 ? sev : 2];
 
-    // Resolve source location from the primary lexeme (pos), then range (start/end)
-    auto lex_to_coord = [&](const k::lex::any_lexeme& lex) -> std::pair<char_coord, char_coord> {
-        return std::visit([&](const auto& l) -> std::pair<char_coord, char_coord> {
+    // Resolve source location from the primary lexeme (pos), then range (start/end).
+    // The resolved source file and coordinates are returned together.
+    struct located {
+        const source* src = nullptr;
+        char_coord c1 = char_coord::INVALID();
+        char_coord c2 = char_coord::INVALID();
+    };
+
+    auto lex_to_located = [&](const k::lex::any_lexeme& lex) -> located {
+        return std::visit([&](const auto& l) -> located {
             using T = std::decay_t<decltype(l)>;
             if constexpr (std::is_base_of_v<k::lex::lexeme, T>) {
                 if (!l.content.empty()) {
-                    return { _source.get_coordinates({&l.content.front()}),
-                             _source.get_coordinates({&l.content.back()}) };
+                    auto* s = source_for_position(&l.content.front());
+                    if (s) {
+                        return { s,
+                                 s->get_coordinates({&l.content.front()}),
+                                 s->get_coordinates({&l.content.back()}) };
+                    }
                 }
             }
-            return { char_coord::INVALID(), char_coord::INVALID() };
+            return {};
         }, lex);
     };
 
@@ -763,39 +901,47 @@ void compiler::report(const k::log::diagnostic& diag) {
         try { formatted = fmt::vformat(diag.message, store); } catch(...) {}
     }
 
-    // Determine primary display coord
-    char_coord display_coord = char_coord::INVALID();
+    // Determine primary display coord and source file
+    located primary;
     if (diag.pos) {
-        auto [c1, c2] = lex_to_coord(*diag.pos);
-        display_coord = c1;
+        primary = lex_to_located(*diag.pos);
     } else if (diag.start) {
-        auto [c1, c2] = lex_to_coord(*diag.start);
-        display_coord = c1;
+        primary = lex_to_located(*diag.start);
     }
 
+    const std::string& diag_path = primary.src ? primary.src->path : (_sources.empty() ? "" : _sources.front().path);
+
     // Print main message
-    if (display_coord) {
+    if (primary.c1) {
         fmt::print("{}:{}:{}: {} {:0>5X} : {}\n",
-            _source.path, display_coord.line, display_coord.col,
+            diag_path, primary.c1.line, primary.c1.col,
             sev_str, code, formatted);
     } else {
         fmt::print("{}: {} {:0>5X} : {}\n",
-            _source.path, sev_str, code, formatted);
+            diag_path, sev_str, code, formatted);
     }
 
     // Print source excerpt
+    auto log_excerpt = [&](const located& loc_start, const located& loc_end) {
+        if (!loc_start.src) return;
+        if (loc_start.c1 && loc_end.c2) {
+            log_source_line(*loc_start.src, loc_start.c1, loc_end.c2);
+        } else if (loc_start.c1) {
+            log_source_line(*loc_start.src, loc_start.c1);
+        }
+    };
+
     if (diag.start && diag.end) {
-        auto [c1, _1] = lex_to_coord(*diag.start);
-        auto [_2, c2] = lex_to_coord(*diag.end);
-        if (c1 && c2) log_source_line(c1, c2);
-        else if (c1)  log_source_line(c1);
+        auto ls = lex_to_located(*diag.start);
+        auto le = lex_to_located(*diag.end);
+        log_excerpt(ls, le);
     } else if (diag.pos) {
-        auto [c1, c2] = lex_to_coord(*diag.pos);
-        if (c1 && c2) log_source_line(c1, c2);
-        else if (c1)  log_source_line(c1);
+        auto lp = lex_to_located(*diag.pos);
+        if (lp.src && lp.c1 && lp.c2) log_source_line(*lp.src, lp.c1, lp.c2);
+        else if (lp.src && lp.c1)      log_source_line(*lp.src, lp.c1);
     } else if (diag.start) {
-        auto [c1, c2] = lex_to_coord(*diag.start);
-        if (c1) log_source_line(c1, c2);
+        auto ls = lex_to_located(*diag.start);
+        if (ls.src && ls.c1) log_source_line(*ls.src, ls.c1, ls.c2);
     }
 
     // Print notes
@@ -807,15 +953,16 @@ void compiler::report(const k::log::diagnostic& diag) {
             try { note_msg = fmt::vformat(note.message, store); } catch(...) {}
         }
         if (note.pos) {
-            auto [nc, _] = lex_to_coord(*note.pos);
-            if (nc) {
-                fmt::print("{}:{}:{}: note: {}\n", _source.path, nc.line, nc.col, note_msg);
-                log_source_line(nc);
+            auto nl = lex_to_located(*note.pos);
+            const std::string& note_path = nl.src ? nl.src->path : diag_path;
+            if (nl.c1) {
+                fmt::print("{}:{}:{}: note: {}\n", note_path, nl.c1.line, nl.c1.col, note_msg);
+                if (nl.src) log_source_line(*nl.src, nl.c1);
             } else {
-                fmt::print("{}: note: {}\n", _source.path, note_msg);
+                fmt::print("{}: note: {}\n", note_path, note_msg);
             }
         } else {
-            fmt::print("{}: note: {}\n", _source.path, note_msg);
+            fmt::print("{}: note: {}\n", diag_path, note_msg);
         }
     }
 }
@@ -825,8 +972,8 @@ void compiler::print_logs() {
 }
 
 
-void compiler::log_source_line(unsigned int line, unsigned int col) {
-    auto txt = _source.get_line(line);
+void compiler::log_source_line(const source& src, unsigned int line, unsigned int col) {
+    auto txt = src.get_line(line);
     fmt::print("{:>5d} | {}", line, txt);
     fmt::print("      | {}^", std::string(col, ' ') );
     if (txt.empty() || (txt.back()!='\r' && txt.back()!='\n')) {
@@ -834,11 +981,11 @@ void compiler::log_source_line(unsigned int line, unsigned int col) {
     }
 }
 
-void compiler::log_source_line(unsigned int line, unsigned int start, unsigned int end) {
+void compiler::log_source_line(const source& src, unsigned int line, unsigned int start, unsigned int end) {
     if (end<start) {
-        log_source_line(line, end, start);
+        log_source_line(src, line, end, start);
     } else {
-        auto txt = _source.get_line(line);
+        auto txt = src.get_line(line);
         fmt::print("{:>5d} | {}", line, txt);
         if (start == end) {
             fmt::print("      | {}^", std::string(start, ' ') );
@@ -851,11 +998,11 @@ void compiler::log_source_line(unsigned int line, unsigned int start, unsigned i
     }
 }
 
-void compiler::log_source_lines(unsigned int line_start, unsigned int start, unsigned int line_end, unsigned int end) {
+void compiler::log_source_lines(const source& src, unsigned int line_start, unsigned int start, unsigned int line_end, unsigned int end) {
     if (line_end<line_start) {
-        log_source_lines(line_end, end, line_start, start);
+        log_source_lines(src, line_end, end, line_start, start);
     } else {
-        auto line1 = _source.get_line(line_start);
+        auto line1 = src.get_line(line_start);
         fmt::print("{:>5d} | {}", line_start, line1);
         fmt::print("      | {}^{}", std::string(start, ' '), std::string(line1.size()-start-1, '~') );
         if (line_end > line_start + 1) {
@@ -864,7 +1011,7 @@ void compiler::log_source_lines(unsigned int line_start, unsigned int start, uns
         if (line1.empty() || (line1.back()!='\r' && line1.back()!='\n')) {
             fmt::print("\n");
         }
-        auto line2 = _source.get_line(line_end);
+        auto line2 = src.get_line(line_end);
         fmt::print("{:>5d} | {}", line_end, line2);
         if (end==0) {
             fmt::print("      | ^");
@@ -877,15 +1024,15 @@ void compiler::log_source_lines(unsigned int line_start, unsigned int start, uns
     }
 }
 
-void compiler::log_source_line(char_coord pos) {
-    log_source_line(pos.line, pos.col);
+void compiler::log_source_line(const source& src, char_coord pos) {
+    log_source_line(src, pos.line, pos.col);
 }
 
-void compiler::log_source_line(char_coord start, char_coord end) {
+void compiler::log_source_line(const source& src, char_coord start, char_coord end) {
     if (start.line==end.line) {
-        log_source_line(start.line, start.col, end.col);
+        log_source_line(src, start.line, start.col, end.col);
     } else {
-        log_source_lines(start.line, start.col, end.line, end.col);
+        log_source_lines(src, start.line, start.col, end.line, end.col);
     }
 }
 

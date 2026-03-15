@@ -19,6 +19,7 @@
 #define KLANG_COMPILER_HPP
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "common/logger.hpp"
 #include "common/file_resolver.hpp"
@@ -59,7 +60,14 @@ class compiler : protected log::logger,  public std::enable_shared_from_this<com
 protected:
     static bool _compiler_class_init;
 
-    source _source;
+    /** All source files for the current compilation unit.
+     *  MUST be reserve()'d before any lexing/parsing to prevent
+     *  reallocation that would invalidate the string_views held by lexemes. */
+    std::vector<source> _sources;
+
+    /** Guard: set to true once lexing/parsing has started.
+     *  Any attempt to add more sources after this point is a programming error. */
+    bool _sources_locked = false;
 
     std::shared_ptr<k::parse::ast::unit> _ast_unit;
     std::shared_ptr<model::context> _context;
@@ -132,6 +140,22 @@ public:
 
 
     void parse_source(const std::string_view& path, const std::string_view& src, bool optimize = true, bool dump = false);
+
+    /**
+     * Compile multiple source files as a single compilation unit (module).
+     * All source contents are loaded before parsing starts so that the
+     * internal source vector can be reserve()'d once, ensuring that the
+     * string_views held by lexemes remain valid throughout compilation.
+     *
+     * @param sources   Pairs of {path, content} for every source file.
+     * @param optimize  Run optimisation passes after code generation.
+     * @param dump      Dump intermediate representations to stdout.
+     * @param forced_module_name  If non-empty, override any module declaration
+     *                            found in the source files (CLI --module-name).
+     */
+    void parse_sources(std::vector<std::pair<std::string, std::string>> sources,
+                       bool optimize = true, bool dump = false,
+                       const std::string& forced_module_name = "");
 
     /**
      * Configure the LLVM IR text export options.
@@ -257,15 +281,26 @@ protected:
      */
     void emit_ir(const std::string& filepath);
 
+    /**
+     * Find which source file a character pointer belongs to, by comparing
+     * the address against the data ranges of all loaded sources.
+     * This is only used for diagnostic messages (error path), so O(n) on the
+     * number of source files is perfectly acceptable.
+     *
+     * @param ptr  Pointer into the content of some source file.
+     * @return     Pointer to the matching source, or nullptr if not found.
+     */
+    const source* source_for_position(const char* ptr) const;
+
     char_coord coordinates_from_pos(const k::char_pos& coord) const;
     std::pair<char_coord,char_coord> coordinates_from_lex(const lex::lexeme& lex) const;
 
-    void log_source_line(char_coord pos);
-    void log_source_line(unsigned int line, unsigned int col);
+    void log_source_line(const source& src, char_coord pos);
+    void log_source_line(const source& src, unsigned int line, unsigned int col);
 
-    void log_source_line(char_coord start, char_coord end);
-    void log_source_line(unsigned int line, unsigned int start, unsigned int end);
-    void log_source_lines(unsigned int line_start, unsigned int start, unsigned int line_end, unsigned int end);
+    void log_source_line(const source& src, char_coord start, char_coord end);
+    void log_source_line(const source& src, unsigned int line, unsigned int start, unsigned int end);
+    void log_source_lines(const source& src, unsigned int line_start, unsigned int start, unsigned int line_end, unsigned int end);
 
     void report(const k::log::diagnostic& diag) override;
 

@@ -25,6 +25,19 @@
 
 namespace k::parse {
 
+std::optional<k::name> lookup_module_name(k::source& src, k::log::logger& logger) {
+    try {
+        parser p(logger);
+        p.parse(src);
+        auto mod = p.parse_module_declaration();
+        if (mod && mod->qname) {
+            return mod->qname->to_name();
+        }
+    } catch (const parsing_error&) {
+        // A malformed module declaration — propagate as absent.
+    }
+    return std::nullopt;
+}
 
 
 //

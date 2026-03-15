@@ -17,11 +17,13 @@ one or more K source files, performs lexical analysis, parsing, semantic
 resolution, LLVM IR generation and optional optimisation, then emits either a
 native object file or a linked executable.
 
+Multiple source files may be passed on the command line; they are all compiled
+as a single compilation unit (module).  All files share the same root namespace
+and have global visibility of each other's declarations.
+
 The compiler internally uses LLVM for code generation and delegates linking to
 **clang(1)**.
 
-> **Note:** The current version supports only **one input file** at a time.
-> If multiple files are provided, only the first one is processed.
 
 ---
 
@@ -95,8 +97,14 @@ automatically according to the following priority:
 Where _base_ = `unit_name_to_lib_base(module_name)` — see *Library Output Naming*.
 
 **`input-file`**  
-Path to the K source file to compile. Positional; may also be specified
-explicitly with `--input-file=`_file_. Only one file is currently processed.
+Path(s) to the K source files to compile. Positional; may also be specified
+explicitly with `--input-file=`_file_. Multiple files are compiled as a single
+module (see *Multi-file modules* in the language specification).
+
+**`--module-name` _name_**  
+Override the module name regardless of any `module` declaration in the source
+files. This is equivalent to having `module` _name_`;` at the top of every
+file.  Useful for build systems that determine the module name externally.
 
 ---
 
@@ -507,8 +515,14 @@ kditool validate libmath.utils.kdi
 
 ## NOTES
 
-* Multiple source files on the command line are currently **not supported**.
-  Only the first file is compiled; a warning is emitted for the rest.
+* Multiple source files on the command line are compiled as a **single module**
+  (compilation unit).  All files share the same root namespace and have global
+  visibility of each other's declarations.  There is no file-private scope.
+* If multiple files contain a `module` declaration, they must all declare the
+  **same** module name, otherwise compilation fails.  If only one file has a
+  `module` declaration, its name is used for the entire unit.  If no file has
+  one, a random anonymous name is generated (with a warning).
+* The `--module-name` flag overrides any source-level `module` declarations.
 * When a module has no `main` function and neither `-c`, `--dyn-lib` nor
   `--static-lib` is specified, **klangc** automatically produces a shared
   library (`.so`).
@@ -559,8 +573,9 @@ To make all transitive KDIs available, either:
 
 ## BUGS
 
-* Only one input file can be compiled per invocation.
 * No incremental compilation or dependency tracking.
+* Duplicate symbol detection across files of the same module is not yet enforced
+  (may silently overwrite).
 * The optimisation pipeline will be migrated to the LLVM new pass manager in a
   future release.
 
