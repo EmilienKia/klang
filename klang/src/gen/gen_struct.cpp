@@ -460,6 +460,15 @@ void declaration_generator::visit_aggregate(aggregate& st) {
     _struct_stack.pop();
 }
 
+// declaration_generator::visit_enumeration
+// -----------------------------------------
+// Enums have no LLVM-level declarations; their underlying type is already handled
+// by the model builder. This override exists only to prevent the default visitor
+// from trying to visit children that don't exist.
+void declaration_generator::visit_enumeration(enumeration&) {
+    // Nothing to do.
+}
+
 // implementation_generator::visit_aggregate
 // -------------------------------------------
 // Generates the LLVM IR implementations for all members of an aggregate.

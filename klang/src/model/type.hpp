@@ -68,6 +68,8 @@ class sized_array_type;
 class array_type;
 class struct_type;
 class function_reference_type;
+class enum_type;
+class enumeration;
 
 /**
  * Base type class
@@ -134,6 +136,8 @@ public:
     inline static bool is_sized_array(const std::shared_ptr<type>& type);
     inline static bool is_array(const std::shared_ptr<type>& type);
     inline static bool is_function_reference(const std::shared_ptr<type>& type);
+    /** True if the type is an enum type (optionally stripping const). */
+    inline static bool is_enum(const std::shared_ptr<type>& type);
     /** True if the type is the null literal type. */
     inline static bool is_null(const std::shared_ptr<type>& type);
 
@@ -815,6 +819,48 @@ public:
     std::string to_string() const override;
 };
 
+
+/**
+ * Enum type — a nominal type backed by a primitive integer type.
+ *
+ * An enum_type wraps a primitive_type and is associated with an enumeration
+ * model object. In LLVM IR, the enum is represented identically to its
+ * underlying primitive integer type.
+ *
+ * Conversions:
+ *   - enum ↔ underlying int: implicit
+ *   - enum ↔ different enum: allowed with a warning (both must be primitive-backed)
+ */
+class enum_type : public type {
+protected:
+    friend class context;
+    friend class model_builder;
+    friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
+
+    std::weak_ptr<enumeration> _enumeration;
+    std::shared_ptr<primitive_type> _underlying_type;
+
+    enum_type(std::weak_ptr<enumeration> e, std::shared_ptr<primitive_type> underlying)
+        : _enumeration(std::move(e)), _underlying_type(std::move(underlying)) {}
+
+public:
+    bool is_resolved() const override { return _underlying_type != nullptr; }
+
+    std::shared_ptr<primitive_type> get_underlying_type() const { return _underlying_type; }
+    std::shared_ptr<enumeration> get_enumeration() const { return _enumeration.lock(); }
+
+    llvm::Type* get_llvm_type() const override;
+    llvm::Constant* generate_default_value_initializer() const override;
+    std::string to_string() const override;
+};
+
+inline bool type::is_enum(const std::shared_ptr<type>& t) {
+    auto nc = remove_const(t);
+    return std::dynamic_pointer_cast<enum_type>(nc) != nullptr;
+}
+
+
 inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2) {
     if (type1 == type2) return true;
     if (!type1 || !type2) return false;
@@ -859,6 +905,12 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
         }
         return false;
     }
+    // Enum type nominal equality: same enumeration object
+    if (auto e1 = std::dynamic_pointer_cast<enum_type>(type1)) {
+        auto e2 = std::dynamic_pointer_cast<enum_type>(type2);
+        return e2 && e1->get_enumeration() == e2->get_enumeration();
+    }
+
     return false;
 }
 

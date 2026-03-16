@@ -41,6 +41,8 @@ They may **not** be used as ordinary identifiers.
 | `for`       | Counter-controlled loop |
 | `new`       | Dynamic allocation operator — allocates and constructs an object, returns a `T!` owner |
 | `delete`    | Dynamic deallocation operator — destroys and frees the object owned by a `T!` variable |
+| `default`   | Marks the default entry of an enum declaration |
+| `enum`      | Enumeration type declaration |
 
 ### Grammar
 
@@ -53,7 +55,7 @@ Keyword: (one of)
     public   protected   private
     this     return
     if       else     while    for
-    new      delete
+    new      delete   default  enum
 ```
 
 ---
@@ -68,6 +70,8 @@ Keyword: (one of)
 - `unsigned` is used as a type modifier: `unsigned int`, `unsigned short`, etc. It is not a standalone type.
 - `new` allocates a dynamic object and returns a `T!` owner. See [Dynamic Allocation](../memory/new-delete.md).
 - `delete` destroys and frees the object owned by a `T!` variable. See [Dynamic Allocation](../memory/new-delete.md).
+- `enum` declares an enumeration type. See [Enumerations](../enums/enums.md).
+- `default` marks the default entry in an enum declaration. See [Enumerations](../enums/enums.md).
 - All other keywords are used in declarations or statements as described in the relevant reference sections.
 
 ---

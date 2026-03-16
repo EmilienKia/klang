@@ -53,6 +53,14 @@ void ast::aggregate_decl::visit(ast_visitor &visitor) {
     visitor.visit_aggregate_decl(*this);
 }
 
+void ast::enum_entry::visit(ast_visitor &visitor) {
+    // enum entries are visited as part of enum_decl
+}
+
+void ast::enum_decl::visit(ast_visitor &visitor) {
+    visitor.visit_enum_decl(*this);
+}
+
 void ast::identified_type_specifier::visit(ast_visitor &visitor) {
     visitor.visit_identified_type_specifier(*this);
 }
@@ -262,6 +270,10 @@ void default_ast_visitor::visit_aggregate_decl(ast::aggregate_decl &st) {
     for(ast::decl_ptr& decl : st.declarations) {
         decl->visit(*this);
     }
+}
+
+void default_ast_visitor::visit_enum_decl(ast::enum_decl &) {
+
 }
 
 void default_ast_visitor::visit_variable_decl(ast::variable_decl &) {

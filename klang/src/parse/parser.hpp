@@ -132,6 +132,12 @@ public:
     std::shared_ptr<ast::aggregate_decl> parse_aggregate_decl();
 
     /**
+     * ENUM_DECLARATION := SPECIFIERS 'enum' identifier '{' ENUM_ENTRY* '}' ';'
+     * ENUM_ENTRY := identifier [ '=' ( integer_literal | identifier ) ] [ 'default' ] ';'
+     */
+    std::shared_ptr<ast::enum_decl> parse_enum_decl();
+
+    /**
      * QUALIFIED_IDENTIFIER := ?'::' identifier *( '::' identifier )
      *
      * @return The qualified identifier, if parsed correctly completely.

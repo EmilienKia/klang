@@ -195,6 +195,12 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {
         }
         return kdi::kdi_type::make_aggregate(std::move(fq));
     }
+    if (auto et = std::dynamic_pointer_cast<enum_type>(t)) {
+        // TODO: KDI schema does not yet have a dedicated enum type.
+        // For now, export enum types as their underlying primitive integer type
+        // so that cross-library function signatures remain usable.
+        return to_kdi_type(et->get_underlying_type());
+    }
     return kdi::kdi_type::make_void();
 }
 

@@ -158,6 +158,11 @@ ast::decl_ptr parser::parse_declaration()
         return decl;
     }
 
+    // Look for an enum decl
+    if(auto decl = parse_enum_decl()) {
+        return decl;
+    }
+
     // Look for a function decl
     if(auto decl = parse_function_decl()) {
         return decl;
@@ -331,6 +336,114 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
     }
 
     return std::make_shared<ast::aggregate_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations);
+}
+
+std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
+{
+    lex::lex_holder holder(_lexer);
+
+    std::vector<lex::keyword> specifiers = parse_specifiers();
+
+    // Expect 'enum' keyword
+    if(lex::opt_ref_any_lexeme lenum = _lexer.get(); lenum==lex::keyword::ENUM) {
+        // ok
+    } else {
+        holder.rollback();
+        return {};
+    }
+    auto kw_enum = lex::as<lex::keyword>(_lexer.pick_previous());
+
+    // Expect a name
+    auto lname = _lexer.get();
+    if(lex::is_not<lex::identifier>(lname)) {
+        holder.rollback();
+        return {};
+    }
+    auto enum_name = lex::as<lex::identifier>(lname);
+
+    // Expect an open brace
+    lex::punctuator open_brace_val({}, lex::punctuator::BRACE_OPEN);
+    if(lex::opt_ref_any_lexeme lopenbrace = _lexer.get(); lopenbrace==lex::punctuator::BRACE_OPEN) {
+        open_brace_val = lex::as<lex::punctuator>(lopenbrace);
+    } else {
+        throw_error(0x0060, _lexer.pick_current(), "Enum open brace is missing");
+    }
+
+    // Parse enum entries
+    std::vector<std::shared_ptr<ast::enum_entry>> entries;
+    while(true) {
+        // Check for closing brace
+        lex::lex_holder entry_holder(_lexer);
+        auto peek = _lexer.get();
+        if(peek == lex::punctuator::BRACE_CLOSE) {
+            _lexer.unget(); // will be consumed below
+            break;
+        }
+        entry_holder.rollback();
+
+        // Expect an identifier (entry name)
+        auto lentry_name = _lexer.get();
+        if(lex::is_not<lex::identifier>(lentry_name)) {
+            throw_error(0x0061, _lexer.pick_current(), "Expected enum entry name");
+        }
+        auto entry_name = lex::as<lex::identifier>(lentry_name);
+
+        // Optional '=' value
+        std::optional<lex::any_literal> literal_value;
+        std::optional<lex::identifier> ref_value;
+        {
+            lex::lex_holder eq_holder(_lexer);
+            auto maybe_eq = _lexer.get();
+            if(maybe_eq == lex::operator_::EQUAL) {
+                // Expect integer literal or identifier
+                auto lval = _lexer.get();
+                if(lex::is<lex::integer>(lval)) {
+                    literal_value = lex::any_literal{lex::as<lex::integer>(lval)};
+                } else if(lex::is<lex::identifier>(lval)) {
+                    ref_value = lex::as<lex::identifier>(lval);
+                } else {
+                    throw_error(0x0062, _lexer.pick_current(), "Expected integer literal or entry name after '=' in enum entry");
+                }
+            } else {
+                eq_holder.rollback();
+            }
+        }
+
+        // Optional 'default' keyword
+        bool is_default = false;
+        {
+            lex::lex_holder def_holder(_lexer);
+            auto maybe_default = _lexer.get();
+            if(maybe_default == lex::keyword::DEFAULT) {
+                is_default = true;
+            } else {
+                def_holder.rollback();
+            }
+        }
+
+        // Expect semicolon
+        if(auto lsemi = _lexer.get(); lsemi != lex::punctuator::SEMICOLON) {
+            throw_error(0x0063, _lexer.pick_current(), "Expected ';' after enum entry");
+        }
+
+        entries.push_back(std::make_shared<ast::enum_entry>(
+            entry_name, literal_value, ref_value, is_default));
+    }
+
+    // Expect closing brace
+    lex::punctuator close_brace_val({}, lex::punctuator::BRACE_CLOSE);
+    if(lex::opt_ref_any_lexeme lclosebrace = _lexer.get(); lclosebrace==lex::punctuator::BRACE_CLOSE) {
+        close_brace_val = lex::as<lex::punctuator>(lclosebrace);
+    } else {
+        throw_error(0x0064, _lexer.pick_current(), "Enum closing brace is expected");
+    }
+
+    // Expect terminal semicolon
+    if(auto lsemi = _lexer.get(); lsemi != lex::punctuator::SEMICOLON) {
+        throw_error(0x0065, _lexer.pick_current(), "Expected ';' after enum declaration");
+    }
+
+    return std::make_shared<ast::enum_decl>(specifiers, kw_enum, enum_name, open_brace_val, close_brace_val, entries);
 }
 
 std::vector<lex::keyword> parser::parse_specifiers()

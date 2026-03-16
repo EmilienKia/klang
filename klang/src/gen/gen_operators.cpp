@@ -2186,6 +2186,37 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         right_type = right_type->get_subtype();
     }
 
+    // ── Enum comparison: convert enum operands to their underlying primitive type ──
+    {
+        auto left_enum = std::dynamic_pointer_cast<enum_type>(left_type);
+        auto right_enum = std::dynamic_pointer_cast<enum_type>(right_type);
+        if (left_enum || right_enum) {
+            // Determine the common underlying primitive type for comparison
+            auto left_underlying = left_enum ? left_enum->get_underlying_type()
+                                             : std::dynamic_pointer_cast<primitive_type>(left_type);
+            auto right_underlying = right_enum ? right_enum->get_underlying_type()
+                                               : std::dynamic_pointer_cast<primitive_type>(right_type);
+            if (!left_underlying || !right_underlying) {
+                throw_error(0x0085, std::nullopt,
+                    "Cannot compare enum with non-primitive type: "
+                    "operands have types '{}' and '{}'",
+                    {left_type ? left_type->to_string() : "?",
+                     right_type ? right_type->to_string() : "?"});
+            }
+            // Adapt both operands to a common type (use right's underlying if both are enum, left otherwise)
+            auto common_type = left_underlying;
+            if (right_underlying->type_size() > left_underlying->type_size()) {
+                common_type = right_underlying;
+            }
+            left = adapt_type(left, common_type);
+            right = adapt_type(right, common_type);
+            if (left) expr.assign_left(left);
+            if (right) expr.assign_right(right);
+            left_type = common_type;
+            right_type = common_type;
+        }
+    }
+
     if(!type::is_primitive(left_type) || !type::is_primitive(right_type)) {
         throw_error(0x002C, std::nullopt,
             "Comparison operators are not supported for non-primitive types: "

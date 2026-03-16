@@ -919,6 +919,51 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * A single entry in an enum declaration.
+         * Syntax: identifier [ '=' ( integer_literal | identifier ) ] [ 'default' ] ';'
+         */
+        struct enum_entry : public ast_node {
+            lex::identifier name;
+            /** Optional explicit value: either an integer literal or a reference to another entry name. */
+            std::optional<lex::any_literal> literal_value;
+            /** Optional reference to another entry (by identifier). Mutually exclusive with literal_value in practice. */
+            std::optional<lex::identifier> ref_value;
+            /** True when the 'default' keyword follows the entry. */
+            bool is_default = false;
+
+            enum_entry(const lex::identifier& name,
+                       const std::optional<lex::any_literal>& literal_value,
+                       const std::optional<lex::identifier>& ref_value,
+                       bool is_default)
+                : name(name), literal_value(literal_value), ref_value(ref_value), is_default(is_default) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
+        /**
+         * Enum declaration.
+         * Syntax: SPECIFIERS 'enum' identifier '{' ENUM_ENTRY* '}' ';'
+         */
+        struct enum_decl : public declaration {
+            std::vector<lex::keyword> specifiers;
+            lex::keyword kw_enum;
+            lex::identifier name;
+            lex::punctuator open_brace, close_brace;
+            std::vector<std::shared_ptr<enum_entry>> entries;
+
+            enum_decl(const std::vector<lex::keyword>& specifiers,
+                      const lex::keyword& kw_enum,
+                      const lex::identifier& name,
+                      const lex::punctuator& open_brace,
+                      const lex::punctuator& close_brace,
+                      const std::vector<std::shared_ptr<enum_entry>>& entries)
+                : specifiers(specifiers), kw_enum(kw_enum), name(name),
+                  open_brace(open_brace), close_brace(close_brace), entries(entries) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct module_name : public ast_node {
             lex::keyword module;
             std::shared_ptr<qualified_identifier> qname;
@@ -971,6 +1016,7 @@ namespace k::parse {
         virtual void visit_visibility_decl(ast::visibility_decl &) = 0;
         virtual void visit_namespace_decl(ast::namespace_decl &) = 0;
         virtual void visit_aggregate_decl(ast::aggregate_decl &) = 0;
+        virtual void visit_enum_decl(ast::enum_decl &) = 0;
         virtual void visit_variable_decl(ast::variable_decl &) = 0;
         virtual void visit_function_decl(ast::function_decl &) = 0;
 
@@ -1026,6 +1072,7 @@ namespace k::parse {
         void visit_visibility_decl(ast::visibility_decl &) override;
         void visit_namespace_decl(ast::namespace_decl &) override;
         void visit_aggregate_decl(ast::aggregate_decl &) override;
+        void visit_enum_decl(ast::enum_decl &) override;
         void visit_variable_decl(ast::variable_decl &) override;
         void visit_function_decl(ast::function_decl &) override;
 

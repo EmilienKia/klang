@@ -40,7 +40,7 @@ Grammar notation used here:
     `public` `protected` `private`
     `this` `return`
     `if` `else` `while` `for`
-    `new` `delete`
+    `new` `delete` `default` `enum`
 ### Literals
 *Full description:* [Literals](expressions/literals.md)
 <a id="literal"></a>**Literal:**
@@ -99,6 +99,7 @@ Grammar notation used here:
     [VisibilityDecl](#visibilitydecl)
     | [NamespaceDecl](#namespacedecl)
     | [AggregateDecl](#aggregatedecl)
+    | [EnumDecl](#enumdecl)
     | [FunctionDecl](#functiondecl)
     | [VariableDecl](#variabledecl)
 <a id="visibilitydecl"></a>**VisibilityDecl:**
@@ -121,6 +122,15 @@ Grammar notation used here:
     ( [BlockStatement](#blockstatement) | `'->'` `(` `'default'` | `'delete'` `)` `';'` | `';'` *(abstract only)* )
 
     *Note: the bare `';'` form (no body) is only valid when `'abstract'` appears in the [Specifier](#specifier) list.*
+
+*Full description:* [Enumerations](enums/enums.md)
+
+<a id="enumdecl"></a>**EnumDecl:**
+    {{ [Specifier](#specifier) }} `'enum'` [Identifier](#identifier) `'{'` {{ [EnumEntry](#enumentry) }} `'}'` `';'`
+
+<a id="enumentry"></a>**EnumEntry:**
+    [Identifier](#identifier) `[` `'='` `(` [IntegerLiteral](#integerliteral) | [Identifier](#identifier) `)` `]` `[` `'default'` `]` `';'`
+
 <a id="variabledecl"></a>**VariableDecl:**
     {{ [Specifier](#specifier) }} [Identifier](#identifier) `':'` [TypeSpec](#typespec) `[` [Initialiser](#initialiser) `]` `';'`
 <a id="specifier"></a>**Specifier:**

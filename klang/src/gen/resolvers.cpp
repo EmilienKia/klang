@@ -435,6 +435,17 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
             }
         }
 
+        // Look at enumerations (e.g. MyEnum::entry)
+        if (name.size() == 2) {
+            if (auto eh = dynamic_cast<const enum_holder*>(&elem)) {
+                if (auto en = eh->get_enum(name.front())) {
+                    // Found an enum — but entry resolution happens in visit_symbol_expression
+                    // We cannot return enum entries as variables or functions.
+                    // Instead, we skip here and handle it in visit_symbol_expression directly.
+                }
+            }
+        }
+
         // Look at namespace
         if (auto nspc = dynamic_cast<const ns*>(&elem)) {
             if (auto child = nspc->get_child_namespace(name.front())) {
@@ -688,6 +699,14 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
 
     for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
         if (auto st = resolve_struct_from(*current, type_name)) return st->get_struct_type();
+        // Also look for enum types (simple names only for now)
+        if (type_name.size() == 1) {
+            if (auto eh = std::dynamic_pointer_cast<const enum_holder>(current)) {
+                if (auto en = eh->get_enum(type_name.front())) {
+                    return en->get_enum_type();
+                }
+            }
+        }
     }
 
     // Fallback: search imported modules (relative name, scope chain exhausted)
@@ -1409,6 +1428,14 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
     for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
         if (auto st = resolve_struct_from(*current, type_name)) {
             return st->get_struct_type();
+        }
+        // Also look for enum types (simple names only for now)
+        if (type_name.size() == 1) {
+            if (auto eh = std::dynamic_pointer_cast<const enum_holder>(current)) {
+                if (auto en = eh->get_enum(type_name.front())) {
+                    return en->get_enum_type();
+                }
+            }
         }
     }
 
@@ -2714,7 +2741,52 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             // Everything else between primitives is narrowing
             return CAST_NARROWING;
         }
+        // ref<enum> → value: load + convert
+        auto enum_sub = std::dynamic_pointer_cast<enum_type>(sub);
+        if (enum_sub) {
+            auto enum_tgt = std::dynamic_pointer_cast<enum_type>(tgt_nc);
+            if (enum_tgt) {
+                return (enum_sub->get_enumeration() == enum_tgt->get_enumeration()) ? CAST_REF_CONV : CAST_WIDENING;
+            }
+            if (prim_tgt) return CAST_WIDENING;
+        }
         return CAST_IMPOSSIBLE;
+    }
+
+    // --- Enum implicit conversions ---
+    auto eff_src_nc = type::remove_const(effective_src);
+    auto enum_eff_src = std::dynamic_pointer_cast<enum_type>(eff_src_nc);
+    auto enum_eff_tgt = std::dynamic_pointer_cast<enum_type>(tgt_nc);
+
+    // enum → same enum: identity
+    if (enum_eff_src && enum_eff_tgt && enum_eff_src->get_enumeration() == enum_eff_tgt->get_enumeration()) {
+        return CAST_NONE;
+    }
+    // enum → different enum: widening (with warning at adapt_type time)
+    if (enum_eff_src && enum_eff_tgt) {
+        return CAST_WIDENING;
+    }
+    // enum → primitive: widening (implicit)
+    if (enum_eff_src && !enum_eff_tgt) {
+        auto p_tgt = std::dynamic_pointer_cast<primitive_type>(tgt_nc);
+        if (p_tgt) return CAST_WIDENING;
+    }
+    // primitive → enum: widening (implicit)
+    if (!enum_eff_src && enum_eff_tgt) {
+        auto p_src = std::dynamic_pointer_cast<primitive_type>(eff_src_nc);
+        if (p_src) return CAST_WIDENING;
+    }
+    // ref<enum> cases: load + convert
+    if (type::is_reference(effective_src)) {
+        auto ref_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(effective_src)->get_subtype());
+        auto ref_enum_src = std::dynamic_pointer_cast<enum_type>(ref_sub);
+        if (ref_enum_src) {
+            if (enum_eff_tgt) {
+                return (ref_enum_src->get_enumeration() == enum_eff_tgt->get_enumeration()) ? CAST_REF_CONV : CAST_WIDENING;
+            }
+            auto p_tgt = std::dynamic_pointer_cast<primitive_type>(tgt_nc);
+            if (p_tgt) return CAST_WIDENING;
+        }
     }
 
     // --- Both primitive ---
@@ -3507,6 +3579,13 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             cast->set_type(prim_tgt);
             return cast;
         }
+        // ref<enum> → enum or ref<enum> → primitive: load first, then adapt
+        auto ref_enum_sub = std::dynamic_pointer_cast<enum_type>(ref_subtype);
+        if (ref_enum_sub) {
+            auto loaded = adapt_reference_load_value(expr);
+            if (!loaded) return {};
+            return adapt_type(loaded, type_nc);
+        }
         // ref<indirection> → bool: load the pointer then compare to null.
         if (type::is_prim_bool(type_nc)) {
             if (type::is_pointer(ref_subtype) || type::is_link(ref_subtype) ||
@@ -3540,6 +3619,53 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
 
     auto prim_src = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr->get_type()));
     auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
+
+    // ── Enum implicit conversions ──────────────────────────────────────────────
+    auto enum_src = std::dynamic_pointer_cast<enum_type>(type::remove_const(expr->get_type()));
+    auto enum_tgt = std::dynamic_pointer_cast<enum_type>(type_nc);
+
+    // enum → enum (same enum): identity
+    if (enum_src && enum_tgt && enum_src->get_enumeration() == enum_tgt->get_enumeration()) {
+        return expr;
+    }
+
+    // enum → enum (different enums): allowed with warning (both primitive-backed)
+    if (enum_src && enum_tgt && enum_src->get_enumeration() != enum_tgt->get_enumeration()) {
+        // Implicit conversion between different enum types — emit a warning
+        // TODO: emit a warning diagnostic here
+        auto cast = cast_expression::make_shared(expr, enum_tgt);
+        cast->set_type(enum_tgt);
+        return cast;
+    }
+
+    // enum → primitive int: implicit (use underlying type)
+    if (enum_src && !enum_tgt) {
+        if (!prim_tgt) prim_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
+        if (prim_tgt) {
+            auto underlying = enum_src->get_underlying_type();
+            if (*underlying == *prim_tgt) {
+                // Same underlying type: just reinterpret
+                auto cast = cast_expression::make_shared(expr, prim_tgt);
+                cast->set_type(prim_tgt);
+                return cast;
+            }
+            // Different primitive widths: cast through underlying
+            auto cast = cast_expression::make_shared(expr, prim_tgt);
+            cast->set_type(prim_tgt);
+            return cast;
+        }
+    }
+
+    // primitive int → enum: implicit
+    if (!enum_src && enum_tgt) {
+        if (!prim_src) prim_src = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr->get_type()));
+        if (prim_src) {
+            auto cast = cast_expression::make_shared(expr, enum_tgt);
+            cast->set_type(enum_tgt);
+            return cast;
+        }
+    }
+    // ── End enum conversions ───────────────────────────────────────────────────
 
     if(!prim_src || !prim_tgt) {
         // For non-primitive (struct/class) value types: accept if they are the same type object.

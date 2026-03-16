@@ -125,6 +125,25 @@ public:
         prefix() << "} // " << st.get_short_name() << std::endl;
     }
 
+    void visit_enumeration(enumeration& en) override {
+        prefix() << "enum '" << en.get_short_name() << "' ("
+                 << en.get_fq_name() << " / " << en.get_mangled_name()
+                 << ")";
+        if (en.get_underlying_type()) {
+            _stm << " : " << en.get_underlying_type()->to_string();
+        }
+        _stm << " {" << std::endl;
+        {
+            auto pf = prefix_inc();
+            for (auto& entry : en.entries()) {
+                prefix() << entry.name << " = " << entry.value;
+                if (entry.is_default) _stm << " default";
+                _stm << ";" << std::endl;
+            }
+        }
+        prefix() << "} // " << en.get_short_name() << std::endl;
+    }
+
     // -------------------------------------------------------------------------
     // Helper: print function signature prefix flags
     // -------------------------------------------------------------------------
@@ -249,6 +268,8 @@ public:
             dump_primitive_type(*t);
         } else if(auto t = dynamic_cast<unresolved_type*>(&type)) {
             dump_unresolved_type(*t);
+        } else if(auto t = dynamic_cast<enum_type*>(&type)) {
+            dump_enum_type(*t);
         } else if(auto t = dynamic_cast<struct_type*>(&type)) {
             dump_struct_type(*t);
         } else if(auto t = dynamic_cast<sized_array_type*>(&type)) {
@@ -285,6 +306,15 @@ public:
         _stm << "struct:";
         if(auto st = type.get_struct()) {
             _stm << st->get_fq_name();
+        } else {
+            _stm << type.to_string();
+        }
+    }
+
+    void dump_enum_type(enum_type& type) {
+        _stm << "enum:";
+        if(auto en = type.get_enumeration()) {
+            _stm << en->get_fq_name();
         } else {
             _stm << type.to_string();
         }

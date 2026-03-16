@@ -110,27 +110,68 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
         auto func =  std::get<std::shared_ptr<function>>(found_symbol);
         symbol.set_target(func);
     } else {
-        // Symbol not found at this phase.
-        // If this symbol is the callee of a function invocation, defer resolution to
-        // type_reference_resolver which handles unified call syntax and member lookups.
-        // Otherwise throw immediately, since there is nothing further that can resolve it.
-        auto parent_expr = symbol.get_parent_expression();
-        bool is_function_callee = false;
-        if (auto parent_invoc = std::dynamic_pointer_cast<function_invocation_expression>(parent_expr)) {
-            is_function_callee = (parent_invoc->callee_expr().get() == &symbol);
+        // Symbol not found as variable/function.
+        // Try enum entry resolution: EnumName::entryName
+        bool resolved_as_enum = false;
+        const auto& sym_name = symbol.get_name();
+        if (sym_name.size() == 2 && !sym_name.has_root_prefix()) {
+            // Walk up the scope chain looking for an enum_holder with a matching enum
+            for (auto current = symbol.shared_as<element>(); current; current = current->parent<element>()) {
+                if (auto eh = std::dynamic_pointer_cast<enum_holder>(current)) {
+                    if (auto en = eh->get_enum(sym_name.front())) {
+                        // Found the enum; now check the entry name
+                        auto entry = en->get_entry_by_name(sym_name.back());
+                        if (entry.has_value()) {
+                            // Find the entry index
+                            size_t idx = 0;
+                            for (auto& e : en->entries()) {
+                                if (e.name == sym_name.back()) break;
+                                idx++;
+                            }
+                            symbol.set_target(symbol_expression::enum_entry_target{en, idx});
+                            resolved_as_enum = true;
+                            break;
+                        } else {
+                            throw_error(0x0080, std::nullopt,
+                                "Enum '{}' has no entry named '{}'",
+                                {sym_name.front(), sym_name.back()});
+                        }
+                    }
+                }
+            }
         }
-        if (!is_function_callee) {
-            throw_error(0x0003, std::nullopt,
-                "Undefined symbol '{}': no variable, parameter or function with this name is visible in the current scope",
-                {symbol.get_name().to_string()});
+
+        if (!resolved_as_enum) {
+            // If this symbol is the callee of a function invocation, defer resolution to
+            // type_reference_resolver which handles unified call syntax and member lookups.
+            // Also defer if the symbol is an argument of a constructor_invocation_expression:
+            // the name may be an enum entry that can only be resolved once the target type is known.
+            // Otherwise throw immediately, since there is nothing further that can resolve it.
+            auto parent_expr = symbol.get_parent_expression();
+            bool is_function_callee = false;
+            if (auto parent_invoc = std::dynamic_pointer_cast<function_invocation_expression>(parent_expr)) {
+                is_function_callee = (parent_invoc->callee_expr().get() == &symbol);
+            }
+            bool is_ctor_arg = std::dynamic_pointer_cast<constructor_invocation_expression>(parent_expr) != nullptr;
+            if (!is_function_callee && !is_ctor_arg) {
+                throw_error(0x0003, std::nullopt,
+                    "Undefined symbol '{}': no variable, parameter or function with this name is visible in the current scope",
+                    {symbol.get_name().to_string()});
+            }
+            // else: leave unresolved; type_reference_resolver will report the error if still not found
         }
-        // else: leave unresolved; type_reference_resolver will report the error if still not found
     }
 }
 
 void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
 {
     if(!symbol.is_resolved()) {
+        // Allow unresolved symbols that are arguments of a constructor_invocation_expression.
+        // These may be enum entry names that will be resolved during visit_constructor_invocation_expression.
+        auto parent = symbol.get_parent_expression();
+        if (std::dynamic_pointer_cast<constructor_invocation_expression>(parent)) {
+            return; // defer to visit_constructor_invocation_expression
+        }
         throw_internal_error(0x0001, std::nullopt,
             "Internal error: symbol '{}' reached type-resolution phase without being resolved; "
             "symbol resolution must be run before type resolution",
@@ -208,6 +249,13 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
             // The symbol gives a reference to the function ref type (non-null, like K's ~).
             // Wrap in a reference so that it can be assigned to any indirection kind.
             symbol.set_type(fn_ref_type->get_reference());
+        }
+    } else if (symbol.is_enum_entry()) {
+        // Enum entry: the type is the enum_type itself (not a reference — it's an rvalue constant).
+        auto& target = symbol.get_enum_entry();
+        auto en = target.enum_def;
+        if (en && en->get_enum_type()) {
+            symbol.set_type(en->get_enum_type());
         }
     }
     // (symbol type resolution complete)
@@ -368,6 +416,14 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                 {func ? func->get_fq_name() : "<null>"});
         }
         _value = llvm_func;
+    } else if (symbol.is_enum_entry()) {
+        // Enum entry: generate a constant integer value with the enum's underlying LLVM type.
+        auto& target = symbol.get_enum_entry();
+        auto en = target.enum_def;
+        auto& entry = en->entries()[target.entry_index];
+        auto et = en->get_enum_type();
+        llvm::Type* llvm_ty = et->get_llvm_type();
+        _value = llvm::ConstantInt::get(llvm_ty, static_cast<uint64_t>(entry.value), /*isSigned=*/entry.value < 0);
     }
     // TODO Support other types of symbols, not only variables and functions
 }
@@ -4253,6 +4309,53 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
                 expr.assign_argument(0, cast);
             }
         }
+    } else if (auto et = std::dynamic_pointer_cast<enum_type>(var_type)) {
+        // Enum type construction:
+        //   MonEnum(entree)   — enum entry by name (resolved relative to the enum)
+        //   MonEnum(3)        — construction from numeric literal
+        //   MonEnum           — default construction (uses default entry)
+        auto en = et->get_enumeration();
+        if (!en) {
+            throw_internal_error(0x0081, std::nullopt,
+                "Internal error: enum_type has no associated enumeration model object");
+        }
+        if (expr.empty()) {
+            // Default construction: use the default entry value
+            auto def_entry = en->get_default_entry();
+            auto val = value_expression::from_value(static_cast<long long>(def_entry.value));
+            val->set_type(et);
+            expr.arguments({val});
+        } else if (expr.size() == 1) {
+            auto arg = expr.argument(0);
+            // Check if the argument is an unresolved symbol (enum entry name)
+            auto sym = std::dynamic_pointer_cast<symbol_expression>(arg);
+            if (sym && !sym->is_resolved()) {
+                // Try to resolve as an enum entry name
+                auto entry_name = sym->get_name().to_string();
+                auto entry = en->get_entry_by_name(entry_name);
+                if (entry.has_value()) {
+                    auto val = value_expression::from_value(static_cast<long long>(entry->value));
+                    val->set_type(et);
+                    expr.assign_argument(0, val);
+                } else {
+                    throw_error(0x0082, std::nullopt,
+                        "Enum '{}' has no entry named '{}'",
+                        {en->get_short_name(), entry_name});
+                }
+            } else {
+                // Argument is an already-resolved expression (e.g. numeric literal, variable, qualified enum entry)
+                // Visit it to resolve types if needed
+                arg->accept(*this);
+                auto cast = adapt_type(expr.argument(0), et);
+                if (cast && cast != expr.argument(0)) {
+                    expr.assign_argument(0, cast);
+                }
+            }
+        } else {
+            throw_error(0x0083, std::nullopt,
+                "Enum constructor takes at most one argument, but {} were provided",
+                {std::to_string(expr.size())});
+        }
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
         auto st = st_type->get_struct();
         std::vector<std::shared_ptr<expression>> ctor_args = expr.arguments();
@@ -4366,6 +4469,27 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                     value = _value;
                 }
             }
+        }
+        if (value != nullptr) {
+            _builder->CreateStore(value, object_ref);
+        }
+    } else if (auto et = std::dynamic_pointer_cast<enum_type>(var_type)) {
+        // Enum type: treat like a primitive — store the integer value.
+        llvm::Value* value = nullptr;
+        if (!expr.empty()) {
+            auto first_arg = expr.argument(0);
+            _value = nullptr;
+            first_arg->accept(*this);
+            if (!_value) {
+                throw_internal_error(0x0084, std::nullopt,
+                    "Internal error: failed to generate an LLVM value for enum initialisation "
+                    "of variable '{}'; the argument expression produced no result",
+                    {var_def->get_fq_name()});
+            }
+            value = _value;
+        } else {
+            // Default construction: use default value initializer
+            value = et->generate_default_value_initializer();
         }
         if (value != nullptr) {
             _builder->CreateStore(value, object_ref);
@@ -4834,6 +4958,53 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         throw_internal_error(0x0019, std::nullopt,
             "Internal error: cast expression has an unresolved source or target type; "
             "type resolution must complete before code generation");
+    }
+
+    // ── Enum ↔ primitive / enum ↔ enum casts ─────────────────────────────────
+    // At LLVM IR level, enums are just integers. The cast is a no-op if the
+    // underlying types match, or an integer truncation/extension otherwise.
+    {
+        auto src_nc = type::remove_const(source_type);
+        auto tgt_nc = type::remove_const(target_type);
+        auto enum_src = std::dynamic_pointer_cast<enum_type>(src_nc);
+        auto enum_tgt = std::dynamic_pointer_cast<enum_type>(tgt_nc);
+        if (enum_src || enum_tgt) {
+            // Evaluate source expression
+            _value = nullptr;
+            expr.sub_expr()->accept(*this);
+            if (!_value) return;
+
+            llvm::Type* src_llvm = enum_src ? enum_src->get_llvm_type()
+                : std::dynamic_pointer_cast<primitive_type>(src_nc)->get_llvm_type();
+            llvm::Type* tgt_llvm = enum_tgt ? enum_tgt->get_llvm_type()
+                : std::dynamic_pointer_cast<primitive_type>(tgt_nc)->get_llvm_type();
+
+            if (src_llvm == tgt_llvm) {
+                // Same LLVM type: no-op cast
+                return;
+            }
+            // Integer widening/narrowing
+            auto src_int = llvm::dyn_cast<llvm::IntegerType>(src_llvm);
+            auto tgt_int = llvm::dyn_cast<llvm::IntegerType>(tgt_llvm);
+            if (src_int && tgt_int) {
+                if (tgt_int->getBitWidth() > src_int->getBitWidth()) {
+                    // Determine signedness from enum's underlying type or primitive
+                    bool is_signed = false;
+                    if (enum_src) {
+                        is_signed = !enum_src->get_underlying_type()->is_unsigned();
+                    } else if (auto ps = std::dynamic_pointer_cast<primitive_type>(src_nc)) {
+                        is_signed = !ps->is_unsigned();
+                    }
+                    _value = is_signed
+                        ? _builder->CreateSExt(_value, tgt_llvm, "enum_sext")
+                        : _builder->CreateZExt(_value, tgt_llvm, "enum_zext");
+                } else {
+                    _value = _builder->CreateTrunc(_value, tgt_llvm, "enum_trunc");
+                }
+                return;
+            }
+            return;
+        }
     }
 
     // ── ref<T> → link<T> or ref<T> → pin<T>: no-op (same LLVM ptr) ────────────

@@ -95,6 +95,10 @@ void context::add_struct(std::shared_ptr<struct_type> st_type) {
     _struct_types.insert({st_type->name(), st_type});
 }
 
+void context::add_enum(const std::string& name, std::shared_ptr<enum_type> et) {
+    _enum_types.insert({name, et});
+}
+
 void context::materialise_opaque_struct_type(std::shared_ptr<struct_type> st_type) {
     if (st_type->is_resolved()) return; // already has an LLVM type
     // Create an opaque (body-less) LLVM StructType so that is_resolved() returns true.
@@ -208,6 +212,11 @@ std::shared_ptr<type> context::from_string(const std::string& type_name) {
 
     // Look for structures
     if(auto it = _struct_types.find(type_name); it!=_struct_types.end()) {
+        return it->second;
+    }
+
+    // Look for enum types
+    if(auto it = _enum_types.find(type_name); it!=_enum_types.end()) {
         return it->second;
     }
 
@@ -721,6 +730,11 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
             // yet generated: resolve_struct_type will handle the LLVM materialisation
             // recursively. An unresolved_type remaining means the name was truly unknown.
             if (std::dynamic_pointer_cast<struct_type>(resolved_type)) {
+                unres->resolve(resolved_type);
+                return resolved_type;
+            }
+            // Similarly, if it resolved to an enum_type, accept it.
+            if (std::dynamic_pointer_cast<enum_type>(resolved_type)) {
                 unres->resolve(resolved_type);
                 return resolved_type;
             }

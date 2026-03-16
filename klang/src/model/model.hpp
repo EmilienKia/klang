@@ -53,6 +53,7 @@ class static_constructor;
 class static_destructor;
 class aggregate;
 class structure;
+class enumeration;
 class klass;
 class interface;
 class ns;
@@ -511,6 +512,95 @@ public:
 };
 
 
+/**
+ * Interface for holding enumerations (like ns and aggregates).
+ */
+class enum_holder
+{
+public:
+    virtual std::shared_ptr<enumeration> define_enum(const std::string& name);
+    virtual std::shared_ptr<enumeration> get_enum(const std::string& name) const;
+
+    const std::map<std::string, std::shared_ptr<enumeration>>& enums() const { return _enums; }
+
+protected:
+    /** Map of all defined enumerations. */
+    std::map<std::string, std::shared_ptr<enumeration>> _enums;
+
+    virtual std::shared_ptr<enumeration> do_create_enum(const std::string& name) = 0;
+    virtual void on_enum_defined(std::shared_ptr<enumeration>) = 0;
+};
+
+
+/**
+ * A single entry in an enumeration definition.
+ */
+struct enum_entry_def {
+    std::string name;
+    int64_t value = 0;
+    bool is_default = false;
+};
+
+/**
+ * Enumeration: a named set of integer-valued constants.
+ *
+ * An enumeration is a nominal type backed by the smallest primitive integer
+ * type that can hold all declared values. Each entry maps a name to a
+ * compile-time constant integer value.
+ */
+class enumeration : public element, public named_element {
+protected:
+    friend class ns;
+    friend class aggregate;
+    friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
+
+    std::vector<enum_entry_def> _entries;
+    std::shared_ptr<enum_type> _type;
+    std::shared_ptr<primitive_type> _underlying_type;
+    visibility _visibility = PUBLIC;
+
+    enumeration(std::shared_ptr<element> parent)
+        : element(parent) {}
+
+    static std::shared_ptr<enumeration> make_shared(std::shared_ptr<element> parent, const std::string& name);
+
+    void update_mangled_name() override;
+
+public:
+    void accept(model_visitor& visitor) override;
+
+    const std::vector<enum_entry_def>& entries() const { return _entries; }
+    void add_entry(const std::string& name, int64_t value, bool is_default) {
+        _entries.push_back({name, value, is_default});
+    }
+
+    std::optional<enum_entry_def> get_entry_by_name(const std::string& name) const {
+        for (auto& e : _entries) {
+            if (e.name == name) return e;
+        }
+        return std::nullopt;
+    }
+
+    enum_entry_def get_default_entry() const {
+        for (auto& e : _entries) {
+            if (e.is_default) return e;
+        }
+        // Fallback: first entry (should always exist)
+        return _entries.front();
+    }
+
+    std::shared_ptr<enum_type> get_enum_type() const { return _type; }
+    void set_enum_type(std::shared_ptr<enum_type> t) { _type = t; }
+
+    std::shared_ptr<primitive_type> get_underlying_type() const { return _underlying_type; }
+    void set_underlying_type(std::shared_ptr<primitive_type> t) { _underlying_type = t; }
+
+    visibility get_visibility() const { return _visibility; }
+    void set_visibility(visibility v) { _visibility = v; }
+};
+
+
 class member_variable_definition : public element, public variable_definition {
 protected:
 
@@ -577,7 +667,7 @@ struct base_spec {
  * Holds all common member data: member variables, functions, constructors,
  * destructor, static ctor/dtor, nested aggregates, bases, vtable, vptrs, etc.
  */
-class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder {
+class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder {
 protected:
     friend class ns;
     friend class gen::implementation_generator;
@@ -639,6 +729,9 @@ protected:
     std::shared_ptr<klass> do_create_class(const std::string &name) override;
     std::shared_ptr<interface> do_create_interface(const std::string &name) override;
     void on_aggregate_defined(std::shared_ptr<aggregate>) override;
+
+    std::shared_ptr<enumeration> do_create_enum(const std::string &name) override;
+    void on_enum_defined(std::shared_ptr<enumeration>) override;
 
     void set_struct_type(const std::shared_ptr<struct_type>& st_type) {
         _type = st_type;
@@ -1463,7 +1556,7 @@ public:
 };
 
 
-class ns : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder {
+class ns : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder {
 protected:
 
     friend class unit;
@@ -1489,6 +1582,9 @@ protected:
     std::shared_ptr<klass> do_create_class(const std::string &name) override;
     std::shared_ptr<interface> do_create_interface(const std::string &name) override;
     void on_aggregate_defined(std::shared_ptr<aggregate>) override;
+
+    std::shared_ptr<enumeration> do_create_enum(const std::string &name) override;
+    void on_enum_defined(std::shared_ptr<enumeration>) override;
 
     void update_mangled_name() override;
 public:

@@ -201,6 +201,23 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             }
         }
 
+        void visit_enum_decl(ast::enum_decl& decl) override {
+            prefix() << "enum " << decl.name.content << std::endl;
+            auto pf = prefix_inc();
+            for(auto& entry : decl.entries) {
+                prefix() << entry->name.content;
+                if (entry->literal_value.has_value()) {
+                    _stm << " = <literal>";
+                } else if (entry->ref_value.has_value()) {
+                    _stm << " = " << entry->ref_value->content;
+                }
+                if (entry->is_default) {
+                    _stm << " default";
+                }
+                _stm << ";" << std::endl;
+            }
+        }
+
         void visit_identified_type_specifier(ast::identified_type_specifier& type) override {
             type.name.visit(*this);
         }

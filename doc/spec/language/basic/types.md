@@ -39,6 +39,7 @@ K is a statically-typed language. Every expression has a type determined at comp
     - 13.6 [Explicit cast](#136-explicit-cast)
     - 13.7 [Implicit indirection-to-bool conversion](#137-implicit-indirection-to-bool-conversion)
 14. [Const-ness](#14-const-ness)
+15. [Enumeration types](#15-enumeration-types)
 
 ---
 
@@ -1741,4 +1742,29 @@ See [Structures — §13](../structs/structs.md#13-const-structs) for full detai
 
 ---
 
-*See also:* [Keywords](keywords.md) · [Expressions](../expressions/expressions.md) · [Statements](../statements/statements.md) · [Structures](../structs/structs.md)
+## 15. Enumeration types
+
+An **enumeration type** (`enum`) is a named nominal type backed by a
+primitive integer.  It defines a closed set of named constants.
+
+```k
+enum Color { RED = 0; GREEN = 1; BLUE = 2 default; };
+```
+
+Enum types participate in the type system as distinct types:
+
+- **Implicit conversion** from / to the underlying primitive integer is
+  allowed (widening weight).
+- **Comparison operators** (`==`, `!=`, `<`, `>`, `<=`, `>=`) are supported
+  and follow the rules of the underlying integer type.
+- At the LLVM IR level an enum value is represented identically to its
+  underlying primitive integer — there is no runtime overhead.
+
+The underlying type is automatically chosen as the smallest primitive
+integer that can represent all declared values.
+
+For full details see [Enumerations](../enums/enums.md).
+
+---
+
+*See also:* [Keywords](keywords.md) · [Expressions](../expressions/expressions.md) · [Statements](../statements/statements.md) · [Structures](../structs/structs.md) · [Enumerations](../enums/enums.md)

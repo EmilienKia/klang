@@ -98,6 +98,7 @@ public:
     void visit_aggregate(aggregate&) override;
     void visit_klass(klass&) override;
     void visit_interface(interface&) override;
+    void visit_enumeration(enumeration&) override;
     void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition &) override;
 
