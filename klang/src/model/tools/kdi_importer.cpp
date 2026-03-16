@@ -322,12 +322,17 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
         materialise_aggregate(agg, ctx);
     }
 
-    // Pass 2 — free functions in this namespace
+    // Pass 2 — enumerations in this namespace
+    for (const auto& en : ns.enums) {
+        materialise_enum(en, ctx);
+    }
+
+    // Pass 3 — free functions in this namespace
     for (const auto& fn : ns.functions) {
         materialise_function(fn, ctx);
     }
 
-    // Pass 3 — global / static variables in this namespace
+    // Pass 4 — global / static variables in this namespace
     for (const auto& var : ns.variables) {
         materialise_variable(var, ctx);
     }
@@ -372,6 +377,25 @@ void kdi_importer::materialise_function(const kdi::kdi_function& fn,
                                          std::shared_ptr<context> ctx)
 {
     _unit.get_or_create_imported_function(&fn, ctx);
+}
+
+void kdi_importer::materialise_enum(const kdi::kdi_enum& en,
+                                     std::shared_ptr<context> ctx)
+{
+    const std::string& fq = en.fq_name.empty() ? en.name : en.fq_name;
+    const std::string normalised = (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':')
+                                   ? fq.substr(2) : fq;
+
+    std::vector<std::string> parts;
+    std::size_t pos = 0;
+    while (true) {
+        auto sep = normalised.find("::", pos);
+        if (sep == std::string::npos) { parts.push_back(normalised.substr(pos)); break; }
+        parts.push_back(normalised.substr(pos, sep - pos));
+        pos = sep + 2;
+    }
+
+    _unit.get_or_create_imported_enum(k::name{false, std::move(parts)}, ctx);
 }
 
 void kdi_importer::materialise_variable(const kdi::kdi_variable& var,

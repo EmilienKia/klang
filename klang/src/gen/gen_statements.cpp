@@ -643,6 +643,13 @@ void type_reference_resolver::visit_variable_statement(variable_statement& var)
                     resolved = imported_agg->get_struct_type();
                 }
             }
+            // Fallback: try imported enums
+            if (!resolved || !type::is_resolved(resolved)) {
+                if (auto imported_en = _unit.get_or_create_imported_enum(
+                        unres_type->type_id(), _context)) {
+                    resolved = imported_en->get_enum_type();
+                }
+            }
             if (resolved && type::is_resolved(resolved)) {
                 var.set_type(resolved);
             }

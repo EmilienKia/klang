@@ -267,6 +267,7 @@ struct kdi_search_result {
     const kdi::kdi_function*  func  = nullptr;
     const kdi::kdi_variable*  var   = nullptr;
     const kdi::kdi_aggregate* agg   = nullptr;
+    const kdi::kdi_enum*      en    = nullptr;
 };
 
 kdi_search_result
@@ -330,11 +331,13 @@ search_in_kdi(const kdi::kdi_file& kdi, const k::name& name)
 
         const std::string& sym = parts.back();
         for (const auto& f : ns_ptr->functions)
-            if (f.name == sym) return { &f, nullptr, nullptr };
+            if (f.name == sym) return { &f, nullptr, nullptr, nullptr };
         for (const auto& v : ns_ptr->variables)
-            if (v.name == sym) return { nullptr, &v, nullptr };
+            if (v.name == sym) return { nullptr, &v, nullptr, nullptr };
         for (const auto& a : ns_ptr->aggregates)
-            if (a.name == sym) return { nullptr, nullptr, &a };
+            if (a.name == sym) return { nullptr, nullptr, &a, nullptr };
+        for (const auto& e : ns_ptr->enums)
+            if (e.name == sym) return { nullptr, nullptr, nullptr, &e };
         return {};
     };
 
@@ -349,14 +352,14 @@ search_in_kdi(const kdi::kdi_file& kdi, const k::name& name)
             // are relative to root_ns. But root_ns.name is already mod_parts.back(),
             // so we skip that and look from root_ns directly.
             auto res = try_find_from_root(mod_parts.size());
-            if (res.func || res.var || res.agg) return res;
+            if (res.func || res.var || res.agg || res.en) return res;
         }
     }
 
     // Strategy 2: strip just the last module component if it matches parts[0]
     if (!mod_parts.empty() && !parts.empty() && parts[0] == mod_parts.back()) {
         auto res = try_find_from_root(1);
-        if (res.func || res.var || res.agg) return res;
+        if (res.func || res.var || res.agg || res.en) return res;
     }
 
     // Strategy 3: plain lookup (no module prefix)
@@ -419,6 +422,23 @@ const kdi::kdi_aggregate* unit::find_imported_type(const k::name& name) {
         if (!tdep) continue;
         auto res = search_in_kdi(*tdep, name);
         if (res.agg) return res.agg;
+    }
+    return nullptr;
+}
+
+const kdi::kdi_enum* unit::find_imported_enum(const k::name& name) {
+    for (auto& imp : _imported_modules) {
+        if (!imp.kdi) continue;
+        auto res = search_in_kdi(*imp.kdi, name);
+        if (res.en) {
+            imp.used = true;
+            return res.en;
+        }
+    }
+    for (const auto& tdep : _transitive_kdis) {
+        if (!tdep) continue;
+        auto res = search_in_kdi(*tdep, name);
+        if (res.en) return res.en;
     }
     return nullptr;
 }
@@ -788,6 +808,78 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
     }
 
     return agg;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// unit::get_or_create_imported_enum
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::shared_ptr<enumeration>
+unit::get_or_create_imported_enum(const k::name& fq_name,
+                                  std::shared_ptr<context> ctx)
+{
+    const std::string key = fq_name.to_string();
+    auto it = _imported_enums.find(key);
+    if (it != _imported_enums.end()) {
+        return it->second;
+    }
+
+    // Find the enum definition in loaded KDIs
+    const kdi::kdi_enum* kdi_en = find_imported_enum(fq_name);
+    if (!kdi_en) {
+        return nullptr;
+    }
+
+    // Create the enumeration model node
+    auto root = get_root_namespace();
+    auto en = enumeration::make_shared(root, kdi_en->name);
+    if (!kdi_en->fq_name.empty()) {
+        en->assign_name(fq_to_abs_kname(kdi_en->fq_name));
+    }
+
+    // Resolve underlying type from KDI
+    auto underlying_model_type = kdi_type_to_model_type(kdi_en->underlying_type, *this, ctx);
+    auto underlying = std::dynamic_pointer_cast<primitive_type>(underlying_model_type);
+    if (underlying) {
+        en->set_underlying_type(underlying);
+    }
+
+    // Add all entries
+    for (auto& kdi_entry : kdi_en->entries) {
+        en->add_entry(kdi_entry.name, kdi_entry.value, kdi_entry.is_default);
+    }
+
+    // Resolve base enum (derivation)
+    if (kdi_en->base_fq_name.has_value()) {
+        en->set_base_name(*kdi_en->base_fq_name);
+        // Parse base fq_name into k::name
+        std::vector<std::string> base_parts;
+        const std::string& bfq = *kdi_en->base_fq_name;
+        std::size_t start = 0;
+        while (true) {
+            auto pos = bfq.find("::", start);
+            if (pos == std::string::npos) { base_parts.push_back(bfq.substr(start)); break; }
+            base_parts.push_back(bfq.substr(start, pos - start));
+            start = pos + 2;
+        }
+        auto base_en = get_or_create_imported_enum(k::name{false, std::move(base_parts)}, ctx);
+        if (base_en) en->set_base(base_en);
+    }
+
+    en->set_resolved(true);
+
+    // Create the enum_type and register it in the context
+    if (underlying) {
+        auto et = std::shared_ptr<enum_type>(new enum_type(en, underlying));
+        en->set_enum_type(et);
+        ctx->add_enum(key, et);
+    }
+
+    // Set visibility
+    en->set_visibility(kdi_en->visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+
+    _imported_enums[key] = en;
+    return en;
 }
 
 } // namespace k::model

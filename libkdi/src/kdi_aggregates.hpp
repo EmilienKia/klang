@@ -306,6 +306,27 @@ struct kdi_aggregate {
     std::string                   llvm_def;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Enumeration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A single entry in an exported enumeration. */
+struct kdi_enum_entry {
+    std::string name;
+    int64_t     value      = 0;
+    bool        is_default = false;
+};
+
+/** An exported enumeration. */
+struct kdi_enum {
+    std::string                   name;            ///< short name
+    std::string                   fq_name;         ///< fully-qualified K name
+    kdi_visibility                visibility = kdi_visibility::public_;
+    kdi_type                      underlying_type; ///< backing primitive int type
+    std::optional<std::string>    base_fq_name;    ///< base enum fq_name (derivation)
+    std::vector<kdi_enum_entry>   entries;
+};
+
 } // namespace kdi
 
 #endif // LIBKDI_AGGREGATES_HPP

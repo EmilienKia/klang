@@ -69,6 +69,8 @@ std::string type_str(const kdi_type& t) {
         }
         if constexpr (std::is_same_v<T, kdi_aggregate_ref>)
             return v.fq_name;
+        if constexpr (std::is_same_v<T, kdi_enum_ref>)
+            return "enum " + v.fq_name;
         return "?";
     }, t.value);
 }
@@ -225,6 +227,20 @@ void dump_namespace(const kdi_namespace& ns, std::ostream& out, int depth) {
 
     for (auto& agg : ns.aggregates) dump_aggregate(agg, out, depth + (ns.name.empty() ? 0 : 1));
 
+    for (auto& e : ns.enums) {
+        int d = depth + (ns.name.empty() ? 0 : 1);
+        out << indent(d) << vis_str(e.visibility) << " enum " << e.name;
+        if (e.base_fq_name.has_value())
+            out << " : " << *e.base_fq_name;
+        out << " [" << type_str(e.underlying_type) << "] {\n";
+        for (auto& en : e.entries) {
+            out << indent(d + 1) << en.name << " = " << en.value;
+            if (en.is_default) out << " (default)";
+            out << "\n";
+        }
+        out << indent(d) << "}\n";
+    }
+
     for (auto& f : ns.functions) {
         int d = depth + (ns.name.empty() ? 0 : 1);
         out << indent(d) << vis_str(f.visibility) << " ";
@@ -268,6 +284,13 @@ void kdi_dump(const kdi_file& file, std::ostream& out) {
         out << "\n// Type table (" << file.types.aggregates.size() << " aggregate(s)):\n";
         for (auto& e : file.types.aggregates) {
             out << "//   " << e.fq_name << " => " << e.mangled_name << "\n";
+        }
+    }
+
+    if (!file.types.enums.empty()) {
+        out << "\n// Enum type table (" << file.types.enums.size() << " enum(s)):\n";
+        for (auto& e : file.types.enums) {
+            out << "//   " << e.fq_name << "\n";
         }
     }
 

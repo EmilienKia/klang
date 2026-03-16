@@ -119,6 +119,11 @@ struct kdi_aggregate_ref {
     std::string fq_name;      ///< e.g. "math::Vec3"
 };
 
+/** Reference to an enum type by its fully-qualified K name. */
+struct kdi_enum_ref {
+    std::string fq_name;      ///< e.g. "color::Color"
+};
+
 // ── Tagged union ─────────────────────────────────────────────────────────────
 
 using kdi_type_variant = std::variant<
@@ -135,7 +140,8 @@ using kdi_type_variant = std::variant<
     kdi_array_type,
     kdi_sized_array_type,
     kdi_fn_ref_type,
-    kdi_aggregate_ref
+    kdi_aggregate_ref,
+    kdi_enum_ref
 >;
 
 /** A complete K type, encoded as a tagged union. */
@@ -154,6 +160,9 @@ struct kdi_type {
     }
     static kdi_type make_aggregate(std::string fq_name) {
         return {kdi_aggregate_ref{std::move(fq_name)}};
+    }
+    static kdi_type make_enum(std::string fq_name) {
+        return {kdi_enum_ref{std::move(fq_name)}};
     }
 };
 

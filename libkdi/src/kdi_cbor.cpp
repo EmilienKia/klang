@@ -326,6 +326,9 @@ cbor_item_t* encode_type(const kdi_type& t) {
         } else if constexpr (std::is_same_v<T, kdi_aggregate_ref>) {
             map_push(m, "kind",    cbor_str("aggregate"));
             map_push(m, "fq_name", cbor_str(v.fq_name));
+        } else if constexpr (std::is_same_v<T, kdi_enum_ref>) {
+            map_push(m, "kind",    cbor_str("enum"));
+            map_push(m, "fq_name", cbor_str(v.fq_name));
         }
     }, t.value);
     return m;
@@ -386,6 +389,9 @@ kdi_type decode_type(cbor_item_t* item, const std::string& path) {
     }
     if (kind == "aggregate") {
         return {kdi_aggregate_ref{req_string(item, "fq_name", path)}};
+    }
+    if (kind == "enum") {
+        return {kdi_enum_ref{req_string(item, "fq_name", path)}};
     }
     throw kdi_parse_error("unknown type kind '" + kind + "' at " + path);
 }
@@ -937,6 +943,68 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Enum
+// ─────────────────────────────────────────────────────────────────────────────
+
+cbor_item_t* encode_int64(int64_t v) {
+    if (v >= 0) return cbor_build_uint64(static_cast<uint64_t>(v));
+    return cbor_build_negint64(static_cast<uint64_t>(-(v + 1)));
+}
+
+int64_t read_int64(cbor_item_t* item, const std::string& path) {
+    if (!item) throw kdi_parse_error("expected int at " + path);
+    if (cbor_isa_uint(item))   return static_cast<int64_t>(cbor_get_uint64(item));
+    if (cbor_isa_negint(item)) return -static_cast<int64_t>(cbor_get_uint64(item)) - 1;
+    throw kdi_parse_error("expected int at " + path);
+}
+
+cbor_item_t* encode_enum(const kdi_enum& e) {
+    cbor_item_t* m = cbor_new_indefinite_map();
+    map_push(m, "name",            cbor_str(e.name));
+    map_push(m, "fq_name",         cbor_str(e.fq_name));
+    map_push(m, "visibility",      encode_visibility(e.visibility));
+    map_push(m, "underlying_type", encode_type(e.underlying_type));
+    if (e.base_fq_name.has_value())
+        map_push(m, "base_fq_name", cbor_str(*e.base_fq_name));
+    cbor_item_t* entries = cbor_new_indefinite_array();
+    for (auto& en : e.entries) {
+        cbor_item_t* em = cbor_new_indefinite_map();
+        map_push(em, "name",       cbor_str(en.name));
+        map_push(em, "value",      encode_int64(en.value));
+        if (en.is_default) map_push(em, "is_default", cbor_bool(true));
+        cbor_array_push(entries, cbor_move(em));
+    }
+    map_push(m, "entries", entries);
+    return m;
+}
+
+kdi_enum decode_enum(cbor_item_t* item, const std::string& path) {
+    kdi_enum e;
+    e.name       = req_string(item, "name", path);
+    e.fq_name    = req_string(item, "fq_name", path);
+    e.visibility = decode_visibility(item, "visibility", path);
+    auto* ut = map_get(item, "underlying_type");
+    if (ut) e.underlying_type = decode_type(ut, path + ".underlying_type");
+    auto* bn = map_get(item, "base_fq_name");
+    if (bn && cbor_isa_string(bn))
+        e.base_fq_name = read_string(bn, path + ".base_fq_name");
+    auto* ea = map_get(item, "entries");
+    if (ea && cbor_isa_array(ea)) {
+        size_t n = cbor_array_size(ea);
+        for (size_t i = 0; i < n; ++i) {
+            auto* ei = cbor_array_get(ea, i);
+            auto ep = path + ".entries[" + std::to_string(i) + "]";
+            kdi_enum_entry en;
+            en.name       = req_string(ei, "name", ep);
+            en.value      = read_int64(map_get(ei, "value"), ep + ".value");
+            en.is_default = opt_bool(ei, "is_default");
+            e.entries.push_back(en);
+        }
+    }
+    return e;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Namespace
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -951,6 +1019,10 @@ cbor_item_t* encode_namespace(const kdi_namespace& ns) {
     cbor_item_t* aggs = cbor_new_indefinite_array();
     for (auto& a : ns.aggregates) cbor_array_push(aggs, cbor_move(encode_aggregate(a)));
     map_push(m, "aggregates", aggs);
+
+    cbor_item_t* enums = cbor_new_indefinite_array();
+    for (auto& e : ns.enums) cbor_array_push(enums, cbor_move(encode_enum(e)));
+    map_push(m, "enums", enums);
 
     cbor_item_t* fns = cbor_new_indefinite_array();
     for (auto& f : ns.functions) cbor_array_push(fns, cbor_move(encode_function(f)));
@@ -978,6 +1050,13 @@ kdi_namespace decode_namespace(cbor_item_t* item, const std::string& path) {
         for (size_t i = 0; i < n; ++i)
             ns.aggregates.push_back(decode_aggregate(cbor_array_get(aa, i),
                                                      path + ".aggregates[" + std::to_string(i) + "]"));
+    }
+    auto* ea = map_get(item, "enums");
+    if (ea && cbor_isa_array(ea)) {
+        size_t n = cbor_array_size(ea);
+        for (size_t i = 0; i < n; ++i)
+            ns.enums.push_back(decode_enum(cbor_array_get(ea, i),
+                                           path + ".enums[" + std::to_string(i) + "]"));
     }
     auto* fa = map_get(item, "functions");
     if (fa && cbor_isa_array(fa)) {
@@ -1017,6 +1096,15 @@ cbor_item_t* encode_type_table(const kdi_type_table& tt) {
         cbor_array_push(a, cbor_move(em));
     }
     map_push(m, "aggregates", a);
+    if (!tt.enums.empty()) {
+        cbor_item_t* ea = cbor_new_indefinite_array();
+        for (auto& e : tt.enums) {
+            cbor_item_t* em = cbor_new_indefinite_map();
+            map_push(em, "fq_name", cbor_str(e.fq_name));
+            cbor_array_push(ea, cbor_move(em));
+        }
+        map_push(m, "enums", ea);
+    }
     return m;
 }
 
@@ -1032,6 +1120,17 @@ kdi_type_table decode_type_table(cbor_item_t* item, const std::string& path) {
             e.fq_name      = req_string(ei, "fq_name", ep);
             e.mangled_name = opt_string(ei, "mangled_name");
             tt.aggregates.push_back(e);
+        }
+    }
+    auto* ea = map_get(item, "enums");
+    if (ea && cbor_isa_array(ea)) {
+        size_t n = cbor_array_size(ea);
+        for (size_t i = 0; i < n; ++i) {
+            auto* ei = cbor_array_get(ea, i);
+            auto ep = path + ".enums[" + std::to_string(i) + "]";
+            kdi_enum_type_entry e;
+            e.fq_name = req_string(ei, "fq_name", ep);
+            tt.enums.push_back(e);
         }
     }
     return tt;

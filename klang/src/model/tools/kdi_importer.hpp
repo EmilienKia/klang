@@ -182,6 +182,13 @@ private:
                                std::shared_ptr<context> ctx);
 
     /**
+     * Materialise a single enumeration.
+     * Delegates to unit::get_or_create_imported_enum().
+     */
+    void materialise_enum(const kdi::kdi_enum& en,
+                          std::shared_ptr<context> ctx);
+
+    /**
      * Materialise a single global / namespace-level function.
      * Delegates to unit::get_or_create_imported_function().
      */

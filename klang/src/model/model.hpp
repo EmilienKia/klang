@@ -567,6 +567,7 @@ class enumeration : public element, public named_element {
 protected:
     friend class ns;
     friend class aggregate;
+    friend class unit;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
 
@@ -1722,6 +1723,12 @@ protected:
      */
     std::unordered_map<std::string, std::shared_ptr<imported_variable>>  _imported_variables;
 
+    /**
+     * Cache of imported enumeration model nodes keyed by fully-qualified K name.
+     * Created lazily by get_or_create_imported_enum().
+     */
+    std::unordered_map<std::string, std::shared_ptr<enumeration>>        _imported_enums;
+
     std::shared_ptr<global_main_function> _global_main_func;
 
     friend class k::model::gen::symbol_resolver;
@@ -1841,6 +1848,14 @@ public:
     const kdi::kdi_aggregate*
     find_imported_type(const k::name& name);
 
+    /**
+     * Find an enum type in any loaded import.
+     * @param name  Qualified name of the enum (without root prefix).
+     * @return Pointer into the kdi_file's kdi_enum entry, or nullptr.
+     */
+    const kdi::kdi_enum*
+    find_imported_enum(const k::name& name);
+
     // ── Imported model-node factory methods ─────────────────────────────────
     //
     // Each method returns (or retrieves from cache) a fully-built model node
@@ -1877,6 +1892,17 @@ public:
     std::shared_ptr<imported_variable>
     get_or_create_imported_variable(const kdi::kdi_variable* kdi_var,
                                     std::shared_ptr<context> ctx);
+
+    /**
+     * Return (or create) an imported enumeration model node for the enum
+     * identified by its fully-qualified K name @p fq_name.
+     *
+     * Searches all loaded imports; builds the underlying type, entries,
+     * and registers the enum_type in context::add_enum().
+     */
+    std::shared_ptr<enumeration>
+    get_or_create_imported_enum(const k::name& fq_name,
+                                std::shared_ptr<context> ctx);
 
     // ── Accessors ────────────────────────────────────────────────────────────
 

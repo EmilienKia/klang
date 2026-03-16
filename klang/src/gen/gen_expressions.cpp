@@ -111,32 +111,49 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
         symbol.set_target(func);
     } else {
         // Symbol not found as variable/function.
-        // Try enum entry resolution: EnumName::entryName
+        // Try enum entry resolution: EnumName::entryName or module::EnumName::entryName
         bool resolved_as_enum = false;
         const auto& sym_name = symbol.get_name();
-        if (sym_name.size() == 2 && !sym_name.has_root_prefix()) {
-            // Walk up the scope chain looking for an enum_holder with a matching enum
-            for (auto current = symbol.shared_as<element>(); current; current = current->parent<element>()) {
-                if (auto eh = std::dynamic_pointer_cast<enum_holder>(current)) {
-                    if (auto en = eh->get_enum(sym_name.front())) {
-                        // Found the enum; now check the entry name
-                        auto entry = en->get_entry_by_name(sym_name.back());
-                        if (entry.has_value()) {
-                            // Find the entry index
-                            size_t idx = 0;
-                            for (auto& e : en->entries()) {
-                                if (e.name == sym_name.back()) break;
-                                idx++;
-                            }
-                            symbol.set_target(symbol_expression::enum_entry_target{en, idx});
-                            resolved_as_enum = true;
+        if (sym_name.size() >= 2 && !sym_name.has_root_prefix()) {
+            // The entry name is the last component; the enum name is everything before it
+            const std::string& entry_name = sym_name.back();
+            std::shared_ptr<enumeration> found_enum;
+
+            if (sym_name.size() == 2) {
+                // Simple: EnumName::entryName — walk up the scope chain
+                for (auto current = symbol.shared_as<element>(); current; current = current->parent<element>()) {
+                    if (auto eh = std::dynamic_pointer_cast<enum_holder>(current)) {
+                        if (auto en = eh->get_enum(sym_name.front())) {
+                            found_enum = en;
                             break;
-                        } else {
-                            throw_error(0x0080, std::nullopt,
-                                "Enum '{}' has no entry named '{}'",
-                                {sym_name.front(), sym_name.back()});
                         }
                     }
+                }
+            }
+
+            // If not found locally, try imported enums (works for both 2-part and N-part names)
+            if (!found_enum) {
+                // Build a k::name from all parts except the last (the entry name)
+                std::vector<std::string> enum_parts(sym_name.parts().begin(),
+                                                     sym_name.parts().end() - 1);
+                k::name enum_name{false, std::move(enum_parts)};
+                found_enum = _unit.get_or_create_imported_enum(enum_name, _context);
+            }
+
+            if (found_enum) {
+                auto entry = found_enum->get_entry_by_name(entry_name);
+                if (entry.has_value()) {
+                    size_t idx = 0;
+                    for (auto& e : found_enum->entries()) {
+                        if (e.name == entry_name) break;
+                        idx++;
+                    }
+                    symbol.set_target(symbol_expression::enum_entry_target{found_enum, idx});
+                    resolved_as_enum = true;
+                } else {
+                    throw_error(0x0080, std::nullopt,
+                        "Enum '{}' has no entry named '{}'",
+                        {found_enum->get_short_name(), entry_name});
                 }
             }
         }

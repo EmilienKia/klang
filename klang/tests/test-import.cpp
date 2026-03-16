@@ -853,6 +853,338 @@ TEST_CASE("import diamond interfaces — IBase/IA/IB from 3 libs, Diamond class 
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// ENUM IMPORT TESTS
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-enum-basic] Enum defined in a lib, accessed by qualified name in exe.
+//
+// lib:  enum Color { RED = 0; GREEN = 1; BLUE = 2; }
+// exe:  main() → Color::GREEN = 1
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import enum — basic qualified access to imported enum entries",
+          "[import][e2e][import-enum]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module colorlib;
+            enum Color {
+                RED = 0;
+                GREEN = 1;
+                BLUE = 2;
+            };
+        )K",
+        R"K(
+            module exec_enum;
+            import colorlib;
+            main() : int {
+                c : colorlib::Color = colorlib::Color::GREEN;
+                return c;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 1 );  // GREEN = 1
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-enum-default] Imported enum with a 'default' entry.
+//
+// lib:  enum Status { OK = 0; ERR = 1 default; WARN = 2; }
+// exe:  s : Status;  → ERR = 1  (default construction)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import enum — default construction of imported enum",
+          "[import][e2e][import-enum]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module statuslib;
+            enum Status {
+                OK = 0;
+                ERR = 1 default;
+                WARN = 2;
+            };
+        )K",
+        R"K(
+            module exec_enum_default;
+            import statuslib;
+            main() : int {
+                s : statuslib::Status;
+                return s;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 1 );  // ERR = 1 is the default
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-enum-fn-param] Enum used as function parameter and return type across
+// library boundary.
+//
+// lib:  enum Dir { NORTH=0; SOUTH=1; EAST=2; WEST=3; }
+//       opposite(d: Dir) : Dir
+// exe:  main() → opposite(NORTH) = SOUTH = 1
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import enum — enum as function parameter/return across lib boundary",
+          "[import][e2e][import-enum]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module dirlib;
+            enum Dir {
+                NORTH = 0;
+                SOUTH = 1;
+                EAST = 2;
+                WEST = 3;
+            };
+            opposite(d: Dir) : int {
+                if (d == Dir::NORTH) { return Dir::SOUTH; }
+                if (d == Dir::SOUTH) { return Dir::NORTH; }
+                if (d == Dir::EAST)  { return Dir::WEST; }
+                return Dir::EAST;
+            }
+        )K",
+        R"K(
+            module exec_enum_fn;
+            import dirlib;
+            main() : int {
+                d : dirlib::Dir = dirlib::Dir::NORTH;
+                return dirlib::opposite(d);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 1 );  // opposite(NORTH) = SOUTH = 1
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-enum-comparison] Imported enum values compared in exe.
+//
+// lib:  enum Priority { LOW=1; MED=5; HIGH=10; }
+// exe:  main() → (LOW < HIGH) ? 42 : 0
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import enum — comparison operators on imported enum",
+          "[import][e2e][import-enum]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module priolib;
+            enum Priority {
+                LOW = 1;
+                MED = 5;
+                HIGH = 10;
+            };
+        )K",
+        R"K(
+            module exec_enum_cmp;
+            import priolib;
+            main() : int {
+                a : priolib::Priority = priolib::Priority::LOW;
+                b : priolib::Priority = priolib::Priority::HIGH;
+                if (a < b) { return 42; }
+                return 0;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-enum-derive-local] Local derivation of an imported enum.
+//
+// lib:  enum Base { A=1; B=2; }
+// exe:  enum Extended : colorlib::Base { C=3; }
+//       main() → Extended::A + Extended::C = 1 + 3 = 4
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import enum — local derivation of imported enum",
+          "[import][e2e][import-enum][import-enum-derive]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module baseenumlib;
+            enum Base {
+                A = 1;
+                B = 2;
+            };
+        )K",
+        R"K(
+            module exec_enum_derive;
+            import baseenumlib;
+            enum Extended : baseenumlib::Base {
+                C = 3;
+            };
+            main() : int {
+                return Extended::A + Extended::C;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 4 );  // A(1) + C(3) = 4
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-enum-derive-default] Local derivation overrides the base default.
+//
+// lib:  enum Base { A=1 default; B=2; }
+// exe:  enum Ext : Base { C=3 default; }
+//       main() → default(Ext) = C = 3
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import enum — local derivation overrides imported default",
+          "[import][e2e][import-enum][import-enum-derive]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module defenumlib;
+            enum Base {
+                A = 1 default;
+                B = 2;
+            };
+        )K",
+        R"K(
+            module exec_enum_derive_default;
+            import defenumlib;
+            enum Ext : defenumlib::Base {
+                C = 3 default;
+            };
+            main() : int {
+                e : Ext;
+                return e;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 3 );  // C is the new default
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-enum-derive-autoincr] Local derivation auto-increments from base max.
+//
+// lib:  enum Base { X=10; Y=20; }
+// exe:  enum Ext : Base { Z; }   → Z = 21
+//       main() → Z = 21
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import enum — local derivation auto-increments from imported base",
+          "[import][e2e][import-enum][import-enum-derive]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module autoenumlib;
+            enum Base {
+                X = 10;
+                Y = 20;
+            };
+        )K",
+        R"K(
+            module exec_enum_derive_auto;
+            import autoenumlib;
+            enum Ext : autoenumlib::Base {
+                Z;
+            };
+            main() : int {
+                return Ext::Z;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 21 );  // auto-incremented from Y=20
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-enum-derive-cross-lib] Enum derivation chain across two libraries.
+//
+// lib1: enum Base { A=1; B=2; }
+// lib2: enum Mid : Base { C=3; }  (imports lib1)
+// exe:  import lib2;  main() → Mid::A + Mid::B + Mid::C = 6
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import enum — derivation chain across two libraries",
+          "[import][e2e][import-enum][import-enum-derive]") {
+    std::vector<LibSpec> libs = {
+        { R"K(
+            module enumbase_lib;
+            enum Base {
+                A = 1;
+                B = 2;
+            };
+        )K" },
+        { R"K(
+            module enumderiv_lib;
+            import enumbase_lib;
+            enum Mid : enumbase_lib::Base {
+                C = 3;
+            };
+        )K" }
+    };
+
+    auto result = build_exec_with_libs(libs,
+        R"K(
+            module exec_enum_chain;
+            import enumbase_lib;
+            import enumderiv_lib;
+            main() : int {
+                return enumderiv_lib::Mid::A + enumderiv_lib::Mid::B + enumderiv_lib::Mid::C;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 6 );  // 1 + 2 + 3
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [import-enum-derive-local-from-cross-lib] 3-level derivation:
+//   lib1: enum Base { A=1; }
+//   lib2: enum Mid : Base { B=2; }   (imports lib1)
+//   exe:  enum Leaf : Mid { C=3; }   (imports lib2)
+//         main() → Leaf::A + Leaf::B + Leaf::C = 6
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import enum — local derivation from cross-lib derived enum (3-level chain)",
+          "[import][e2e][import-enum][import-enum-derive]") {
+    std::vector<LibSpec> libs = {
+        { R"K(
+            module ebase3_lib;
+            enum Base {
+                A = 1;
+            };
+        )K" },
+        { R"K(
+            module emid3_lib;
+            import ebase3_lib;
+            enum Mid : ebase3_lib::Base {
+                B = 2;
+            };
+        )K" }
+    };
+
+    auto result = build_exec_with_libs(libs,
+        R"K(
+            module exec_enum_3level;
+            import ebase3_lib;
+            import emid3_lib;
+            enum Leaf : emid3_lib::Mid {
+                C = 3;
+            };
+            main() : int {
+                return Leaf::A + Leaf::B + Leaf::C;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 6 );  // 1 + 2 + 3
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // TRANSITIVE IMPORT TESTS
 // ═════════════════════════════════════════════════════════════════════════════
 //

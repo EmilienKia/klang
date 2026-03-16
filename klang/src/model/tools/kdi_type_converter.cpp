@@ -43,22 +43,21 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx);
 static std::shared_ptr<type>
 convert_primitive(const kdi::kdi_int_type& t, std::shared_ptr<context> ctx)
 {
-    // Map KDI int_type → primitive_type names understood by context::from_string()
-    // K primitive names: bool, char, byte, short, int, long, ubyte, ushort, uint, ulong,
-    //                    float, double
+    // Map KDI int_type → primitive_type via context::from_type() to avoid
+    // string-lookup mismatches (e.g. "ubyte" is not in context::from_string()).
     if (t.is_signed) {
         switch (t.bits) {
-            case  8: return ctx->from_string("byte");
-            case 16: return ctx->from_string("short");
-            case 32: return ctx->from_string("int");
-            case 64: return ctx->from_string("long");
+            case  8: return ctx->from_type(primitive_type::CHAR);
+            case 16: return ctx->from_type(primitive_type::SHORT);
+            case 32: return ctx->from_type(primitive_type::INT);
+            case 64: return ctx->from_type(primitive_type::LONG);
         }
     } else {
         switch (t.bits) {
-            case  8: return ctx->from_string("ubyte");
-            case 16: return ctx->from_string("ushort");
-            case 32: return ctx->from_string("uint");
-            case 64: return ctx->from_string("ulong");
+            case  8: return ctx->from_type(primitive_type::BYTE);
+            case 16: return ctx->from_type(primitive_type::UNSIGNED_SHORT);
+            case 32: return ctx->from_type(primitive_type::UNSIGNED_INT);
+            case 64: return ctx->from_type(primitive_type::UNSIGNED_LONG);
         }
     }
     return nullptr; // unsupported width
@@ -178,6 +177,25 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_aggregate_ref>) {
             return convert_aggregate_ref(v, owner, ctx);
+        }
+        else if constexpr (std::is_same_v<T, kdi::kdi_enum_ref>) {
+            // Parse fq_name into a k::name
+            std::vector<std::string> parts;
+            const std::string& fq = v.fq_name;
+            std::size_t start = 0;
+            while (true) {
+                auto pos = fq.find("::", start);
+                if (pos == std::string::npos) {
+                    parts.push_back(fq.substr(start));
+                    break;
+                }
+                parts.push_back(fq.substr(start, pos - start));
+                start = pos + 2;
+            }
+            k::name kname(false, std::move(parts));
+            auto en = owner.get_or_create_imported_enum(kname, ctx);
+            if (!en) return nullptr;
+            return en->get_enum_type();
         }
         else {
             return nullptr;

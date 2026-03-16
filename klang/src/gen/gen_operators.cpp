@@ -59,6 +59,14 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
     }
     // Strip const qualifier for arithmetic type checks (const is compile-time only)
     target_type = type::remove_const(target_type);
+
+    // ── Enum → underlying primitive conversion for both operands ──
+    if (auto left_enum = std::dynamic_pointer_cast<enum_type>(target_type)) {
+        target_type = left_enum->get_underlying_type();
+        left = adapt_type(left, target_type);
+        if (left) expr.assign_left(left);
+    }
+
     if(!type::is_primitive(target_type)) {
         throw_error(0x0001, std::nullopt,
             "Arithmetic operators are not supported for non-primitive types: "
@@ -87,6 +95,15 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
         source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
         right->set_type(source_type);
         expr.assign_right(right);
+    }
+    // Convert right enum to underlying primitive too
+    source_type = type::remove_const(source_type);
+    if (auto right_enum = std::dynamic_pointer_cast<enum_type>(source_type)) {
+        source_type = right_enum->get_underlying_type();
+        right = adapt_type(right, source_type);
+        if (right) {
+            expr.assign_right(right);
+        }
     }
 
     // TODO Promote to largest target_type instead to align to left operand.

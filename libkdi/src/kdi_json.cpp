@@ -71,6 +71,9 @@ static kdi_layout_field  from_json_layout_field(const json&);
 static json          to_json(const kdi_aggregate&);
 static kdi_aggregate from_json_aggregate(const json&);
 
+static json      to_json(const kdi_enum&);
+static kdi_enum  from_json_enum(const json&);
+
 static json          to_json(const kdi_namespace&);
 static kdi_namespace from_json_namespace(const json&);
 
@@ -125,6 +128,8 @@ static json to_json(const kdi_type& t) {
         }
         else if constexpr (std::is_same_v<T, kdi_aggregate_ref>)
             return {{"kind","aggregate"},{"fq_name",v.fq_name}};
+        else if constexpr (std::is_same_v<T, kdi_enum_ref>)
+            return {{"kind","enum"},{"fq_name",v.fq_name}};
         else
             return {{"kind","unknown"}};
     }, t.value);
@@ -177,6 +182,8 @@ static kdi_type from_json_type(const json& j) {
     }
     if (kind == "aggregate")
         return kdi_type::make_aggregate(j.at("fq_name").get<std::string>());
+    if (kind == "enum")
+        return kdi_type::make_enum(j.at("fq_name").get<std::string>());
     throw kdi_json_error("unknown type kind: " + kind);
 }
 
@@ -588,6 +595,44 @@ static kdi_aggregate from_json_aggregate(const json& j) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// kdi_enum
+// ─────────────────────────────────────────────────────────────────────────────
+
+static json to_json(const kdi_enum& e) {
+    json entries = json::array();
+    for (auto& en : e.entries)
+        entries.push_back({{"name",en.name},{"value",en.value},{"is_default",en.is_default}});
+    json obj = {
+        {"name",            e.name},
+        {"fq_name",         e.fq_name},
+        {"visibility",      vis_to_str(e.visibility)},
+        {"underlying_type", to_json(e.underlying_type)},
+        {"entries",         entries},
+    };
+    if (e.base_fq_name.has_value())
+        obj["base_fq_name"] = *e.base_fq_name;
+    return obj;
+}
+
+static kdi_enum from_json_enum(const json& j) {
+    kdi_enum e;
+    e.name            = j.at("name");
+    e.fq_name         = j.at("fq_name");
+    e.visibility      = vis_from_str(j.value("visibility", "public"));
+    e.underlying_type = from_json_type(j.at("underlying_type"));
+    if (j.contains("base_fq_name"))
+        e.base_fq_name = j.at("base_fq_name").get<std::string>();
+    for (auto& en : j.value("entries", json::array())) {
+        kdi_enum_entry entry;
+        entry.name       = en.at("name");
+        entry.value      = en.at("value").get<int64_t>();
+        entry.is_default = en.value("is_default", false);
+        e.entries.push_back(entry);
+    }
+    return e;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // kdi_namespace
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -596,12 +641,14 @@ static json to_json(const kdi_namespace& ns) {
     for (auto& n : ns.namespaces) sub.push_back(to_json(n));
     json aggs = json::array();
     for (auto& a : ns.aggregates) aggs.push_back(to_json(a));
+    json enums = json::array();
+    for (auto& e : ns.enums) enums.push_back(to_json(e));
     json fns = json::array();
     for (auto& f : ns.functions) fns.push_back(to_json(f));
     json vars = json::array();
     for (auto& v : ns.variables) vars.push_back(to_json(v));
     return {{"name",ns.name},{"fq_name",ns.fq_name},
-            {"namespaces",sub},{"aggregates",aggs},
+            {"namespaces",sub},{"aggregates",aggs},{"enums",enums},
             {"functions",fns},{"variables",vars}};
 }
 static kdi_namespace from_json_namespace(const json& j) {
@@ -612,6 +659,8 @@ static kdi_namespace from_json_namespace(const json& j) {
         ns.namespaces.push_back(from_json_namespace(n));
     for (auto& a : j.value("aggregates", json::array()))
         ns.aggregates.push_back(from_json_aggregate(a));
+    for (auto& e : j.value("enums", json::array()))
+        ns.enums.push_back(from_json_enum(e));
     for (auto& f : j.value("functions", json::array()))
         ns.functions.push_back(from_json_function(f));
     for (auto& v : j.value("variables", json::array()))
@@ -661,7 +710,12 @@ static json to_json(const kdi_type_table& tt) {
     json arr = json::array();
     for (auto& e : tt.aggregates)
         arr.push_back({{"fq_name",e.fq_name},{"mangled_name",e.mangled_name}});
-    return {{"aggregates", arr}};
+    json enums = json::array();
+    for (auto& e : tt.enums)
+        enums.push_back({{"fq_name",e.fq_name}});
+    json obj = {{"aggregates", arr}};
+    if (!enums.empty()) obj["enums"] = enums;
+    return obj;
 }
 static kdi_type_table from_json_type_table(const json& j) {
     kdi_type_table tt;
@@ -670,6 +724,11 @@ static kdi_type_table from_json_type_table(const json& j) {
         entry.fq_name      = e.value("fq_name", "");
         entry.mangled_name = e.value("mangled_name", "");
         tt.aggregates.push_back(entry);
+    }
+    for (auto& e : j.value("enums", json::array())) {
+        kdi_enum_type_entry entry;
+        entry.fq_name = e.value("fq_name", "");
+        tt.enums.push_back(entry);
     }
     return tt;
 }

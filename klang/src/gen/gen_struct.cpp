@@ -475,6 +475,7 @@ void declaration_generator::visit_enumeration(enumeration&) {
 // selection, and enum_type creation. Supports enum derivation (single inheritance,
 // multi-level) and deferred resolution (no pre-declaration ordering requirement).
 void symbol_resolver::visit_enumeration(enumeration& en) {
+    visit_named_element(en);
     resolve_enumeration(en);
 }
 
@@ -491,12 +492,35 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
 
     // ── 1. Resolve base enum if present ──
     if (en.get_base_name().has_value()) {
-        auto base_en = scope_lookup::lookup_enumeration(
-            en.shared_as<element>(), *en.get_base_name());
+        const std::string& base_name_str = *en.get_base_name();
+        std::shared_ptr<enumeration> base_en;
+
+        // First try local scope lookup (simple name)
+        base_en = scope_lookup::lookup_enumeration(
+            en.shared_as<element>(), base_name_str);
+
+        // If not found and name is qualified, try imported enums
+        if (!base_en && base_name_str.find("::") != std::string::npos) {
+            // Parse the qualified name into a k::name
+            std::vector<std::string> parts;
+            std::size_t pos = 0;
+            while (true) {
+                auto sep = base_name_str.find("::", pos);
+                if (sep == std::string::npos) {
+                    parts.push_back(base_name_str.substr(pos));
+                    break;
+                }
+                parts.push_back(base_name_str.substr(pos, sep - pos));
+                pos = sep + 2;
+            }
+            k::name qualified_name{false, std::move(parts)};
+            base_en = _unit.get_or_create_imported_enum(qualified_name, _context);
+        }
+
         if (!base_en) {
             throw_error(0x0091, std::nullopt,
                 "Enum '{}': base enum '{}' not found",
-                {en.get_short_name(), *en.get_base_name()});
+                {en.get_short_name(), base_name_str});
         }
         // Recursively resolve the base if it hasn't been resolved yet
         resolve_enumeration(*base_en);

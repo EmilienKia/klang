@@ -196,9 +196,14 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {
         return kdi::kdi_type::make_aggregate(std::move(fq));
     }
     if (auto et = std::dynamic_pointer_cast<enum_type>(t)) {
-        // TODO: KDI schema does not yet have a dedicated enum type.
-        // For now, export enum types as their underlying primitive integer type
-        // so that cross-library function signatures remain usable.
+        auto en = et->get_enumeration();
+        if (en) {
+            const std::string& fq = en->get_fq_name();
+            std::string clean_fq = (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':')
+                                   ? fq.substr(2) : fq;
+            return kdi::kdi_type::make_enum(std::move(clean_fq));
+        }
+        // Fallback: export as underlying primitive if enumeration is unknown
         return to_kdi_type(et->get_underlying_type());
     }
     return kdi::kdi_type::make_void();
@@ -587,6 +592,54 @@ void kdi_builder::visit_interface(interface& i) {
         _agg_stack.back()->nested.push_back(std::move(kagg));
     else if (!_ns_stack.empty())
         _ns_stack.back()->aggregates.push_back(std::move(kagg));
+}
+
+void kdi_builder::visit_enumeration(enumeration& en) {
+    if (!is_exported(en.get_visibility())) return;
+
+    kdi::kdi_enum ke;
+    ke.name       = en.get_short_name();
+    ke.fq_name    = [&]() {
+        const std::string& fq = en.get_fq_name();
+        return (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':')
+               ? fq.substr(2) : fq;
+    }();
+    ke.visibility = to_kdi_vis(en.get_visibility());
+
+    if (en.get_underlying_type()) {
+        ke.underlying_type = to_kdi_type(en.get_underlying_type());
+    }
+
+    if (en.has_base()) {
+        const std::string& bfq = en.get_base()->get_fq_name();
+        ke.base_fq_name = (bfq.size() >= 2 && bfq[0] == ':' && bfq[1] == ':')
+                          ? bfq.substr(2) : bfq;
+    }
+
+    for (auto& entry : en.entries()) {
+        kdi::kdi_enum_entry kee;
+        kee.name       = entry.name;
+        kee.value      = entry.value;
+        kee.is_default = entry.is_default;
+        ke.entries.push_back(std::move(kee));
+    }
+
+    // Register in enum type table
+    {
+        bool found = false;
+        for (auto& e : _file.types.enums) {
+            if (e.fq_name == ke.fq_name) { found = true; break; }
+        }
+        if (!found) {
+            kdi::kdi_enum_type_entry ete;
+            ete.fq_name = ke.fq_name;
+            _file.types.enums.push_back(std::move(ete));
+        }
+    }
+
+    // Deposit into parent namespace
+    if (!_ns_stack.empty())
+        _ns_stack.back()->enums.push_back(std::move(ke));
 }
 
 void kdi_builder::visit_function(function& fn) {

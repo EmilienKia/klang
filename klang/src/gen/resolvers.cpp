@@ -725,6 +725,10 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
     if (auto agg = _unit.get_or_create_imported_aggregate(type_name, _context)) {
         return agg->get_struct_type();
     }
+    // Fallback: search imported enums
+    if (auto en = _unit.get_or_create_imported_enum(type_name, _context)) {
+        return en->get_enum_type();
+    }
     return {};
 }
 
@@ -1410,6 +1414,10 @@ type_reference_resolver::resolve_type_from_root(const k::name& name_without_pref
     if (auto agg = _unit.get_or_create_imported_aggregate(name_without_prefix, _context)) {
         return agg->get_struct_type();
     }
+    // Strategy 4: fallback — search imported enums.
+    if (auto en = _unit.get_or_create_imported_enum(name_without_prefix, _context)) {
+        return en->get_enum_type();
+    }
 
     return {};
 }
@@ -1454,6 +1462,10 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
     // Fallback: search imported modules (scope chain exhausted)
     if (auto agg = _unit.get_or_create_imported_aggregate(type_name, _context)) {
         return agg->get_struct_type();
+    }
+    // Fallback: search imported enums
+    if (auto en = _unit.get_or_create_imported_enum(type_name, _context)) {
+        return en->get_enum_type();
     }
 
     return {};
@@ -1663,6 +1675,13 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                             resolved_inner = imported_agg->get_struct_type();
                         }
                     }
+                    if (!resolved_inner || !type::is_resolved(resolved_inner)) {
+                        auto imported_en = _unit.get_or_create_imported_enum(
+                            unres_inner->type_id(), _context);
+                        if (imported_en && imported_en->get_enum_type()) {
+                            resolved_inner = imported_en->get_enum_type();
+                        }
+                    }
                 } else {
                     resolved_inner = _context->resolve_type(inner);
                 }
@@ -1710,6 +1729,13 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                             unres_inner->type_id(), _context);
                         if (imported_agg && imported_agg->get_struct_type()) {
                             resolved_inner = imported_agg->get_struct_type();
+                        }
+                    }
+                    if (!resolved_inner || !type::is_resolved(resolved_inner)) {
+                        auto imported_en = _unit.get_or_create_imported_enum(
+                            unres_inner->type_id(), _context);
+                        if (imported_en && imported_en->get_enum_type()) {
+                            resolved_inner = imported_en->get_enum_type();
                         }
                     }
                     return resolved_inner;
@@ -1767,6 +1793,14 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     unres_type->type_id(), _context);
                 if (imported_agg && imported_agg->get_struct_type()) {
                     resolved = imported_agg->get_struct_type();
+                }
+            }
+            if(!resolved || !type::is_resolved(resolved)) {
+                // Fall back to imported enums
+                auto imported_en = _unit.get_or_create_imported_enum(
+                    unres_type->type_id(), _context);
+                if (imported_en && imported_en->get_enum_type()) {
+                    resolved = imported_en->get_enum_type();
                 }
             }
             if(!resolved || !type::is_resolved(resolved)) {

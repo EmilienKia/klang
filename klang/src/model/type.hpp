@@ -835,6 +835,7 @@ class enum_type : public type {
 protected:
     friend class context;
     friend class model_builder;
+    friend class unit;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
 
