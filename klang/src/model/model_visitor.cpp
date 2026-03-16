@@ -51,10 +51,6 @@ void default_model_visitor::visit_interface(interface &iface) {
     visit_klass(iface);
 }
 
-void default_model_visitor::visit_enumeration(enumeration &en) {
-    visit_element(en);
-}
-
 void default_model_visitor::visit_function(function &func) {
     visit_element(func);
 }

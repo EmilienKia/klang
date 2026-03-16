@@ -212,6 +212,18 @@ scope_lookup::lookup_structure(std::shared_ptr<element> elem, const std::string&
     return {};
 }
 
+std::shared_ptr<enumeration>
+scope_lookup::lookup_enumeration(std::shared_ptr<element> elem, const std::string& name) {
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto eh = std::dynamic_pointer_cast<enum_holder>(current)) {
+            if (auto en = eh->get_enum(name)) {
+                return en;
+            }
+        }
+    }
+    return {};
+}
+
 //
 // Symbol resolver
 //
@@ -2746,7 +2758,16 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         if (enum_sub) {
             auto enum_tgt = std::dynamic_pointer_cast<enum_type>(tgt_nc);
             if (enum_tgt) {
-                return (enum_sub->get_enumeration() == enum_tgt->get_enumeration()) ? CAST_REF_CONV : CAST_WIDENING;
+                if (enum_sub->get_enumeration() == enum_tgt->get_enumeration()) {
+                    return CAST_REF_CONV;
+                }
+                // Upcast only: ref<Derived> → Base
+                auto src_en = enum_sub->get_enumeration();
+                auto tgt_en = enum_tgt->get_enumeration();
+                if (src_en && tgt_en && src_en->is_derived_from(tgt_en)) {
+                    return CAST_WIDENING;
+                }
+                return CAST_IMPOSSIBLE;
             }
             if (prim_tgt) return CAST_WIDENING;
         }
@@ -2762,9 +2783,15 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     if (enum_eff_src && enum_eff_tgt && enum_eff_src->get_enumeration() == enum_eff_tgt->get_enumeration()) {
         return CAST_NONE;
     }
-    // enum → different enum: widening (with warning at adapt_type time)
+    // enum → different enum: only Derived → Base (upcast) is allowed
     if (enum_eff_src && enum_eff_tgt) {
-        return CAST_WIDENING;
+        auto src_en = enum_eff_src->get_enumeration();
+        auto tgt_en = enum_eff_tgt->get_enumeration();
+        if (src_en && tgt_en && src_en->is_derived_from(tgt_en)) {
+            return CAST_WIDENING; // upcast: Derived → Base
+        }
+        // Base → Derived (downcast) or unrelated enums: not allowed
+        return CAST_IMPOSSIBLE;
     }
     // enum → primitive: widening (implicit)
     if (enum_eff_src && !enum_eff_tgt) {
@@ -2782,7 +2809,16 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         auto ref_enum_src = std::dynamic_pointer_cast<enum_type>(ref_sub);
         if (ref_enum_src) {
             if (enum_eff_tgt) {
-                return (ref_enum_src->get_enumeration() == enum_eff_tgt->get_enumeration()) ? CAST_REF_CONV : CAST_WIDENING;
+                if (ref_enum_src->get_enumeration() == enum_eff_tgt->get_enumeration()) {
+                    return CAST_REF_CONV;
+                }
+                // Upcast only: ref<Derived> → Base
+                auto src_en = ref_enum_src->get_enumeration();
+                auto tgt_en = enum_eff_tgt->get_enumeration();
+                if (src_en && tgt_en && src_en->is_derived_from(tgt_en)) {
+                    return CAST_WIDENING;
+                }
+                return CAST_IMPOSSIBLE;
             }
             auto p_tgt = std::dynamic_pointer_cast<primitive_type>(tgt_nc);
             if (p_tgt) return CAST_WIDENING;

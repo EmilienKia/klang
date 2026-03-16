@@ -567,3 +567,308 @@ TEST_CASE("Enum — comparison between enum and integer literal", "[gen][enum]")
     CHECK(jit->lookup_symbol<int(*)()>("check")() == 1);
 }
 
+// ============================================================
+// Phase 3: Enum derivation — Parser tests
+// ============================================================
+
+TEST_CASE("Parse enum — derivation clause", "[parser][enum]") {
+    test_logger log;
+    k::source src{"enum Derived : Base { X = 10; };"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_enum_decl();
+    REQUIRE(decl);
+    CHECK(std::string{decl->name.content} == "Derived");
+    REQUIRE(decl->base_name.has_value());
+    CHECK(*decl->base_name == "Base");
+    REQUIRE(decl->entries.size() == 1);
+}
+
+TEST_CASE("Parse enum — derivation with qualified base name", "[parser][enum]") {
+    test_logger log;
+    k::source src{"enum D : ns::Base { X; };"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_enum_decl();
+    REQUIRE(decl);
+    REQUIRE(decl->base_name.has_value());
+    CHECK(*decl->base_name == "ns::Base");
+}
+
+TEST_CASE("Parse enum — no derivation clause", "[parser][enum]") {
+    test_logger log;
+    k::source src{"enum E { A; B; };"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_enum_decl();
+    REQUIRE(decl);
+    CHECK_FALSE(decl->base_name.has_value());
+}
+
+// ============================================================
+// Phase 4: Enum derivation — JIT tests
+// ============================================================
+
+TEST_CASE("Enum derivation — inherited entries accessible", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 1; B = 2; };
+        enum Derived : Base { C = 3; };
+        get_a() : int { return Derived::A; }
+        get_b() : int { return Derived::B; }
+        get_c() : int { return Derived::C; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_a")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("get_b")() == 2);
+    CHECK(jit->lookup_symbol<int(*)()>("get_c")() == 3);
+}
+
+TEST_CASE("Enum derivation — auto-increment continues from base", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 5; B = 6; };
+        enum Derived : Base { C; D; };
+        get_c() : int { return Derived::C; }
+        get_d() : int { return Derived::D; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_c")() == 7);
+    CHECK(jit->lookup_symbol<int(*)()>("get_d")() == 8);
+}
+
+TEST_CASE("Enum derivation — new entry references base entry", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 10; B = 20; };
+        enum Derived : Base { C = A; D = B; };
+        get_c() : int { return Derived::C; }
+        get_d() : int { return Derived::D; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_c")() == 10);
+    CHECK(jit->lookup_symbol<int(*)()>("get_d")() == 20);
+}
+
+TEST_CASE("Enum derivation — inherits default from base", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 1; B = 2 default; };
+        enum Derived : Base { C = 3; };
+        get_default() : int {
+            d : Derived;
+            return d;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_default")() == 2);
+}
+
+TEST_CASE("Enum derivation — override default in derived", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 1; B = 2 default; };
+        enum Derived : Base { C = 3 default; };
+        get_default() : int {
+            d : Derived;
+            return d;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_default")() == 3);
+}
+
+TEST_CASE("Enum derivation — default is first entry when no explicit default", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 1; B = 2; };
+        enum Derived : Base { C = 3; };
+        get_default() : int {
+            d : Derived;
+            return d;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_default")() == 1);
+}
+
+TEST_CASE("Enum derivation — constructor with inherited entry name", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 10; B = 20; };
+        enum Derived : Base { C = 30; };
+        get_val() : int {
+            d : Derived(A);
+            return d;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_val")() == 10);
+}
+
+TEST_CASE("Enum derivation — constructor with numeric value", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 1; };
+        enum Derived : Base { B = 2; };
+        get_val() : int {
+            d : Derived(1);
+            return d;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_val")() == 1);
+}
+
+TEST_CASE("Enum derivation — multi-level inheritance", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum A { X = 1; };
+        enum B : A { Y = 2; };
+        enum C : B { Z = 3; };
+        get_x() : int { return C::X; }
+        get_y() : int { return C::Y; }
+        get_z() : int { return C::Z; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_x")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("get_y")() == 2);
+    CHECK(jit->lookup_symbol<int(*)()>("get_z")() == 3);
+}
+
+TEST_CASE("Enum derivation — multi-level auto-increment", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum A { X = 1; };
+        enum B : A { Y; };
+        enum C : B { Z; };
+        get_y() : int { return C::Y; }
+        get_z() : int { return C::Z; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_y")() == 2);
+    CHECK(jit->lookup_symbol<int(*)()>("get_z")() == 3);
+}
+
+TEST_CASE("Enum derivation — duplicate values with base (alias)", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 1; };
+        enum Derived : Base { B = 1; };
+        get_a() : int { return Derived::A; }
+        get_b() : int { return Derived::B; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_a")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("get_b")() == 1);
+}
+
+TEST_CASE("Enum derivation — Derived to int conversion", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 1; B = 2; };
+        enum Derived : Base { C = 3; };
+        get_val() : int {
+            d : Derived = Derived::C;
+            return d;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_val")() == 3);
+}
+
+TEST_CASE("Enum derivation — comparison between inherited and new entries", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 1; B = 2; };
+        enum Derived : Base { C = 3; };
+        check_eq() : int {
+            d : Derived = Derived::A;
+            if (d == Derived::A) { return 1; }
+            return 0;
+        }
+        check_lt() : int {
+            d : Derived = Derived::A;
+            if (d < Derived::C) { return 1; }
+            return 0;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("check_eq")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("check_lt")() == 1);
+}
+
+TEST_CASE("Enum derivation — forward declaration order (base after derived)", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Derived : Base { C = 3; };
+        enum Base { A = 1; B = 2; };
+        get_a() : int { return Derived::A; }
+        get_c() : int { return Derived::C; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_a")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("get_c")() == 3);
+}
+
+TEST_CASE("Enum derivation — multiple derived enums from same base", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 1; };
+        enum D1 : Base { B = 2; };
+        enum D2 : Base { C = 3; };
+        get_d1b() : int { return D1::B; }
+        get_d2c() : int { return D2::C; }
+        get_d1a() : int { return D1::A; }
+        get_d2a() : int { return D2::A; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_d1b")() == 2);
+    CHECK(jit->lookup_symbol<int(*)()>("get_d2c")() == 3);
+    CHECK(jit->lookup_symbol<int(*)()>("get_d1a")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("get_d2a")() == 1);
+}
+
+TEST_CASE("Enum derivation — cycle detection", "[gen][enum]") {
+    // This should fail with a circular derivation error
+    REQUIRE_THROWS(gen_jit_throws(R"(
+        module test;
+        enum A : B { X = 1; };
+        enum B : A { Y = 2; };
+    )"));
+}
+
+TEST_CASE("Enum derivation — base not found error", "[gen][enum]") {
+    REQUIRE_THROWS(gen_jit_throws(R"(
+        module test;
+        enum D : NonExistent { X = 1; };
+    )"));
+}
+
+TEST_CASE("Enum derivation — Derived to Base implicit conversion", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 1; B = 2; };
+        enum Derived : Base { C = 3; };
+        accept_base(b : Base) : int { return b; }
+        test_upcast() : int {
+            d : Derived = Derived::C;
+            return accept_base(d);
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test_upcast")() == 3);
+}
+
+TEST_CASE("Enum derivation — empty derived enum", "[gen][enum]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Base { A = 1; B = 2 default; };
+        enum Derived : Base { };
+        get_a() : int { return Derived::A; }
+        get_default() : int {
+            d : Derived;
+            return d;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_a")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("get_default")() == 2);
+}

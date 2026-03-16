@@ -202,7 +202,11 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_enum_decl(ast::enum_decl& decl) override {
-            prefix() << "enum " << decl.name.content << std::endl;
+            prefix() << "enum " << decl.name.content;
+            if (decl.base_name.has_value()) {
+                _stm << " : " << *decl.base_name;
+            }
+            _stm << std::endl;
             auto pf = prefix_inc();
             for(auto& entry : decl.entries) {
                 prefix() << entry->name.content;

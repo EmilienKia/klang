@@ -41,8 +41,6 @@ They may **not** be used as ordinary identifiers.
 | `for`       | Counter-controlled loop |
 | `new`       | Dynamic allocation operator — allocates and constructs an object, returns a `T!` owner |
 | `delete`    | Dynamic deallocation operator — destroys and frees the object owned by a `T!` variable |
-| `default`   | Marks the default entry of an enum declaration |
-| `enum`      | Enumeration type declaration |
 
 ### Grammar
 
@@ -62,7 +60,7 @@ Keyword: (one of)
 
 ## Notes
 
-- `struct`, `class`, and `interface` declare user-defined aggregate types. See [Structures](../structs/structs.md), [Classes and Virtuality](../structs/classes.md), and [Interfaces](../structs/interfaces.md).
+    new      delete
 - `abstract` is valid on a `class` or its methods to mark them as requiring overriding. On an `interface` or its methods it is accepted but redundant (warning).
 - `final` prevents further inheritance or overriding. See the relevant sections in [Classes and Virtuality](../structs/classes.md).
 - `const` marks a variable or parameter as immutable. See [Const-ness](types.md#14-const-ness) for the full specification.
@@ -76,4 +74,3 @@ Keyword: (one of)
 
 ---
 
-*See also:* [Lexical Conventions](lexical.md) · [Types](types.md) · [Statements Overview](../statements/statements.md)

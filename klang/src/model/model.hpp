@@ -542,11 +542,26 @@ struct enum_entry_def {
 };
 
 /**
+ * A raw (unresolved) entry in an enumeration definition.
+ * Stored during model building; resolved during the symbol resolution phase.
+ */
+struct enum_raw_entry_def {
+    std::string name;
+    std::optional<int64_t> explicit_value;  ///< Set if entry has an integer literal value.
+    std::string ref_name;                    ///< Set if entry references another entry by name.
+    bool is_default = false;
+};
+
+/**
  * Enumeration: a named set of integer-valued constants.
  *
  * An enumeration is a nominal type backed by the smallest primitive integer
  * type that can hold all declared values. Each entry maps a name to a
  * compile-time constant integer value.
+ *
+ * Enumerations support single inheritance: a derived enum inherits all entries
+ * from its base and may add new ones. Multi-level inheritance (A : B : C) is
+ * supported. Cycles are detected and rejected.
  */
 class enumeration : public element, public named_element {
 protected:
@@ -559,6 +574,17 @@ protected:
     std::shared_ptr<enum_type> _type;
     std::shared_ptr<primitive_type> _underlying_type;
     visibility _visibility = PUBLIC;
+
+    /** Optional base enum name (unresolved, from AST). */
+    std::optional<std::string> _base_name;
+    /** Resolved base enumeration (set during symbol resolution). */
+    std::shared_ptr<enumeration> _base;
+    /** Raw (unresolved) entries from AST — used for deferred resolution of derived enums. */
+    std::vector<enum_raw_entry_def> _raw_entries;
+    /** True when entry values, underlying type and enum_type have been fully resolved. */
+    bool _resolved = false;
+    /** True while this enum is being resolved (for cycle detection). */
+    bool _resolving = false;
 
     enumeration(std::shared_ptr<element> parent)
         : element(parent) {}
@@ -598,6 +624,29 @@ public:
 
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }
+
+    // ── Derivation support ──
+
+    void set_base_name(const std::string& name) { _base_name = name; }
+    const std::optional<std::string>& get_base_name() const { return _base_name; }
+
+    void set_base(std::shared_ptr<enumeration> base) { _base = base; }
+    std::shared_ptr<enumeration> get_base() const { return _base; }
+    bool has_base() const { return _base != nullptr; }
+
+    /** Check whether this enum is derived (directly or transitively) from `other`. */
+    bool is_derived_from(const std::shared_ptr<enumeration>& other) const {
+        for (auto b = _base; b; b = b->_base) {
+            if (b == other) return true;
+        }
+        return false;
+    }
+
+    const std::vector<enum_raw_entry_def>& raw_entries() const { return _raw_entries; }
+    void add_raw_entry(const enum_raw_entry_def& e) { _raw_entries.push_back(e); }
+
+    bool is_resolved() const { return _resolved; }
+    void set_resolved(bool v) { _resolved = v; }
 };
 
 

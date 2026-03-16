@@ -129,8 +129,11 @@ public:
         prefix() << "enum '" << en.get_short_name() << "' ("
                  << en.get_fq_name() << " / " << en.get_mangled_name()
                  << ")";
+        if (en.has_base()) {
+            _stm << " : " << en.get_base()->get_short_name();
+        }
         if (en.get_underlying_type()) {
-            _stm << " : " << en.get_underlying_type()->to_string();
+            _stm << " [" << en.get_underlying_type()->to_string() << "]";
         }
         _stm << " {" << std::endl;
         {

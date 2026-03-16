@@ -66,7 +66,6 @@ protected:
     std::map<primitive_type::PRIMITIVE_TYPE, std::shared_ptr<primitive_type>> _primitive_types;
     std::shared_ptr<null_type> _null_type;
     std::map<std::string, std::shared_ptr<struct_type>> _struct_types;
-    std::map<std::string, std::shared_ptr<enum_type>> _enum_types;
     std::vector<std::shared_ptr<unresolved_type>> _unresolved;
 
     // Entities:
@@ -104,7 +103,6 @@ public:
     std::shared_ptr<type> from_literal(const k::lex::any_literal &literal);
 
     void add_struct(std::shared_ptr<struct_type> st_type);
-    void add_enum(const std::string& name, std::shared_ptr<enum_type> et);
 
     /**
      * Create an opaque (body-less) LLVM StructType and assign it to @p st_type.

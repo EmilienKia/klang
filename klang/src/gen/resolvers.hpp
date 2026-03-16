@@ -82,6 +82,12 @@ public:
     static std::shared_ptr<aggregate>
     lookup_structure(std::shared_ptr<element> elem, const std::string& name);
 
+    /**
+     * Look up an enumeration by name, starting from elem and walking up the scope chain.
+     */
+    static std::shared_ptr<enumeration>
+    lookup_enumeration(std::shared_ptr<element> elem, const std::string& name);
+
     //
     // Visibility helpers
     //
@@ -218,6 +224,7 @@ protected:
     void visit_aggregate(aggregate&) override;
     void visit_klass(klass&) override;
     void visit_interface(interface&) override;
+    void visit_enumeration(enumeration&) override;
 
     void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition&) override;
@@ -277,6 +284,13 @@ protected:
      * @return The final non-redirected target.
      */
     std::shared_ptr<function> resolve_redirect_chain(function& fn, std::unordered_set<function*>& visited);
+
+    /**
+     * Resolve an enumeration's entries, base, underlying type and enum_type.
+     * Handles recursive resolution for derived enums whose base may not yet be resolved.
+     * @param en The enumeration to resolve.
+     */
+    void resolve_enumeration(enumeration& en);
 };
 
 

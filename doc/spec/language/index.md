@@ -78,12 +78,6 @@ Examples are included where they clarify the normative text.
 | [Dynamic Allocation — `new` and `delete`](memory/new-delete.md) | `new T(args)` allocation and construction; `delete owner` destruction and deallocation; owner lifetime rules; observer assignment |
 | [Uniform Array Initialization](memory/uniform-array-init.md) | `var : T(args)[N]` and `new T(args)[N]` — initialize all array elements with the same constructor arguments |
 
-### Enumerations
-
-| Page | Description |
-|------|-------------|
-| [Enumerations](enums/enums.md) | Numeric enum declarations, entry values, auto-increment, default entry, construction syntax, implicit conversions, comparison operators |
-
 ### Grammar Reference
 
 | Page | Description |

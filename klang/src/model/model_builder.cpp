@@ -242,22 +242,17 @@ namespace k::model {
             }
         }
 
-        // First pass: collect all explicitly valued entries (literals only)
-        // and record references for forward-reference resolution.
-        struct raw_entry {
-            std::string name;
-            bool has_literal = false;
-            int64_t literal_value = 0;
-            std::string ref_name; // non-empty if referencing another entry
-            bool is_default = false;
-            bool resolved = false;
-            int64_t resolved_value = 0;
-        };
-        std::vector<raw_entry> raw_entries;
+        // Store base enum name if present (resolution deferred to symbol_resolver)
+        if (decl.base_name.has_value()) {
+            en->set_base_name(*decl.base_name);
+        }
 
+        // Collect raw entries from AST — validation and value resolution are
+        // performed later by the symbol_resolver (so that forward-declared or
+        // yet-to-be-visited base enums are available).
         bool has_explicit_default = false;
         for (auto& ast_entry : decl.entries) {
-            raw_entry re;
+            enum_raw_entry_def re;
             re.name = std::string{ast_entry->name.content};
             re.is_default = ast_entry->is_default;
 
@@ -269,128 +264,22 @@ namespace k::model {
             }
 
             if (ast_entry->literal_value.has_value()) {
-                // Explicit integer literal
                 auto& lit = *ast_entry->literal_value;
                 if (lit.index() == lex::any_literal_type_index::INTEGER) {
                     auto& int_lit = lit.get<lex::integer>();
-                    re.has_literal = true;
-                    re.literal_value = static_cast<int64_t>(int_lit.to_unsigned_int());
-                    re.resolved = true;
-                    re.resolved_value = re.literal_value;
+                    re.explicit_value = static_cast<int64_t>(int_lit.to_unsigned_int());
                 } else {
                     throw_error(0x0072, ast_entry->name, "Enum entry '{}' value must be an integer literal", {re.name});
                 }
             } else if (ast_entry->ref_value.has_value()) {
-                // Reference to another entry
                 re.ref_name = std::string{ast_entry->ref_value->content};
-            } else {
-                // No explicit value — will be auto-incremented
             }
 
-            raw_entries.push_back(std::move(re));
+            en->add_raw_entry(re);
         }
 
-        // Second pass: resolve references (with forward-reference support) and auto-increment.
-        // Use iterative resolution to handle forward references.
-        // Max iterations = number of entries (to detect cycles).
-        bool changed = true;
-        size_t max_iter = raw_entries.size() + 1;
-        for (size_t iter = 0; iter < max_iter && changed; ++iter) {
-            changed = false;
-            for (size_t i = 0; i < raw_entries.size(); ++i) {
-                auto& re = raw_entries[i];
-                if (re.resolved) continue;
-
-                if (!re.ref_name.empty()) {
-                    // Try to resolve the reference
-                    bool found = false;
-                    for (auto& other : raw_entries) {
-                        if (other.name == re.ref_name && other.resolved) {
-                            re.resolved = true;
-                            re.resolved_value = other.resolved_value;
-                            changed = true;
-                            found = true;
-                            break;
-                        }
-                    }
-                    // If the reference hasn't been resolved yet, wait for next iteration
-                } else {
-                    // Auto-increment: value = previous resolved entry's value + 1, or 0 if first
-                    if (i == 0) {
-                        re.resolved = true;
-                        re.resolved_value = 0;
-                        changed = true;
-                    } else if (raw_entries[i-1].resolved) {
-                        re.resolved = true;
-                        re.resolved_value = raw_entries[i-1].resolved_value + 1;
-                        changed = true;
-                    }
-                }
-            }
-        }
-
-        // Check for unresolved entries (cycles or missing references)
-        for (auto& re : raw_entries) {
-            if (!re.resolved) {
-                // Find the corresponding AST entry for error reporting
-                for (auto& ast_entry : decl.entries) {
-                    if (std::string{ast_entry->name.content} == re.name) {
-                        if (!re.ref_name.empty()) {
-                            throw_error(0x0073, ast_entry->name,
-                                "Enum entry '{}' references unresolvable entry '{}' (cycle or missing entry)",
-                                {re.name, re.ref_name});
-                        } else {
-                            throw_error(0x0074, ast_entry->name,
-                                "Enum entry '{}' could not be resolved (depends on unresolved previous entry)",
-                                {re.name});
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Determine the smallest underlying type
-        int64_t min_val = 0, max_val = 0;
-        for (auto& re : raw_entries) {
-            if (re.resolved_value < min_val) min_val = re.resolved_value;
-            if (re.resolved_value > max_val) max_val = re.resolved_value;
-        }
-
-        primitive_type::PRIMITIVE_TYPE prim_type;
-        if (min_val >= 0) {
-            // Unsigned
-            if (max_val <= 255) prim_type = primitive_type::BYTE;
-            else if (max_val <= 65535) prim_type = primitive_type::UNSIGNED_SHORT;
-            else if (max_val <= 4294967295LL) prim_type = primitive_type::UNSIGNED_INT;
-            else prim_type = primitive_type::UNSIGNED_LONG;
-        } else {
-            // Signed
-            if (min_val >= -128 && max_val <= 127) prim_type = primitive_type::CHAR;
-            else if (min_val >= -32768 && max_val <= 32767) prim_type = primitive_type::SHORT;
-            else if (min_val >= -2147483648LL && max_val <= 2147483647LL) prim_type = primitive_type::INT;
-            else prim_type = primitive_type::LONG;
-        }
-
-        auto underlying = _context->from_type(prim_type);
-        en->set_underlying_type(underlying);
-
-        // Add entries to the enumeration model
-        // If no explicit default, mark the first entry as default
-        bool first = true;
-        for (auto& re : raw_entries) {
-            bool is_def = re.is_default;
-            if (!has_explicit_default && first) {
-                is_def = true;
-            }
-            en->add_entry(re.name, re.resolved_value, is_def);
-            first = false;
-        }
-
-        // Create the enum_type and register it
-        auto et = std::shared_ptr<enum_type>(new enum_type(en, underlying));
-        en->set_enum_type(et);
-        _context->add_enum(std::string{decl.name.content}, et);
+        // Full resolution (entry values, underlying type, enum_type creation)
+        // is performed by symbol_resolver::visit_enumeration().
     }
 
     void model_builder::visit_variable_decl(parse::ast::variable_decl &decl) {

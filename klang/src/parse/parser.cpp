@@ -361,6 +361,40 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
     }
     auto enum_name = lex::as<lex::identifier>(lname);
 
+    // Optional base enum clause: ':' QualifiedName
+    std::optional<std::string> base_name;
+    {
+        lex::lex_holder base_holder(_lexer);
+        auto maybe_colon = _lexer.get();
+        if (maybe_colon == lex::operator_::COLON) {
+            auto lbase = _lexer.get();
+            if (!lex::is<lex::identifier>(lbase)) {
+                throw_error(0x0075, _lexer.pick_current(), "Expected base enum name after ':' in enum declaration");
+            }
+            std::string qualified = std::string{lex::as<lex::identifier>(lbase).content};
+            // Support qualified names: id ('::' id)*
+            while (true) {
+                lex::lex_holder dcolon_holder(_lexer);
+                auto maybe_dcolon = _lexer.get();
+                if (maybe_dcolon == lex::punctuator::DOUBLE_COLON) {
+                    auto lnext = _lexer.get();
+                    if (lex::is<lex::identifier>(lnext)) {
+                        qualified += "::" + std::string{lex::as<lex::identifier>(lnext).content};
+                    } else {
+                        dcolon_holder.rollback();
+                        break;
+                    }
+                } else {
+                    dcolon_holder.rollback();
+                    break;
+                }
+            }
+            base_name = qualified;
+        } else {
+            base_holder.rollback();
+        }
+    }
+
     // Expect an open brace
     lex::punctuator open_brace_val({}, lex::punctuator::BRACE_OPEN);
     if(lex::opt_ref_any_lexeme lopenbrace = _lexer.get(); lopenbrace==lex::punctuator::BRACE_OPEN) {
@@ -443,7 +477,7 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
         throw_error(0x0065, _lexer.pick_current(), "Expected ';' after enum declaration");
     }
 
-    return std::make_shared<ast::enum_decl>(specifiers, kw_enum, enum_name, open_brace_val, close_brace_val, entries);
+    return std::make_shared<ast::enum_decl>(specifiers, kw_enum, enum_name, base_name, open_brace_val, close_brace_val, entries);
 }
 
 std::vector<lex::keyword> parser::parse_specifiers()

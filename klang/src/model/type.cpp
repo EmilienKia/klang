@@ -740,39 +740,5 @@ std::shared_ptr<function_reference_type> function_reference_type_builder::build(
     }
 }
 
-//
-// Enum type
-//
-
-llvm::Type* enum_type::get_llvm_type() const {
-    if (_underlying_type) {
-        return _underlying_type->get_llvm_type();
-    }
-    return nullptr;
-}
-
-llvm::Constant* enum_type::generate_default_value_initializer() const {
-    if (_underlying_type) {
-        // Use the enum's default entry value (not just zero)
-        auto en = _enumeration.lock();
-        if (en && !en->entries().empty()) {
-            auto def_entry = en->get_default_entry();
-            return llvm::ConstantInt::get(_underlying_type->get_llvm_type(),
-                                          static_cast<uint64_t>(def_entry.value),
-                                          /*isSigned=*/def_entry.value < 0);
-        }
-        return _underlying_type->generate_default_value_initializer();
-    }
-    return nullptr;
-}
-
-std::string enum_type::to_string() const {
-    auto e = _enumeration.lock();
-    if (e) {
-        return "enum " + e->get_short_name();
-    }
-    return "enum <unknown>";
-}
-
 
 } // k::model

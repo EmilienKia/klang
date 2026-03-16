@@ -91,9 +91,6 @@ public:
     void visit_global_variable_definition(global_variable_definition& var) override;
     void visit_member_variable_definition(member_variable_definition& var) override;
 
-    // Enum declarations — currently no KDI schema for enums; silently ignored.
-    void visit_enumeration(enumeration&)                              override {}
-
     // Compiler-internal nodes — silently ignored
     void visit_static_constructor(static_constructor&)               override {}
     void visit_static_destructor(static_destructor&)                 override {}

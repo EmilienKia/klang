@@ -137,7 +137,6 @@ protected:
     void visit_visibility_decl(parse::ast::visibility_decl &) override;
     void visit_namespace_decl(parse::ast::namespace_decl &) override;
     void visit_aggregate_decl(parse::ast::aggregate_decl &) override;
-    void visit_enum_decl(parse::ast::enum_decl &) override;
     void visit_variable_decl(parse::ast::variable_decl &) override;
     void visit_function_decl(parse::ast::function_decl &) override;
 

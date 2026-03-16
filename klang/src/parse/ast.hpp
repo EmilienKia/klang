@@ -943,22 +943,26 @@ namespace k::parse {
 
         /**
          * Enum declaration.
-         * Syntax: SPECIFIERS 'enum' identifier '{' ENUM_ENTRY* '}' ';'
+         * Syntax: SPECIFIERS 'enum' identifier [ ':' QualifiedName ] '{' ENUM_ENTRY* '}' ';'
          */
         struct enum_decl : public declaration {
             std::vector<lex::keyword> specifiers;
             lex::keyword kw_enum;
             lex::identifier name;
+            /** Optional base enum name for enum derivation (e.g. "Base" or "ns::Base"). */
+            std::optional<std::string> base_name;
             lex::punctuator open_brace, close_brace;
             std::vector<std::shared_ptr<enum_entry>> entries;
 
             enum_decl(const std::vector<lex::keyword>& specifiers,
                       const lex::keyword& kw_enum,
                       const lex::identifier& name,
+                      const std::optional<std::string>& base_name,
                       const lex::punctuator& open_brace,
                       const lex::punctuator& close_brace,
                       const std::vector<std::shared_ptr<enum_entry>>& entries)
                 : specifiers(specifiers), kw_enum(kw_enum), name(name),
+                  base_name(base_name),
                   open_brace(open_brace), close_brace(close_brace), entries(entries) {}
 
             virtual void visit(ast_visitor &visitor) override;

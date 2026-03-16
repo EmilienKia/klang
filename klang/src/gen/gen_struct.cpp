@@ -463,10 +463,209 @@ void declaration_generator::visit_aggregate(aggregate& st) {
 // declaration_generator::visit_enumeration
 // -----------------------------------------
 // Enums have no LLVM-level declarations; their underlying type is already handled
-// by the model builder. This override exists only to prevent the default visitor
+// by the symbol resolver. This override exists only to prevent the default visitor
 // from trying to visit children that don't exist.
 void declaration_generator::visit_enumeration(enumeration&) {
     // Nothing to do.
+}
+
+// symbol_resolver::visit_enumeration
+// ------------------------------------
+// Resolves an enumeration: base lookup, entry value resolution, underlying type
+// selection, and enum_type creation. Supports enum derivation (single inheritance,
+// multi-level) and deferred resolution (no pre-declaration ordering requirement).
+void symbol_resolver::visit_enumeration(enumeration& en) {
+    resolve_enumeration(en);
+}
+
+void symbol_resolver::resolve_enumeration(enumeration& en) {
+    if (en.is_resolved()) return;
+
+    // Cycle detection
+    if (en._resolving) {
+        throw_error(0x0090, std::nullopt,
+            "Circular enum derivation detected involving enum '{}'",
+            {en.get_short_name()});
+    }
+    en._resolving = true;
+
+    // ── 1. Resolve base enum if present ──
+    if (en.get_base_name().has_value()) {
+        auto base_en = scope_lookup::lookup_enumeration(
+            en.shared_as<element>(), *en.get_base_name());
+        if (!base_en) {
+            throw_error(0x0091, std::nullopt,
+                "Enum '{}': base enum '{}' not found",
+                {en.get_short_name(), *en.get_base_name()});
+        }
+        // Recursively resolve the base if it hasn't been resolved yet
+        resolve_enumeration(*base_en);
+        en.set_base(base_en);
+    }
+
+    // ── 2. Build the combined list of work entries ──
+    // For derived enums, prepend the base entries (already resolved) so that
+    // references and auto-increment from local entries can see them.
+    struct work_entry {
+        std::string name;
+        bool from_base = false;
+        bool has_literal = false;
+        int64_t literal_value = 0;
+        std::string ref_name;
+        bool is_default = false;
+        bool resolved = false;
+        int64_t resolved_value = 0;
+    };
+    std::vector<work_entry> work;
+
+    // Collect base entries
+    if (en.has_base()) {
+        for (auto& be : en.get_base()->entries()) {
+            work_entry we;
+            we.name = be.name;
+            we.from_base = true;
+            we.has_literal = true;
+            we.literal_value = be.value;
+            we.resolved = true;
+            we.resolved_value = be.value;
+            we.is_default = be.is_default;
+            work.push_back(std::move(we));
+        }
+    }
+
+    // Collect local raw entries
+    size_t local_start = work.size();
+    for (auto& re : en.raw_entries()) {
+        work_entry we;
+        we.name = re.name;
+        we.from_base = false;
+        we.is_default = re.is_default;
+        if (re.explicit_value.has_value()) {
+            we.has_literal = true;
+            we.literal_value = *re.explicit_value;
+            we.resolved = true;
+            we.resolved_value = *re.explicit_value;
+        } else if (!re.ref_name.empty()) {
+            we.ref_name = re.ref_name;
+        }
+        // Check for name shadowing with base entries (warning)
+        if (en.has_base()) {
+            for (size_t i = 0; i < local_start; ++i) {
+                if (work[i].name == we.name) {
+                    logger_relay::warn(with_flag(0x0092), std::nullopt,
+                        "Enum '{}': entry '{}' shadows an inherited entry from base enum '{}'",
+                        {en.get_short_name(), we.name, en.get_base()->get_short_name()});
+                    break;
+                }
+            }
+        }
+        work.push_back(std::move(we));
+    }
+
+    // ── 3. Resolve references and auto-increment ──
+    bool changed = true;
+    size_t max_iter = work.size() + 1;
+    for (size_t iter = 0; iter < max_iter && changed; ++iter) {
+        changed = false;
+        for (size_t i = 0; i < work.size(); ++i) {
+            auto& we = work[i];
+            if (we.resolved) continue;
+
+            if (!we.ref_name.empty()) {
+                // Try to resolve the reference against all entries (base + local)
+                for (auto& other : work) {
+                    if (other.name == we.ref_name && other.resolved) {
+                        we.resolved = true;
+                        we.resolved_value = other.resolved_value;
+                        changed = true;
+                        break;
+                    }
+                }
+            } else {
+                // Auto-increment: value = previous entry's value + 1, or 0 if first
+                if (i == 0) {
+                    we.resolved = true;
+                    we.resolved_value = 0;
+                    changed = true;
+                } else if (work[i-1].resolved) {
+                    we.resolved = true;
+                    we.resolved_value = work[i-1].resolved_value + 1;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    // Check for unresolved entries
+    for (auto& we : work) {
+        if (!we.resolved) {
+            if (!we.ref_name.empty()) {
+                throw_error(0x0073, std::nullopt,
+                    "Enum entry '{}' references unresolvable entry '{}' (cycle or missing entry)",
+                    {we.name, we.ref_name});
+            } else {
+                throw_error(0x0074, std::nullopt,
+                    "Enum entry '{}' could not be resolved (depends on unresolved previous entry)",
+                    {we.name});
+            }
+        }
+    }
+
+    // ── 4. Determine whether the derived enum overrides the default ──
+    bool has_local_default = false;
+    for (size_t i = local_start; i < work.size(); ++i) {
+        if (work[i].is_default) { has_local_default = true; break; }
+    }
+    // If the derived has a local default, clear the inherited default flag
+    if (has_local_default && en.has_base()) {
+        for (size_t i = 0; i < local_start; ++i) {
+            work[i].is_default = false;
+        }
+    }
+    // If no explicit default anywhere, mark the first entry as default
+    bool any_default = false;
+    for (auto& we : work) { if (we.is_default) { any_default = true; break; } }
+    if (!any_default && !work.empty()) {
+        work[0].is_default = true;
+    }
+
+    // ── 5. Determine the smallest underlying type ──
+    int64_t min_val = 0, max_val = 0;
+    for (auto& we : work) {
+        if (we.resolved_value < min_val) min_val = we.resolved_value;
+        if (we.resolved_value > max_val) max_val = we.resolved_value;
+    }
+
+    primitive_type::PRIMITIVE_TYPE prim_type;
+    if (min_val >= 0) {
+        if (max_val <= 255) prim_type = primitive_type::BYTE;
+        else if (max_val <= 65535) prim_type = primitive_type::UNSIGNED_SHORT;
+        else if (max_val <= 4294967295LL) prim_type = primitive_type::UNSIGNED_INT;
+        else prim_type = primitive_type::UNSIGNED_LONG;
+    } else {
+        if (min_val >= -128 && max_val <= 127) prim_type = primitive_type::CHAR;
+        else if (min_val >= -32768 && max_val <= 32767) prim_type = primitive_type::SHORT;
+        else if (min_val >= -2147483648LL && max_val <= 2147483647LL) prim_type = primitive_type::INT;
+        else prim_type = primitive_type::LONG;
+    }
+
+    auto underlying = _context->from_type(prim_type);
+    en.set_underlying_type(underlying);
+
+    // ── 6. Populate the resolved entries ──
+    // Store ALL entries (base + local) so that entries() returns the full set.
+    for (auto& we : work) {
+        en.add_entry(we.name, we.resolved_value, we.is_default);
+    }
+
+    // ── 7. Create and register enum_type ──
+    auto et = std::shared_ptr<enum_type>(new enum_type(
+        std::dynamic_pointer_cast<enumeration>(en.shared_from_this()), underlying));
+    en.set_enum_type(et);
+    _context->add_enum(en.get_short_name(), et);
+
+    en._resolving = false;
+    en.set_resolved(true);
 }
 
 // implementation_generator::visit_aggregate

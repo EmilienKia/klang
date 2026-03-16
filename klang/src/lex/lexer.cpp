@@ -51,7 +51,6 @@ namespace k::lex {
         {"default", keyword::DEFAULT},
         {"delete", keyword::DELETE},
         {"new", keyword::NEW},
-        {"enum", keyword::ENUM},
 
         {"bool", keyword::BOOL},
         {"byte", keyword::BYTE},

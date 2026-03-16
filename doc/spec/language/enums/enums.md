@@ -13,7 +13,7 @@ all declared values as the *underlying type*.
 
 ```
 EnumDecl:
-    { Specifier } 'enum' Identifier '{' { EnumEntry } '}' ';'
+    { Specifier } 'enum' Identifier [ ':' QualifiedName ] '{' { EnumEntry } '}' ';'
 
 EnumEntry:
     Identifier [ '=' ( IntegerLiteral | Identifier ) ] [ 'default' ] ';'
@@ -41,18 +41,61 @@ enum Color {
 
 ---
 
-## 2. Usage
+## 2. Enum derivation
 
-### 2.1 Qualified access
+An enum may **derive** from another enum using single-inheritance syntax.
+The derived enum inherits all entries from its base and may add new ones.
+
+```k
+enum Shape {
+    CIRCLE = 0;
+    SQUARE = 1;
+};
+
+enum ExtShape : Shape {
+    TRIANGLE = 2;
+    HEXAGON;          // auto-incremented from last base entry → 3 if no gap
+};
+```
+
+### Rules
+
+| Rule | Description |
+|------|-------------|
+| **Single inheritance** | Only one base enum is allowed (`enum D : B { … }`).  Multiple inheritance is not supported. |
+| **Multi-level** | Derivation chains are supported: `enum C : B` where `enum B : A`.  `C` inherits entries from both `A` and `B`. |
+| **Entry visibility** | All entries from the base are accessible via the derived name: `ExtShape::CIRCLE` works. |
+| **Auto-increment** | The first entry without an explicit value in the derived enum continues from the last entry value of the base (base + local entries form a single sequence). |
+| **References** | A new entry may reference a base entry by name: `ALIAS = CIRCLE;`. |
+| **Default inheritance** | If the derived enum does not declare a new `default`, the base's default is inherited.  If the derived declares a `default`, it overrides the inherited one. |
+| **Name shadowing** | A derived entry may have the same name as a base entry (a compiler **warning** is emitted).  The derived entry takes precedence for the derived enum's entry list. |
+| **Cycle detection** | Circular derivation (`A : B`, `B : A`) is detected and rejected with an error. |
+| **Declaration order** | The base enum does not need to be declared before the derived enum — the compiler resolves forward references. |
+| **Underlying type** | The underlying type of the derived enum is the smallest type that fits **all** entries (inherited + local). |
+
+### Conversion rules for derived enums
+
+| Source | Target | Allowed | Notes |
+|--------|--------|---------|-------|
+| `Derived` | `Base` | ✔ (widening) | Upcast: implicit, always safe |
+| `Base` | `Derived` | ✘ (error) | Downcast: not allowed |
+| Unrelated enums | | ✘ (error) | No implicit conversion between unrelated enums |
+
+---
+
+## 3. Usage
+
+### 3.1 Qualified access
 
 ```k
 c : Color = Color::BLUE;
+d : ExtShape = ExtShape::CIRCLE;   // inherited entry
 ```
 
 The fully qualified form `EnumName::entryName` is always available and
 follows the standard symbol lookup / scope resolution rules.
 
-### 2.2 Constructor-style initialization
+### 3.2 Constructor-style initialization
 
 ```k
 c : Color(GREEN);     // entry name resolved relative to Color
@@ -64,11 +107,12 @@ When using the constructor form `EnumName(arg)`:
 
 - If `arg` is an unqualified identifier, it is resolved as an entry name
   **relative to the enum** (no scope lookup for variables or functions).
+  For derived enums, inherited entry names are also searched.
 - If `arg` is a numeric literal or an already-resolved expression, it is
   implicitly converted to the enum type.
 - If no argument is given, the default entry value is used.
 
-### 2.3 Assignment from numeric value
+### 3.3 Assignment from numeric value
 
 ```k
 c : Color = 2;        // implicit int → Color conversion
@@ -76,20 +120,23 @@ c : Color = 2;        // implicit int → Color conversion
 
 ---
 
-## 3. Implicit conversions
+## 4. Implicit conversions
 
 | Source | Target | Weight | Notes |
 |--------|--------|--------|-------|
 | `E` | same `E` | identity | No conversion needed |
-| `E` | different `F` | widening | Allowed; a warning may be emitted |
+| `Derived` | `Base` | widening | Upcast (only for derived→base relationship) |
 | `E` | primitive int | widening | Implicit |
 | primitive int | `E` | widening | Implicit |
 | `ref<E>` | `E` | ref-load | Load + identity |
 | `ref<E>` | primitive int | ref-load + widening | Load then convert |
 
+> **Note:** Implicit conversions between unrelated enums are **not** allowed.
+> Only `Derived → Base` (upcast) is permitted.
+
 ---
 
-## 4. Comparison operators
+## 5. Comparison operators
 
 All six comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) are
 supported on enum values.  Both operands are implicitly converted to
@@ -103,7 +150,7 @@ if (c == 1) { /* ... */ }
 
 ---
 
-## 5. Underlying type selection
+## 6. Underlying type selection
 
 | All values ≥ 0 | Range | Underlying type |
 |:-:|-------------|-----------------|
@@ -116,24 +163,27 @@ if (c == 1) { /* ... */ }
 | ✘ | −2³¹ … 2³¹−1 | `int` |
 | ✘ | everything else | `long` |
 
+For derived enums, the range includes **all** entries (inherited + local).
+
 ---
 
-## 6. LLVM IR representation
+## 7. LLVM IR representation
 
 An enum value is represented as a plain integer of the underlying type.
 There is no distinct LLVM type — the enum_type is a compiler-level
 abstraction.  Casts between enum and integer are either no-ops (same bit
 width) or integer truncation / extension.
 
+Derived enums are represented identically to their base — the derivation
+relationship exists only at the compiler's type-system level.
+
 ---
 
-## 7. Future extensions
+## 8. Future extensions
 
 The following features are **not** currently supported but are planned
 for future versions:
 
-- **Enum inheritance / extension**: extending an existing enum with new
-  entries.
 - **Non-numeric backing types**: using types other than primitive integers
   as the underlying representation.
 - **Methods on enums**: defining member functions associated with an enum
