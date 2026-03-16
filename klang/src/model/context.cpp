@@ -95,6 +95,10 @@ void context::add_struct(std::shared_ptr<struct_type> st_type) {
     _struct_types.insert({st_type->name(), st_type});
 }
 
+void context::add_enum(const std::string& name, std::shared_ptr<enum_type> et) {
+    _enum_types.insert({name, et});
+}
+
 void context::materialise_opaque_struct_type(std::shared_ptr<struct_type> st_type) {
     if (st_type->is_resolved()) return; // already has an LLVM type
     // Create an opaque (body-less) LLVM StructType so that is_resolved() returns true.
@@ -213,6 +217,14 @@ std::shared_ptr<type> context::from_string(const std::string& type_name) {
 
     // Look for enum types
     if(auto it = _enum_types.find(type_name); it!=_enum_types.end()) {
+        return it->second;
+    }
+
+    // TODO find other types by name.
+    return create_unresolved(name(type_name));
+}
+
+std::shared_ptr<type> context::from_keyword(const lex::keyword& kw, bool is_unsigned) {
     return from_string(is_unsigned ? (std::string("unsigned ") + std::string(kw.content)) : std::string(kw.content));
     // TODO find other types by name.
 }
@@ -727,6 +739,11 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
                 return resolved_type;
             }
             if (!resolved_type->is_resolved()) {
+                // TODO throw an exception
+                std::cerr << "Error: cannot resolve type: " << unres->type_id().to_string() << std::endl;
+                return nullptr;
+            } else {
+                unres->resolve(resolved_type);
                 return resolved_type;
             }
         }

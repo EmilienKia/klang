@@ -164,6 +164,13 @@ public:
 };
 
 class symbol_expression : public expression {
+public:
+    /** Resolved target for enum entries: holds the enumeration and the entry index. */
+    struct enum_entry_target {
+        std::shared_ptr<enumeration> enum_def;
+        size_t entry_index; // index into enumeration->entries()
+    };
+
 protected:
     // Name of the symbol when not resolved.
     name _name;
@@ -171,7 +178,8 @@ protected:
     std::variant<
             std::monostate, // Not resolved
             std::shared_ptr<variable_definition>,
-            std::shared_ptr<function>
+            std::shared_ptr<function>,
+            enum_entry_target
     > _target;
 
     symbol_expression(const name &name);
@@ -222,6 +230,14 @@ public:
         }
     }
 
+    bool is_enum_entry() const {
+        return std::holds_alternative<enum_entry_target>(_target);
+    }
+
+    const enum_entry_target& get_enum_entry() const {
+        return std::get<enum_entry_target>(_target);
+    }
+
     bool is_resolved() const {
         return _target.index() != 0;
     }
@@ -229,6 +245,8 @@ public:
     void set_target(std::shared_ptr<variable_definition> var);
 
     void set_target(std::shared_ptr<function> func);
+
+    void set_target(enum_entry_target target) { _target = std::move(target); }
 
     std::shared_ptr<expression> clone() const override {
         return std::shared_ptr<symbol_expression>(new symbol_expression(*this));

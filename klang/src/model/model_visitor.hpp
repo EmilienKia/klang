@@ -49,6 +49,7 @@ public:
     virtual void visit_structure(structure&) =0;
     virtual void visit_klass(klass&) =0;
     virtual void visit_interface(interface&) =0;
+    virtual void visit_enumeration(enumeration&) =0;
     virtual void visit_function(function&) =0;
     virtual void visit_constructor(constructor&) =0;
     virtual void visit_destructor(destructor&) =0;
@@ -157,6 +158,7 @@ public:
     void visit_structure(structure&) override;
     void visit_klass(klass&) override;
     void visit_interface(interface&) override;
+    void visit_enumeration(enumeration&) override;
     void visit_function(function&) override;
     void visit_constructor(constructor&) override;
     void visit_destructor(destructor&) override;

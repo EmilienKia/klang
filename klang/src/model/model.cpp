@@ -193,6 +193,46 @@ std::shared_ptr<structure> aggregate_holder::get_structure(const std::string &na
 }
 
 
+//
+// Enum holder
+//
+
+std::shared_ptr<enumeration> enum_holder::define_enum(const std::string &name) {
+    std::shared_ptr<enumeration> en = do_create_enum(name);
+    _enums.insert({name, en});
+    on_enum_defined(en);
+    return en;
+}
+
+std::shared_ptr<enumeration> enum_holder::get_enum(const std::string &name) const {
+    auto it = _enums.find(name);
+    if (it != _enums.end()) {
+        return it->second;
+    } else {
+        return {};
+    }
+}
+
+
+//
+// Enumeration
+//
+
+std::shared_ptr<enumeration> enumeration::make_shared(std::shared_ptr<element> parent, const std::string& name) {
+    auto en = std::shared_ptr<enumeration>(new enumeration(parent));
+    en->assign_name(name);
+    return en;
+}
+
+void enumeration::update_mangled_name() {
+    // Use the same mangling convention as struct types
+    _mangled_name = std::to_string(_short_name.size()) + _short_name;
+}
+
+void enumeration::accept(model_visitor& visitor) {
+    visitor.visit_enumeration(*this);
+}
+
 
 //
 // Variable definition
@@ -764,6 +804,14 @@ void aggregate::on_aggregate_defined(std::shared_ptr<aggregate> agg) {
     _children.push_back(agg);
 }
 
+std::shared_ptr<enumeration> aggregate::do_create_enum(const std::string &name) {
+    return enumeration::make_shared(shared_as<aggregate>(), name);
+}
+
+void aggregate::on_enum_defined(std::shared_ptr<enumeration> en) {
+    _children.push_back(en);
+}
+
 bool aggregate::is_derived_from(const std::shared_ptr<aggregate>& base_st) const {
     for (auto& bs : _bases) {
         if (!bs.base) continue;
@@ -995,6 +1043,14 @@ std::shared_ptr<interface> ns::do_create_interface(const std::string &name) {
 
 void ns::on_aggregate_defined(std::shared_ptr<aggregate> agg) {
     _children.push_back(agg);
+}
+
+std::shared_ptr<enumeration> ns::do_create_enum(const std::string &name) {
+    return enumeration::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name);
+}
+
+void ns::on_enum_defined(std::shared_ptr<enumeration> en) {
+    _children.push_back(en);
 }
 
 
