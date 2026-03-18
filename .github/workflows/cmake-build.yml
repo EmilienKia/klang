@@ -34,12 +34,12 @@ jobs:
             pkg-config \
             build-essential \
             libcbor-dev \
-            libboost-all-dev \
+            libboost-program-options-dev \
             nlohmann-json3-dev \
             libfmt-dev \
             catch2 \
             llvm-18-dev \
-            clang
+            clang-18
 
       # ── Configure ───────────────────────────────────────────────────────────
       - name: Configure CMake
