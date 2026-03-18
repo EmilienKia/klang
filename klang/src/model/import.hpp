@@ -60,6 +60,11 @@ struct imported_module {
 
     /// True once a symbol from this import has been used (for unused-import warning).
     bool used = false;
+
+    /// True if this import was implicitly injected by the compiler (e.g. the
+    /// base standard library "k").  Implicit imports are never flagged as
+    /// unused and are always linked.
+    bool implicit = false;
 };
 
 } // namespace k::model

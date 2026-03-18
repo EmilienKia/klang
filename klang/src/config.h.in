@@ -17,4 +17,13 @@
 // Empty string if not detected.
 #define KLANG_LIBRARY_ARCHITECTURE "@KLANG_LIBRARY_ARCHITECTURE@"
 
+// Build-time path to the K base standard library KDI descriptor directory.
+// Used by the compiler to locate libk.kdi for implicit import of module "k".
+// May be empty if not configured (e.g. installed system-wide).
+#define KLANG_STDLIB_KDI_DIR "@KLANG_STDLIB_KDI_DIR@"
+
+// Build-time path to the K base standard library binary directory.
+// Used by the linker to locate libk.so / libk.a.
+#define KLANG_STDLIB_LIB_DIR "@KLANG_STDLIB_LIB_DIR@"
+
 #endif // KLANG_CONFIG_H

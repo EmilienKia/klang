@@ -62,3 +62,4 @@ message(STATUS "KLANG_LIB_PATH_ENV_VAR: ${KLANG_LIB_PATH_ENV_VAR}")
 # ── Sub-projects ──────────────────────────────────────────────────────────────
 add_subdirectory(libkdi)
 add_subdirectory(klang)
+add_subdirectory(libk)

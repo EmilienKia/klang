@@ -278,7 +278,27 @@ int main(int argc, const char** argv) {
                 resolver->add_dirs_from_env(env_name);
             }
 
-            // 5. System directories (configured by CMake via config.h)
+            // 5. K base standard library directories (configured by CMake)
+#if defined(KLANG_STDLIB_KDI_DIR)
+            {
+                const std::string stdlib_kdi(KLANG_STDLIB_KDI_DIR);
+                if (!stdlib_kdi.empty()) {
+                    resolver->add_search_dir(stdlib_kdi);
+                }
+            }
+#endif
+#if defined(KLANG_STDLIB_LIB_DIR)
+            {
+                const std::string stdlib_lib(KLANG_STDLIB_LIB_DIR);
+                // Add as a search dir too — the linker uses the same list
+                // for -L flags (via get_lib_search_dirs)
+                if (!stdlib_lib.empty() && stdlib_lib != std::string(KLANG_STDLIB_KDI_DIR)) {
+                    resolver->add_search_dir(stdlib_lib);
+                }
+            }
+#endif
+
+            // 6. System directories (configured by CMake via config.h)
 #if defined(KLANG_LIBRARY_ARCHITECTURE) && !defined(_WIN32)
             const std::string arch(KLANG_LIBRARY_ARCHITECTURE);
             if (!arch.empty()) {

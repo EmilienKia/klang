@@ -330,6 +330,21 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
 
         k::model::model_builder::visit(*this, _context, *_ast_unit, *_model_unit);
 
+        // ── Implicit import of base standard library (module "k") ───────
+        // Every K module automatically imports "k" unless:
+        //   - it IS "k" itself (bootstrap: stdlib cannot import itself)
+        //   - the user already wrote "import k;" (add_import deduplicates)
+        {
+            const auto unit_name = _model_unit->get_unit_name().to_string();
+            if (unit_name != "k") {
+                _model_unit->add_import(k::name("k"));
+                // Mark as implicit so it won't trigger unused-import warnings
+                if (auto* imp = _model_unit->find_import(k::name("k"))) {
+                    imp->implicit = true;
+                }
+            }
+        }
+
         // ── Import resolution ──────────────────────────────────────────────
         // Build a default resolver (current dir) if none was set by the caller.
         if (!_file_resolver) {
@@ -651,6 +666,19 @@ std::vector<std::string> compiler::build_import_link_args() const {
     // ── -l<base> for each used direct import ──────────────────────────────
     // Track added lib bases to avoid duplicates (direct + transitive may overlap)
     std::unordered_set<std::string> added_libs;
+
+    // Always link the base standard library (libk) unless we ARE building it
+    // or it was not resolved (e.g. during bootstrap / tests without stdlib).
+    {
+        const auto unit_name = _model_unit->get_unit_name().to_string();
+        if (unit_name != "k") {
+            auto* k_import = _model_unit->find_import(k::name("k"));
+            if (k_import && k_import->kdi) {
+                added_libs.insert("k");
+                args.push_back("-lk");
+            }
+        }
+    }
 
     for (const auto& imp : _model_unit->get_imports()) {
         if (!imp.used) continue;

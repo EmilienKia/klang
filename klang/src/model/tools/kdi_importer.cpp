@@ -206,8 +206,22 @@ kdi_importer::load_module(const std::string& canon) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void kdi_importer::import_all() {
-    for (auto& imp : _unit.get_imports()) {
+    // First pass: collect indices of imports that must be removed (implicit
+    // imports whose KDI is not available — e.g. the base stdlib during bootstrap).
+    std::vector<std::size_t> to_remove;
+
+    for (std::size_t i = 0; i < _unit.get_imports().size(); ++i) {
+        auto& imp = _unit.get_imports()[i];
         const std::string canon = canonical(imp.module_name);
+
+        if (imp.implicit) {
+            // Implicit import: try to resolve but don't fail if missing
+            auto path_opt = _resolver.resolve(canon, ".kdi");
+            if (!path_opt) {
+                to_remove.push_back(i);
+                continue;
+            }
+        }
 
         auto kdi_ptr = load_module(canon);
 
@@ -219,6 +233,14 @@ void kdi_importer::import_all() {
         auto path_opt = _resolver.resolve(canon, ".kdi");
         if (path_opt) {
             imp.resolved_kdi_path = path_opt->string();
+        }
+    }
+
+    // Remove unresolved implicit imports (reverse order to keep indices valid)
+    if (!to_remove.empty()) {
+        auto& imports = _unit.get_imports();
+        for (auto it = to_remove.rbegin(); it != to_remove.rend(); ++it) {
+            imports.erase(imports.begin() + static_cast<std::ptrdiff_t>(*it));
         }
     }
 
@@ -406,7 +428,7 @@ void kdi_importer::materialise_variable(const kdi::kdi_variable& var,
 
 void kdi_importer::check_unused_imports() const {
     for (const auto& imp : _unit.get_imports()) {
-        if (!imp.used) {
+        if (!imp.used && !imp.implicit) {
             auto diag = k::log::diagnostic::make_warning(
                 0x80010,
                 "Imported module '{}' is declared but none of its symbols "
