@@ -17,7 +17,7 @@ find_package(nlohmann_json REQUIRED)
 
 find_package(fmt REQUIRED)
 
-find_package(Boost 1.74 REQUIRED
+find_package(Boost REQUIRED
     COMPONENTS program_options system filesystem
 )
 include_directories(${Boost_INCLUDE_DIRS})
