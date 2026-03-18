@@ -1129,6 +1129,9 @@ protected:
     /** True if this member function is declared const (this parameter is ref<const T>). */
     bool _is_const_member = false;
 
+    /** True if this function is an operator overload (e.g. operator_add, operator_eq, etc.). */
+    bool _is_operator = false;
+
     /**
      * True if this function is virtual (dispatch through vtable).
      * Set during symbol resolution for non-static, non-private member functions of classes.
@@ -1231,6 +1234,11 @@ public:
     bool is_const_member() const { return _is_const_member; }
     /** Set whether this member function is const. */
     void set_const_member(bool v) { _is_const_member = v; }
+
+    /** True if this function is an operator overload. */
+    bool is_operator() const { return _is_operator; }
+    /** Set whether this function is an operator overload. */
+    void set_operator(bool v) { _is_operator = v; }
 
     /**
      * Reset the implicit 'this' parameter so that create_this_parameter() will

@@ -51,7 +51,10 @@ imported_function::imported_function(std::shared_ptr<element> parent,
     : function(std::move(parent), /*is_static=*/true)
     , _kdi_function(kdi_fn)
 {
-    if (kdi_fn) _mangled_name = kdi_fn->mangled_name;
+    if (kdi_fn) {
+        _mangled_name = kdi_fn->mangled_name;
+        _is_operator  = kdi_fn->is_operator;
+    }
 }
 void imported_function::update_mangled_name() {
     if (_kdi_function) _mangled_name = _kdi_function->mangled_name;
@@ -121,6 +124,7 @@ imported_method::imported_method(std::shared_ptr<element> parent,
         _is_const_member  = kdi_m->is_const_member;
         _is_abstract_func = kdi_m->is_abstract;
         _is_final_func    = kdi_m->is_final;
+        _is_operator      = kdi_m->is_operator;
         _vtable_slot      = kdi_m->vtable_slot;
     }
 }

@@ -21,6 +21,8 @@
 
 #include "parser.hpp"
 
+#include <deque>
+
 #include "../common/logger.hpp"
 
 namespace k::parse {
@@ -564,10 +566,128 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         }
     }
 
-    // Check for destructor syntax: ~identifier
+    // Check for operator function syntax: 'operator' OP_SYMBOL
+    bool is_operator = false;
     bool is_destructor = false;
+    bool is_cast_operator = false;
+    std::string canonical_name;
     auto lname= _lexer.get();
-    if(lname == lex::operator_::TILDE) {
+
+    if(lname == lex::keyword::OPERATOR) {
+        // Parse the operator symbol and map to canonical name
+        is_operator = true;
+        auto lop = _lexer.get();
+        if(!lop) {
+            throw_error(0x0050, _lexer.pick_current(), "Expected operator symbol after 'operator' keyword");
+        }
+
+        // Check for casting operator: operator() : ReturnType
+        if(lop == lex::punctuator::PARENTHESIS_OPEN) {
+            auto lclose = _lexer.get();
+            if(lclose == lex::punctuator::PARENTHESIS_CLOSE) {
+                is_cast_operator = true;
+            } else {
+                throw_error(0x0056, _lexer.pick_current(), "Casting operator must have empty parameter list: operator()");
+            }
+        }
+
+        if(is_cast_operator) {
+            // Casting operator: the return type will be parsed later and injected into the canonical name.
+            // For now, use a placeholder name that will be updated after return type is parsed.
+            canonical_name = "__operator_cv_";
+        } else if(lex::is<lex::operator_>(lop)) {
+            auto& op = lex::as<lex::operator_>(lop);
+            switch(op.type) {
+                case lex::operator_::PLUS:  canonical_name = "__operator_pl_"; break;
+                case lex::operator_::MINUS: canonical_name = "__operator_mi_"; break;
+                case lex::operator_::STAR:  canonical_name = "__operator_ml_"; break;
+                case lex::operator_::SLASH: canonical_name = "__operator_dv_"; break;
+                case lex::operator_::PERCENT: canonical_name = "__operator_rm_"; break;
+                case lex::operator_::AMPERSAND: canonical_name = "__operator_an_"; break;
+                case lex::operator_::PIPE:  canonical_name = "__operator_or_"; break;
+                case lex::operator_::CARET: canonical_name = "__operator_eo_"; break;
+                case lex::operator_::TILDE: canonical_name = "__operator_co_"; break;
+                case lex::operator_::DOUBLE_CHEVRON_OPEN: canonical_name = "__operator_ls_"; break;
+                case lex::operator_::DOUBLE_CHEVRON_CLOSE: canonical_name = "__operator_rs_"; break;
+                case lex::operator_::DOUBLE_AMPERSAND: canonical_name = "__operator_aa_"; break;
+                case lex::operator_::DOUBLE_PIPE: canonical_name = "__operator_oo_"; break;
+                case lex::operator_::EXCLAMATION_MARK: canonical_name = "__operator_nt_"; break;
+                case lex::operator_::DOUBLE_EQUAL: canonical_name = "__operator_eq_"; break;
+                case lex::operator_::EXCLAMATION_MARK_EQUAL: canonical_name = "__operator_ne_"; break;
+                case lex::operator_::CHEVRON_OPEN: canonical_name = "__operator_lt_"; break;
+                case lex::operator_::CHEVRON_CLOSE: canonical_name = "__operator_gt_"; break;
+                case lex::operator_::CHEVRON_OPEN_EQUAL: canonical_name = "__operator_le_"; break;
+                case lex::operator_::CHEVRON_CLOSE_EQUAL: canonical_name = "__operator_ge_"; break;
+                case lex::operator_::EQUAL: canonical_name = "__operator_aS_"; break;
+                case lex::operator_::PLUS_EQUAL: canonical_name = "__operator_pL_"; break;
+                case lex::operator_::MINUS_EQUAL: canonical_name = "__operator_mI_"; break;
+                case lex::operator_::STAR_EQUAL: canonical_name = "__operator_mL_"; break;
+                case lex::operator_::SLASH_EQUAL: canonical_name = "__operator_dV_"; break;
+                case lex::operator_::PERCENT_EQUAL: canonical_name = "__operator_rM_"; break;
+                case lex::operator_::AMPERSAND_EQUAL: canonical_name = "__operator_aN_"; break;
+                case lex::operator_::PIPE_EQUAL: canonical_name = "__operator_oR_"; break;
+                case lex::operator_::CARET_EQUAL: canonical_name = "__operator_eO_"; break;
+                case lex::operator_::DOUBLE_CHEVRON_OPEN_EQUAL: canonical_name = "__operator_lS_"; break;
+                case lex::operator_::DOUBLE_CHEVRON_CLOSE_EQUAL: canonical_name = "__operator_rS_"; break;
+                case lex::operator_::DOUBLE_PLUS: {
+                    // Check for prefix (++_) vs postfix (_++) form
+                    lex::lex_holder inc_holder(_lexer);
+                    auto lnext = _lexer.get();
+                    if(lex::is<lex::identifier>(lnext) && std::string{lex::as<lex::identifier>(lnext).content} == "_") {
+                        canonical_name = "__operator_pp_";
+                    } else {
+                        inc_holder.rollback();
+                        throw_error(0x0051, _lexer.pick_current(), "Expected '_' after '++' in operator declaration (use '++_' for prefix increment or '_++' for postfix increment)");
+                    }
+                    break;
+                }
+                case lex::operator_::DOUBLE_MINUS: {
+                    // Check for prefix (--_) vs postfix (_--) form
+                    lex::lex_holder dec_holder(_lexer);
+                    auto lnext = _lexer.get();
+                    if(lex::is<lex::identifier>(lnext) && std::string{lex::as<lex::identifier>(lnext).content} == "_") {
+                        canonical_name = "__operator_mm_";
+                    } else {
+                        dec_holder.rollback();
+                        throw_error(0x0052, _lexer.pick_current(), "Expected '_' after '--' in operator declaration (use '--_' for prefix decrement or '_--' for postfix decrement)");
+                    }
+                    break;
+                }
+                default:
+                    throw_error(0x0053, _lexer.pick_previous(), "Unsupported operator symbol in 'operator' declaration");
+            }
+        } else if(lex::is<lex::identifier>(lop) && std::string{lex::as<lex::identifier>(lop).content} == "_") {
+            // Postfix forms: _++ or _--
+            auto lop2 = _lexer.get();
+            if(lop2 == lex::operator_::DOUBLE_PLUS) {
+                canonical_name = "__operator_PP_";
+            } else if(lop2 == lex::operator_::DOUBLE_MINUS) {
+                canonical_name = "__operator_MM_";
+            } else {
+                throw_error(0x0054, _lexer.pick_previous(), "Expected '++' or '--' after '_' in postfix operator declaration (use '_++' for postfix increment or '_--' for postfix decrement)");
+            }
+        } else {
+            throw_error(0x0055, _lexer.pick_previous(), "Expected a valid operator symbol after 'operator' keyword");
+        }
+        // Create a synthetic identifier with the canonical name.
+        // We need the string to outlive the parser, so we use a static storage deque.
+        // A deque is used instead of a vector because deque::push_back never
+        // invalidates references to existing elements (no reallocation),
+        // which is critical since string_view's into earlier entries must remain valid.
+        static std::deque<std::string> operator_name_storage;
+        operator_name_storage.push_back(canonical_name);
+        std::string_view name_view(operator_name_storage.back());
+        // Replace the last consumed lexeme with the synthetic identifier, then re-read it.
+        _lexer.replace_last(lex::any_lexeme{lex::identifier(name_view)});
+        _lexer.unget();
+        lname = _lexer.get();
+
+        // For casting operators, we've already consumed the empty parentheses.
+        // Skip the normal parenthesis-looking code below.
+        if(!is_cast_operator) {
+            // Normal operator handling continues below...
+        }
+    } else if(lname == lex::operator_::TILDE) {
         // Destructor: expect an identifier after the tilde
         auto lname2 = _lexer.get();
         if(lex::is_not<lex::identifier>(lname2)) {
@@ -581,60 +701,65 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         return {};
     }
 
-    // Look for open parenthesis
-    if(auto lopenpar = _lexer.get(); lopenpar!=lex::punctuator::PARENTHESIS_OPEN) {
-        holder.rollback();
-        return {};
+    // Look for open parenthesis (skip for casting operators)
+    if(!is_cast_operator) {
+        if(auto lopenpar = _lexer.get(); lopenpar!=lex::punctuator::PARENTHESIS_OPEN) {
+            holder.rollback();
+            return {};
+        }
     }
 
-    // Look for parameter_spec declarations
+    // Look for parameter_spec declarations (skip for casting operators which have no params)
     std::vector<std::shared_ptr<ast::parameter_spec>> params;
-    auto lex = _lexer.get();
-    if(!lex) {
-        throw_error(0x0009, _lexer.pick_current(), "Function declaration expects finalizing its declaration");
-    }
-    if(lex!=lex::punctuator::PARENTHESIS_CLOSE) {
-        if(is_destructor) {
-            throw_error(0x003D, _lexer.pick_current(), "Destructor declaration must have no parameters");
-        }
-        _lexer.unget();
-        holder.sync();
-        // Look for first parameter_spec
-        auto param = parse_parameter_spec();
-        if(param) {
-            params.push_back(param);
-        } else {
-            throw_error(0x000A, _lexer.pick_current(), "Function declaration expects a first parameter declaration");
-        }
 
-        while(true) {
-            lex = _lexer.get();
-            if(!lex) {
-                throw_error(0x000B, _lexer.pick_current(), "Function declaration expects finalizing its declaration");
+    if(!is_cast_operator) {
+        auto lex = _lexer.get();
+        if(!lex) {
+            throw_error(0x0009, _lexer.pick_current(), "Function declaration expects finalizing its declaration");
+        }
+        if(lex!=lex::punctuator::PARENTHESIS_CLOSE) {
+            if(is_destructor) {
+                throw_error(0x003D, _lexer.pick_current(), "Destructor declaration must have no parameters");
             }
-            if(lex==lex::punctuator::PARENTHESIS_CLOSE) {
-                break;
-            }
-            if(lex!=lex::punctuator::COMMA){
-                throw_error(0x000C, _lexer.pick_current(), "Function declaration expects a closing parenthesis ')' for finalizing its prototype or a comma ',' to specify another parameter");
-            }
-
-            // Look for next parameter_spec
+            _lexer.unget();
+            holder.sync();
+            // Look for first parameter_spec
             auto param = parse_parameter_spec();
             if(param) {
                 params.push_back(param);
             } else {
-                throw_error(0x000D, _lexer.pick_current(), "Function declaration expects a parameter specification");
+                throw_error(0x000A, _lexer.pick_current(), "Function declaration expects a first parameter declaration");
             }
-        }
 
-        // Validate: default values must only appear on trailing parameters
-        bool found_default = false;
-        for(auto& p : params) {
-            if(p->default_expr) {
-                found_default = true;
-            } else if(found_default) {
-                throw_error(0x0040, _lexer.pick_current(), "Parameter without default value cannot follow a parameter with a default value");
+            while(true) {
+                lex = _lexer.get();
+                if(!lex) {
+                    throw_error(0x000B, _lexer.pick_current(), "Function declaration expects finalizing its declaration");
+                }
+                if(lex==lex::punctuator::PARENTHESIS_CLOSE) {
+                    break;
+                }
+                if(lex!=lex::punctuator::COMMA){
+                    throw_error(0x000C, _lexer.pick_current(), "Function declaration expects a closing parenthesis ')' for finalizing its prototype or a comma ',' to specify another parameter");
+                }
+
+                // Look for next parameter_spec
+                auto param = parse_parameter_spec();
+                if(param) {
+                    params.push_back(param);
+                } else {
+                    throw_error(0x000D, _lexer.pick_current(), "Function declaration expects a parameter specification");
+                }
+            }
+
+            // Validate: default values must only appear on trailing parameters
+            bool found_default = false;
+            for(auto& p : params) {
+                if(p->default_expr) {
+                    found_default = true;
+                } else if(found_default) {
+                    throw_error(0x0040, _lexer.pick_current(), "Parameter without default value cannot follow a parameter with a default value");
+                }
             }
         }
     }
@@ -648,7 +773,75 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             throw_error(0x003E, _lexer.pick_current(), "Destructor declaration must not have a return type");
         }
 
-        // Try to parse a type specifier first (covers the 'return type' case for non-constructors).
+        // For casting operators, the return type MUST follow the ':' with no mem-initializers
+        if(is_cast_operator) {
+            lex::lex_holder type_holder(_lexer);
+            restype = parse_type_spec();
+            if(!restype) {
+                throw_error(0x0057, _lexer.pick_current(), "Casting operator declaration expects a return type after ':'");
+            }
+            // type_holder stays synced (consumed) — parse_type_spec() already advanced the lexer
+
+            // Encode the return type into the canonical name
+            // Helper lambda to encode type specifier
+            std::function<std::string(const std::shared_ptr<ast::type_specifier>&)> encode_type;
+            encode_type = [&encode_type](const std::shared_ptr<ast::type_specifier>& ts) -> std::string {
+                if(!ts) return "void";
+
+                if(auto identified = std::dynamic_pointer_cast<ast::identified_type_specifier>(ts)) {
+                    std::string result;
+                    for(size_t i = 0; i < identified->name.names.size(); ++i) {
+                        if(i > 0) result += "_";
+                        result += std::string(identified->name.names[i].content);
+                    }
+                    return result;
+                }
+                if(auto keyword_ts = std::dynamic_pointer_cast<ast::keyword_type_specifier>(ts)) {
+                    // Encode keyword types (these are built-in types)
+                    switch(keyword_ts->keyword.type) {
+                        case lex::keyword::INT: return "int";
+                        case lex::keyword::DOUBLE: return "double";
+                        case lex::keyword::FLOAT: return "float";
+                        case lex::keyword::BOOL: return "bool";
+                        case lex::keyword::LONG: return keyword_ts->is_unsigned ? "ulong" : "long";
+                        case lex::keyword::SHORT: return keyword_ts->is_unsigned ? "ushort" : "short";
+                        case lex::keyword::CHAR: return keyword_ts->is_unsigned ? "uchar" : "char";
+                        case lex::keyword::BYTE: return keyword_ts->is_unsigned ? "ubyte" : "byte";
+                        default: return "unknown";
+                    }
+                }
+                if(auto ptr = std::dynamic_pointer_cast<ast::pointer_type_specifier>(ts)) {
+                    std::string result = encode_type(ptr->subtype);
+                    switch(ptr->pointer_type.type) {
+                        case lex::operator_::STAR: result += "p"; break;      // pointer
+                        case lex::operator_::AMPERSAND: result += "r"; break; // reference
+                        case lex::operator_::CARET: result += "l"; break;     // link (pin)
+                        case lex::operator_::TILDE: result += "lnk"; break;   // link
+                        case lex::operator_::EXCLAMATION_MARK: result += "o"; break;  // owner
+                        default: break;
+                    }
+                    return result;
+                }
+                if(auto const_ts = std::dynamic_pointer_cast<ast::const_type_specifier>(ts)) {
+                    return encode_type(const_ts->subtype) + "c";  // const qualifier
+                }
+                // Default fallback
+                return "unknown";
+            };
+
+            std::string encoded_type = encode_type(restype);
+            canonical_name = "__operator_cv_" + encoded_type;
+
+            // Update lname to use the corrected name (with encoded return type).
+            // lname is a reference to the lexeme in the lexer's stream; we update it in-place
+            // so that the function_decl constructor picks up the correct name.
+            static std::deque<std::string> cast_operator_name_storage;
+            cast_operator_name_storage.push_back(canonical_name);
+            std::string_view name_view(cast_operator_name_storage.back());
+            lname->get() = lex::any_lexeme{lex::identifier(name_view)};
+        } else {
+            // Normal disambiguation logic for non-casting operators
+            // Try to parse a type specifier first (covers the 'return type' case for non-constructors).
         // If it succeeds AND is not followed immediately by a '(' (which would be the first mem-init),
         // it is a return-type specifier. Otherwise, we try to parse as a mem-initializer-list.
         // Disambiguation: a type specifier always comes right before '{', so if after parsing the
@@ -680,6 +873,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 type_holder.rollback();
             }
         }
+        } // end of if(is_cast_operator) else
 
         if(!restype) {
             // Try to parse as mem-initializer-list: MEMBER_INIT {',' MEMBER_INIT}*
@@ -762,16 +956,22 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 if(auto lsemi = _lexer.get(); lsemi != lex::punctuator::SEMICOLON) {
                     throw_error(0x0046, _lexer.pick_current(), "Function aliasing declaration expects ';' after 'default'/'delete'");
                 }
-                // Only constructors (non-static) may use -> default / -> delete
+                // -> default / -> delete is allowed on non-static constructors and on assignment operator declarations.
                 if(is_destructor) {
                     throw_error(0x0047, _lexer.pick_current(),
-                        "The '-> default' / '-> delete' specifier is only allowed on non-static constructors, not on destructors");
+                        "The '-> default' / '-> delete' specifier is only allowed on non-static constructors or assignment operators, not on destructors");
                 }
                 if(lex::keyword::has(specifiers, lex::keyword::STATIC)) {
                     throw_error(0x0048, _lexer.pick_current(),
-                        "The '-> default' / '-> delete' specifier is only allowed on non-static constructors; static constructors cannot be defaulted or deleted");
+                        "The '-> default' / '-> delete' specifier is only allowed on non-static constructors or assignment operators; static functions cannot be defaulted or deleted");
                 }
-                return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), params, aliasing);
+                if(is_operator && aliasing == ast::function_decl::aliasing_spec_t::DEFAULT) {
+                    throw_error(0x0058, _lexer.pick_current(),
+                        "'-> default' is not supported on operator declarations; only '-> delete' is allowed");
+                }
+                auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), params, aliasing);
+                decl->is_operator = is_operator;
+                return decl;
             }
 
             // Not default/delete — try to parse a redirect target: qualifiedId [ '(' type_list ')' ] ';'
@@ -834,14 +1034,18 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             auto lsemi = _lexer.get();
             if (lsemi == lex::punctuator::SEMICOLON) {
                 // Return a function_decl with no body and no aliasing
-                return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, nullptr, is_destructor);
+                auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, nullptr, is_destructor);
+                decl->is_operator = is_operator;
+                return decl;
             }
             semi_holder.rollback();
         }
 
         throw_error(0x000F, _lexer.pick_current(), "Function declaration expects a body block '{ ... }'");
     }
-    return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, statements, is_destructor);
+    auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, statements, is_destructor);
+    decl->is_operator = is_operator;
+    return decl;
 }
 
 std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
@@ -2268,3 +2472,4 @@ std::shared_ptr<ast::brace_init_list> parser::parse_brace_init_list(const lex::p
 }
 
 } // k::parse_all
+

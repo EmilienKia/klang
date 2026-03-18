@@ -156,4 +156,4 @@ result : int = (a + b) * c;
 A bare name or qualified name refers to a declared variable or function.  
 See [Identifiers and Name Expressions](identifiers.md).
 ---
-*See also:* [Literals](literals.md) · [Unary Operators](unary.md) · [Binary Operators](binary.md) · [Assignment Operators](assignment.md) · [Function Call](call.md) · [Dynamic Allocation](../memory/new-delete.md)
+*See also:* [Literals](literals.md) · [Unary Operators](unary.md) · [Binary Operators](binary.md) · [Assignment Operators](assignment.md) · [Function Call](call.md) · [Dynamic Allocation](../memory/new-delete.md) · [Operator Overloading](../functions/operators.md)

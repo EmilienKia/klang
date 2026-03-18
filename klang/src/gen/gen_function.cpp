@@ -284,6 +284,14 @@ void type_reference_resolver::visit_function(function& fn) {
         param->accept(*this);
     }
 
+    // Resolve return type if still unresolved (e.g. member functions returning StructType&)
+    if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
+        auto resolved = _context->resolve_type(fn.get_return_type());
+        if (resolved && type::is_resolved(resolved)) {
+            fn.set_return_type(resolved);
+        }
+    }
+
     // Redirected functions have no body to visit
     if (fn.is_redirected()) {
         return;
@@ -562,6 +570,44 @@ void implementation_generator::visit_function(function &function) {
 
                 // Store the alloca in context for potential use by constructor_invocation_expression
                 _context->_vbase_standalone_allocas[st->shared_as<aggregate>()][vbase->get_short_name()] = vbase_alloca;
+            }
+        }
+    }
+
+    // ── Compiler-generated copy assignment operator: emit memberwise copy ──
+    if (function.is_compiler_generated() && function.is_operator()
+        && function.get_short_name() == "__operator_aS_"
+        && function.is_member() && !function.is_static()) {
+        auto st = function.parent<aggregate>();
+        if (st) {
+            auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+            if (this_param_it != _context->_function_this_variables.end()) {
+                auto this_ptr = _builder->CreateLoad(
+                    st->get_struct_type()->get_reference()->get_llvm_type(),
+                    this_param_it->second, "this_ptr");
+                auto other_param = function.get_parameter("other");
+                if (other_param) {
+                    auto other_alloca_it = _context->_parameter_variables.find(
+                        std::const_pointer_cast<parameter>(other_param));
+                    if (other_alloca_it != _context->_parameter_variables.end()) {
+                        auto other_ref_type = _context->get_llvm_type(st->get_struct_type()->get_reference());
+                        auto other_ptr = _builder->CreateLoad(other_ref_type, other_alloca_it->second, "other_ref");
+                        auto st_llvm_type = _context->get_llvm_type(st->get_struct_type());
+                        // Memberwise copy using memcpy
+                        auto& dl = _context->_module->getDataLayout();
+                        uint64_t size = dl.getTypeAllocSize(st_llvm_type);
+                        _builder->CreateMemCpy(
+                            this_ptr, llvm::MaybeAlign(),
+                            other_ptr, llvm::MaybeAlign(),
+                            _builder->getInt64(size)
+                        );
+                    }
+                }
+                // Return this (ref to struct)
+                _builder->CreateRet(this_ptr);
+                optimize_function_dead_inst_elimination(*func);
+                llvm::verifyFunction(*func);
+                return;
             }
         }
     }

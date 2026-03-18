@@ -41,6 +41,7 @@ They may **not** be used as ordinary identifiers.
 | `for`       | Counter-controlled loop |
 | `new`       | Dynamic allocation operator — allocates and constructs an object, returns a `T!` owner |
 | `delete`    | Dynamic deallocation operator — destroys and frees the object owned by a `T!` variable |
+| `operator`  | Declares an operator overload function (member or non-member) |
 
 ### Grammar
 
@@ -54,6 +55,7 @@ Keyword: (one of)
     this     return
     if       else     while    for
     new      delete   default  enum
+    operator
 ```
 
 ---

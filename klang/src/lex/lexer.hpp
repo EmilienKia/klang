@@ -156,6 +156,26 @@ namespace k::lex {
         opt_ref_any_lexeme get();
         void unget(size_t count = 1);
 
+        /**
+         * Replace the lexeme at the current position (index-1, i.e. the last consumed token)
+         * with the given lexeme. Used by the parser to inject synthetic tokens.
+         */
+        void replace_last(any_lexeme lexeme) {
+            if (index > 0 && index <= lexemes.size()) {
+                lexemes[index - 1] = std::move(lexeme);
+            }
+        }
+
+        /**
+         * Get a mutable reference to the last consumed lexeme (at index-1).
+         */
+        opt_ref_any_lexeme pick_last_mutable() {
+            if (index > 0 && index <= lexemes.size()) {
+                return std::ref(lexemes[index - 1]);
+            }
+            return std::nullopt;
+        }
+
         size_t tell() const;
         void seek(size_t pos);
 

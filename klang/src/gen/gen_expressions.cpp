@@ -37,6 +37,10 @@ void emit_vptr_store(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_pt
 llvm::Value* emit_virtual_dispatch_call(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr,
     int slot_index, llvm::FunctionType* fn_type, const std::vector<llvm::Value*>& args,
     std::shared_ptr<context> ctx, const std::string& result_name);
+// Forward declaration for operator dispatch helper defined in gen_operators.cpp
+virtual_dispatch_info compute_operator_dispatch_info(
+    const std::shared_ptr<function>& func,
+    const std::shared_ptr<type>& receiver_type);
 } // k::model::gen
 template<typename STM>
 inline STM& operator << (STM& stm, const llvm::Type& type) {
@@ -4954,20 +4958,58 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
             // Keep as-is (no load_value replacement).
         }
 
-        // ── Case: ref<Struct/Prim> → value (load) ──────────────────────────────
+        // ── Casting operator overload: (TargetType)struct_value ──────────────
+        // Check BEFORE ref→value unwrapping so that the reference is preserved
+        // as the 'this' parameter for the casting operator call.
         else if(type::is_reference(source_type)) {
-            // ref<T> → T : wrap in load_value
+            auto get_source_aggregate = [](const std::shared_ptr<type>& src) -> std::shared_ptr<aggregate> {
+                auto effective = src;
+                if (type::is_reference(effective)) {
+                    effective = std::dynamic_pointer_cast<reference_type>(effective)->get_referenced_type();
+                }
+                effective = type::remove_const(effective);
+                if (auto st = std::dynamic_pointer_cast<struct_type>(effective)) {
+                    return st->get_struct();
+                }
+                return nullptr;
+            };
+
+            auto source_agg = get_source_aggregate(source_type);
+            if (source_agg) {
+                bool is_const_this = false;
+                auto ref_sub = std::dynamic_pointer_cast<reference_type>(source_type)->get_referenced_type();
+                is_const_this = type::is_const(ref_sub);
+
+                auto cast_func = resolve_cast_operator_overload(source_agg, target_type, is_const_this);
+                if (cast_func) {
+                    expr.set_operator_func(cast_func);
+
+                    // Compute virtual dispatch info if the function is virtual
+                    if (cast_func->is_virtual() && cast_func->get_vtable_slot() >= 0) {
+                        auto receiver_type = source_type;
+                        auto di = compute_operator_dispatch_info(cast_func, receiver_type);
+                        expr.set_operator_dispatch_info(std::move(di));
+                    }
+
+                    expr.set_type(target_type);
+                    return;
+                }
+            }
+
+            // No casting operator found: fall back to ref<T> → T load
             auto deref = load_value_expression::make_shared(sub_expr->shared_as<expression>());
             expr.assign(deref);
             deref->set_type(source_type->get_subtype());
         }
     }
 
-
     expr.set_type(expr.get_cast_type());
 }
 
 void implementation_generator::visit_cast_expression(cast_expression& expr) {
+    // ── Casting operator overload: call __operator_cv_<type>() ───────────────
+    if (generate_cast_operator_overload(expr)) return;
+
     auto source_type = expr.sub_expr()->get_type();
     auto target_type = expr.get_cast_type();
 
@@ -5427,11 +5469,8 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 
     if(src->is_boolean()) {
         if(tgt->is_integer()) {
-            if(tgt->is_unsigned()) {
-                _value = _builder->CreateZExt(_value, _builder->getIntNTy(tgt->type_size()));
-            } else {
-                _value = _builder->CreateSExt(_value, _builder->getIntNTy(tgt->type_size()));
-            }
+            // Bool is logically 0 or 1: always zero-extend, regardless of target signedness.
+            _value = _builder->CreateZExt(_value, _builder->getIntNTy(tgt->type_size()));
         } else if (tgt->is_float()) {
             if(*tgt == primitive_type::FLOAT) {
                 auto ftype = _context->get_llvm_type(tgt);
@@ -5458,8 +5497,6 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                         "unexpected results if the value exceeds the signed range (overflow is implementation-defined)");
                     report(d);
                 }
-                // SExt or trunc for signed integers
-                _value = _builder->CreateSExtOrTrunc(_value, _context->get_llvm_type(tgt));
             } else /* if (tgt->is_unsigned())*/  {
                 if (src->is_signed()) {
                     auto d = k::log::diagnostic::make_warning(with_flag(0x001D),
@@ -5467,8 +5504,13 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                         "as large positive values (two's complement wrap-around)");
                     report(d);
                 }
-                // ZExt or trunc for unsigned integers
+            }
+            // Extension type depends on source signedness:
+            // unsigned source → ZExt, signed source → SExt. Truncation is the same either way.
+            if (src->is_unsigned()) {
                 _value = _builder->CreateZExtOrTrunc(_value, _context->get_llvm_type(tgt));
+            } else {
+                _value = _builder->CreateSExtOrTrunc(_value, _context->get_llvm_type(tgt));
             }
         } else if (tgt->is_float()) {
             if(src->is_unsigned()) {
@@ -5489,7 +5531,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         }
     } else if(src->is_float()) {
         if(tgt->is_boolean()) {
-            _value = _builder->CreateFCmpUNE(_value, llvm::ConstantFP::get(_context->get_llvm_type(tgt), 0.0));
+            _value = _builder->CreateFCmpUNE(_value, llvm::ConstantFP::get(_context->get_llvm_type(src), 0.0));
         } else if(tgt->is_integer()) {
             if(tgt->is_unsigned()) {
                 _value = _builder->CreateFPToUI(_value, _context->get_llvm_type(tgt));

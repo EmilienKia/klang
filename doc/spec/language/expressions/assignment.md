@@ -4,6 +4,8 @@
 
 Assignment operators store a value into a variable or memory location.
 
+> **Operator overloading:** When the left-hand operand is of a user-defined aggregate type (struct, class, or interface), the compiler looks for a matching assignment operator function (`operator =`, `operator +=`, etc.) instead of applying built-in semantics. See [Operator Overloading](../functions/operators.md) for the full specification.
+
 ---
 
 ## Contents
@@ -229,4 +231,4 @@ n += 1;        // increment by 1 (same as ++n)
 - Implicit widening or narrowing conversions are applied as described in [Types — Implicit conversions](../basic/types.md#13-implicit-conversions).
 
 ---
-*See also:* [Binary Operators](binary.md) · [Expressions](expressions.md) · [Types](../basic/types.md) · [Unary Operators](unary.md) · [Dynamic Allocation](../memory/new-delete.md)
+*See also:* [Binary Operators](binary.md) · [Expressions](expressions.md) · [Types](../basic/types.md) · [Unary Operators](unary.md) · [Dynamic Allocation](../memory/new-delete.md) · [Operator Overloading](../functions/operators.md)

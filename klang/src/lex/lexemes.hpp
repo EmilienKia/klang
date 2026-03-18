@@ -140,7 +140,8 @@ struct keyword : public lexeme {
         DEFAULT,
         DELETE,
         NEW,
-        ENUM
+        ENUM,
+        OPERATOR
         /* TODO add new lexeme definition here. */
     };
 

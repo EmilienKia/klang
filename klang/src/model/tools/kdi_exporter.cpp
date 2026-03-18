@@ -665,6 +665,7 @@ void kdi_builder::visit_function(function& fn) {
         km.is_virtual      = fn.is_virtual();
         km.is_abstract     = fn.is_abstract_func();
         km.is_final        = fn.is_final_func();
+        km.is_operator     = fn.is_operator();
         km.vtable_slot     = fn.get_vtable_slot();
         km.return_type     = to_kdi_type(std::const_pointer_cast<type>(fn.get_return_type()));
         km.params          = to_kdi_params(fn);
@@ -682,6 +683,7 @@ void kdi_builder::visit_function(function& fn) {
         kf.fq_name      = fn.get_fq_name();
         kf.visibility   = to_kdi_vis(fn.get_visibility());
         kf.is_static    = fn.is_static();
+        kf.is_operator  = fn.is_operator();
         kf.return_type  = to_kdi_type(std::const_pointer_cast<type>(fn.get_return_type()));
         kf.params       = to_kdi_params(fn);
         kf.mangled_name = fn.get_mangled_name();

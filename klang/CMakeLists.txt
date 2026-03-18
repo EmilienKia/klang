@@ -115,6 +115,9 @@ add_executable(klang-tests
         tests/test-gen-array-size.cpp
         tests/test-gen-designated-init.cpp
         tests/test-multi-source.cpp
+        tests/test-gen-operator-overload.cpp
+        tests/test-gen-assign-operator.cpp
+        tests/test-gen-cast.cpp
 )
 target_link_libraries(klang-tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain kdi)
 target_include_directories(klang-tests PRIVATE ${CMAKE_SOURCE_DIR}/libkdi/src)

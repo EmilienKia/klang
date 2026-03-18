@@ -22,6 +22,8 @@
 #include "model.hpp"
 #include "type.hpp"
 
+#include "../common/operator_names.hpp"
+
 #include <iosfwd>
 #include <sstream>
 
@@ -92,6 +94,20 @@
 namespace k::model {
 
 std::string mangler::mangle_short_name(const std::string& short_name) {
+    // Operator names (__operator_XX_) are mangled as raw 2-letter Itanium codes
+    if (k::op::is_operator_name(short_name)) {
+        auto code = k::op::get_operator_mangling_code(short_name);
+        if (!code.empty()) {
+            if (k::op::is_cast_operator(short_name)) {
+                // Cast operator: "__operator_cv_<encoded_type>" → "cv" + mangled type suffix
+                // The encoded type suffix is everything after "__operator_cv_"
+                constexpr size_t prefix_len = 14; // "__operator_cv_"
+                std::string type_suffix = short_name.substr(prefix_len);
+                return "cv" + std::to_string(type_suffix.size()) + type_suffix;
+            }
+            return code;
+        }
+    }
     //TODO Ensure name is a valid short name (e.g. no special chars, begin with letter or _ , etc)
     return std::to_string(short_name.size()) + short_name;
 }

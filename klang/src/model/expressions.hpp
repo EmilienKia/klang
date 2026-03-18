@@ -259,6 +259,19 @@ protected:
     std::shared_ptr<expression> _sub_expr;
     std::shared_ptr<k::parse::ast::unary_expression> _ast_unary_expr;
 
+    /**
+     * Resolved operator overload function, set during type resolution.
+     * When non-null, the code generator should produce a function call to this operator
+     * function instead of a primitive operation.
+     */
+    std::shared_ptr<function> _operator_func;
+
+    /**
+     * Dispatch info for operator overload virtual dispatch.
+     * Only meaningful when _operator_func is set and virtual.
+     */
+    std::optional<virtual_dispatch_info> _operator_dispatch_info;
+
     unary_expression() = default;
     unary_expression(const unary_expression&) = delete;
     unary_expression(const std::shared_ptr<expression> &sub_expr)
@@ -293,6 +306,16 @@ public:
         return _ast_unary_expr;
     }
 
+    /** Resolved operator overload function (nullptr if primitive operation). */
+    std::shared_ptr<function> get_operator_func() const { return _operator_func; }
+    void set_operator_func(std::shared_ptr<function> f) { _operator_func = std::move(f); }
+    bool has_operator_overload() const { return _operator_func != nullptr; }
+
+    /** Dispatch info for virtual operator calls. */
+    bool has_operator_dispatch_info() const { return _operator_dispatch_info.has_value(); }
+    const virtual_dispatch_info& get_operator_dispatch_info() const { return _operator_dispatch_info.value(); }
+    void set_operator_dispatch_info(virtual_dispatch_info info) { _operator_dispatch_info = std::move(info); }
+
     std::shared_ptr<expression> clone() const override = 0;
 };
 
@@ -302,6 +325,19 @@ protected:
     std::shared_ptr<expression> _left_expr;
     /** Right hand sub expression. */
     std::shared_ptr<expression> _right_expr;
+
+    /**
+     * Resolved operator overload function, set during type resolution.
+     * When non-null, the code generator should produce a function call to this operator
+     * function instead of a primitive operation.
+     */
+    std::shared_ptr<function> _operator_func;
+
+    /**
+     * Dispatch info for operator overload virtual dispatch.
+     * Only meaningful when _operator_func is set and virtual.
+     */
+    std::optional<virtual_dispatch_info> _operator_dispatch_info;
 
     binary_expression() = default;
     binary_expression(const binary_expression&) = delete;
@@ -348,6 +384,16 @@ public:
     std::shared_ptr<expression> &right() {
         return _right_expr;
     }
+
+    /** Resolved operator overload function (nullptr if primitive operation). */
+    std::shared_ptr<function> get_operator_func() const { return _operator_func; }
+    void set_operator_func(std::shared_ptr<function> f) { _operator_func = std::move(f); }
+    bool has_operator_overload() const { return _operator_func != nullptr; }
+
+    /** Dispatch info for virtual operator calls. */
+    bool has_operator_dispatch_info() const { return _operator_dispatch_info.has_value(); }
+    const virtual_dispatch_info& get_operator_dispatch_info() const { return _operator_dispatch_info.value(); }
+    void set_operator_dispatch_info(virtual_dispatch_info info) { _operator_dispatch_info = std::move(info); }
 
     std::shared_ptr<expression> clone() const override = 0;
 };

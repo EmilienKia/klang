@@ -4,6 +4,8 @@
 
 Binary operators combine two operands to produce a value.
 
+> **Operator overloading:** When one operand is of a user-defined aggregate type (struct, class, or interface), the compiler looks for a matching operator function instead of applying built-in semantics. See [Operator Overloading](../functions/operators.md) for the full specification.
+
 ---
 
 ## Contents
@@ -204,4 +206,5 @@ max : int = (a > b) ? a : b;
 label : char* = (x > 0) ? "positive" : "non-positive";
 ```
 ---
+*See also:* [Unary Operators](unary.md) · [Assignment Operators](assignment.md) · [Expressions](expressions.md) · [Operator Overloading](../functions/operators.md)
 *See also:* [Unary Operators](unary.md) · [Assignment Operators](assignment.md) · [Expressions](expressions.md)

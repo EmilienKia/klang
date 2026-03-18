@@ -79,6 +79,7 @@ MemberFunctionDecl:
     { Specifier } Identifier '(' [ ParameterList ] ')' [ ':' TypeSpec ] BlockStatement
 ```
 See [Functions](../functions/functions.md) for the full function syntax.
+See [Operator Overloading](../functions/operators.md) for defining custom operators on structs.
 Inside a member function:
 - Fields and other member functions are accessible by name (implicit `this.`).
 - `this` is also available explicitly: `this.field`.

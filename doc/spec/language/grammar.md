@@ -40,7 +40,8 @@ Grammar notation used here:
     `public` `protected` `private`
     `this` `return`
     `if` `else` `while` `for`
-    `new` `delete`
+    `new` `delete` `default` `enum`
+    `operator`
 ### Literals
 *Full description:* [Literals](expressions/literals.md)
 <a id="literal"></a>**Literal:**
@@ -119,8 +120,25 @@ Grammar notation used here:
     {{ [Specifier](#specifier) }} `[` `'~'` `]` [Identifier](#identifier) `'('` `[` [ParameterList](#parameterlist) `]` `')'` `[` `':'` [TypeSpec](#typespec) `]`
     `[` `':'` `(` [MemberInitList](#memberinitlist) | [StaticDepList](#staticdeplist) `)` `]`
     ( [BlockStatement](#blockstatement) | `'->'` `(` `'default'` | `'delete'` `)` `';'` | `';'` *(abstract only)* )
+    | [OperatorFunctionDecl](#operatorfunctiondecl)
 
     *Note: the bare `';'` form (no body) is only valid when `'abstract'` appears in the [Specifier](#specifier) list.*
+
+<a id="operatorfunctiondecl"></a>**OperatorFunctionDecl:**
+    {{ [Specifier](#specifier) }} `'operator'` [OperatorSymbol](#operatorsymbol) `'('` `[` [ParameterList](#parameterlist) `]` `')'` `[` `':'` [TypeSpec](#typespec) `]`
+    ( [BlockStatement](#blockstatement) | `';'` *(abstract only)* )
+    | {{ [Specifier](#specifier) }} `'operator'` `'('` `')'` `':'` [TypeSpec](#typespec) [BlockStatement](#blockstatement)
+
+<a id="operatorsymbol"></a>**OperatorSymbol:**
+    *(one of)*
+    `+` `-` `*` `/` `%` `&` `|` `^` `~` `<<` `>>` `&&` `||` `!`
+    `==` `!=` `<` `>` `<=` `>=`
+    `=` `+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`
+    `++_` `--_` `_++` `_--`
+
+    *Note: `++_` and `--_` denote prefix increment/decrement; `_++` and `_--` denote postfix.
+    The `'operator' '(' ')'` form (cast operator) has no OperatorSymbol — the empty parentheses identify it.
+    Full description:* [Operator Overloading](functions/operators.md).
 
 <a id="specifier"></a>**Specifier:**
     *(one of)*
@@ -292,7 +310,7 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     | [IdentifierExpr](#identifierexpr)
 <a id="identifierexpr"></a>**IdentifierExpr:**
     [QualifiedIdentifier](#qualifiedidentifier)
-*Full description of operators:* [Unary](expressions/unary.md) - [Binary](expressions/binary.md) - [Assignment](expressions/assignment.md) - [Call and member access](expressions/call.md)
+*Full description of operators:* [Unary](expressions/unary.md) - [Binary](expressions/binary.md) - [Assignment](expressions/assignment.md) - [Call and member access](expressions/call.md) - [Operator Overloading](functions/operators.md)
 ---
 *See also:* [Index](index.md) for per-topic reference pages.
 

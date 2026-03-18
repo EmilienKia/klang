@@ -23,6 +23,7 @@
 #include "operators.hpp"
 
 #include "../common/common.hpp"
+#include "../common/operator_names.hpp"
 #include <random>
 #include <sstream>
 #include <iomanip>
@@ -532,6 +533,23 @@ namespace k::model {
 
         std::shared_ptr<model::function> function = parent_scope->define_function(func_name, is_static);
 
+        // Propagate operator flag
+        if (func.is_operator) {
+            function->set_operator(true);
+
+            // Assignment operators must be member functions
+            bool is_assignment_op = k::op::is_assignment_operator(func_name);
+            if (is_assignment_op) {
+                auto owner_agg = current_context_content<model::aggregate>();
+                if (!owner_agg) {
+                    throw_error(0x0059, func.name,
+                        "Assignment operator '{}' must be declared as a member function of a struct, class, or interface; "
+                        "non-member assignment operators are not allowed",
+                        {func_name});
+                }
+            }
+        }
+
         // const member is only meaningful for non-static member functions (not constructors/destructors/static)
         if (is_const_member) {
             if (is_static) {
@@ -572,12 +590,12 @@ namespace k::model {
             function->set_aliasing(model::function::function_aliasing::REDIRECT);
             function->set_redirect_target_name(func.redirect_target->to_name());
         } else if(func.aliasing_spec != parse::ast::function_decl::aliasing_spec_t::NONE) {
-            // Validated at parse time: only non-static constructors may carry DEFAULT/DELETE.
-            // Here we double-check at model level and emit a clearer error if the context is wrong.
-            if(!std::dynamic_pointer_cast<constructor>(function)) {
+            // DEFAULT/DELETE is allowed on non-static constructors and assignment operator functions.
+            bool is_assignment_operator = func.is_operator && k::op::is_assignment_operator(func_name);
+            if(!std::dynamic_pointer_cast<constructor>(function) && !is_assignment_operator) {
                 throw_error(0x0021, func.name,
-                    "'-> default' / '-> delete' is only allowed on non-static constructors; "
-                    "function '{}' is not a non-static constructor",
+                    "'-> default' / '-> delete' is only allowed on non-static constructors or assignment operators; "
+                    "function '{}' is not a non-static constructor or assignment operator",
                     {func_name});
             }
             auto aliasing = (func.aliasing_spec == parse::ast::function_decl::aliasing_spec_t::DEFAULT)

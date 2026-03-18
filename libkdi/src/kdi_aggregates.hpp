@@ -77,6 +77,7 @@ struct kdi_function {
     std::string              fq_name;
     kdi_visibility           visibility   = kdi_visibility::public_;
     bool                     is_static    = false;
+    bool                     is_operator  = false;
     kdi_type                 return_type;
     std::vector<kdi_param>   params;
     std::string              mangled_name;
@@ -96,6 +97,7 @@ struct kdi_method {
     bool                     is_virtual      = false;
     bool                     is_abstract     = false;
     bool                     is_final        = false;
+    bool                     is_operator     = false;
     int32_t                  vtable_slot     = -1;   ///< -1 = not virtual
     kdi_type                 return_type;
     std::vector<kdi_param>   params;                 ///< excluding 'this'

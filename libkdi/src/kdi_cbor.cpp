@@ -469,7 +469,8 @@ cbor_item_t* encode_function(const kdi_function& f) {
     map_push(m, "name",         cbor_str(f.name));
     map_push(m, "fq_name",      cbor_str(f.fq_name));
     map_push(m, "visibility",   encode_visibility(f.visibility));
-    if (f.is_static) map_push(m, "is_static", cbor_bool(true));
+    if (f.is_static)   map_push(m, "is_static",   cbor_bool(true));
+    if (f.is_operator) map_push(m, "is_operator",  cbor_bool(true));
     map_push(m, "return_type",  encode_type(f.return_type));
     map_push(m, "params",       encode_params(f.params));
     map_push(m, "mangled_name", cbor_str(f.mangled_name));
@@ -483,6 +484,7 @@ kdi_function decode_function(cbor_item_t* item, const std::string& path) {
     f.fq_name      = req_string(item, "fq_name", path);
     f.visibility   = decode_visibility(item, "visibility", path);
     f.is_static    = opt_bool(item, "is_static");
+    f.is_operator  = opt_bool(item, "is_operator");
     auto* rt = map_get(item, "return_type");
     if (!rt) throw kdi_parse_error("missing 'return_type' at " + path);
     f.return_type  = decode_type(rt, path + ".return_type");
@@ -502,6 +504,7 @@ cbor_item_t* encode_method(const kdi_method& m) {
     if (m.is_virtual)      map_push(map, "is_virtual",       cbor_bool(true));
     if (m.is_abstract)     map_push(map, "is_abstract",      cbor_bool(true));
     if (m.is_final)        map_push(map, "is_final",         cbor_bool(true));
+    if (m.is_operator)     map_push(map, "is_operator",      cbor_bool(true));
     if (m.vtable_slot >= 0) map_push(map, "vtable_slot",     cbor_build_uint32(static_cast<uint32_t>(m.vtable_slot)));
     map_push(map, "return_type",  encode_type(m.return_type));
     map_push(map, "params",       encode_params(m.params));
@@ -520,6 +523,7 @@ kdi_method decode_method(cbor_item_t* item, const std::string& path) {
     m.is_virtual     = opt_bool(item, "is_virtual");
     m.is_abstract    = opt_bool(item, "is_abstract");
     m.is_final       = opt_bool(item, "is_final");
+    m.is_operator    = opt_bool(item, "is_operator");
     m.vtable_slot    = opt_int32(item, "vtable_slot", -1);
     auto* rt = map_get(item, "return_type");
     if (!rt) throw kdi_parse_error("missing 'return_type' at " + path);

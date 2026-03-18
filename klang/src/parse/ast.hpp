@@ -870,6 +870,8 @@ namespace k::parse {
             std::vector<member_initializer> member_inits;
             std::shared_ptr<block_statement> content;
             bool is_destructor = false;
+            /** True if this is an operator function declaration (e.g. operator +(...)). */
+            bool is_operator = false;
             /** Aliasing specifier: NONE = regular body, DEFAULT = -> default ;, DELETE = -> delete ;, REDIRECT = -> target ; */
             aliasing_spec_t aliasing_spec = aliasing_spec_t::NONE;
 

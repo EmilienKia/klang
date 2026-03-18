@@ -912,6 +912,29 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
         return e2 && e1->get_enumeration() == e2->get_enumeration();
     }
 
+    // Unresolved type: compare by name if both unresolved, or compare resolved forms
+    if (auto u1 = std::dynamic_pointer_cast<unresolved_type>(type1)) {
+        if (auto u2 = std::dynamic_pointer_cast<unresolved_type>(type2)) {
+            // Both unresolved: if both resolved, compare resolved types
+            if (u1->is_resolved() && u2->is_resolved()) {
+                return are_equal(u1->get_resolved(), u2->get_resolved());
+            }
+            // Otherwise compare by type name
+            return u1->type_id() == u2->type_id();
+        }
+        // One unresolved, one not: compare resolved form if available
+        if (u1->is_resolved()) {
+            return are_equal(u1->get_resolved(), type2);
+        }
+        return false;
+    }
+    if (auto u2 = std::dynamic_pointer_cast<unresolved_type>(type2)) {
+        if (u2->is_resolved()) {
+            return are_equal(type1, u2->get_resolved());
+        }
+        return false;
+    }
+
     return false;
 }
 

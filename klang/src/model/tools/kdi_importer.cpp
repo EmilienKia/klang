@@ -235,32 +235,32 @@ void kdi_importer::import_all() {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-/// Recursively collect all llvm_def strings from every aggregate in a KDI
-/// namespace tree, appending them into @p out.  Called before any model node
-/// is created so that every type definition is present in the combined IR blob
-/// that will be parsed in a single LLVM module (avoiding opaque forward-refs).
+/// Recursively collect all struct type definition strings from every aggregate
+/// in a KDI namespace tree, appending them into @p out.  Called before any
+/// model node is created so that every type definition is present in the
+/// combined IR blob that will be parsed in a single LLVM module (avoiding
+/// opaque forward-refs).
+///
+/// IMPORTANT: only aggregate struct type definitions ('%Name = type { ... }')
+/// are collected here.  Vtable global variable definitions
+/// ('@sym = constant %VtType { ... }') are intentionally excluded because they
+/// reference undefined functions/globals, which would cause LLVM's IR parser to
+/// abort before reaching subsequent struct type definitions in the combined
+/// blob.  Vtable struct types are not needed during import anyway — imported
+/// virtual dispatch uses byte-offset GEP, not struct GEP on the vtable type.
 static void collect_llvm_defs_from_namespace(const kdi::kdi_namespace& ns,
                                               std::string& out)
 {
     for (const auto& agg : ns.aggregates) {
-        // Aggregate's own type def
+        // Aggregate's own struct type def (e.g. '%Base = type { ptr, i32 }')
         if (!agg.llvm_def.empty()) {
             out += agg.llvm_def;
-            out += '\n';
-        }
-        // Vtable struct type def
-        if (agg.vtable.has_value() && !agg.vtable->llvm_def.empty()) {
-            out += agg.vtable->llvm_def;
             out += '\n';
         }
         // Nested aggregates (public/protected inner types)
         for (const auto& nested : agg.nested) {
             if (!nested.llvm_def.empty()) {
                 out += nested.llvm_def;
-                out += '\n';
-            }
-            if (nested.vtable.has_value() && !nested.vtable->llvm_def.empty()) {
-                out += nested.vtable->llvm_def;
                 out += '\n';
             }
         }

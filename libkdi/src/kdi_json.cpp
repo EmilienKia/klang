@@ -238,7 +238,7 @@ static std::vector<kdi_param> params_from_json(const json& j) {
 }
 
 static json to_json(const kdi_function& f) {
-    return {
+    json j = {
         {"name",         f.name},
         {"fq_name",      f.fq_name},
         {"visibility",   vis_to_str(f.visibility)},
@@ -248,6 +248,8 @@ static json to_json(const kdi_function& f) {
         {"mangled_name", f.mangled_name},
         {"llvm_def",     f.llvm_def},
     };
+    if (f.is_operator) j["is_operator"] = true;
+    return j;
 }
 static kdi_function from_json_function(const json& j) {
     kdi_function f;
@@ -255,6 +257,7 @@ static kdi_function from_json_function(const json& j) {
     f.fq_name      = j.at("fq_name");
     f.visibility   = vis_from_str(j.value("visibility", "public"));
     f.is_static    = j.value("is_static", false);
+    f.is_operator  = j.value("is_operator", false);
     f.return_type  = from_json_type(j.at("return_type"));
     f.params       = params_from_json(j.value("params", json::array()));
     f.mangled_name = j.value("mangled_name", "");
@@ -263,7 +266,7 @@ static kdi_function from_json_function(const json& j) {
 }
 
 static json to_json(const kdi_method& m) {
-    return {
+    json j = {
         {"name",            m.name},
         {"fq_name",         m.fq_name},
         {"visibility",      vis_to_str(m.visibility)},
@@ -278,6 +281,8 @@ static json to_json(const kdi_method& m) {
         {"mangled_name",    m.mangled_name},
         {"llvm_def",        m.llvm_def},
     };
+    if (m.is_operator) j["is_operator"] = true;
+    return j;
 }
 static kdi_method from_json_method(const json& j) {
     kdi_method m;
@@ -289,6 +294,7 @@ static kdi_method from_json_method(const json& j) {
     m.is_virtual      = j.value("is_virtual", false);
     m.is_abstract     = j.value("is_abstract", false);
     m.is_final        = j.value("is_final", false);
+    m.is_operator     = j.value("is_operator", false);
     m.vtable_slot     = j.value("vtable_slot", -1);
     m.return_type     = from_json_type(j.at("return_type"));
     m.params          = params_from_json(j.value("params", json::array()));

@@ -4,6 +4,8 @@
 
 Unary operators operate on a single operand.
 
+> **Operator overloading:** When the operand is of a user-defined aggregate type (struct, class, or interface), the compiler looks for a matching operator function instead of applying built-in semantics. See [Operator Overloading](../functions/operators.md) for the full specification.
+
 ---
 
 ## Contents
@@ -213,4 +215,4 @@ i++;         // returns old value of i, then increments
 i--;         // returns old value of i, then decrements
 ```
 ---
-*See also:* [Binary Operators](binary.md) · [Expressions](expressions.md) · [Types](../basic/types.md)
+*See also:* [Binary Operators](binary.md) · [Expressions](expressions.md) · [Types](../basic/types.md) · [Operator Overloading](../functions/operators.md)

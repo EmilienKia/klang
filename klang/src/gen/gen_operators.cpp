@@ -18,6 +18,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "../common/operator_names.hpp"
 
 #include "llvm/Support/raw_os_ostream.h"
 template<typename STM>
@@ -36,6 +37,850 @@ inline STM& operator << (STM& stm, const llvm::Value& value) {
 
 namespace k::model::gen {
 
+// Forward declaration for class virtual dispatch helper (defined in gen_class.cpp)
+llvm::Value* emit_virtual_dispatch_call(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr,
+    int slot_index, llvm::FunctionType* fn_type, const std::vector<llvm::Value*>& args,
+    std::shared_ptr<context> ctx, const std::string& result_name);
+
+
+namespace {
+
+/**
+ * Encode a resolved model type to the same string format used by the parser
+ * for casting operator canonical names.
+ * E.g. int → "int", double* → "doublep", const int& → "intcr", struct Foo → "Foo"
+ */
+std::string encode_type_for_cast_operator(const std::shared_ptr<type>& t) {
+    if (!t) return "void";
+
+    // Remove const wrapper
+    if (type::is_const(t)) {
+        return encode_type_for_cast_operator(t->get_subtype()) + "c";
+    }
+
+    // Primitive types
+    if (auto pt = std::dynamic_pointer_cast<primitive_type>(t)) {
+        switch (pt->get_type()) {
+            case primitive_type::BOOL: return "bool";
+            case primitive_type::CHAR: return pt->is_unsigned() ? "uchar" : "char";
+            case primitive_type::BYTE: return pt->is_unsigned() ? "ubyte" : "byte";
+            case primitive_type::SHORT: return pt->is_unsigned() ? "ushort" : "short";
+            case primitive_type::INT: return pt->is_unsigned() ? "uint" : "int";
+            case primitive_type::LONG: return pt->is_unsigned() ? "ulong" : "long";
+            case primitive_type::FLOAT: return "float";
+            case primitive_type::DOUBLE: return "double";
+            default: return "unknown";
+        }
+    }
+
+    // Pointer types
+    if (type::is_pointer(t)) return encode_type_for_cast_operator(t->get_subtype()) + "p";
+    if (type::is_reference(t)) return encode_type_for_cast_operator(t->get_subtype()) + "r";
+    if (type::is_link(t)) return encode_type_for_cast_operator(t->get_subtype()) + "lnk";
+    if (type::is_pinned(t)) return encode_type_for_cast_operator(t->get_subtype()) + "l";
+    if (type::is_owner(t)) return encode_type_for_cast_operator(t->get_subtype()) + "o";
+
+    // Struct types
+    if (auto st = std::dynamic_pointer_cast<struct_type>(t)) {
+        return st->name();
+    }
+
+    return "unknown";
+}
+
+} // anonymous namespace
+
+namespace {
+
+/**
+ * Get the canonical operator function name for a binary expression.
+ * Returns empty string if the expression type does not map to an overloadable operator.
+ */
+std::string get_binary_operator_name(const binary_expression& expr) {
+    if (dynamic_cast<const addition_expression*>(&expr)) return "__operator_pl_";
+    if (dynamic_cast<const substraction_expression*>(&expr)) return "__operator_mi_";
+    if (dynamic_cast<const multiplication_expression*>(&expr)) return "__operator_ml_";
+    if (dynamic_cast<const division_expression*>(&expr)) return "__operator_dv_";
+    if (dynamic_cast<const modulo_expression*>(&expr)) return "__operator_rm_";
+    if (dynamic_cast<const bitwise_and_expression*>(&expr)) return "__operator_an_";
+    if (dynamic_cast<const bitwise_or_expression*>(&expr)) return "__operator_or_";
+    if (dynamic_cast<const bitwise_xor_expression*>(&expr)) return "__operator_eo_";
+    if (dynamic_cast<const left_shift_expression*>(&expr)) return "__operator_ls_";
+    if (dynamic_cast<const right_shift_expression*>(&expr)) return "__operator_rs_";
+    if (dynamic_cast<const logical_and_expression*>(&expr)) return "__operator_aa_";
+    if (dynamic_cast<const logical_or_expression*>(&expr)) return "__operator_oo_";
+    if (dynamic_cast<const equal_expression*>(&expr)) return "__operator_eq_";
+    if (dynamic_cast<const different_expression*>(&expr)) return "__operator_ne_";
+    if (dynamic_cast<const lesser_expression*>(&expr)) return "__operator_lt_";
+    if (dynamic_cast<const greater_expression*>(&expr)) return "__operator_gt_";
+    if (dynamic_cast<const lesser_equal_expression*>(&expr)) return "__operator_le_";
+    if (dynamic_cast<const greater_equal_expression*>(&expr)) return "__operator_ge_";
+    if (dynamic_cast<const simple_assignation_expression*>(&expr)) return "__operator_aS_";
+    if (dynamic_cast<const additition_assignation_expression*>(&expr)) return "__operator_pL_";
+    if (dynamic_cast<const substraction_assignation_expression*>(&expr)) return "__operator_mI_";
+    if (dynamic_cast<const multiplication_assignation_expression*>(&expr)) return "__operator_mL_";
+    if (dynamic_cast<const division_assignation_expression*>(&expr)) return "__operator_dV_";
+    if (dynamic_cast<const modulo_assignation_expression*>(&expr)) return "__operator_rM_";
+    if (dynamic_cast<const bitwise_and_assignation_expression*>(&expr)) return "__operator_aN_";
+    if (dynamic_cast<const bitwise_or_assignation_expression*>(&expr)) return "__operator_oR_";
+    if (dynamic_cast<const bitwise_xor_assignation_expression*>(&expr)) return "__operator_eO_";
+    if (dynamic_cast<const left_shift_assignation_expression*>(&expr)) return "__operator_lS_";
+    if (dynamic_cast<const right_shift_assignation_expression*>(&expr)) return "__operator_rS_";
+    return "";
+}
+
+/**
+ * Get the canonical operator function name for a unary expression.
+ * Returns empty string if the expression type does not map to an overloadable operator.
+ */
+std::string get_unary_operator_name(const unary_expression& expr) {
+    if (dynamic_cast<const unary_plus_expression*>(&expr)) return "__operator_pl_";
+    if (dynamic_cast<const unary_minus_expression*>(&expr)) return "__operator_mi_";
+    if (dynamic_cast<const bitwise_not_expression*>(&expr)) return "__operator_co_";
+    if (dynamic_cast<const logical_not_expression*>(&expr)) return "__operator_nt_";
+    if (dynamic_cast<const prefix_increment_expression*>(&expr)) return "__operator_pp_";
+    if (dynamic_cast<const prefix_decrement_expression*>(&expr)) return "__operator_mm_";
+    if (dynamic_cast<const postfix_increment_expression*>(&expr)) return "__operator_PP_";
+    if (dynamic_cast<const postfix_decrement_expression*>(&expr)) return "__operator_MM_";
+    return "";
+}
+
+/**
+ * Get a human-readable operator symbol from the canonical operator function name.
+ * Used in error messages.
+ */
+std::string get_operator_symbol(const std::string& op_name) {
+    return k::op::get_operator_symbol(op_name);
+}
+
+/**
+ * Collect member operator functions from an aggregate and its full inheritance
+ * hierarchy, following C++-style name-hiding semantics:
+ *  - If the aggregate itself declares any function named op_name, return those only.
+ *  - Otherwise, recurse into direct bases (BFS order, diamond-safe via visited set).
+ * This ensures inherited operators are found when a derived class does not re-declare them.
+ */
+static std::vector<std::shared_ptr<function>>
+collect_member_operators_from_hierarchy(
+    const std::shared_ptr<aggregate>& agg,
+    const std::string& op_name,
+    std::vector<const aggregate*>& visited)
+{
+    if (!agg) return {};
+    for (auto* v : visited) if (v == agg.get()) return {};
+    visited.push_back(agg.get());
+
+    // Direct members first (name hiding: if anything declared here, stop)
+    auto direct = agg->get_functions(op_name);
+    if (!direct.empty()) return direct;
+
+    // Nothing at this level — recurse into bases
+    std::vector<std::shared_ptr<function>> result;
+    for (const auto& bs : agg->get_bases()) {
+        if (!bs.base) continue;
+        auto from_base = collect_member_operators_from_hierarchy(bs.base, op_name, visited);
+        for (auto& f : from_base) {
+            if (std::find(result.begin(), result.end(), f) == result.end())
+                result.push_back(f);
+        }
+    }
+    return result;
+}
+
+static std::vector<std::shared_ptr<function>>
+collect_member_operators_from_hierarchy(
+    const std::shared_ptr<aggregate>& agg,
+    const std::string& op_name)
+{
+    std::vector<const aggregate*> visited;
+    return collect_member_operators_from_hierarchy(agg, op_name, visited);
+}
+
+} // anonymous namespace
+
+/**
+ * Resolve a binary operator overload for an aggregate type, using cast-weight scoring
+ * on the right operand to select the best match among multiple candidates.
+ */
+std::pair<std::shared_ptr<function>, std::shared_ptr<expression>>
+type_reference_resolver::resolve_binary_operator_overload(
+    const binary_expression& expr,
+    const std::shared_ptr<aggregate>& left_agg,
+    const std::shared_ptr<expression>& left_expr,
+    const std::shared_ptr<expression>& right_expr,
+    bool is_const_this)
+{
+    std::string op_name = get_binary_operator_name(expr);
+    if (op_name.empty()) return {nullptr, nullptr};
+
+    // Collect all candidate functions: member first (with inheritance), then non-member.
+    // collect_member_operators_from_hierarchy implements C++-style name hiding: if the left
+    // aggregate itself declares any operator with op_name, only those are returned;
+    // otherwise the search recurses into base classes (BFS, diamond-safe).
+    std::vector<std::shared_ptr<function>> member_funcs =
+        collect_member_operators_from_hierarchy(left_agg, op_name);
+    std::vector<std::shared_ptr<function>> non_member_funcs = scope_lookup::lookup_functions(left_expr, op_name);
+    // Remove any member functions that leaked into non_member_funcs via scope_lookup.
+    // (scope_lookup walks up the element parent chain, which includes the enclosing aggregate.)
+    non_member_funcs.erase(
+        std::remove_if(non_member_funcs.begin(), non_member_funcs.end(),
+            [](const std::shared_ptr<function>& f) { return f->is_member(); }),
+        non_member_funcs.end());
+
+    // Filter member operators by constness: on a const object, only const member operators are callable.
+    if (is_const_this && !member_funcs.empty()) {
+        bool had_mutable = false;
+        std::vector<std::shared_ptr<function>> const_members;
+        for (auto& func : member_funcs) {
+            if (func->is_const_member()) {
+                const_members.push_back(func);
+            } else {
+                had_mutable = true;
+            }
+        }
+        if (const_members.empty() && had_mutable && non_member_funcs.empty()) {
+            std::string op_sym = get_operator_symbol(op_name);
+            std::string type_str = left_agg->get_struct_type() ? left_agg->get_struct_type()->to_string() : left_agg->get_short_name();
+            throw_error(0x0087, std::nullopt,
+                "Cannot call mutable member operator '{}' on a const object of type '{}': "
+                "only const member operators can be called on const objects; "
+                "declare the operator as 'const' to allow calls on const objects",
+                {op_sym, type_str});
+        }
+        member_funcs = std::move(const_members);
+    }
+
+    if (member_funcs.empty() && non_member_funcs.empty()) return {nullptr, nullptr};
+
+    struct CandInfo {
+        std::shared_ptr<function> func;
+        cast_weight score;
+        bool is_member;
+        std::shared_ptr<expression> adapted_right;
+    };
+
+    std::vector<CandInfo> valid;
+
+    // Score member operator functions: parameter list has 1 param (the right operand)
+    // The left operand ('this') is always an exact match since we looked up on the correct aggregate.
+    for (auto& func : member_funcs) {
+        const auto& params = func->parameters();
+        if (params.size() != 1) continue; // Binary member operator should have exactly 1 explicit param
+        auto right_param_type = params[0]->get_type();
+        auto w = compute_cast_weight(right_expr, right_param_type);
+        if (w != CAST_IMPOSSIBLE) {
+            auto adapted = adapt_type(right_expr, right_param_type);
+            valid.push_back({func, w, true, adapted ? adapted : right_expr});
+        }
+    }
+
+    // Score non-member operator functions: parameter list has 2 params (left, right)
+    // Must validate BOTH left (params[0]) and right (params[1]) parameter compatibility.
+    for (auto& func : non_member_funcs) {
+        const auto& params = func->parameters();
+        if (params.size() != 2) continue; // Binary non-member operator should have exactly 2 params
+
+        // Validate left parameter: must be compatible with the left expression
+        auto left_param_type = params[0]->get_type();
+        auto wl = compute_cast_weight(left_expr, left_param_type);
+        if (wl == CAST_IMPOSSIBLE) continue;
+
+        // Score right parameter
+        auto right_param_type = params[1]->get_type();
+        auto wr = compute_cast_weight(right_expr, right_param_type);
+        if (wr == CAST_IMPOSSIBLE) continue;
+
+        // Overall score = worst of left and right
+        cast_weight w = std::max(wl, wr);
+        auto adapted = adapt_type(right_expr, right_param_type);
+        valid.push_back({func, w, false, adapted ? adapted : right_expr});
+    }
+
+    if (valid.empty()) return {nullptr, nullptr};
+
+    // Best = lowest score; among equal scores, prefer member over non-member
+    cast_weight best_score = CAST_IMPOSSIBLE;
+    bool best_is_member = false;
+
+    for (auto& c : valid) {
+        if (c.score < best_score
+            || (c.score == best_score && c.is_member && !best_is_member)) {
+            best_score = c.score;
+            best_is_member = c.is_member;
+        }
+    }
+
+    std::vector<CandInfo*> best;
+    for (auto& c : valid) {
+        if (c.score == best_score && c.is_member == best_is_member)
+            best.push_back(&c);
+    }
+
+    if (best.size() > 1) {
+        std::string op_sym = get_operator_symbol(op_name);
+        std::string left_type_str = left_expr->get_type() ? left_expr->get_type()->to_string() : "?";
+        auto d = k::log::diagnostic::make_error(0x3000B,
+            "Ambiguous operator '{}' for type '{}': {} equally viable overloads",
+            {op_sym, left_type_str, std::to_string(best.size())});
+        for (auto* c : best) {
+            std::string sig;
+            bool first = true;
+            for (auto& p : c->func->parameters()) {
+                if (!first) sig += ", ";
+                sig += p->get_type() ? p->get_type()->to_string() : "?";
+                first = false;
+            }
+            d.add_note("  candidate: {} {}({})", {c->is_member ? "[member]" : "[non-member]",
+                        c->func->get_fq_name(), sig});
+        }
+        throw resolution_error(std::move(d));
+    }
+
+    return {best[0]->func, best[0]->adapted_right};
+}
+
+/**
+ * Resolve a unary operator overload for an aggregate type, using cast-weight scoring
+ * to select the best match among multiple candidates.
+ */
+std::shared_ptr<function>
+type_reference_resolver::resolve_unary_operator_overload(
+    const unary_expression& expr,
+    const std::shared_ptr<aggregate>& operand_agg,
+    const std::shared_ptr<expression>& operand_expr,
+    bool is_const_this)
+{
+    std::string op_name = get_unary_operator_name(expr);
+    if (op_name.empty()) return nullptr;
+
+    // Collect all candidate functions: member first (with inheritance), then non-member.
+    std::vector<std::shared_ptr<function>> member_funcs =
+        collect_member_operators_from_hierarchy(operand_agg, op_name);
+    std::vector<std::shared_ptr<function>> non_member_funcs = scope_lookup::lookup_functions(operand_expr, op_name);
+    // Remove any member functions that leaked into non_member_funcs via scope_lookup.
+    non_member_funcs.erase(
+        std::remove_if(non_member_funcs.begin(), non_member_funcs.end(),
+            [](const std::shared_ptr<function>& f) { return f->is_member(); }),
+        non_member_funcs.end());
+
+    // Filter member operators by constness: on a const object, only const member operators are callable.
+    if (is_const_this && !member_funcs.empty()) {
+        bool had_mutable = false;
+        std::vector<std::shared_ptr<function>> const_members;
+        for (auto& func : member_funcs) {
+            if (func->is_const_member()) {
+                const_members.push_back(func);
+            } else {
+                had_mutable = true;
+            }
+        }
+        if (const_members.empty() && had_mutable && non_member_funcs.empty()) {
+            std::string op_sym = get_operator_symbol(op_name);
+            std::string type_str = operand_agg->get_struct_type() ? operand_agg->get_struct_type()->to_string() : operand_agg->get_short_name();
+            throw_error(0x0088, std::nullopt,
+                "Cannot call mutable member operator '{}' on a const object of type '{}': "
+                "only const member operators can be called on const objects; "
+                "declare the operator as 'const' to allow calls on const objects",
+                {op_sym, type_str});
+        }
+        member_funcs = std::move(const_members);
+    }
+
+    if (member_funcs.empty() && non_member_funcs.empty()) return nullptr;
+
+    struct CandInfo {
+        std::shared_ptr<function> func;
+        cast_weight score;
+        bool is_member;
+    };
+
+    std::vector<CandInfo> valid;
+
+    // Score member operator functions: no explicit parameters for unary member operators
+    // The operand ('this') is always an exact match since we looked up on the correct aggregate.
+    for (auto& func : member_funcs) {
+        const auto& params = func->parameters();
+        if (!params.empty()) continue; // Unary member operator should have no explicit param
+        valid.push_back({func, CAST_NONE, true});
+    }
+
+    // Score non-member operator functions: parameter list has 1 param (the operand)
+    for (auto& func : non_member_funcs) {
+        const auto& params = func->parameters();
+        if (params.size() != 1) continue; // Unary non-member operator should have exactly 1 param
+
+        auto operand_param_type = params[0]->get_type();
+        auto w = compute_cast_weight(operand_expr, operand_param_type);
+        if (w != CAST_IMPOSSIBLE) {
+            valid.push_back({func, w, false});
+        }
+    }
+
+    if (valid.empty()) return nullptr;
+
+    // Best = lowest score; among equal scores, prefer member over non-member
+    cast_weight best_score = CAST_IMPOSSIBLE;
+    bool best_is_member = false;
+
+    for (auto& c : valid) {
+        if (c.score < best_score
+            || (c.score == best_score && c.is_member && !best_is_member)) {
+            best_score = c.score;
+            best_is_member = c.is_member;
+        }
+    }
+
+    std::vector<CandInfo*> best;
+    for (auto& c : valid) {
+        if (c.score == best_score && c.is_member == best_is_member)
+            best.push_back(&c);
+    }
+
+    if (best.size() > 1) {
+        std::string op_sym = get_operator_symbol(op_name);
+        std::string operand_type_str = operand_expr->get_type() ? operand_expr->get_type()->to_string() : "?";
+        auto d = k::log::diagnostic::make_error(0x3000C,
+            "Ambiguous unary operator '{}' for type '{}': {} equally viable overloads",
+            {op_sym, operand_type_str, std::to_string(best.size())});
+        for (auto* c : best) {
+            std::string sig;
+            bool first = true;
+            for (auto& p : c->func->parameters()) {
+                if (!first) sig += ", ";
+                sig += p->get_type() ? p->get_type()->to_string() : "?";
+                first = false;
+            }
+            d.add_note("  candidate: {} {}({})", {c->is_member ? "[member]" : "[non-member]",
+                        c->func->get_fq_name(), sig});
+        }
+        throw resolution_error(std::move(d));
+    }
+
+    return best[0]->func;
+}
+
+/**
+ * Resolve a casting operator overload for an aggregate type.
+ * Looks for a member function named "__operator_cv_<encoded_type>" matching the
+ * target type of the cast, searching the aggregate's hierarchy.
+ */
+std::shared_ptr<function>
+type_reference_resolver::resolve_cast_operator_overload(
+    const std::shared_ptr<aggregate>& source_agg,
+    const std::shared_ptr<type>& target_type,
+    bool is_const_this)
+{
+    if (!source_agg || !target_type) return nullptr;
+
+    // Build the canonical operator name from the target type
+    std::string encoded = encode_type_for_cast_operator(target_type);
+    std::string op_name = "__operator_cv_" + encoded;
+
+    // Collect member operator functions from the hierarchy
+    std::vector<std::shared_ptr<function>> member_funcs =
+        collect_member_operators_from_hierarchy(source_agg, op_name);
+
+    if (member_funcs.empty()) return nullptr;
+
+    // Filter by constness: on a const object, only const member operators are callable.
+    if (is_const_this) {
+        std::vector<std::shared_ptr<function>> const_members;
+        for (auto& func : member_funcs) {
+            if (func->is_const_member()) {
+                const_members.push_back(func);
+            }
+        }
+        if (const_members.empty()) return nullptr;
+        member_funcs = std::move(const_members);
+    }
+
+    // Casting operators have no parameters (other than 'this'), so there's no
+    // scoring to do — just return the first (and should be only) match.
+    for (auto& func : member_funcs) {
+        // Verify it has no explicit parameters
+        if (func->parameters().empty()) {
+            return func;
+        }
+    }
+
+    return nullptr;
+}
+
+namespace {
+} // anonymous namespace
+
+/**
+ * Compute virtual dispatch info for an operator overload call on a member function.
+ * Similar to annotate_dispatch_info for function_invocation_expression.
+ */
+virtual_dispatch_info compute_operator_dispatch_info(
+    const std::shared_ptr<function>& func,
+    const std::shared_ptr<type>& receiver_type)
+{
+    virtual_dispatch_info di;
+    di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+
+    if (!func || !func->is_virtual() || func->get_vtable_slot() < 0) {
+        return di;
+    }
+
+    if (!type::is_reference(receiver_type)) {
+        return di;
+    }
+
+    auto bare_subtype = type::remove_const(receiver_type->get_subtype());
+    auto st_type = std::dynamic_pointer_cast<struct_type>(bare_subtype);
+    if (!st_type) {
+        return di;
+    }
+
+    auto kl = std::dynamic_pointer_cast<klass>(st_type->get_struct());
+    if (!kl || !kl->has_vtable()) {
+        // Check imported aggregates
+        auto imp = std::dynamic_pointer_cast<aggregate>(st_type->get_struct());
+        if (imp && imp->has_vtable()) {
+            di.kind = virtual_dispatch_info::dispatch_kind::VTABLE;
+            di.slot_index = func->get_vtable_slot();
+            di.imported_dispatch_agg = imp;
+            di.this_adjustment = 0;
+            return di;
+        }
+        return di;
+    }
+
+    di.kind = virtual_dispatch_info::dispatch_kind::VTABLE;
+    di.slot_index = func->get_vtable_slot();
+    di.dispatch_class = kl;
+    di.this_adjustment = 0;
+    return di;
+}
+
+
+//
+// Operator overload code generation helpers
+//
+
+bool implementation_generator::generate_binary_operator_overload(binary_expression& expr) {
+    if (!expr.has_operator_overload()) return false;
+
+    auto op_func = expr.get_operator_func();
+
+    // Find the LLVM function (may be null for abstract or external virtual operators)
+    auto it = _context->_functions.find(op_func);
+    if (it == _context->_functions.end()) {
+        if (op_func->is_virtual() &&
+            (op_func->is_abstract_func() || op_func->is_external())) {
+            // Abstract/external virtual operator: no LLVM definition, dispatch via vtable below.
+        } else {
+            throw_internal_error(0x0060, std::nullopt,
+                "Internal error: operator overload function '{}' has no LLVM definition",
+                {op_func->get_short_name()});
+        }
+    }
+    llvm::Function* llvm_func = (it != _context->_functions.end()) ? it->second : nullptr;
+
+    // Build the LLVM FunctionType (from llvm_func if available, or from the model)
+    auto build_fn_type = [&]() -> llvm::FunctionType* {
+        if (llvm_func) return llvm_func->getFunctionType();
+        // Reconstruct from model
+        std::vector<llvm::Type*> param_types;
+        if (op_func->is_member() && !op_func->is_static() && op_func->get_this_parameter())
+            param_types.push_back(_context->get_llvm_type(op_func->get_this_parameter()->get_type()));
+        for (const auto& param : op_func->parameters())
+            param_types.push_back(_context->get_llvm_type(param->get_type()));
+        llvm::Type* ret_type = op_func->has_return_type()
+            ? _context->get_llvm_type(op_func->get_return_type())
+            : llvm::Type::getVoidTy(**_context);
+        return llvm::FunctionType::get(ret_type, param_types, false);
+    };
+
+    // Build arguments
+    std::vector<llvm::Value*> args;
+
+    if (op_func->is_member()) {
+        // Member operator: 'this' is the left operand (a reference/pointer to the struct)
+        expr.left()->accept(*this);
+        if (!_value) {
+            throw_internal_error(0x0061, std::nullopt,
+                "Internal error: left operand for operator overload produced no LLVM value");
+        }
+        args.push_back(_value);
+
+        // Right operand is the argument
+        expr.right()->accept(*this);
+        if (!_value) {
+            throw_internal_error(0x0062, std::nullopt,
+                "Internal error: right operand for operator overload produced no LLVM value");
+        }
+        args.push_back(_value);
+    } else {
+        // Non-member operator: both operands are arguments
+        expr.left()->accept(*this);
+        if (!_value) {
+            throw_internal_error(0x0063, std::nullopt,
+                "Internal error: left operand for non-member operator overload produced no LLVM value");
+        }
+        args.push_back(_value);
+
+        expr.right()->accept(*this);
+        if (!_value) {
+            throw_internal_error(0x0064, std::nullopt,
+                "Internal error: right operand for non-member operator overload produced no LLVM value");
+        }
+        args.push_back(_value);
+    }
+
+    // Check for virtual dispatch
+    if (expr.has_operator_dispatch_info()) {
+        auto& di = expr.get_operator_dispatch_info();
+        if (di.kind == virtual_dispatch_info::dispatch_kind::VTABLE) {
+            llvm::FunctionType* fn_type = build_fn_type();
+            if (di.dispatch_class) {
+                // Local class: use the standard virtual dispatch helper
+                auto result = emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[0],
+                    di.slot_index, fn_type, args, _context, "op_vcall");
+                if (result) {
+                    _value = result;
+                    return true;
+                }
+                // Fallback: emit_virtual_dispatch_call returned nullptr (vtable not ready?)
+            }
+            if (di.imported_dispatch_agg) {
+                // Imported class: use byte-offset GEP (same as function invocation for imports)
+                auto imp_agg = di.imported_dispatch_agg;
+                auto* struct_llvm_type = imp_agg->get_struct_type()
+                                         ? imp_agg->get_struct_type()->get_llvm_type() : nullptr;
+                if (struct_llvm_type) {
+                    llvm::LLVMContext& llvm_ctx = **_context;
+                    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                    llvm::Value* vptr_addr = _builder->CreateStructGEP(
+                        struct_llvm_type, args[0], 0, "op_imp_vptr_addr");
+                    llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "op_imp_vptr");
+                    const uint64_t ptr_size = 8;
+                    llvm::Value* slot_offset = llvm::ConstantInt::get(
+                        llvm::Type::getInt64Ty(llvm_ctx),
+                        (di.slot_index + 1) * ptr_size);
+                    llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
+                        llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "op_imp_vtbl_slot");
+                    llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "op_imp_fn_ptr");
+                    _value = _builder->CreateCall(fn_type, fn_ptr, args,
+                        fn_type->getReturnType()->isVoidTy() ? "" : "op_imp_vcall");
+                    return true;
+                }
+            }
+        }
+    }
+
+    if (!llvm_func) {
+        throw_internal_error(0x0060, std::nullopt,
+            "Internal error: operator overload function '{}' has no LLVM definition and is not dispatched virtually",
+            {op_func->get_short_name()});
+    }
+
+    // Direct call
+    _value = _builder->CreateCall(llvm_func, args,
+        llvm_func->getReturnType()->isVoidTy() ? "" : "op_call");
+    return true;
+}
+
+bool implementation_generator::generate_unary_operator_overload(unary_expression& expr) {
+    if (!expr.has_operator_overload()) return false;
+
+    auto op_func = expr.get_operator_func();
+
+    // Find the LLVM function (may be null for abstract or external virtual operators)
+    auto it = _context->_functions.find(op_func);
+    if (it == _context->_functions.end()) {
+        if (op_func->is_virtual() &&
+            (op_func->is_abstract_func() || op_func->is_external())) {
+            // Abstract/external virtual operator: no LLVM definition, dispatch via vtable below.
+        } else {
+            throw_internal_error(0x0065, std::nullopt,
+                "Internal error: operator overload function '{}' has no LLVM definition",
+                {op_func->get_short_name()});
+        }
+    }
+    llvm::Function* llvm_func = (it != _context->_functions.end()) ? it->second : nullptr;
+
+    // Build the LLVM FunctionType (from llvm_func if available, or from the model)
+    auto build_fn_type = [&]() -> llvm::FunctionType* {
+        if (llvm_func) return llvm_func->getFunctionType();
+        // Reconstruct from model
+        std::vector<llvm::Type*> param_types;
+        if (op_func->is_member() && !op_func->is_static() && op_func->get_this_parameter())
+            param_types.push_back(_context->get_llvm_type(op_func->get_this_parameter()->get_type()));
+        for (const auto& param : op_func->parameters())
+            param_types.push_back(_context->get_llvm_type(param->get_type()));
+        llvm::Type* ret_type = op_func->has_return_type()
+            ? _context->get_llvm_type(op_func->get_return_type())
+            : llvm::Type::getVoidTy(**_context);
+        return llvm::FunctionType::get(ret_type, param_types, false);
+    };
+
+    // Build arguments
+    std::vector<llvm::Value*> args;
+
+    if (op_func->is_member()) {
+        // Member operator: 'this' is the operand (a reference/pointer to the struct)
+        expr.sub_expr()->accept(*this);
+        if (!_value) {
+            throw_internal_error(0x0066, std::nullopt,
+                "Internal error: operand for unary operator overload produced no LLVM value");
+        }
+        args.push_back(_value);
+    } else {
+        // Non-member operator: operand is the argument
+        expr.sub_expr()->accept(*this);
+        if (!_value) {
+            throw_internal_error(0x0067, std::nullopt,
+                "Internal error: operand for non-member unary operator overload produced no LLVM value");
+        }
+        args.push_back(_value);
+    }
+
+    // Check for virtual dispatch
+    if (expr.has_operator_dispatch_info()) {
+        auto& di = expr.get_operator_dispatch_info();
+        if (di.kind == virtual_dispatch_info::dispatch_kind::VTABLE) {
+            llvm::FunctionType* fn_type = build_fn_type();
+            if (di.dispatch_class) {
+                auto result = emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[0],
+                    di.slot_index, fn_type, args, _context, "uop_vcall");
+                if (result) {
+                    _value = result;
+                    return true;
+                }
+            }
+            if (di.imported_dispatch_agg) {
+                auto imp_agg = di.imported_dispatch_agg;
+                auto* struct_llvm_type = imp_agg->get_struct_type()
+                                         ? imp_agg->get_struct_type()->get_llvm_type() : nullptr;
+                if (struct_llvm_type) {
+                    llvm::LLVMContext& llvm_ctx = **_context;
+                    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                    llvm::Value* vptr_addr = _builder->CreateStructGEP(
+                        struct_llvm_type, args[0], 0, "uop_imp_vptr_addr");
+                    llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "uop_imp_vptr");
+                    const uint64_t ptr_size = 8;
+                    llvm::Value* slot_offset = llvm::ConstantInt::get(
+                        llvm::Type::getInt64Ty(llvm_ctx),
+                        (di.slot_index + 1) * ptr_size);
+                    llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
+                        llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "uop_imp_vtbl_slot");
+                    llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "uop_imp_fn_ptr");
+                    _value = _builder->CreateCall(fn_type, fn_ptr, args,
+                        fn_type->getReturnType()->isVoidTy() ? "" : "uop_imp_vcall");
+                    return true;
+                }
+            }
+        }
+    }
+
+    if (!llvm_func) {
+        throw_internal_error(0x0065, std::nullopt,
+            "Internal error: operator overload function '{}' has no LLVM definition and is not dispatched virtually",
+            {op_func->get_short_name()});
+    }
+
+    // Direct call
+    _value = _builder->CreateCall(llvm_func, args,
+        llvm_func->getReturnType()->isVoidTy() ? "" : "uop_call");
+    return true;
+}
+
+bool implementation_generator::generate_cast_operator_overload(cast_expression& expr) {
+    if (!expr.has_operator_overload()) return false;
+
+    auto op_func = expr.get_operator_func();
+
+    // Find the LLVM function (may be null for abstract or external virtual operators)
+    auto it = _context->_functions.find(op_func);
+    if (it == _context->_functions.end()) {
+        if (op_func->is_virtual() &&
+            (op_func->is_abstract_func() || op_func->is_external())) {
+            // Abstract/external virtual operator: no LLVM definition, dispatch via vtable below.
+        } else {
+            throw_internal_error(0x0068, std::nullopt,
+                "Internal error: casting operator function '{}' has no LLVM definition",
+                {op_func->get_short_name()});
+        }
+    }
+    llvm::Function* llvm_func = (it != _context->_functions.end()) ? it->second : nullptr;
+
+    // Build the LLVM FunctionType (from llvm_func if available, or from the model)
+    auto build_fn_type = [&]() -> llvm::FunctionType* {
+        if (llvm_func) return llvm_func->getFunctionType();
+        // Reconstruct from model
+        std::vector<llvm::Type*> param_types;
+        if (op_func->is_member() && !op_func->is_static() && op_func->get_this_parameter())
+            param_types.push_back(_context->get_llvm_type(op_func->get_this_parameter()->get_type()));
+        for (const auto& param : op_func->parameters())
+            param_types.push_back(_context->get_llvm_type(param->get_type()));
+        llvm::Type* ret_type = op_func->has_return_type()
+            ? _context->get_llvm_type(op_func->get_return_type())
+            : llvm::Type::getVoidTy(**_context);
+        return llvm::FunctionType::get(ret_type, param_types, false);
+    };
+
+    // Build arguments: only 'this' (the source object being cast)
+    std::vector<llvm::Value*> args;
+
+    // Member casting operator: 'this' is the source operand (a reference/pointer to the struct)
+    expr.sub_expr()->accept(*this);
+    if (!_value) {
+        throw_internal_error(0x0069, std::nullopt,
+            "Internal error: source operand for casting operator overload produced no LLVM value");
+    }
+    args.push_back(_value);
+
+    // Check for virtual dispatch
+    if (expr.has_operator_dispatch_info()) {
+        auto& di = expr.get_operator_dispatch_info();
+        if (di.kind == virtual_dispatch_info::dispatch_kind::VTABLE) {
+            llvm::FunctionType* fn_type = build_fn_type();
+            if (di.dispatch_class) {
+                auto result = emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[0],
+                    di.slot_index, fn_type, args, _context, "cast_vcall");
+                if (result) {
+                    _value = result;
+                    return true;
+                }
+            }
+            if (di.imported_dispatch_agg) {
+                auto imp_agg = di.imported_dispatch_agg;
+                auto* struct_llvm_type = imp_agg->get_struct_type()
+                                         ? imp_agg->get_struct_type()->get_llvm_type() : nullptr;
+                if (struct_llvm_type) {
+                    llvm::LLVMContext& llvm_ctx = **_context;
+                    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                    llvm::Value* vptr_addr = _builder->CreateStructGEP(
+                        struct_llvm_type, args[0], 0, "cast_imp_vptr_addr");
+                    llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "cast_imp_vptr");
+                    const uint64_t ptr_size = 8;
+                    llvm::Value* slot_offset = llvm::ConstantInt::get(
+                        llvm::Type::getInt64Ty(llvm_ctx),
+                        (di.slot_index + 1) * ptr_size);
+                    llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
+                        llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "cast_imp_vtbl_slot");
+                    llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "cast_imp_fn_ptr");
+                    _value = _builder->CreateCall(fn_type, fn_ptr, args, "cast_imp_vcall");
+                    return true;
+                }
+            }
+        }
+    }
+
+    if (!llvm_func) {
+        throw_internal_error(0x0068, std::nullopt,
+            "Internal error: casting operator function '{}' has no LLVM definition and is not dispatched virtually",
+            {op_func->get_short_name()});
+    }
+
+    // Direct call
+    _value = _builder->CreateCall(llvm_func, args, "cast_call");
+    return true;
+}
+
 
 //
 // Arithmetic binary expression
@@ -52,11 +897,14 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
     auto left = expr.left();
     auto right = expr.right();
 
-    auto target_type = left->get_type();
+    auto left_type = left->get_type();
+    auto target_type = left_type;
     if(type::is_reference(target_type)) {
         // Target type must be de-referenced
         target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
     }
+    // Detect constness before stripping const qualifier
+    bool is_const_left = type::is_const(target_type);
     // Strip const qualifier for arithmetic type checks (const is compile-time only)
     target_type = type::remove_const(target_type);
 
@@ -65,6 +913,45 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
         target_type = left_enum->get_underlying_type();
         left = adapt_type(left, target_type);
         if (left) expr.assign_left(left);
+    }
+
+    // ── Operator overload for aggregate (struct/class/interface) references ──
+    if(type::is_struct(target_type)) {
+        auto st_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(target_type));
+        if (st_type) {
+            auto agg = st_type->get_struct();
+            if (agg) {
+                auto [op_func, adapted_right] = resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
+                if (op_func) {
+                    // Store the resolved operator function on the expression
+                    expr.set_operator_func(op_func);
+                    // Apply the adapted right operand (implicit cast if needed)
+                    if (adapted_right && adapted_right != right) {
+                        expr.assign_right(adapted_right);
+                    }
+                    // Set the expression type to the return type of the operator function
+                    if (op_func->has_return_type()) {
+                        expr.set_type(op_func->get_return_type());
+                    } else {
+                        expr.set_type(target_type);
+                    }
+                    // Compute dispatch info for virtual calls
+                    if (op_func->is_member()) {
+                        auto di = compute_operator_dispatch_info(op_func, left_type);
+                        expr.set_operator_dispatch_info(std::move(di));
+                    } else {
+                        virtual_dispatch_info di;
+                        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                        expr.set_operator_dispatch_info(std::move(di));
+                    }
+                    return;
+                }
+            }
+        }
+        throw_error(0x0001, std::nullopt,
+            "No matching operator overload found for non-primitive type: "
+            "the left operand has type '{}'; define an operator function or use primitive types",
+            {target_type ? target_type->to_string() : "?"});
     }
 
     if(!type::is_primitive(target_type)) {
@@ -136,6 +1023,8 @@ void type_reference_resolver::visit_arithmetic_binary_expression(arithmetic_bina
 //
 
 void implementation_generator::visit_addition_expression(addition_expression &expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -165,6 +1054,8 @@ void implementation_generator::visit_addition_expression(addition_expression &ex
 //
 
 void implementation_generator::visit_substraction_expression(substraction_expression &expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -194,6 +1085,8 @@ void implementation_generator::visit_substraction_expression(substraction_expres
 //
 
 void implementation_generator::visit_multiplication_expression(multiplication_expression &expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -225,6 +1118,8 @@ void implementation_generator::visit_multiplication_expression(multiplication_ex
 //
 
 void implementation_generator::visit_division_expression(division_expression &expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -260,6 +1155,8 @@ void implementation_generator::visit_division_expression(division_expression &ex
 //
 
 void implementation_generator::visit_modulo_expression(modulo_expression &expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -295,6 +1192,8 @@ void implementation_generator::visit_modulo_expression(modulo_expression &expr) 
 //
 
 void implementation_generator::visit_bitwise_and_expression(bitwise_and_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -330,6 +1229,8 @@ void implementation_generator::visit_bitwise_and_expression(bitwise_and_expressi
 //
 
 void implementation_generator::visit_bitwise_or_expression(bitwise_or_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -365,6 +1266,8 @@ void implementation_generator::visit_bitwise_or_expression(bitwise_or_expression
 //
 
 void implementation_generator::visit_bitwise_xor_expression(bitwise_xor_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -400,6 +1303,8 @@ void implementation_generator::visit_bitwise_xor_expression(bitwise_xor_expressi
 //
 
 void implementation_generator::visit_left_shift_expression(left_shift_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -436,6 +1341,8 @@ void implementation_generator::visit_left_shift_expression(left_shift_expression
 //
 
 void implementation_generator::visit_right_shift_expression(right_shift_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         // TODO throw exception ?
@@ -847,7 +1754,66 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             "Owner assignment: right-hand side must be an owner value, "
             "another owner variable (move), or null; got type '{}'",
             {source_type ? source_type->to_string() : "?"});
-    } else if(!type::is_primitive(target_type) && !type::is_struct(target_type)) {
+    } else if(type::is_struct(target_type)) {
+        // ── Struct assignment: try operator overload ──
+        auto nc_target = type::remove_const(target_type);
+        auto st_type = std::dynamic_pointer_cast<struct_type>(nc_target);
+        if (st_type) {
+            auto agg = st_type->get_struct();
+            if (agg) {
+                // Check if the operator is explicitly deleted
+                std::string op_name = get_binary_operator_name(expr);
+                if (!op_name.empty()) {
+                    auto member_funcs = collect_member_operators_from_hierarchy(agg, op_name);
+                    for (auto& f : member_funcs) {
+                        if (f->is_deleted()) {
+                            throw_error(0x00B0, std::nullopt,
+                                "Use of deleted operator '{}' on type '{}': "
+                                "this operator was explicitly deleted with '-> delete'",
+                                {get_operator_symbol(op_name),
+                                 target_type ? target_type->to_string() : "?"});
+                        }
+                    }
+                }
+                bool is_const_left = type::is_const(target_type);
+                auto [op_func, adapted_right] = resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
+                if (op_func) {
+                    // Store the resolved operator function on the expression
+                    expr.set_operator_func(op_func);
+                    // Apply the adapted right operand (implicit cast if needed)
+                    if (adapted_right && adapted_right != right) {
+                        expr.assign_right(adapted_right);
+                    }
+                    // Set the expression type to the return type of the operator function
+                    if (op_func->has_return_type()) {
+                        expr.set_type(op_func->get_return_type());
+                    } else {
+                        expr.set_type(ref_target_type);
+                    }
+                    // Compute dispatch info for virtual calls
+                    if (op_func->is_member()) {
+                        auto di = compute_operator_dispatch_info(op_func, left_type);
+                        expr.set_operator_dispatch_info(std::move(di));
+                    } else {
+                        virtual_dispatch_info di;
+                        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                        expr.set_operator_dispatch_info(std::move(di));
+                    }
+                    return;
+                }
+            }
+        }
+        // No operator overload found — fall through to default struct assignment (memcpy/store).
+        expr.set_type(ref_target_type);
+        // If source type is reference, deref it
+        if(type::is_reference(source_type)) {
+            right = load_value_expression::make_shared(right);
+            source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+            right->set_type(source_type);
+            expr.assign_right(right);
+        }
+        return;
+    } else if(!type::is_primitive(target_type)) {
         throw_error(0x000D, std::nullopt,
             "Assignment to a non-primitive, non-pointer type is not yet supported: "
             "the target has type '{}'; only assignments to primitive types, pointers and arrays are supported",
@@ -893,6 +1859,8 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
 //
 
 void implementation_generator::visit_simple_assignation_expression(simple_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x001B, std::nullopt,
@@ -1034,6 +2002,9 @@ void symbol_resolver::visit_arithmetic_assignation_expression(arithmetic_assigna
 void type_reference_resolver::visit_arithmetic_assignation_expression(arithmetic_assignation_expression &expr) {
     visit_assignation_expression(expr);
 
+    // If an operator overload was resolved, no further checks needed.
+    if (expr.has_operator_overload()) return;
+
     auto left = expr.left();
     auto right = expr.right();
 
@@ -1053,6 +2024,8 @@ void type_reference_resolver::visit_arithmetic_assignation_expression(arithmetic
 //
 
 void implementation_generator::visit_addition_assignation_expression(additition_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x001C, std::nullopt,
@@ -1083,6 +2056,8 @@ void implementation_generator::visit_addition_assignation_expression(additition_
 //
 
 void implementation_generator::visit_substraction_assignation_expression(substraction_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x001D, std::nullopt,
@@ -1113,6 +2088,8 @@ void implementation_generator::visit_substraction_assignation_expression(substra
 //
 
 void implementation_generator::visit_multiplication_assignation_expression(multiplication_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x001E, std::nullopt,
@@ -1143,6 +2120,8 @@ void implementation_generator::visit_multiplication_assignation_expression(multi
 //
 
 void implementation_generator::visit_division_assignation_expression(division_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x001F, std::nullopt,
@@ -1179,6 +2158,8 @@ void implementation_generator::visit_division_assignation_expression(division_as
 //
 
 void implementation_generator::visit_modulo_assignation_expression(modulo_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x0020, std::nullopt,
@@ -1215,6 +2196,8 @@ void implementation_generator::visit_modulo_assignation_expression(modulo_assign
 //
 
 void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x0021, std::nullopt,
@@ -1251,6 +2234,8 @@ void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_
 //
 
 void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x0022, std::nullopt,
@@ -1287,6 +2272,8 @@ void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_o
 //
 
 void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x0023, std::nullopt,
@@ -1323,6 +2310,8 @@ void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_
 //
 
 void implementation_generator::visit_left_shift_assignation_expression(left_shift_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x0024, std::nullopt,
@@ -1360,6 +2349,8 @@ void implementation_generator::visit_left_shift_assignation_expression(left_shif
 //
 
 void implementation_generator::visit_right_shift_assignation_expression(right_shift_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x0025, std::nullopt,
@@ -1414,9 +2405,40 @@ void type_reference_resolver::visit_arithmetic_unary_expression(arithmetic_unary
             {type ? type->to_string() : "?"});
     }
 
+    auto orig_type = type;
     if(type::is_reference(type)) {
         // Dereference type, if needed
         type = type->get_subtype();
+    }
+
+    // ── Operator overload for aggregate types ──
+    bool is_const_operand = type::is_const(type);
+    auto check_type = type::remove_const(type);
+    if(type::is_struct(check_type)) {
+        auto st_type = std::dynamic_pointer_cast<struct_type>(check_type);
+        if (st_type) {
+            auto agg = st_type->get_struct();
+            if (agg) {
+                auto op_func = resolve_unary_operator_overload(expr, agg, sub, is_const_operand);
+                if (op_func) {
+                    expr.set_operator_func(op_func);
+                    if (op_func->has_return_type()) {
+                        expr.set_type(op_func->get_return_type());
+                    } else {
+                        expr.set_type(type);
+                    }
+                    if (op_func->is_member()) {
+                        auto di = compute_operator_dispatch_info(op_func, orig_type);
+                        expr.set_operator_dispatch_info(std::move(di));
+                    } else {
+                        virtual_dispatch_info di;
+                        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                        expr.set_operator_dispatch_info(std::move(di));
+                    }
+                    return;
+                }
+            }
+        }
     }
 
     if(!type::is_primitive(type)) {
@@ -1458,6 +2480,35 @@ void type_reference_resolver::visit_prefix_increment_expression(prefix_increment
             {value_type ? value_type->to_string() : "?"});
     }
 
+    // ── Operator overload for aggregate types ──
+    auto check_type = type::remove_const(value_type);
+    if(type::is_struct(check_type)) {
+        auto st_type = std::dynamic_pointer_cast<struct_type>(check_type);
+        if (st_type) {
+            auto agg = st_type->get_struct();
+            if (agg) {
+                auto op_func = resolve_unary_operator_overload(expr, agg, sub);
+                if (op_func) {
+                    expr.set_operator_func(op_func);
+                    if (op_func->has_return_type()) {
+                        expr.set_type(op_func->get_return_type());
+                    } else {
+                        expr.set_type(ref_type);
+                    }
+                    if (op_func->is_member()) {
+                        auto di = compute_operator_dispatch_info(op_func, type);
+                        expr.set_operator_dispatch_info(std::move(di));
+                    } else {
+                        virtual_dispatch_info di;
+                        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                        expr.set_operator_dispatch_info(std::move(di));
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
     if(!type::is_primitive(value_type)) {
         throw_error(0x0030, std::nullopt,
             "Prefix '++' requires a numeric primitive operand, but got type '{}'",
@@ -1473,6 +2524,8 @@ void type_reference_resolver::visit_prefix_increment_expression(prefix_increment
 }
 
 void implementation_generator::visit_prefix_increment_expression(prefix_increment_expression& expr) {
+    if (generate_unary_operator_overload(expr)) return;
+
     // Get the pointer (alloca) to the variable
     auto ptr = process_unary_expression(expr);
     if(!ptr) {
@@ -1538,6 +2591,35 @@ void type_reference_resolver::visit_prefix_decrement_expression(prefix_decrement
             {value_type ? value_type->to_string() : "?"});
     }
 
+    // ── Operator overload for aggregate types ──
+    auto check_type = type::remove_const(value_type);
+    if(type::is_struct(check_type)) {
+        auto st_type = std::dynamic_pointer_cast<struct_type>(check_type);
+        if (st_type) {
+            auto agg = st_type->get_struct();
+            if (agg) {
+                auto op_func = resolve_unary_operator_overload(expr, agg, sub);
+                if (op_func) {
+                    expr.set_operator_func(op_func);
+                    if (op_func->has_return_type()) {
+                        expr.set_type(op_func->get_return_type());
+                    } else {
+                        expr.set_type(ref_type);
+                    }
+                    if (op_func->is_member()) {
+                        auto di = compute_operator_dispatch_info(op_func, type);
+                        expr.set_operator_dispatch_info(std::move(di));
+                    } else {
+                        virtual_dispatch_info di;
+                        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                        expr.set_operator_dispatch_info(std::move(di));
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
     if(!type::is_primitive(value_type)) {
         throw_error(0x0033, std::nullopt,
             "Prefix '--' requires a numeric primitive operand, but got type '{}'",
@@ -1553,6 +2635,8 @@ void type_reference_resolver::visit_prefix_decrement_expression(prefix_decrement
 }
 
 void implementation_generator::visit_prefix_decrement_expression(prefix_decrement_expression& expr) {
+    if (generate_unary_operator_overload(expr)) return;
+
     auto ptr = process_unary_expression(expr);
     if(!ptr) {
         _value = nullptr;
@@ -1615,6 +2699,35 @@ void type_reference_resolver::visit_postfix_increment_expression(postfix_increme
             {value_type ? value_type->to_string() : "?"});
     }
 
+    // ── Operator overload for aggregate types ──
+    auto check_type = type::remove_const(value_type);
+    if(type::is_struct(check_type)) {
+        auto st_type = std::dynamic_pointer_cast<struct_type>(check_type);
+        if (st_type) {
+            auto agg = st_type->get_struct();
+            if (agg) {
+                auto op_func = resolve_unary_operator_overload(expr, agg, sub);
+                if (op_func) {
+                    expr.set_operator_func(op_func);
+                    if (op_func->has_return_type()) {
+                        expr.set_type(op_func->get_return_type());
+                    } else {
+                        expr.set_type(value_type);
+                    }
+                    if (op_func->is_member()) {
+                        auto di = compute_operator_dispatch_info(op_func, type);
+                        expr.set_operator_dispatch_info(std::move(di));
+                    } else {
+                        virtual_dispatch_info di;
+                        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                        expr.set_operator_dispatch_info(std::move(di));
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
     if(!type::is_primitive(value_type)) {
         throw_error(0x0036, std::nullopt,
             "Postfix '++' requires a numeric primitive operand, but got type '{}'",
@@ -1630,6 +2743,8 @@ void type_reference_resolver::visit_postfix_increment_expression(postfix_increme
 }
 
 void implementation_generator::visit_postfix_increment_expression(postfix_increment_expression& expr) {
+    if (generate_unary_operator_overload(expr)) return;
+
     auto ptr = process_unary_expression(expr);
     if(!ptr) {
         _value = nullptr;
@@ -1693,6 +2808,35 @@ void type_reference_resolver::visit_postfix_decrement_expression(postfix_decreme
             {value_type ? value_type->to_string() : "?"});
     }
 
+    // ── Operator overload for aggregate types ──
+    auto check_type = type::remove_const(value_type);
+    if(type::is_struct(check_type)) {
+        auto st_type = std::dynamic_pointer_cast<struct_type>(check_type);
+        if (st_type) {
+            auto agg = st_type->get_struct();
+            if (agg) {
+                auto op_func = resolve_unary_operator_overload(expr, agg, sub);
+                if (op_func) {
+                    expr.set_operator_func(op_func);
+                    if (op_func->has_return_type()) {
+                        expr.set_type(op_func->get_return_type());
+                    } else {
+                        expr.set_type(value_type);
+                    }
+                    if (op_func->is_member()) {
+                        auto di = compute_operator_dispatch_info(op_func, type);
+                        expr.set_operator_dispatch_info(std::move(di));
+                    } else {
+                        virtual_dispatch_info di;
+                        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                        expr.set_operator_dispatch_info(std::move(di));
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
     if(!type::is_primitive(value_type)) {
         throw_error(0x0039, std::nullopt,
             "Postfix '--' requires a numeric primitive operand, but got type '{}'",
@@ -1708,6 +2852,8 @@ void type_reference_resolver::visit_postfix_decrement_expression(postfix_decreme
 }
 
 void implementation_generator::visit_postfix_decrement_expression(postfix_decrement_expression& expr) {
+    if (generate_unary_operator_overload(expr)) return;
+
     auto ptr = process_unary_expression(expr);
     if(!ptr) {
         _value = nullptr;
@@ -1741,11 +2887,14 @@ void implementation_generator::visit_postfix_decrement_expression(postfix_decrem
     _value = old_val;
 }
 
+
 //
 // Unary plus expression
 //
 
 void implementation_generator::visit_unary_plus_expression(unary_plus_expression& expr) {
+    if (generate_unary_operator_overload(expr)) return;
+
     auto val = process_unary_expression(expr);
     if(!val) {
         // TODO throw exception ?
@@ -1773,6 +2922,8 @@ void implementation_generator::visit_unary_plus_expression(unary_plus_expression
 //
 
 void implementation_generator::visit_unary_minus_expression(unary_minus_expression& expr) {
+    if (generate_unary_operator_overload(expr)) return;
+
     auto val = process_unary_expression(expr);
     if(!val) {
         // TODO throw exception ?
@@ -1808,6 +2959,8 @@ void implementation_generator::visit_unary_minus_expression(unary_minus_expressi
 //
 
 void implementation_generator::visit_bitwise_not_expression(bitwise_not_expression& expr) {
+    if (generate_unary_operator_overload(expr)) return;
+
     auto val = process_unary_expression(expr);
     if(!val) {
         // TODO throw exception ?
@@ -1866,6 +3019,46 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
         }
         return false;
     };
+
+    // ── Operator overload for aggregate types (before reference stripping) ──
+    {
+        auto check_left = left_type;
+        if (type::is_reference(check_left)) {
+            check_left = check_left->get_subtype();
+        }
+        bool is_const_left = type::is_const(check_left);
+        check_left = type::remove_const(check_left);
+        if (type::is_struct(check_left)) {
+            auto st_type = std::dynamic_pointer_cast<struct_type>(check_left);
+            if (st_type) {
+                auto agg = st_type->get_struct();
+                if (agg) {
+                    auto [op_func, adapted_right] = resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
+                    if (op_func) {
+                        expr.set_operator_func(op_func);
+                        // Apply the adapted right operand (implicit cast if needed)
+                        if (adapted_right && adapted_right != right) {
+                            expr.assign_right(adapted_right);
+                        }
+                        if (op_func->has_return_type()) {
+                            expr.set_type(op_func->get_return_type());
+                        } else {
+                            expr.set_type(_context->from_type(primitive_type::BOOL));
+                        }
+                        if (op_func->is_member()) {
+                            auto di = compute_operator_dispatch_info(op_func, left_type);
+                            expr.set_operator_dispatch_info(std::move(di));
+                        } else {
+                            virtual_dispatch_info di;
+                            di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                            expr.set_operator_dispatch_info(std::move(di));
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
 
     if(type::is_reference(left_type)) {
         // For ref<indirection>, don't unwrap — adapt_type handles ref<indirection>→bool.
@@ -1938,6 +3131,8 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
 //
 
 void implementation_generator::visit_logical_and_expression(logical_and_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     // ── Short-circuit evaluation (and-then) ─────────────────────────────────
     // Evaluate left first; if false, skip right entirely and yield false.
 
@@ -1990,6 +3185,8 @@ void implementation_generator::visit_logical_and_expression(logical_and_expressi
 
 
 void implementation_generator::visit_logical_or_expression(logical_or_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     // ── Short-circuit evaluation (or-else) ─────────────────────────────────
     // Evaluate left first; if true, skip right entirely and yield true.
 
@@ -2059,6 +3256,39 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
         }
     }
 
+    // ── Operator overload for aggregate types ──
+    {
+        auto check_type = type::remove_const(type);
+        bool is_const_operand = type::is_const(type);
+        if (type::is_struct(check_type)) {
+            auto st_type = std::dynamic_pointer_cast<struct_type>(check_type);
+            if (st_type) {
+                auto agg = st_type->get_struct();
+                if (agg) {
+                    auto op_func = resolve_unary_operator_overload(expr, agg, sub, is_const_operand);
+                    if (op_func) {
+                        expr.set_operator_func(op_func);
+                        if (op_func->has_return_type()) {
+                            expr.set_type(op_func->get_return_type());
+                        } else {
+                            expr.set_type(_context->from_type(primitive_type::BOOL));
+                        }
+                        auto orig_type = sub->get_type();
+                        if (op_func->is_member()) {
+                            auto di = compute_operator_dispatch_info(op_func, orig_type);
+                            expr.set_operator_dispatch_info(std::move(di));
+                        } else {
+                            virtual_dispatch_info di;
+                            di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                            expr.set_operator_dispatch_info(std::move(di));
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     // Check bool-compatibility: primitive, indirection, or null.
     auto is_bool_compatible = [](const std::shared_ptr<k::model::type>& t) {
         if (type::is_primitive(t)) return true;
@@ -2098,6 +3328,8 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
 }
 
 void implementation_generator::visit_logical_not_expression(logical_not_expression& expr) {
+    if (generate_unary_operator_overload(expr)) return;
+
     auto value = process_unary_expression(expr);
 
     if(!value) {
@@ -2189,6 +3421,47 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         return;
     }
     // ─────────────────────────────────────────────────────────────────────────
+
+    // ── Operator overload for aggregate types (before reference stripping) ──
+    {
+        auto check_left = left_type;
+        if (type::is_reference(check_left)) {
+            check_left = check_left->get_subtype();
+        }
+        bool is_const_left = type::is_const(check_left);
+        check_left = type::remove_const(check_left);
+        if (type::is_struct(check_left)) {
+            auto st_type = std::dynamic_pointer_cast<struct_type>(check_left);
+            if (st_type) {
+                auto agg = st_type->get_struct();
+                if (agg) {
+                    auto [op_func, adapted_right] = resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
+                    if (op_func) {
+                        expr.set_operator_func(op_func);
+                        // Apply the adapted right operand (implicit cast if needed)
+                        if (adapted_right && adapted_right != right) {
+                            expr.assign_right(adapted_right);
+                        }
+                        if (op_func->has_return_type()) {
+                            expr.set_type(op_func->get_return_type());
+                        } else {
+                            static auto bool_type_cached = _context->from_type(primitive_type::BOOL);
+                            expr.set_type(bool_type_cached);
+                        }
+                        if (op_func->is_member()) {
+                            auto di = compute_operator_dispatch_info(op_func, left_type);
+                            expr.set_operator_dispatch_info(std::move(di));
+                        } else {
+                            virtual_dispatch_info di;
+                            di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                            expr.set_operator_dispatch_info(std::move(di));
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
 
     // ── Primitive comparison (existing path) ─────────────────────────────────
     if(type::is_reference(left_type)) {
@@ -2286,6 +3559,8 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
 //
 
 void implementation_generator::visit_equal_expression(equal_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x0029, std::nullopt,
@@ -2302,8 +3577,6 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
             || type::is_owner(t)   || type::is_null(t);
     };
     if (is_addr(left_type) || is_addr(right_type)) {
-        // Both are pointer-sized values; null is ConstantPointerNull.
-        // Ensure both are ptr-typed for ICmpEQ.
         auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
         if (left->getType() != ptr_ty) left = _builder->CreateBitCast(left, ptr_ty);
         if (right->getType() != ptr_ty) right = _builder->CreateBitCast(right, ptr_ty);
@@ -2345,6 +3618,8 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
 //
 
 void implementation_generator::visit_different_expression(different_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x002B, std::nullopt,
@@ -2402,6 +3677,8 @@ void implementation_generator::visit_different_expression(different_expression& 
 //
 
 void implementation_generator::visit_lesser_expression(lesser_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x002D, std::nullopt,
@@ -2446,6 +3723,8 @@ void implementation_generator::visit_lesser_expression(lesser_expression& expr) 
 //
 
 void implementation_generator::visit_greater_expression(greater_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x002F, std::nullopt,
@@ -2490,6 +3769,8 @@ void implementation_generator::visit_greater_expression(greater_expression& expr
 //
 
 void implementation_generator::visit_lesser_equal_expression(lesser_equal_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x0031, std::nullopt,
@@ -2534,9 +3815,11 @@ void implementation_generator::visit_lesser_equal_expression(lesser_equal_expres
 //
 
 void implementation_generator::visit_greater_equal_expression(greater_equal_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x0033, std::nullopt,
+        throw_internal_error(0x0034, std::nullopt,
             "Internal error: '>=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }

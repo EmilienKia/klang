@@ -711,6 +711,61 @@ protected:
      * @return The given arg expression if already compatible, the new wrapping casting expr if mapping, nullptr if not possible.
      */
     std::shared_ptr<expression> adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type);
+
+    /**
+     * Resolve a binary operator overload for an aggregate type, using cast-weight scoring
+     * on the right operand to select the best match among multiple candidates.
+     * Member operators are preferred over non-member when scores are equal.
+     * For non-member operators, both left and right parameter compatibility are validated.
+     * When is_const_this is true, only const member operators are considered.
+     * @param expr          The binary expression node.
+     * @param left_agg      The aggregate type of the left operand.
+     * @param left_expr     The left operand expression (used for scope lookup and non-member left param scoring).
+     * @param right_expr    The right operand expression.
+     * @param is_const_this True if the left operand is a const object (only const member operators are viable).
+     * @return {best_func, adapted_right} or {nullptr, nullptr} if no viable match.
+     */
+    std::pair<std::shared_ptr<function>, std::shared_ptr<expression>>
+    resolve_binary_operator_overload(
+        const binary_expression& expr,
+        const std::shared_ptr<aggregate>& left_agg,
+        const std::shared_ptr<expression>& left_expr,
+        const std::shared_ptr<expression>& right_expr,
+        bool is_const_this = false);
+
+    /**
+     * Resolve a unary operator overload for an aggregate type, using cast-weight scoring
+     * to select the best match among multiple candidates.
+     * Member operators are preferred over non-member when scores are equal.
+     * For non-member operators, the operand parameter compatibility is validated.
+     * When is_const_this is true, only const member operators are considered.
+     * @param expr          The unary expression node.
+     * @param operand_agg   The aggregate type of the operand.
+     * @param operand_expr  The operand expression (used for scope lookup and non-member param scoring).
+     * @param is_const_this True if the operand is a const object (only const member operators are viable).
+     * @return The best matching function, or nullptr if no viable match.
+     */
+    std::shared_ptr<function>
+    resolve_unary_operator_overload(
+        const unary_expression& expr,
+        const std::shared_ptr<aggregate>& operand_agg,
+        const std::shared_ptr<expression>& operand_expr,
+        bool is_const_this = false);
+
+    /**
+     * Resolve a casting operator overload for an aggregate type.
+     * Looks for a member function named "operator_cast_<encoded_type>" matching the
+     * target type of the cast.
+     * @param source_agg    The aggregate type of the source expression.
+     * @param target_type   The target type of the cast.
+     * @param is_const_this True if the source is a const object.
+     * @return The matching casting operator function, or nullptr if no viable match.
+     */
+    std::shared_ptr<function>
+    resolve_cast_operator_overload(
+        const std::shared_ptr<aggregate>& source_agg,
+        const std::shared_ptr<type>& target_type,
+        bool is_const_this = false);
 };
 
 

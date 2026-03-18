@@ -238,6 +238,25 @@ public:
 
     llvm::Value* process_unary_expression(unary_expression&);
     std::pair<llvm::Value*,llvm::Value*> process_binary_expression(binary_expression&);
+
+    /**
+     * Generate a function call for a binary operator overload.
+     * Returns true if the overload was handled (and _value is set), false if not an overload.
+     */
+    bool generate_binary_operator_overload(binary_expression& expr);
+
+    /**
+     * Generate a function call for a unary operator overload.
+     * Returns true if the overload was handled (and _value is set), false if not an overload.
+     */
+    bool generate_unary_operator_overload(unary_expression& expr);
+
+    /**
+     * Generate a function call for a casting operator overload.
+     * Returns true if the overload was handled (and _value is set), false if not an overload.
+     */
+    bool generate_cast_operator_overload(cast_expression& expr);
+
     void visit_addition_expression(addition_expression&) override;
     void visit_substraction_expression(substraction_expression&) override;
     void visit_multiplication_expression(multiplication_expression&) override;

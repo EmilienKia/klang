@@ -3566,6 +3566,10 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             auto tgt_sub = tgt_ref->get_referenced_type();
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
+            // Exact match: ref<T> → ref<T> (structural equality, not just pointer identity)
+            if (type::are_equal(src_sub_nc, tgt_sub_nc) && type::is_const(src_sub) == type::is_const(tgt_sub)) {
+                return expr;
+            }
             // Mutable → const widening: ref<T> → ref<const T>
             if (src_sub_nc == tgt_sub_nc && type::is_const(tgt_sub) && !type::is_const(src_sub)) {
                 // Bitwise-identical at IR level (just a different type annotation).
