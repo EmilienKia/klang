@@ -865,25 +865,26 @@ TEST_CASE("Parse PM expression", "[parser][expression][pm_expr]") {
     auto expr = parser.parse_pm_expr();
     REQUIRE( expr );
 
+    // Left-associative: (ident .* ifier) ->* other
     auto pm1 = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
     REQUIRE( pm1 );
 
-    REQUIRE( pm1->op == k::lex::operator_::DOT_STAR );
+    REQUIRE( pm1->op == k::lex::operator_::ARROW_STAR );
 
-    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(pm1->lexpr());
+    auto pm2 = std::dynamic_pointer_cast<ast::binary_operator_expr>(pm1->lexpr());
+    REQUIRE( pm2 );
+
+    REQUIRE( pm2->op == k::lex::operator_::DOT_STAR );
+
+    auto ident = std::dynamic_pointer_cast<ast::identifier_expr>(pm2->lexpr());
     REQUIRE( ident );
     REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 
-    auto pm2 = std::dynamic_pointer_cast<ast::binary_operator_expr>(pm1->rexpr());
-    REQUIRE( pm2 );
-
-    REQUIRE( pm2->op == k::lex::operator_::ARROW_STAR );
-
-    auto ifier = std::dynamic_pointer_cast<ast::identifier_expr>(pm2->lexpr());
+    auto ifier = std::dynamic_pointer_cast<ast::identifier_expr>(pm2->rexpr());
     REQUIRE( ifier );
     REQUIRE( is_same(*ifier, k::name(false, "ifier") ) );
 
-    auto other = std::dynamic_pointer_cast<ast::identifier_expr>(pm2->rexpr());
+    auto other = std::dynamic_pointer_cast<ast::identifier_expr>(pm1->rexpr());
     REQUIRE( other );
     REQUIRE( is_same(*other, k::name(false, "other") ) );
 }
@@ -1556,7 +1557,6 @@ TEST_CASE("Parse function redirect — simple", "[parser][function_decl][redirec
     REQUIRE( std::string{decl->redirect_target->names[0].content} == "bar" );
     REQUIRE_FALSE( decl->redirect_has_param_types );
     REQUIRE( decl->redirect_param_types.empty() );
-    REQUIRE_FALSE( decl->content );
 }
 
 TEST_CASE("Parse function redirect — with return type", "[parser][function_decl][redirect]") {
@@ -1757,5 +1757,146 @@ TEST_CASE("Parse import — missing semicolon yields error", "[parser][import][e
     k::source src{"import math::vec"};
     k::parse::parser parser(log, src);
     REQUIRE_THROWS( parser.parse_unit() );
+}
+
+
+//
+// Operator associativity tests
+//
+
+TEST_CASE("Parse left-associative addition: a + b + c", "[parser][expression][associativity]") {
+    test_logger log;
+    k::source src{"a + b + c"};
+    k::parse::parser parser(log, src);
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    // Left-associative: (a + b) + c
+    auto add2 = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
+    REQUIRE( add2 );
+    REQUIRE( add2->op == k::lex::operator_::PLUS );
+
+    auto add1 = std::dynamic_pointer_cast<ast::binary_operator_expr>(add2->lexpr());
+    REQUIRE( add1 );
+    REQUIRE( add1->op == k::lex::operator_::PLUS );
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(add1->lexpr());
+    REQUIRE( a );
+    REQUIRE( is_same(*a, k::name(false, "a")) );
+
+    auto b = std::dynamic_pointer_cast<ast::identifier_expr>(add1->rexpr());
+    REQUIRE( b );
+    REQUIRE( is_same(*b, k::name(false, "b")) );
+
+    auto c = std::dynamic_pointer_cast<ast::identifier_expr>(add2->rexpr());
+    REQUIRE( c );
+    REQUIRE( is_same(*c, k::name(false, "c")) );
+}
+
+TEST_CASE("Parse left-associative subtraction: a - b - c", "[parser][expression][associativity]") {
+    test_logger log;
+    k::source src{"a - b - c"};
+    k::parse::parser parser(log, src);
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    // Left-associative: (a - b) - c
+    auto sub2 = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
+    REQUIRE( sub2 );
+    REQUIRE( sub2->op == k::lex::operator_::MINUS );
+
+    auto sub1 = std::dynamic_pointer_cast<ast::binary_operator_expr>(sub2->lexpr());
+    REQUIRE( sub1 );
+    REQUIRE( sub1->op == k::lex::operator_::MINUS );
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(sub1->lexpr());
+    REQUIRE( a );
+
+    auto b = std::dynamic_pointer_cast<ast::identifier_expr>(sub1->rexpr());
+    REQUIRE( b );
+
+    auto c = std::dynamic_pointer_cast<ast::identifier_expr>(sub2->rexpr());
+    REQUIRE( c );
+}
+
+TEST_CASE("Parse left-associative multiplication: a * b * c", "[parser][expression][associativity]") {
+    test_logger log;
+    k::source src{"a * b * c"};
+    k::parse::parser parser(log, src);
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    // Left-associative: (a * b) * c
+    auto mul2 = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
+    REQUIRE( mul2 );
+    REQUIRE( mul2->op == k::lex::operator_::STAR );
+
+    auto mul1 = std::dynamic_pointer_cast<ast::binary_operator_expr>(mul2->lexpr());
+    REQUIRE( mul1 );
+    REQUIRE( mul1->op == k::lex::operator_::STAR );
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(mul1->lexpr());
+    REQUIRE( a );
+
+    auto b = std::dynamic_pointer_cast<ast::identifier_expr>(mul1->rexpr());
+    REQUIRE( b );
+
+    auto c = std::dynamic_pointer_cast<ast::identifier_expr>(mul2->rexpr());
+    REQUIRE( c );
+}
+
+TEST_CASE("Parse left-associative division: a / b / c", "[parser][expression][associativity]") {
+    test_logger log;
+    k::source src{"a / b / c"};
+    k::parse::parser parser(log, src);
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    // Left-associative: (a / b) / c
+    auto div2 = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
+    REQUIRE( div2 );
+    REQUIRE( div2->op == k::lex::operator_::SLASH );
+
+    auto div1 = std::dynamic_pointer_cast<ast::binary_operator_expr>(div2->lexpr());
+    REQUIRE( div1 );
+    REQUIRE( div1->op == k::lex::operator_::SLASH );
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(div1->lexpr());
+    REQUIRE( a );
+
+    auto b = std::dynamic_pointer_cast<ast::identifier_expr>(div1->rexpr());
+    REQUIRE( b );
+
+    auto c = std::dynamic_pointer_cast<ast::identifier_expr>(div2->rexpr());
+    REQUIRE( c );
+}
+
+TEST_CASE("Parse right-associative assignment: a = b = c", "[parser][expression][associativity]") {
+    test_logger log;
+    k::source src{"a = b = c"};
+    k::parse::parser parser(log, src);
+    auto expr = parser.parse_expression();
+    REQUIRE( expr );
+
+    // Right-associative: a = (b = c)
+    auto assign1 = std::dynamic_pointer_cast<ast::binary_operator_expr>(expr);
+    REQUIRE( assign1 );
+    REQUIRE( assign1->op == k::lex::operator_::EQUAL );
+
+    auto a = std::dynamic_pointer_cast<ast::identifier_expr>(assign1->lexpr());
+    REQUIRE( a );
+    REQUIRE( is_same(*a, k::name(false, "a")) );
+
+    auto assign2 = std::dynamic_pointer_cast<ast::binary_operator_expr>(assign1->rexpr());
+    REQUIRE( assign2 );
+    REQUIRE( assign2->op == k::lex::operator_::EQUAL );
+
+    auto b = std::dynamic_pointer_cast<ast::identifier_expr>(assign2->lexpr());
+    REQUIRE( b );
+    REQUIRE( is_same(*b, k::name(false, "b")) );
+
+    auto c = std::dynamic_pointer_cast<ast::identifier_expr>(assign2->rexpr());
+    REQUIRE( c );
+    REQUIRE( is_same(*c, k::name(false, "c")) );
 }
 

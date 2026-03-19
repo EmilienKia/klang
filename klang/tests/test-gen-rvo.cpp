@@ -1127,8 +1127,7 @@ TEST_CASE("RVO-8: Operator+ returning struct by value", "[gen][rvo][rvo8]") {
 }
 
 TEST_CASE("RVO-8: Chained operator returning struct — a + b + c", "[gen][rvo][rvo8]") {
-    // NOTE: K's parser currently makes + right-associative (a + (b + c)).
-    // We use explicit parentheses to enforce left-associativity: (a + b) + c.
+    // With left-associativity fixed, a + b + c is now parsed as (a + b) + c.
     auto jit = gen_jit(R"SRC(
         module __rvo8_chain_op__;
 
@@ -1150,7 +1149,7 @@ TEST_CASE("RVO-8: Chained operator returning struct — a + b + c", "[gen][rvo][
             a : Vec(1);
             b : Vec(10);
             c : Vec(100);
-            d : Vec = (a + b) + c;
+            d : Vec = a + b + c;
             return d.x;
         }
 

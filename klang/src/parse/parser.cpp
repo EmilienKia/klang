@@ -1782,17 +1782,19 @@ ast::expr_ptr parser::parse_logical_or_expression()
         return {};
     }
 
-    auto op = _lexer.get();
-    if (op != lex::operator_::DOUBLE_PIPE) {
-        _lexer.unget();
-        return left_expr;
-    }
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::DOUBLE_PIPE) {
+            _lexer.unget();
+            return left_expr;
+        }
 
-    ast::expr_ptr right_expr = parse_logical_or_expression();
-    if(right_expr) {
-        return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
-    } else {
-        throw_error(0x001B, _lexer.pick_current(), "Logical-OR expression is expecting a sub expression after the double-pipe '||' operator");
+        ast::expr_ptr right_expr = parse_logical_and_expression();
+        if(right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(0x001B, _lexer.pick_current(), "Logical-OR expression is expecting a sub expression after the double-pipe '||' operator");
+        }
     }
 
 }
@@ -1807,17 +1809,19 @@ ast::expr_ptr parser::parse_logical_and_expression()
         return {};
     }
 
-    auto op = _lexer.get();
-    if (op != lex::operator_::DOUBLE_AMPERSAND) {
-        _lexer.unget();
-        return left_expr;
-    }
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::DOUBLE_AMPERSAND) {
+            _lexer.unget();
+            return left_expr;
+        }
 
-    ast::expr_ptr right_expr = parse_logical_and_expression();
-    if(right_expr) {
-        return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
-    } else {
-        throw_error(0x001C, _lexer.pick_current(), "Logical-AND expression is expecting a sub expression after the double-ampersand '&&' operator");
+        ast::expr_ptr right_expr = parse_inclusive_bin_or_expr();
+        if(right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(0x001C, _lexer.pick_current(), "Logical-AND expression is expecting a sub expression after the double-ampersand '&&' operator");
+        }
     }
 
 }
@@ -1832,17 +1836,19 @@ ast::expr_ptr parser::parse_inclusive_bin_or_expr()
         return {};
     }
 
-    auto op = _lexer.get();
-    if (op != lex::operator_::PIPE) {
-        _lexer.unget();
-        return left_expr;
-    }
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::PIPE) {
+            _lexer.unget();
+            return left_expr;
+        }
 
-    ast::expr_ptr right_expr = parse_inclusive_bin_or_expr();
-    if(right_expr) {
-        return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
-    } else {
-        throw_error(0x001D, _lexer.pick_current(), "Binary-OR expression is expecting a sub expression after the pipe '|' operator");
+        ast::expr_ptr right_expr = parse_exclusive_bin_or_expr();
+        if(right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(0x001D, _lexer.pick_current(), "Binary-OR expression is expecting a sub expression after the pipe '|' operator");
+        }
     }
 
 }
@@ -1857,17 +1863,19 @@ ast::expr_ptr parser::parse_exclusive_bin_or_expr()
         return {};
     }
 
-    auto op = _lexer.get();
-    if (op != lex::operator_::CARET) {
-        _lexer.unget();
-        return left_expr;
-    }
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::CARET) {
+            _lexer.unget();
+            return left_expr;
+        }
 
-    ast::expr_ptr right_expr = parse_exclusive_bin_or_expr();
-    if(right_expr) {
-        return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
-    } else {
-        throw_error(0x001E, _lexer.pick_current(), "Binary-XOR expression is expecting a sub expression after the caret '^' operator");
+        ast::expr_ptr right_expr = parse_bin_and_expr();
+        if(right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(0x001E, _lexer.pick_current(), "Binary-XOR expression is expecting a sub expression after the caret '^' operator");
+        }
     }
 
 }
@@ -1882,19 +1890,20 @@ ast::expr_ptr parser::parse_bin_and_expr()
         return {};
     }
 
-    auto op = _lexer.get();
-    if (op != lex::operator_::AMPERSAND) {
-        _lexer.unget();
-        return left_expr;
-    }
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::AMPERSAND) {
+            _lexer.unget();
+            return left_expr;
+        }
 
-    ast::expr_ptr right_expr = parse_bin_and_expr();
-    if(right_expr) {
-        return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
-    } else {
-        throw_error(0x001F, _lexer.pick_current(), "Binary-AND expression is expecting a sub expression after the ampersand '&' operator");
+        ast::expr_ptr right_expr = parse_equality_expr();
+        if(right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(0x001F, _lexer.pick_current(), "Binary-AND expression is expecting a sub expression after the ampersand '&' operator");
+        }
     }
-
 
 }
 
@@ -1908,18 +1917,20 @@ ast::expr_ptr parser::parse_equality_expr()
         return {};
     }
 
-    auto op = _lexer.get();
-    if (op != lex::operator_::DOUBLE_EQUAL &&
-        op != lex::operator_::EXCLAMATION_MARK_EQUAL) {
-        _lexer.unget();
-        return left_expr;
-    }
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::DOUBLE_EQUAL &&
+            op != lex::operator_::EXCLAMATION_MARK_EQUAL) {
+            _lexer.unget();
+            return left_expr;
+        }
 
-    ast::expr_ptr right_expr = parse_equality_expr();
-    if(right_expr) {
-        return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
-    } else {
-        throw_error(0x0020, _lexer.pick_current(), "Equality expression is expecting a sub expression after the equality '==' or '!=' operators");
+        ast::expr_ptr right_expr = parse_relational_expr();
+        if(right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(0x0020, _lexer.pick_current(), "Equality expression is expecting a sub expression after the equality '==' or '!=' operators");
+        }
     }
 }
 
@@ -1933,23 +1944,24 @@ ast::expr_ptr parser::parse_relational_expr()
         return {};
     }
 
-    auto op = _lexer.get();
-    if(lex::is_none_of<
-            lex::operator_::CHEVRON_CLOSE,
-            lex::operator_::CHEVRON_OPEN,
-            lex::operator_::CHEVRON_CLOSE_EQUAL,
-            lex::operator_::CHEVRON_OPEN_EQUAL>(op)) {
-        _lexer.unget();
-        return left_expr;
-    }
+    while (true) {
+        auto op = _lexer.get();
+        if(lex::is_none_of<
+                lex::operator_::CHEVRON_CLOSE,
+                lex::operator_::CHEVRON_OPEN,
+                lex::operator_::CHEVRON_CLOSE_EQUAL,
+                lex::operator_::CHEVRON_OPEN_EQUAL>(op)) {
+            _lexer.unget();
+            return left_expr;
+        }
 
-    ast::expr_ptr right_expr = parse_relational_expr();
-    if(right_expr) {
-        return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
-    } else {
-        throw_error(0x0021, _lexer.pick_current(), "Relational expression is expecting a sub expression after the relational '<', '>', '<=' or '>=' operators");
+        ast::expr_ptr right_expr = parse_shifting_expr();
+        if(right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(0x0021, _lexer.pick_current(), "Relational expression is expecting a sub expression after the relational '<', '>', '<=' or '>=' operators");
+        }
     }
-
 
 }
 
@@ -1963,18 +1975,20 @@ ast::expr_ptr parser::parse_shifting_expr()
         return {};
     }
 
-    auto op = _lexer.get();
-    if (op != lex::operator_::DOUBLE_CHEVRON_CLOSE &&
-        op != lex::operator_::DOUBLE_CHEVRON_OPEN) {
-        _lexer.unget();
-        return left_expr;
-    }
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::DOUBLE_CHEVRON_CLOSE &&
+            op != lex::operator_::DOUBLE_CHEVRON_OPEN) {
+            _lexer.unget();
+            return left_expr;
+        }
 
-    ast::expr_ptr right_expr = parse_shifting_expr();
-    if(right_expr) {
-        return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
-    } else {
-        throw_error(0x0022, _lexer.pick_current(), "Shifting expression is expecting a sub expression after the shifting '<<' or '>>' operators");
+        ast::expr_ptr right_expr = parse_additive_expr();
+        if(right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(0x0022, _lexer.pick_current(), "Shifting expression is expecting a sub expression after the shifting '<<' or '>>' operators");
+        }
     }
 }
 
@@ -1988,18 +2002,20 @@ ast::expr_ptr parser::parse_additive_expr()
         return {};
     }
 
-    auto op = _lexer.get();
-    if (op != lex::operator_::PLUS &&
-        op != lex::operator_::MINUS) {
-        _lexer.unget();
-        return left_expr;
-    }
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::PLUS &&
+            op != lex::operator_::MINUS) {
+            _lexer.unget();
+            return left_expr;
+        }
 
-    ast::expr_ptr right_expr = parse_additive_expr();
-    if(right_expr) {
-        return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
-    } else {
-        throw_error(0x0023, _lexer.pick_current(), "Additive expression is expecting a sub expression after the additive '+' or '-' operators");
+        ast::expr_ptr right_expr = parse_multiplicative_expr();
+        if(right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(0x0023, _lexer.pick_current(), "Additive expression is expecting a sub expression after the additive '+' or '-' operators");
+        }
     }
 }
 
@@ -2012,20 +2028,22 @@ ast::expr_ptr parser::parse_multiplicative_expr() {
         return {};
     }
 
-    auto op = _lexer.get();
-    if (lex::is_none_of<
-            lex::operator_::STAR,
-            lex::operator_::SLASH,
-            lex::operator_::PERCENT>(op)) {
-        _lexer.unget();
-        return left_expr;
-    }
+    while (true) {
+        auto op = _lexer.get();
+        if (lex::is_none_of<
+                lex::operator_::STAR,
+                lex::operator_::SLASH,
+                lex::operator_::PERCENT>(op)) {
+            _lexer.unget();
+            return left_expr;
+        }
 
-    ast::expr_ptr right_expr = parse_multiplicative_expr();
-    if (right_expr) {
-        return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
-    } else {
-        throw_error(0x0024, _lexer.pick_current(), "Multiplicative expression is expecting a sub expression after the multiplicative '*', '/' or '%' operators");
+        ast::expr_ptr right_expr = parse_pm_expr();
+        if (right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(0x0024, _lexer.pick_current(), "Multiplicative expression is expecting a sub expression after the multiplicative '*', '/' or '%' operators");
+        }
     }
 }
 
@@ -2038,19 +2056,21 @@ ast::expr_ptr parser::parse_pm_expr() {
         return {};
     }
 
-    auto op = _lexer.get();
-    if (op != lex::operator_::DOT_STAR &&
-        op != lex::operator_::ARROW_STAR) {
-        _lexer.unget();
-        return left_expr;
-    }
+    while (true) {
+        auto op = _lexer.get();
+        if (op != lex::operator_::DOT_STAR &&
+            op != lex::operator_::ARROW_STAR) {
+            _lexer.unget();
+            return left_expr;
+        }
 
-    ast::expr_ptr right_expr = parse_pm_expr();
-    if (right_expr) {
-        return std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
-    } else {
-        throw_error(0x0025, _lexer.pick_current(),
-                    "PM expression is expecting a sub expression after the pm '.*' or '.->' operators");
+        ast::expr_ptr right_expr = parse_cast_expr();
+        if (right_expr) {
+            left_expr = std::make_shared<ast::binary_operator_expr>(lex::as<lex::operator_>(op), left_expr, right_expr);
+        } else {
+            throw_error(0x0025, _lexer.pick_current(),
+                        "PM expression is expecting a sub expression after the pm '.*' or '.->' operators");
+        }
     }
 }
 
