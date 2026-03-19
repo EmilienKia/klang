@@ -857,19 +857,30 @@ void implementation_generator::visit_klass(klass& klass) {
                 llvm::BasicBlock* bb = llvm::BasicBlock::Create(llvm_ctx, "entry", thunk);
                 llvm::IRBuilder<> tb(bb);
 
-                llvm::Argument* this_arg = thunk->arg_begin();
-                llvm::Type* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
-                llvm::Value* this_as_int = tb.CreatePtrToInt(this_arg, i64_ty, "this_int");
-                llvm::Value* adj_int = tb.CreateSub(
-                    this_as_int,
-                    llvm::ConstantInt::get(i64_ty, (uint64_t)offset),
-                    "this_adj_int");
-                llvm::Value* this_adj = tb.CreateIntToPtr(adj_int, ptr_ty, "this_adj");
+                // For sret functions, the first arg is the sret pointer (pass through),
+                // and the second arg is 'this' (needs adjustment).
+                // For non-sret functions, the first arg is 'this'.
+                bool thunk_has_sret = real_llvm_func->hasParamAttribute(0, llvm::Attribute::StructRet);
+                unsigned this_arg_index = thunk_has_sret ? 1 : 0;
 
+                llvm::Type* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
                 std::vector<llvm::Value*> fwd_args;
-                fwd_args.push_back(this_adj);
-                for (auto it = std::next(thunk->arg_begin()); it != thunk->arg_end(); ++it)
-                    fwd_args.push_back(&*it);
+
+                for (unsigned i = 0; i < thunk->arg_size(); ++i) {
+                    llvm::Argument* arg = thunk->getArg(i);
+                    if (i == this_arg_index) {
+                        // Adjust 'this' pointer
+                        llvm::Value* this_as_int = tb.CreatePtrToInt(arg, i64_ty, "this_int");
+                        llvm::Value* adj_int = tb.CreateSub(
+                            this_as_int,
+                            llvm::ConstantInt::get(i64_ty, (uint64_t)offset),
+                            "this_adj_int");
+                        llvm::Value* this_adj = tb.CreateIntToPtr(adj_int, ptr_ty, "this_adj");
+                        fwd_args.push_back(this_adj);
+                    } else {
+                        fwd_args.push_back(arg);
+                    }
+                }
 
                 if (real_llvm_func->getReturnType()->isVoidTy()) {
                     tb.CreateCall(fn_ty, real_llvm_func, fwd_args);
@@ -1099,18 +1110,27 @@ void implementation_generator::visit_klass(klass& klass) {
                                 _context->module());
                             llvm::BasicBlock* bb = llvm::BasicBlock::Create(llvm_ctx, "entry", thunk);
                             llvm::IRBuilder<> tb(bb);
-                            llvm::Argument* this_arg = thunk->arg_begin();
+
+                            // For sret functions, arg 0 is sret (pass through), arg 1 is this (adjust)
+                            bool thunk_has_sret = override_func->hasParamAttribute(0, llvm::Attribute::StructRet);
+                            unsigned this_idx = thunk_has_sret ? 1 : 0;
+
                             llvm::Type* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
-                            llvm::Value* this_as_int = tb.CreatePtrToInt(this_arg, i64_ty, "this_int");
-                            llvm::Value* adj_int = tb.CreateSub(
-                                this_as_int,
-                                llvm::ConstantInt::get(i64_ty, base_byte_offset),
-                                "this_adj_int");
-                            llvm::Value* this_adj = tb.CreateIntToPtr(adj_int, ptr_ty, "this_adj");
                             std::vector<llvm::Value*> fwd_args;
-                            fwd_args.push_back(this_adj);
-                            for (auto it = std::next(thunk->arg_begin()); it != thunk->arg_end(); ++it)
-                                fwd_args.push_back(&*it);
+                            for (unsigned i = 0; i < thunk->arg_size(); ++i) {
+                                llvm::Argument* arg = thunk->getArg(i);
+                                if (i == this_idx) {
+                                    llvm::Value* this_as_int = tb.CreatePtrToInt(arg, i64_ty, "this_int");
+                                    llvm::Value* adj_int = tb.CreateSub(
+                                        this_as_int,
+                                        llvm::ConstantInt::get(i64_ty, base_byte_offset),
+                                        "this_adj_int");
+                                    llvm::Value* this_adj = tb.CreateIntToPtr(adj_int, ptr_ty, "this_adj");
+                                    fwd_args.push_back(this_adj);
+                                } else {
+                                    fwd_args.push_back(arg);
+                                }
+                            }
                             if (override_func->getReturnType()->isVoidTy()) {
                                 tb.CreateCall(fn_ty, override_func, fwd_args);
                                 tb.CreateRetVoid();

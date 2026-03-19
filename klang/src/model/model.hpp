@@ -1353,6 +1353,7 @@ class destructor : public function {
 protected:
     friend class aggregate;
     friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
 
     destructor(std::shared_ptr<aggregate> parent) :
         function(parent) {}

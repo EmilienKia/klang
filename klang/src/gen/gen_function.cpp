@@ -342,8 +342,16 @@ void declaration_generator::visit_function(function &function) {
 
     // Return type, if any:
     llvm::Type* ret_type = nullptr;
+    bool use_sret = false;
     if(const auto& ret = function.get_return_type()) {
-        ret_type = _context->get_llvm_type(ret);
+        if (needs_sret_return(ret)) {
+            // sret ABI: prepend a pointer parameter for the return value, actual return is void
+            param_types.insert(param_types.begin(), llvm::PointerType::get(**_context, 0));
+            ret_type = llvm::Type::getVoidTy(**_context);
+            use_sret = true;
+        } else {
+            ret_type = _context->get_llvm_type(ret);
+        }
     } else {
         ret_type = llvm::Type::getVoidTy(**_context);
     }
@@ -351,6 +359,12 @@ void declaration_generator::visit_function(function &function) {
     // create the function:
     llvm::FunctionType *func_type = llvm::FunctionType::get(ret_type, param_types, false);
     llvm::Function *func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage, function.get_mangled_name(), *_context->_module);
+
+    if (use_sret) {
+        // Mark the first parameter with the StructRet attribute
+        func->addParamAttr(0, llvm::Attribute::get(**_context, llvm::Attribute::StructRet,
+            _context->get_llvm_type(function.get_return_type())));
+    }
 
     _context->_functions.insert({function.shared_as<k::model::function>(), func});
 
@@ -390,22 +404,97 @@ void implementation_generator::visit_function(function &function) {
 
     // Reset per-function state
     _retval_alloca = nullptr;
+    _sret_ptr = nullptr;
+    _nrvo_candidate = nullptr;
+    _sret_destination = nullptr;
     _expression_temporaries.clear();
     while (!_cleanup_blocks.empty()) _cleanup_blocks.pop();
     while (!_cleanup_vars_stack.empty()) _cleanup_vars_stack.pop();
     while (!_owner_params_stack.empty()) _owner_params_stack.pop();
     while (!_struct_params_stack.empty()) _struct_params_stack.pop();
 
-    // If function has a non-void return type, pre-create an alloca for the return value
-    // so that destructor calls can happen before the actual ret instruction.
-    if (function.has_return_type()) {
+    // Determine if this function uses sret ABI
+    const bool use_sret = function.has_return_type() && needs_sret_return(function.get_return_type());
+
+    if (use_sret) {
+        // Capture the sret argument (first LLVM argument, before 'this' or explicit params)
+        auto arg_it_sret = func->arg_begin();
+        llvm::Argument* sret_arg = &*(arg_it_sret);
+        sret_arg->setName("sret");
+        _sret_ptr = sret_arg;
+
+        // NRVO analysis: scan all return statements in the function body.
+        // If every return returns the same named local variable, it's an NRVO candidate.
+        if (auto blk = function.get_block()) {
+            std::shared_ptr<variable_statement> nrvo_var;
+            bool nrvo_eligible = true;
+            std::function<void(const k::model::block&)> scan_returns;
+            scan_returns = [&](const k::model::block& b) {
+                for (auto& stmt : b.get_statements()) {
+                    if (auto ret = std::dynamic_pointer_cast<return_statement>(stmt)) {
+                        if (auto expr = ret->get_expression()) {
+                            // Check if expression is a symbol_expression referring to a local variable_statement
+                            auto sym = std::dynamic_pointer_cast<symbol_expression>(expr);
+                            if (!sym) {
+                                // Could be wrapped in a load_value_expression or cast
+                                if (auto lv = std::dynamic_pointer_cast<load_value_expression>(expr))
+                                    sym = std::dynamic_pointer_cast<symbol_expression>(lv->sub_expr());
+                            }
+                            if (sym && sym->is_variable_def()) {
+                                auto var_def = sym->get_variable_def();
+                                auto var_stmt = std::dynamic_pointer_cast<variable_statement>(var_def);
+                                if (var_stmt && type::is_struct(var_stmt->get_type())) {
+                                    if (!nrvo_var) {
+                                        nrvo_var = var_stmt;
+                                    } else if (nrvo_var != var_stmt) {
+                                        nrvo_eligible = false; // different variables in different returns
+                                    }
+                                } else {
+                                    nrvo_eligible = false;
+                                }
+                            } else {
+                                nrvo_eligible = false;
+                            }
+                        }
+                    }
+                    // Recurse into nested blocks (if-else, while, for bodies)
+                    if (auto sub_block = std::dynamic_pointer_cast<k::model::block>(stmt)) {
+                        scan_returns(*sub_block);
+                    }
+                    if (auto if_stmt = std::dynamic_pointer_cast<if_else_statement>(stmt)) {
+                        if (auto then_b = std::dynamic_pointer_cast<k::model::block>(if_stmt->get_then_stmt()))
+                            scan_returns(*then_b);
+                        if (auto else_b = std::dynamic_pointer_cast<k::model::block>(if_stmt->get_else_stmt()))
+                            scan_returns(*else_b);
+                    }
+                    if (auto while_stmt = std::dynamic_pointer_cast<while_statement>(stmt)) {
+                        if (auto body = std::dynamic_pointer_cast<k::model::block>(while_stmt->get_nested_stmt()))
+                            scan_returns(*body);
+                    }
+                    if (auto for_stmt = std::dynamic_pointer_cast<for_statement>(stmt)) {
+                        if (auto body = std::dynamic_pointer_cast<k::model::block>(for_stmt->get_nested_stmt()))
+                            scan_returns(*body);
+                    }
+                }
+            };
+            scan_returns(*blk);
+            if (nrvo_eligible && nrvo_var) {
+                _nrvo_candidate = nrvo_var;
+            }
+        }
+    }
+
+    // If function has a non-void return type AND is NOT sret, pre-create an alloca for
+    // the return value so that destructor calls can happen before the actual ret instruction.
+    if (function.has_return_type() && !use_sret) {
         llvm::IRBuilder<> alloca_builder(&func->getEntryBlock(), func->getEntryBlock().begin());
         _retval_alloca = alloca_builder.CreateAlloca(
             _context->get_llvm_type(function.get_return_type()), nullptr, "retval");
     }
 
-    // Capture arguments
+    // Capture arguments — for sret functions, first LLVM arg is sret, so skip it
     auto arg_it = func->arg_begin();
+    if (use_sret) ++arg_it; // skip sret argument
     if (function.is_member() && !function.is_static()) {
         // First parameter is the 'this' pointer
         llvm::Argument *arg = &*(arg_it++);
@@ -908,7 +997,7 @@ void implementation_generator::visit_function(function &function) {
         }
     }
 
-    if (function.has_return_type()) {
+    if (function.has_return_type() && !use_sret) {
         llvm::Type* ret_type = _context->get_llvm_type(function.get_return_type());
         _builder->CreateRet(llvm::UndefValue::get(ret_type));
     } else {

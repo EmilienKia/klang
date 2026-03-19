@@ -2265,24 +2265,28 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             "only direct, member and pointer-to-member function calls are supported");
     }
 
-    // ── Helper lambda: materialize struct return values into an alloca ─────
-    // If the call returns a struct by value, store the aggregate into an alloca
-    // so that member access (GEP) and method calls on the temporary work.
-    // If the struct has a destructor, track it for cleanup at full-expression end.
-    auto materialize_struct_return = [&]() {
-        if (!_value || !expr.get_type()) return;
+    // ── Helper state: track whether sret destination was consumed ──────────
+    bool _sret_dest_was_consumed = false;
+
+    // ── Helper lambda: handle sret call result ─────────────────────────────
+    // For functions that return non-primitive types via sret, _value after the call
+    // is the sret alloca pointer (already written by the callee).
+    // If the struct has a destructor and this is a temporary, track it for cleanup.
+    auto handle_sret_result = [&](llvm::Value* sret_ptr_val) {
+        _value = sret_ptr_val;
+
+        // If the sret destination was consumed from _sret_destination (variable init),
+        // it's NOT a temporary — don't track it for cleanup (the variable owns it).
+        if (_sret_dest_was_consumed) {
+            _sret_dest_was_consumed = false;
+            return;
+        }
+
+        // Track for temporary cleanup if the struct has a destructor
+        if (!expr.get_type()) return;
         auto ret_type_nc = type::remove_const(expr.get_type());
         auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
         if (!ret_st) return;
-
-        llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
-        llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
-        llvm::Type* llvm_st = _context->get_llvm_type(ret_st);
-        llvm::AllocaInst* tmp_alloca = entry_builder.CreateAlloca(llvm_st, nullptr, "struct_ret_tmp");
-        _builder->CreateStore(_value, tmp_alloca);
-        _value = tmp_alloca;
-
-        // Track for temporary cleanup if the struct has a destructor
         auto st = ret_st->get_struct();
         if (st) {
             auto dtor = st->get_destructor();
@@ -2290,10 +2294,62 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 auto dtor_fn = dtor->shared_as<k::model::function>();
                 auto dtor_it = _context->_functions.find(dtor_fn);
                 if (dtor_it != _context->_functions.end()) {
-                    _expression_temporaries.push_back(std::make_pair(tmp_alloca, dtor_it->second));
+                    // Only track if the value is an AllocaInst (temporary)
+                    if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(sret_ptr_val)) {
+                        _expression_temporaries.push_back(std::make_pair(alloca, dtor_it->second));
+                    }
                 }
             }
         }
+    };
+
+    // ── Helper lambda: create or get sret destination for a call ──────────────
+    // If _sret_destination is set (from variable_statement or return), use it directly.
+    // Otherwise create a new temporary alloca.
+    auto get_sret_ptr_for_call = [&]() -> llvm::Value* {
+        if (_sret_destination) {
+            // Caller provided a destination — use it directly (no temporary)
+            llvm::Value* dest = _sret_destination;
+            _sret_destination = nullptr; // consume it
+            _sret_dest_was_consumed = true;
+            return dest;
+        }
+        _sret_dest_was_consumed = false;
+        // Create a temporary alloca for the sret result
+        auto ret_type_nc = type::remove_const(expr.get_type());
+        llvm::Type* llvm_ret = _context->get_llvm_type(ret_type_nc);
+        llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+        llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+        return entry_builder.CreateAlloca(llvm_ret, nullptr, "sret_tmp");
+    };
+
+    // ── Helper lambda: emit a call with sret if needed ──────────────────────
+    // Wraps CreateCall: if the callee uses sret ABI, prepend the sret pointer.
+    // Returns the sret pointer (or nullptr if not sret).
+    auto emit_sret_call = [&](llvm::FunctionType* fn_type, llvm::Value* callee_val,
+                               std::vector<llvm::Value*>& call_args,
+                               const std::string& name) -> llvm::Value* {
+        bool callee_is_sret = fn_type->getReturnType()->isVoidTy()
+            && expr.get_type() && needs_sret_return(expr.get_type());
+        if (callee_is_sret) {
+            llvm::Value* sret_ptr = get_sret_ptr_for_call();
+            call_args.insert(call_args.begin(), sret_ptr);
+
+            // Rebuild fn_type with the sret param prepended
+            std::vector<llvm::Type*> param_types;
+            param_types.push_back(llvm::PointerType::get(**_context, 0));
+            for (auto* pt : fn_type->params())
+                param_types.push_back(pt);
+            auto* sret_fn_type = llvm::FunctionType::get(
+                llvm::Type::getVoidTy(**_context), param_types, false);
+
+            _builder->CreateCall(sret_fn_type, callee_val, call_args);
+            return sret_ptr;
+        }
+        // Non-sret call
+        _value = _builder->CreateCall(fn_type, callee_val, call_args,
+            fn_type->getReturnType()->isVoidTy() ? "" : name);
+        return nullptr;
     };
 
     // ── INDIRECT_MEMBER call via pointer-to-member  obj.*mfp(args) ────────────
@@ -2371,8 +2427,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             if (_value) call_args.push_back(_value);
         }
 
-        _value = _builder->CreateCall(llvm_fn_type, fn_ptr, call_args, "mfp_call");
-        materialize_struct_return();
+        auto* sret_result = emit_sret_call(llvm_fn_type, fn_ptr, call_args, "mfp_call");
+        if (sret_result) {
+            handle_sret_result(sret_result);
+        }
         return;
     }
 
@@ -2436,8 +2494,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             call_args.push_back(_value);
         }
 
-        _value = _builder->CreateCall(llvm_fn_type, fn_ptr, call_args, "ind_call");
-        materialize_struct_return();
+        auto* sret_result = emit_sret_call(llvm_fn_type, fn_ptr, call_args, "ind_call");
+        if (sret_result) {
+            handle_sret_result(sret_result);
+        }
         return;
     }
 
@@ -2462,9 +2522,44 @@ void implementation_generator::visit_function_invocation_expression(function_inv
 
         args.push_back(_value);
     }
+    // Save outer _sret_destination — it's meant for the call result, not for arguments
+    llvm::Value* saved_sret_destination = _sret_destination;
+    _sret_destination = nullptr;
+
     for(auto arg : expr.arguments()) {
         _value = nullptr;
+
+        // ── Argument copy elision for by-value struct parameters ──────────
+        // When a by-value struct argument is the direct result of a sret-
+        // returning function call (prvalue), set _sret_destination so the
+        // inner call writes directly into a staging alloca without tracking
+        // it as a temporary. This avoids an extra destructor call.
+        bool arg_elision_set = false;
+        bool arg_is_struct = arg->get_type() && type::is_struct(arg->get_type())
+            && !type::is_reference(arg->get_type())
+            && !type::is_any_indirection(arg->get_type());
+        bool arg_is_fn_call = std::dynamic_pointer_cast<function_invocation_expression>(arg) != nullptr;
+        if (arg_is_struct
+            && needs_sret_return(arg->get_type())
+            && !_sret_destination
+            && arg_is_fn_call)
+        {
+            auto st_type_nc = type::remove_const(arg->get_type());
+            llvm::Type* llvm_st = _context->get_llvm_type(st_type_nc);
+            llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+            llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+            auto* staging_alloca = entry_builder.CreateAlloca(llvm_st, nullptr, "arg_staging");
+            _sret_destination = staging_alloca;
+            arg_elision_set = true;
+        }
+
         arg->accept(*this);
+
+        // Only clear _sret_destination if WE set it (and it wasn't consumed)
+        if (arg_elision_set && _sret_destination) {
+            _sret_destination = nullptr;
+        }
+
         if(!_value) {
             throw_internal_error(0x000F, std::nullopt,
                 "Internal error: a call argument for '{}' produced no LLVM value during code generation; "
@@ -2483,6 +2578,9 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         }
         args.push_back(_value);
     }
+
+    // Restore outer _sret_destination for the call result
+    _sret_destination = saved_sret_destination;
 
     // Find the function definition
     auto function = callee->get_function();
@@ -2530,17 +2628,29 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 fn_type = llvm_func->getFunctionType();
             } else {
                 std::vector<llvm::Type*> param_types;
+                // For sret: prepend sret pointer parameter
+                if (function->has_return_type() && needs_sret_return(function->get_return_type()))
+                    param_types.push_back(llvm::PointerType::get(**_context, 0));
                 if (function->is_member() && !function->is_static())
                     param_types.push_back(_context->get_llvm_type(function->get_this_parameter()->get_type()));
                 for (const auto& param : function->parameters())
                     param_types.push_back(_context->get_llvm_type(param->get_type()));
-                llvm::Type* ret_type = function->has_return_type()
-                    ? _context->get_llvm_type(function->get_return_type())
-                    : llvm::Type::getVoidTy(**_context);
-                fn_type = llvm::FunctionType::get(ret_type, param_types, false);
+                llvm::Type* ret_type_llvm = llvm::Type::getVoidTy(**_context);
+                if (function->has_return_type() && !needs_sret_return(function->get_return_type()))
+                    ret_type_llvm = _context->get_llvm_type(function->get_return_type());
+                fn_type = llvm::FunctionType::get(ret_type_llvm, param_types, false);
             }
-            _value = emit_virtual_dispatch_call(*_builder, *kl, args[0], di.slot_index, fn_type, args, _context, "");
-            materialize_struct_return();
+            // Check if sret ABI is used
+            bool call_uses_sret = fn_type->getReturnType()->isVoidTy()
+                && expr.get_type() && needs_sret_return(expr.get_type());
+            if (call_uses_sret) {
+                llvm::Value* sret_alloca = get_sret_ptr_for_call();
+                args.insert(args.begin(), sret_alloca);
+                _value = emit_virtual_dispatch_call(*_builder, *kl, args[1], di.slot_index, fn_type, args, _context, "");
+                handle_sret_result(sret_alloca);
+            } else {
+                _value = emit_virtual_dispatch_call(*_builder, *kl, args[0], di.slot_index, fn_type, args, _context, "");
+            }
             return;
         }
 
@@ -2557,14 +2667,16 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 fn_type = llvm_func->getFunctionType();
             } else if (function) {
                 std::vector<llvm::Type*> param_types;
+                if (function->has_return_type() && needs_sret_return(function->get_return_type()))
+                    param_types.push_back(llvm::PointerType::get(**_context, 0));
                 if (function->is_member() && !function->is_static() && function->get_this_parameter())
                     param_types.push_back(_context->get_llvm_type(function->get_this_parameter()->get_type()));
                 for (const auto& param : function->parameters())
                     param_types.push_back(_context->get_llvm_type(param->get_type()));
-                llvm::Type* ret_type = function->has_return_type()
-                    ? _context->get_llvm_type(function->get_return_type())
-                    : llvm::Type::getVoidTy(**_context);
-                fn_type = llvm::FunctionType::get(ret_type, param_types, false);
+                llvm::Type* ret_type_llvm = llvm::Type::getVoidTy(**_context);
+                if (function->has_return_type() && !needs_sret_return(function->get_return_type()))
+                    ret_type_llvm = _context->get_llvm_type(function->get_return_type());
+                fn_type = llvm::FunctionType::get(ret_type_llvm, param_types, false);
             }
             if (!fn_type) {
                 throw_internal_error(0x0015, std::nullopt,
@@ -2613,17 +2725,31 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
                 llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "imp_vtbl_slot");
             llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "imp_fn_ptr");
-            _value = _builder->CreateCall(fn_type, fn_ptr, args,
-                fn_type->getReturnType()->isVoidTy() ? "" : "imp_vcall");
-            materialize_struct_return();
+            bool call_uses_sret = fn_type->getReturnType()->isVoidTy()
+                && expr.get_type() && needs_sret_return(expr.get_type());
+            if (call_uses_sret) {
+                llvm::Value* sret_alloca = get_sret_ptr_for_call();
+                args.insert(args.begin(), sret_alloca);
+                _builder->CreateCall(fn_type, fn_ptr, args);
+                handle_sret_result(sret_alloca);
+            } else {
+                _value = _builder->CreateCall(fn_type, fn_ptr, args,
+                    fn_type->getReturnType()->isVoidTy() ? "" : "imp_vcall");
+            }
             return;
         }
     }
     // ── Direct call (non-virtual, or qualified, or free function) ────────────
-    _value = _builder->CreateCall(llvm_func, args);
-
-    // ── Materialize struct return values into an alloca ───────────────────────
-    materialize_struct_return();
+    bool call_uses_sret = llvm_func->getReturnType()->isVoidTy()
+        && expr.get_type() && needs_sret_return(expr.get_type());
+    if (call_uses_sret) {
+        llvm::Value* sret_alloca = get_sret_ptr_for_call();
+        args.insert(args.begin(), sret_alloca);
+        _builder->CreateCall(llvm_func, args);
+        handle_sret_result(sret_alloca);
+    } else {
+        _value = _builder->CreateCall(llvm_func, args);
+    }
 }
 
 //

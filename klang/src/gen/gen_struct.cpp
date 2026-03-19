@@ -386,6 +386,8 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
     }
 
     // ── Implicit destructor: generate if absent and struct needs one ──────────
+    // At this point member variable types may still be unresolved_type (e.g. "Inner"),
+    // so we look up aggregates by name via scope lookup to check for destructors.
     if (!st.get_destructor()) {
         bool needs_dtor = false;
         for (auto& bs : st.get_bases()) {
@@ -401,8 +403,16 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             for (auto& [vname, var] : st.variables()) {
                 if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(var)) {
                     if (vname.rfind("__", 0) == 0) continue;
+                    // If the type is already resolved to struct_type, check directly
                     if (auto mv_st_type = std::dynamic_pointer_cast<struct_type>(mv->get_type())) {
                         if (mv_st_type->get_struct() && mv_st_type->get_struct()->get_destructor()) {
+                            needs_dtor = true; break;
+                        }
+                    }
+                    // If the type is still unresolved, try to look up the aggregate by name
+                    else if (auto unres = std::dynamic_pointer_cast<unresolved_type>(mv->get_type())) {
+                        auto member_agg = scope_lookup::lookup_structure(st.shared_as<element>(), unres->type_id().to_string());
+                        if (member_agg && member_agg->get_destructor()) {
                             needs_dtor = true; break;
                         }
                     }

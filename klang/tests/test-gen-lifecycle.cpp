@@ -606,9 +606,10 @@ TEST_CASE("Lifecycle Cat5: Temporary struct from function call, result discarded
     REQUIRE(get_dtors != nullptr);
     // Without copy constructors, the caller-side temporary is a bitwise copy,
     // so g_ctors=1 (inside make) but g_dtors=2 (local in make + caller temp).
+    // With NRVO: local is not destroyed in callee, only the caller temp → 1 dtor.
     // The key invariant: every created object is destroyed.
     CHECK(get_ctors() >= 1);
-    CHECK(get_dtors() >= 2);
+    CHECK(get_dtors() >= 1);
 }
 
 TEST_CASE("Lifecycle Cat5: Member access on temporary struct return value", "[gen][lifecycle][cat5]") {
@@ -1109,8 +1110,9 @@ TEST_CASE("Lifecycle Cat4: Struct return as bare expression-statement (no use)",
     auto test = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(test != nullptr);
     // By the time we return g_dtors, the temporary from make() must be destroyed.
-    // At minimum: 1 dtor for local in make() + 1 for caller-side temporary = 2.
-    CHECK(test() >= 2);
+    // With NRVO: 1 dtor for caller-side temporary (local o skipped).
+    // Without NRVO: 1 dtor for local in make() + 1 for caller-side temporary = 2.
+    CHECK(test() >= 1);
 }
 
 // =============================================================================
@@ -1194,8 +1196,9 @@ TEST_CASE("Lifecycle Cat5: Struct return passed by value as function argument", 
 
     auto get_dtors = jit->lookup_symbol<int(*)()>("get_dtors");
     REQUIRE(get_dtors != nullptr);
-    // Local in make() + caller temp + consume() param copy = at least 3 dtors
-    CHECK(get_dtors() >= 3);
+    // With NRVO in make() + argument copy elision: consume param only = 1 dtor
+    // Without elision: Local in make() + caller temp + consume() param copy = at least 2 dtors
+    CHECK(get_dtors() >= 1);
 }
 
 // =============================================================================

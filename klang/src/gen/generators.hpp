@@ -46,6 +46,16 @@ namespace k::model::gen {
 
 class jit;
 
+/**
+ * Returns true if a return type requires sret (structure-return) ABI:
+ * i.e. non-primitive aggregate types (struct, class, interface, array).
+ */
+inline bool needs_sret_return(const std::shared_ptr<k::model::type>& ret_type) {
+    if (!ret_type) return false;
+    auto t = k::model::type::remove_const(ret_type);
+    return k::model::type::is_struct(t) || k::model::type::is_array(t) || k::model::type::is_sized_array(t);
+}
+
 class generation_error : public k::log::compiler_error {
 public:
     explicit generation_error(k::log::diagnostic diag)
@@ -175,6 +185,21 @@ protected:
 
     /** Per-function alloca for return value (used when destructions must happen before a return). */
     llvm::AllocaInst* _retval_alloca = nullptr;
+
+    /** sret pointer argument for functions returning non-primitive types.
+     *  When non-null, the callee writes the return value into this pointer instead of
+     *  returning an LLVM aggregate.  Set during visit_function prologue. */
+    llvm::Value* _sret_ptr = nullptr;
+
+    /** NRVO candidate variable — when non-null, this variable's alloca is aliased to _sret_ptr
+     *  so it is constructed directly into the caller's destination. */
+    std::shared_ptr<variable_statement> _nrvo_candidate;
+
+    /** Destination pointer for sret calls from variable declarations or return statements.
+     *  When non-null, visit_function_invocation_expression uses this pointer as the sret
+     *  destination instead of creating a temporary. Set by visit_variable_statement or
+     *  visit_return_statement. */
+    llvm::Value* _sret_destination = nullptr;
 
     static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
 

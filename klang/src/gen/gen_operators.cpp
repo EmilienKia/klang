@@ -637,6 +637,31 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
             llvm::FunctionType* fn_type = build_fn_type();
             if (di.dispatch_class) {
                 // Local class: use the standard virtual dispatch helper
+                bool op_vdisp_sret = fn_type->getReturnType()->isVoidTy()
+                    && op_func->has_return_type() && needs_sret_return(op_func->get_return_type());
+                if (op_vdisp_sret) {
+                    auto ret_type_nc = type::remove_const(op_func->get_return_type());
+                    llvm::Type* llvm_ret = _context->get_llvm_type(ret_type_nc);
+                    llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+                    llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+                    llvm::AllocaInst* sret_tmp = entry_builder.CreateAlloca(llvm_ret, nullptr, "op_vsret_tmp");
+                    args.insert(args.begin(), sret_tmp);
+                    auto result = emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[1],
+                        di.slot_index, fn_type, args, _context, "op_vcall");
+                    _value = sret_tmp;
+                    // Track for cleanup
+                    auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
+                    if (ret_st && ret_st->get_struct()) {
+                        auto dtor = ret_st->get_struct()->get_destructor();
+                        if (dtor) {
+                            auto dtor_fn = dtor->shared_as<k::model::function>();
+                            auto dtor_it = _context->_functions.find(dtor_fn);
+                            if (dtor_it != _context->_functions.end())
+                                _expression_temporaries.push_back(std::make_pair(sret_tmp, dtor_it->second));
+                        }
+                    }
+                    return true;
+                }
                 auto result = emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[0],
                     di.slot_index, fn_type, args, _context, "op_vcall");
                 if (result) {
@@ -678,8 +703,49 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
     }
 
     // Direct call
-    _value = _builder->CreateCall(llvm_func, args,
-        llvm_func->getReturnType()->isVoidTy() ? "" : "op_call");
+    bool op_uses_sret = llvm_func->getReturnType()->isVoidTy()
+        && op_func->has_return_type() && needs_sret_return(op_func->get_return_type());
+    if (op_uses_sret) {
+        auto ret_type_nc = type::remove_const(op_func->get_return_type());
+        llvm::Type* llvm_ret = _context->get_llvm_type(ret_type_nc);
+
+        // Use _sret_destination if set (variable init), otherwise create a temp
+        llvm::Value* sret_dest = nullptr;
+        bool consumed_sret_dest = false;
+        if (_sret_destination) {
+            sret_dest = _sret_destination;
+            _sret_destination = nullptr;
+            consumed_sret_dest = true;
+        } else {
+            llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+            llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+            sret_dest = entry_builder.CreateAlloca(llvm_ret, nullptr, "op_sret_tmp");
+        }
+
+        args.insert(args.begin(), sret_dest);
+        _builder->CreateCall(llvm_func, args);
+        _value = sret_dest;
+
+        // Track for temporary cleanup only if this is a temporary (not consumed from _sret_destination)
+        if (!consumed_sret_dest) {
+            auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
+            if (ret_st && ret_st->get_struct()) {
+                auto dtor = ret_st->get_struct()->get_destructor();
+                if (dtor) {
+                    auto dtor_fn = dtor->shared_as<k::model::function>();
+                    auto dtor_it = _context->_functions.find(dtor_fn);
+                    if (dtor_it != _context->_functions.end()) {
+                        if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(sret_dest)) {
+                            _expression_temporaries.push_back(std::make_pair(alloca, dtor_it->second));
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        _value = _builder->CreateCall(llvm_func, args,
+            llvm_func->getReturnType()->isVoidTy() ? "" : "op_call");
+    }
     return true;
 }
 
