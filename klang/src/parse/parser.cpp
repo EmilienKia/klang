@@ -767,7 +767,104 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     // Look for return type OR mem-initializer-list (both start with ':')
     std::shared_ptr<ast::type_specifier> restype;
     std::vector<ast::member_initializer> member_inits;
+
+    // Named return variable: check for 'identifier :' after ')'.
+    // Syntax: func(params) retVarName : RetType [ Initialiser ] { body }
+    bool has_named_return = false;
+    std::optional<lex::identifier> return_var_name;
+    ast::expr_ptr return_var_init_expr;
+    bool return_var_is_ctor_init = false;
+
     holder.sync();
+    {
+        lex::lex_holder named_ret_holder(_lexer);
+        auto maybe_name = _lexer.get();
+        if (lex::is<lex::identifier>(maybe_name)) {
+            // Peek: if next token is ':', this is a named return variable
+            lex::lex_holder colon_holder(_lexer);
+            auto maybe_colon = _lexer.get();
+            if (maybe_colon == lex::operator_::COLON) {
+                // It's a named return variable!
+                if (is_destructor) {
+                    throw_error(0x0070, _lexer.pick_current(), "Destructor declaration must not have a named return variable");
+                }
+                if (lex::keyword::has(specifiers, lex::keyword::ABSTRACT)) {
+                    throw_error(0x0071, _lexer.pick_current(), "Abstract function declaration must not have a named return variable");
+                }
+
+                return_var_name = lex::as<lex::identifier>(maybe_name);
+                has_named_return = true;
+
+                // Parse the return type
+                restype = parse_type_spec();
+                if (!restype) {
+                    throw_error(0x0072, _lexer.pick_current(), "Named return variable expects a type specifier after ':'");
+                }
+
+                // Parse optional initialiser: '= expr' or '(args...)'
+                {
+                    lex::lex_holder init_holder(_lexer);
+                    auto maybe_init = _lexer.get();
+                    if (maybe_init == lex::operator_::EQUAL) {
+                        // Assignment-style init: = expr
+                        return_var_init_expr = parse_conditional_expr();
+                        if (!return_var_init_expr) {
+                            throw_error(0x0073, _lexer.pick_current(), "Named return variable expects an expression after '='");
+                        }
+                        return_var_is_ctor_init = false;
+                    } else if (maybe_init == lex::punctuator::PARENTHESIS_OPEN) {
+                        // Constructor-style init: (args...)
+                        lex::lex_holder close_holder(_lexer);
+                        auto maybe_close = _lexer.get();
+                        if (maybe_close == lex::punctuator::PARENTHESIS_CLOSE) {
+                            // Empty constructor args — default-constructed (no explicit init expr)
+                        } else {
+                            close_holder.rollback();
+                            auto first_arg = parse_assignment_expression();
+                            if (!first_arg) {
+                                throw_error(0x0074, _lexer.pick_current(), "Named return variable constructor expects an expression or ')'");
+                            }
+                            // For a single arg, store directly as init expr
+                            // For multiple args, wrap in expr_list_expr
+                            std::vector<ast::expr_ptr> ctor_args;
+                            ctor_args.push_back(first_arg);
+                            while (true) {
+                                lex::lex_holder comma_holder(_lexer);
+                                auto next = _lexer.get();
+                                if (next == lex::punctuator::PARENTHESIS_CLOSE) {
+                                    break;
+                                }
+                                if (next != lex::punctuator::COMMA) {
+                                    throw_error(0x0075, _lexer.pick_current(), "Named return variable constructor expects ',' or ')' after expression");
+                                }
+                                auto arg = parse_assignment_expression();
+                                if (!arg) {
+                                    throw_error(0x0076, _lexer.pick_current(), "Named return variable constructor expects an expression after ','");
+                                }
+                                ctor_args.push_back(arg);
+                            }
+                            if (ctor_args.size() == 1) {
+                                return_var_init_expr = ctor_args[0];
+                            } else {
+                                return_var_init_expr = std::make_shared<ast::expr_list_expr>(ctor_args);
+                            }
+                        }
+                        return_var_is_ctor_init = true;
+                    } else {
+                        init_holder.rollback();
+                        // No init — default-constructed
+                    }
+                }
+
+                // Don't fall through to the normal ':' handling
+                named_ret_holder.sync();
+                goto parse_body;
+            }
+            colon_holder.rollback();
+        }
+        named_ret_holder.rollback();
+    }
+
     if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
         if(is_destructor) {
             throw_error(0x003E, _lexer.pick_current(), "Destructor declaration must not have a return type");
@@ -938,12 +1035,16 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         holder.rollback();
     }
 
+    parse_body:
     auto statements = parse_statement_block();
     if(!statements) {
         // Try to parse a function-aliasing declaration: -> ('default'|'delete'|qualifiedId) ';'
         lex::lex_holder alias_holder(_lexer);
         auto larrow = _lexer.get();
         if(larrow == lex::operator_::ARROW) {
+            if (has_named_return) {
+                throw_error(0x0077, _lexer.pick_current(), "Function with named return variable must not use '->' aliasing");
+            }
             // First, try 'default' or 'delete' (only for constructors)
             auto lkw = _lexer.get();
             if(lkw == lex::keyword::DEFAULT || lkw == lex::keyword::DELETE) {
@@ -1045,6 +1146,12 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     }
     auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, statements, is_destructor);
     decl->is_operator = is_operator;
+    if (has_named_return) {
+        decl->has_named_return = true;
+        decl->return_var_name = return_var_name;
+        decl->return_var_init_expr = return_var_init_expr;
+        decl->return_var_is_ctor_init = return_var_is_ctor_init;
+    }
     return decl;
 }
 

@@ -20,7 +20,8 @@ ReturnStatement:
 ```
 ---
 ## 2. Semantics
-- If the function has a non-void return type, a `return` with an expression is required before the function terminates. The expression is evaluated, converted to the return type, and returned.
+- If the function has a non-void return type and **no** [named return variable](../functions/named-return.md), a `return` with an expression is required before the function terminates. The expression is evaluated, converted to the return type, and returned.
+- If the function has a non-void return type and **has** a named return variable, reaching the end of the body or executing a bare `return;` implicitly returns the named variable. A `return expr;` is accepted (with a warning) and assigns `expr` to the named variable before returning.
 - If the function has no return type (void), `return` may appear without an expression, or may be omitted (falling off the end of the function body is valid for void functions).
 - Multiple `return` statements may appear in a function. The first one reached terminates the function.
 The return value expression is evaluated **before** any local destructors run.
@@ -117,4 +118,26 @@ main() : int {
 }
 ```
 ---
-*See also:* [Statements](statements.md) · [Functions](../functions/functions.md) · [Destructors](../structs/destructors.md) · [Dynamic Allocation](../memory/new-delete.md)
+*See also:* [Statements](statements.md) · [Functions](../functions/functions.md) · [Named Return Variables](../functions/named-return.md) · [Destructors](../structs/destructors.md) · [Dynamic Allocation](../memory/new-delete.md)
+
+### Interaction with named return variables
+
+When a function declares a [named return variable](../functions/named-return.md), the
+`return` statement has modified semantics:
+
+| Statement | Behaviour |
+|-----------|-----------|
+| *(end of function body)* | Implicitly returns the named variable. |
+| `return;` | Returns the named variable (early exit). |
+| `return expr;` | **Warning 0x6001.** Assigns `expr` to the named variable, then returns it. |
+
+The named return variable is **not** destroyed during scope cleanup (it lives in the
+caller's storage via NRVO).  All other local variables are destroyed normally.
+
+```k
+make(v : int) r : Obj(v) {
+    other : Obj(100);    // will be destroyed at function exit
+    r.val = r.val + other.val;
+    // r is NOT destroyed here — it IS the caller's variable
+}
+```

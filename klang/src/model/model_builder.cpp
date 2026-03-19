@@ -700,6 +700,19 @@ namespace k::model {
         // Push function context
         stack<func_context> push(_contexts, function);
 
+        // Reject named return variables on constructors and static constructors/destructors
+        if (func.has_named_return) {
+            if (std::dynamic_pointer_cast<constructor>(function)) {
+                throw_error(0x0079, *func.return_var_name,
+                    "Constructor '{}' must not have a named return variable",
+                    {func_name});
+            } else if (std::dynamic_pointer_cast<static_constructor>(function)) {
+                throw_error(0x007A, *func.return_var_name,
+                    "Static constructor '{}' must not have a named return variable",
+                    {func_name});
+            }
+        }
+
         // TODO add function specs
 
         if(func.type) {
@@ -783,9 +796,35 @@ namespace k::model {
         }
 
         if(func.content) {
+            // Named return variable: if present, inject a synthetic variable_decl AST node
+            // at the beginning of the block_statement so it gets processed with proper scope.
+            if (func.has_named_return && func.return_var_name) {
+                if (!func.type) {
+                    throw_error(0x0078, *func.return_var_name,
+                        "Named return variable '{}' requires the function to have a return type",
+                        {std::string{func.return_var_name->content}});
+                }
+                // Create a synthetic variable_decl AST node
+                auto ret_var_decl = std::make_shared<parse::ast::variable_decl>(
+                    std::vector<lex::keyword>{}, *func.return_var_name, func.type,
+                    func.return_var_init_expr, func.return_var_is_ctor_init);
+                // Insert at the beginning of the block's statements
+                func.content->statements.insert(func.content->statements.begin(), ret_var_decl);
+            }
+
             visit_block_statement(*func.content);
             if(auto block = std::dynamic_pointer_cast<model::block>(_stmt)) {
                 function->set_block(block);
+
+                // If named return: find the first variable_statement and register it
+                if (func.has_named_return && func.return_var_name) {
+                    auto& stmts = block->get_statements();
+                    if (!stmts.empty()) {
+                        if (auto var_stmt = std::dynamic_pointer_cast<model::variable_statement>(stmts.front())) {
+                            function->set_named_return_var(var_stmt);
+                        }
+                    }
+                }
             }
         } else if (!function->is_abstract_func()
                    && func.aliasing_spec == parse::ast::function_decl::aliasing_spec_t::NONE) {

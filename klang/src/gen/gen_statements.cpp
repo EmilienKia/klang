@@ -195,6 +195,17 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
     // TODO check if return type is void to prevent to return sometinhg
 
     if(auto expr = stmt.get_expression()) {
+        // Warn if function uses named return variable and return has an expression
+        if (func->has_named_return_var()) {
+            if (stmt.get_ast_return_statement()) {
+                logger_relay::warn(with_flag(0x6001), lex::any_lexeme{stmt.get_ast_return_statement()->ret},
+                    "Function with named return variable '{}' uses 'return expr;'; "
+                    "the expression will be assigned to '{}' before returning",
+                    {func->get_named_return_var()->get_short_name(),
+                     func->get_named_return_var()->get_short_name()});
+            }
+        }
+
         expr->accept(*this);
         auto cast = adapt_type(expr, ret_type);
         if(!cast) {
@@ -214,11 +225,52 @@ void declaration_generator::visit_return_statement(return_statement& stmt) {
 
 void implementation_generator::visit_return_statement(return_statement& stmt) {
 
+    auto func = stmt.get_block()->get_function();
+    auto named_ret_var = func ? func->get_named_return_var() : nullptr;
+
     // Evaluate the return expression first (before any destructor calls)
     llvm::Value* ret_value = nullptr;
     if (auto expr = stmt.get_expression()) {
         _value = nullptr;
 
+        // Named return variable: return expr is treated as assignment to the named var + return.
+        // (Warning is emitted during validation, not here.)
+        if (named_ret_var) {
+            // Evaluate the expression
+            expr->accept(*this);
+            ret_value = _value;
+            _value = nullptr;
+
+            // Store into named return variable
+            if (ret_value) {
+                auto var_it = _context->_variables.find(named_ret_var);
+                if (var_it != _context->_variables.end()) {
+                    if (_sret_ptr) {
+                        // sret: store into sret_ptr (which is what the named var alloca will be RAUW'd to)
+                        if (ret_value != _sret_ptr) {
+                            if (llvm::isa<llvm::AllocaInst>(ret_value) || llvm::isa<llvm::GetElementPtrInst>(ret_value)) {
+                                auto ret_type = func->get_return_type();
+                                llvm::Type* llvm_ret_type = _context->get_llvm_type(ret_type);
+                                llvm::Value* loaded = _builder->CreateLoad(llvm_ret_type, ret_value, "nrv_sret_load");
+                                _builder->CreateStore(loaded, var_it->second);
+                            } else {
+                                _builder->CreateStore(ret_value, var_it->second);
+                            }
+                        }
+                    } else {
+                        // non-sret: store into the variable's alloca
+                        _builder->CreateStore(ret_value, var_it->second);
+                    }
+                }
+            }
+
+            // Destroy any struct temporaries created during the expression evaluation
+            emit_expression_temporaries_cleanup();
+
+            // Fall through to scope cleanup and return
+            ret_value = nullptr; // don't use ret_value for the ret instruction
+
+        } else {
         // For sret functions: if the return expression is the NRVO candidate,
         // the data is already in _sret_ptr (the variable's alloca IS _sret_ptr),
         // so we skip evaluation and store entirely.
@@ -282,6 +334,7 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
 
         // Destroy any struct temporaries created during the return expression evaluation
         emit_expression_temporaries_cleanup();
+        } // end else (non-named-return expression handling)
     }
 
     // Emit destructor calls for all active scopes, from innermost to outermost.
@@ -299,8 +352,9 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
             for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
                 auto& var_stmt = *it;
 
-                // NRVO: do NOT destroy the NRVO candidate — it lives in caller's storage
+                // NRVO / named return: do NOT destroy the candidate — it lives in caller's storage
                 if (_nrvo_candidate && var_stmt == _nrvo_candidate) continue;
+                if (named_ret_var && var_stmt == named_ret_var) continue;
 
                 auto vt = var_stmt->get_type();
 
@@ -355,6 +409,16 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
     if (_sret_ptr) {
         // sret functions always return void
         _builder->CreateRetVoid();
+    } else if (named_ret_var) {
+        // Named return variable (non-sret): load and return
+        auto var_it = _context->_variables.find(named_ret_var);
+        if (var_it != _context->_variables.end()) {
+            llvm::Type* ret_type = _context->get_llvm_type(func->get_return_type());
+            llvm::Value* loaded = _builder->CreateLoad(ret_type, var_it->second, "named_ret_load");
+            _builder->CreateRet(loaded);
+        } else {
+            _builder->CreateRetVoid();
+        }
     } else if (stmt.get_expression()) {
         if (_retval_alloca && ret_value) {
             // Load the stored return value (after destructors)

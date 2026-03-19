@@ -288,6 +288,10 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             }
             _stm << ")";
 
+            if(function.has_named_return && function.return_var_name) {
+                _stm << " " << function.return_var_name->content;
+            }
+
             if(function.type) {
                 _stm << " : ";
                 function.type->visit(*this);

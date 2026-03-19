@@ -423,6 +423,10 @@ void implementation_generator::visit_function(function &function) {
         sret_arg->setName("sret");
         _sret_ptr = sret_arg;
 
+        // Named return variable: guaranteed NRVO — skip heuristic scan
+        if (function.has_named_return_var()) {
+            _nrvo_candidate = function.get_named_return_var();
+        } else {
         // NRVO analysis: scan all return statements in the function body.
         // If every return returns the same named local variable, it's an NRVO candidate.
         if (auto blk = function.get_block()) {
@@ -482,6 +486,7 @@ void implementation_generator::visit_function(function &function) {
                 _nrvo_candidate = nrvo_var;
             }
         }
+        } // end else (heuristic NRVO when no named return var)
     }
 
     // If function has a non-void return type AND is NOT sret, pre-create an alloca for
@@ -998,8 +1003,22 @@ void implementation_generator::visit_function(function &function) {
     }
 
     if (function.has_return_type() && !use_sret) {
-        llvm::Type* ret_type = _context->get_llvm_type(function.get_return_type());
-        _builder->CreateRet(llvm::UndefValue::get(ret_type));
+        // Named return variable (non-sret): load and return it at fall-through
+        if (function.has_named_return_var()) {
+            auto nrv = function.get_named_return_var();
+            auto var_it = _context->_variables.find(nrv);
+            if (var_it != _context->_variables.end()) {
+                llvm::Type* ret_type = _context->get_llvm_type(function.get_return_type());
+                llvm::Value* loaded = _builder->CreateLoad(ret_type, var_it->second, "named_ret_load");
+                _builder->CreateRet(loaded);
+            } else {
+                llvm::Type* ret_type = _context->get_llvm_type(function.get_return_type());
+                _builder->CreateRet(llvm::UndefValue::get(ret_type));
+            }
+        } else {
+            llvm::Type* ret_type = _context->get_llvm_type(function.get_return_type());
+            _builder->CreateRet(llvm::UndefValue::get(ret_type));
+        }
     } else {
         _builder->CreateRetVoid();
     }

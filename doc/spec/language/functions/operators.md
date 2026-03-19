@@ -47,9 +47,12 @@ An operator function is declared with the `operator` keyword followed by the ope
 
 ```
 OperatorFunctionDecl:
-    { Specifier } 'operator' OperatorSymbol '(' [ ParameterList ] ')' [ ':' TypeSpec ] BlockStatement
+    { Specifier } 'operator' OperatorSymbol '(' [ ParameterList ] ')'
+        [ Identifier ] [ ':' TypeSpec [ Initialiser ] ] BlockStatement
     | { Specifier } 'operator' '(' ')' ':' TypeSpec BlockStatement          // cast operator
 ```
+
+*The optional `Identifier` before `:` is a [named return variable](named-return.md).*
 
 ```
 OperatorSymbol: (one of)

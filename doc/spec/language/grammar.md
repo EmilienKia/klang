@@ -117,15 +117,24 @@ Grammar notation used here:
 <a id="basespec"></a>**BaseSpec:**
     `[` `(` `'public'` | `'protected'` | `'private'` `)` `]` [Identifier](#identifier)
 <a id="functiondecl"></a>**FunctionDecl:**
-    {{ [Specifier](#specifier) }} `[` `'~'` `]` [Identifier](#identifier) `'('` `[` [ParameterList](#parameterlist) `]` `')'` `[` `':'` [TypeSpec](#typespec) `]`
+    {{ [Specifier](#specifier) }} `[` `'~'` `]` [Identifier](#identifier) `'('` `[` [ParameterList](#parameterlist) `]` `')'`
+    `[` [Identifier](#identifier) `]`
+    `[` `':'` [TypeSpec](#typespec) `[` [Initialiser](#initialiser) `]` `]`
     `[` `':'` `(` [MemberInitList](#memberinitlist) | [StaticDepList](#staticdeplist) `)` `]`
     ( [BlockStatement](#blockstatement) | `'->'` `(` `'default'` | `'delete'` `)` `';'` | `';'` *(abstract only)* )
     | [OperatorFunctionDecl](#operatorfunctiondecl)
 
     *Note: the bare `';'` form (no body) is only valid when `'abstract'` appears in the [Specifier](#specifier) list.*
 
+    *Note: the optional [Identifier](#identifier) after `')'` names the return variable.
+    When present, the function uses **named return variable** semantics: the variable is
+    declared as a local at function entry, and is implicitly returned when the function
+    falls off the closing `'}'` or executes a bare `'return'` `';'`.  See [Named Return Variables](functions/named-return.md).*
+
 <a id="operatorfunctiondecl"></a>**OperatorFunctionDecl:**
-    {{ [Specifier](#specifier) }} `'operator'` [OperatorSymbol](#operatorsymbol) `'('` `[` [ParameterList](#parameterlist) `]` `')'` `[` `':'` [TypeSpec](#typespec) `]`
+    {{ [Specifier](#specifier) }} `'operator'` [OperatorSymbol](#operatorsymbol) `'('` `[` [ParameterList](#parameterlist) `]` `')'`
+    `[` [Identifier](#identifier) `]`
+    `[` `':'` [TypeSpec](#typespec) `[` [Initialiser](#initialiser) `]` `]`
     ( [BlockStatement](#blockstatement) | `';'` *(abstract only)* )
     | {{ [Specifier](#specifier) }} `'operator'` `'('` `')'` `':'` [TypeSpec](#typespec) [BlockStatement](#blockstatement)
 

@@ -58,6 +58,7 @@ Examples are included where they clarify the normative text.
 | [Operator Overloading](functions/operators.md) | Defining custom operators on structs/classes: member and non-member operators, const operators, overload resolution, inheritance, interfaces |
 | [Function Overloading](functions/overloading.md) | Multiple functions with the same name |
 | [Static Functions](functions/static.md) | Static member functions |
+| [Named Return Variables](functions/named-return.md) | Named return variable syntax, guaranteed NRVO, implicit return |
 
 ### Structures
 

@@ -21,7 +21,10 @@ In K, a function is always declared with its full definition (body).
 There are no forward declarations without a body in the current language version.
 ### Grammar
 ```
-    { Specifier } [ '~' ] Identifier '(' [ ParameterList ] ')' [ ':' TypeSpec ] FunctionBody
+    { Specifier } [ '~' ] Identifier '(' [ ParameterList ] ')'
+        [ Identifier ]
+        [ ':' TypeSpec [ Initialiser ] ]
+        FunctionBody
 FunctionBody: (one of)
     BlockStatement
     '->' QualifiedIdentifier [ '(' [ TypeSpecList ] ')' ] ';'
@@ -38,6 +41,7 @@ Specifier: (one of)
 - The function name is an identifier (preceded optionally by `~` for destructors).
 - Parameters are enclosed in parentheses, separated by commas.
 - The optional return type follows a `:`.
+- An optional identifier before the `:` names the return variable (see [Named Return Variables](named-return.md)).
 - Instead of a body block, a function may redirect to another function with `-> target;` (see [Function Redirectors](redirectors.md)).
 - If the return type is omitted, the function returns nothing (void).
 - The body follows immediately as a block statement.
@@ -106,6 +110,32 @@ test() : int {
 
 See [Destructors — Return values and expression temporaries](../structs/destructors.md#4-return-values-and-expression-temporaries)
 for the full lifetime rules.
+
+### Named return variables
+
+A function may name its return variable by placing an identifier between the closing
+parenthesis and the colon of the return type.  The syntax mirrors a variable declaration:
+
+```k
+make(v : int) result : Obj(v) {
+    result.val = result.val + 1;
+}   // 'result' is implicitly returned
+```
+
+When a named return variable is present:
+- The variable is declared as a local at the very beginning of the function body.
+- Reaching the closing `}` of the function implicitly returns the named variable (no
+  `return` statement needed).
+- A bare `return;` may be used for early exit — it also returns the named variable.
+- `return expr;` is accepted but emits a **warning**: the expression is assigned to the
+  named variable, then the function returns.
+- For aggregate types returned by value, **NRVO is guaranteed** (the named variable is
+  constructed directly in the caller's destination — zero copy).
+- The named return variable must not be `const`.
+- Named return variables are not allowed on constructors, destructors, `abstract` functions,
+  or `void` functions.
+
+See [Named Return Variables](named-return.md) for the full specification.
 ---
 ## 4. Function body
 The body of a function is a block statement (`{ ... }`).  

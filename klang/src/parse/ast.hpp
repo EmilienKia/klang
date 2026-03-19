@@ -882,6 +882,17 @@ namespace k::parse {
             /** True if redirect_param_types was explicitly provided (even if empty). */
             bool redirect_has_param_types = false;
 
+            /** Named return variable — present when function uses named return syntax:
+             *  func(params) retVarName : RetType [ Initialiser ] { body }
+             */
+            bool has_named_return = false;
+            /** The identifier for the named return variable. */
+            std::optional<lex::identifier> return_var_name;
+            /** Init expression for the named return variable (assignment-style: = expr). */
+            expr_ptr return_var_init_expr;
+            /** True when init is constructor-style (args...) vs assignment-style (= expr). */
+            bool return_var_is_ctor_init = false;
+
             function_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
                           const std::shared_ptr<ast::type_specifier> &type, const std::vector<std::shared_ptr<parameter_spec>> &params,
                           const std::shared_ptr <block_statement> &content, bool is_destructor = false) :

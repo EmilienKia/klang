@@ -1182,6 +1182,10 @@ protected:
     std::shared_ptr<parameter> _this_param;
     std::shared_ptr<block> _block;
 
+    /** Named return variable — when set, NRVO is guaranteed and implicit return is enabled.
+     *  The variable_statement is inserted as the first statement in the function's block. */
+    std::shared_ptr<variable_statement> _named_return_var;
+
     function(std::shared_ptr<element> parent, bool is_static = false) :
         element(parent), _is_static(is_static) {}
 
@@ -1225,6 +1229,13 @@ public:
 
     void set_block(const std::shared_ptr<block>& block);
     std::shared_ptr<block> get_block();
+
+    /** True if this function has a named return variable. */
+    bool has_named_return_var() const { return _named_return_var != nullptr; }
+    /** Returns the named return variable (nullptr if none). */
+    std::shared_ptr<variable_statement> get_named_return_var() const { return _named_return_var; }
+    /** Set the named return variable. */
+    void set_named_return_var(std::shared_ptr<variable_statement> v) { _named_return_var = std::move(v); }
 
     bool is_static() const { return _is_static; }
     bool is_compiler_generated() const { return _compiler_generated; }
