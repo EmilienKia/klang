@@ -1004,6 +1004,20 @@ void implementation_generator::visit_function(function &function) {
         _builder->CreateRetVoid();
     }
 
+    // NRVO: replace the NRVO candidate's alloca with _sret_ptr in all IR uses.
+    // During code generation, the alloca was used normally (constructor writes into it,
+    // symbol references return it, etc.). Now that all IR is generated, we swap it out
+    // so the constructor writes directly into the caller's destination — zero-copy NRVO.
+    if (_nrvo_candidate && _sret_ptr) {
+        auto it = _context->_variables.find(_nrvo_candidate);
+        if (it != _context->_variables.end()) {
+            llvm::AllocaInst* nrvo_alloca = it->second;
+            nrvo_alloca->replaceAllUsesWith(_sret_ptr);
+            nrvo_alloca->eraseFromParent();
+            _context->_variables.erase(it);
+        }
+    }
+
     // Pre-optimize function
     optimize_function_dead_inst_elimination(*func);
 

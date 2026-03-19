@@ -274,16 +274,10 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
                 _builder->CreateStore(ret_value, _retval_alloca);
             }
         } else {
-            // NRVO return: the data is in the NRVO candidate's local alloca.
-            // Copy it to _sret_ptr since we don't yet do full NRVO aliasing.
-            auto var_it = _context->_variables.find(_nrvo_candidate);
-            if (var_it != _context->_variables.end()) {
-                auto func_model = stmt.get_block()->get_function();
-                auto ret_type = func_model->get_return_type();
-                llvm::Type* llvm_ret_type = _context->get_llvm_type(ret_type);
-                llvm::Value* loaded = _builder->CreateLoad(llvm_ret_type, var_it->second, "nrvo_load");
-                _builder->CreateStore(loaded, _sret_ptr);
-            }
+            // Full NRVO return: after the RAUW pass in visit_function, the NRVO
+            // candidate's alloca will have been replaced by _sret_ptr, so the
+            // constructor already wrote directly into the caller's destination.
+            // Nothing to copy here.
         }
 
         // Destroy any struct temporaries created during the return expression evaluation
@@ -788,80 +782,15 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     std::shared_ptr<k::model::type> var_type = var.get_type();
     llvm::Type *  type = _context->get_llvm_type(var_type);
 
-    // NRVO: if this variable is the NRVO candidate, alias its alloca to _sret_ptr
+    // NRVO: if this variable is the NRVO candidate, we still create a normal alloca here.
+    // After the function body is fully generated, visit_function will RAUW (Replace All
+    // Uses With) this alloca with _sret_ptr and erase it — achieving zero-copy NRVO
+    // while keeping AllocaInst* in the _variables map during code generation.
     llvm::AllocaInst* alloca;
     bool is_nrvo_var = (_nrvo_candidate && var.shared_as<variable_statement>() == _nrvo_candidate && _sret_ptr);
-    if (is_nrvo_var) {
-        // Create a nominal alloca that we'll actually replace with _sret_ptr
-        // We can't use _sret_ptr directly as AllocaInst, but since all users
-        // go through _context->_variables which stores AllocaInst*, we create
-        // a dummy alloca and immediately replace all uses. Instead, we bitcast
-        // _sret_ptr to the right type and use a fresh alloca that stores/loads from sret.
-        // Actually simpler: just create the alloca normally but initialize from sret pointer.
-        // For NRVO, the alloca IS the sret pointer. We store the sret ptr as the alloca.
-        // Since LLVM's opaque pointers make alloca and argument ptrs interchangeable:
-        alloca = build.CreateAlloca(type, nullptr, var.get_short_name());
-        // We'll treat the sret ptr as the storage. But we need the variable's alloca
-        // to point to sret storage. Let's just use the sret ptr directly.
-        // The trick: don't create an alloca, use sret_ptr. But _context->_variables expects AllocaInst*.
-        // Cleanest approach: create the alloca, then at constructor invocation,
-        // pass sret_ptr instead. But this is complex.
-        // Simplest NRVO: use the sret_ptr directly via a cast. Since all pointers are opaque
-        // in modern LLVM, we can store the sret arg in the alloca map by casting.
-        // But we can't — _variables maps to AllocaInst*.
-        // Alternative: create a real alloca, and at the end, memcpy to sret.
-        // BETTER: We use a simple approach — the alloca IS the sret pointer.
-        // We create the alloca for type bookkeeping but never use it; instead
-        // we directly substitute _sret_ptr wherever this variable is accessed.
-        // Hmm, this is getting complex. Let me use a simpler approach:
-        // Just create the alloca. The constructor writes into it. At return time,
-        // we memcpy from alloca to _sret_ptr. The only difference from non-NRVO is
-        // that we skip the local destruction (already handled in visit_return_statement).
-        // This gives us partial elision (skip dtor) but not full NRVO (still 1 copy).
-        //
-        // FULL NRVO: we need _sret_ptr to BE the alloca. Let's cast it.
-        // In LLVM opaque-pointer mode, an Argument* and AllocaInst* are both ptr.
-        // We can create a "proxy" alloca that stores the sret_ptr and load from it,
-        // but that defeats the purpose. Instead, we'll create the alloca as before
-        // and use _sret_ptr as the variable's storage by storing it in _context->_variables
-        // via a trick. Let's create a special AllocaInst pointing at entry block
-        // and immediately RAUW (Replace All Uses With) with _sret_ptr.
-        //
-        // Actually, the simplest correct approach: just use the sret ptr via
-        // reinterpret. Since _context->_variables stores AllocaInst* and we need
-        // _sret_ptr there, and in LLVM all pointers are opaque, we can actually
-        // just bitcast the Argument to AllocaInst — NO, that's UB.
-        //
-        // Final clean approach: We don't store in _context->_variables for NRVO vars.
-        // Instead, we store the alloca but make it a proxy: the alloca stores the sret_ptr.
-        // When the constructor writes to the alloca, it actually writes to sret.
-        // We do: alloca = CreateAlloca(ptr), store(sret_ptr, alloca)
-        // Then pass: load(alloca) as "this" to the constructor.
-        // This requires changing how the constructor invocation finds the dest.
-        // ... This is over-engineering it.
-        //
-        // PRAGMATIC APPROACH: Create the real alloca. At return time, instead of
-        // destroying the NRVO var (already handled), memcpy from alloca to sret_ptr.
-        // The only copies saved are destructions. To save constructions too, we need
-        // to make the alloca == sret_ptr. Let's just memcpy at return for now,
-        // and the big win is skipping destructions.
-        //
-        // Wait — even simpler. The alloca we create IS at the function entry. In LLVM,
-        // we can just not create the alloca and instead use _sret_ptr everywhere.
-        // The key insight: _context->_variables stores AllocaInst*, but we can store
-        // a "fake" alloca. In LLVM opaque pointer mode, we can create an alloca and
-        // immediately replaceAllUsesWith. But the alloca has no uses yet.
-        //
-        // SIMPLEST CORRECT APPROACH FOR FULL NRVO:
-        // We create the alloca normally. After the function body is generated,
-        // we RAUW the alloca with _sret_ptr and erase the alloca.
-        // But this happens in visit_function, not here.
-        // For now, let's just create the alloca and handle the copy in return.
-        _context->_variables.insert({var.shared_as<variable_statement>(), alloca});
-    } else {
-        alloca = build.CreateAlloca(type, nullptr, var.get_short_name());
-        _context->_variables.insert({var.shared_as<variable_statement>(), alloca});
-    }
+
+    alloca = build.CreateAlloca(type, nullptr, var.get_short_name());
+    _context->_variables.insert({var.shared_as<variable_statement>(), alloca});
 
     // But initialize at the decl place
     auto init = var.get_init_expr();
