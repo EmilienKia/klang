@@ -49,6 +49,12 @@ titi::b = 13;   // static field access (not a call)
 - Each argument is implicitly converted to the corresponding parameter type (see [Types](../basic/types.md#7-implicit-conversions)).
 - Pass-by-value for primitive types and struct types (a copy is made).
 - Pass-by-reference if the parameter type is a reference type (`T&`): the argument must be an lvalue.
+
+**Struct pass-by-value:**  
+When a struct is passed by value, a bitwise copy of the argument is placed in the callee's
+parameter storage.  If the struct has a destructor, the destructor is called on the parameter
+copy at function exit, in reverse declaration order together with other locals.
+See [Destructors — By-value parameters](../structs/destructors.md#3-by-value-parameters).
 ### Default parameter values
 Parameters may have default values. If a call omits trailing arguments that have defaults, the default values are substituted.
 ```k
@@ -152,6 +158,35 @@ struct Counter {
     getEx() : int { return this.n; }   // explicit this.n
 }
 ```
+
+**Member access on temporaries (rvalues):**
+
+The `.` operator also works on struct-typed rvalues — for example, the result of a function
+call that returns a struct by value.  The temporary is materialised into compiler-managed
+storage and remains alive until the end of the enclosing full expression statement:
+
+```k
+struct Obj {
+    val : int;
+    get() : int { return val; }
+}
+make(v: int) : Obj { o : Obj; o.val = v; return o; }
+
+test() : int {
+    return make(42).get();   // member call on temporary — valid
+}
+```
+
+Chained method calls on temporaries are also valid; all intermediate temporaries survive
+until the end of the statement:
+
+```k
+make(1).add(10).add(100).get();
+// Three temporaries created; all destroyed at ';' in reverse order.
+```
+
+See [Destructors — Return values and expression temporaries](../structs/destructors.md#4-return-values-and-expression-temporaries)
+for the full lifetime rules.
 
 **Array virtual member — `size`:**
 

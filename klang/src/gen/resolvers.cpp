@@ -1955,21 +1955,53 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             }
         }
 
-        auto [best_constructor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
-        if (!best_constructor) {
-            throw_error(0x0008, std::nullopt,
-                "No matching constructor found for variable '{}' of type '{}': "
-                "none of the available constructors can be called with the provided arguments",
-                {var.get_fq_name(), st_type->to_string()});
+        // ── Direct struct copy: if single arg has the same struct type (by value or by ref),
+        //    allow direct aggregate copy without a constructor.
+        bool handled_as_direct_copy = false;
+        if (ctor_args.size() == 1) {
+            auto arg_type = ctor_args[0]->get_type();
+            auto arg_type_nc = type::remove_const(arg_type);
+            bool is_direct_copy = false;
+            // Check bare struct type (rvalue from function return)
+            if (arg_type_nc == st_type) {
+                is_direct_copy = true;
+            }
+            // Check ref<struct> (lvalue variable)
+            if (!is_direct_copy && type::is_reference(arg_type_nc)) {
+                auto ref_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype());
+                if (ref_sub == st_type) {
+                    is_direct_copy = true;
+                }
+            }
+            if (is_direct_copy) {
+                // Direct copy: null constructor signals aggregate store in impl_gen
+                var.set_var_constructor(nullptr);
+                if (init_expr) {
+                    init_expr->set_constructor(nullptr);
+                    init_expr->arguments(ctor_args);
+                }
+                handled_as_direct_copy = true;
+            }
         }
-        // Check constructor visibility from the variable's declaration site
-        if (auto var_elem = dynamic_cast<const element*>(&var)) {
-            check_constructor_visibility(*best_constructor, *var_elem);
-        }
-        var.set_var_constructor(best_constructor);
-        if (init_expr) {
-            init_expr->set_constructor(best_constructor);
-            init_expr->arguments(adapted_args);
+
+        if (!handled_as_direct_copy) {
+            auto [best_constructor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
+            if (!best_constructor) {
+                throw_error(0x0008, std::nullopt,
+                    "No matching constructor found for variable '{}' of type '{}': "
+                    "none of the available constructors can be called with the provided arguments",
+                    {var.get_fq_name(), st_type->to_string()});
+            } else {
+                // Check constructor visibility from the variable's declaration site
+                if (auto var_elem = dynamic_cast<const element*>(&var)) {
+                    check_constructor_visibility(*best_constructor, *var_elem);
+                }
+                var.set_var_constructor(best_constructor);
+                if (init_expr) {
+                    init_expr->set_constructor(best_constructor);
+                    init_expr->arguments(adapted_args);
+                }
+            }
         }
 
     } else if (type::is_reference(var.get_type())) {
@@ -2876,6 +2908,16 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         }
         // All other primitive conversions (int<->float, narrowing int, bool<->int, etc.)
         return CAST_NARROWING;
+    }
+
+    // --- Struct value identity: bare struct S → S (same type) ---
+    // This handles rvalues of struct type (e.g. from function return) being
+    // passed as by-value struct parameters of the same type.
+    if (auto st_src = std::dynamic_pointer_cast<struct_type>(eff_src_nc)) {
+        auto st_tgt_val = std::dynamic_pointer_cast<struct_type>(tgt_nc);
+        if (st_tgt_val && st_src == st_tgt_val) {
+            return CAST_NONE;
+        }
     }
 
     // --- Struct construction via single-arg constructor ---

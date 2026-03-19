@@ -90,6 +90,11 @@ See [Binary Operators](binary.md) and [Assignment Operators](assignment.md).
 ### Function call expressions
 Apply a function to a list of arguments.  
 See [Function Call](call.md).
+
+> **Expression temporaries:** When a function call returns a struct by value, the result is a
+> temporary that is materialised in compiler-managed storage.  All temporaries created within a
+> full expression are destroyed at the end of the enclosing statement, in reverse creation
+> order.  See [Destructors — §4](../structs/destructors.md#4-return-values-and-expression-temporaries).
 ### Constructor invocation expressions
 Construct a struct-typed variable with explicit arguments.  
 See [Constructors](../structs/constructors.md).

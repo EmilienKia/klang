@@ -390,9 +390,11 @@ void implementation_generator::visit_function(function &function) {
 
     // Reset per-function state
     _retval_alloca = nullptr;
+    _expression_temporaries.clear();
     while (!_cleanup_blocks.empty()) _cleanup_blocks.pop();
     while (!_cleanup_vars_stack.empty()) _cleanup_vars_stack.pop();
     while (!_owner_params_stack.empty()) _owner_params_stack.pop();
+    while (!_struct_params_stack.empty()) _struct_params_stack.pop();
 
     // If function has a non-void return type, pre-create an alloca for the return value
     // so that destructor calls can happen before the actual ret instruction.
@@ -438,6 +440,26 @@ void implementation_generator::visit_function(function &function) {
         }
         if (!owner_params.empty()) {
             _owner_params_stack.push(owner_params);
+        }
+    }
+
+    // Collect struct-typed by-value parameters that have destructors.
+    // These need destructor calls at function exit (they are copies owned by the callee).
+    {
+        std::vector<std::shared_ptr<parameter>> struct_params;
+        for (const auto& param : function.parameters()) {
+            auto pt = param->get_type();
+            // Skip reference, pointer, link, pinned, owner types — only plain struct by value
+            if (type::is_reference(pt) || type::is_pointer(pt) || type::is_link(pt)
+                || type::is_pinned(pt) || type::is_owner(pt)) continue;
+            if (auto st_type = std::dynamic_pointer_cast<struct_type>(pt)) {
+                if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+                    struct_params.push_back(param);
+                }
+            }
+        }
+        if (!struct_params.empty()) {
+            _struct_params_stack.push(struct_params);
         }
     }
 
@@ -743,11 +765,11 @@ void implementation_generator::visit_function(function &function) {
         }
     }
 
-    // ── For destructors: call base destructors in reverse base-declaration order ──
-    // (own members are handled by visit_block cleanup; bases are handled here)
+    // ── For destructors: call member and base destructors ──────────────────
     if (auto dtor = function.shared_as<destructor>()) {
         auto st = dtor->get_owner();
-        if (st && (st->has_bases() || st->has_virtual_bases())) {
+        std::clog << "[DEBUG] visit_function destructor for " << (st ? st->get_short_name() : "null") << std::endl;
+        if (st) {
             auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
             if (this_param_it != _context->_function_this_variables.end()) {
                 auto this_param = this_param_it->second;
@@ -755,6 +777,44 @@ void implementation_generator::visit_function(function &function) {
                     st->get_struct_type()->get_reference()->get_llvm_type(),
                     this_param, "this_ptr");
 
+                // ── Member struct destructor calls (reverse declaration order) ──
+                // Collect member variables that have a destructor (own members, not base subobjs)
+                std::vector<std::pair<std::shared_ptr<member_variable_definition>, unsigned>> dtor_members;
+                for (auto& var_entry : st->variables()) {
+                    if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
+                        if (var->get_short_name() == "__parent__") continue;
+                        if (var->get_short_name().rfind("__base_", 0) == 0) continue;
+                        if (var->get_short_name().rfind("__vbptr_", 0) == 0) continue;
+                        if (var->get_short_name().rfind("__vbase_", 0) == 0) continue;
+                        if (var->get_short_name().rfind("__vptr", 0) == 0) continue;
+                        if (auto m_st_type = std::dynamic_pointer_cast<struct_type>(var->get_type())) {
+                            if (m_st_type->get_struct() && m_st_type->get_struct()->get_destructor()) {
+                                auto field_opt = st->get_struct_type()->get_member(var->get_short_name());
+                                if (field_opt) {
+                                    dtor_members.push_back({var, (unsigned)field_opt->index});
+                                }
+                            }
+                        }
+                    }
+                }
+                // Call member destructors in reverse declaration order
+                for (auto it = dtor_members.rbegin(); it != dtor_members.rend(); ++it) {
+                    auto& [var, field_idx] = *it;
+                    std::clog << "[DEBUG] Emitting member dtor call for " << var->get_short_name()
+                              << " (field_idx=" << field_idx << ") in " << st->get_short_name() << std::endl;
+                    auto m_st_type = std::dynamic_pointer_cast<struct_type>(var->get_type());
+                    auto m_dtor = m_st_type->get_struct()->get_destructor();
+                    auto m_dtor_it = _context->_functions.find(m_dtor->shared_as<k::model::function>());
+                    if (m_dtor_it == _context->_functions.end()) continue;
+                    auto member_ptr = _builder->CreateStructGEP(
+                        _context->get_llvm_type(st->get_struct_type()),
+                        this_ptr, field_idx,
+                        "member_" + var->get_short_name() + "_ptr");
+                    _builder->CreateCall(m_dtor_it->second, {member_ptr});
+                }
+
+                // ── Base destructors in reverse base-declaration order ──
+                if (st->has_bases() || st->has_virtual_bases()) {
                 const auto& bases = st->get_bases();
                 // Iterate in reverse base-declaration order
                 // Skip virtual bases (handled separately via vbases below)
@@ -807,6 +867,7 @@ void implementation_generator::visit_function(function &function) {
                 // NOTE: Classes with only __vbptr_X__ (not __vbase_X__) do NOT call virtual
                 // base destructors — that is the responsibility of the most-derived class (the
                 // one owning __vbase_X__). This matches C++ sub-object destructor semantics.
+                }
             }
         }
     }
@@ -827,6 +888,23 @@ void implementation_generator::visit_function(function &function) {
             llvm::AllocaInst* alloca = param_it->second;
             emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
                 alloca, own_type->get_owned_type(), "exit_param");
+        }
+    }
+
+    // Clean up struct-typed by-value parameters at fall-through exit
+    if (!_struct_params_stack.empty()) {
+        auto params = _struct_params_stack.top();
+        _struct_params_stack.pop();
+        for (auto it = params.rbegin(); it != params.rend(); ++it) {
+            auto& param = *it;
+            auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
+            if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
+            auto dtor = st_type->get_struct()->get_destructor();
+            auto dtor_it = _context->_functions.find(dtor->shared_as<k::model::function>());
+            if (dtor_it == _context->_functions.end()) continue;
+            auto param_it = _context->_parameter_variables.find(param);
+            if (param_it == _context->_parameter_variables.end()) continue;
+            _builder->CreateCall(dtor_it->second, {param_it->second});
         }
     }
 
@@ -1490,7 +1568,7 @@ void implementation_generator::visit_global_destructor_function(global_destructo
 
     // First: emit standalone static destructors (structs with ~S() but no S()).
     for (auto& sdtor : standalone_sdtors) {
-        auto sdtor_it = _context->_functions.find(sdtor->shared_as<function>());
+        auto sdtor_it = _context->_functions.find(sdtor->shared_as<k::model::function>());
         if (sdtor_it == _context->_functions.end()) continue;
         dtor_builder.CreateCall(sdtor_it->second, {});
     }
@@ -1502,7 +1580,7 @@ void implementation_generator::visit_global_destructor_function(global_destructo
             if (!owner) continue;
             auto sdtor = owner->get_static_destructor();
             if (!sdtor) continue;
-            auto sdtor_it = _context->_functions.find(sdtor->shared_as<function>());
+            auto sdtor_it = _context->_functions.find(sdtor->shared_as<k::model::function>());
             if (sdtor_it == _context->_functions.end()) continue;
             dtor_builder.CreateCall(sdtor_it->second, {});
         } else if (auto gv = std::get_if<std::shared_ptr<global_variable_definition>>(&item)) {

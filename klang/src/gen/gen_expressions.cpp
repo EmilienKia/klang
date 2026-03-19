@@ -729,6 +729,30 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
     }
 
     if(!type::is_reference(type)) {
+        // ── Bare struct rvalue (e.g. function return value) ──────────────────
+        // Allow member access on struct-typed rvalues (temporaries).
+        // The implementation generator will materialize the temporary into an alloca.
+        if (type::is_struct(type)) {
+            auto bare_subtype = type::remove_const(type);
+            bool is_const_access = type::is_const(type);
+            if (auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
+                const auto& member_name = expr.symbol();
+                const k::name& sym_name = member_name.get_name();
+                const std::string& name_str = sym_name.to_string();
+                std::string simple_name = sym_name.size() > 1 ? sym_name.back() : name_str;
+
+                // Look up the member in the struct type (field or method)
+                if (auto field = struct_subtype->get_member(simple_name)) {
+                    auto field_type = field->field_type.lock();
+                    if (is_const_access) {
+                        field_type = type::remove_const(field_type)->get_const();
+                    }
+                    expr.set_type(field_type->get_reference());
+                }
+                // For method: leave type unset, handled by function_invocation_expression
+            }
+            return;
+        }
         throw_error(0x001C, std::nullopt,
             "Cannot access a member on a non-reference expression: "
             "the '.' operator requires the left-hand side to be a reference to a struct, "
@@ -1093,6 +1117,28 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
                 _value = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), _value, field->index);
             }
             // For method calls: leave _value as the A* pointer (treated as A ref at LLVM level)
+        }
+        return;
+    }
+
+    // ── Bare struct rvalue (e.g. function return materialized into alloca) ──
+    // _value is already a pointer (alloca) from struct return materialization.
+    if (type::is_struct(type)) {
+        auto bare_subtype = type::remove_const(type);
+        if (auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
+            const auto& member_name = expr.symbol();
+            const k::name& sym_name = member_name.get_name();
+            std::string simple_name = sym_name.size() > 1 ? sym_name.back() : sym_name.to_string();
+            if (auto field = struct_subtype->get_member(simple_name); field) {
+                _value = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), _value, field->index);
+            } else if (auto method = struct_subtype->get_struct()->get_function(simple_name)) {
+                // Leave _value as the struct alloca pointer (will be used as 'this')
+            } else {
+                throw_internal_error(0x000A, std::nullopt,
+                    "Internal error: struct '{}' has no member named '{}' during code generation; "
+                    "the model is inconsistent — type resolution should have caught this earlier",
+                    {struct_subtype->name(), simple_name});
+            }
         }
         return;
     }
@@ -1758,7 +1804,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         auto this_expr = member_callee->sub_expr();
         auto this_type = this_expr->get_type(); // should be ref<struct> (possibly base)
 
-        if (!type::is_reference(this_type)) {
+        if (!type::is_reference(this_type) && !type::is_struct(this_type)) {
             throw_error(0x0024, std::nullopt,
                 "The '.' operator requires the left-hand side to have a reference type, "
                 "but '{}' is not a reference; did you mean to use a reference parameter?",
@@ -2219,6 +2265,37 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             "only direct, member and pointer-to-member function calls are supported");
     }
 
+    // ── Helper lambda: materialize struct return values into an alloca ─────
+    // If the call returns a struct by value, store the aggregate into an alloca
+    // so that member access (GEP) and method calls on the temporary work.
+    // If the struct has a destructor, track it for cleanup at full-expression end.
+    auto materialize_struct_return = [&]() {
+        if (!_value || !expr.get_type()) return;
+        auto ret_type_nc = type::remove_const(expr.get_type());
+        auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
+        if (!ret_st) return;
+
+        llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+        llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+        llvm::Type* llvm_st = _context->get_llvm_type(ret_st);
+        llvm::AllocaInst* tmp_alloca = entry_builder.CreateAlloca(llvm_st, nullptr, "struct_ret_tmp");
+        _builder->CreateStore(_value, tmp_alloca);
+        _value = tmp_alloca;
+
+        // Track for temporary cleanup if the struct has a destructor
+        auto st = ret_st->get_struct();
+        if (st) {
+            auto dtor = st->get_destructor();
+            if (dtor) {
+                auto dtor_fn = dtor->shared_as<k::model::function>();
+                auto dtor_it = _context->_functions.find(dtor_fn);
+                if (dtor_it != _context->_functions.end()) {
+                    _expression_temporaries.push_back(std::make_pair(tmp_alloca, dtor_it->second));
+                }
+            }
+        }
+    };
+
     // ── INDIRECT_MEMBER call via pointer-to-member  obj.*mfp(args) ────────────
     if (expr.has_dispatch_info() &&
         expr.get_dispatch_info().kind == virtual_dispatch_info::dispatch_kind::INDIRECT_MEMBER) {
@@ -2295,6 +2372,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         }
 
         _value = _builder->CreateCall(llvm_fn_type, fn_ptr, call_args, "mfp_call");
+        materialize_struct_return();
         return;
     }
 
@@ -2359,6 +2437,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         }
 
         _value = _builder->CreateCall(llvm_fn_type, fn_ptr, call_args, "ind_call");
+        materialize_struct_return();
         return;
     }
 
@@ -2391,6 +2470,16 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 "Internal error: a call argument for '{}' produced no LLVM value during code generation; "
                 "this indicates a bug in expression code generation",
                 {callee ? callee->get_name().to_string() : "<unknown>"});
+        }
+        // If the argument is a struct rvalue (bare struct type, not ref) and _value is
+        // an alloca (pointer), we need to load the aggregate to pass it by value.
+        // This happens when a function return value is materialized into an alloca.
+        if (arg->get_type() && type::is_struct(arg->get_type())) {
+            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(_value)) {
+                auto st_type_nc = type::remove_const(arg->get_type());
+                llvm::Type* llvm_st = _context->get_llvm_type(st_type_nc);
+                _value = _builder->CreateLoad(llvm_st, alloca, "struct_arg_load");
+            }
         }
         args.push_back(_value);
     }
@@ -2451,6 +2540,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 fn_type = llvm::FunctionType::get(ret_type, param_types, false);
             }
             _value = emit_virtual_dispatch_call(*_builder, *kl, args[0], di.slot_index, fn_type, args, _context, "");
+            materialize_struct_return();
             return;
         }
 
@@ -2525,11 +2615,15 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "imp_fn_ptr");
             _value = _builder->CreateCall(fn_type, fn_ptr, args,
                 fn_type->getReturnType()->isVoidTy() ? "" : "imp_vcall");
+            materialize_struct_return();
             return;
         }
     }
     // ── Direct call (non-virtual, or qualified, or free function) ────────────
     _value = _builder->CreateCall(llvm_func, args);
+
+    // ── Materialize struct return values into an alloca ───────────────────────
+    materialize_struct_return();
 }
 
 //
@@ -4410,6 +4504,31 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             }
         }
 
+        // ── Direct struct copy: if single arg has the same struct type (by value or by ref),
+        //    allow direct aggregate copy without a constructor.
+        if (ctor_args.size() == 1) {
+            auto arg_type = ctor_args[0]->get_type();
+            auto arg_type_nc = type::remove_const(arg_type);
+            bool is_direct_copy = false;
+            // Check bare struct type (rvalue from function return)
+            if (arg_type_nc == st_type) {
+                is_direct_copy = true;
+            }
+            // Check ref<struct> (lvalue variable)
+            if (!is_direct_copy && type::is_reference(arg_type_nc)) {
+                auto ref_sub = type::remove_const(std::dynamic_pointer_cast<reference_type>(arg_type_nc)->get_subtype());
+                if (ref_sub == st_type) {
+                    is_direct_copy = true;
+                }
+            }
+            if (is_direct_copy) {
+                // Direct copy: null constructor signals aggregate store in impl_gen
+                expr.set_constructor(nullptr);
+                expr.arguments(ctor_args);
+                return;
+            }
+        }
+
         auto [best_constructor, adapted_args] = get_best_matching_constructor(st->constructors(), ctor_args);
         if (!best_constructor) {
             throw_error(0x002A, std::nullopt,
@@ -4517,6 +4636,28 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         }
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
         auto st = st_type->get_struct();
+        auto function = expr.get_constructor();
+
+        // ── Direct struct copy (no constructor): aggregate load+store ──
+        if (!function && expr.size() == 1) {
+            _value = nullptr;
+            expr.argument(0)->accept(*this);
+            if (_value) {
+                auto arg_type = expr.argument(0)->get_type();
+                llvm::Type* llvm_struct_ty = _context->get_llvm_type(st_type);
+                llvm::Value* src_val = _value;
+                // If the argument is a reference (lvalue) OR a bare struct type
+                // (rvalue materialized into an alloca), load the aggregate from the pointer.
+                if (type::is_reference(arg_type) || type::is_struct(arg_type)) {
+                    src_val = _builder->CreateLoad(llvm_struct_ty, _value, "copy_load");
+                }
+                // src_val is now the aggregate value; store into the destination alloca
+                _builder->CreateStore(src_val, object_ref);
+            }
+            _value = object_ref;
+            return;
+        }
+
         std::vector<llvm::Value*> args;
         args.push_back(object_ref);
         for(auto arg : expr.arguments()) {
@@ -4530,7 +4671,6 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             }
             args.push_back(_value);
         }
-        auto function = expr.get_constructor();
         auto it = _context->_functions.find(function);
         if(it==_context->_functions.end()) {
             throw_internal_error(0x0017, std::nullopt,

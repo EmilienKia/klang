@@ -69,7 +69,7 @@ Examples are included where they clarify the normative text.
 | [Inheritance](structs/inheritance.md) | Single and multiple inheritance, diamond patterns, cross-type restrictions, static upcast, dynamic downcast |
 | [Constructors](structs/constructors.md) | Instance and static constructors |
 | [Designated Struct Initializers](structs/designated-init.md) | Named-field initialization with `.member = expr` and `.member(args…)` forms |
-| [Destructors](structs/destructors.md) | Instance and static destructors |
+| [Destructors](structs/destructors.md) | Instance and static destructors; by-value parameter destruction; expression temporaries lifetime |
 | [Nested Structures](structs/nested.md) | Static nested and non-static inner structures |
 
 ### Dynamic Memory

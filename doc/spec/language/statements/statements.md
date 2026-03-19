@@ -69,6 +69,11 @@ i++;
 > `new Foo();` or a call to a function returning `T!` — the compiler emits
 > **Warning 0x5010** and the object is deleted immediately after construction.
 > See [Dynamic Allocation — Unassigned result](../memory/new-delete.md#1-new-expression--single-object).
+
+> **Note:** If an expression statement produces struct-typed temporaries (e.g. function calls
+> returning a struct by value, including chained method calls), those temporaries are
+> destroyed at the end of the statement, in **reverse creation order**.
+> See [Destructors — Return values and expression temporaries](../structs/destructors.md#4-return-values-and-expression-temporaries).
 ---
 ## 4. Variable declaration statement
 A local variable declaration introduces a named variable in the current scope.  
@@ -168,6 +173,16 @@ test_local_dtor() : int {
     return dtor_count;     // return expression evaluated BEFORE c is destroyed
 }                          // destructor called here (after return value is captured)
 ```
+
+> **Expression temporaries in variable declarations:**  
+> If the initialiser expression of a variable declaration creates struct-typed temporaries
+> (e.g. `x : Obj = make(42);`), those temporaries are destroyed at the end of the
+> variable declaration statement, after the destination variable has been initialised.
+
+> **Expression temporaries in control-flow conditions:**  
+> Temporaries created in the condition expression of `if`, `while`, or `for` statements
+> are destroyed after the condition is evaluated, before the controlled body executes.
+> See [Destructors — Return values and expression temporaries](../structs/destructors.md#4-return-values-and-expression-temporaries).
 
 For owner-typed local variables (`T!`, `T[N]!`):
 - If the owner is still non-null at scope exit, it is automatically deleted (destructor called + memory freed).

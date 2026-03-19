@@ -25,6 +25,19 @@ namespace k::model::gen {
 
 using namespace k::model;
 
+//
+// Expression temporaries cleanup
+//
+
+void implementation_generator::emit_expression_temporaries_cleanup() {
+    if (_expression_temporaries.empty()) return;
+    // Destroy in reverse creation order
+    for (auto it = _expression_temporaries.rbegin(); it != _expression_temporaries.rend(); ++it) {
+        _builder->CreateCall(it->second, {it->first});
+    }
+    _expression_temporaries.clear();
+}
+
 
 //
 // Block
@@ -209,11 +222,14 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
             // Store the return value so we can load it after destructor calls
             _builder->CreateStore(ret_value, _retval_alloca);
         }
+
+        // Destroy any struct temporaries created during the return expression evaluation
+        emit_expression_temporaries_cleanup();
     }
 
     // Emit destructor calls for all active scopes, from innermost to outermost.
     // We use a copy of the cleanup vars stack to iterate without modifying the live stack.
-    if (!_cleanup_vars_stack.empty() || !_owner_params_stack.empty()) {
+    if (!_cleanup_vars_stack.empty() || !_owner_params_stack.empty() || !_struct_params_stack.empty()) {
         // Collect all scope variable lists from innermost to outermost
         std::vector<std::vector<std::shared_ptr<variable_statement>>> all_scopes;
         std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
@@ -255,6 +271,21 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
                 llvm::AllocaInst* alloca = param_it->second;
                 emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
                     alloca, own_type->get_owned_type(), "ret_param");
+            }
+        }
+        // Also clean up struct-typed by-value parameters (reverse order)
+        if (!_struct_params_stack.empty()) {
+            auto params_copy = _struct_params_stack.top();
+            for (auto it = params_copy.rbegin(); it != params_copy.rend(); ++it) {
+                auto& param = *it;
+                auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
+                if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
+                auto dtor = st_type->get_struct()->get_destructor();
+                auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                if (dtor_it == _context->_functions.end()) continue;
+                auto param_it = _context->_parameter_variables.find(param);
+                if (param_it == _context->_parameter_variables.end()) continue;
+                _builder->CreateCall(dtor_it->second, {param_it->second});
             }
         }
     }
@@ -333,6 +364,9 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
     stmt.get_test_expr()->accept(*this);
     auto test_value = _value;
     _value = nullptr;
+
+    // Destroy any struct temporaries created during condition evaluation
+    emit_expression_temporaries_cleanup();
 
     bool has_else = (bool)stmt.get_else_stmt();
 
@@ -420,6 +454,9 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
     stmt.get_test_expr()->accept(*this);
     auto test_value = _value;
     _value = nullptr;
+
+    // Destroy any struct temporaries created during condition evaluation
+    emit_expression_temporaries_cleanup();
 
     // Do branching
     _builder->CreateCondBr(test_value, nested_block, cont_block);
@@ -521,6 +558,9 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
         auto test_value = _value;
         _value = nullptr;
 
+        // Destroy any struct temporaries created during condition evaluation
+        emit_expression_temporaries_cleanup();
+
         // Do branching
         _builder->CreateCondBr(test_value, nested_block, cont_block);
     } else {
@@ -539,6 +579,9 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
         step->accept(*this);
         auto step_value = _value;
         _value = nullptr;
+
+        // Destroy any struct temporaries created during step evaluation
+        emit_expression_temporaries_cleanup();
     }
 
     // Go back to test
@@ -598,6 +641,9 @@ void implementation_generator::visit_expression_statement(expression_statement& 
                 _value = nullptr;
             }
         }
+
+        // Destroy any struct temporaries created during expression evaluation
+        emit_expression_temporaries_cleanup();
     }
 }
 
@@ -732,6 +778,9 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
             "all variable declarations must have an initialiser (uninitialized variables are not yet supported)",
             {var.get_fq_name()});
     }
+
+    // Destroy any struct temporaries created during the init expression evaluation
+    emit_expression_temporaries_cleanup();
 
 }
 

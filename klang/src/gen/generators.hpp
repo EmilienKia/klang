@@ -163,6 +163,16 @@ protected:
     /** Parallel stack: for each cleanup block, the list of owner-typed PARAMETERS to destroy (function body only). */
     std::stack<std::vector<std::shared_ptr<parameter>>> _owner_params_stack;
 
+    /** Stack of struct-typed by-value parameters that need destructor calls at function exit. */
+    std::stack<std::vector<std::shared_ptr<parameter>>> _struct_params_stack;
+
+    /**
+     * Temporary struct objects created during expression evaluation.
+     * Each entry: { alloca pointer, destructor LLVM function }.
+     * Destroyed in reverse creation order at end of full-expression (statement boundary).
+     */
+    std::vector<std::pair<llvm::AllocaInst*, llvm::Function*>> _expression_temporaries;
+
     /** Per-function alloca for return value (used when destructions must happen before a return). */
     llvm::AllocaInst* _retval_alloca = nullptr;
 
@@ -317,6 +327,13 @@ public:
     void visit_designated_struct_init_expression(designated_struct_init_expression&) override;
 
     void visit_cast_expression(cast_expression&) override;
+
+    /**
+     * Emit destructor calls for all tracked expression temporaries, in reverse
+     * creation order, then clear the list.  Must be called at full-expression
+     * boundaries (end of expression_statement, variable_statement init, etc.).
+     */
+    void emit_expression_temporaries_cleanup();
 
     void generate();
 

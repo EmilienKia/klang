@@ -9,9 +9,11 @@ A *destructor* is a special member function called automatically when a struct i
 ## Contents
 1. [Instance destructors](#1-instance-destructors)
 2. [When destructors are called](#2-when-destructors-are-called)
-3. [Static destructors (class finalizers)](#3-static-destructors-class-finalizers)
-4. [Destructor and return statement interaction](#4-destructor-and-return-statement-interaction)
-5. [Examples](#5-examples)
+3. [By-value parameters](#3-by-value-parameters)
+4. [Return values and expression temporaries](#4-return-values-and-expression-temporaries)
+5. [Static destructors (class finalizers)](#5-static-destructors-class-finalizers)
+6. [Destructor and return statement interaction](#6-destructor-and-return-statement-interaction)
+7. [Examples](#7-examples)
 ---
 ## 1. Instance destructors
 An instance destructor is a member function whose name is `~` followed by the struct name.  
@@ -85,7 +87,122 @@ items : Item[3]! = new Item[3]{Item(1), Item(2), Item(3)};
 delete items;    // ~Item() called on items[2], then items[1], then items[0]
 ```
 ---
-## 3. Static destructors (class finalizers)
+
+## 3. By-value parameters
+
+When a function receives a struct parameter **by value** (not by reference, pointer, or other
+indirection), the argument is copied into the callee's parameter storage.  If the struct type
+has a destructor, the destructor is called on the parameter copy when the function exits —
+just like a local variable, in reverse declaration order together with other locals.
+
+```k
+dtor_count : int;
+
+struct Obj {
+    val : int;
+    Obj(v: int) : val(v) {}
+    ~Obj() { dtor_count = dtor_count + 1; }
+}
+
+consume(o: Obj) : int {
+    return o.val;
+}
+
+test() : int {
+    a : Obj(42);
+    result : int = consume(a);   // copy of 'a' is made for the parameter
+    return result;
+}   // ~Obj() on 'a'; ~Obj() on the copy already ran at the end of consume()
+```
+
+After `consume` returns, the parameter copy has already been destroyed inside `consume`.
+
+---
+
+## 4. Return values and expression temporaries
+
+### Struct-by-value return
+
+A function may return a struct by value.  The result is a **temporary** — an unnamed object
+with automatic storage duration that lives until the end of the enclosing **full expression
+statement**.
+
+```k
+make(v: int) : Obj {
+    o : Obj(v);
+    return o;   // returns a copy of 'o'
+}               // local 'o' destroyed here (inside make)
+
+test() : int {
+    x : Obj = make(42);   // temporary from make() is copied into 'x'
+    return x.val;
+}                          // 'x' destroyed here
+```
+
+### Expression temporaries and lifetime
+
+When a function call produces a struct-typed rvalue (a temporary), that temporary is
+**materialised** into compiler-managed storage.  The temporary is not destroyed immediately
+after the call returns — it survives until the **end of the full expression statement** that
+contains the call.
+
+This rule is critical for chained member accesses and method calls on temporaries:
+
+```k
+struct Builder {
+    n : int;
+    Builder(v: int) : n(v) {}
+    ~Builder() { log = log + 1; }
+    add(x: int) : Builder {
+        r : Builder(n + x);
+        return r;
+    }
+    get() : int { return n; }
+}
+
+log : int;
+
+test() : int {
+    return make(1).add(10).add(100).get();
+    //     ^temp1   ^temp2  ^temp3
+    // All three temporaries are alive during the whole expression.
+    // At the semicolon (end of statement), they are destroyed in
+    // reverse creation order: temp3, temp2, temp1.
+}
+```
+
+### Destruction order
+
+Multiple temporaries created within a single full expression are destroyed in **reverse
+creation order** at the end of the statement.  This guarantees that no temporary is accessed
+after its destruction, even in complex chained expressions.
+
+### Temporaries in control-flow conditions
+
+The same rule applies to expressions used as conditions in `if`, `while`, and `for`
+statements: temporaries created during condition evaluation are destroyed after the condition
+is evaluated, before the controlled body executes.
+
+```k
+if (make(1).get() > 0) {
+    // the temporary from make(1) is already destroyed here
+}
+```
+
+### Member access on temporaries
+
+The `.` operator may be used on a struct-typed rvalue (a temporary returned from a function
+call) to access fields or call member functions.  The temporary remains alive for the full
+statement:
+
+```k
+val : int = make(42).val;           // field access on temporary
+res : int = make(42).get();         // member function call on temporary
+```
+
+---
+
+## 5. Static destructors (class finalizers)
 A *static destructor* is a static no-argument void function whose name is `~` followed by the struct name.  
 It acts as a class-level finaliser, called once at program shutdown (after `main` returns), via the global destructor function.
 ### Grammar
@@ -113,7 +230,7 @@ struct Cleaner {
 Static destructors are registered in the global destructor function.  
 The ordering between static destructors and instance destructor calls for global variables follows the reverse of the registration order in the global constructor (which respects the dependency graph).
 ---
-## 4. Destructor and return statement interaction
+## 6. Destructor and return statement interaction
 When a `return` statement is reached inside a function that has live local struct variables:
 1. The return value expression is evaluated first (no destructors called yet).
 2. Destructors of in-scope local variables are called in reverse declaration order.
@@ -132,7 +249,7 @@ test_local_dtor() : int {
 ```
 After the call, the returned value is 0, but `dtor_count` is 1.
 ---
-## 5. Examples
+## 7. Examples
 ### Local destructor
 ```k
 module demo;

@@ -90,6 +90,22 @@ init() {
 // Returns double
 half(x: double) : double { return x / 2.0d; }
 ```
+
+**Returning structs by value:**  
+A function may return a struct type.  At the call site, the returned value is an expression
+temporary whose lifetime extends to the end of the enclosing full expression statement.
+This allows chained member access and method calls on the returned value:
+
+```k
+make(v: int) : Point { p : Point(v, v); return p; }
+
+test() : int {
+    return make(42).x;   // member access on the returned temporary
+}
+```
+
+See [Destructors — Return values and expression temporaries](../structs/destructors.md#4-return-values-and-expression-temporaries)
+for the full lifetime rules.
 ---
 ## 4. Function body
 The body of a function is a block statement (`{ ... }`).  

@@ -57,6 +57,35 @@ make() : Foo! {
 If the caller does not assign the returned owner to a variable, the compiler emits
 **Warning 0x5010** and the object is immediately deleted at the call site.
 See [Dynamic Allocation — Ownership and lifetime](../memory/new-delete.md#4-ownership-and-lifetime).
+
+### Struct return (by value)
+
+When a function returns a struct by value, a copy of the struct is produced as an
+**expression temporary** at the call site.  The local variable inside the callee is destroyed
+normally at function exit; the returned copy is a new temporary that lives until the end of
+the enclosing full expression statement in the caller.
+
+```k
+struct Obj {
+    val : int;
+    Obj(v: int) : val(v) {}
+    ~Obj() { dtor_count = dtor_count + 1; }
+}
+
+make(v: int) : Obj {
+    o : Obj(v);
+    return o;        // copy of 'o' is returned
+}                    // local 'o' destroyed here
+
+test() : int {
+    x : Obj = make(42);   // temporary from make() copied into 'x';
+                           // temporary destroyed at end of statement
+    return x.val;
+}                          // 'x' destroyed here
+```
+
+See [Destructors — Return values and expression temporaries](../structs/destructors.md#4-return-values-and-expression-temporaries)
+for the full lifetime rules of struct temporaries.
 ---
 ## 4. Examples
 ### Return with expression
