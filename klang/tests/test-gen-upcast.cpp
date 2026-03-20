@@ -516,5 +516,3 @@ TEST_CASE("Dynamic upcast error: ptr<Unrelated> from ptr<Base> is rejected at co
     )SRC"));
 }
 
-
-

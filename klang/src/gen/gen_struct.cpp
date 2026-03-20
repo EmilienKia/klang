@@ -430,13 +430,35 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
     // Note: class-specific processing (vtable) is done in visit_klass
 }
 
+// signature_resolver::visit_aggregate
+// ------------------------------------
+// Pre-resolve function signatures (parameter + return types) within an aggregate,
+// without processing function bodies or member variable init expressions.
+void signature_resolver::visit_aggregate(aggregate& st) {
+    // Visit nested aggregate children first (depth-first)
+    for (auto& child : st.get_children()) {
+        if (auto nested_st = std::dynamic_pointer_cast<aggregate>(child)) {
+            nested_st->accept(*this);
+        }
+    }
+
+    // Visit only function/constructor/destructor children to resolve their
+    // parameter and return types. Skip member variables and other children
+    // to avoid side-effects (e.g. global constructor registration for static
+    // member variables).
+    for (auto& child : st.get_children()) {
+        if (std::dynamic_pointer_cast<aggregate>(child)) continue;
+        if (std::dynamic_pointer_cast<function>(child)) {
+            child->accept(*this);
+        }
+    }
+}
+
+
 // type_reference_resolver::visit_aggregate
-// -----------------------------------------
-// Resolves all type references inside an aggregate and validates overload sets.
-// Note: const-struct method promotion is already performed in symbol_resolver phase.
-//
+// ------------------------------------------
 // Steps:
-//  1. Visit nested aggregate children first (depth-first), so their resolved LLVM
+//  1. Visit nested aggregate children first (depth-first), so their
 //     types are available before outer members reference them.
 //  2. Visit all remaining children (functions, constructors, destructor, variables) —
 //     excluding nested aggregates already handled in step 1.  This resolves parameter

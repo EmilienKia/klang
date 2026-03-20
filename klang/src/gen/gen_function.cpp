@@ -164,6 +164,61 @@ void symbol_resolver::visit_parameter(parameter& param) {
     }
 }
 
+void signature_resolver::visit_parameter(parameter& param) {
+    if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
+        // Handle unresolved_function_ref_type (function pointer/pin/link type)
+        if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var_type)) {
+            // Function ref type resolution requires scope lookup and function matching.
+            // Leave it for the full type_reference_resolver pass.
+            return;
+        }
+
+        std::shared_ptr<type> res_type = _context->resolve_type(var_type);
+        if (!type::is_resolved(res_type)) {
+            // Fallback for composite types wrapping an imported aggregate
+            // (e.g. reference_type(unresolved("ns::Type"))).
+            // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.
+            enum class WrapKind { Ref, Ptr, Link, Pin, Const, Owner };
+            std::vector<WrapKind> wrappers;
+            auto inner = var_type;
+            while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
+                if      (type::is_reference(inner))  wrappers.push_back(WrapKind::Ref);
+                else if (type::is_pointer(inner))    wrappers.push_back(WrapKind::Ptr);
+                else if (type::is_link(inner))       wrappers.push_back(WrapKind::Link);
+                else if (type::is_pinned(inner))     wrappers.push_back(WrapKind::Pin);
+                else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
+                else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
+                else break;
+                inner = inner->get_subtype();
+            }
+            if (auto unres = std::dynamic_pointer_cast<unresolved_type>(inner);
+                unres && !unres->type_id().empty())
+            {
+                if (auto imp_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context)) {
+                    res_type = imp_agg->get_struct_type();
+                    for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
+                        switch (*it) {
+                            case WrapKind::Ref:   res_type = res_type->get_reference(); break;
+                            case WrapKind::Ptr:   res_type = res_type->get_pointer();   break;
+                            case WrapKind::Link:  res_type = res_type->get_link();      break;
+                            case WrapKind::Pin:   res_type = res_type->get_pinned();    break;
+                            case WrapKind::Const: res_type = res_type->get_const();     break;
+                            case WrapKind::Owner: res_type = res_type->get_owner();     break;
+                        }
+                    }
+                }
+            }
+        }
+        if (type::is_resolved(res_type)) {
+            param.set_type(res_type);
+        }
+        // If still unresolved, silently leave it — the full type_reference_resolver
+        // pass will either resolve it or emit the proper error.
+    }
+    // Do NOT process init/default expressions — those need expression visitors
+    // which are only available in the full type_reference_resolver pass.
+}
+
 void type_reference_resolver::visit_parameter(parameter& param) {
 
     if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
@@ -272,6 +327,30 @@ void symbol_resolver::visit_function(function& fn) {
         visit_block(*block);
     }
     _function_stack.pop_back();
+}
+
+void signature_resolver::visit_function(function& fn) {
+    // Resolve this-parameter type
+    if (fn.is_member() && !fn.is_static()) {
+        if (auto this_param = fn.get_this_parameter()) {
+            this_param->accept(*this);
+        }
+    }
+
+    // Resolve regular parameter types
+    for (auto param : fn.parameters()) {
+        param->accept(*this);
+    }
+
+    // Resolve return type if still unresolved
+    if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
+        auto resolved = _context->resolve_type(fn.get_return_type());
+        if (resolved && type::is_resolved(resolved)) {
+            fn.set_return_type(resolved);
+        }
+    }
+
+    // Do NOT visit the function body — that is the job of type_reference_resolver.
 }
 
 void type_reference_resolver::visit_function(function& fn) {
@@ -1297,6 +1376,10 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
     visit_function(ctor);
 }
 
+void signature_resolver::visit_constructor(constructor& ctor) {
+    visit_function(ctor);
+}
+
 void type_reference_resolver::visit_constructor(constructor& ctor) {
     auto st = ctor.get_owner();
     if (!st) {
@@ -1418,6 +1501,10 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
 // Destructor
 //
 
+void signature_resolver::visit_destructor(destructor& dtor) {
+    visit_function(dtor);
+}
+
 void type_reference_resolver::visit_destructor(destructor& dtor) {
     auto st = dtor.get_owner();
     if (!st) {
@@ -1496,6 +1583,11 @@ void symbol_resolver::visit_static_constructor(static_constructor& sctor) {
     }
 }
 
+void signature_resolver::visit_static_constructor(static_constructor& sctor) {
+    visit_function(sctor);
+    // Do NOT register with global constructor — that happens in the full pass.
+}
+
 void type_reference_resolver::visit_static_constructor(static_constructor& sctor) {
     visit_function(sctor);
 
@@ -1511,6 +1603,10 @@ void type_reference_resolver::visit_static_constructor(static_constructor& sctor
 //
 
 void symbol_resolver::visit_static_destructor(static_destructor& sdtor) {
+    visit_function(sdtor);
+}
+
+void signature_resolver::visit_static_destructor(static_destructor& sdtor) {
     visit_function(sdtor);
 }
 

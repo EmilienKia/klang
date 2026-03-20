@@ -1463,6 +1463,9 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
     }
     left_type = std::dynamic_pointer_cast<reference_type>(left_type)->get_subtype();
 
+    // Strip const qualifier before checking for indirection / array
+    left_type = type::remove_const(left_type);
+
     // Unwrap any indirection type (owner, pointer, link, pinned) to reach the inner array
     if (type::is_owner(left_type)) {
         left_type = std::dynamic_pointer_cast<owner_type>(left_type)->get_owned_type();
@@ -1472,6 +1475,13 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
         left_type = std::dynamic_pointer_cast<link_type>(left_type)->get_linked_type();
     } else if (type::is_pinned(left_type)) {
         left_type = std::dynamic_pointer_cast<pinned_type>(left_type)->get_pinned_type();
+    }
+
+    // Unsized arrays (e.g. char[]) are canonicalized to ref<array<T>>.
+    // After unwrapping an indirection such as pointer<ref<array<T>>> we
+    // may still have a reference wrapper — strip it to reach the array.
+    if (type::is_reference(left_type)) {
+        left_type = std::dynamic_pointer_cast<reference_type>(left_type)->get_subtype();
     }
 
     if(!type::is_array(left_type)) {
@@ -1516,7 +1526,11 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
     // At this point left_type is ref<X> where X can be:
     //   - sized_array_type or array_type (direct array)
     //   - owner_type, pointer_type, link_type, pinned_type wrapping an array
+    //   - const_type wrapping any of the above
     auto arr_type_inner = left_type->get_subtype();
+
+    // Strip const qualifier before checking for indirection / array
+    arr_type_inner = type::remove_const(arr_type_inner);
 
     // Handle any indirection wrapping an array: load the raw pointer, then treat it as ptr to array struct
     // All indirection types (owner, pointer, link, pinned) are opaque pointers in LLVM IR.
@@ -1536,6 +1550,16 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
         auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
         left = _builder->CreateLoad(ptr_ty, left, "pin_arr_ptr");
         arr_type_inner = pin_type->get_pinned_type();
+    }
+
+    // Unsized arrays (e.g. char[]) are canonicalized to ref<array<T>>.
+    // After unwrapping an indirection such as pointer<ref<array<T>>> we
+    // may still have a reference wrapper — strip it and load the actual
+    // array struct pointer through the reference.
+    if (auto ref_inner = std::dynamic_pointer_cast<reference_type>(arr_type_inner)) {
+        arr_type_inner = ref_inner->get_subtype();
+        auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+        left = _builder->CreateLoad(ptr_ty, left, "ref_arr_ptr");
     }
 
     // Dereference index if needed
@@ -2100,7 +2124,11 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // the qualifying base class, inject 'this' automatically.
         // This enables the pattern:  Base::method()  inside an override instead of
         // the more verbose:  Base::method(this)
-        if (is_qualified_call && !this_candidate && !_function_stack.empty()) {
+        //
+        // Also applies to unqualified member-function calls: when calling method() from
+        // within another member function, inject 'this' so that the member function
+        // candidate can match via Mode A in get_best_matching_function.
+        if (!this_candidate && !_function_stack.empty()) {
             auto enclosing_fn = _function_stack.back();
             if (enclosing_fn && enclosing_fn->is_member() && !enclosing_fn->is_static()) {
                 auto this_param = enclosing_fn->get_this_parameter();
@@ -4597,6 +4625,15 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
                 "Enum constructor takes at most one argument, but {} were provided",
                 {std::to_string(expr.size())});
         }
+    } else if (type::is_owner(var_type)) {
+        // Owner type member init: _buf(buf) — move the owner pointer.
+        // Adapt the argument type if needed (e.g. ref<owner> → owner).
+        if (!expr.empty()) {
+            auto cast = adapt_type(expr.argument(0), var_type);
+            if (cast && cast != expr.argument(0)) {
+                expr.assign_argument(0, cast);
+            }
+        }
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
         auto st = st_type->get_struct();
         std::vector<std::shared_ptr<expression>> ctor_args = expr.arguments();
@@ -4812,6 +4849,42 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 {st_type->to_string()});
         }
         _value = _builder->CreateCall(llvm_func, args);
+
+    } else if (type::is_owner(var_type)) {
+        // Owner type member init: _buf(buf) — move the owner pointer.
+        // Load the pointer from the source (parameter alloca), store into the member,
+        // then null out the source so the exit-param cleanup doesn't free it.
+        if (!expr.empty()) {
+            _value = nullptr;
+            expr.argument(0)->accept(*this);
+            if (_value) {
+                auto arg_type = expr.argument(0)->get_type();
+                llvm::Value* ptr_val = _value;
+                // If arg is ref<owner<T>>, load the owner pointer from the alloca
+                if (arg_type && type::is_reference(arg_type)) {
+                    auto inner = std::dynamic_pointer_cast<reference_type>(arg_type)->get_subtype();
+                    inner = type::remove_const(inner);
+                    if (type::is_owner(inner)) {
+                        auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
+                        // _value is the alloca of the source owner variable
+                        llvm::Value* src_alloca = _value;
+                        ptr_val = _builder->CreateLoad(ptr_ty, src_alloca, "owner_move_load");
+                        // Store into the destination member
+                        _builder->CreateStore(ptr_val, object_ref);
+                        // Null out the source to prevent double-free
+                        _builder->CreateStore(
+                            llvm::ConstantPointerNull::get(llvm::PointerType::get(_builder->getContext(), 0)),
+                            src_alloca);
+                    } else {
+                        _builder->CreateStore(ptr_val, object_ref);
+                    }
+                } else {
+                    // Direct owner value (e.g. from a move expression)
+                    _builder->CreateStore(ptr_val, object_ref);
+                }
+            }
+        }
+        _value = object_ref;
 
     } else if (auto ptr_var_type = std::dynamic_pointer_cast<pointer_type>(var_type)) {
         // Pointer (*) variable: store the address of the pointed-to object.
@@ -5678,6 +5751,27 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     if(type::is_null(source_type) && type::is_prim_bool(target_type)) {
         _value = _builder->getFalse();
         return;
+    }
+
+    // ── Indirection reinterpret: owner ↔ pointer ↔ link ↔ pinned ────────────
+    // All indirection types share the same LLVM opaque-pointer representation,
+    // so an owner-to-pointer borrow (or any other combination) is a no-op cast
+    // when the inner types match.  We must NOT short-circuit when inner types
+    // differ (e.g. Base* → Derived~ requires a dynamic cast).
+    {
+        auto is_heap_indirection = [](const std::shared_ptr<type>& t) {
+            return type::is_owner(t) || type::is_pointer(t) ||
+                   type::is_link(t) || type::is_pinned(t);
+        };
+        if (is_heap_indirection(source_type) && is_heap_indirection(target_type)) {
+            auto src_inner = type::remove_const(source_type->get_subtype());
+            auto tgt_inner = type::remove_const(target_type->get_subtype());
+            if (src_inner == tgt_inner) {
+                _value = nullptr;
+                expr.sub_expr()->accept(*this);
+                return;
+            }
+        }
     }
 
     // ── Dynamic cast (RTTI-based): Base→Derived for klass/interface indirections ──

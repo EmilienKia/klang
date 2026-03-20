@@ -18,35 +18,12 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/parse/parser.hpp"
-#include "../src/common/process.hpp"
-#include "../src/compiler.hpp"
-
 #include <kdi.hpp>
 #include <kdi_symbols.hpp>
 
 #include "helpers.hpp"
 
 #include <set>
-
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** True if the nm output for the file contains a defined symbol whose name
- *  includes the given substring. Works for both .so (--dynamic) and .a. */
-static bool has_defined_symbol_containing(const std::string& file, const std::string& substr) {
-    // For .so: use --dynamic so we inspect the export table.
-    // For .a:  nm lists all symbols without --dynamic; the flag is silently
-    //          ignored on archives by most nm implementations, so one command
-    //          covers both cases.
-    auto res = k::tools::lookup_run_process(
-        "nm", {"--defined-only", file});
-    if (res.exit_code != 0) return false;
-    return res.out.find(substr) != std::string::npos;
-}
-
 
 // ---------------------------------------------------------------------------
 // unit_name_to_lib_base — pure utility
@@ -67,7 +44,6 @@ TEST_CASE("unit_name_to_lib_base: single separator", "[prod-lib][unit-name]") {
 TEST_CASE("unit_name_to_lib_base: empty string", "[prod-lib][unit-name]") {
     REQUIRE(k::compiler::unit_name_to_lib_base("") == "");
 }
-
 
 // ---------------------------------------------------------------------------
 // Shared library (.so)
@@ -121,7 +97,6 @@ TEST_CASE("Shared library: compound module — symbol 'square' exported", "[prod
     std::filesystem::remove(so_path);
 }
 
-
 // ---------------------------------------------------------------------------
 // Static library (.a)
 // ---------------------------------------------------------------------------
@@ -174,7 +149,6 @@ TEST_CASE("Static library: compound module — symbol 'cube' present", "[prod-li
     std::filesystem::remove(a_path);
 }
 
-
 // ---------------------------------------------------------------------------
 // Both libraries in a single compilation pass (gen_libraries)
 // ---------------------------------------------------------------------------
@@ -219,20 +193,9 @@ TEST_CASE("Both libraries: single pass produces .so and .a with same symbols", "
     std::filesystem::remove(a_path);
 }
 
-
 // ---------------------------------------------------------------------------
 // KDI file generation
 // ---------------------------------------------------------------------------
-
-/**
- * Given a library path (e.g. /tmp/foo.so or /tmp/foo.a), derive the expected
- * path of the KDI file (same stem, extension = .kdi).
- */
-static std::filesystem::path kdi_path_for(const std::string& lib_path) {
-    std::filesystem::path p(lib_path);
-    p.replace_extension(".kdi");
-    return p;
-}
 
 TEST_CASE("KDI: .kdi file generated alongside shared library", "[prod-lib][kdi][shared]") {
     std::string so_path;
@@ -505,5 +468,4 @@ TEST_CASE("check-symbols: convenience overload (path) works end-to-end", "[prod-
     std::filesystem::remove(so_path);
     std::filesystem::remove(kdi_p);
 }
-
 

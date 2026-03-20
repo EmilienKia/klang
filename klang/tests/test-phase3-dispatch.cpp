@@ -40,140 +40,9 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/model/model.hpp"
-#include "../src/model/expressions.hpp"
-#include "../src/model/statements.hpp"
-#include "../src/gen/resolvers.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Compile helper
-// ─────────────────────────────────────────────────────────────────────────────
-static std::shared_ptr<k::compiler> compile_model(std::string_view src) {
-    auto comp = k::compiler::create();
-    try {
-        comp->parse_source("", src, /*optimize=*/false, /*dump=*/false);
-        return comp;
-    } catch (const k::log::compiler_error&) {
-        return nullptr;
-    } catch (const std::exception& ex) {
-        std::cerr << "Unexpected error: " << ex.what() << std::endl;
-        return nullptr;
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Recursive AST traversal helpers
-// ─────────────────────────────────────────────────────────────────────────────
-namespace {
-
-// Forward declarations
-void collect_in_expr(k::model::expression* expr,
-                     std::vector<k::model::function_invocation_expression*>& out);
-void collect_in_stmt(k::model::statement* stmt,
-                     std::vector<k::model::function_invocation_expression*>& out);
-
-void collect_in_expr(k::model::expression* expr,
-                     std::vector<k::model::function_invocation_expression*>& out)
-{
-    if (!expr) return;
-    using namespace k::model;
-
-    if (auto* inv = dynamic_cast<function_invocation_expression*>(expr)) {
-        out.push_back(inv);
-        // Recurse into callee and arguments
-        if (inv->callee_expr()) collect_in_expr(inv->callee_expr().get(), out);
-        for (auto& arg : inv->arguments()) collect_in_expr(arg.get(), out);
-        return;
-    }
-    // binary / unary / member / cast expressions — recurse via children
-    if (auto* bin = dynamic_cast<binary_expression*>(expr)) {
-        collect_in_expr(bin->left().get(), out);
-        collect_in_expr(bin->right().get(), out);
-        return;
-    }
-    if (auto* un = dynamic_cast<unary_expression*>(expr)) {
-        collect_in_expr(un->sub_expr().get(), out);
-        return;
-    }
-    if (auto* mem = dynamic_cast<member_of_object_expression*>(expr)) {
-        collect_in_expr(mem->sub_expr().get(), out);
-        return;
-    }
-    // cast_expression is a unary_expression — handled above already
-    // symbol_expression, value_expression — leaf nodes, nothing to recurse into
-}
-
-void collect_in_stmt(k::model::statement* stmt,
-                     std::vector<k::model::function_invocation_expression*>& out)
-{
-    if (!stmt) return;
-    using namespace k::model;
-
-    if (auto* blk = dynamic_cast<block*>(stmt)) {
-        for (auto& s : blk->get_statements()) collect_in_stmt(s.get(), out);
-        return;
-    }
-    if (auto* ret = dynamic_cast<return_statement*>(stmt)) {
-        if (ret->get_expression()) collect_in_expr(ret->get_expression().get(), out);
-        return;
-    }
-    if (auto* es = dynamic_cast<expression_statement*>(stmt)) {
-        if (es->get_expression()) collect_in_expr(es->get_expression().get(), out);
-        return;
-    }
-    if (auto* vs = dynamic_cast<variable_statement*>(stmt)) {
-        // variable_statement inherits variable_definition — check for init expression (constructor call)
-        if (auto ctor = std::dynamic_pointer_cast<constructor_invocation_expression>(vs->get_init_expr())) {
-            for (auto& arg : ctor->arguments()) collect_in_expr(arg.get(), out);
-        }
-        return;
-    }
-    if (auto* ifs = dynamic_cast<if_else_statement*>(stmt)) {
-        if (ifs->get_test_expr()) collect_in_expr(ifs->get_test_expr().get(), out);
-        if (ifs->get_then_stmt()) collect_in_stmt(ifs->get_then_stmt().get(), out);
-        if (ifs->get_else_stmt()) collect_in_stmt(ifs->get_else_stmt().get(), out);
-        return;
-    }
-    if (auto* ws = dynamic_cast<while_statement*>(stmt)) {
-        if (ws->get_test_expr()) collect_in_expr(ws->get_test_expr().get(), out);
-        if (ws->get_nested_stmt()) collect_in_stmt(ws->get_nested_stmt().get(), out);
-        return;
-    }
-}
-
-} // anonymous namespace
-
-/**
- * Find all function invocations inside a named function within the root namespace.
- */
-static std::vector<k::model::function_invocation_expression*>
-collect_invocations_in(const std::shared_ptr<k::compiler>& comp, const std::string& func_name) {
-    if (!comp || !comp->get_unit()) return {};
-    auto root = comp->get_unit()->get_root_namespace();
-    if (!root) return {};
-
-    // Find the function by short name
-    std::shared_ptr<k::model::function> target_func;
-    for (auto& fn : root->functions()) {
-        if (fn && fn->get_short_name() == func_name) {
-            target_func = fn;
-            break;
-        }
-    }
-    if (!target_func || !target_func->get_block()) return {};
-
-    std::vector<k::model::function_invocation_expression*> result;
-    collect_in_stmt(target_func->get_block().get(), result);
-    return result;
-}
-
 using dispatch_kind = k::model::virtual_dispatch_info::dispatch_kind;
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [A] Free function call → DIRECT
@@ -199,7 +68,6 @@ TEST_CASE("[A] Phase3: free function call is annotated DIRECT", "[phase3][dispat
     }
     CHECK(found);
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [B] Non-virtual struct method call → DIRECT
@@ -227,7 +95,6 @@ TEST_CASE("[B] Phase3: non-virtual struct method call is annotated DIRECT", "[ph
     }
     CHECK(found);
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [C] Virtual class method call via base reference → VTABLE, slot_index=0
@@ -263,7 +130,6 @@ TEST_CASE("[C] Phase3: virtual call via base ref → VTABLE with slot_index=0", 
     CHECK(found_vtable);
 }
 
-
 // ════════════════════════════════════════════════════════════════════════════
 //  [D] Qualified call Base::method(d) → DIRECT (bypasses vtable)
 // ════════════════════════════════════════════════════════════════════════════
@@ -294,7 +160,6 @@ TEST_CASE("[D] Phase3: qualified call bypasses vtable → DIRECT", "[phase3][dis
     }
     CHECK(found);
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [E] Abstract method call via abstract class reference → VTABLE
@@ -329,7 +194,6 @@ TEST_CASE("[E] Phase3: abstract method call via base ref → VTABLE", "[phase3][
     }
     CHECK(found_vtable);
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [F] Virtual method with slot_index > 0 (second method in vtable)
@@ -377,7 +241,6 @@ TEST_CASE("[F] Phase3: second virtual method has slot_index=1", "[phase3][dispat
     }
 }
 
-
 // ════════════════════════════════════════════════════════════════════════════
 //  [G] Virtual call via secondary base reference → VTABLE, dispatch_class = secondary base
 // ════════════════════════════════════════════════════════════════════════════
@@ -415,7 +278,6 @@ TEST_CASE("[G] Phase3: virtual call via secondary base ref → VTABLE with corre
     CHECK(found_vtable);
 }
 
-
 // ════════════════════════════════════════════════════════════════════════════
 //  [H] Runtime JIT: dispatch_info annotation doesn't break existing dispatch
 // ════════════════════════════════════════════════════════════════════════════
@@ -443,11 +305,4 @@ TEST_CASE("[H] Phase3: runtime JIT — virtual dispatch via annotated dispatch_i
     REQUIRE(fn != nullptr);
     CHECK(fn() == 25);  // 5 * 5
 }
-
-
-
-
-
-
-
 

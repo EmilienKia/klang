@@ -29,18 +29,9 @@
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/TargetParser/Host.h>
 
-#include <kdi.hpp>
-
-#include "../src/common/logger.hpp"
-#include "../src/common/path_lookup_file_resolver.hpp"
-#include "../src/parse/parser.hpp"
 #include "../src/parse/ast_dump.hpp"
-#include "../src/model/model.hpp"
 #include "../src/model/model_builder.hpp"
 #include "../src/model/model_dump.hpp"
-#include "../src/gen/resolvers.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/compiler.hpp"
 
 std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump, bool optimize) {
     auto comp = k::compiler::create();
@@ -851,4 +842,303 @@ void test_logger::report(const k::log::diagnostic& diag) {
         }
         INFO("NOTE " << note_msg);
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Model inspection helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+std::shared_ptr<k::compiler> compile_model(std::string_view src) {
+    auto comp = k::compiler::create();
+    try {
+        comp->parse_source("", src, /*optimize=*/false, /*dump=*/false);
+        return comp;
+    } catch (const k::log::compiler_error&) {
+        return nullptr;
+    } catch (const std::exception& ex) {
+        std::cerr << "Unexpected error: " << ex.what() << std::endl;
+        return nullptr;
+    }
+}
+
+std::shared_ptr<k::model::aggregate>
+find_aggregate(const std::shared_ptr<k::compiler>& comp, const std::string& name) {
+    if (!comp || !comp->get_unit()) return nullptr;
+    auto root = comp->get_unit()->get_root_namespace();
+    if (!root) return nullptr;
+    return root->get_aggregate(name);
+}
+
+std::shared_ptr<k::model::klass>
+find_klass(const std::shared_ptr<k::compiler>& comp, const std::string& name) {
+    return std::dynamic_pointer_cast<k::model::klass>(find_aggregate(comp, name));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AST traversal helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+void collect_in_expr(k::model::expression* expr,
+                     std::vector<k::model::function_invocation_expression*>& out)
+{
+    if (!expr) return;
+    using namespace k::model;
+
+    if (auto* inv = dynamic_cast<function_invocation_expression*>(expr)) {
+        out.push_back(inv);
+        if (inv->callee_expr()) collect_in_expr(inv->callee_expr().get(), out);
+        for (auto& arg : inv->arguments()) collect_in_expr(arg.get(), out);
+        return;
+    }
+    if (auto* bin = dynamic_cast<binary_expression*>(expr)) {
+        collect_in_expr(bin->left().get(), out);
+        collect_in_expr(bin->right().get(), out);
+        return;
+    }
+    if (auto* un = dynamic_cast<unary_expression*>(expr)) {
+        collect_in_expr(un->sub_expr().get(), out);
+        return;
+    }
+    if (auto* mem = dynamic_cast<member_of_object_expression*>(expr)) {
+        collect_in_expr(mem->sub_expr().get(), out);
+        return;
+    }
+}
+
+void collect_in_stmt(k::model::statement* stmt,
+                     std::vector<k::model::function_invocation_expression*>& out)
+{
+    if (!stmt) return;
+    using namespace k::model;
+
+    if (auto* blk = dynamic_cast<block*>(stmt)) {
+        for (auto& s : blk->get_statements()) collect_in_stmt(s.get(), out);
+        return;
+    }
+    if (auto* ret = dynamic_cast<return_statement*>(stmt)) {
+        if (ret->get_expression()) collect_in_expr(ret->get_expression().get(), out);
+        return;
+    }
+    if (auto* es = dynamic_cast<expression_statement*>(stmt)) {
+        if (es->get_expression()) collect_in_expr(es->get_expression().get(), out);
+        return;
+    }
+    if (auto* vs = dynamic_cast<variable_statement*>(stmt)) {
+        if (auto ctor = std::dynamic_pointer_cast<constructor_invocation_expression>(vs->get_init_expr())) {
+            for (auto& arg : ctor->arguments()) collect_in_expr(arg.get(), out);
+        }
+        return;
+    }
+    if (auto* ifs = dynamic_cast<if_else_statement*>(stmt)) {
+        if (ifs->get_test_expr()) collect_in_expr(ifs->get_test_expr().get(), out);
+        if (ifs->get_then_stmt()) collect_in_stmt(ifs->get_then_stmt().get(), out);
+        if (ifs->get_else_stmt()) collect_in_stmt(ifs->get_else_stmt().get(), out);
+        return;
+    }
+    if (auto* ws = dynamic_cast<while_statement*>(stmt)) {
+        if (ws->get_test_expr()) collect_in_expr(ws->get_test_expr().get(), out);
+        if (ws->get_nested_stmt()) collect_in_stmt(ws->get_nested_stmt().get(), out);
+        return;
+    }
+}
+
+std::vector<k::model::function_invocation_expression*>
+collect_invocations_in(const std::shared_ptr<k::compiler>& comp, const std::string& func_name) {
+    if (!comp || !comp->get_unit()) return {};
+    auto root = comp->get_unit()->get_root_namespace();
+    if (!root) return {};
+
+    std::shared_ptr<k::model::function> target_func;
+    for (auto& fn : root->functions()) {
+        if (fn && fn->get_short_name() == func_name) {
+            target_func = fn;
+            break;
+        }
+    }
+    if (!target_func || !target_func->get_block()) return {};
+
+    std::vector<k::model::function_invocation_expression*> result;
+    collect_in_stmt(target_func->get_block().get(), result);
+    return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Parser AST comparison helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+bool is_same(const k::parse::ast::qualified_identifier& ident1, const k::name& ident2) {
+    if (ident1.has_root_prefix() != ident2.has_root_prefix()) {
+        return false;
+    }
+    if (ident1.size() != ident2.size()) {
+        return false;
+    }
+    for (size_t idx = 0; idx < ident1.size(); idx++) {
+        if (ident1[idx] != ident2[idx]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool is_same(const k::parse::ast::identifier_expr& ident1, const k::name& ident2) {
+    return is_same(ident1.qident, ident2);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Library / symbol inspection helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+bool has_defined_symbol_containing(const std::string& file, const std::string& substr) {
+    auto res = k::tools::lookup_run_process(
+        "nm", {"--defined-only", file});
+    if (res.exit_code != 0) return false;
+    return res.out.find(substr) != std::string::npos;
+}
+
+std::filesystem::path kdi_path_for(const std::string& lib_path) {
+    std::filesystem::path p(lib_path);
+    p.replace_extension(".kdi");
+    return p;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// KDI import testing helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+std::string build_kdi_for_import_warning_test(const std::string_view& lib_src) {
+    std::string so = build_shared_library(lib_src);
+    std::filesystem::path kdi = std::filesystem::path(so).replace_extension(".kdi");
+    if (!std::filesystem::exists(kdi))
+        throw std::runtime_error("expected .kdi not produced: " + kdi.string());
+    return kdi.string();
+}
+
+std::vector<k::log::diagnostic> run_importer_with_logger(
+    const std::string& unit_name,
+    const std::vector<std::string>& module_names,
+    k::path_lookup_file_resolver& resolver,
+    std::vector<std::string> pre_used)
+{
+    auto comp = k::compiler::create();
+    auto* model_unit = comp->get_unit().get();
+    if (!model_unit) throw std::runtime_error("unit not created by compiler");
+
+    model_unit->set_unit_name(k::name::from(unit_name));
+    for (const auto& mn : module_names)
+        model_unit->add_import(k::name::from(mn));
+
+    test_logger tl;
+    k::model::kdi_importer importer(*model_unit, resolver, tl);
+    importer.import_all();
+    importer.materialise_all(comp->get_context_for_test());
+
+    for (auto& imp : model_unit->get_imports()) {
+        const std::string canon = imp.module_name.to_string();
+        for (const auto& pu : pre_used)
+            if (canon == pu) imp.used = true;
+    }
+
+    importer.check_unused_imports();
+    return tl.diagnostics;
+}
+
+std::string write_minimal_kdi(const std::string& module_name,
+                               const std::vector<std::string>& deps)
+{
+    kdi::kdi_file f;
+    f.header.module_name   = module_name;
+    f.header.lib_base      = module_name;
+    f.header.lib_path      = "lib" + module_name + ".so";
+    f.header.target_triple = "x86_64-pc-linux-gnu";
+    f.header.compiler_ver  = "0.0.0-test";
+    f.header.dependencies  = deps;
+    f.unit.name            = module_name;
+    f.unit.root_ns.name    = "";
+    f.unit.root_ns.fq_name = "";
+
+    std::string path = "/tmp/" + module_name + ".kdi";
+    if (!kdi::kdi_write_cbor_file(f, path))
+        throw std::runtime_error("Cannot write test kdi: " + path);
+    return path;
+}
+
+bool try_import(const std::string& unit_name,
+                const std::string& first_import,
+                const std::unordered_map<std::string,std::string>& kdi_paths,
+                std::string* out_what)
+{
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    for (const auto& [mod, path] : kdi_paths)
+        resolver->add_explicit_path(mod, path);
+
+    auto comp = k::compiler::create();
+    comp->set_file_resolver(resolver);
+    auto* model_unit = comp->get_unit().get();
+    if (!model_unit) throw std::runtime_error("unit not created");
+
+    model_unit->set_unit_name(k::name::from(unit_name));
+    model_unit->add_import(k::name::from(first_import));
+
+    test_logger tl;
+    k::model::kdi_importer importer(*model_unit, *resolver, tl);
+    try {
+        importer.import_all();
+        return false;
+    } catch (const k::log::compiler_error& e) {
+        if (out_what) *out_what = e.what();
+        return true;
+    } catch (const std::exception& e) {
+        if (out_what) *out_what = std::string("std::exception: ") + e.what();
+        return true;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TmpDir
+// ═══════════════════════════════════════════════════════════════════════════
+
+static std::atomic<int> g_tmp_counter{0};
+
+TmpDir::TmpDir() {
+    path = std::filesystem::temp_directory_path() /
+           ("klang_test_" + std::to_string(++g_tmp_counter));
+    std::filesystem::create_directories(path);
+}
+
+TmpDir::~TmpDir() {
+    std::error_code ec;
+    std::filesystem::remove_all(path, ec);
+}
+
+std::filesystem::path TmpDir::create_file(const std::string& name) const {
+    auto p = path / name;
+    std::ofstream{p.string()}.close();
+    return p;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TmpKdi
+// ═══════════════════════════════════════════════════════════════════════════
+
+TmpKdi::TmpKdi(const std::string_view& src) {
+    so_path = build_shared_library(src);
+    kdi_path = [&]() {
+        std::filesystem::path p(so_path);
+        p.replace_extension(".kdi");
+        return p.string();
+    }();
+    if (!std::filesystem::is_regular_file(kdi_path)) {
+        throw std::runtime_error("build_shared_library did not produce " + kdi_path);
+    }
+}
+
+TmpKdi::~TmpKdi() {
+    std::error_code ec;
+    std::filesystem::remove(so_path, ec);
+    std::filesystem::remove(kdi_path, ec);
+}
+
+std::filesystem::path TmpKdi::dir() const {
+    return std::filesystem::path(kdi_path).parent_path();
 }

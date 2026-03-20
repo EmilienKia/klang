@@ -1201,7 +1201,7 @@ void implementation_generator::visit_division_expression(division_expression &ex
         left = _builder->CreateLoad(type, left);
     }
 
-    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr.get_type()))) {
         if(prim->is_integer()) {
             if(prim->is_unsigned()) {
                 _value = _builder->CreateUDiv(left, right);
@@ -1238,7 +1238,7 @@ void implementation_generator::visit_modulo_expression(modulo_expression &expr) 
         left = _builder->CreateLoad(type, left);
     }
 
-    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr.get_type()))) {
         if(prim->is_integer()) {
             if(prim->is_unsigned()) {
                 _value = _builder->CreateURem(left, right);
@@ -1275,7 +1275,7 @@ void implementation_generator::visit_bitwise_and_expression(bitwise_and_expressi
         left = _builder->CreateLoad(type, left);
     }
 
-    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr.get_type()))) {
         if(prim->is_integer()) {
             _value = _builder->CreateAnd(left, right);
         } else if(prim->is_float()) {
@@ -1312,7 +1312,7 @@ void implementation_generator::visit_bitwise_or_expression(bitwise_or_expression
         left = _builder->CreateLoad(type, left);
     }
 
-    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr.get_type()))) {
         if(prim->is_integer()) {
             _value = _builder->CreateOr(left, right);
         } else if(prim->is_float()) {
@@ -1349,7 +1349,7 @@ void implementation_generator::visit_bitwise_xor_expression(bitwise_xor_expressi
         left = _builder->CreateLoad(type, left);
     }
 
-    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr.get_type()))) {
         if(prim->is_integer()) {
             _value = _builder->CreateXor(left, right);
         } else if(prim->is_float()) {
@@ -1386,7 +1386,7 @@ void implementation_generator::visit_left_shift_expression(left_shift_expression
         left = _builder->CreateLoad(type, left);
     }
 
-    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr.get_type()))) {
         if(prim->is_integer()) {
             // TODO may it poison when overflow ?
             _value = _builder->CreateShl(left, right);
@@ -1424,7 +1424,7 @@ void implementation_generator::visit_right_shift_expression(right_shift_expressi
         left = _builder->CreateLoad(type, left);
     }
 
-    if(auto prim = std::dynamic_pointer_cast<primitive_type>(expr.get_type())) {
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr.get_type()))) {
         if(prim->is_integer()) {
             if(prim->is_unsigned()) {
                 // TODO may it poison when overflow ?
@@ -2196,7 +2196,7 @@ void implementation_generator::visit_division_assignation_expression(division_as
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-    auto left_type = left_ref_type->get_subtype();
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
     auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
@@ -2234,7 +2234,7 @@ void implementation_generator::visit_modulo_assignation_expression(modulo_assign
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-    auto left_type = left_ref_type->get_subtype();
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
     auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
@@ -2272,7 +2272,7 @@ void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-    auto left_type = left_ref_type->get_subtype();
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
     auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
@@ -2310,7 +2310,7 @@ void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_o
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-    auto left_type = left_ref_type->get_subtype();
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
     auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
@@ -2348,7 +2348,7 @@ void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-    auto left_type = left_ref_type->get_subtype();
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
     auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
@@ -2386,7 +2386,7 @@ void implementation_generator::visit_left_shift_assignation_expression(left_shif
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-    auto left_type = left_ref_type->get_subtype();
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
     auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
@@ -2425,7 +2425,7 @@ void implementation_generator::visit_right_shift_assignation_expression(right_sh
     }
 
     auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-    auto left_type = left_ref_type->get_subtype();
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
     auto llvm_type = _context->get_llvm_type(left_type);
 
     auto left_val = _builder->CreateLoad(llvm_type, left);
@@ -3004,7 +3004,7 @@ void implementation_generator::visit_unary_minus_expression(unary_minus_expressi
         val = _builder->CreateLoad(_context->get_llvm_type(type), val);
     }
 
-    if(auto prim = std::dynamic_pointer_cast<primitive_type>(type)) {
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(type))) {
         // When primitive, return the value itself
         if(prim->is_integer_or_bool()) {
             // TODO may it poison when overflow ?
@@ -3041,7 +3041,7 @@ void implementation_generator::visit_bitwise_not_expression(bitwise_not_expressi
         val = _builder->CreateLoad(_context->get_llvm_type(type), val);
     }
 
-    if(auto prim = std::dynamic_pointer_cast<primitive_type>(type)) {
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(type))) {
         // When primitive, return the value itself
         if(prim->is_integer_or_bool()) {
             _value = _builder->CreateNot(val);
@@ -3535,12 +3535,14 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         expr.assign_left(left);
         left_type = left_type->get_subtype();
     }
+    left_type = type::remove_const(left_type);
 
     if(type::is_reference(right_type)) {
         right = adapt_reference_load_value(right);
         expr.assign_right(right);
         right_type = right_type->get_subtype();
     }
+    right_type = type::remove_const(right_type);
 
     // ── Enum comparison: convert enum operands to their underlying primitive type ──
     {
@@ -3581,8 +3583,8 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
              right_type ? right_type->to_string() : "?"});
     }
 
-    auto left_prim_type = std::dynamic_pointer_cast<primitive_type>(left_type);
-    auto right_prim_type = std::dynamic_pointer_cast<primitive_type>(right_type);
+    auto left_prim_type = std::dynamic_pointer_cast<primitive_type>(type::remove_const(left_type));
+    auto right_prim_type = std::dynamic_pointer_cast<primitive_type>(type::remove_const(right_type));
 
     auto adapted_left = left;
     auto adapted_right = right;
@@ -3668,7 +3670,8 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim = std::dynamic_pointer_cast<primitive_type>(left_type);
+    auto prim_left = type::is_reference(left_type) ? left_type->get_subtype() : left_type;
+    auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left));
 
     if(prim->is_integer_or_bool()) {
         _value = _builder->CreateICmpEQ(left, right);
@@ -3727,7 +3730,8 @@ void implementation_generator::visit_different_expression(different_expression& 
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim = std::dynamic_pointer_cast<primitive_type>(left_type);
+    auto prim_left_ne = type::is_reference(left_type) ? left_type->get_subtype() : left_type;
+    auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_ne));
 
     if(prim->is_integer_or_bool()) {
         _value = _builder->CreateICmpNE(left, right);
@@ -3769,7 +3773,8 @@ void implementation_generator::visit_lesser_expression(lesser_expression& expr) 
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+    auto prim_left_lt = type::is_reference(expr.left()->get_type()) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
+    auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_lt));
 
     if(prim->is_integer_or_bool()) {
         if(prim->is_unsigned()) {
@@ -3815,7 +3820,8 @@ void implementation_generator::visit_greater_expression(greater_expression& expr
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+    auto prim_left_gt = type::is_reference(expr.left()->get_type()) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
+    auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_gt));
 
     if(prim->is_integer_or_bool()) {
         if(prim->is_unsigned()) {
@@ -3861,7 +3867,8 @@ void implementation_generator::visit_lesser_equal_expression(lesser_equal_expres
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+    auto prim_left_le = type::is_reference(expr.left()->get_type()) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
+    auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_le));
 
     if(prim->is_integer_or_bool()) {
         if(prim->is_unsigned()) {
@@ -3907,7 +3914,8 @@ void implementation_generator::visit_greater_equal_expression(greater_equal_expr
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim = std::dynamic_pointer_cast<primitive_type>(expr.left()->get_type());
+    auto prim_left_ge = type::is_reference(expr.left()->get_type()) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
+    auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_ge));
 
     if(prim->is_integer_or_bool()) {
         if(prim->is_unsigned()) {

@@ -2687,11 +2687,13 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     }
 
     // ref<owner<T>> → ptr<T>: load owner and borrow as pointer
+    // Also handles ref<const<owner<T>>> (const class member) → ptr<T>
     if (type::is_reference(type_src) && !type::is_double_reference(type_src)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
         auto inner = ref_src->get_subtype();
-        if (type::is_owner(inner)) {
-            auto own_sub = inner->get_subtype();
+        auto inner_nc = type::remove_const(inner);
+        if (type::is_owner(inner_nc)) {
+            auto own_sub = inner_nc->get_subtype();
             auto own_sub_nc = type::remove_const(own_sub);
             if (type::is_pointer(tgt_nc)) {
                 auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
@@ -2892,7 +2894,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     }
 
     // --- Both primitive ---
-    auto prim_src = std::dynamic_pointer_cast<primitive_type>(effective_src);
+    auto prim_src = std::dynamic_pointer_cast<primitive_type>(eff_src_nc);
     auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(tgt_nc);
     if (prim_src && prim_tgt) {
         if (*prim_src == *prim_tgt) return CAST_NONE;
@@ -3522,11 +3524,13 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     }
 
     // ref<owner<T>> → ptr<T>: load the owner value (address) as an observer pointer
+    // Also handles ref<const<owner<T>>> (const class member) → ptr<T>
     if (type::is_reference(type_src) && !type::is_double_reference(type_src)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
         auto inner = ref_src->get_subtype();
-        if (type::is_owner(inner)) {
-            auto own_sub_nc = type::remove_const(inner->get_subtype());
+        auto inner_nc = type::remove_const(inner);
+        if (type::is_owner(inner_nc)) {
+            auto own_sub_nc = type::remove_const(inner_nc->get_subtype());
             // ── ref<owner<T>> → owner<T>: move ownership (load + null source) ──────
             if (type::is_owner(type_nc)) {
                 auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
@@ -3552,7 +3556,7 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                 if (own_sub_nc == tgt_sub_nc) {
                     // Load the stored pointer from the owner slot
                     auto loaded = load_value_expression::make_shared(expr);
-                    loaded->set_type(inner);
+                    loaded->set_type(inner_nc);
                     // Reinterpret as pointer
                     auto cast = cast_expression::make_shared(loaded, type_nc);
                     cast->set_type(type_nc);
@@ -3564,7 +3568,7 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                 if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
                     src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
                     auto loaded = load_value_expression::make_shared(expr);
-                    loaded->set_type(inner);
+                    loaded->set_type(inner_nc);
                     auto upcast = cast_expression::make_shared(loaded, type_nc);
                     upcast->set_type(type_nc);
                     return upcast;

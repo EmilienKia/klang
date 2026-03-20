@@ -241,10 +241,22 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
         return from_keyword(kw->keyword, kw->is_unsigned);
     } else if(auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*ptr->subtype);
+        if(ptr->pointer_type==lex::operator_::AMPERSAND) {
+            return subtype->get_reference();
+        }
+        // int[] is canonicalized to reference(array(int)) for stack/parameter use,
+        // but for indirection types (T[]*, T[]~, T[]^) we need pointer/link/pinned(array(T)),
+        // not pointer/link/pinned(ref(array(T))).  Unwrap the reference when it wraps
+        // an unsized array, same as the owner case below.
+        if (auto ref = std::dynamic_pointer_cast<reference_type>(subtype)) {
+            if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                if (!arr->is_sized()) {
+                    subtype = arr;
+                }
+            }
+        }
         if(ptr->pointer_type==lex::operator_::STAR) {
             return subtype->get_pointer();
-        } else if(ptr->pointer_type==lex::operator_::AMPERSAND) {
-            return subtype->get_reference();
         } else if(ptr->pointer_type==lex::operator_::TILDE) {
             return subtype->get_link();
         } else if(ptr->pointer_type==lex::operator_::CARET) {

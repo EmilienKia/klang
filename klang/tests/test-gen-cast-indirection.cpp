@@ -846,4 +846,3 @@ TEST_CASE("Implicit upcast: f(IFace&) called with class ref implementing IFace",
     REQUIRE(fn() == 42);
 }
 
-

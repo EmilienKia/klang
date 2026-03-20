@@ -317,8 +317,39 @@ void symbol_resolver::visit_namespace(ns& ns)
 
 }
 
+//
+// signature_resolver — namespace-level entry points
+// (element-specific methods are in gen_struct.cpp, gen_class.cpp, gen_function.cpp)
+//
+
+void signature_resolver::resolve_signatures(ns& ns) {
+    visit_namespace(ns);
+}
+
+void signature_resolver::visit_namespace(ns& ns) {
+    // Only visit aggregate children — free functions don't need the
+    // signature pre-pass because they don't cause cross-type forward references.
+    for (auto& child : ns.get_children()) {
+        if (std::dynamic_pointer_cast<aggregate>(child)) {
+            child->accept(*this);
+        }
+    }
+}
+
 void type_reference_resolver::visit_namespace(ns& ns)
 {
+    // Pre-pass: resolve all aggregate function signatures (parameter + return types)
+    // WITHOUT processing function bodies.  This ensures that when function bodies
+    // reference types from sibling classes (e.g. String's operator+ returning
+    // StringBuilder), those constructor/function parameter types are already resolved.
+    {
+        signature_resolver sig_resolver(_log, _context, _unit);
+        sig_resolver.resolve_signatures(ns);
+    }
+
+    // Full pass: visit everything (including function bodies).
+    // Signature resolution is idempotent (already-resolved types are skipped),
+    // so only the function bodies and expressions are newly processed.
     for(auto& child : ns.get_children()) {
         child->accept(*this);
     }

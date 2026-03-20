@@ -30,54 +30,12 @@
 
 #include <catch2/catch_all.hpp>
 
-#include <kdi.hpp>
-
-#include "../src/compiler.hpp"
-#include "../src/common/logger.hpp"
-#include "../src/common/path_lookup_file_resolver.hpp"
-#include "../src/model/model.hpp"
-#include "../src/model/imported.hpp"
-#include "../src/model/tools/kdi_importer.hpp"
-
 #include "helpers.hpp"
-
-#include <filesystem>
-#include <fstream>
-#include <unordered_map>
-#include <vector>
 
 #include <llvm/IR/Module.h>
 #include <llvm/Support/raw_ostream.h>
 
 namespace fs = std::filesystem;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-struct TmpKdi {
-    std::string so_path;
-    std::string kdi_path;
-
-    explicit TmpKdi(const std::string_view& src) {
-        so_path = build_shared_library(src);
-        kdi_path = [&]() {
-            fs::path p(so_path);
-            p.replace_extension(".kdi");
-            return p.string();
-        }();
-        if (!fs::is_regular_file(kdi_path)) {
-            throw std::runtime_error("build_shared_library did not produce " + kdi_path);
-        }
-    }
-    ~TmpKdi() {
-        std::error_code ec;
-        fs::remove(so_path, ec);
-        fs::remove(kdi_path, ec);
-    }
-    /// Directory that contains the .kdi file
-    fs::path dir() const { return fs::path(kdi_path).parent_path(); }
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 4 — kdi_importer: load, validate, store
@@ -1525,48 +1483,6 @@ TEST_CASE("import transitive function — transitive global function used by dir
 // (which prints to stderr and has no diagnostic-collection API).
 // ═════════════════════════════════════════════════════════════════════════════
 
-// Helper: build a .kdi in /tmp from a simple lib source and return its path.
-static std::string build_kdi_for_import_warning_test(const std::string_view& lib_src) {
-    std::string so = build_shared_library(lib_src);
-    std::filesystem::path kdi = std::filesystem::path(so).replace_extension(".kdi");
-    if (!std::filesystem::exists(kdi))
-        throw std::runtime_error("expected .kdi not produced: " + kdi.string());
-    return kdi.string();
-}
-
-// Helper: run kdi_importer phases A+B+C on a fresh unit importing the given
-// module names.  Returns all diagnostics collected by the test_logger.
-static std::vector<k::log::diagnostic> run_importer_with_logger(
-    const std::string& unit_name,
-    const std::vector<std::string>& module_names,
-    k::path_lookup_file_resolver& resolver,
-    std::vector<std::string> pre_used = {})   // module names to mark used before check
-{
-    // Use compiler::create() to get properly-initialised unit + context
-    auto comp = k::compiler::create();
-    auto* model_unit = comp->get_unit().get();
-    if (!model_unit) throw std::runtime_error("unit not created by compiler");
-
-    model_unit->set_unit_name(k::name::from(unit_name));
-    for (const auto& mn : module_names)
-        model_unit->add_import(k::name::from(mn));
-
-    test_logger tl;
-    k::model::kdi_importer importer(*model_unit, resolver, tl);
-    importer.import_all();
-    importer.materialise_all(comp->get_context_for_test());
-
-    // Mark any requested imports as used (simulate symbol resolution)
-    for (auto& imp : model_unit->get_imports()) {
-        const std::string canon = imp.module_name.to_string();
-        for (const auto& pu : pre_used)
-            if (canon == pu) imp.used = true;
-    }
-
-    importer.check_unused_imports();
-    return tl.diagnostics;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Test: an import whose symbols are never touched → warning 0x80010
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1683,61 +1599,6 @@ TEST_CASE("unused import — one used one unused, only unused triggers warning",
 // ═════════════════════════════════════════════════════════════════════════════
 // P1 — Circular import detection (error 0x80003)
 // ═════════════════════════════════════════════════════════════════════════════
-
-// Helper: build a minimal kdi_file with forged dependencies and write it to /tmp.
-static std::string write_minimal_kdi(const std::string& module_name,
-                                      const std::vector<std::string>& deps)
-{
-    kdi::kdi_file f;
-    f.header.module_name   = module_name;
-    f.header.lib_base      = module_name;
-    f.header.lib_path      = "lib" + module_name + ".so";
-    f.header.target_triple = "x86_64-pc-linux-gnu";
-    f.header.compiler_ver  = "0.0.0-test";
-    f.header.dependencies  = deps;
-    f.unit.name            = module_name;
-    f.unit.root_ns.name    = "";
-    f.unit.root_ns.fq_name = "";
-
-    std::string path = "/tmp/" + module_name + ".kdi";
-    if (!kdi::kdi_write_cbor_file(f, path))
-        throw std::runtime_error("Cannot write test kdi: " + path);
-    return path;
-}
-
-// Helper: attempt to load a single import via kdi_importer and return whether
-// a compiler_error was thrown.  Fills *out_what with e.what() on throw.
-// @param kdi_paths  map of module_name → kdi file path (for explicit resolution)
-static bool try_import(const std::string& unit_name,
-                       const std::string& first_import,
-                       const std::unordered_map<std::string,std::string>& kdi_paths,
-                       std::string* out_what = nullptr)
-{
-    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
-    for (const auto& [mod, path] : kdi_paths)
-        resolver->add_explicit_path(mod, path);
-
-    auto comp = k::compiler::create();
-    comp->set_file_resolver(resolver);
-    auto* model_unit = comp->get_unit().get();
-    if (!model_unit) throw std::runtime_error("unit not created");
-
-    model_unit->set_unit_name(k::name::from(unit_name));
-    model_unit->add_import(k::name::from(first_import));
-
-    test_logger tl;
-    k::model::kdi_importer importer(*model_unit, *resolver, tl);
-    try {
-        importer.import_all();
-        return false;   // no exception → no cycle
-    } catch (const k::log::compiler_error& e) {
-        if (out_what) *out_what = e.what();
-        return true;    // exception → cycle detected
-    } catch (const std::exception& e) {
-        if (out_what) *out_what = std::string("std::exception: ") + e.what();
-        return true;    // other exception → count as error
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test: self-import (A depends on A)

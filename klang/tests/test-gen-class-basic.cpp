@@ -36,13 +36,6 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/gen/resolvers.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -413,11 +406,4 @@ test() : int {
     REQUIRE(fn);
     CHECK(fn() == 150);
 }
-
-
-
-
-
-
-
 

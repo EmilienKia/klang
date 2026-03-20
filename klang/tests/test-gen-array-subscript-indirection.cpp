@@ -26,13 +26,6 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/gen/resolvers.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -465,5 +458,136 @@ TEST_CASE("Array of owners — write-through", "[gen][subscript-indirection][arr
     auto test = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 110);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subscript on owner array member of struct (regression)
+//
+// These tests exercise owner array member subscript in different access modes:
+//   1) External: h._buf[0]  (member accessed from outside the struct)
+//   2) Via method using implicit 'this': _buf[i]
+//   3) Via const method
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Subscript on owner array member — external access", "[gen][subscript-indirection][owner-member]") {
+    auto jit = gen_jit(R"SRC(
+        module __ext_owner_subscript__;
+
+        struct Holder {
+            _buf : char[]!;
+            Holder(buf : char[]!) : _buf(buf) {}
+            ~Holder() { delete _buf; }
+        }
+
+        test() : int {
+            sz : unsigned int = 3u;
+            buf : char[]! = new char[sz];
+            buf[0] = 'A';
+            buf[1] = 'B';
+            buf[2] = 'C';
+            h : Holder(buf);
+            result : int = 0;
+            if (h._buf[0] == 'A') result = result + 1;
+            if (h._buf[1] == 'B') result = result + 10;
+            if (h._buf[2] == 'C') result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 111);
+}
+
+TEST_CASE("Subscript on owner array member via non-const method (implicit this)", "[gen][subscript-indirection][owner-member]") {
+    auto jit = gen_jit(R"SRC(
+        module __const_owner_subscript__;
+
+        struct Holder {
+            _buf : char[]!;
+            _size : int;
+            Holder(buf : char[]!, sz : int) : _buf(buf), _size(sz) {}
+            ~Holder() { delete _buf; }
+            const at(i : int) : char { return _buf[i]; }
+        }
+
+        test() : int {
+            sz : unsigned int = 3u;
+            buf : char[]! = new char[sz];
+            buf[0] = 'A';
+            buf[1] = 'B';
+            buf[2] = 'C';
+            h : Holder(buf, 3);
+            result : int = 0;
+            if (h.at(0) == 'A') result = result + 1;
+            if (h.at(1) == 'B') result = result + 10;
+            if (h.at(2) == 'C') result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 111);
+}
+
+TEST_CASE("Subscript on owner int array member via const method", "[gen][subscript-indirection][owner-member]") {
+    auto jit = gen_jit(R"SRC(
+        module __const_owner_int_subscript__;
+
+        struct IntArray {
+            _data : int[]!;
+            _len  : int;
+            IntArray(d : int[]!, n : int) : _data(d), _len(n) {}
+            ~IntArray() { delete _data; }
+            const get(i : int) : int { return _data[i]; }
+        }
+
+        test() : int {
+            sz : unsigned int = 3u;
+            d : int[]! = new int[sz];
+            d[0] = 10;
+            d[1] = 20;
+            d[2] = 30;
+            a : IntArray(d, 3);
+            return a.get(0) + a.get(1) + a.get(2);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 60);
+}
+
+TEST_CASE("Subscript on owner array member via non-const method (mutable write)", "[gen][subscript-indirection][owner-member]") {
+    auto jit = gen_jit(R"SRC(
+        module __mut_owner_subscript__;
+
+        struct Buffer {
+            _buf : char[]!;
+            _size : int;
+            Buffer(buf : char[]!, sz : int) : _buf(buf), _size(sz) {}
+            ~Buffer() { delete _buf; }
+            set(i : int, c : char) { _buf[i] = c; }
+            const get(i : int) : char { return _buf[i]; }
+        }
+
+        test() : int {
+            sz : unsigned int = 2u;
+            buf : char[]! = new char[sz];
+            buf[0] = 'X';
+            buf[1] = 'Y';
+            b : Buffer(buf, 2);
+            b.set(0, 'Z');
+            result : int = 0;
+            if (b.get(0) == 'Z') result = result + 1;
+            if (b.get(1) == 'Y') result = result + 10;
+            return result;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 11);
 }
 

@@ -18,12 +18,6 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
 
 using namespace k::parse;
@@ -1077,5 +1071,4 @@ TEST_CASE("Designated init — imported parent struct with private member and ba
     if (!result.err.empty()) INFO("stderr: " << result.err);
     REQUIRE(result.exit_code == 42);
 }
-
 

@@ -38,13 +38,6 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/gen/resolvers.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
 
 //
@@ -346,7 +339,6 @@ test_write_read() : int {
     REQUIRE(test1 != nullptr);
     CHECK(test1() == 55);
 }
-
 
 // TODO: Diamond ctor init (D() : A(99)) requires full diamond sharing (Pass-2 virtual propagation).
 // Current behaviour: D has two independent copies of A. 'D() : A(99)' cannot specify

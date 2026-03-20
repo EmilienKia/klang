@@ -11,7 +11,8 @@
 # Every K program and library is automatically linked against libk.
 # ─────────────────────────────────────────────────────────────────────────────
 set(LIBK_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/object.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/object.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/string.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
@@ -49,3 +50,14 @@ set(KLANG_STDLIB_KDI_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
     "Directory containing k.kdi (K base stdlib descriptor)")
 set(KLANG_STDLIB_LIB_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
     "Directory containing libk.so / libk.a (K base stdlib binaries)")
+# ── libk tests ───────────────────────────────────────────────────────────────
+# Tests that exercise the K standard library features (String, StringBuilder,
+# etc.) via JIT compilation.  These are distinct from compiler tests (klang-tests)
+# and focus on the behaviour of the library types themselves.
+# ─────────────────────────────────────────────────────────────────────────────
+add_executable(libk-tests
+    tests/test-string.cpp
+)
+target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain)
+
+add_test(NAME libk-tests COMMAND libk-tests)

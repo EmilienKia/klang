@@ -69,9 +69,17 @@ target_link_libraries(klangc klangcomp ${LLVM_LIBRARIES} fmt::fmt ${Boost_LIBRAR
 # Tests
 #
 
-add_executable(klang-tests
+add_library(klang-test-helpers STATIC
         tests/helpers.hpp
         tests/helpers.cpp
+)
+target_link_libraries(klang-test-helpers PUBLIC klangcomp ${LLVM_LIBRARIES} fmt::fmt kdi)
+target_include_directories(klang-test-helpers PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    ${CMAKE_SOURCE_DIR}/libkdi/src
+)
+
+add_executable(klang-tests
         tests/test-lexer.cpp
         tests/test-parser.cpp
         tests/test-gen-arithmetic.cpp
@@ -122,8 +130,7 @@ add_executable(klang-tests
         tests/test-gen-rvo.cpp
         tests/test-gen-named-return.cpp
 )
-target_link_libraries(klang-tests klangcomp ${LLVM_LIBRARIES} fmt::fmt Catch2::Catch2WithMain kdi)
-target_include_directories(klang-tests PRIVATE ${CMAKE_SOURCE_DIR}/libkdi/src)
+target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
 
 add_test(NAME klang-tests COMMAND klang-tests)
 

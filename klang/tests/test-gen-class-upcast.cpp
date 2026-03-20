@@ -555,5 +555,3 @@ TEST_CASE("Class upcast: ptr<Base class> assigned from pin<Derived class>", "[ge
     REQUIRE(fn() == 66);
 }
 
-
-

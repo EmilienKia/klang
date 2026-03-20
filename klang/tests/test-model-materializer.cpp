@@ -48,54 +48,7 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/resolvers.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper: compile source up to (and including) model_materializer, then return
-// the compiler object for model inspection.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Compile K source and return the compiler (which provides access to the model unit).
- * Returns nullptr if compilation fails.
- * Note: parse_source() runs ALL passes including code generation; we inspect
- * the model AFTER full compilation so all materializer passes have run.
- */
-static std::shared_ptr<k::compiler> compile_model(std::string_view src) {
-    auto comp = k::compiler::create();
-    try {
-        comp->parse_source("", src, /*optimize=*/false, /*dump=*/false);
-        return comp;
-    } catch (const k::log::compiler_error&) {
-        return nullptr;
-    } catch (const std::exception& ex) {
-        std::cerr << "Unexpected error: " << ex.what() << std::endl;
-        return nullptr;
-    }
-}
-
-/**
- * Navigate to an aggregate by its short name within the root namespace.
- */
-static std::shared_ptr<k::model::aggregate>
-find_aggregate(const std::shared_ptr<k::compiler>& comp, const std::string& name) {
-    if (!comp || !comp->get_unit()) return nullptr;
-    auto root = comp->get_unit()->get_root_namespace();
-    if (!root) return nullptr;
-    return root->get_aggregate(name);
-}
-
-static std::shared_ptr<k::model::klass>
-find_klass(const std::shared_ptr<k::compiler>& comp, const std::string& name) {
-    return std::dynamic_pointer_cast<k::model::klass>(find_aggregate(comp, name));
-}
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [A] Single-class vtable: 1 virtual method → 1 slot
@@ -122,7 +75,6 @@ TEST_CASE("[A] Phase2: single-class vtable has correct slot count", "[phase2][ma
     CHECK(vt->entries[0].func != nullptr);
     CHECK(vt->entries[0].func->get_short_name() == "bar");
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [B] Derived class overrides: correct slot_index and func pointer updated
@@ -165,7 +117,6 @@ TEST_CASE("[B] Phase2: derived override updates vtable entry func pointer", "[ph
     CHECK(deriv_vt->entries[0].introducing_func->get_owner()->get_short_name() == "Base");
 }
 
-
 // ════════════════════════════════════════════════════════════════════════════
 //  [C] Abstract class: abstract method → slot present, func is abstract
 // ════════════════════════════════════════════════════════════════════════════
@@ -190,7 +141,6 @@ TEST_CASE("[C] Phase2: abstract class has abstract slot without error", "[phase2
     REQUIRE(vt->entries[0].func != nullptr);
     CHECK(vt->entries[0].func->is_abstract_func());
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [D] Concrete derived provides all overrides → no abstract slots remain
@@ -220,7 +170,6 @@ TEST_CASE("[D] Phase2: concrete derived class fills all abstract slots", "[phase
     CHECK(!vt->entries[0].func->is_abstract_func());
     CHECK(vt->entries[0].func->get_owner()->get_short_name() == "Circle");
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [E] Single inheritance → one secondary_vtable spec (for the primary base)
@@ -254,7 +203,6 @@ TEST_CASE("[E] Phase2: single inheritance → one secondary vtable spec for prim
     CHECK(vt->secondary_vtables[0].base_class->get_short_name() == "Base");
     CHECK(vt->secondary_vtables[0].base_offset > 0); // non-zero: Base is after __vptr__
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [F] Multiple inheritance: D : B, C (both with vtable) → secondary_vtables
@@ -299,7 +247,6 @@ TEST_CASE("[F] Phase2: multiple class bases → secondary_vtable_spec present", 
     }
     CHECK(found_c);
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [G] No override in D → thunk NOT needed for that slot
@@ -351,7 +298,6 @@ TEST_CASE("[G] Phase2: inherited-but-not-overridden slot → needs_thunk false",
     }
     // If spec_c is null (e.g., the offset happened to be 0), the test is vacuously valid.
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [H] Overridden slot in D → thunk IS needed (if C is at non-zero offset)
@@ -413,7 +359,6 @@ TEST_CASE("[H] Phase2: overridden slot in D with non-zero offset → needs_thunk
     // If offset == 0, needs_thunk == false is correct (no adjustment needed).
 }
 
-
 // ════════════════════════════════════════════════════════════════════════════
 //  [I] Single inheritance virtual dispatch still works after Phase 2 (JIT)
 // ════════════════════════════════════════════════════════════════════════════
@@ -440,7 +385,6 @@ TEST_CASE("[I] Phase2: single inheritance virtual dispatch works at runtime", "[
     REQUIRE(fn != nullptr);
     CHECK(fn() == 7);
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [J] Multiple inheritance virtual dispatch via secondary vtable (JIT)
@@ -479,7 +423,6 @@ TEST_CASE("[J] Phase2: multiple class inheritance virtual dispatch works at runt
     REQUIRE(fn_c != nullptr);
     CHECK(fn_c() == 20);  // Dispatches to C::value
 }
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [K] Vtable validation: non-abstract class with unimplemented abstract slot → error
@@ -570,9 +513,4 @@ TEST_CASE("[DBG-V2] Child : Base(abstract) : Ping, Pong — secondary specs cove
     }
     CHECK(has_pong_global);
 }
-
-
-
-
-
 

@@ -457,6 +457,10 @@ void symbol_resolver::visit_klass(klass& klass) {
     }
 }
 
+void signature_resolver::visit_klass(klass& klass) {
+    visit_aggregate(klass);
+}
+
 // type_reference_resolver::visit_klass
 // --------------------------------------
 // Extends aggregate type-reference resolution by building the LLVM struct type
@@ -1177,6 +1181,10 @@ void implementation_generator::visit_klass(klass& klass) {
 
 void symbol_resolver::visit_interface(interface& iface) {
     visit_klass(iface);
+}
+
+void signature_resolver::visit_interface(interface& iface) {
+    visit_aggregate(iface);
 }
 
 void type_reference_resolver::visit_interface(interface& iface) {

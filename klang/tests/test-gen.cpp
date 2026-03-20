@@ -18,12 +18,6 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
 
 TEST_CASE( "Simple method", "[gen]" ) {
@@ -188,7 +182,6 @@ TEST_CASE("Array indices references", "[gen][refs][array]") {
 // Structure content references and invocation
 //
 
-
 TEST_CASE("Structure content references and invocation with local variable", "[gen][struct]") {
     auto jit = gen_jit(R"SRC(
         module __structs__;
@@ -225,7 +218,6 @@ TEST_CASE("Structure content references and invocation with local variable", "[g
     REQUIRE( res_another_test_local == (10 + 32 + 5 + 8) );
 
 }
-
 
 TEST_CASE("Structure content references and invocation with global variable", "[gen][struct]") {
     auto jit = gen_jit(R"SRC(
@@ -550,7 +542,6 @@ TEST_CASE("Main entry point method returning nothing", "[gen]") {
     auto res_main = main(argc, (char**)argv);
     REQUIRE( res_main == 0 );
 }
-
 
 TEST_CASE("Static struct member", "[gen][var]") {
     auto jit = gen_jit(R"SRC(

@@ -31,12 +31,6 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
 
 // =============================================================================
@@ -298,5 +292,4 @@ TEST_CASE("Non-static inner struct: compiler-generated default constructor", "[g
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 49);  // 42 + 7
 }
-
 

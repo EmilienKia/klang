@@ -42,10 +42,6 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/compiler.hpp"
-#include "../src/model/model.hpp"
-#include "../src/model/expressions.hpp"
-
 #include "helpers.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -305,5 +301,4 @@ TEST_CASE("[J] Phase4: non-regression — main() wrapper (global_main_function)"
     )SRC");
     CHECK(result.exit_code == 42);
 }
-
 

@@ -76,13 +76,6 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/gen/resolvers.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -152,7 +145,6 @@ test_derived() : int {
 //      (This test block is intentionally empty — the rule is enforced by the
 //       type system, not a runtime keyword check.)
 // ════════════════════════════════════════════════════════════════════════════
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [C,D] / [S,T] cross-struct/class inheritance → error 0x0035
@@ -1166,8 +1158,4 @@ test_c() : int { d: D; return call_c(d); }
     CHECK(fn_b() == 2);
     CHECK(fn_c() == 3);
 }
-
-
-
-
 

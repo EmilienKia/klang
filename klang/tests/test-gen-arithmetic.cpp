@@ -18,14 +18,7 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
-
 
 TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
 
@@ -271,7 +264,6 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
     }
 }
 
-
 TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
@@ -499,7 +491,6 @@ TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
         REQUIRE( ge(24, 42) == false );
     }
 }
-
 
 TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
 
@@ -742,7 +733,6 @@ TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
         REQUIRE( ge(24, 42) == false );
     }
 }
-
 
 TEST_CASE( "uint16 arithmetic", "[gen][uint16][arithmetic]" ) {
 
@@ -1703,7 +1693,6 @@ TEST_CASE( "int64 arithmetic", "[gen][int64][arithmetic]" ) {
     }
 }
 
-
 TEST_CASE( "uint64 arithmetic", "[gen][uint64][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
@@ -2144,8 +2133,6 @@ TEST_CASE( "float arithmetic", "[gen][float][arithmetic]" ) {
     }
 }
 
-
-
 TEST_CASE( "double arithmetic", "[gen][double][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
@@ -2402,8 +2389,6 @@ TEST_CASE( "double arithmetic", "[gen][double][arithmetic]" ) {
     }
 }
 
-
-
 TEST_CASE("Boolean values and casting", "[gen][bool]") {
     auto jit = gen_jit(R"SRC(
         module __bool__;
@@ -2469,7 +2454,6 @@ TEST_CASE("Boolean values and casting", "[gen][bool]") {
         REQUIRE( cast_byte_to_bool( 0 ) == false );
     }
 
-
     SECTION( "cast int32 to boolean" ) {
         auto cast_int32_to_bool = jit->lookup_symbol<bool(*)(int)>("cast_int32_to_bool");
         REQUIRE( cast_int32_to_bool != nullptr );
@@ -2485,7 +2469,6 @@ TEST_CASE("Boolean values and casting", "[gen][bool]") {
         REQUIRE( cast_uint64_to_bool( 0 ) == false );
     }
 
-
     SECTION( "cast boolean to char" ) {
         auto cast_bool_to_char = jit->lookup_symbol<char(*)(bool)>("cast_bool_to_char");
         REQUIRE( cast_bool_to_char != nullptr );
@@ -2499,7 +2482,6 @@ TEST_CASE("Boolean values and casting", "[gen][bool]") {
         REQUIRE( cast_bool_to_byte( false ) == 0 );
         REQUIRE( cast_bool_to_byte( true ) != 0 );
     }
-
 
     SECTION( "cast boolean to int32" ) {
         auto cast_bool_to_int32 = jit->lookup_symbol<int(*)(bool)>("cast_bool_to_int32");
@@ -2515,7 +2497,6 @@ TEST_CASE("Boolean values and casting", "[gen][bool]") {
         REQUIRE( cast_bool_to_uint64( true ) != 0 );
     }
 }
-
 
 TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
     auto jit = gen_jit(R"SRC(
@@ -2643,8 +2624,6 @@ TEST_CASE("Boolean arithmetic", "[gen][bool][arithmetic]") {
         REQUIRE( ge(false, true) == false );
     }
 }
-
-
 
 // ============================================================================
 // INTERACTION WITH LOOPS AND COMBINED USES
@@ -2938,5 +2917,4 @@ TEST_CASE("Increment/decrement on unsigned integer types", "[gen][incr-decr][uns
         REQUIRE(f(42UL) == 42UL);
     }
 }
-
 

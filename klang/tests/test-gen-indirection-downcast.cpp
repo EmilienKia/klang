@@ -45,7 +45,6 @@
 #include <catch2/catch_all.hpp>
 #include "helpers.hpp"
 
-
 // =============================================================================
 // Shared source fragments (helper macros)
 // =============================================================================
@@ -62,7 +61,6 @@
     "    Derived() : Base(42), extra(7) {}\n" \
     "    Derived(v : int) : Base(v), extra(7) {}\n" \
     "}\n"
-
 
 // =============================================================================
 // [T1] ref<Base> init from Derived object — success
@@ -532,7 +530,4 @@ TEST_CASE("Downcast: ptr<Base> assigned from pin<Derived>", "[gen][downcast][ptr
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 66);
 }
-
-
-
 

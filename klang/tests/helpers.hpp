@@ -19,8 +19,13 @@
 #ifndef KLANG_HELPERS_HPP
 #define KLANG_HELPERS_HPP
 
+#include <atomic>
+#include <fstream>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <vector>
+#include <filesystem>
 
 #include "../src/common/logger.hpp"
 #include "../src/common/common.hpp"
@@ -28,6 +33,15 @@
 #include "../src/common/path_lookup_file_resolver.hpp"
 #include "../src/gen/resolvers.hpp"
 #include "../src/gen/generators.hpp"
+#include "../src/compiler.hpp"
+#include "../src/model/model.hpp"
+#include "../src/model/imported.hpp"
+#include "../src/model/expressions.hpp"
+#include "../src/model/statements.hpp"
+#include "../src/parse/parser.hpp"
+#include "../src/model/tools/kdi_importer.hpp"
+
+#include <kdi.hpp>
 
 #include <llvm/Target/TargetMachine.h>
 
@@ -216,6 +230,157 @@ bool compile_collect_diagnostics(
     const std::string_view& src,
     std::shared_ptr<k::path_lookup_file_resolver> resolver,
     test_logger& out_logger);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Model inspection helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Compile K source and return the compiler (which provides access to the model unit).
+ * Returns nullptr if compilation fails.
+ * Note: parse_source() runs ALL passes including code generation; we inspect
+ * the model AFTER full compilation so all materializer passes have run.
+ */
+std::shared_ptr<k::compiler> compile_model(std::string_view src);
+
+/**
+ * Navigate to an aggregate by its short name within the root namespace.
+ */
+std::shared_ptr<k::model::aggregate>
+find_aggregate(const std::shared_ptr<k::compiler>& comp, const std::string& name);
+
+/**
+ * Navigate to a klass by its short name within the root namespace.
+ */
+std::shared_ptr<k::model::klass>
+find_klass(const std::shared_ptr<k::compiler>& comp, const std::string& name);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AST traversal helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Recursively collect all function_invocation_expression nodes within an expression tree.
+ */
+void collect_in_expr(k::model::expression* expr,
+                     std::vector<k::model::function_invocation_expression*>& out);
+
+/**
+ * Recursively collect all function_invocation_expression nodes within a statement tree.
+ */
+void collect_in_stmt(k::model::statement* stmt,
+                     std::vector<k::model::function_invocation_expression*>& out);
+
+/**
+ * Find all function invocations inside a named function within the root namespace.
+ */
+std::vector<k::model::function_invocation_expression*>
+collect_invocations_in(const std::shared_ptr<k::compiler>& comp, const std::string& func_name);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Parser AST comparison helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Compare a parsed qualified_identifier against a k::name for equality.
+ */
+bool is_same(const k::parse::ast::qualified_identifier& ident1, const k::name& ident2);
+
+/**
+ * Compare a parsed identifier_expr against a k::name for equality.
+ */
+bool is_same(const k::parse::ast::identifier_expr& ident1, const k::name& ident2);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Library / symbol inspection helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * True if the nm output for the file contains a defined symbol whose name
+ * includes the given substring. Works for both .so (--dynamic) and .a.
+ */
+bool has_defined_symbol_containing(const std::string& file, const std::string& substr);
+
+/**
+ * Given a library path (e.g. /tmp/foo.so or /tmp/foo.a), derive the expected
+ * path of the KDI file (same stem, extension = .kdi).
+ */
+std::filesystem::path kdi_path_for(const std::string& lib_path);
+
+/**
+ * Build a .kdi in /tmp from a simple lib source and return its path.
+ */
+std::string build_kdi_for_import_warning_test(const std::string_view& lib_src);
+
+/**
+ * Run kdi_importer phases A+B+C on a fresh unit importing the given
+ * module names.  Returns all diagnostics collected by the test_logger.
+ * @param pre_used  module names to mark as used before checking for unused imports.
+ */
+std::vector<k::log::diagnostic> run_importer_with_logger(
+    const std::string& unit_name,
+    const std::vector<std::string>& module_names,
+    k::path_lookup_file_resolver& resolver,
+    std::vector<std::string> pre_used = {});
+
+/**
+ * Build a minimal kdi_file with forged dependencies and write it to /tmp.
+ * Returns the path to the written .kdi file.
+ */
+std::string write_minimal_kdi(const std::string& module_name,
+                               const std::vector<std::string>& deps);
+
+/**
+ * Attempt to load a single import via kdi_importer and return whether
+ * a compiler_error was thrown.  Fills *out_what with e.what() on throw.
+ * @param kdi_paths  map of module_name → kdi file path (for explicit resolution)
+ */
+bool try_import(const std::string& unit_name,
+                const std::string& first_import,
+                const std::unordered_map<std::string,std::string>& kdi_paths,
+                std::string* out_what = nullptr);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Temporary directory / file RAII helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * RAII wrapper around a temporary directory.
+ *
+ * Creates a unique directory under the system temp path on construction
+ * and recursively removes it on destruction.
+ */
+struct TmpDir {
+    std::filesystem::path path;
+
+    TmpDir();
+    ~TmpDir();
+
+    /// Create an empty file inside the tmp dir; returns its path.
+    std::filesystem::path create_file(const std::string& name) const;
+};
+
+/**
+ * RAII wrapper that compiles a K library source into a shared library,
+ * verifies that the .kdi companion file was produced, and removes both
+ * on destruction.
+ *
+ * Usage:
+ *   TmpKdi kdi(some_k_source);
+ *   kdi.kdi_path;   // path to the .kdi file
+ *   kdi.so_path;    // path to the .so  file
+ *   kdi.dir();      // parent directory
+ */
+struct TmpKdi {
+    std::string so_path;
+    std::string kdi_path;
+
+    explicit TmpKdi(const std::string_view& src);
+    ~TmpKdi();
+
+    /// Directory that contains the .kdi file.
+    std::filesystem::path dir() const;
+};
 
 #endif //KLANG_HELPERS_HPP
 

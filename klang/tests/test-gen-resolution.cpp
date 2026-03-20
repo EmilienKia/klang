@@ -18,12 +18,6 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
 
 // =============================================================================
@@ -978,7 +972,6 @@ TEST_CASE("Qualified name lookup: qualified struct type used for variable declar
     REQUIRE(test() == 12);
 }
 
-
 // =============================================================================
 // Absolute name lookup with omitted module namespace prefix
 // i.e. ::func, ::struct::method, ::subns::func should resolve from the root
@@ -1139,7 +1132,6 @@ TEST_CASE("Absolute name lookup: ::subns1::subns2::func() two-level without modu
     REQUIRE(test != nullptr);
     REQUIRE(test() == 42);
 }
-
 
 // =============================================================================
 // Overload resolution with default parameter values
@@ -1440,7 +1432,6 @@ TEST_CASE("Non-colliding constructors: Box(int) and Box(int,int,int=0)", "[gen][
     REQUIRE(t3 != nullptr);
     REQUIRE(t3() == 6);       // x=1, y=2, z=3
 }
-
 
 // =============================================================================
 // Reference variable constraints

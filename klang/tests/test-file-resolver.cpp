@@ -18,37 +18,11 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/file_resolver.hpp"
-#include "../src/common/path_lookup_file_resolver.hpp"
+#include "helpers.hpp"
 
-#include <atomic>
-#include <filesystem>
-#include <fstream>
+#include "../src/common/file_resolver.hpp"
 
 namespace fs = std::filesystem;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-static std::atomic<int> g_tmp_counter{0};
-
-/// Create a temporary directory with RAII cleanup.
-struct TmpDir {
-    fs::path path;
-    TmpDir() {
-        path = fs::temp_directory_path() / ("klang_test_resolver_" +
-               std::to_string(++g_tmp_counter));
-        fs::create_directories(path);
-    }
-    ~TmpDir() { fs::remove_all(path); }
-    /// Create a file inside the tmp dir; returns its path.
-    fs::path create_file(const std::string& name) const {
-        auto p = path / name;
-        std::ofstream{p.string()}.close();
-        return p;
-    }
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // file_resolver::module_name_to_file_base
@@ -132,8 +106,9 @@ TEST_CASE("path_lookup_file_resolver — env var dirs are searched", "[resolver]
     tmp.create_file("mylib.kdi");
 
     // Set the env var to point to our tmp dir
+    static std::atomic<int> s_env_counter{0};
     const std::string env_name = "KLANG_TEST_RESOLVER_PATH_" +
-        std::to_string(++g_tmp_counter);
+        std::to_string(++s_env_counter);
     ::setenv(env_name.c_str(), tmp.path.c_str(), 1);
 
     k::path_lookup_file_resolver r;
@@ -195,6 +170,4 @@ TEST_CASE("file_resolver::chain — both fail returns nullopt", "[resolver][live
     auto chain = k::file_resolver::chain(std::move(r1), std::move(r2));
     REQUIRE_FALSE( chain->resolve("lib", ".kdi") );
 }
-
-
 

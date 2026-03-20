@@ -418,8 +418,3 @@ TEST_CASE("Link passed as function parameter behaves like object", "[gen][indire
     REQUIRE(fn() == 12);
 }
 
-
-
-
-
-

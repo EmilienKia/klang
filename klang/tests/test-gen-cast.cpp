@@ -63,7 +63,6 @@
 #include <catch2/catch_all.hpp>
 #include "helpers.hpp"
 
-
 // =============================================================================
 // [B2I] bool → int
 // =============================================================================
@@ -744,6 +743,4 @@ TEST_CASE("Explicit cast: (long) double", "[gen][cast][primitive][double][long]"
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 999999L);
 }
-
-
 

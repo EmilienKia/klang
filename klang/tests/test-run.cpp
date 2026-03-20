@@ -19,11 +19,7 @@
 #include <catch2/catch_all.hpp>
 #include <llvm/MC/TargetRegistry.h>
 
-#include "../src/parse/parser.hpp"
-#include "../src/common/process.hpp"
-
 #include "helpers.hpp"
-
 
 TEST_CASE( "Fibonacci 8", "[gen]" ) {
     auto res = build_and_exec(R"SRC(

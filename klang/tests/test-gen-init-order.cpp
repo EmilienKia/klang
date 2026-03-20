@@ -38,15 +38,7 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/gen/resolvers.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
-
 
 // =============================================================================
 // Rule 3: implicit dep — global var of type S initialized after S's static ctor
@@ -367,6 +359,4 @@ TEST_CASE("Init order: diamond dependency — A runs exactly once",
     REQUIRE(get_a() == 1); // A ran exactly once despite two dependents
     REQUIRE(get_d() == 1); // D ran
 }
-
-
 

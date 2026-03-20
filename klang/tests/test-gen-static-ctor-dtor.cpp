@@ -32,13 +32,6 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/gen/resolvers.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
 
 // =============================================================================
@@ -450,5 +443,4 @@ TEST_CASE("Static constructor co-exists with global variable initialization", "[
     setup();
     REQUIRE(get_derived() == 10);  // base(5) * 2
 }
-
 

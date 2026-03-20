@@ -18,11 +18,7 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/compiler.hpp"
-#include "../src/common/logger.hpp"
-#include "../src/gen/generators.hpp"
 #include "helpers.hpp"
-
 
 // =============================================================================
 // Multi-source compilation tests
@@ -345,7 +341,4 @@ TEST_CASE("Multi-source: forced module name with multiple files, some with modul
     REQUIRE(fb);
     REQUIRE(fb() == 2);
 }
-
-
-
 

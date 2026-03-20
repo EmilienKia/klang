@@ -18,9 +18,6 @@
 #include <catch2/catch_all.hpp>
 
 #include "../src/lex/lexer.hpp"
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
 
 #include "helpers.hpp"
 
@@ -29,33 +26,6 @@
 
 using namespace k::parse;
 using namespace k::log;
-
-
-//
-// Tooling
-//
-
-bool is_same(const k::parse::ast::qualified_identifier& ident1, const k::name& ident2 ) {
-    if(ident1.has_root_prefix() != ident2.has_root_prefix()) {
-        return false;
-    }
-
-    if(ident1.size() != ident2.size()) {
-        return false;
-    }
-
-    for(size_t idx = 0; idx <ident1.size(); idx++) {
-        if(ident1[idx]!=ident2[idx]) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool is_same(const k::parse::ast::identifier_expr& ident1, const k::name& ident2 ) {
-    return is_same(ident1.qident, ident2);
-}
 
 //
 // Parse identifiers
@@ -404,7 +374,6 @@ TEST_CASE( "Parse parenthesis primary expressions at left of binary expr", "[par
     REQUIRE(  is_same(*b, k::name(false, {"b"})  ) );
 }
 
-
 TEST_CASE( "Parse parenthesis primary expressions at left and right of binary expr", "[parser][expression][primary_expr]") {
     test_logger log;
     k::source src{"( a + b ) *(c-d)"};
@@ -440,7 +409,6 @@ TEST_CASE( "Parse parenthesis primary expressions at left and right of binary ex
     REQUIRE( d );
     REQUIRE(  is_same(*d, k::name(false, {"d"})  ) );
 }
-
 
 //
 // Postfix expr
@@ -555,7 +523,6 @@ TEST_CASE("Parse () postfix expression with many second expr", "[parser][express
     REQUIRE( is_same(*a, k::name(false, "a") ) );
 }
 
-
 #if TODO
 TEST_CASE("Parse [] postfix expression", "[parser][expression][postfix_expr]") {
     k::log::logger log;
@@ -578,8 +545,6 @@ TEST_CASE("Parse [] postfix expression", "[parser][expression][postfix_expr]") {
 }
 #endif
 
-
-
 //
 // Parse unary expressions
 //
@@ -595,8 +560,6 @@ TEST_CASE("Parse no unary expression", "[parser][expression][unary_expr]") {
     REQUIRE( ident );
     REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
-
-
 
 TEST_CASE("Parse no unary expression with postfix operator expr", "[parser][expression][unary_expr]") {
     test_logger log;
@@ -615,7 +578,6 @@ TEST_CASE("Parse no unary expression with postfix operator expr", "[parser][expr
     REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 
 }
-
 
 TEST_CASE("Parse prefix operator unary expression", "[parser][expression][unary_expr]") {
     test_logger log;
@@ -660,7 +622,6 @@ TEST_CASE("Parse prefix operator unary expression", "[parser][expression][unary_
     REQUIRE( ident );
     REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
-
 
 //
 // Parse cast expression
@@ -798,8 +759,6 @@ TEST_CASE("Parse cast of function invocation", "[parser][expression][postfix_exp
     REQUIRE( is_same(*a, k::name(false, "a") ) );
 }
 
-
-
 //
 // Parse PM expression
 //
@@ -815,7 +774,6 @@ TEST_CASE("Parse no PM expression", "[parser][expression][pm_expr]") {
     REQUIRE( ident );
     REQUIRE( is_same(*ident, k::name(false, "ident") ) );
 }
-
 
 TEST_CASE("Parse dot-star PM expression", "[parser][expression][pm_expr]") {
     test_logger log;
@@ -889,7 +847,6 @@ TEST_CASE("Parse PM expression", "[parser][expression][pm_expr]") {
     REQUIRE( is_same(*other, k::name(false, "other") ) );
 }
 
-
 //
 // Conditional expression
 //
@@ -952,7 +909,6 @@ TEST_CASE( "Parse simple expression with additional token", "[parser][expression
     REQUIRE( is_same(*ident, k::name(false, "a") ) );
 }
 
-
 TEST_CASE( "Parse simple expression list", "[parser][expression]") {
     test_logger log;
     k::source src{"a , 0"};
@@ -993,8 +949,6 @@ TEST_CASE( "Parse simple expression list with additional token", "[parser][expre
     REQUIRE( lit->literal->content == "0" );
 }
 
-
-
 //
 // Parse function invocation expression
 //
@@ -1014,8 +968,6 @@ TEST_CASE( "Parse expression of simple function invocation", "[parser][expressio
 
 }
 
-
-
 //
 // Parse variable declaration
 //
@@ -1027,8 +979,6 @@ TEST_CASE( "Parse variable declaration", "[parser][variable]") {
     REQUIRE( var );
     REQUIRE( var->name.content == "plic" );
 }
-
-
 
 //
 // Parse visibility declaration
@@ -1059,7 +1009,6 @@ TEST_CASE( "Parse private visibility declaration", "[parser][visibility]") {
     REQUIRE( var );
     REQUIRE( var->scope.type == k::lex::keyword::PRIVATE );
 }
-
 
 //
 // Various cases
@@ -1167,7 +1116,6 @@ TEST_CASE( "Parse if-else statement", "[parser][if-else]") {
     auto ret = std::dynamic_pointer_cast<ast::return_statement>(stmt->else_stmt);
     REQUIRE( ret );
 }
-
 
 //
 // While
@@ -1309,7 +1257,6 @@ TEST_CASE("Parse constructor with one mem-initializers with two arguments", "[pa
     REQUIRE( decl->content );
 }
 
-
 TEST_CASE("Parse constructor with mem-initializer with expression", "[parser][function_decl][mem_init]") {
     test_logger log;
     k::source src{"MyStruct(a : int) : x(a + 1) { }"};
@@ -1439,7 +1386,6 @@ TEST_CASE("Parse constructor with default parameter", "[parser][default-params]"
     REQUIRE(func->params.size() == 1);
     REQUIRE(func->params[0]->default_expr != nullptr);
 }
-
 
 //
 // Function aliasing declarations (-> default / -> delete)
@@ -1758,7 +1704,6 @@ TEST_CASE("Parse import — missing semicolon yields error", "[parser][import][e
     k::parse::parser parser(log, src);
     REQUIRE_THROWS( parser.parse_unit() );
 }
-
 
 //
 // Operator associativity tests

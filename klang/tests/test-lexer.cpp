@@ -22,15 +22,11 @@
 #include <fmt/args.h>
 
 #include "../src/lex/lexer.hpp"
-#include "../src/common/logger.hpp"
-#include "../src/common/common.hpp"
 
 #include "helpers.hpp"
 
 using namespace k::lex;
 using namespace k::log;
-
-
 
 TEST_CASE( "Lex empty source", "[lexer]" ) {
     test_logger log;
@@ -70,7 +66,6 @@ TEST_CASE( "Lex one identifier", "[lexer]" ) {
 
     }
 }
-
 
 TEST_CASE( "Lex one keyword", "[lexer]" ) {
     test_logger log;
@@ -799,7 +794,6 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
             REQUIRE(l.size == integer_size::INT);
         }
 
-
         SECTION("Lex octal explicit identifier") {
             k::source src{"0123i"};
             auto lexemes = lex.parse(src);
@@ -1353,7 +1347,6 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
 
     }
 
-
     SECTION("Lex explicit double") {
 
         SECTION("Lex double 123.45e8d") {
@@ -1420,7 +1413,6 @@ TEST_CASE( "Lex one float", "[lexer][float]" ) {
 
     // TODO
 }
-
 
 TEST_CASE( "Lex one char", "[lexer]" ) {
     test_logger log;
@@ -1511,7 +1503,6 @@ TEST_CASE( "Lex one char", "[lexer]" ) {
     // TODO add unicode escape tests
 }
 
-
 TEST_CASE( "Lex one string", "[lexer]" ) {
     test_logger log;
     lexer lex(log);
@@ -1535,7 +1526,6 @@ TEST_CASE( "Lex one string", "[lexer]" ) {
 
     // TODO add unicode escape tests
 }
-
 
 TEST_CASE( "Lex one boolean", "[lexer]" ) {
     test_logger log;
@@ -1573,7 +1563,6 @@ TEST_CASE( "Lex one boolean", "[lexer]" ) {
         REQUIRE( std::get<bool>(val) == false );
     }
 }
-
 
 TEST_CASE( "Lex null", "[lexer]" ) {
     test_logger log;
@@ -1744,8 +1733,6 @@ TEST_CASE("Additional lexer tests", "[lexer]") {
         REQUIRE( lex3 == punctuator::PARENTHESIS_CLOSE );
     }
 }
-
-
 
 //
 // Test k::name parsing

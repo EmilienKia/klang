@@ -35,13 +35,6 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/gen/resolvers.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -813,7 +806,6 @@ TEST_CASE("new int{1, , 3} — JIT: bare brace empty slot defaults to 0", "[gen]
     REQUIRE(fn);
     REQUIRE(fn() == 4);  // 1+0+3
 }
-
 
 // =============================================================================
 // Bounds-check tests (Phase 1 of bounds-check feature)

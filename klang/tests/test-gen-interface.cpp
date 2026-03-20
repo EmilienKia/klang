@@ -69,15 +69,7 @@
 
 #include <catch2/catch_all.hpp>
 
-#include "../src/common/logger.hpp"
-#include "../src/parse/parser.hpp"
-#include "../src/model/model.hpp"
-#include "../src/gen/generators.hpp"
-#include "../src/gen/resolvers.hpp"
-#include "../src/compiler.hpp"
-
 #include "helpers.hpp"
-
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [A] Interface is represented as k::model::interface in the model
@@ -797,9 +789,4 @@ test_via_left()     : int { b: Both; return via_left(b); }
     CHECK(fdr() == 1);
     CHECK(fvl() == -1);
 }
-
-
-
-
-
 
