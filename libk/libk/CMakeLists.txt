@@ -52,12 +52,17 @@ set(KLANG_STDLIB_LIB_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
     "Directory containing libk.so / libk.a (K base stdlib binaries)")
 # ── libk tests ───────────────────────────────────────────────────────────────
 # Tests that exercise the K standard library features (String, StringBuilder,
-# etc.) via JIT compilation.  These are distinct from compiler tests (klang-tests)
-# and focus on the behaviour of the library types themselves.
+# etc.) via JIT compilation.  The test K source uses `import k;` to reference
+# the real stdlib types — no class definitions are duplicated.
 # ─────────────────────────────────────────────────────────────────────────────
 add_executable(libk-tests
     tests/test-string.cpp
 )
-target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain)
+target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
+add_dependencies(libk-tests libk_stdlib)
+target_compile_definitions(libk-tests PRIVATE
+    LIBK_KDI_DIR="${LIBK_OUTPUT_DIR}"
+    LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
+)
 
 add_test(NAME libk-tests COMMAND libk-tests)

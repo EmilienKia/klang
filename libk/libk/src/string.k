@@ -1,7 +1,7 @@
 /*
  * K Language standard library — base module
  *
- * Copyright 2023-2026 Emilien Kia
+ * Copyright 2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@
 
 module k;
 
-
 // ═════════════════════════════════════════════════════════════════════════════
 // CharHelpers — Static utility methods for char[] buffer operations.
 //
@@ -33,7 +32,7 @@ public final class CharHelpers {
 public:
 
     /** Copy `count` chars from src[src_off..] to dst[dst_off..]. */
-    public static copy(dst: char[]*, dst_off: int, src: char[]*, src_off: int, count: int) {
+    public static copy(dst: char[], dst_off: unsigned int, const src: char[], src_off: unsigned int, count: unsigned int) {
         i : int = 0;
         while (i < count) {
             dst[dst_off + i] = src[src_off + i];
@@ -43,7 +42,7 @@ public:
 
     /** Compare `len` chars starting from position 0 in both arrays.
      *  Returns true if all characters match. */
-    public static equals(a: char[]*, b: char[]*, len: int) : bool {
+    public static equals(a: char[], b: char[], len: unsigned int) : bool {
         i : int = 0;
         while (i < len) {
             if (a[i] != b[i]) return false;
@@ -53,7 +52,7 @@ public:
     }
 
     /** Fill `count` positions in dst starting at dst_off with char `c`. */
-    public static fill(dst: char[]*, dst_off: int, c: char, count: int) {
+    public static fill(dst: char[], dst_off: unsigned int, c: char, count: unsigned int) {
         i : int = 0;
         while (i < count) {
             dst[dst_off + i] = c;
@@ -72,30 +71,27 @@ public:
 //     whose element at index _size is '\0'.
 //
 // NOTE: This is a proof-of-concept for ASCII strings only.
-//       The K compiler does not yet support unsized array parameters (char[])
-//       or sized-to-unsized owner conversion. All buffer management is done
-//       via sized new allocations and character-by-character copy.
 // ═════════════════════════════════════════════════════════════════════════════
 const final class String {
     _buf  : char[]!;     // owner, null-terminated buffer
-    _size : int;         // number of characters (excluding '\0')
+    _size : unsigned int;         // number of characters (excluding '\0')
 
 public:
     // ── Constructors ────────────────────────────────────────────────────
 
     /** Default: empty string. */
-    String() : _buf(null), _size(0) {}
+    String() -> default;
 
     /** Construct a String of given size from an owner buffer (takes ownership).
      *  The buffer must already be null-terminated at position `sz`.
      *  This is the primary internal construction path.
      */
-    String(buf : char[]!, sz : int) : _buf(buf), _size(sz) {}
+    String(buf : char[]!, sz : unsigned int) : _buf(buf), _size(sz) {}
 
     /** Copy constructor. */
     String(other : const String&) : _buf(null), _size(other._size) {
         if (_size > 0) {
-            alloc_sz : unsigned int = (unsigned int)(_size + 1);
+            alloc_sz : unsigned int = _size + 1;
             _buf = new char[alloc_sz];
             CharHelpers::copy(_buf, 0, other._buf, 0, _size + 1);
         }
@@ -107,22 +103,17 @@ public:
     String(sb : const StringBuilder&) : _buf(null), _size(0) {
         _size = sb.size();
         if (_size > 0) {
-            alloc_sz : unsigned int = (unsigned int)(_size + 1);
+            alloc_sz : unsigned int = _size + 1;
             _buf = new char[alloc_sz];
             CharHelpers::copy(_buf, 0, sb.data(), 0, _size);
             _buf[_size] = '\0';
         }
     }
 
-    /** Destructor. */
-    ~String() {
-        delete _buf;
-    }
-
     // ── Accessors (all const — implicit in a const class) ───────────────
 
     /** Number of characters (excluding the terminal '\0'). */
-    const size() : int { return _size; }
+    const size() : unsigned int { return _size; }
 
     /** True when the string contains no characters. */
     const empty() : bool { return _size == 0; }
@@ -135,7 +126,7 @@ public:
     /** Return a non-owning pointer to the internal buffer.
      *  Valid as long as this String is alive. Returns null for empty strings.
      */
-    const data() : char[]* {
+    const data() : char[]^ {
         return _buf;
     }
 
@@ -172,21 +163,21 @@ public:
 // When appending would exceed capacity, the buffer is grown (doubled).
 // ═════════════════════════════════════════════════════════════════════════════
 class StringBuilder {
-    _buf      : char[]!;     // owner, null-terminated buffer
-    _size     : int;         // number of characters
-    _capacity : int;         // allocated capacity (chars, not counting '\0')
+    _buf      : char[]!;              // owner, null-terminated buffer
+    _size     : unsigned int;         // number of characters
+    _capacity : unsigned int;         // allocated capacity (chars, not counting '\0')
 
 public:
     // ── Constructors ────────────────────────────────────────────────────
 
     /** Default: empty builder. */
-    StringBuilder() : _buf(null), _size(0), _capacity(0) {}
+    StringBuilder() -> default;
 
     /** Construct from a String. */
     StringBuilder(s : const String&) : _buf(null), _size(0), _capacity(0) {
         if (s.size() > 0) {
             _capacity = s.size();
-            alloc_sz : unsigned int = (unsigned int)(_capacity + 1);
+            alloc_sz : unsigned int = _capacity + 1;
             _buf = new char[alloc_sz];
             CharHelpers::copy(_buf, 0, s.data(), 0, s.size());
             _size = s.size();
@@ -198,22 +189,17 @@ public:
     StringBuilder(other : const StringBuilder&) : _buf(null), _size(0), _capacity(0) {
         if (other._size > 0) {
             _capacity = other._size;
-            alloc_sz : unsigned int = (unsigned int)(_capacity + 1);
+            alloc_sz : unsigned int = _capacity + 1;
             _buf = new char[alloc_sz];
             CharHelpers::copy(_buf, 0, other._buf, 0, other._size + 1);
             _size = other._size;
         }
     }
 
-    /** Destructor. */
-    ~StringBuilder() {
-        delete _buf;
-    }
-
     // ── Accessors ───────────────────────────────────────────────────────
 
     /** Total number of characters. */
-    const size() : int { return _size; }
+    const size() : unsigned int { return _size; }
 
     /** True when the builder contains no characters. */
     const empty() : bool { return _size == 0; }
@@ -222,6 +208,12 @@ public:
     const char_at(index : int) : char {
         return _buf[index];
     }
+
+    /** Return a reference to the character at position `index`. No bounds check (POC). */
+    char_at(index : int) : char& {
+        return _buf[index];
+    }
+
 
     /** Return a non-owning pointer to the internal buffer.
      *  Valid as long as this StringBuilder is alive and not reallocated.
@@ -286,18 +278,20 @@ private:
             return;
         }
         // Grow
-        new_cap : int = _capacity * 2;
+        new_cap : unsigned int = _capacity * 2;
         if (new_cap < 16) {
             new_cap = 16;
         }
         if (new_cap < needed) {
             new_cap = needed;
         }
-        alloc_sz : unsigned int = (unsigned int)(new_cap + 1);
+        alloc_sz : unsigned int = new_cap + 1;
         new_buf : char[]! = new char[alloc_sz];
-        // Copy existing content
-        CharHelpers::copy(new_buf, 0, _buf, 0, _size + 1);
-        delete _buf;
+        // Copy existing content (only if there is an existing buffer)
+        if (_buf != null) {
+            CharHelpers::copy(new_buf, 0, _buf, 0, _size + 1);
+            delete _buf;
+        }
         _buf = new_buf;
         _capacity = new_cap;
     }

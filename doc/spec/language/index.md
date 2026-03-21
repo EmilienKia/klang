@@ -80,6 +80,15 @@ Examples are included where they clarify the normative text.
 | [Dynamic Allocation — `new` and `delete`](memory/new-delete.md) | `new T(args)` allocation and construction; `delete owner` destruction and deallocation; owner lifetime rules; observer assignment |
 | [Uniform Array Initialization](memory/uniform-array-init.md) | `var : T(args)[N]` and `new T(args)[N]` — initialize all array elements with the same constructor arguments |
 
+### Standard Library
+
+| Page | Description |
+|------|-------------|
+| [Standard Library Overview](../stdlib/index.md) | Base library (module `k`), optional libraries, conventions |
+| [Object](../stdlib/object.md) | Root base class for all K classes |
+| [String Types](../stdlib/string.md) | `CharHelpers`, `String`, `StringBuilder` |
+| [Math](../stdlib/math.md) | Optional `k::math` module — `abs`, `min`, `max`, `clamp` |
+
 ### Grammar Reference
 
 | Page | Description |

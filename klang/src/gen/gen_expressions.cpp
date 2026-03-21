@@ -1484,6 +1484,9 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
         left_type = std::dynamic_pointer_cast<reference_type>(left_type)->get_subtype();
     }
 
+    // Strip any remaining const wrapper (e.g. pointer<const<array<T>>> → const<array<T>>)
+    left_type = type::remove_const(left_type);
+
     if(!type::is_array(left_type)) {
         throw_error(0x0020, std::nullopt,
             "Subscript operator '[]' can only be applied to an array type, "
@@ -1561,6 +1564,9 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
         auto* ptr_ty = llvm::PointerType::get(_builder->getContext(), 0);
         left = _builder->CreateLoad(ptr_ty, left, "ref_arr_ptr");
     }
+
+    // Strip any remaining const wrapper (e.g. pointer<const<array<T>>> → const<array<T>>)
+    arr_type_inner = type::remove_const(arr_type_inner);
 
     // Dereference index if needed
     auto right_type = expr.right()->get_type();
@@ -5766,6 +5772,17 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         if (is_heap_indirection(source_type) && is_heap_indirection(target_type)) {
             auto src_inner = type::remove_const(source_type->get_subtype());
             auto tgt_inner = type::remove_const(target_type->get_subtype());
+            if (src_inner == tgt_inner) {
+                _value = nullptr;
+                expr.sub_expr()->accept(*this);
+                return;
+            }
+        }
+        // indirection → reference: owner/ptr/lnk/pin<T> → ref<T>
+        // Both are opaque pointers at LLVM IR level — no-op cast.
+        if (is_heap_indirection(source_type) && type::is_reference(target_type)) {
+            auto src_inner = type::remove_const(source_type->get_subtype());
+            auto tgt_inner = type::remove_const(std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype());
             if (src_inner == tgt_inner) {
                 _value = nullptr;
                 expr.sub_expr()->accept(*this);

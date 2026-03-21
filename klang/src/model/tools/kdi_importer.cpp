@@ -60,14 +60,22 @@ void kdi_importer::register_root_ns(const std::string& module_name) {
 
     auto it = _root_ns_owners.find(root);
     if (it != _root_ns_owners.end() && it->second != module_name) {
-        // Two different modules share the same root component → error
-        auto diag = k::log::diagnostic::make_error(
-            0x80001,
-            "Namespace root collision: module '{}' and module '{}' share the "
-            "same root namespace component '{}'",
-            {module_name, it->second, root});
-        _logger.report(diag);
-        throw k::log::compiler_error(std::move(diag));
+        // Two different modules share the same root component.
+        // Allow it if one module is a sub-module of the other (same hierarchy):
+        //   e.g. "k" and "k::math" → both in the "k" hierarchy → OK
+        const auto& existing = it->second;
+        bool same_hierarchy =
+            (module_name.starts_with(existing + "::")) ||
+            (existing.starts_with(module_name + "::"));
+        if (!same_hierarchy) {
+            auto diag = k::log::diagnostic::make_error(
+                0x80001,
+                "Namespace root collision: module '{}' and module '{}' share the "
+                "same root namespace component '{}'",
+                {module_name, existing, root});
+            _logger.report(diag);
+            throw k::log::compiler_error(std::move(diag));
+        }
     }
     _root_ns_owners[root] = module_name;
 

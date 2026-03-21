@@ -54,6 +54,23 @@ llvm::TargetMachine* make_pic_target_machine();
 std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump = false, bool optimize = true);
 
 /**
+ * Like gen_jit() but configures a file resolver so that the K base standard
+ * library (module "k") is importable, and loads libk.so into the current
+ * process so the JIT can resolve its symbols.
+ *
+ * @param src             K source code (should contain `import k;`).
+ * @param stdlib_kdi_dir  Directory containing k.kdi (libk build dir).
+ * @param stdlib_lib_dir  Directory containing libk.so (same or separate).
+ * @param dump            Dump intermediate representations.
+ * @param optimize        Run optimisation passes.
+ */
+std::unique_ptr<k::model::gen::jit> gen_jit_with_stdlib(
+    std::string_view src,
+    const std::string& stdlib_kdi_dir,
+    const std::string& stdlib_lib_dir,
+    bool dump = false, bool optimize = true);
+
+/**
  * Like gen_jit() but compiles multiple source files as a single compilation unit.
  * @param sources   Pairs of {path, content} for every source file in the unit.
  * @param dump      Dump intermediate representations.

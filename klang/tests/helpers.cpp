@@ -19,6 +19,7 @@
 #include "helpers.hpp"
 
 #include <unistd.h>
+#include <dlfcn.h>
 #include <set>
 
 #include <fmt/core.h>
@@ -53,6 +54,42 @@ std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool du
     auto comp = k::compiler::create();
     comp->parse_source("", src, optimize, dump);
     return comp->to_jit();
+}
+
+std::unique_ptr<k::model::gen::jit> gen_jit_with_stdlib(
+    std::string_view src,
+    const std::string& stdlib_kdi_dir,
+    const std::string& stdlib_lib_dir,
+    bool dump, bool optimize)
+{
+    // Load libk.so into the current process so the JIT's
+    // DynamicLibrarySearchGenerator can resolve its symbols.
+    static void* libk_handle = nullptr;
+    if (!libk_handle) {
+        std::string libk_path = stdlib_lib_dir + "/libk.so";
+        libk_handle = dlopen(libk_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        if (!libk_handle) {
+            std::cerr << "gen_jit_with_stdlib: cannot load " << libk_path
+                      << ": " << dlerror() << std::endl;
+            return nullptr;
+        }
+    }
+
+    auto comp = k::compiler::create();
+    // Configure the file resolver so `import k;` finds k.kdi.
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(stdlib_kdi_dir);
+    comp->set_file_resolver(resolver);
+
+    try {
+        comp->parse_source("", src, optimize, dump);
+        return comp->to_jit();
+    } catch (const k::log::compiler_error&) {
+        return nullptr;
+    } catch (std::exception& ex) {
+        std::cerr << "Unexpected error during compilation: " << ex.what() << std::endl;
+        return nullptr;
+    }
 }
 
 std::unique_ptr<k::model::gen::jit> gen_jit_multi(

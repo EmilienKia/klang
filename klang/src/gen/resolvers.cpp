@@ -323,6 +323,17 @@ symbol_resolver::resolve_symbol_from_root(const name& name) {
         return _unit.get_or_create_imported_variable(kdi_var, _context);
     }
 
+    // Strategy 4: try to resolve a method inside an imported aggregate.
+    if (name.size() >= 2) {
+        auto agg_name = name.without_back();
+        auto func_name = name.back();
+        if (auto imp_agg = _unit.get_or_create_imported_aggregate(agg_name, _context)) {
+            if (auto fn = imp_agg->get_function(func_name)) {
+                return fn;
+            }
+        }
+    }
+
     return std::monostate{};
 }
 
@@ -506,6 +517,21 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
         if (auto* kdi_var = _unit.find_imported_variable(name)) {
             return _unit.get_or_create_imported_variable(kdi_var, _context);
         }
+
+        // Fallback: try to resolve a method (possibly static) inside an imported
+        // aggregate.  For a name like "k::math::Math::abs", peel off the last
+        // component as the function name and try to find the rest as an imported
+        // aggregate, then look for the function within it.
+        if (name.size() >= 2) {
+            auto agg_name = name.without_back();
+            auto func_name = name.back();
+            if (auto imp_agg = _unit.get_or_create_imported_aggregate(agg_name, _context)) {
+                if (auto fn = imp_agg->get_function(func_name)) {
+                    return fn;
+                }
+            }
+        }
+
         return std::monostate{};
     }
 }
@@ -2590,6 +2616,12 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             }
             return CAST_IMPOSSIBLE;
         }
+        // ptr<T> → ref<T>: borrow pointer target as reference (same LLVM representation)
+        if (type::is_reference(tgt_nc)) {
+            auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
+            auto src_sub_nc = type::remove_const(type_src->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) return CAST_WIDENING;
+        }
         return CAST_IMPOSSIBLE;
     }
 
@@ -2616,6 +2648,12 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             }
             return CAST_IMPOSSIBLE;
         }
+        // lnk<T> → ref<T>: borrow link target as reference
+        if (type::is_reference(tgt_nc)) {
+            auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
+            auto src_sub_nc = type::remove_const(type_src->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) return CAST_WIDENING;
+        }
         return CAST_IMPOSSIBLE;
     }
 
@@ -2641,6 +2679,12 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 }
             }
             return CAST_IMPOSSIBLE;
+        }
+        // pin<T> → ref<T>: borrow pinned target as reference
+        if (type::is_reference(tgt_nc)) {
+            auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
+            auto src_sub_nc = type::remove_const(type_src->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) return CAST_WIDENING;
         }
         return CAST_IMPOSSIBLE;
     }
@@ -2683,6 +2727,16 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             }
             return CAST_IMPOSSIBLE;
         }
+        // owner<T> → lnk<T> / pin<T>: borrow as link or pinned
+        if (type::is_link(tgt_nc) || type::is_pinned(tgt_nc)) {
+            auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) return CAST_WIDENING;
+        }
+        // owner<T> → ref<T>: borrow owned object as reference
+        if (type::is_reference(tgt_nc)) {
+            auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) return CAST_WIDENING;
+        }
         return CAST_IMPOSSIBLE;
     }
 
@@ -2708,6 +2762,16 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             if (type::is_owner(tgt_nc)) {
                 // Move from ref<owner>: allowed (load the owner, move it)
                 auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+                if (own_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+            }
+            // ref<owner<T>> → lnk<T> / pin<T>: load owner, borrow as link or pinned
+            if (type::is_link(tgt_nc) || type::is_pinned(tgt_nc)) {
+                auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+                if (own_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+            }
+            // ref<owner<T>> → ref<T>: load owner pointer value, borrow as reference
+            if (type::is_reference(tgt_nc)) {
+                auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
                 if (own_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
             }
         }
@@ -2739,6 +2803,12 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     }
                 }
                 return CAST_IMPOSSIBLE;
+            }
+            // ref<ptr/lnk/pin<T>> → ref<T>: load indirection value, use as reference
+            if (type::is_reference(tgt_nc)) {
+                auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
+                auto src_sub_nc = type::remove_const(inner->get_subtype());
+                if (src_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
             }
         }
     }
@@ -3413,6 +3483,16 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             }
             return expr;
         } else {
+            // ptr<T> → ref<T>: borrow pointer target as reference (LLVM-level identical)
+            if (type::is_reference(type_nc)) {
+                auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
+                auto src_sub_nc = type::remove_const(type_src->get_subtype());
+                if (src_sub_nc == tgt_sub_nc) {
+                    auto cast = cast_expression::make_shared(expr, type_nc);
+                    cast->set_type(type_nc);
+                    return cast;
+                }
+            }
             // Error : Source is a pointer, and asked to be cast to an object.
             return {};
         }
@@ -3444,6 +3524,16 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             }
             return expr;
         } else {
+            // lnk<T> → ref<T>: borrow link target as reference
+            if (type::is_reference(type_nc)) {
+                auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
+                auto src_sub_nc = type::remove_const(type_src->get_subtype());
+                if (src_sub_nc == tgt_sub_nc) {
+                    auto cast = cast_expression::make_shared(expr, type_nc);
+                    cast->set_type(type_nc);
+                    return cast;
+                }
+            }
             return {};
         }
     }
@@ -3474,6 +3564,16 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             }
             return expr;
         } else {
+            // pin<T> → ref<T>: borrow pinned target as reference
+            if (type::is_reference(type_nc)) {
+                auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
+                auto src_sub_nc = type::remove_const(type_src->get_subtype());
+                if (src_sub_nc == tgt_sub_nc) {
+                    auto cast = cast_expression::make_shared(expr, type_nc);
+                    cast->set_type(type_nc);
+                    return cast;
+                }
+            }
             return {};
         }
     }
@@ -3519,6 +3619,24 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                 return upcast;
             }
             return {};
+        }
+        // owner<T> → lnk<T> / pin<T>: borrow as link or pinned (same LLVM representation)
+        if (type::is_link(type_nc) || type::is_pinned(type_nc)) {
+            auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) {
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
+        }
+        // owner<T> → ref<T>: borrow owned object as reference (same LLVM representation)
+        if (type::is_reference(type_nc)) {
+            auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) {
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
         }
         return {};
     }
@@ -3574,6 +3692,28 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                     return upcast;
                 }
             }
+            // ref<owner<T>> → lnk<T> / pin<T>: load owner, borrow as link or pinned
+            if (type::is_link(type_nc) || type::is_pinned(type_nc)) {
+                auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
+                if (own_sub_nc == tgt_sub_nc) {
+                    auto loaded = load_value_expression::make_shared(expr);
+                    loaded->set_type(inner_nc);
+                    auto cast = cast_expression::make_shared(loaded, type_nc);
+                    cast->set_type(type_nc);
+                    return cast;
+                }
+            }
+            // ref<owner<T>> → ref<T>: load owner pointer value, borrow as reference
+            if (type::is_reference(type_nc)) {
+                auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
+                if (own_sub_nc == tgt_sub_nc) {
+                    auto loaded = load_value_expression::make_shared(expr);
+                    loaded->set_type(inner_nc);  // owner<T>
+                    auto cast = cast_expression::make_shared(loaded, type_nc);
+                    cast->set_type(type_nc);
+                    return cast;
+                }
+            }
         }
     }
 
@@ -3587,6 +3727,7 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
 
     if(type::is_reference(type_src)) {
         // ── ref<ptr/lnk/pin<T>> → ptr/lnk/pin<Base>: load the stored pointer then upcast ──
+        // ── ref<ptr/lnk/pin<T>> → ref<T>: load the indirection value, use as reference ──
         if (!type::is_reference(type_nc)) {
             auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
             auto inner = ref_src->get_subtype();
@@ -3598,6 +3739,23 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                 // Now adapt the loaded indirection to the target indirection type
                 auto adapted = adapt_type(loaded, type_nc);
                 return adapted ? adapted : loaded;
+            }
+        } else {
+            // ref<ptr/lnk/pin<T>> → ref<T>: load indirection value, reinterpret as reference
+            auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
+            auto inner = ref_src->get_subtype();
+            auto inner_nc = type::remove_const(inner);
+            if (type::is_pointer(inner_nc) || type::is_link(inner_nc) || type::is_pinned(inner_nc)) {
+                auto tgt_ref = std::dynamic_pointer_cast<reference_type>(type_nc);
+                auto tgt_sub_nc = type::remove_const(tgt_ref->get_subtype());
+                auto src_sub_nc = type::remove_const(inner_nc->get_subtype());
+                if (src_sub_nc == tgt_sub_nc) {
+                    auto loaded = load_value_expression::make_shared(expr);
+                    loaded->set_type(inner_nc);
+                    auto cast = cast_expression::make_shared(loaded, type_nc);
+                    cast->set_type(type_nc);
+                    return cast;
+                }
             }
         }
 
