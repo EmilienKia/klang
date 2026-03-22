@@ -91,7 +91,6 @@ add_executable(klang-tests
         tests/test-gen-nested-structs.cpp
         tests/test-gen-visibility.cpp
         tests/test-gen-inheritance.cpp
-        tests/test-run.cpp
         tests/test-gen-indirection.cpp
         tests/test-gen-const.cpp
         tests/test-gen-class-basic.cpp
@@ -129,11 +128,26 @@ add_executable(klang-tests
         tests/test-gen-lifecycle.cpp
         tests/test-gen-rvo.cpp
         tests/test-gen-named-return.cpp
-        tests/test-stdin.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
 
 add_test(NAME klang-tests COMMAND klang-tests)
+
+#
+# klangc executable integration tests
+# These tests invoke the klangc binary and verify its CLI behaviour.
+#
+
+add_executable(klangc-tests
+        tests/test-klangc-run.cpp
+        tests/test-klangc-stdin.cpp
+        tests/test-klangc-jit-exec.cpp
+)
+target_link_libraries(klangc-tests klang-test-helpers Catch2::Catch2WithMain)
+# Ensure klangc is built before running its integration tests
+add_dependencies(klangc-tests klangc)
+
+add_test(NAME klangc-tests COMMAND klangc-tests)
 
 #
 # Dev and test tools

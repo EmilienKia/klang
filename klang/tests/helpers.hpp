@@ -399,5 +399,35 @@ struct TmpKdi {
     std::filesystem::path dir() const;
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// klangc binary test helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Locate the klangc binary next to the current test executable.
+ * On Linux, resolves /proc/self/exe to find the directory.
+ * @throws std::runtime_error if the binary cannot be found.
+ */
+std::filesystem::path find_klangc();
+
+/**
+ * Locate the libk build directory (for LD_LIBRARY_PATH).
+ * Test binary is at <build>/klang/klang-tests, libk.so is at <build>/libk/libk/.
+ * @return The directory containing libk.so, or empty string if not found.
+ */
+std::string find_libk_dir();
+
+/**
+ * RAII helper to temporarily prepend a directory to LD_LIBRARY_PATH.
+ * Restores the original value on destruction.
+ */
+struct ScopedLdLibraryPath {
+    std::string old_value;
+    bool had_old = false;
+
+    explicit ScopedLdLibraryPath(const std::string& dir);
+    ~ScopedLdLibraryPath();
+};
+
 #endif //KLANG_HELPERS_HPP
 

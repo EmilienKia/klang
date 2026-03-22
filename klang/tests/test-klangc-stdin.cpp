@@ -15,69 +15,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+/**
+ * Tests for the klangc --stdin option.
+ */
 #include <catch2/catch_all.hpp>
-
 #include <filesystem>
 #include <fstream>
 #include <unistd.h>
-
 #include "helpers.hpp"
-
-// ---------------------------------------------------------------------------
-// Utility: locate the klangc binary next to the current test executable.
-// ---------------------------------------------------------------------------
-static std::filesystem::path find_klangc() {
-    // On Linux /proc/self/exe is a symlink to the running executable.
-    std::error_code ec;
-    auto self = std::filesystem::read_symlink("/proc/self/exe", ec);
-    if (ec) {
-        throw std::runtime_error("Cannot resolve /proc/self/exe: " + ec.message());
-    }
-    auto klangc = self.parent_path() / "klangc";
-    if (!std::filesystem::exists(klangc)) {
-        throw std::runtime_error("Cannot find klangc binary at " + klangc.string());
-    }
-    return klangc;
-}
-
-// ---------------------------------------------------------------------------
-// Utility: locate the libk build directory (for LD_LIBRARY_PATH).
-// Test binary is at <build>/klang/klang-tests, libk.so is at <build>/libk/libk/
-// ---------------------------------------------------------------------------
-static std::string find_libk_dir() {
-    std::error_code ec;
-    auto self = std::filesystem::read_symlink("/proc/self/exe", ec);
-    if (ec) return {};
-    auto build_dir = self.parent_path().parent_path(); // <build>
-    auto libk_dir = build_dir / "libk" / "libk";
-    if (std::filesystem::exists(libk_dir / "libk.so")) {
-        return libk_dir.string();
-    }
-    return {};
-}
-
-// ---------------------------------------------------------------------------
-// RAII helper to temporarily prepend a directory to LD_LIBRARY_PATH.
-// ---------------------------------------------------------------------------
-struct ScopedLdLibraryPath {
-    std::string old_value;
-    bool had_old = false;
-
-    explicit ScopedLdLibraryPath(const std::string& dir) {
-        if (dir.empty()) return;
-        const char* old_ld = ::getenv("LD_LIBRARY_PATH");
-        had_old = (old_ld != nullptr);
-        if (had_old) old_value = old_ld;
-        std::string new_ld = dir + (had_old ? (":" + old_value) : "");
-        ::setenv("LD_LIBRARY_PATH", new_ld.c_str(), 1);
-    }
-
-    ~ScopedLdLibraryPath() {
-        if (had_old) ::setenv("LD_LIBRARY_PATH", old_value.c_str(), 1);
-        else         ::unsetenv("LD_LIBRARY_PATH");
-    }
-};
 
 // ---------------------------------------------------------------------------
 // --stdin only (no input files): compile and produce an executable
@@ -263,7 +208,7 @@ TEST_CASE("stdin: no --stdin and no files produces error", "[stdin][live]") {
     CHECK(res.err.find("No input file") != std::string::npos);
 }
 
-
-
-
+// ===========================================================================
+// --jit-exec tests
+// ===========================================================================
 

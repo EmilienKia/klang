@@ -15,11 +15,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+/**
+ * Tests for compiling K programs and executing the produced binaries.
+ */
 #include <catch2/catch_all.hpp>
-#include <llvm/MC/TargetRegistry.h>
-
 #include "helpers.hpp"
+
+// ---------------------------------------------------------------------------
 
 TEST_CASE( "Fibonacci 8", "[gen]" ) {
     auto res = build_and_exec(R"SRC(

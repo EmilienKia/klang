@@ -8,6 +8,9 @@
 
 ```
 klangc [options] input-file...
+klangc [options] --stdin [input-file...]
+klangc [options] --jit-exec input-file...
+klangc [options] --jit-exec --stdin [input-file...]
 ```
 
 ## DESCRIPTION
@@ -15,11 +18,13 @@ klangc [options] input-file...
 **klangc** is the command-line driver for the K language compiler. It reads
 one or more K source files, performs lexical analysis, parsing, semantic
 resolution, LLVM IR generation and optional optimisation, then emits either a
-native object file or a linked executable.
+native object file, a linked executable, or executes the program directly
+in-process via JIT compilation.
 
 Multiple source files may be passed on the command line; they are all compiled
 as a single compilation unit (module).  All files share the same root namespace
-and have global visibility of each other's declarations.
+and have global visibility of each other's declarations.  An additional source
+may be provided through standard input with the `--stdin` flag.
 
 The compiler internally uses LLVM for code generation and delegates linking to
 **clang(1)**.
@@ -100,6 +105,28 @@ Where _base_ = `unit_name_to_lib_base(module_name)` — see *Library Output Nami
 Path(s) to the K source files to compile. Positional; may also be specified
 explicitly with `--input-file=`_file_. Multiple files are compiled as a single
 module (see *Multi-file modules* in the language specification).
+
+**`--stdin`**  
+Read an additional K source from standard input. The content piped through
+stdin is treated as if it were a regular `.k` file appended to the command
+line. It is compiled together with any other input files as part of the same
+module. The synthetic path `<stdin>` is used in diagnostic messages.  
+When `--stdin` is specified, at least one source must be available — either
+from positional arguments or from stdin itself (i.e. `--stdin` alone, with no
+files, is valid).  
+When used with `-c` and no `-o`, the default output name is `stdin.o`.
+
+**`--jit-exec`**  
+Instead of emitting an object file or linked binary, compile the module
+in-process using LLVM ORC JIT and **execute** the `main()` function directly.
+The module must define a `main` entry point; otherwise an error is reported
+and **klangc** exits with status `-1`.  
+The integer value returned by `main()` (or `0` if `main` returns `void`)
+becomes the exit status of the **klangc** process itself. This makes
+`--jit-exec` suitable for scripting and rapid prototyping without the overhead
+of producing a native executable on disk.  
+`--jit-exec` takes precedence over `-c`, `--dyn-lib`, `--static-lib` and
+normal executable generation; `-o` is ignored.
 
 **`--module-name` _name_**  
 Override the module name regardless of any `module` declaration in the source
@@ -247,6 +274,7 @@ automatically (e.g. `output.opt.ll`).
 | `2`  | Version information displayed |
 | `3`  | Target list displayed |
 | `4`  | Target triple displayed |
+| _N_  | With `--jit-exec`: the value returned by the module's `main()` function (or `0` if `main` returns `void`) |
 | `-1` | Compilation or code-generation error |
 
 ---
@@ -390,6 +418,51 @@ klangc -c hello.k -o hello.o
 
 ```sh
 klangc --target=aarch64-unknown-linux-gnu -c hello.k -o hello.aarch64.o
+```
+
+---
+
+**Read source from standard input (pipe a file):**
+
+```sh
+cat hello.k | klangc --stdin -o hello
+```
+
+---
+
+**Read source from stdin alongside regular files:**
+
+```sh
+echo 'module mymod; main() : int { return 0; }' \
+  | klangc helpers.k --stdin -o myapp
+```
+
+Both `helpers.k` and the piped stdin content are compiled as a single module.
+
+---
+
+**JIT-execute a K program without producing a binary:**
+
+```sh
+klangc --jit-exec hello.k
+```
+
+The module's `main()` function is executed in-process and its return value
+becomes the exit code:
+
+```sh
+klangc --jit-exec hello.k
+echo $?   # prints the value returned by main()
+```
+
+---
+
+**Combine `--stdin` and `--jit-exec` for quick one-liners:**
+
+```sh
+echo 'module test; main() : int { return 42; }' \
+  | klangc --stdin --jit-exec
+echo $?   # 42
 ```
 
 ---
@@ -543,8 +616,10 @@ kditool validate libmath.utils.kdi
 * The optimisation pipeline uses the LLVM legacy pass manager with the
   following passes: instruction combining, expression reassociation, GVN
   (global value numbering), dead-code elimination and CFG simplification.
-* JIT execution (used internally in the `klang` REPL) is not exposed through
-  the `klangc` command-line driver.
+* JIT execution is available through the `--jit-exec` flag, which compiles
+  the module in-process via LLVM ORC JIT and directly invokes the `main()`
+  entry point.  Imported shared libraries are loaded into the current process
+  so their symbols are visible to the JIT linker.
 
 ### Transitive imports
 

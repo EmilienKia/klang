@@ -86,6 +86,8 @@ int main(int argc, const char** argv) {
             ("output,o", po::value<std::string>(&output_file), "Place the output into <arg> file.")
             ("input-file", po::value<std::vector<std::string>>(&input_files), "input file")
             ("stdin", "Read an additional K source from standard input")
+            ("jit-exec", "Compile and execute the program in-process via JIT "
+                         "(requires a main() entry point)")
             ("dyn-lib",    "Produce a shared library (.so) instead of an executable")
             ("static-lib", "Produce a static library (.a) instead of an executable")
             ("emit-raw-ir", "Export LLVM IR text after code generation (before optimisation)")
@@ -354,9 +356,30 @@ int main(int argc, const char** argv) {
         const bool want_compile    = vm.count("compile")     > 0;
         const bool want_dyn_lib    = vm.count("dyn-lib")     > 0;
         const bool want_static_lib = vm.count("static-lib")  > 0;
+        const bool want_jit_exec   = vm.count("jit-exec")    > 0;
         const bool has_main        = compiler->has_main_method();
 
-        if (want_compile) {
+        if (want_jit_exec) {
+            // ── JIT execution mode ──────────────────────────────────────────
+            if (!has_main) {
+                std::cerr << "Cannot JIT-execute: no main() entry point in the compiled module." << std::endl;
+                return -1;
+            }
+            auto jit = compiler->to_jit();
+            if (!jit) {
+                std::cerr << "JIT instantiation error." << std::endl;
+                return -1;
+            }
+            auto main_fn = jit->lookup_main_entry_symbol<int(*)(int, char**)>();
+            if (!main_fn) {
+                std::cerr << "Cannot resolve main() symbol in JIT." << std::endl;
+                return -1;
+            }
+            // Forward the original argc/argv so the K program can inspect them
+            // if it ever supports command-line argument access.
+            return main_fn(0, nullptr);
+
+        } else if (want_compile) {
             // -c : just emit a native object file, no linking
             if (output_file.empty()) {
                 if (!input_files.empty()) {

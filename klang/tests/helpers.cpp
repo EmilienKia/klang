@@ -1179,3 +1179,47 @@ TmpKdi::~TmpKdi() {
 std::filesystem::path TmpKdi::dir() const {
     return std::filesystem::path(kdi_path).parent_path();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// klangc binary test helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+std::filesystem::path find_klangc() {
+    std::error_code ec;
+    auto self = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec) {
+        throw std::runtime_error("Cannot resolve /proc/self/exe: " + ec.message());
+    }
+    auto klangc = self.parent_path() / "klangc";
+    if (!std::filesystem::exists(klangc)) {
+        throw std::runtime_error("Cannot find klangc binary at " + klangc.string());
+    }
+    return klangc;
+}
+
+std::string find_libk_dir() {
+    std::error_code ec;
+    auto self = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec) return {};
+    auto build_dir = self.parent_path().parent_path(); // <build>
+    auto libk_dir = build_dir / "libk" / "libk";
+    if (std::filesystem::exists(libk_dir / "libk.so")) {
+        return libk_dir.string();
+    }
+    return {};
+}
+
+ScopedLdLibraryPath::ScopedLdLibraryPath(const std::string& dir) {
+    if (dir.empty()) return;
+    const char* old_ld = ::getenv("LD_LIBRARY_PATH");
+    had_old = (old_ld != nullptr);
+    if (had_old) old_value = old_ld;
+    std::string new_ld = dir + (had_old ? (":" + old_value) : "");
+    ::setenv("LD_LIBRARY_PATH", new_ld.c_str(), 1);
+}
+
+ScopedLdLibraryPath::~ScopedLdLibraryPath() {
+    if (had_old) ::setenv("LD_LIBRARY_PATH", old_value.c_str(), 1);
+    else         ::unsetenv("LD_LIBRARY_PATH");
+}
+
