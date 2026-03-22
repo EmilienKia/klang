@@ -129,6 +129,7 @@ add_executable(klang-tests
         tests/test-gen-lifecycle.cpp
         tests/test-gen-rvo.cpp
         tests/test-gen-named-return.cpp
+        tests/test-stdin.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
 

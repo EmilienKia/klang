@@ -85,6 +85,7 @@ int main(int argc, const char** argv) {
             ("compile,c", "Compile the source files, but do not link")
             ("output,o", po::value<std::string>(&output_file), "Place the output into <arg> file.")
             ("input-file", po::value<std::vector<std::string>>(&input_files), "input file")
+            ("stdin", "Read an additional K source from standard input")
             ("dyn-lib",    "Produce a shared library (.so) instead of an executable")
             ("static-lib", "Produce a static library (.a) instead of an executable")
             ("emit-raw-ir", "Export LLVM IR text after code generation (before optimisation)")
@@ -210,7 +211,9 @@ int main(int argc, const char** argv) {
     }
 
 
-    if(input_files.empty()) {
+    const bool want_stdin = vm.count("stdin") > 0;
+
+    if(input_files.empty() && !want_stdin) {
         std::cerr << "No input file." << std::endl;
         return -1;
     }
@@ -218,10 +221,17 @@ int main(int argc, const char** argv) {
     // Read all input files before compilation starts (needed to know the
     // total count for the internal reserve() that keeps string_views valid).
     std::vector<std::pair<std::string, std::string>> sources;
-    sources.reserve(input_files.size());
+    sources.reserve(input_files.size() + (want_stdin ? 1 : 0));
     for (const auto& path : input_files) {
         std::cout << "Reading : " << path << std::endl;
         sources.emplace_back(path, read_text_file_content(path));
+    }
+
+    // Read additional source from standard input when --stdin is specified.
+    if (want_stdin) {
+        std::ostringstream ss;
+        ss << std::cin.rdbuf();
+        sources.emplace_back("<stdin>", ss.str());
     }
 
     try {
@@ -324,7 +334,7 @@ int main(int argc, const char** argv) {
         // process_generation() (called inside parse_source) can use them.
         if (ir_opts.emit_raw_ir || ir_opts.emit_opt_ir) {
             std::string effective_output = output_file;
-            if (effective_output.empty()) {
+            if (effective_output.empty() && !input_files.empty()) {
                 if (vm.count("compile")) {
                     effective_output = std::filesystem::path(input_files[0]).replace_extension(".o").string();
                 } else if (vm.count("dyn-lib") || vm.count("static-lib")) {
@@ -349,7 +359,11 @@ int main(int argc, const char** argv) {
         if (want_compile) {
             // -c : just emit a native object file, no linking
             if (output_file.empty()) {
-                output_file = std::filesystem::path(input_files[0]).replace_extension(".o").string();
+                if (!input_files.empty()) {
+                    output_file = std::filesystem::path(input_files[0]).replace_extension(".o").string();
+                } else {
+                    output_file = "stdin.o";
+                }
             }
             return compiler->gen_object_file(output_file) ? 0 : -1;
 
@@ -384,7 +398,7 @@ int main(int argc, const char** argv) {
 
         } else {
             // Default: compile and link into an executable
-            return compiler->gen_executable(output_file);
+            return compiler->gen_executable(output_file) ? 0 : -1;
         }
 
 

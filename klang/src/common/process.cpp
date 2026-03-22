@@ -71,8 +71,9 @@ exec_result run_process(
     // If you have input, write it and close stdin to signal EOF
     if (stdin_data) {
         in_stream << *stdin_data;
+        in_stream.flush();
     }
-    //in_stream.pipe().close();
+    in_stream.pipe().close();
 
     // Optionally implement a simple timeout by polling for completion
     const auto start = std::chrono::steady_clock::now();
