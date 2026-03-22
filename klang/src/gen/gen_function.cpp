@@ -29,6 +29,7 @@
 #include "../model/statements.hpp"
 #include "../model/imported.hpp"
 #include "../model/mangler.hpp"
+#include "../parse/ast.hpp"
 
 #include <llvm/IR/Verifier.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
@@ -222,13 +223,18 @@ void signature_resolver::visit_parameter(parameter& param) {
 void type_reference_resolver::visit_parameter(parameter& param) {
 
     if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
+        // Extract lexeme from AST parameter_spec for error reporting
+        lex::opt_any_lexeme param_lexeme;
+        if (auto ast_ps = param.get_ast_parameter_spec(); ast_ps && ast_ps->name) {
+            param_lexeme = lex::any_lexeme{*ast_ps->name};
+        }
         // Handle unresolved_function_ref_type (function pointer/pin/link type)
         if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var_type)) {
             auto resolved = resolve_function_ref_type(ufrt, param);
             if (resolved && type::is_resolved(resolved)) {
                 param.set_type(resolved);
             } else {
-                throw_error(0x0001, std::nullopt,
+                throw_error(0x0001, param_lexeme,
                     "Cannot resolve function reference type for parameter '{}'",
                     {param.get_short_name()});
             }
@@ -270,7 +276,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
             }
         }
         if (!type::is_resolved(res_type)) {
-            throw_error(0x0001, std::nullopt,
+            throw_error(0x0001, param_lexeme,
                 "Cannot resolve type for parameter '{}': the type name is unknown",
                 {param.get_short_name()});
         }
@@ -314,7 +320,9 @@ void symbol_resolver::visit_function(function& fn) {
         if (auto* target_fn = std::get_if<std::shared_ptr<function>>(&result)) {
             fn.set_redirect_target(*target_fn);
         } else {
-            throw_error(0x0050, std::nullopt,
+            lex::opt_any_lexeme fn_lexeme;
+            if (auto ast_fd = fn.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+            throw_error(0x0050, fn_lexeme,
                 "Function redirector '{}' targets '{}', which could not be resolved to a function",
                 {fn.get_short_name(), target_name.to_string()});
         }
@@ -469,7 +477,9 @@ void implementation_generator::visit_function(function &function) {
 
     auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
     if (func_it==_context->_functions.end()) {
-        throw_internal_error(0x0001, std::nullopt,
+        lex::opt_any_lexeme fn_lexeme;
+        if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+        throw_internal_error(0x0001, fn_lexeme,
             "Internal error: LLVM function declaration not found for '{}'; "
             "the declaration pass must be run before the implementation pass",
             {function.get_fq_name()});
@@ -508,7 +518,8 @@ void implementation_generator::visit_function(function &function) {
         } else {
         // NRVO analysis: scan all return statements in the function body.
         // If every return returns the same named local variable, it's an NRVO candidate.
-        if (auto blk = function.get_block()) {
+        auto blk = function.get_block();
+        if (blk) {
             std::shared_ptr<variable_statement> nrvo_var;
             bool nrvo_eligible = true;
             std::function<void(const k::model::block&)> scan_returns;
@@ -1383,7 +1394,9 @@ void signature_resolver::visit_constructor(constructor& ctor) {
 void type_reference_resolver::visit_constructor(constructor& ctor) {
     auto st = ctor.get_owner();
     if (!st) {
-        throw_internal_error(0x0001, std::nullopt,
+        lex::opt_any_lexeme ctor_lexeme;
+        if (auto ast_fd = ctor.get_ast_function_decl()) ctor_lexeme = lex::any_lexeme{ast_fd->name};
+        throw_internal_error(0x0001, ctor_lexeme,
             "Internal error: constructor has no owner structure; "
             "every constructor must belong to a struct — this indicates a compiler bug");
     }
@@ -1508,7 +1521,9 @@ void signature_resolver::visit_destructor(destructor& dtor) {
 void type_reference_resolver::visit_destructor(destructor& dtor) {
     auto st = dtor.get_owner();
     if (!st) {
-        throw_internal_error(0x0002, std::nullopt,
+        lex::opt_any_lexeme dtor_lexeme;
+        if (auto ast_fd = dtor.get_ast_function_decl()) dtor_lexeme = lex::any_lexeme{ast_fd->name};
+        throw_internal_error(0x0002, dtor_lexeme,
             "Internal error: destructor has no owner structure; "
             "every destructor must belong to a struct — this indicates a compiler bug");
     }
@@ -1576,7 +1591,9 @@ void symbol_resolver::visit_static_constructor(static_constructor& sctor) {
             }
         }
         // Not found — report error
-        throw_error(0x0006, std::nullopt,
+        lex::opt_any_lexeme sctor_lexeme;
+        if (auto ast_fd = sctor.get_ast_function_decl()) sctor_lexeme = lex::any_lexeme{ast_fd->name};
+        throw_error(0x0006, sctor_lexeme,
             "In static constructor '{}': dependency '{}' in the mem-init list "
             "does not refer to any known struct or global variable in scope",
             {sctor.get_fq_name(), dep.name});
@@ -1649,20 +1666,32 @@ void implementation_generator::visit_global_constructor_function(global_construc
 
     auto it_func = _context->_functions.find(func.shared_as<function>());
     if (it_func == _context->_functions.end()) {
-        throw_internal_error(0x0002, std::nullopt,
+        lex::opt_any_lexeme fn_lexeme;
+        if (auto ast_fd = func.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+        throw_internal_error(0x0002, fn_lexeme,
             "Internal error: global constructor function not found in LLVM function table; "
             "the declaration pass may not have run");
     }
 
     // Emit static constructor calls in order, interleaved with global-variable inits.
-    // Global variable init expressions are already emitted by visit_function (from the block).
-    // We need to insert static_constructor calls at the right position in the IR.
+    // Global variable init expressions are already emitted by visit_function in order from the block.
+    // We need to insert static_ctor calls at the right position in the IR.
     // Strategy: build an ordered list of static ctor calls only, then insert them
     // just before the ret terminator (after all variable inits).
     // NOTE: variable inits are already in the block (emitted by visit_function).
     //       Static ctors are emitted in their correct order relative to each other
     //       and relative to variable inits by placing them just before the final ret.
     //       The unified ordering ensures that all dependencies are respected.
+    // The IR order within the function body therefore is:
+    //   [var-init calls in block order] then [static ctor calls before ret]
+    // Because init_order_resolver ensures the ordering is correct, and the block was built
+    // with vars in dependency order, static ctors will logically precede their dependent vars.
+    // BUT: to achieve FULL correct interleaving at IR level, we use a different approach:
+    // We collect static ctor calls from items in order and insert them AFTER their position
+    // in the block by using move-instruction sequencing.
+    // For simplicity and correctness (since ordering is resolved), we emit static ctor calls
+    // in the order they appear in items, just before the terminator.
+
     llvm::Function* llvm_func = it_func->second;
     llvm::BasicBlock& last_bb = llvm_func->back();
     llvm::IRBuilder<> ctor_builder(&last_bb, last_bb.getTerminator()->getIterator());
@@ -1856,7 +1885,9 @@ void type_reference_resolver::visit_global_main_function(global_main_function& m
     // Look at the compatible prototypes
     // TODO Add a better method prototype compatibility checking/searching
     if (main_func.get_real_func().has_parameter()) {
-        throw_error(0x000C, std::nullopt,
+        lex::opt_any_lexeme main_lexeme;
+        if (auto ast_fd = main_func.get_real_func().get_ast_function_decl()) main_lexeme = lex::any_lexeme{ast_fd->name};
+        throw_error(0x000C, main_lexeme,
             "'main' function does not support parameters yet; "
             "declare it as 'func main() : int' or 'func main() : void'");
     }
@@ -1886,7 +1917,9 @@ void type_reference_resolver::visit_global_main_function(global_main_function& m
         // Cast invocation result to int
         auto cast = adapt_type(invoke, int_type);
         if(!cast) {
-            throw_error(0x000D, std::nullopt,
+            lex::opt_any_lexeme main_lexeme;
+            if (auto ast_fd = main_func.get_real_func().get_ast_function_decl()) main_lexeme = lex::any_lexeme{ast_fd->name};
+            throw_error(0x000D, main_lexeme,
                 "'main' function return type '{}' cannot be implicitly cast to 'int'; "
                 "the return type must be 'int', 'void', or a type castable to 'int'",
                 {main_func.get_real_func().get_return_type() ? main_func.get_real_func().get_return_type()->to_string() : "?"});

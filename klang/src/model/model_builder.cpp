@@ -48,7 +48,19 @@ namespace k::model {
         // Push root ns context
         stack<ns_context> push(_contexts, _unit.get_root_namespace());
 
-        super::visit_unit(unit);
+        // Visit module name and imports via default visitor
+        if (unit.module_name) {
+            unit.module_name->visit(*this);
+        }
+        for (auto& imp : unit.imports) {
+            imp->visit(*this);
+        }
+        // Visit declarations (set _current_ast_decl for diamond-inheritance workaround)
+        for (auto& decl : unit.declarations) {
+            _current_ast_decl = decl;
+            decl->visit(*this);
+            _current_ast_decl.reset();
+        }
 
         if (_unit.get_unit_name().empty()) {
             // If no module name defined, set a default one
@@ -122,7 +134,12 @@ namespace k::model {
         // Push namespace context
         stack<ns_context> push(_contexts, namesp);
 
-        super::visit_namespace_decl(ns);
+        // Visit child declarations (set _current_ast_decl for diamond-inheritance workaround)
+        for (auto& decl : ns.declarations) {
+            _current_ast_decl = decl;
+            decl->visit(*this);
+            _current_ast_decl.reset();
+        }
     }
 
     void model_builder::visit_aggregate_decl(parse::ast::aggregate_decl& st) {
@@ -147,6 +164,7 @@ namespace k::model {
         // Detect if declared inside an outer aggregate
         bool is_static_nested = lex::keyword::has(st.specifiers, lex::keyword::STATIC);
         agg->set_static_nested(is_static_nested);
+        agg->set_ast_aggregate_decl(st.shared_as<parse::ast::aggregate_decl>());
 
         // Detect if the final specifier is present
         bool is_final = lex::keyword::has(st.specifiers, lex::keyword::FINAL);
@@ -224,7 +242,12 @@ namespace k::model {
             vctx->visibility = model::DEFAULT;
         }
 
-        default_ast_visitor::visit_aggregate_decl(st);
+        // Visit child declarations (set _current_ast_decl for diamond-inheritance workaround)
+        for (auto& decl : st.declarations) {
+            _current_ast_decl = decl;
+            decl->visit(*this);
+            _current_ast_decl.reset();
+        }
     }
 
     void model_builder::visit_enum_decl(parse::ast::enum_decl &decl) {
@@ -235,6 +258,7 @@ namespace k::model {
         }
 
         auto en = parent_scope->define_enum(std::string{decl.name.content});
+        en->set_ast_enum_decl(decl.shared_as<parse::ast::enum_decl>());
 
         // Resolve visibility
         if (auto vctx = current_context<visibility_context>()) {
@@ -292,6 +316,17 @@ namespace k::model {
         bool is_static = lex::keyword::has(decl.specifiers, lex::keyword::STATIC);
         bool is_const  = lex::keyword::has(decl.specifiers, lex::keyword::CONST);
         std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(std::string{decl.name.content}, is_static);
+        // Store the AST node on the variable for source location reporting in diagnostics.
+        if (auto var_stmt = std::dynamic_pointer_cast<model::variable_statement>(var)) {
+            // variable_decl has diamond inheritance (declaration + statement from ast_node);
+            // use _current_ast_decl which was set by the parent visitor loop.
+            if (_current_ast_decl) {
+                auto var_decl_ptr = std::dynamic_pointer_cast<parse::ast::variable_decl>(_current_ast_decl);
+                if (var_decl_ptr) {
+                    var_stmt->set_ast_variable_decl(var_decl_ptr);
+                }
+            }
+        }
         auto var_type = _context->from_type_specifier(*decl.type);
         // Normalize: if the type itself is const-qualified (e.g. "var : const T"),
         // strip the const from the type and promote it to the is_const flag.
@@ -533,6 +568,9 @@ namespace k::model {
 
         std::shared_ptr<model::function> function = parent_scope->define_function(func_name, is_static);
 
+        // Wire AST function_decl to the model function
+        function->set_ast_function_decl(func.shared_as<parse::ast::function_decl>());
+
         // Propagate operator flag
         if (func.is_operator) {
             function->set_operator(true);
@@ -755,6 +793,7 @@ namespace k::model {
             }
             std::shared_ptr<model::parameter> parameter = function->append_parameter(std::string{param->name->content}, param_type);
             parameter->set_const(param_is_const);
+            parameter->set_ast_parameter_spec(param);
             // Build default expression if present
             if(param->default_expr) {
                 _expr.reset();
@@ -850,7 +889,10 @@ namespace k::model {
         // Visit all children statements
         for(auto& stmt : block_stmt.statements) {
             _stmt.reset();
+            // Track declaration pointer for diamond-inheritance types (variable_decl)
+            _current_ast_decl = std::dynamic_pointer_cast<parse::ast::declaration>(stmt);
             stmt->visit(*this);
+            _current_ast_decl.reset();
             if(_stmt) {
                 block->append_statement(_stmt);
                 _stmt.reset();
@@ -1065,6 +1107,9 @@ namespace k::model {
 
     void model_builder::visit_literal_expr(parse::ast::literal_expr &expr) {
         _expr = model::value_expression::from_literal(expr.literal);
+        if (_expr) {
+            _expr->set_ast_expression(expr.shared_as<parse::ast::literal_expr>());
+        }
     }
 
     void model_builder::visit_keyword_expr(parse::ast::keyword_expr &expr) {
@@ -1073,6 +1118,9 @@ namespace k::model {
 
     void model_builder::visit_this_expr(parse::ast::keyword_expr &expr) {
         _expr = model::symbol_expression::from_identifier(name("this"));
+        if (_expr) {
+            _expr->set_ast_expression(expr.shared_as<parse::ast::keyword_expr>());
+        }
     }
 
     void model_builder::visit_expr_list_expr(parse::ast::expr_list_expr &) {
@@ -1188,12 +1236,18 @@ namespace k::model {
                 throw_error(0x0018, expr.op, "Binary operator '{}' is not supported", {std::string{expr.op.content}});
                 break;
         }
+        if (_expr) {
+            _expr->set_ast_expression(expr.shared_as<parse::ast::binary_operator_expr>());
+        }
     }
 
     void model_builder::visit_cast_expr(parse::ast::cast_expr& expr) {
         _expr = nullptr;
         expr.expr()->visit(*this);
         _expr = model::cast_expression::make_shared(_expr, _context->from_type_specifier(*expr.type));
+        if (_expr) {
+            _expr->set_ast_expression(expr.shared_as<parse::ast::cast_expr>());
+        }
     }
 
     void model_builder::visit_unary_prefix_expr(parse::ast::unary_prefix_expr& expr) {
@@ -1262,6 +1316,9 @@ namespace k::model {
         expr.rexpr()->visit(*this);
         std::shared_ptr<model::expression> rexpr = _expr;
         _expr = model::subscript_expression::make_shared(lexpr, rexpr);
+        if (_expr) {
+            _expr->set_ast_expression(expr.shared_as<parse::ast::bracket_postifx_expr>());
+        }
     }
 
     void model_builder::visit_parenthesis_postifx_expr(parse::ast::parenthesis_postifx_expr &expr) {
@@ -1282,6 +1339,9 @@ namespace k::model {
         }
 
         _expr = model::function_invocation_expression::make_shared(callee, args);
+        if (_expr) {
+            _expr->set_ast_expression(expr.shared_as<parse::ast::parenthesis_postifx_expr>());
+        }
     }
 
     void model_builder::visit_member_access_postfix_expr(parse::ast::member_access_postfix_expr &expr) {
@@ -1306,6 +1366,9 @@ namespace k::model {
                 throw_error(0x001B, expr.op, "Member access operator '{}' is not supported; expected '.' to access a member of an object, or '->' to access a member through a pointer", {std::string{expr.op.content}});
                 break;
         }
+        if (_expr) {
+            _expr->set_ast_expression(expr.shared_as<parse::ast::member_access_postfix_expr>());
+        }
     }
 
     void model_builder::visit_identifier_expr(parse::ast::identifier_expr &expr) {
@@ -1315,6 +1378,9 @@ namespace k::model {
             idents.emplace_back(ident.content);
         }
         _expr = model::symbol_expression::from_identifier(name(has_prefix, std::move(idents)));
+        if (_expr) {
+            _expr->set_ast_expression(expr.shared_as<parse::ast::identifier_expr>());
+        }
     }
 
     void model_builder::visit_new_expr(parse::ast::new_expr& expr) {
@@ -1349,6 +1415,7 @@ namespace k::model {
             }
 
             _expr = model::new_expression::make_uniform_array_shared(alloc_type, size_expr, ctor_args);
+            if (_expr) _expr->set_ast_expression(expr.shared_as<parse::ast::new_expr>());
         } else if (expr.is_array) {
             // ── Array form: new T[N]{e0, e1, ...} ──
 
@@ -1375,6 +1442,7 @@ namespace k::model {
             }
 
             _expr = model::new_expression::make_array_shared(alloc_type, size_expr, init_elements, expr.brace_init != nullptr);
+            if (_expr) _expr->set_ast_expression(expr.shared_as<parse::ast::new_expr>());
         } else {
             // ── Single-object form: new T(args...) ──
 
@@ -1397,6 +1465,7 @@ namespace k::model {
             }
 
             _expr = model::new_expression::make_shared(alloc_type, args);
+            if (_expr) _expr->set_ast_expression(expr.shared_as<parse::ast::new_expr>());
         }
     }
 
@@ -1405,6 +1474,7 @@ namespace k::model {
         expr.expr()->visit(*this);
         auto target = _expr;
         _expr = model::delete_expression::make_shared(target);
+        if (_expr) _expr->set_ast_expression(expr.shared_as<parse::ast::delete_expr>());
     }
 
     void model_builder::visit_brace_init_list(parse::ast::brace_init_list& init) {

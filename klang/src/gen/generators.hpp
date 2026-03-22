@@ -83,16 +83,15 @@ protected:
 
     static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
 
-    [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
-        if (opt) diag.at(*opt);
+        if (lexeme) diag.at(*lexeme);
         logger_relay::report(diag);
         throw generation_error(std::move(diag));
     }
 
     /** Throw an internal-compiler-error (should never be reachable via any K source input). */
-    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
     }
 
@@ -203,16 +202,15 @@ protected:
 
     static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
 
-    [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
-        if (opt) diag.at(*opt);
+        if (lexeme) diag.at(*lexeme);
         logger_relay::report(diag);
         throw generation_error(std::move(diag));
     }
 
     /** Throw an internal-compiler-error (should never be reachable via any K source input). */
-    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
     }
 

@@ -20,6 +20,7 @@
 
 #include "context.hpp"
 #include "model_visitor.hpp"
+#include "../parse/ast.hpp"
 
 namespace k::model {
 
@@ -44,6 +45,118 @@ std::shared_ptr<statement> expression::find_statement() {
 std::shared_ptr<const statement> expression::find_statement() const {
     return ancestor<statement>();
 };
+
+//
+// Expression: first_lexeme / last_lexeme default implementations
+//
+
+std::optional<k::lex::any_lexeme> expression::first_lexeme() const {
+    // Try to extract a lexeme from the AST node.
+    if (auto ast_expr = get_ast_node_as<parse::ast::expression>()) {
+        // literal_expr — extract the first (only) token from the literal
+        if (auto lit = std::dynamic_pointer_cast<parse::ast::literal_expr>(ast_expr)) {
+            // any_literal derives from literal. Use value() to get the base literal reference.
+            const k::lex::literal& base_lit = lit->literal.value();
+            return k::lex::any_lexeme{k::lex::identifier{base_lit.content}};
+        }
+        // keyword_expr (this, null, etc.)
+        if (auto kw = std::dynamic_pointer_cast<parse::ast::keyword_expr>(ast_expr)) {
+            return k::lex::any_lexeme{kw->keyword};
+        }
+        // identifier_expr
+        if (auto id = std::dynamic_pointer_cast<parse::ast::identifier_expr>(ast_expr)) {
+            if (id->qident.initial_doublecolon.has_value()) {
+                return k::lex::any_lexeme{*id->qident.initial_doublecolon};
+            }
+            if (!id->qident.names.empty()) {
+                return k::lex::any_lexeme{id->qident.names.front()};
+            }
+        }
+        // new_expr
+        if (auto ne = std::dynamic_pointer_cast<parse::ast::new_expr>(ast_expr)) {
+            return k::lex::any_lexeme{ne->new_kw};
+        }
+        // delete_expr
+        if (auto de = std::dynamic_pointer_cast<parse::ast::delete_expr>(ast_expr)) {
+            return k::lex::any_lexeme{de->delete_kw};
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<k::lex::any_lexeme> expression::last_lexeme() const {
+    // Try to extract a lexeme from the AST node.
+    if (auto ast_expr = get_ast_node_as<parse::ast::expression>()) {
+        // literal_expr
+        if (auto lit = std::dynamic_pointer_cast<parse::ast::literal_expr>(ast_expr)) {
+            const k::lex::literal& base_lit = lit->literal.value();
+            return k::lex::any_lexeme{k::lex::identifier{base_lit.content}};
+        }
+        // keyword_expr
+        if (auto kw = std::dynamic_pointer_cast<parse::ast::keyword_expr>(ast_expr)) {
+            return k::lex::any_lexeme{kw->keyword};
+        }
+        // identifier_expr
+        if (auto id = std::dynamic_pointer_cast<parse::ast::identifier_expr>(ast_expr)) {
+            if (!id->qident.names.empty()) {
+                return k::lex::any_lexeme{id->qident.names.back()};
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+//
+// Unary expression: first_lexeme / last_lexeme
+//
+
+std::optional<k::lex::any_lexeme> unary_expression::first_lexeme() const {
+    // For prefix operators, the operator token is the first lexeme.
+    if (auto ast_prefix = get_ast_node_as<parse::ast::unary_prefix_expr>()) {
+        return k::lex::any_lexeme{ast_prefix->op};
+    }
+    // For postfix operators, the sub-expression's first lexeme is the first.
+    if (_sub_expr) {
+        return _sub_expr->first_lexeme();
+    }
+    // Fallback to base default
+    return expression::first_lexeme();
+}
+
+std::optional<k::lex::any_lexeme> unary_expression::last_lexeme() const {
+    // For postfix operators, the operator token is the last lexeme.
+    if (auto ast_postfix = get_ast_node_as<parse::ast::unary_postfix_expr>()) {
+        return k::lex::any_lexeme{ast_postfix->op};
+    }
+    // For prefix operators, the sub-expression's last lexeme is the last.
+    if (_sub_expr) {
+        return _sub_expr->last_lexeme();
+    }
+    // Fallback to base default
+    return expression::last_lexeme();
+}
+
+//
+// Binary expression: first_lexeme / last_lexeme
+//
+
+std::optional<k::lex::any_lexeme> binary_expression::first_lexeme() const {
+    if (_left_expr) {
+        if (auto lex = _left_expr->first_lexeme()) {
+            return lex;
+        }
+    }
+    return expression::first_lexeme();
+}
+
+std::optional<k::lex::any_lexeme> binary_expression::last_lexeme() const {
+    if (_right_expr) {
+        if (auto lex = _right_expr->last_lexeme()) {
+            return lex;
+        }
+    }
+    return expression::last_lexeme();
+}
 
 //
 // Value expression

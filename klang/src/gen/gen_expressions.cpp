@@ -24,6 +24,7 @@
 #include "../model/operators.hpp"
 #include "../model/mangler.hpp"
 #include "../model/imported.hpp"
+#include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 
 #include "llvm/Support/raw_os_ostream.h"
@@ -155,7 +156,7 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
                     symbol.set_target(symbol_expression::enum_entry_target{found_enum, idx});
                     resolved_as_enum = true;
                 } else {
-                    throw_error(0x0080, std::nullopt,
+                    throw_error(0x0080, symbol.first_lexeme(),
                         "Enum '{}' has no entry named '{}'",
                         {found_enum->get_short_name(), entry_name});
                 }
@@ -175,7 +176,7 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
             }
             bool is_ctor_arg = std::dynamic_pointer_cast<constructor_invocation_expression>(parent_expr) != nullptr;
             if (!is_function_callee && !is_ctor_arg) {
-                throw_error(0x0003, std::nullopt,
+                throw_error(0x0003, symbol.first_lexeme(),
                     "Undefined symbol '{}': no variable, parameter or function with this name is visible in the current scope",
                     {symbol.get_name().to_string()});
             }
@@ -193,7 +194,7 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
         if (std::dynamic_pointer_cast<constructor_invocation_expression>(parent)) {
             return; // defer to visit_constructor_invocation_expression
         }
-        throw_internal_error(0x0001, std::nullopt,
+        throw_internal_error(0x0001, symbol.first_lexeme(),
             "Internal error: symbol '{}' reached type-resolution phase without being resolved; "
             "symbol resolution must be run before type resolution",
             {symbol.get_name().to_string()});
@@ -305,14 +306,14 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
             llvm::Value* this_value_ref = nullptr;
             auto func = std::dynamic_pointer_cast<function>(symbol.find_statement()->get_function());
             if(!func) {
-                throw_internal_error(0x0001, std::nullopt,
+                throw_internal_error(0x0001, symbol.first_lexeme(),
                     "Internal error: cannot find enclosing function context for member variable '{}' access; "
                     "member variables can only be accessed from inside a method",
                     {member_var->get_fq_name()});
             }
             this_value_ref = _context->_function_this_variables[func];
             if (!this_value_ref) {
-                throw_internal_error(0x0002, std::nullopt,
+                throw_internal_error(0x0002, symbol.first_lexeme(),
                     "Internal error: no 'this' pointer found in function '{}' for member variable '{}' access; "
                     "the function may be static or have no associated struct instance",
                     {func->get_fq_name(), member_var->get_fq_name()});
@@ -320,7 +321,7 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
 
             // Get member variable — potentially from an ancestor struct via __parent__ chain
             if(_struct_stack.empty()) {
-                throw_internal_error(0x0003, std::nullopt,
+                throw_internal_error(0x0003, symbol.first_lexeme(),
                     "Internal error: no struct context on the code-generation stack when accessing member variable '{}'; "
                     "member access code generation must be performed inside a struct method",
                     {name});
@@ -343,7 +344,7 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
             auto walk_struct = current_struct;
             while (walk_struct && walk_struct != member_owner) {
                 if (!walk_struct->is_inner()) {
-                    throw_internal_error(0x0004, std::nullopt,
+                    throw_internal_error(0x0004, symbol.first_lexeme(),
                         "Internal error: could not reach owning struct '{}' for member '{}' via __parent__ chain; "
                         "the struct hierarchy is inconsistent",
                         {member_owner ? member_owner->get_short_name() : "?", name});
@@ -368,7 +369,7 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
             }
 
             if (!walk_struct) {
-                throw_internal_error(0x0005, std::nullopt,
+                throw_internal_error(0x0005, symbol.first_lexeme(),
                     "Internal error: could not find owning struct for member variable '{}' in __parent__ chain",
                     {name});
             }
@@ -383,20 +384,20 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                             "this_" + walk_struct->get_short_name() + "_" + name + "_ptr"
                     );
                 } else {
-                    throw_internal_error(0x0004, std::nullopt,
+                    throw_internal_error(0x0004, symbol.first_lexeme(),
                         "Internal error: struct '{}' has no member named '{}'; "
                         "the model is inconsistent — the member was not found during code generation",
                         {struct_type->name(), name});
                 }
             } else { // TODO add here the method resolution
-                throw_internal_error(0x0005, std::nullopt,
+                throw_internal_error(0x0005, symbol.first_lexeme(),
                     "Internal error: struct has no LLVM type information when accessing member '{}'; "
                     "the declaration pass must be run before the implementation pass",
                     {name});
             }
 
         } else {
-            throw_internal_error(0x0006, std::nullopt,
+            throw_internal_error(0x0006, symbol.first_lexeme(),
                 "Internal error: unsupported variable definition kind encountered while generating code for symbol '{}'; "
                 "only parameters, global variables, local variables and member variables are supported",
                 {var_def->get_fq_name()});
@@ -424,14 +425,14 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
         // Find the function definition
         auto it = _context->_functions.find(func);
         if(it==_context->_functions.end()) {
-            throw_internal_error(0x0007, std::nullopt,
+            throw_internal_error(0x0007, symbol.first_lexeme(),
                 "Internal error: LLVM declaration not found for function '{}'; "
                 "the declaration pass must be run before the implementation pass",
                 {func ? func->get_fq_name() : "<null>"});
         }
         llvm::Function* llvm_func = it->second;
         if(!llvm_func) {
-            throw_internal_error(0x0008, std::nullopt,
+            throw_internal_error(0x0008, symbol.first_lexeme(),
                 "Internal error: LLVM function object is null for '{}'; "
                 "this indicates a compiler bug in the declaration pass",
                 {func ? func->get_fq_name() : "<null>"});
@@ -457,7 +458,7 @@ void symbol_resolver::visit_unary_expression(unary_expression& expr)
 {
     auto& sub = expr.sub_expr();
     if(!sub) {
-        throw_internal_error(0x0001, std::nullopt,
+        throw_internal_error(0x0001, expr.first_lexeme(),
             "Internal error: unary expression has a null sub-expression; "
             "this indicates a malformed AST or a compiler bug");
     }
@@ -469,7 +470,7 @@ void type_reference_resolver::visit_unary_expression(unary_expression& expr)
     auto& sub = expr.sub_expr();
 
     if(!sub) {
-        throw_internal_error(0x0002, std::nullopt,
+        throw_internal_error(0x0002, expr.first_lexeme(),
             "Internal error: unary expression has a null sub-expression; "
             "this indicates a malformed AST or a compiler bug");
     }
@@ -477,7 +478,7 @@ void type_reference_resolver::visit_unary_expression(unary_expression& expr)
     sub->accept(*this);
 
     if(!type::is_resolved(sub->get_type())) {
-        throw_internal_error(0x0003, std::nullopt,
+        throw_internal_error(0x0003, expr.first_lexeme(),
             "Internal error: sub-expression of a unary operator could not be type-resolved; "
             "the type of the operand must be known before the unary expression can be typed");
     }
@@ -502,7 +503,7 @@ void symbol_resolver::visit_binary_expression(binary_expression& expr)
     auto& right = expr.right();
 
     if(!left || !right) {
-        throw_internal_error(0x0002, std::nullopt,
+        throw_internal_error(0x0002, expr.first_lexeme(),
             "Internal error: binary expression has a null left or right operand; "
             "this indicates a malformed AST or a compiler bug");
     }
@@ -518,7 +519,7 @@ void type_reference_resolver::visit_binary_expression(binary_expression& expr)
     auto& right = expr.right();
 
     if(!left || !right) {
-        throw_internal_error(0x0004, std::nullopt,
+        throw_internal_error(0x0004, expr.first_lexeme(),
             "Internal error: binary expression has a null left or right operand; "
             "this indicates a malformed AST or a compiler bug");
     }
@@ -527,12 +528,12 @@ void type_reference_resolver::visit_binary_expression(binary_expression& expr)
     right->accept(*this);
 
     if(!type::is_resolved(left->get_type())) {
-        throw_internal_error(0x0005, std::nullopt,
+        throw_internal_error(0x0005, expr.first_lexeme(),
             "Internal error: the left operand of a binary operator could not be type-resolved; "
             "the type of each operand must be known before the binary expression can be typed");
     }
     if(!type::is_resolved(right->get_type())) {
-        throw_internal_error(0x0006, std::nullopt,
+        throw_internal_error(0x0006, expr.first_lexeme(),
             "Internal error: the right operand of a binary operator could not be type-resolved; "
             "the type of each operand must be known before the binary expression can be typed");
     }
@@ -562,7 +563,7 @@ void type_reference_resolver::visit_address_of_expression(address_of_expression&
     auto sub_type = sub_expr->get_type();
 
     if(!type::is_reference(sub_type)) {
-        throw_error(0x0018, std::nullopt,
+        throw_error(0x0018, expr.first_lexeme(),
             "Cannot take the address of a non-reference expression: "
             "the '&' operator requires a reference (i.e. an addressable location) as its operand, "
             "but the operand has type '{}'",
@@ -580,7 +581,7 @@ void implementation_generator::visit_address_of_expression(address_of_expression
     expr.sub_expr()->accept(*this);
 
     if(!_value) {
-        throw_internal_error(0x0009, std::nullopt,
+        throw_internal_error(0x0009, expr.first_lexeme(),
             "Internal error: the sub-expression of an address-of ('&') operator produced no LLVM value; "
             "this indicates a code-generation bug");
     }
@@ -601,7 +602,7 @@ void type_reference_resolver::visit_load_value_expression(load_value_expression&
     } else if(auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type)) {
         expr.set_type(k::model::type::remove_const(ptr_type->get_subtype()));
     } else {
-        throw_error(0x0019, std::nullopt,
+        throw_error(0x0019, expr.first_lexeme(),
             "Cannot dereference a non-pointer/non-reference expression: "
             "load ('*') requires a reference or pointer operand, "
             "but the operand has type '{}'",
@@ -646,7 +647,7 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
            std::dynamic_pointer_cast<owner_type>(sub)) {
             type = sub;
         } else {
-            throw_error(0x001A, std::nullopt,
+            throw_error(0x001A, expr.first_lexeme(),
                 "Cannot dereference a reference to a non-pointer type: "
                 "the dereference operator ('*') requires pointer (*), link (~), pinned (^) or owner (!), "
                 "but '{}' is not a pointer-like type",
@@ -664,7 +665,7 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
         // Dereferencing an owner gives a reference to the owned object
         expr.set_type(own_type->get_owned_type()->get_reference());
     } else {
-        throw_error(0x001B, std::nullopt,
+        throw_error(0x001B, expr.first_lexeme(),
             "Cannot dereference a non-pointer expression: "
             "the dereference operator ('*') requires a pointer (*), link (~), pinned (^) or owner (!), "
             "but the operand has type '{}'",
@@ -753,7 +754,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
             }
             return;
         }
-        throw_error(0x001C, std::nullopt,
+        throw_error(0x001C, expr.first_lexeme(),
             "Cannot access a member on a non-reference expression: "
             "the '.' operator requires the left-hand side to be a reference to a struct, "
             "but the left-hand side has type '{}'",
@@ -775,7 +776,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
             expr.set_type(_context->from_type(primitive_type::UNSIGNED_INT));
             return;
         }
-        throw_error(0x001D, std::nullopt,
+        throw_error(0x001D, expr.first_lexeme(),
             "Arrays have no member named '{}'; only 'size' is available",
             {name_str});
     }
@@ -875,7 +876,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                         return; // defer to function_invocation_expression
                     }
                 }
-                throw_error(0x001D, std::nullopt,
+                throw_error(0x001D, expr.first_lexeme(),
                     "No member named '{}' in struct '{}' or any of its bases",
                     {name_str, struct_subtype->name()});
                 return;
@@ -893,13 +894,13 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                 is_function_callee = (parent_invoc->callee_expr().get() == &expr);
             }
             if (is_function_callee) return; // defer to function_invocation_expression
-            throw_error(0x001D, std::nullopt,
+            throw_error(0x001D, expr.first_lexeme(),
                 "No member named '{}' in struct '{}' or any of its bases",
                 {name_str, struct_subtype->name()});
         }
 
         if (hits.size() > 1) {
-            throw_error(0x0031, std::nullopt,
+            throw_error(0x0031, expr.first_lexeme(),
                 "Ambiguous access to member '{}' in struct '{}': "
                 "the member is found in multiple base classes; use Base::member to disambiguate",
                 {name_str, struct_subtype->name()});
@@ -914,7 +915,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                 auto vis = member_var->get_visibility();
                 if (vis != PUBLIC) {
                     if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
-                        throw_error(0x0030, std::nullopt,
+                        throw_error(0x0030, expr.first_lexeme(),
                             "{} member variable '{}' of struct '{}' is not accessible here; "
                             "it can only be accessed from member functions of '{}'{}",
                             {vis == PROTECTED ? "protected" : "private",
@@ -1089,7 +1090,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
             // — leave expr type unset; function_invocation_expression will handle it.
         }
     } else {
-        throw_error(0x001E, std::nullopt,
+        throw_error(0x001E, expr.first_lexeme(),
             "The '.' operator can only be applied to a reference to a struct type, "
             "but the left-hand side is a reference to '{}' which is not a struct",
             {bare_subtype ? bare_subtype->to_string() : "?"});
@@ -1134,7 +1135,7 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
             } else if (auto method = struct_subtype->get_struct()->get_function(simple_name)) {
                 // Leave _value as the struct alloca pointer (will be used as 'this')
             } else {
-                throw_internal_error(0x000A, std::nullopt,
+                throw_internal_error(0x000A, expr.first_lexeme(),
                     "Internal error: struct '{}' has no member named '{}' during code generation; "
                     "the model is inconsistent — type resolution should have caught this earlier",
                     {struct_subtype->name(), simple_name});
@@ -1169,13 +1170,13 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
         } else if(auto method = struct_subtype->get_struct()->get_function(simple_name)) {
             // Note return the already-assigned address of the struct onto which the function is applied to
         } else {
-            throw_internal_error(0x000A, std::nullopt,
+            throw_internal_error(0x000A, expr.first_lexeme(),
                 "Internal error: struct '{}' has no member named '{}' during code generation; "
                 "the model is inconsistent — type resolution should have caught this earlier",
                 {struct_subtype->name(), simple_name});
         }
     } else {
-        throw_internal_error(0x000B, std::nullopt,
+        throw_internal_error(0x000B, expr.first_lexeme(),
             "Internal error: the '.' operator is applied to a non-struct type during code generation; "
             "the operand type is '{}' — type resolution should have caught this earlier",
             {type && type->get_subtype() ? type->get_subtype()->to_string() : "?"});
@@ -1206,7 +1207,7 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
         // Allow -> on owner: syntactic sugar for (*owner).member
         pointed_type = own_t->get_owned_type();
     } else {
-        throw_error(0x0080, std::nullopt,
+        throw_error(0x0080, expr.first_lexeme(),
             "The '->' operator requires a pointer (*), link (~), pinned (^) or owner (!) on the LHS, "
             "but got '{}'", {type ? type->to_string() : "?"});
     }
@@ -1224,14 +1225,14 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
             expr.set_type(_context->from_type(primitive_type::UNSIGNED_INT));
             return;
         }
-        throw_error(0x001D, std::nullopt,
+        throw_error(0x001D, expr.first_lexeme(),
             "Arrays have no member named '{}'; only 'size' is available",
             {name_str});
     }
 
     auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_type);
     if (!struct_subtype) {
-        throw_error(0x0081, std::nullopt,
+        throw_error(0x0081, expr.first_lexeme(),
             "The '->' operator requires a pointer to a struct or array, "
             "but the pointed-to type is '{}'",
             {pointed_type ? pointed_type->to_string() : "?"});
@@ -1246,7 +1247,7 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
                 auto vis = mv->get_visibility();
                 if (vis != PUBLIC) {
                     if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
-                        throw_error(0x0083, std::nullopt,
+                        throw_error(0x0083, expr.first_lexeme(),
                             "{} member variable '{}' of struct '{}' is not accessible here via '->'; "
                             "it can only be accessed from member functions of '{}'{}",
                             {vis == PROTECTED ? "protected" : "private",
@@ -1265,7 +1266,7 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
                 auto vis = fn->get_visibility();
                 if (vis != PUBLIC) {
                     if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
-                        throw_error(0x0084, std::nullopt,
+                        throw_error(0x0084, expr.first_lexeme(),
                             "{} member function '{}' of struct '{}' is not accessible here via '->'; "
                             "it can only be called from member functions of '{}'{}",
                             {vis == PROTECTED ? "protected" : "private",
@@ -1277,7 +1278,7 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
         }
         expr.set_type(pointed_type->get_reference());
     } else {
-        throw_error(0x0082, std::nullopt,
+        throw_error(0x0082, expr.first_lexeme(),
             "Struct '{}' has no member named '{}'",
             {struct_subtype->name(), name_str});
     }
@@ -1373,7 +1374,7 @@ void type_reference_resolver::visit_pm_expression(pm_expression& expr) {
         } else if (auto pin = std::dynamic_pointer_cast<pinned_type>(obj_type)) {
             obj_type = pin->get_pinned_type();
         } else {
-            throw_error(0x0090, std::nullopt,
+            throw_error(0x0090, expr.first_lexeme(),
                 "The '->*' operator requires a pointer (*), link (~) or pinned (^) on the LHS, "
                 "but got '{}'", {obj_type ? obj_type->to_string() : "?"});
         }
@@ -1381,7 +1382,7 @@ void type_reference_resolver::visit_pm_expression(pm_expression& expr) {
 
     auto struct_t = std::dynamic_pointer_cast<struct_type>(obj_type);
     if (!struct_t) {
-        throw_error(0x0091, std::nullopt,
+        throw_error(0x0091, expr.first_lexeme(),
             "The '{}' operator requires a struct on the LHS, but got '{}'",
             {expr.is_arrow() ? "->*" : ".*", obj_type ? obj_type->to_string() : "?"});
     }
@@ -1396,7 +1397,7 @@ void type_reference_resolver::visit_pm_expression(pm_expression& expr) {
     if (!mfrt) {
         // Also accept plain function_reference_type (for free-function pointers used in pm context)
         if (!std::dynamic_pointer_cast<function_reference_type>(mfp_type)) {
-            throw_error(0x0092, std::nullopt,
+            throw_error(0x0092, expr.first_lexeme(),
                 "The '{}' operator requires a member function reference type on the RHS, "
                 "but got '{}'",
                 {expr.is_arrow() ? "->*" : ".*", mfp_type ? mfp_type->to_string() : "?"});
@@ -1452,7 +1453,7 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
 
     // Dereference if needed
     if(!type::is_reference(left_type)) {
-        throw_error(0x001F, std::nullopt,
+        throw_error(0x001F, expr.first_lexeme(),
             "Subscript operator '[]' requires a reference to an array as left operand, "
             "but the left operand has type '{}' which is not a reference",
             {left_type ? left_type->to_string() : "?"});
@@ -1488,7 +1489,7 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
     left_type = type::remove_const(left_type);
 
     if(!type::is_array(left_type)) {
-        throw_error(0x0020, std::nullopt,
+        throw_error(0x0020, expr.first_lexeme(),
             "Subscript operator '[]' can only be applied to an array type, "
             "but the dereferenced left operand has type '{}' which is not an array",
             {left_type ? left_type->to_string() : "?"});
@@ -1501,7 +1502,7 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
     // TODO is array really indexed by uint ?
     auto adapted_right = adapt_type(right, _context->from_type(primitive_type::UNSIGNED_INT));
     if(!adapted_right) {
-        throw_error(0x0021, std::nullopt,
+        throw_error(0x0021, expr.first_lexeme(),
             "Subscript index expression cannot be implicitly converted to an unsigned integer index type; "
             "the index operand has type '{}' — use an explicit cast if needed",
             {right->get_type() ? right->get_type()->to_string() : "?"});
@@ -1581,7 +1582,7 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
         auto* struct_llvm = sized_arr->get_llvm_struct_type();
         auto* data_arr_llvm = sized_arr->get_llvm_data_array_type();
         if (!struct_llvm || !data_arr_llvm) {
-            throw_internal_error(0x000C, std::nullopt,
+            throw_internal_error(0x000C, expr.first_lexeme(),
                 "Internal error: sized array has no LLVM struct type during subscript code generation");
         }
 
@@ -1603,7 +1604,7 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
         auto* struct_llvm = unsized_arr->get_llvm_struct_type();
         auto* data_arr_llvm = unsized_arr->get_llvm_data_array_type();
         if (!struct_llvm || !data_arr_llvm) {
-            throw_internal_error(0x000C, std::nullopt,
+            throw_internal_error(0x000C, expr.first_lexeme(),
                 "Internal error: unsized array has no LLVM struct type during subscript code generation");
         }
 
@@ -1736,7 +1737,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     auto ptr_member_callee = std::dynamic_pointer_cast<member_of_pointer_expression>(expr.callee_expr());
 
     if(!callee && !member_callee && !pm_callee && !ptr_member_callee) {
-        throw_error(0x0022, std::nullopt,
+        throw_error(0x0022, expr.first_lexeme(),
             "Unsupported call expression form: only direct function calls ('func(args)'), "
             "member function calls ('obj.method(args)') and pointer-to-member calls "
             "('obj.*mfp(args)') are supported");
@@ -1774,7 +1775,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         }
         auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type);
         if (!frt) {
-            throw_error(0x0093, std::nullopt,
+            throw_error(0x0093, expr.first_lexeme(),
                 "The '{}' call requires a member function reference type, but got '{}'",
                 {pm_callee->is_arrow() ? "->*" : ".*", mfp_type ? mfp_type->to_string() : "?"});
         }
@@ -1825,7 +1826,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         callee = std::dynamic_pointer_cast<symbol_expression>(
                 member_callee->symbol().shared_as<symbol_expression>());
         if (!callee) {
-            throw_error(0x0023, std::nullopt,
+            throw_error(0x0023, expr.first_lexeme(),
                 "Unsupported member call form: the right-hand side of '.' must be a simple name, "
                 "not a complex expression");
         }
@@ -1835,7 +1836,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         auto this_type = this_expr->get_type(); // should be ref<struct> (possibly base)
 
         if (!type::is_reference(this_type) && !type::is_struct(this_type)) {
-            throw_error(0x0024, std::nullopt,
+            throw_error(0x0024, expr.first_lexeme(),
                 "The '.' operator requires the left-hand side to have a reference type, "
                 "but '{}' is not a reference; did you mean to use a reference parameter?",
                 {this_type ? this_type->to_string() : "?"});
@@ -1846,7 +1847,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         auto bare_subtype = type::remove_const(subtype);
         auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype);
         if (!struct_subtype) {
-            throw_error(0x0025, std::nullopt,
+            throw_error(0x0025, expr.first_lexeme(),
                 "The '.' operator can only be applied to a struct type, "
                 "but the left-hand side has type '{}' which is not a struct",
                 {bare_subtype ? bare_subtype->to_string() : "?"});
@@ -1880,7 +1881,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             find_class(st);
 
             if (!qualifying_agg) {
-                throw_error(0x0040, std::nullopt,
+                throw_error(0x0040, expr.first_lexeme(),
                     "Qualified member call '{}': '{}' is not a base class of '{}'; "
                     "the qualifying class must be the class itself or one of its base classes",
                     {callee->get_name().to_string(), qualifying_class_name, st->get_short_name()});
@@ -1894,7 +1895,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 }
             }
             if (qual_candidates.empty()) {
-                throw_error(0x0041, std::nullopt,
+                throw_error(0x0041, expr.first_lexeme(),
                     "No function named '{}' found in class '{}'",
                     {func_short_name, qualifying_class_name});
             }
@@ -1935,7 +1936,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 }
             }
             if (const_candidates.empty() && !candidates.empty()) {
-                throw_error(0x0034, std::nullopt,
+                throw_error(0x0034, expr.first_lexeme(),
                     "Cannot call mutable member function '{}' on a const object of type '{}': "
                     "only const member functions can be called on const objects",
                     {func_short_name, struct_subtype->name()});
@@ -1944,7 +1945,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         }
 
         if (candidates.empty()) {
-            throw_error(0x0026, std::nullopt,
+            throw_error(0x0026, expr.first_lexeme(),
                 "No function named '{}' found in struct '{}' or its enclosing scopes; "
                 "check the spelling or verify that '{}' is declared as a method or free function",
                 {callee->get_name().to_string(), st->get_short_name(),
@@ -1959,13 +1960,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
         // Static constructors and destructors cannot be called explicitly
         if (std::dynamic_pointer_cast<static_constructor>(best.func)) {
-            throw_error(0x002B, std::nullopt,
+            throw_error(0x002B, expr.first_lexeme(),
                 "Static constructor '{}' cannot be called explicitly; "
                 "it is automatically invoked during program initialization",
                 {best.func->get_short_name()});
         }
         if (std::dynamic_pointer_cast<static_destructor>(best.func)) {
-            throw_error(0x002C, std::nullopt,
+            throw_error(0x002C, expr.first_lexeme(),
                 "Static destructor '~{}' cannot be called explicitly; "
                 "it is automatically invoked during program finalization",
                 {best.func->get_short_name()});
@@ -2201,7 +2202,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 }
                 return;
             }
-            throw_error(0x0027, std::nullopt,
+            throw_error(0x0027, expr.first_lexeme(),
                 "No function named '{}' found in the current scope; "
                 "check the spelling or add the appropriate declaration",
                 {func_name});
@@ -2220,13 +2221,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
         // Static constructors and destructors cannot be called explicitly
         if (std::dynamic_pointer_cast<static_constructor>(best.func)) {
-            throw_error(0x002D, std::nullopt,
+            throw_error(0x002D, expr.first_lexeme(),
                 "Static constructor '{}' cannot be called explicitly; "
                 "it is automatically invoked during program initialization",
                 {best.func->get_short_name()});
         }
         if (std::dynamic_pointer_cast<static_destructor>(best.func)) {
-            throw_error(0x002E, std::nullopt,
+            throw_error(0x002E, expr.first_lexeme(),
                 "Static destructor '~{}' cannot be called explicitly; "
                 "it is automatically invoked during program finalization",
                 {best.func->get_short_name()});
@@ -2294,7 +2295,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     auto pm_callee = std::dynamic_pointer_cast<pm_expression>(expr.callee_expr());
 
     if(!callee && !member_callee && !pm_callee) {
-        throw_internal_error(0x000C, std::nullopt,
+        throw_internal_error(0x000C, expr.first_lexeme(),
             "Internal error: unsupported call expression form during code generation; "
             "only direct, member and pointer-to-member function calls are supported");
     }
@@ -2391,7 +2392,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         expr.get_dispatch_info().kind == virtual_dispatch_info::dispatch_kind::INDIRECT_MEMBER) {
         // pm_callee->left() = object expression (this), pm_callee->right() = mfp variable
         if (!pm_callee) {
-            throw_internal_error(0x0048, std::nullopt,
+            throw_internal_error(0x0048, expr.first_lexeme(),
                 "Internal error: INDIRECT_MEMBER dispatch without a pm_expression callee");
         }
 
@@ -2428,7 +2429,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         }
         auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type);
         if (!frt || !mfp_alloca) {
-            throw_internal_error(0x0049, std::nullopt,
+            throw_internal_error(0x0049, expr.first_lexeme(),
                 "Internal error: INDIRECT_MEMBER call: could not obtain function pointer");
         }
 
@@ -2479,7 +2480,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         if (callee) callee->accept(*this);
         llvm::Value* var_addr = _value;
         if (!var_addr) {
-            throw_internal_error(0x0041, std::nullopt,
+            throw_internal_error(0x0041, expr.first_lexeme(),
                 "Internal error: indirect call through function reference produced no LLVM value");
         }
 
@@ -2492,7 +2493,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         }
         auto frt = std::dynamic_pointer_cast<function_reference_type>(inner_type);
         if (!frt) {
-            throw_internal_error(0x0042, std::nullopt,
+            throw_internal_error(0x0042, expr.first_lexeme(),
                 "Internal error: indirect call without a function_reference_type annotation");
         }
 
@@ -2506,7 +2507,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         for (const auto& pt : frt->get_parameter_types()) {
             auto llt = _context->get_llvm_type(pt);
             if (!llt) {
-                throw_internal_error(0x0043, std::nullopt,
+                throw_internal_error(0x0043, expr.first_lexeme(),
                     "Internal error: could not map K parameter type to LLVM type for indirect call");
             }
             param_llvm_types.push_back(llt);
@@ -2522,7 +2523,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             _value = nullptr;
             arg->accept(*this);
             if (!_value) {
-                throw_internal_error(0x0044, std::nullopt,
+                throw_internal_error(0x0044, expr.first_lexeme(),
                     "Internal error: an argument for an indirect call produced no LLVM value");
             }
             call_args.push_back(_value);
@@ -2540,7 +2541,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     if (member_callee) {
         callee = std::dynamic_pointer_cast<symbol_expression>(member_callee->symbol().shared_as<symbol_expression>());
         if (!callee) {
-            throw_internal_error(0x000D, std::nullopt,
+            throw_internal_error(0x000D, expr.first_lexeme(),
                 "Internal error: member function call has a non-symbol callee; "
                 "this should have been rejected during type resolution");
         }
@@ -2548,7 +2549,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         // First argument is the object pointer (this)
         member_callee->sub_expr()->accept(*this);
         if(!_value) {
-            throw_internal_error(0x000E, std::nullopt,
+            throw_internal_error(0x000E, expr.first_lexeme(),
                 "Internal error: failed to generate the 'this' argument for member function call '{}'; "
                 "the object expression produced no LLVM value",
                 {callee ? callee->get_name().to_string() : "<unknown>"});
@@ -2595,7 +2596,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         }
 
         if(!_value) {
-            throw_internal_error(0x000F, std::nullopt,
+            throw_internal_error(0x000F, expr.first_lexeme(),
                 "Internal error: a call argument for '{}' produced no LLVM value during code generation; "
                 "this indicates a bug in expression code generation",
                 {callee ? callee->get_name().to_string() : "<unknown>"});
@@ -2626,7 +2627,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             (function->is_abstract_func() || function->is_external())) {
             // Fall through: llvm_func will remain null; virtual dispatch handles it below.
         } else {
-            throw_internal_error(0x0010, std::nullopt,
+            throw_internal_error(0x0010, expr.first_lexeme(),
                 "Internal error: LLVM declaration not found for function '{}' during code generation; "
                 "the declaration pass must be run before the implementation pass",
                 {function ? function->get_fq_name() : "<null>"});
@@ -2636,7 +2637,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     if(llvm_func == nullptr &&
        !(function && (function->is_abstract_func() ||
                       (function->is_virtual() && function->is_external())))) {
-        throw_internal_error(0x0011, std::nullopt,
+        throw_internal_error(0x0011, expr.first_lexeme(),
             "Internal error: LLVM function object is null for '{}'; "
             "this indicates a compiler bug in the declaration pass",
             {function ? function->get_fq_name() : "<null>"});
@@ -2713,7 +2714,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 fn_type = llvm::FunctionType::get(ret_type_llvm, param_types, false);
             }
             if (!fn_type) {
-                throw_internal_error(0x0015, std::nullopt,
+                throw_internal_error(0x0015, expr.first_lexeme(),
                     "Internal error: cannot build FunctionType for imported virtual dispatch of '{}'",
                     {function ? function->get_fq_name() : "<null>"});
             }
@@ -2721,7 +2722,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             auto* struct_llvm_type = imp_agg->get_struct_type()
                                      ? imp_agg->get_struct_type()->get_llvm_type() : nullptr;
             if (!struct_llvm_type) {
-                throw_internal_error(0x0016, std::nullopt,
+                throw_internal_error(0x0016, expr.first_lexeme(),
                     "Internal error: imported aggregate '{}' has no LLVM struct type",
                     {imp_agg->get_fq_name()});
             }
@@ -2848,7 +2849,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             }
         }
         if (!type::is_resolved(elem_type)) {
-            throw_error(0x0055, std::nullopt,
+            throw_error(0x0055, expr.first_lexeme(),
                 "Cannot resolve element type of 'new' uniform array expression: type '{}' is unknown",
                 {elem_type ? elem_type->to_string() : "<null>"});
             return;
@@ -2870,7 +2871,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
                 auto adapted_size = adapt_type(expr._array_size_expr, uint_type);
                 if (!adapted_size) {
-                    throw_error(0x4233, std::nullopt,
+                    throw_error(0x4233, expr.first_lexeme(),
                         "Uniform array size expression must be convertible to an unsigned integer; "
                         "expression has type '{}'",
                         {expr._array_size_expr->get_type() ? expr._array_size_expr->get_type()->to_string() : "?"});
@@ -2887,7 +2888,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
             auto struct_model = st_type->get_struct();
             if (struct_model && struct_model->is_abstract()) {
-                throw_error(0x4230, std::nullopt,
+                throw_error(0x4230, expr.first_lexeme(),
                     "Cannot create uniform array of abstract class '{}'",
                     {struct_model->get_short_name()});
                 return;
@@ -2898,7 +2899,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
             auto struct_model = st_type->get_struct();
             if (!struct_model) {
-                throw_error(0x4225, std::nullopt,
+                throw_error(0x4225, expr.first_lexeme(),
                     "Cannot resolve struct for uniform 'new {}(...)[]': aggregate not resolved",
                     {st_type->to_string()});
                 return;
@@ -2906,7 +2907,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             auto [best_ctor, adapted_args] = get_best_matching_constructor(
                 struct_model->constructors(), expr._uniform_ctor_args);
             if (!best_ctor) {
-                throw_error(0x4231, std::nullopt,
+                throw_error(0x4231, expr.first_lexeme(),
                     "No matching constructor for uniform array init of type '{}'",
                     {st_type->to_string()});
                 return;
@@ -2917,7 +2918,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         } else if (type::is_primitive(elem_type)) {
             // Primitive: must have exactly one arg convertible to the element type
             if (expr._uniform_ctor_args.size() > 1) {
-                throw_error(0x4232, std::nullopt,
+                throw_error(0x4232, expr.first_lexeme(),
                     "Uniform array init for primitive type '{}' expects at most one argument, got {}",
                     {elem_type->to_string(), std::to_string(expr._uniform_ctor_args.size())});
                 return;
@@ -2925,7 +2926,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             if (!expr._uniform_ctor_args.empty() && expr._uniform_ctor_args[0]) {
                 auto cast = adapt_type(expr._uniform_ctor_args[0], elem_type);
                 if (!cast) {
-                    throw_error(0x4232, std::nullopt,
+                    throw_error(0x4232, expr.first_lexeme(),
                         "Cannot convert uniform init value to primitive element type '{}'",
                         {elem_type->to_string()});
                     return;
@@ -2991,7 +2992,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             }
         }
         if (!type::is_resolved(elem_type)) {
-            throw_error(0x0055, std::nullopt,
+            throw_error(0x0055, expr.first_lexeme(),
                 "Cannot resolve element type of 'new[]' expression: type '{}' is unknown",
                 {elem_type ? elem_type->to_string() : "<null>"});
             return;
@@ -3018,7 +3019,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
                 auto adapted_size = adapt_type(expr._array_size_expr, uint_type);
                 if (!adapted_size) {
-                    throw_error(0x4221, std::nullopt,
+                    throw_error(0x4221, expr.first_lexeme(),
                         "Array size expression for 'new[]' must be convertible to an unsigned integer; "
                         "expression has type '{}'",
                         {expr._array_size_expr->get_type() ? expr._array_size_expr->get_type()->to_string() : "?"});
@@ -3031,7 +3032,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
 
                 // Brace initializers are not allowed for dynamic-sized arrays
                 if (expr._has_brace_init) {
-                    throw_error(0x422A, std::nullopt,
+                    throw_error(0x422A, expr.first_lexeme(),
                         "Brace initializer lists are not allowed for dynamically-sized 'new[]' arrays; "
                         "all elements will be default-initialized");
                     return;
@@ -3042,7 +3043,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             arr_size = init_count;
             if (arr_size == 0 && !expr._has_brace_init) {
                 // new T[] with no brace init at all → cannot infer the size
-                throw_error(0x4229, std::nullopt,
+                throw_error(0x4229, expr.first_lexeme(),
                     "Cannot infer array size for 'new[]': "
                     "either provide an explicit size or a brace initializer list");
                 return;
@@ -3060,13 +3061,13 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
                 auto struct_model = st_type->get_struct();
                 if (!struct_model) {
-                    throw_error(0x4225, std::nullopt,
+                    throw_error(0x4225, expr.first_lexeme(),
                         "Cannot resolve struct for 'new {}[]': aggregate not resolved",
                         {st_type->to_string()});
                     return;
                 }
                 if (struct_model->is_abstract()) {
-                    throw_error(0x4226, std::nullopt,
+                    throw_error(0x4226, expr.first_lexeme(),
                         "Cannot 'new' array of abstract class '{}'",
                         {struct_model->get_short_name()});
                     return;
@@ -3089,7 +3090,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
 
         // Validate init count vs array size
         if (init_count > arr_size) {
-            throw_error(0x4222, std::nullopt,
+            throw_error(0x4222, expr.first_lexeme(),
                 "Array initializer list for 'new {}[{}]' has {} elements: too many initializers",
                 {elem_type->to_string(), std::to_string(arr_size), std::to_string(init_count)});
             return;
@@ -3113,7 +3114,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 if (!e) continue;
                 auto cast = adapt_type(e, elem_type);
                 if (!cast) {
-                    throw_error(0x4224, std::nullopt,
+                    throw_error(0x4224, expr.first_lexeme(),
                         "Cannot convert element {} to type '{}' in 'new[]' initializer",
                         {std::to_string(i), elem_type->to_string()});
                 } else if (cast != e) {
@@ -3123,13 +3124,13 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
             auto struct_model = st_type->get_struct();
             if (!struct_model) {
-                throw_error(0x4225, std::nullopt,
+                throw_error(0x4225, expr.first_lexeme(),
                     "Cannot resolve struct for 'new {}[]': aggregate not resolved",
                     {st_type->to_string()});
                 return;
             }
             if (struct_model->is_abstract()) {
-                throw_error(0x4226, std::nullopt,
+                throw_error(0x4226, expr.first_lexeme(),
                     "Cannot 'new' array of abstract class '{}'",
                     {struct_model->get_short_name()});
                 return;
@@ -3145,7 +3146,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                     for (auto& arg : func_inv->arguments()) ctor_args.push_back(arg);
                     auto [best_ctor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
                     if (!best_ctor) {
-                        throw_error(0x4227, std::nullopt,
+                        throw_error(0x4227, expr.first_lexeme(),
                             "No matching constructor for element {} of type '{}' in 'new[]'",
                             {std::to_string(i), st_type->to_string()});
                     }
@@ -3157,7 +3158,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                     std::vector<std::shared_ptr<expression>> ctor_args = {e};
                     auto [best_ctor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
                     if (!best_ctor) {
-                        throw_error(0x4228, std::nullopt,
+                        throw_error(0x4228, expr.first_lexeme(),
                             "No matching single-parameter constructor for element {} of type '{}' "
                             "with argument type '{}' in 'new[]'",
                             {std::to_string(i), st_type->to_string(),
@@ -3222,7 +3223,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
     }
 
     if (!type::is_resolved(alloc_type)) {
-        throw_error(0x0055, std::nullopt,
+        throw_error(0x0055, expr.first_lexeme(),
             "Cannot resolve the type of 'new' expression: type '{}' is unknown",
             {alloc_type ? alloc_type->to_string() : "<null>"});
     }
@@ -3234,18 +3235,18 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
     if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
         auto st = st_type->get_struct();
         if (!st) {
-            throw_error(0x0056, std::nullopt,
+            throw_error(0x0056, expr.first_lexeme(),
                 "Cannot 'new' a struct type '{}': the aggregate is not resolved",
                 {st_type->to_string()});
         }
         if (st->is_abstract()) {
-            throw_error(0x0057, std::nullopt,
+            throw_error(0x0057, expr.first_lexeme(),
                 "Cannot 'new' abstract class '{}': abstract classes cannot be directly instantiated",
                 {st->get_short_name()});
         }
         auto [best_ctor, adapted_args] = get_best_matching_constructor(st->constructors(), expr.arguments());
         if (!best_ctor) {
-            throw_error(0x0058, std::nullopt,
+            throw_error(0x0058, expr.first_lexeme(),
                 "No matching constructor found for 'new {}': none of the available constructors "
                 "can be called with the provided arguments",
                 {st_type->to_string()});
@@ -3275,7 +3276,7 @@ void type_reference_resolver::visit_delete_expression(delete_expression& expr) {
     // The sub-expression must be an owner (directly or via reference-to-owner)
     auto sub = expr.sub_expr();
     if (!sub) {
-        throw_error(0x0059, std::nullopt, "'delete' requires an expression");
+        throw_error(0x0059, expr.first_lexeme(), "'delete' requires an expression");
     }
     auto sub_type = sub->get_type();
     // Unwrap reference-to-owner if needed
@@ -3284,7 +3285,7 @@ void type_reference_resolver::visit_delete_expression(delete_expression& expr) {
         sub_type = ref->get_subtype();
     }
     if (!type::is_owner(sub_type)) {
-        throw_error(0x005A, std::nullopt,
+        throw_error(0x005A, expr.first_lexeme(),
             "'delete' can only be applied to an owner ('!') type, got '{}'",
             {sub->get_type() ? sub->get_type()->to_string() : "<null>"});
     }
@@ -3389,7 +3390,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
             auto struct_model = st_type->get_struct();
             if (struct_model && struct_model->is_abstract()) {
-                throw_error(0x4230, std::nullopt,
+                throw_error(0x4230, expr.first_lexeme(),
                     "Cannot create uniform array of abstract class '{}'",
                     {struct_model->get_short_name()});
                 return;
@@ -3403,7 +3404,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
             auto [best_ctor, adapted_args] = get_best_matching_constructor(
                 struct_model->constructors(), expr._uniform_ctor_args);
             if (!best_ctor) {
-                throw_error(0x4231, std::nullopt,
+                throw_error(0x4231, expr.first_lexeme(),
                     "No matching constructor for uniform array init of type '{}'",
                     {st_type->to_string()});
                 return;
@@ -3413,7 +3414,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
         } else if (type::is_primitive(elem_type)) {
             // Primitive: must have exactly one arg convertible to the element type
             if (expr._uniform_ctor_args.size() > 1) {
-                throw_error(0x4232, std::nullopt,
+                throw_error(0x4232, expr.first_lexeme(),
                     "Uniform array init for primitive type '{}' expects at most one argument, got {}",
                     {elem_type->to_string(), std::to_string(expr._uniform_ctor_args.size())});
                 return;
@@ -3421,7 +3422,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
             if (!expr._uniform_ctor_args.empty() && expr._uniform_ctor_args[0]) {
                 auto cast = adapt_type(expr._uniform_ctor_args[0], elem_type);
                 if (!cast) {
-                    throw_error(0x4232, std::nullopt,
+                    throw_error(0x4232, expr.first_lexeme(),
                         "Cannot convert uniform init value to primitive element type '{}'",
                         {elem_type->to_string()});
                     return;
@@ -3453,7 +3454,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
     size_t init_count = expr.size();
 
     if (init_count > arr_size) {
-        throw_error(0x4210, std::nullopt,
+        throw_error(0x4210, expr.first_lexeme(),
             "Array initializer list has {} elements, but the array '{}' has size {}: too many initializers",
             {std::to_string(init_count), var_def->get_fq_name(), std::to_string(arr_size)});
         return;
@@ -3473,7 +3474,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
             if (!e) continue; // default-init slot
             auto cast = adapt_type(e, elem_type);
             if (!cast) {
-                throw_error(0x4212, std::nullopt,
+                throw_error(0x4212, expr.first_lexeme(),
                     "Cannot convert array element {} to type '{}' for array '{}'",
                     {std::to_string(i), elem_type->to_string(), var_def->get_fq_name()});
             } else if (cast != e) {
@@ -3488,7 +3489,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
             if (!e) continue;
             auto cast = adapt_type(e, elem_type);
             if (!cast) {
-                throw_error(0x4212, std::nullopt,
+                throw_error(0x4212, expr.first_lexeme(),
                     "Cannot convert array element {} to indirection type '{}' for array '{}'",
                     {std::to_string(i), elem_type->to_string(), var_def->get_fq_name()});
             } else if (cast != e) {
@@ -3512,7 +3513,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
                 }
                 auto [best_ctor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
                 if (!best_ctor) {
-                    throw_error(0x4213, std::nullopt,
+                    throw_error(0x4213, expr.first_lexeme(),
                         "No matching constructor for array element {} of type '{}'",
                         {std::to_string(i), st_type->to_string()});
                 }
@@ -3524,7 +3525,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
                 std::vector<std::shared_ptr<expression>> ctor_args = {e};
                 auto [best_ctor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
                 if (!best_ctor) {
-                    throw_error(0x4214, std::nullopt,
+                    throw_error(0x4214, expr.first_lexeme(),
                         "No matching single-parameter constructor for array element {} of type '{}' "
                         "with argument type '{}'",
                         {std::to_string(i), st_type->to_string(),
@@ -3565,7 +3566,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
 
         st_type = std::dynamic_pointer_cast<struct_type>(var_type);
         if (!st_type) {
-            throw_error(0x4250, std::nullopt,
+            throw_error(0x4250, expr.first_lexeme(),
                 "Designated initializer can only be used with struct types, but '{}' has type '{}'",
                 {var_def->get_fq_name(), var_type ? var_type->to_string() : "?"});
             return;
@@ -3575,7 +3576,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
 
         // Only valid for structs, not classes with virtual inheritance
         if (target_struct->is_class() && target_struct->has_virtual_bases()) {
-            throw_error(0x4251, std::nullopt,
+            throw_error(0x4251, expr.first_lexeme(),
                 "Designated initializer cannot be used with class '{}' which has virtual bases",
                 {target_struct->get_short_name()});
             return;
@@ -3631,7 +3632,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
 
         // Check for duplicate designators
         if (seen_members.count(full_name)) {
-            throw_error(0x4252, std::nullopt,
+            throw_error(0x4252, expr.first_lexeme(),
                 "Duplicate designated initializer for member '.{}'",
                 {full_name});
             continue;
@@ -3641,7 +3642,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
         // Find the member
         auto it = all_members.find(m.member_name);
         if (it == all_members.end()) {
-            throw_error(0x4253, std::nullopt,
+            throw_error(0x4253, expr.first_lexeme(),
                 "No member '{}' in struct '{}' for designated initializer",
                 {m.member_name, target_struct->get_short_name()});
             continue;
@@ -3653,7 +3654,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
         std::shared_ptr<member_variable_definition> resolved_mem;
         std::shared_ptr<aggregate> resolved_owner;
         if (candidates.size() > 1 && m.qualifier.empty()) {
-            throw_error(0x4254, std::nullopt,
+            throw_error(0x4254, expr.first_lexeme(),
                 "Ambiguous member '{}' in struct '{}': "
                 "use a qualified name (e.g. '.Base::{}') to disambiguate",
                 {m.member_name, target_struct->get_short_name(), m.member_name});
@@ -3670,7 +3671,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
                 }
             }
             if (!found) {
-                throw_error(0x4255, std::nullopt,
+                throw_error(0x4255, expr.first_lexeme(),
                     "No member '{}::{}' found in struct '{}'",
                     {m.qualifier, m.member_name, target_struct->get_short_name()});
                 continue;
@@ -3682,7 +3683,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
 
         // Check accessibility
         if (resolved_mem->get_visibility() == PRIVATE || resolved_mem->get_visibility() == PROTECTED) {
-            throw_error(0x4256, std::nullopt,
+            throw_error(0x4256, expr.first_lexeme(),
                 "Member '{}' is {} in struct '{}' and cannot be used in a designated initializer",
                 {full_name,
                  resolved_mem->get_visibility() == PRIVATE ? "private" : "protected",
@@ -3703,7 +3704,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
                     auto [best_ctor, adapted_args] = get_best_matching_constructor(
                         mem_struct->constructors(), m.args);
                     if (!best_ctor) {
-                        throw_error(0x4257, std::nullopt,
+                        throw_error(0x4257, expr.first_lexeme(),
                             "No matching constructor for member '{}' of type '{}'",
                             {full_name, mem_st_type->to_string()});
                     } else {
@@ -3714,13 +3715,13 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
             } else {
                 // Primitive or indirection: constructor form is like a single-arg init
                 if (m.args.size() != 1) {
-                    throw_error(0x4258, std::nullopt,
+                    throw_error(0x4258, expr.first_lexeme(),
                         "Constructor form for non-aggregate member '{}' of type '{}' expects exactly one argument",
                         {full_name, member_type ? member_type->to_string() : "?"});
                 } else if (m.args[0]) {
                     auto cast = adapt_type(m.args[0], member_type);
                     if (!cast) {
-                        throw_error(0x4259, std::nullopt,
+                        throw_error(0x4259, expr.first_lexeme(),
                             "Cannot convert argument to type '{}' for member '{}'",
                             {member_type->to_string(), full_name});
                     } else if (cast != m.args[0]) {
@@ -3742,7 +3743,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
                 } else {
                     auto cast = adapt_type(m.value, member_type);
                     if (!cast) {
-                        throw_error(0x425A, std::nullopt,
+                        throw_error(0x425A, expr.first_lexeme(),
                             "Cannot convert initializer value to type '{}' for member '{}'",
                             {member_type ? member_type->to_string() : "?", full_name});
                     } else if (cast != m.value) {
@@ -4563,7 +4564,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
     // so type is set to the reference of the constructed symbol type.
     auto var_def = expr.constructed_symbol()->get_variable_def();
     if(!var_def) {
-        throw_internal_error(0x0007, std::nullopt,
+        throw_internal_error(0x0007, expr.first_lexeme(),
             "Internal error: constructor invocation expression does not refer to a variable definition; "
             "the constructed symbol must be a variable — this indicates a compiler bug");
     }
@@ -4572,7 +4573,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
     // Check if constructor is explicitly needed
     auto var_type = var_def->get_type();
     if (!var_type) {
-        throw_internal_error(0x0008, std::nullopt,
+        throw_internal_error(0x0008, expr.first_lexeme(),
             "Internal error: constructor invocation refers to a variable '{}' with no type; "
             "the type must be resolved before constructor invocation can be typed",
             {var_def->get_fq_name()});
@@ -4591,7 +4592,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
         //   MonEnum           — default construction (uses default entry)
         auto en = et->get_enumeration();
         if (!en) {
-            throw_internal_error(0x0081, std::nullopt,
+            throw_internal_error(0x0081, expr.first_lexeme(),
                 "Internal error: enum_type has no associated enumeration model object");
         }
         if (expr.empty()) {
@@ -4613,7 +4614,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
                     val->set_type(et);
                     expr.assign_argument(0, val);
                 } else {
-                    throw_error(0x0082, std::nullopt,
+                    throw_error(0x0082, expr.first_lexeme(),
                         "Enum '{}' has no entry named '{}'",
                         {en->get_short_name(), entry_name});
                 }
@@ -4627,7 +4628,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
                 }
             }
         } else {
-            throw_error(0x0083, std::nullopt,
+            throw_error(0x0083, expr.first_lexeme(),
                 "Enum constructor takes at most one argument, but {} were provided",
                 {std::to_string(expr.size())});
         }
@@ -4700,7 +4701,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
 
         auto [best_constructor, adapted_args] = get_best_matching_constructor(st->constructors(), ctor_args);
         if (!best_constructor) {
-            throw_error(0x002A, std::nullopt,
+            throw_error(0x002A, expr.first_lexeme(),
                 "No matching constructor found for member initialisation of type '{}': "
                 "none of the available constructors can be called with the provided arguments",
                 {st_type->to_string()});
@@ -4713,7 +4714,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             bool is_subobject_init = (var_name.rfind("__base_", 0) == 0)
                                   || (var_name.rfind("__vbase_", 0) == 0);
             if (!is_subobject_init) {
-                throw_error(0x0032, std::nullopt,
+                throw_error(0x0032, expr.first_lexeme(),
                     "Cannot instantiate abstract class '{}'; abstract classes cannot be directly instantiated",
                     {st->get_short_name()});
             }
@@ -4728,7 +4729,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
 void implementation_generator::visit_constructor_invocation_expression(constructor_invocation_expression& expr) {
     auto var_def = expr.constructed_symbol()->get_variable_def();
     if (!var_def) {
-        throw_internal_error(0x0012, std::nullopt,
+        throw_internal_error(0x0012, expr.first_lexeme(),
             "Internal error: constructor invocation expression does not refer to a variable definition; "
             "this indicates a compiler bug — the constructed symbol must be a variable");
     }
@@ -4742,7 +4743,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
     _value = nullptr;
 
     if(!object_ref) {
-        throw_internal_error(0x0013, std::nullopt,
+        throw_internal_error(0x0013, expr.first_lexeme(),
             "Internal error: failed to obtain an LLVM reference for the object being constructed ('{}'); "
             "the variable must have been allocated before constructor code generation",
             {var_def->get_fq_name()});
@@ -4756,7 +4757,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 if (!std::dynamic_pointer_cast<global_variable_definition>(value_expr)) {
                     llvm::Constant* constant = _context->get_llvm_constant_from_value_expression(*value_expr);
                     if (constant == nullptr) {
-                        throw_internal_error(0x0014, std::nullopt,
+                        throw_internal_error(0x0014, expr.first_lexeme(),
                             "Internal error: failed to generate an LLVM constant from a literal value expression "
                             "during primitive constructor invocation for variable '{}'; "
                             "this indicates a compiler bug",
@@ -4770,7 +4771,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 _value = nullptr;
                 first_arg->accept(*this);
                 if (!_value) {
-                    throw_internal_error(0x0015, std::nullopt,
+                    throw_internal_error(0x0015, expr.first_lexeme(),
                         "Internal error: failed to generate an LLVM value for the initialisation argument "
                         "of variable '{}'; the argument expression produced no result",
                         {var_def->get_fq_name()});
@@ -4790,7 +4791,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             _value = nullptr;
             first_arg->accept(*this);
             if (!_value) {
-                throw_internal_error(0x0084, std::nullopt,
+                throw_internal_error(0x0084, expr.first_lexeme(),
                     "Internal error: failed to generate an LLVM value for enum initialisation "
                     "of variable '{}'; the argument expression produced no result",
                     {var_def->get_fq_name()});
@@ -4833,7 +4834,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             _value = nullptr;
             arg->accept(*this);
             if(!_value) {
-                throw_internal_error(0x0016, std::nullopt,
+                throw_internal_error(0x0016, expr.first_lexeme(),
                     "Internal error: a constructor argument for type '{}' produced no LLVM value; "
                     "this indicates a code-generation bug",
                     {st_type->to_string()});
@@ -4842,14 +4843,14 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         }
         auto it = _context->_functions.find(function);
         if(it==_context->_functions.end()) {
-            throw_internal_error(0x0017, std::nullopt,
+            throw_internal_error(0x0017, expr.first_lexeme(),
                 "Internal error: LLVM declaration not found for constructor of type '{}'; "
                 "the declaration pass must be run before the implementation pass",
                 {st_type->to_string()});
         }
         llvm::Function* llvm_func = it->second;
         if(!llvm_func) {
-            throw_internal_error(0x0018, std::nullopt,
+            throw_internal_error(0x0018, expr.first_lexeme(),
                 "Internal error: LLVM constructor function object is null for type '{}'; "
                 "this indicates a compiler bug in the declaration pass",
                 {st_type->to_string()});
@@ -4972,7 +4973,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         }
 
         if (!alloca_ptr) {
-            throw_internal_error(0x001A, std::nullopt,
+            throw_internal_error(0x001A, expr.first_lexeme(),
                 "Internal error: could not obtain the storage location for reference variable '{}'; "
                 "the variable must have been allocated before constructor code generation",
                 {var_def->get_fq_name()});
@@ -4983,7 +4984,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             _value = nullptr;
             first_arg->accept(*this);
             if (!_value) {
-                throw_internal_error(0x001B, std::nullopt,
+                throw_internal_error(0x001B, expr.first_lexeme(),
                     "Internal error: reference variable '{}' initialisation argument produced no LLVM value; "
                     "this indicates a code-generation bug",
                     {var_def->get_fq_name()});
@@ -5099,7 +5100,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 object_ref = alloca_ptr;
             }
         } else {
-            throw_internal_error(0x001C, std::nullopt,
+            throw_internal_error(0x001C, expr.first_lexeme(),
                 "Internal error: reference variable '{}' has no initialisation argument; "
                 "the resolver should have rejected this earlier",
                 {var_def->get_fq_name()});
@@ -5110,7 +5111,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         // No explicit init — zero-initialise the entire struct, then set the count field.
         auto* struct_llvm = sized_arr_type->get_llvm_struct_type();
         if (!struct_llvm) {
-            throw_internal_error(0x001D, std::nullopt,
+            throw_internal_error(0x001D, expr.first_lexeme(),
                 "Internal error: sized array variable '{}' has no LLVM struct type",
                 {var_def->get_fq_name()});
         }
@@ -5196,7 +5197,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                 target_type = resolved2;
                 expr.set_cast_type(target_type);
             } else {
-                throw_error(0x40035, std::nullopt,
+                throw_error(0x40035, expr.first_lexeme(),
                     "Cannot resolve target type of explicit cast: '{}' is unknown in this scope",
                     {target_type ? target_type->to_string() : "?"});
             }
@@ -5254,7 +5255,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                         // Set null_is_fatal on the cast_expression for non-null targets.
                         expr.set_null_is_fatal(target_is_nonnull(target_type));
                     } else {
-                        throw_error(0x40033, std::nullopt,
+                        throw_error(0x40033, expr.first_lexeme(),
                             "Explicit cast: cannot cast from '{}' to '{}': "
                             "the pointed types have no inheritance relationship",
                             {source_type->to_string(), target_type->to_string()});
@@ -5293,7 +5294,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                         // Dynamic downcast ref<Base>→ref<Derived>: ref is non-null → fatal.
                         expr.set_null_is_fatal(true);
                     } else {
-                        throw_error(0x40034, std::nullopt,
+                        throw_error(0x40034, expr.first_lexeme(),
                             "Explicit cast: cannot cast reference from '{}' to '{}': "
                             "the referenced types have no inheritance relationship",
                             {source_type->to_string(), target_type->to_string()});
@@ -5359,7 +5360,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     auto target_type = expr.get_cast_type();
 
     if(!source_type->is_resolved() || !target_type->is_resolved()) {
-        throw_internal_error(0x0019, std::nullopt,
+        throw_internal_error(0x0019, expr.first_lexeme(),
             "Internal error: cast expression has an unresolved source or target type; "
             "type resolution must complete before code generation");
     }
@@ -5838,7 +5839,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     }
 
     if(!type::is_primitive(source_type) || !type::is_primitive(target_type)) {
-        throw_error(0x001A, std::nullopt,
+        throw_error(0x001A, expr.first_lexeme(),
             "Casting between non-primitive types is not yet supported: "
             "cannot cast from '{}' to '{}'; only casts between primitive types are currently implemented",
             {source_type->to_string(), target_type->to_string()});
@@ -5849,7 +5850,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
     if(!_value) {
-        throw_internal_error(0x001A, std::nullopt,
+        throw_internal_error(0x001A, expr.first_lexeme(),
             "Internal error: the expression being cast produced no LLVM value; "
             "this indicates a code-generation bug in the sub-expression");
     }
@@ -5971,7 +5972,7 @@ void implementation_generator::emit_dynamic_cast(
     auto tgt_klass = std::dynamic_pointer_cast<klass>(tgt_st);
 
     if (!src_st || !tgt_st || !tgt_klass) {
-        throw_internal_error(0x0026, std::nullopt,
+        throw_internal_error(0x0026, expr.first_lexeme(),
             "emit_dynamic_cast: source or target is not a class/interface aggregate");
     }
 
@@ -5995,7 +5996,7 @@ void implementation_generator::emit_dynamic_cast(
     std::string rtti_name = mangler::mangle_rtti(tgt_klass->get_name());
     llvm::GlobalVariable* tgt_rtti_gv = _context->module().getNamedGlobal(rtti_name);
     if (!tgt_rtti_gv) {
-        throw_internal_error(0x0027, std::nullopt,
+        throw_internal_error(0x0027, expr.first_lexeme(),
             "emit_dynamic_cast: RTTI global '{}' not found in module",
             {rtti_name});
     }
@@ -6003,14 +6004,14 @@ void implementation_generator::emit_dynamic_cast(
     // ── 3. Load the vptr from the source object (field 0 of the klass) ───────
     auto src_klass = std::dynamic_pointer_cast<klass>(src_st);
     if (!src_klass || !src_klass->has_vtable()) {
-        throw_internal_error(0x0028, std::nullopt,
+        throw_internal_error(0x0028, expr.first_lexeme(),
             "emit_dynamic_cast: source class '{}' has no vtable/vptr",
             {src_st->get_short_name()});
     }
     auto src_vt = src_klass->get_vtable();
     auto* src_llvm_type = src_st_type->get_llvm_type();
     if (!src_llvm_type || !src_vt->llvm_type) {
-        throw_internal_error(0x0029, std::nullopt,
+        throw_internal_error(0x0029, expr.first_lexeme(),
             "emit_dynamic_cast: source class LLVM type not built");
     }
     llvm::Value* vptr_addr = _builder->CreateStructGEP(

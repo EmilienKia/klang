@@ -741,7 +741,7 @@ void type_reference_resolver::visit_expression_statement(expression_statement& s
         // immediately discarded.  This covers both 'new Foo();' and a function call
         // returning T! used as a statement.
         if (type::is_owner(expr->get_type())) {
-            warn(0x5010, std::nullopt,
+            warn(0x5010, expr->first_lexeme(),
                 "Result of expression producing owner type '{}' is immediately discarded — "
                 "the allocated object will be deleted right after construction",
                 {expr->get_type()->to_string()});
@@ -910,7 +910,11 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
                 sized_arr->get_size(), false),
             size_ptr);
     } else {
-        throw_error(0x0003, std::nullopt,
+        lex::opt_any_lexeme var_lexeme;
+        if (auto ast_decl = var.get_ast_variable_decl()) {
+            var_lexeme = lex::any_lexeme{ast_decl->name};
+        }
+        throw_error(0x0003, var_lexeme,
             "Variable '{}' has no initialisation expression; "
             "all variable declarations must have an initialiser (uninitialized variables are not yet supported)",
             {var.get_fq_name()});

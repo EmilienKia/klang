@@ -44,6 +44,7 @@
 #include "model.hpp"
 
 namespace k::parse::ast {
+struct expression;
 struct unary_expression;
 }
 
@@ -66,8 +67,8 @@ protected:
 
     expression() = default;
     expression(std::shared_ptr<type> type) : _type(type) {}
-    // Copy constructor: copies type only, parent is NOT copied (clone is orphan).
-    expression(const expression& other) : _type(other._type) {}
+    // Copy constructor: copies type and AST node, parent is NOT copied (clone is orphan).
+    expression(const expression& other) : _type(other._type) { _ast_node = other._ast_node; }
 
     friend class unary_expression;
     friend class binary_expression;
@@ -94,6 +95,16 @@ public:
     std::shared_ptr<type> get_type() { return _type; }
     std::shared_ptr<const type> get_type() const { return _type; }
 
+    /** Set the AST expression node associated with this model expression. */
+    void set_ast_expression(std::shared_ptr<k::parse::ast::expression> ast) {
+        _ast_node = std::static_pointer_cast<k::parse::ast::ast_node>(std::move(ast));
+    }
+
+    /** Get the AST expression node (typed) associated with this model expression (may be null). */
+    std::shared_ptr<k::parse::ast::expression> get_ast_expression() const {
+        return get_ast_node_as<k::parse::ast::expression>();
+    }
+
     std::shared_ptr<statement> find_statement();
     std::shared_ptr<const statement> find_statement() const;
 
@@ -102,6 +113,26 @@ public:
 
     /** Return a deep copy of this expression, without parent (orphan). */
     virtual std::shared_ptr<expression> clone() const = 0;
+
+    /**
+     * Recursively retrieve the first (leftmost) lexeme covered by this expression's AST subtree.
+     * Returns std::nullopt if no AST node is attached or no lexeme can be found.
+     */
+    virtual std::optional<k::lex::any_lexeme> first_lexeme() const;
+
+    /**
+     * Recursively retrieve the last (rightmost) lexeme covered by this expression's AST subtree.
+     * Returns std::nullopt if no AST node is attached or no lexeme can be found.
+     */
+    virtual std::optional<k::lex::any_lexeme> last_lexeme() const;
+
+    /**
+     * Convenience: returns the source range (first, last) lexemes of this expression.
+     * Either or both may be std::nullopt if not available.
+     */
+    std::pair<std::optional<k::lex::any_lexeme>, std::optional<k::lex::any_lexeme>> source_range() const {
+        return { first_lexeme(), last_lexeme() };
+    }
 };
 
 class value_expression : public expression {
@@ -257,7 +288,6 @@ class unary_expression : public expression {
 protected:
     /** Sub expression. */
     std::shared_ptr<expression> _sub_expr;
-    std::shared_ptr<k::parse::ast::unary_expression> _ast_unary_expr;
 
     /**
      * Resolved operator overload function, set during type resolution.
@@ -299,11 +329,11 @@ public:
     }
 
     void set_ast_unary_expr(const std::shared_ptr<k::parse::ast::unary_expression> &expr) {
-        _ast_unary_expr = expr;
+        _ast_node = std::static_pointer_cast<k::parse::ast::ast_node>(expr);
     }
 
-    const std::shared_ptr<k::parse::ast::unary_expression> &get_ast_unary_expr() const {
-        return _ast_unary_expr;
+    std::shared_ptr<k::parse::ast::unary_expression> get_ast_unary_expr() const {
+        return get_ast_node_as<k::parse::ast::unary_expression>();
     }
 
     /** Resolved operator overload function (nullptr if primitive operation). */
@@ -317,6 +347,9 @@ public:
     void set_operator_dispatch_info(virtual_dispatch_info info) { _operator_dispatch_info = std::move(info); }
 
     std::shared_ptr<expression> clone() const override = 0;
+
+    std::optional<k::lex::any_lexeme> first_lexeme() const override;
+    std::optional<k::lex::any_lexeme> last_lexeme() const override;
 };
 
 class binary_expression : public expression {
@@ -396,6 +429,9 @@ public:
     void set_operator_dispatch_info(virtual_dispatch_info info) { _operator_dispatch_info = std::move(info); }
 
     std::shared_ptr<expression> clone() const override = 0;
+
+    std::optional<k::lex::any_lexeme> first_lexeme() const override;
+    std::optional<k::lex::any_lexeme> last_lexeme() const override;
 };
 
 /**
@@ -416,7 +452,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<load_value_expression> c{new load_value_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
@@ -445,6 +481,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         auto c = make_shared(_sub_expr ? _sub_expr->clone() : nullptr);
         c->_type = _type;
+        c->_ast_node = _ast_node;
         return c;
     }
 };
@@ -462,7 +499,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<address_of_expression> c{new address_of_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
@@ -481,7 +518,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<dereference_expression> c{new dereference_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
@@ -528,7 +565,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<member_of_object_expression> c{new member_of_object_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         auto sym = _symbol ? std::dynamic_pointer_cast<symbol_expression>(_symbol->clone()) : nullptr;
         if (_sub_expr && sym) c->assign(_sub_expr->clone(), sym);
         return c;
@@ -548,7 +585,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<member_of_pointer_expression> c{new member_of_pointer_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         auto sym = _symbol ? std::dynamic_pointer_cast<symbol_expression>(_symbol->clone()) : nullptr;
         if (_sub_expr && sym) c->assign(_sub_expr->clone(), sym);
         return c;
@@ -621,7 +658,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<cast_expression> c{new cast_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         c->_cast_type = _cast_type;
         c->_null_is_fatal = _null_is_fatal;
         if (_sub_expr) c->assign(_sub_expr->clone());

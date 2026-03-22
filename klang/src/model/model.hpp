@@ -34,6 +34,14 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
 
+namespace k::parse::ast {
+struct ast_node;
+struct function_decl;
+struct parameter_spec;
+struct aggregate_decl;
+struct enum_decl;
+}
+
 namespace k::model {
 class constructor_invocation_expression;
 class global_variable_definition;
@@ -261,6 +269,10 @@ class element : public std::enable_shared_from_this<element>
 protected:
     std::shared_ptr<element> _parent = nullptr;
 
+    /** Optional AST node that this model element was built from.
+     *  Set during model building; nullptr when the model is built without parsing. */
+    std::shared_ptr<k::parse::ast::ast_node> _ast_node;
+
     element(std::shared_ptr<element> parent = nullptr) : _parent(parent) {}
 
     friend class statement;
@@ -279,6 +291,15 @@ public:
     virtual ~element() = default;
 
     std::shared_ptr<context> get_context();
+
+    /** Get the AST node associated with this model element (may be null). */
+    std::shared_ptr<k::parse::ast::ast_node> get_ast_node() const { return _ast_node; }
+
+    /** Get the AST node cast to a specific AST type (returns null if not set or wrong type). */
+    template<typename T>
+    std::shared_ptr<T> get_ast_node_as() const {
+        return std::dynamic_pointer_cast<T>(_ast_node);
+    }
 
     template<typename T>
     inline std::shared_ptr<T> shared_as() {
@@ -648,6 +669,14 @@ public:
 
     bool is_resolved() const { return _resolved; }
     void set_resolved(bool v) { _resolved = v; }
+
+    // ── AST node accessors ──
+    void set_ast_enum_decl(std::shared_ptr<k::parse::ast::enum_decl> ast) {
+        _ast_node = std::static_pointer_cast<k::parse::ast::ast_node>(std::move(ast));
+    }
+    std::shared_ptr<k::parse::ast::enum_decl> get_ast_enum_decl() const {
+        return get_ast_node_as<k::parse::ast::enum_decl>();
+    }
 };
 
 
@@ -799,6 +828,15 @@ public:
 
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }
+
+    /** Set the AST aggregate_decl node this aggregate was built from. */
+    void set_ast_aggregate_decl(std::shared_ptr<k::parse::ast::aggregate_decl> ast) {
+        _ast_node = std::static_pointer_cast<k::parse::ast::ast_node>(std::move(ast));
+    }
+    /** Get the AST aggregate_decl node (may be null). */
+    std::shared_ptr<k::parse::ast::aggregate_decl> get_ast_aggregate_decl() const {
+        return get_ast_node_as<k::parse::ast::aggregate_decl>();
+    }
 
     /** True if this aggregate is declared inside another aggregate (static or non-static). */
     bool is_nested() const { return !!parent<aggregate>(); }
@@ -1095,6 +1133,15 @@ public:
     void set_default_expr(std::shared_ptr<expression> expr) { _default_expr = std::move(expr); }
     /** True if this parameter has a default value expression. */
     bool has_default_expr() const { return _default_expr != nullptr; }
+
+    /** Set the AST parameter_spec node this parameter was built from. */
+    void set_ast_parameter_spec(std::shared_ptr<k::parse::ast::parameter_spec> ast) {
+        _ast_node = std::static_pointer_cast<k::parse::ast::ast_node>(std::move(ast));
+    }
+    /** Get the AST parameter_spec node (may be null). */
+    std::shared_ptr<k::parse::ast::parameter_spec> get_ast_parameter_spec() const {
+        return get_ast_node_as<k::parse::ast::parameter_spec>();
+    }
 };
 
 class function : public element, public named_element, public variable_holder {
@@ -1319,6 +1366,15 @@ public:
     std::shared_ptr<function> get_overrides() const { return _overrides; }
     /** Set the function overridden by this one. */
     void set_overrides(std::shared_ptr<function> f) { _overrides = std::move(f); }
+
+    /** Set the AST function_decl node this function was built from. */
+    void set_ast_function_decl(std::shared_ptr<k::parse::ast::function_decl> ast) {
+        _ast_node = std::static_pointer_cast<k::parse::ast::ast_node>(std::move(ast));
+    }
+    /** Get the AST function_decl node (may be null). */
+    std::shared_ptr<k::parse::ast::function_decl> get_ast_function_decl() const {
+        return get_ast_node_as<k::parse::ast::function_decl>();
+    }
 
 };
 

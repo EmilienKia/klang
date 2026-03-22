@@ -115,6 +115,9 @@ protected:
     /** Last generated statement. */
     std::shared_ptr<model::statement> _stmt;
 
+    /** Current AST declaration being visited (shared_ptr kept alive for diamond-inheritance types). */
+    std::shared_ptr<k::parse::ast::declaration> _current_ast_decl;
+
     model_builder(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::model::unit& unit) :
         k::log::logger_relay(logger, log_error_class),
         _context(context),

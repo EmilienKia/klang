@@ -101,6 +101,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<addition_expression> c{new addition_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -119,6 +120,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<substraction_expression> c{new substraction_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -137,6 +139,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<multiplication_expression> c{new multiplication_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -155,6 +158,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<division_expression> c{new division_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -173,6 +177,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<modulo_expression> c{new modulo_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -191,6 +196,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<bitwise_and_expression> c{new bitwise_and_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -209,6 +215,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<bitwise_or_expression> c{new bitwise_or_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -227,6 +234,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<bitwise_xor_expression> c{new bitwise_xor_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -245,6 +253,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<left_shift_expression> c{new left_shift_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -263,6 +272,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<right_shift_expression> c{new right_shift_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -289,6 +299,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<simple_assignation_expression> c{new simple_assignation_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -315,6 +326,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<additition_assignation_expression> c{new additition_assignation_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -333,6 +345,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<substraction_assignation_expression> c{new substraction_assignation_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -351,6 +364,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<multiplication_assignation_expression> c{new multiplication_assignation_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -369,6 +383,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<division_assignation_expression> c{new division_assignation_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -387,6 +402,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<modulo_assignation_expression> c{new modulo_assignation_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -405,6 +421,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<bitwise_and_assignation_expression> c{new bitwise_and_assignation_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -423,6 +440,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<bitwise_or_assignation_expression> c{new bitwise_or_assignation_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -441,6 +459,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<bitwise_xor_assignation_expression> c{new bitwise_xor_assignation_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -459,6 +478,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<left_shift_assignation_expression> c{new left_shift_assignation_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -477,6 +497,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<right_shift_assignation_expression> c{new right_shift_assignation_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -503,7 +524,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<unary_plus_expression> c{new unary_plus_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
@@ -522,7 +543,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<unary_minus_expression> c{new unary_minus_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
@@ -541,7 +562,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<bitwise_not_expression> c{new bitwise_not_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
@@ -560,7 +581,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<prefix_increment_expression> c{new prefix_increment_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
@@ -579,7 +600,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<prefix_decrement_expression> c{new prefix_decrement_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
@@ -598,7 +619,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<postfix_increment_expression> c{new postfix_increment_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
@@ -617,7 +638,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<postfix_decrement_expression> c{new postfix_decrement_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
@@ -644,6 +665,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<logical_and_expression> c{new logical_and_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -662,6 +684,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<logical_or_expression> c{new logical_or_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -680,7 +703,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<logical_not_expression> c{new logical_not_expression()};
         c->_type = _type;
-        c->_ast_unary_expr = _ast_unary_expr;
+        c->_ast_node = _ast_node;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }
@@ -707,6 +730,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<equal_expression> c{new equal_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -725,6 +749,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<different_expression> c{new different_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -743,6 +768,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<lesser_expression> c{new lesser_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -761,6 +787,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<greater_expression> c{new greater_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -779,6 +806,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<lesser_equal_expression> c{new lesser_equal_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }
@@ -797,6 +825,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<greater_equal_expression> c{new greater_equal_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }

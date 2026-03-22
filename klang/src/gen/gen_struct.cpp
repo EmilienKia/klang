@@ -26,6 +26,7 @@
 #include "../common/operator_names.hpp"
 
 #include "../model/imported.hpp"
+#include "../parse/ast.hpp"
 
 #include <llvm/IR/Verifier.h>
 
@@ -71,6 +72,9 @@ namespace k::model::gen {
 // 15. Generate an implicit destructor if any base or member struct has a destructor.
 // Note: class-specific processing (vtable layout, vptr injection) is done in visit_klass.
 void symbol_resolver::visit_aggregate(aggregate& st) {
+    lex::opt_any_lexeme st_lexeme;
+    if (auto ast_ad = st.get_ast_aggregate_decl()) st_lexeme = lex::any_lexeme{ast_ad->name};
+
     visit_named_element(st);
 
     // Pre declare type
@@ -155,21 +159,21 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             }
 
             if (!base_st) {
-                throw_error(0x0010, std::nullopt,
+                throw_error(0x0010, st_lexeme,
                     "Base class '{}' of struct '{}' is not found",
                     {bs.raw_name, st.get_short_name()});
             }
 
             // A final struct cannot be used as a base class
             if (base_st->is_final()) {
-                throw_error(0x0012, std::nullopt,
+                throw_error(0x0012, st_lexeme,
                     "Cannot inherit from '{}' in struct '{}': '{}' is declared final and cannot be used as a base class",
                     {bs.raw_name, st.get_short_name(), bs.raw_name});
             }
 
             // A const struct cannot inherit from a mutable (non-const) struct
             if (st.is_const_struct() && !base_st->is_const_struct()) {
-                throw_error(0x0033, std::nullopt,
+                throw_error(0x0033, st_lexeme,
                     "const struct '{}' cannot inherit from mutable struct '{}': "
                     "a const struct may only inherit from other const structs",
                     {st.get_short_name(), bs.raw_name});
@@ -183,7 +187,7 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             if (st_is_class_like != base_is_class_like) {
                 std::string kind_st   = st.is_class()       ? "class" : "struct";
                 std::string kind_base = base_st->is_class() ? "class" : "struct";
-                throw_error(0x0035, std::nullopt,
+                throw_error(0x0035, st_lexeme,
                     "{} '{}' cannot inherit from {} '{}': "
                     "cross-inheritance between class and struct is not allowed",
                     {kind_st, st.get_short_name(), kind_base, bs.raw_name});
@@ -212,7 +216,7 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
         std::unordered_set<const aggregate*> visited;
         visited.insert(&st);
         if (detect_cycle(&st, visited)) {
-            throw_error(0x0011, std::nullopt,
+            throw_error(0x0011, st_lexeme,
                 "Circular inheritance detected in struct '{}'",
                 {st.get_short_name()});
         }
@@ -317,7 +321,7 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             if (std::dynamic_pointer_cast<constructor>(func)) continue;
             if (std::dynamic_pointer_cast<destructor>(func)) continue;
             if (!func->is_const_member()) {
-                warn(0x0010, std::nullopt,
+                warn(0x0010, st_lexeme,
                     "member function '{}' of const struct '{}' is not declared 'const'; "
                     "it is implicitly promoted to const",
                     {func->get_short_name(), st.get_short_name()});
@@ -467,6 +471,8 @@ void signature_resolver::visit_aggregate(aggregate& st) {
 //     (duplicate signatures) and constructor overload collisions within this aggregate.
 // Note: class-specific LLVM vtable struct-type building is done in visit_klass.
 void type_reference_resolver::visit_aggregate(aggregate& st) {
+    lex::opt_any_lexeme st_lexeme;
+    if (auto ast_ad = st.get_ast_aggregate_decl()) st_lexeme = lex::any_lexeme{ast_ad->name};
     // Note: const-struct method promotion is already done in symbol_resolver phase.
 
     // Visit nested aggregate children first
@@ -497,7 +503,7 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
             if (!is_asgn) continue;
             if (fn->is_deleted()) continue; // deleted operators have no return type
             if (!fn->has_return_type()) {
-                warn(0x00B1, std::nullopt,
+                warn(0x00B1, st_lexeme,
                     "Assignment operator '{}' in '{}' has no return type; "
                     "conventionally it should return '{}' to allow chaining (e.g. a = b = c)",
                     {name, st.get_short_name(), expected_ret ? expected_ret->to_string() : st.get_short_name() + "&"});
@@ -506,7 +512,7 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
                 if (!type::is_reference(ret) ||
                     !type::are_equal(type::remove_const(std::dynamic_pointer_cast<reference_type>(ret)->get_subtype()),
                                      type::remove_const(st_type))) {
-                    warn(0x00B2, std::nullopt,
+                    warn(0x00B2, st_lexeme,
                         "Assignment operator '{}' in '{}' returns '{}' instead of '{}'; "
                         "returning a reference to the owning type is recommended for chaining",
                         {name, st.get_short_name(),
@@ -569,9 +575,12 @@ void symbol_resolver::visit_enumeration(enumeration& en) {
 void symbol_resolver::resolve_enumeration(enumeration& en) {
     if (en.is_resolved()) return;
 
+    lex::opt_any_lexeme en_lexeme;
+    if (auto ast_ed = en.get_ast_enum_decl()) en_lexeme = lex::any_lexeme{ast_ed->name};
+
     // Cycle detection
     if (en._resolving) {
-        throw_error(0x0090, std::nullopt,
+        throw_error(0x0090, en_lexeme,
             "Circular enum derivation detected involving enum '{}'",
             {en.get_short_name()});
     }
@@ -605,7 +614,7 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         }
 
         if (!base_en) {
-            throw_error(0x0091, std::nullopt,
+            throw_error(0x0091, en_lexeme,
                 "Enum '{}': base enum '{}' not found",
                 {en.get_short_name(), base_name_str});
         }
@@ -663,7 +672,7 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         if (en.has_base()) {
             for (size_t i = 0; i < local_start; ++i) {
                 if (work[i].name == we.name) {
-                    logger_relay::warn(with_flag(0x0092), std::nullopt,
+                    logger_relay::warn(with_flag(0x0092), en_lexeme,
                         "Enum '{}': entry '{}' shadows an inherited entry from base enum '{}'",
                         {en.get_short_name(), we.name, en.get_base()->get_short_name()});
                     break;
@@ -711,11 +720,11 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
     for (auto& we : work) {
         if (!we.resolved) {
             if (!we.ref_name.empty()) {
-                throw_error(0x0073, std::nullopt,
+                throw_error(0x0073, en_lexeme,
                     "Enum entry '{}' references unresolvable entry '{}' (cycle or missing entry)",
                     {we.name, we.ref_name});
             } else {
-                throw_error(0x0074, std::nullopt,
+                throw_error(0x0074, en_lexeme,
                     "Enum entry '{}' could not be resolved (depends on unresolved previous entry)",
                     {we.name});
             }

@@ -68,23 +68,21 @@ protected:
 
     std::shared_ptr<expression> _expression;
 
-    std::shared_ptr<k::parse::ast::return_statement> _ast_return_stmt;
-
 public:
     return_statement() = delete;
     return_statement(const std::shared_ptr<statement>& parent) :
             statement(parent) {}
     return_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::return_statement>& ast) :
-            statement(parent), _ast_return_stmt(ast) {}
+            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
-    void set_ast_return_statement(std::shared_ptr<k::parse::ast::return_statement> _ast_return_stmt) {
-        _ast_return_stmt = _ast_return_stmt;
+    void set_ast_return_statement(std::shared_ptr<k::parse::ast::return_statement> ast) {
+        _ast_node = std::move(ast);
     }
 
     std::shared_ptr<const k::parse::ast::return_statement> get_ast_return_statement() const {
-        return _ast_return_stmt;
+        return get_ast_node_as<k::parse::ast::return_statement>();
     }
 
     std::shared_ptr<expression> get_expression() { return _expression; };
@@ -103,8 +101,6 @@ public:
 class if_else_statement : public statement
 {
 protected:
-    std::shared_ptr<k::parse::ast::if_else_statement> _ast_if_else_stmt;
-
     std::shared_ptr<expression> _test_expr;
     std::shared_ptr<statement> _then_stmt;
     std::shared_ptr<statement> _else_stmt;
@@ -113,16 +109,16 @@ public:
     if_else_statement() = delete;
     if_else_statement(const std::shared_ptr<statement>& parent) : statement(parent) {}
     if_else_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::if_else_statement>& ast) :
-            statement(parent), _ast_if_else_stmt(ast) {}
+            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
-    void set_ast_if_else_stmt(const std::shared_ptr<k::parse::ast::if_else_statement> &ast_if_else_stmt) {
-        _ast_if_else_stmt = ast_if_else_stmt;
+    void set_ast_if_else_stmt(const std::shared_ptr<k::parse::ast::if_else_statement> &ast) {
+        _ast_node = ast;
     }
 
-    const std::shared_ptr<k::parse::ast::if_else_statement> &get_ast_if_else_stmt() const {
-        return _ast_if_else_stmt;
+    std::shared_ptr<k::parse::ast::if_else_statement> get_ast_if_else_stmt() const {
+        return get_ast_node_as<k::parse::ast::if_else_statement>();
     }
 
     void set_test_expr(const std::shared_ptr<expression> &test_expr) {
@@ -163,8 +159,6 @@ public:
 class while_statement : public statement
 {
 protected:
-    std::shared_ptr<k::parse::ast::while_statement> _ast_while_stmt;
-
     std::shared_ptr<expression> _test_expr;
     std::shared_ptr<statement> _nested_stmt;
 
@@ -172,16 +166,16 @@ public:
     while_statement() = delete;
     while_statement(const std::shared_ptr<statement>& parent) : statement(parent) {}
     while_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::while_statement>& ast) :
-            statement(parent), _ast_while_stmt(ast) {}
+            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
-    void set_ast_while_stmt(const std::shared_ptr<k::parse::ast::while_statement> &ast_while_stmt) {
-        _ast_while_stmt = ast_while_stmt;
+    void set_ast_while_stmt(const std::shared_ptr<k::parse::ast::while_statement> &ast) {
+        _ast_node = ast;
     }
 
-    const std::shared_ptr<k::parse::ast::while_statement> &get_ast_while_stmt() const {
-        return _ast_while_stmt;
+    std::shared_ptr<k::parse::ast::while_statement> get_ast_while_stmt() const {
+        return get_ast_node_as<k::parse::ast::while_statement>();
     }
 
     void set_test_expr(const std::shared_ptr<expression> &test_expr) {
@@ -211,8 +205,6 @@ public:
 class for_statement : public statement , public variable_holder
 {
 protected:
-    std::shared_ptr<k::parse::ast::for_statement> _ast_for_stmt;
-
     std::shared_ptr<variable_statement> _decl_stmt;
     std::shared_ptr<expression> _test_expr;
     std::shared_ptr<expression> _step_expr;
@@ -226,11 +218,11 @@ public:
     for_statement() = delete;
     for_statement(const std::shared_ptr<statement>& parent) : statement(parent) {}
     for_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::for_statement>& ast) :
-            statement(parent), _ast_for_stmt(ast) {}
+            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
 
-    const std::shared_ptr<k::parse::ast::for_statement> &get_ast_for_stmt() const;
+    std::shared_ptr<k::parse::ast::for_statement> get_ast_for_stmt() const;
 
     void set_ast_for_stmt(const std::shared_ptr<k::parse::ast::for_statement> &ast_for_stmt);
 
@@ -265,7 +257,6 @@ private:
             statement(parent), _expression(expr) {}
 
     std::shared_ptr<expression> _expression;
-    std::shared_ptr<k::parse::ast::expression_statement> _ast_expr_stmt;
 
 
     friend class block;
@@ -283,9 +274,17 @@ public:
     expression_statement() = delete;
     expression_statement(const std::shared_ptr<statement>& parent) : statement(parent) {}
     expression_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::expression_statement>& ast):
-            statement(parent), _ast_expr_stmt(ast) {}
+            statement(parent) { _ast_node = ast; }
 
     void accept(model_visitor& visitor) override;
+
+    void set_ast_expression_statement(std::shared_ptr<k::parse::ast::expression_statement> ast) {
+        _ast_node = std::move(ast);
+    }
+
+    std::shared_ptr<k::parse::ast::expression_statement> get_ast_expression_statement() const {
+        return get_ast_node_as<k::parse::ast::expression_statement>();
+    }
 
     std::shared_ptr<expression> get_expression() { return _expression; };
     std::shared_ptr<const expression> get_expression() const { return _expression; };
@@ -337,6 +336,20 @@ public:
 
     bool is_parameter() const {
         return (bool)_func_param;
+    }
+
+    void set_ast_variable_decl(std::shared_ptr<k::parse::ast::variable_decl> ast) {
+        // variable_decl has non-virtual diamond inheritance on ast_node
+        // (declaration + statement both inherit from ast_node).
+        // Use aliasing constructor to store the declaration::ast_node subobject.
+        if (ast) {
+            k::parse::ast::ast_node* base = static_cast<k::parse::ast::declaration*>(ast.get());
+            _ast_node = std::shared_ptr<k::parse::ast::ast_node>(std::move(ast), base);
+        }
+    }
+
+    std::shared_ptr<k::parse::ast::variable_decl> get_ast_variable_decl() const {
+        return get_ast_node_as<k::parse::ast::variable_decl>();
     }
 
     virtual variable_definition& set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr) override;

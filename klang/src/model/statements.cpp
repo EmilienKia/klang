@@ -98,12 +98,12 @@ void for_statement::accept(model_visitor &visitor) {
     visitor.visit_for_statement(*this);
 }
 
-const std::shared_ptr<k::parse::ast::for_statement>& for_statement::get_ast_for_stmt() const {
-    return _ast_for_stmt;
+std::shared_ptr<k::parse::ast::for_statement> for_statement::get_ast_for_stmt() const {
+    return get_ast_node_as<k::parse::ast::for_statement>();
 }
 
 void for_statement::set_ast_for_stmt(const std::shared_ptr<k::parse::ast::for_statement> &ast_for_stmt) {
-    _ast_for_stmt = ast_for_stmt;
+    _ast_node = ast_for_stmt;
 }
 
 const std::shared_ptr<variable_statement>& for_statement::get_decl_stmt() const {

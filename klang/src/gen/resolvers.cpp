@@ -58,6 +58,7 @@
 #include "../model/imported.hpp"
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
+#include "../parse/ast.hpp"
 
 #include <llvm/IR/DerivedTypes.h>
 
@@ -387,7 +388,7 @@ void symbol_resolver::resolve_redirect_chains(unit& unit) {
 
 std::shared_ptr<function> symbol_resolver::resolve_redirect_chain(function& fn, std::unordered_set<function*>& visited) {
     if (visited.count(&fn)) {
-        throw_error(0x0051, std::nullopt,
+        throw_error(0x0051, fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "Circular redirect chain detected involving function '{}'",
             {fn.get_short_name()});
     }
@@ -395,7 +396,7 @@ std::shared_ptr<function> symbol_resolver::resolve_redirect_chain(function& fn, 
 
     auto target = fn.get_redirect_target();
     if (!target) {
-        throw_error(0x0052, std::nullopt,
+        throw_error(0x0052, fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "Function redirector '{}' has no resolved target",
             {fn.get_short_name()});
     }
@@ -403,7 +404,7 @@ std::shared_ptr<function> symbol_resolver::resolve_redirect_chain(function& fn, 
     // If the target is itself a redirect, follow the chain
     if (target->is_redirected()) {
         if (!target->get_redirect_target()) {
-            throw_error(0x0053, std::nullopt,
+            throw_error(0x0053, fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
                 "Function redirector '{}' targets '{}', which is itself a redirector with no resolved target",
                 {fn.get_short_name(), target->get_short_name()});
         }
@@ -412,12 +413,12 @@ std::shared_ptr<function> symbol_resolver::resolve_redirect_chain(function& fn, 
 
     // Target is a concrete function — check it's not abstract or deleted
     if (target->is_abstract_func()) {
-        throw_error(0x0054, std::nullopt,
+        throw_error(0x0054, fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "Function redirector '{}' targets abstract function '{}', which has no implementation",
             {fn.get_short_name(), target->get_short_name()});
     }
     if (target->is_deleted()) {
-        throw_error(0x0055, std::nullopt,
+        throw_error(0x0055, fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "Function redirector '{}' targets deleted function '{}'",
             {fn.get_short_name(), target->get_short_name()});
     }
@@ -544,7 +545,9 @@ void symbol_resolver::check_variable_visibility(const variable_definition& var, 
         auto vis = mv->get_visibility();
         if (vis == PUBLIC) return;
         if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
-        throw_error(0x000F, std::nullopt,
+        lex::opt_any_lexeme agg_lexeme;
+        if (auto ast_ad = owner_agg->get_ast_aggregate_decl()) agg_lexeme = lex::any_lexeme{ast_ad->name};
+        throw_error(0x000F, agg_lexeme,
             "{} member variable '{}' of struct '{}' is not accessible here; "
             "it can only be accessed from member functions of '{}'{}",
             {vis == PROTECTED ? "protected" : "private",
@@ -1128,7 +1131,7 @@ bool model_materializer::validate_vtable(klass& kl) {
         // that is a compilation error (should have been caught by symbol_resolver, but we
         // double-check here as a defensive measure).
         if (entry.func->is_abstract_func() && !kl.is_abstract()) {
-            throw_error(0x0001, std::nullopt,
+            throw_error(0x0001, kl.get_ast_aggregate_decl() ? lex::opt_any_lexeme{lex::any_lexeme{kl.get_ast_aggregate_decl()->name}} : lex::opt_any_lexeme{},
                 "class '{}' must implement abstract method '{}' (introduced in '{}') "
                 "or be declared 'abstract'",
                 {kl.get_short_name(),
@@ -1313,7 +1316,7 @@ void type_reference_resolver::check_function_visibility(const function& func, co
     auto owner_agg = std::const_pointer_cast<aggregate>(func.get_owner());
     if (owner_agg) {
         if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
-        throw_error(0x002F, std::nullopt,
+        throw_error(0x002F, func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "{} member function '{}' of struct '{}' is not accessible here; "
             "it can only be called from member functions of '{}'{}",
             {vis == PROTECTED ? "protected" : "private",
@@ -1331,13 +1334,13 @@ void type_reference_resolver::check_function_visibility(const function& func, co
         if (vis == PROTECTED) {
             auto owner_root = scope_lookup::root_namespace(*owner_ns);
             if (!owner_root || scope_lookup::is_in_same_module(*site, *owner_root)) return;
-            throw_error(0x002E, std::nullopt,
+            throw_error(0x002E, func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
                 "protected function '{}' is only accessible within the same module; "
                 "it is declared in module '{}' but accessed from outside",
                 {func.get_short_name(), owner_root->get_short_name()});
         } else {
             if (scope_lookup::is_in_same_namespace(*site, *owner_ns)) return;
-            throw_error(0x002E, std::nullopt,
+            throw_error(0x002E, func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
                 "private function '{}' is only accessible within namespace '{}'; "
                 "it cannot be called from outside that namespace",
                 {func.get_short_name(), owner_ns->get_short_name()});
@@ -1354,7 +1357,7 @@ void type_reference_resolver::check_constructor_visibility(const constructor& ct
 
     if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
 
-    throw_error(0x0030, std::nullopt,
+    throw_error(0x0030, ctor.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{ctor.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
         "{} constructor of struct '{}' is not accessible here; "
         "it can only be called from member functions of '{}'{}",
         {vis == PROTECTED ? "protected" : "private",
@@ -1556,7 +1559,9 @@ void type_reference_resolver::check_overload_collisions(function_holder& fh)
                 bool has_default_j = (min_j < max_j);
 
                 if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
-                    throw_error(0x0002, std::nullopt,
+                    lex::opt_any_lexeme fn_lexeme;
+                    if (auto ast_fd = overloads[i]->get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+                    throw_error(0x0002, fn_lexeme,
                         "Ambiguous overload: '{}{}' and overload '{}{}' can both be called with the same number of arguments "
                         "because of default parameter values; rename one overload or remove the default value(s) to resolve the ambiguity",
                         {fname, param_list_str(overloads[i]->parameters()),
@@ -1582,7 +1587,7 @@ void type_reference_resolver::check_constructor_overload_collisions(aggregate& s
 
             if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
                 const std::string& sname = st.get_short_name();
-                throw_error(0x0003, std::nullopt,
+                throw_error(0x0003, st.get_ast_aggregate_decl() ? lex::opt_any_lexeme{lex::any_lexeme{st.get_ast_aggregate_decl()->name}} : lex::opt_any_lexeme{},
                     "Ambiguous constructor overload in '{}': constructor '{}{}' and constructor '{}{}' can both be called with the same number of arguments "
                     "because of default parameter values; remove one constructor or remove the default value(s) to resolve the ambiguity",
                     {sname,
@@ -1661,6 +1666,17 @@ type_reference_resolver::resolve_function_ref_type(
 
 void type_reference_resolver::visit_variable_definition(variable_definition& var)
 {
+    // Extract AST lexeme for error reporting
+    lex::opt_any_lexeme var_lexeme;
+    if (auto* vs = dynamic_cast<variable_statement*>(&var)) {
+        if (auto ast_vd = vs->get_ast_variable_decl()) var_lexeme = lex::any_lexeme{ast_vd->name};
+    } else if (auto* var_elem = dynamic_cast<element*>(&var)) {
+        if (auto ast_node = var_elem->get_ast_node()) {
+            if (auto ast_vd = std::dynamic_pointer_cast<k::parse::ast::variable_decl>(ast_node))
+                var_lexeme = lex::any_lexeme{ast_vd->name};
+        }
+    }
+
     if(!type::is_resolved(var.get_type())) {
         // First: handle unresolved_function_ref_type (function pointer/pin/link type)
         if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var.get_type())) {
@@ -1676,7 +1692,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             if (resolved && type::is_resolved(resolved)) {
                 var.set_type(resolved);
             } else {
-                throw_internal_error(0x0002, std::nullopt,
+                throw_internal_error(0x0002, var_lexeme,
                     "Internal error: cannot resolve function reference type for variable '{}'",
                     {var.get_fq_name()});
             }
@@ -1724,7 +1740,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     }
                     var.set_type(resolved_inner->get_owner());
                 } else {
-                    throw_error(0x0005, std::nullopt,
+                    throw_error(0x0005, var_lexeme,
                         "Unknown inner type for owner variable '{}': cannot resolve '{}'",
                         {var.get_fq_name(), inner ? inner->to_string() : "?"});
                 }
@@ -1790,7 +1806,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             if (resolved && type::is_resolved(resolved)) {
                 var.set_type(resolved);
             } else {
-                throw_internal_error(0x0001, std::nullopt,
+                throw_internal_error(0x0001, var_lexeme,
                     "Internal error: variable '{}' has an unresolvable type that is not an unresolved_type instance; "
                     "this indicates a compiler bug",
                     {var.get_fq_name()});
@@ -1830,7 +1846,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 }
             }
             if(!resolved || !type::is_resolved(resolved)) {
-                throw_error(0x0005, std::nullopt,
+                throw_error(0x0005, var_lexeme,
                     "Unknown type '{}' for variable '{}': no type with this name could be found in scope",
                     {unres_type->type_id().to_string(), var.get_fq_name()});
             } else {
@@ -1897,7 +1913,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         if (!init_expr || init_expr->empty()) {
             // If no explicit initialization, let's have 0-filled initialization:
         } else if (init_expr->size() > 1) {
-            throw_error(0x0006, std::nullopt,
+            throw_error(0x0006, var_lexeme,
                 "Variable '{}' of primitive type '{}' can only be initialised with a single expression, "
                 "but {} were provided",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?", std::to_string(init_expr->size())});
@@ -1915,7 +1931,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             }
 
         } else {
-            throw_internal_error(0x0002, std::nullopt,
+            throw_internal_error(0x0002, var_lexeme,
                 "Variable '{}' of primitive type '{}' has an empty initialisation expression list; "
                 "this is an internal inconsistency",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
@@ -2013,7 +2029,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         if (!handled_as_direct_copy) {
             auto [best_constructor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
             if (!best_constructor) {
-                throw_error(0x0008, std::nullopt,
+                throw_error(0x0008, var_lexeme,
                     "No matching constructor found for variable '{}' of type '{}': "
                     "none of the available constructors can be called with the provided arguments",
                     {var.get_fq_name(), st_type->to_string()});
@@ -2044,14 +2060,14 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         if (type::is_sized_array(ref_sub)) {
             auto dest_arr = std::dynamic_pointer_cast<sized_array_type>(ref_sub);
             if (!init_expr || init_expr->empty()) {
-                throw_error(0x4101, std::nullopt,
+                throw_error(0x4101, var_lexeme,
                     "Array reference variable '{}' of type '{}' must be initialised at its declaration; "
                     "an array reference cannot be left unbound",
                     {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
                 return;
             }
             if (init_expr->size() > 1) {
-                throw_error(0x4102, std::nullopt,
+                throw_error(0x4102, var_lexeme,
                     "Array reference variable '{}' of type '{}' must be initialised with exactly one "
                     "expression, but {} were provided",
                     {var.get_fq_name(), var_type ? var_type->to_string() : "?",
@@ -2062,7 +2078,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             auto arg_type = arg ? arg->get_type() : nullptr;
             // Initialiser must be a reference to a sized array of the same element type.
             if (!arg_type || !type::is_reference(arg_type)) {
-                throw_error(0x4104, std::nullopt,
+                throw_error(0x4104, var_lexeme,
                     "Array reference variable '{}' of type '{}' must be initialised with an array "
                     "reference (lvalue), but the initialiser has type '{}' which is not a reference",
                     {var.get_fq_name(), var_type ? var_type->to_string() : "?",
@@ -2073,7 +2089,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             auto arg_sub = arg_ref->get_subtype();
             auto src_arr = std::dynamic_pointer_cast<sized_array_type>(arg_sub);
             if (!type::is_sized_array(arg_sub)) {
-                throw_error(0x4105, std::nullopt,
+                throw_error(0x4105, var_lexeme,
                     "Array reference variable '{}' of type '{}' can only be initialised from another "
                     "array reference, but the initialiser refers to type '{}' which is not a sized array",
                     {var.get_fq_name(), var_type ? var_type->to_string() : "?",
@@ -2082,7 +2098,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             }
             // Element types must match exactly.
             if (!type::are_equal(dest_arr->get_subtype(), src_arr->get_subtype())) {
-                throw_error(0x4106, std::nullopt,
+                throw_error(0x4106, var_lexeme,
                     "Array reference variable '{}' of type '{}' cannot be initialised from an array of "
                     "type '{}': element types must match exactly",
                     {var.get_fq_name(), var_type ? var_type->to_string() : "?",
@@ -2099,7 +2115,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
 
         // 1. Initialization is mandatory
         if (!init_expr || init_expr->empty()) {
-            throw_error(0x4001, std::nullopt,
+            throw_error(0x4001, var_lexeme,
                 "Reference variable '{}' of type '{}' must be initialised at its declaration: "
                 "a reference is an alias for an existing object and cannot be left unbound",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
@@ -2108,7 +2124,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
 
         // 2. Only one initializer expression is allowed (e.g. ref<int> x = a, b; is invalid)
         if (init_expr->size() > 1) {
-            throw_error(0x4002, std::nullopt,
+            throw_error(0x4002, var_lexeme,
                 "Reference variable '{}' of type '{}' must be initialised with exactly one expression, "
                 "but {} were provided",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?",
@@ -2118,7 +2134,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
 
         auto arg = init_expr->argument(0);
         if (!arg) {
-            throw_internal_error(0x4003, std::nullopt,
+            throw_internal_error(0x4003, var_lexeme,
                 "Reference variable '{}': initialisation argument is null; "
                 "this is an internal compiler inconsistency",
                 {var.get_fq_name()});
@@ -2129,7 +2145,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
 
         // 3. Initialization must be a reference (lvalue), not a bare value: ref<T> x = y; is valid if y is ref<T>, but not if y is T.
         if (!type::is_reference(arg_type)) {
-            throw_error(0x4004, std::nullopt,
+            throw_error(0x4004, var_lexeme,
                 "Reference variable '{}' of type '{}' must be initialised with a reference (an addressable "
                 "object), but the initialiser has type '{}' which is not a reference; "
                 "you cannot bind a reference to a temporary or rvalue",
@@ -2144,7 +2160,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         auto var_sub = ref_var_type->get_subtype();
 
         if (!arg_sub || !var_sub) {
-            throw_error(0x4005, std::nullopt,
+            throw_error(0x4005, var_lexeme,
                 "Reference variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
                 "the referenced type must match exactly",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?",
@@ -2175,7 +2191,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     auto dc = cast_expression::make_shared(arg, var_type, /*null_is_fatal=*/true);
                     init_expr->assign_argument(0, dc);
                 } else {
-                    throw_error(0x4005, std::nullopt,
+                    throw_error(0x4005, var_lexeme,
                         "Reference variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
                         "the referenced type must match exactly",
                         {var.get_fq_name(), var_type ? var_type->to_string() : "?",
@@ -2220,7 +2236,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 if (tgt_ptr && src_sub) {
                     auto tgt_sub = tgt_ptr->get_subtype();
                     if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
-                        throw_error(0x0081, std::nullopt,
+                        throw_error(0x0081, var_lexeme,
                             "Cannot initialise a pointer-to-mutable ('{}') from a pointer-to-const ('{}'): "
                             "this would allow modification of a const object through the mutable pointer",
                             {var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
@@ -2246,7 +2262,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                                 auto dc = cast_expression::make_shared(arg, var.get_type(), /*null_is_fatal=*/false);
                                 assign_single_init_arg(dc);
                             } else {
-                                throw_error(0x4700, std::nullopt,
+                                throw_error(0x4700, var_lexeme,
                                     "Pointer variable '{}' of type '{}' cannot be initialised from an expression of type '{}': "
                                     "the pointed types are incompatible (no inheritance relationship)",
                                     {var.get_fq_name(), var_type ? var_type->to_string() : "?",
@@ -2264,7 +2280,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         auto link_var_type = std::dynamic_pointer_cast<link_type>(var.get_type());
 
         if (!has_single_init_arg()) {
-            throw_error(0x4501, std::nullopt,
+            throw_error(0x4501, var_lexeme,
                 "Link variable '{}' of type '{}' must be initialised at its declaration: "
                 "a link is non-null and cannot be left unbound",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
@@ -2272,7 +2288,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         }
         auto arg = get_single_init_arg();
         if (!arg) {
-            throw_internal_error(0x4503, std::nullopt,
+            throw_internal_error(0x4503, var_lexeme,
                 "Link variable '{}': initialisation argument is null; "
                 "this is an internal compiler inconsistency",
                 {var.get_fq_name()});
@@ -2281,7 +2297,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         auto arg_type = arg->get_type();
         // The initialiser must provide an address: reference, link, pinned, pointer or owner.
         if (!type::is_any_indirection(arg_type) && !type::is_owner(arg_type)) {
-            throw_error(0x4504, std::nullopt,
+            throw_error(0x4504, var_lexeme,
                 "Link variable '{}' of type '{}' must be initialised with an addressable expression "
                 "(reference, link, pinned, pointer or owner), but the initialiser has type '{}' "
                 "which is not an indirection type",
@@ -2309,7 +2325,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 src_pointed_type = effective_arg;
             }
             if (src_pointed_type && type::is_const(src_pointed_type) && !type::is_const(link_sub)) {
-                throw_error(0x0082, std::nullopt,
+                throw_error(0x0082, var_lexeme,
                     "Cannot initialise link-to-mutable ('{}') from a const source (type '{}'): "
                     "this would allow modification of a const object",
                     {var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
@@ -2362,7 +2378,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                         auto dc = cast_expression::make_shared(arg, var_type, /*null_is_fatal=*/true);
                         assign_single_init_arg(dc);
                     } else {
-                        throw_error(0x4506, std::nullopt,
+                        throw_error(0x4506, var_lexeme,
                             "Link variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
                             "the linked types are incompatible (no inheritance relationship)",
                             {var.get_fq_name(), var_type ? var_type->to_string() : "?",
@@ -2377,7 +2393,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         // Pinned variable (^): immutable (not rebindable after init), nullable.
         // Must be initialised at declaration; initialiser can be any indirection, owner or null.
         if (!has_single_init_arg()) {
-            throw_error(0x4601, std::nullopt,
+            throw_error(0x4601, var_lexeme,
                 "Pinned variable '{}' of type '{}' must be initialised at its declaration: "
                 "a pinned indirection cannot be left unbound",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
@@ -2385,7 +2401,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         }
         auto arg = get_single_init_arg();
         if (!arg) {
-            throw_internal_error(0x4603, std::nullopt,
+            throw_internal_error(0x4603, var_lexeme,
                 "Pinned variable '{}': initialisation argument is null; "
                 "this is an internal compiler inconsistency",
                 {var.get_fq_name()});
@@ -2399,7 +2415,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             }
         }
         if (!is_null_init && !type::is_any_indirection(arg_type) && !type::is_owner(arg_type)) {
-            throw_error(0x4604, std::nullopt,
+            throw_error(0x4604, var_lexeme,
                 "Pinned variable '{}' of type '{}' must be initialised with an addressable expression "
                 "(reference, link, pinned, pointer, owner or null), but the initialiser has type '{}' "
                 "which is not an indirection type",
@@ -2445,7 +2461,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                         auto dc = cast_expression::make_shared(arg, var_type, /*null_is_fatal=*/false);
                         assign_single_init_arg(dc);
                     } else {
-                        throw_error(0x4605, std::nullopt,
+                        throw_error(0x4605, var_lexeme,
                             "Pinned variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
                             "the pinned types are incompatible (no inheritance relationship)",
                             {var.get_fq_name(), var_type ? var_type->to_string() : "?",
@@ -2487,7 +2503,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                         }
                     }
                     if (!type::is_owner(effective_arg_type)) {
-                        throw_error(0x4802, std::nullopt,
+                        throw_error(0x4802, var_lexeme,
                             "Owner variable '{}' of type '{}' must be initialised with a 'new' expression, "
                             "another owner variable, or null, but the initialiser has type '{}' which is not "
                             "an owner type",
@@ -2509,7 +2525,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                                 src_st->get_struct() && tgt_st->get_struct() &&
                                 src_st->get_struct()->is_derived_from(tgt_st->get_struct());
                             if (!is_upcast) {
-                                throw_error(0x4803, std::nullopt,
+                                throw_error(0x4803, var_lexeme,
                                     "Owner variable '{}' of type '{}' cannot be initialised from "
                                     "an owner of incompatible type '{}'",
                                     {var.get_fq_name(), var_type ? var_type->to_string() : "?",
@@ -2537,7 +2553,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             arr_init->accept(*this);
         } else if (init_expr && !init_expr->empty()) {
             // Non-brace-init explicit initializer is not supported
-            throw_error(0x4201, std::nullopt,
+            throw_error(0x4201, var_lexeme,
                 "Array variable '{}' of type '{}' cannot have an explicit initialiser at declaration; "
                 "use brace initialization syntax: arr : T[N] {{elem1, elem2, ...}}",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
@@ -3386,7 +3402,11 @@ type_reference_resolver::get_best_matching_function(
 
     if (valid.empty()) {
         std::string fname = candidates.empty() ? "<unknown>" : candidates.front()->get_short_name();
-        throw_error(0x0009, std::nullopt,
+        lex::opt_any_lexeme fn_lexeme;
+        if (!candidates.empty()) {
+            if (auto ast_fd = candidates.front()->get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+        }
+        throw_error(0x0009, fn_lexeme,
             "No viable overload found for '{}' with {} argument(s): "
             "none of the {} candidate(s) can be called with the provided arguments",
             {fname, std::to_string(args.size()), std::to_string(candidates.size())});
