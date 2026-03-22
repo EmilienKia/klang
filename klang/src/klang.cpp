@@ -220,11 +220,28 @@ int main(int argc, const char** argv) {
         return -1;
     }
 
+    // Partition input files: .o files are passed to the linker as-is,
+    // everything else is treated as K source code.
+    std::vector<std::string> k_input_files;
+    std::vector<std::string> object_input_files;
+    for (const auto& path : input_files) {
+        if (std::filesystem::path(path).extension() == ".o") {
+            object_input_files.push_back(path);
+        } else {
+            k_input_files.push_back(path);
+        }
+    }
+
+    if (k_input_files.empty() && !want_stdin) {
+        std::cerr << "No K source file (only .o object files were provided)." << std::endl;
+        return -1;
+    }
+
     // Read all input files before compilation starts (needed to know the
     // total count for the internal reserve() that keeps string_views valid).
     std::vector<std::pair<std::string, std::string>> sources;
-    sources.reserve(input_files.size() + (want_stdin ? 1 : 0));
-    for (const auto& path : input_files) {
+    sources.reserve(k_input_files.size() + (want_stdin ? 1 : 0));
+    for (const auto& path : k_input_files) {
         std::cout << "Reading : " << path << std::endl;
         sources.emplace_back(path, read_text_file_content(path));
     }
@@ -332,18 +349,23 @@ int main(int argc, const char** argv) {
             compiler->set_enforce_ns_collision(true);
         }
 
+        // ── Extra object files (.o) ─────────────────────────────────────────
+        if (!object_input_files.empty()) {
+            compiler->set_extra_object_files(object_input_files);
+        }
+
         // Pre-resolve IR file names from the expected output path so that
         // process_generation() (called inside parse_source) can use them.
         if (ir_opts.emit_raw_ir || ir_opts.emit_opt_ir) {
             std::string effective_output = output_file;
-            if (effective_output.empty() && !input_files.empty()) {
+            if (effective_output.empty() && !k_input_files.empty()) {
                 if (vm.count("compile")) {
-                    effective_output = std::filesystem::path(input_files[0]).replace_extension(".o").string();
+                    effective_output = std::filesystem::path(k_input_files[0]).replace_extension(".o").string();
                 } else if (vm.count("dyn-lib") || vm.count("static-lib")) {
                     // We don't yet know the module name, leave empty — will be
                     // resolved again after parse_source() by the gen_* methods.
                 } else {
-                    effective_output = std::filesystem::path(input_files[0]).replace_extension("").string();
+                    effective_output = std::filesystem::path(k_input_files[0]).replace_extension("").string();
                 }
             }
             if (!effective_output.empty()) {
@@ -361,6 +383,10 @@ int main(int argc, const char** argv) {
 
         if (want_jit_exec) {
             // ── JIT execution mode ──────────────────────────────────────────
+            if (!object_input_files.empty()) {
+                std::cerr << "Error: .o files cannot be used with --jit-exec." << std::endl;
+                return -1;
+            }
             if (!has_main) {
                 std::cerr << "Cannot JIT-execute: no main() entry point in the compiled module." << std::endl;
                 return -1;
@@ -381,9 +407,13 @@ int main(int argc, const char** argv) {
 
         } else if (want_compile) {
             // -c : just emit a native object file, no linking
+            if (!object_input_files.empty()) {
+                std::cerr << "Error: .o files cannot be used with -c (compile-only mode)." << std::endl;
+                return -1;
+            }
             if (output_file.empty()) {
-                if (!input_files.empty()) {
-                    output_file = std::filesystem::path(input_files[0]).replace_extension(".o").string();
+                if (!k_input_files.empty()) {
+                    output_file = std::filesystem::path(k_input_files[0]).replace_extension(".o").string();
                 } else {
                     output_file = "stdin.o";
                 }

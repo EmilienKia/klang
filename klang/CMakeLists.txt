@@ -142,6 +142,7 @@ add_executable(klangc-tests
         tests/test-klangc-run.cpp
         tests/test-klangc-stdin.cpp
         tests/test-klangc-jit-exec.cpp
+        tests/test-klangc-object-input.cpp
 )
 target_link_libraries(klangc-tests klang-test-helpers Catch2::Catch2WithMain)
 # Ensure klangc is built before running its integration tests

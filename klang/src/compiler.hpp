@@ -87,6 +87,10 @@ protected:
     /** When true, the current unit's root namespace must not collide with imports. */
     bool _enforce_ns_collision = false;
 
+    /** Extra object files (.o) to include in the final link step.
+     *  These are passed as-is to clang (or ar) alongside the K-generated .o. */
+    std::vector<std::string> _extra_object_files;
+
     void process_generation(bool optimize = true, bool dump = true);
 
     compiler(llvm::TargetMachine* target = nullptr);
@@ -177,6 +181,13 @@ public:
      * Default: false (the current unit always prevails over imports).
      */
     void set_enforce_ns_collision(bool enforce);
+
+    /**
+     * Set additional pre-compiled object files (.o) to include in the link
+     * step (gen_executable, gen_shared_library, gen_static_library, gen_libraries).
+     * The paths are passed verbatim to clang / ar after the K-generated .o.
+     */
+    void set_extra_object_files(std::vector<std::string> paths);
 
     /**
      * Resolve automatic IR file names based on the output file path.

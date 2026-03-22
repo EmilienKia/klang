@@ -483,6 +483,10 @@ void compiler::set_enforce_ns_collision(bool enforce) {
     _enforce_ns_collision = enforce;
 }
 
+void compiler::set_extra_object_files(std::vector<std::string> paths) {
+    _extra_object_files = std::move(paths);
+}
+
 void compiler::emit_ir(const std::string& filepath) {
     if (filepath.empty()) {
         _context->module().print(llvm::outs(), nullptr);
@@ -612,6 +616,8 @@ bool compiler::gen_executable(const std::string& output_file) {
     tools::exec_result exec_res;
     try {
         std::vector<std::string> clang_args = {"-pie", "-o", output_path.string(), object_path.string()};
+        // Append extra pre-compiled object files (.o)
+        clang_args.insert(clang_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         // Append -L/-l flags for used imports
         auto import_args = build_import_link_args();
         clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
@@ -754,6 +760,8 @@ bool compiler::gen_shared_library(const std::string& output_file) {
     tools::exec_result exec_res;
     try {
         std::vector<std::string> clang_args = {"-shared", "-fPIC", "-o", output_path.string(), object_path.string()};
+        // Append extra pre-compiled object files (.o)
+        clang_args.insert(clang_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         auto import_args = build_import_link_args();
         clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
         exec_res = tools::lookup_run_process("clang", clang_args);
@@ -786,7 +794,10 @@ bool compiler::gen_static_library(const std::string& output_file) {
     // ar rcs: create archive, add index, be silent on missing files
     tools::exec_result exec_res;
     try {
-        exec_res = tools::lookup_run_process("ar", {"rcs", output_path.string(), object_path.string()});
+        std::vector<std::string> ar_args = {"rcs", output_path.string(), object_path.string()};
+        // Append extra pre-compiled object files (.o)
+        ar_args.insert(ar_args.end(), _extra_object_files.begin(), _extra_object_files.end());
+        exec_res = tools::lookup_run_process("ar", ar_args);
     } catch (const tools::tool_not_found& e) {
         std::cerr << "Error: " << e.what() << " (needed to create static library)" << std::endl;
         std::filesystem::remove(object_path);
@@ -823,6 +834,8 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
     tools::exec_result so_res;
     try {
         std::vector<std::string> clang_args = {"-shared", "-fPIC", "-o", so_path.string(), object_path.string()};
+        // Append extra pre-compiled object files (.o)
+        clang_args.insert(clang_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         auto import_args = build_import_link_args();
         clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
         so_res = tools::lookup_run_process("clang", clang_args);
@@ -839,7 +852,10 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
     std::cout << "Generating static library: " << a_path << std::endl;
     tools::exec_result ar_res;
     try {
-        ar_res = tools::lookup_run_process("ar", {"rcs", a_path.string(), object_path.string()});
+        std::vector<std::string> ar_args = {"rcs", a_path.string(), object_path.string()};
+        // Append extra pre-compiled object files (.o)
+        ar_args.insert(ar_args.end(), _extra_object_files.begin(), _extra_object_files.end());
+        ar_res = tools::lookup_run_process("ar", ar_args);
     } catch (const tools::tool_not_found& e) {
         std::cerr << "Error: " << e.what() << " (needed to create static library)" << std::endl;
         std::filesystem::remove(object_path);

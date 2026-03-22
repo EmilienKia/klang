@@ -7,8 +7,8 @@
 ## SYNOPSIS
 
 ```
-klangc [options] input-file...
-klangc [options] --stdin [input-file...]
+klangc [options] input-file... [object-file.o...]
+klangc [options] --stdin [input-file...] [object-file.o...]
 klangc [options] --jit-exec input-file...
 klangc [options] --jit-exec --stdin [input-file...]
 ```
@@ -25,6 +25,14 @@ Multiple source files may be passed on the command line; they are all compiled
 as a single compilation unit (module).  All files share the same root namespace
 and have global visibility of each other's declarations.  An additional source
 may be provided through standard input with the `--stdin` flag.
+
+Pre-compiled **object files** (`.o`) may also be passed alongside K sources.
+They are recognised by their `.o` extension and are **not** read as K source
+code; instead they are forwarded verbatim to the linker (or archiver) during
+the link step.  This allows embedding symbols compiled externally — typically
+from C or C++ with **gcc(1)** or **clang(1)** — into the final shared library,
+static archive, or executable.  Object files are incompatible with `-c`
+(compile-only) and `--jit-exec` modes.
 
 The compiler internally uses LLVM for code generation and delegates linking to
 **clang(1)**.
@@ -49,7 +57,9 @@ exit with status `2`.
 **`-c`**, **`--compile`**  
 Compile source file(s) to a native object file (`.o`) but do not invoke the
 linker. The output file name defaults to the input file name with its extension
-replaced by `.o` (see `-o`).
+replaced by `.o` (see `-o`).  
+Pre-compiled `.o` files **cannot** be passed in this mode (no linking is
+performed); doing so is an error.
 
 **`--dyn-lib`**  
 Produce a shared library (`.so`) from the source file, regardless of whether
@@ -102,9 +112,17 @@ automatically according to the following priority:
 Where _base_ = `unit_name_to_lib_base(module_name)` — see *Library Output Naming*.
 
 **`input-file`**  
-Path(s) to the K source files to compile. Positional; may also be specified
-explicitly with `--input-file=`_file_. Multiple files are compiled as a single
-module (see *Multi-file modules* in the language specification).
+Path(s) to the K source files (`.k`) and/or pre-compiled object files (`.o`)
+to process. Positional; may also be specified explicitly with
+`--input-file=`_file_.  Files are distinguished by their extension:
+
+* **`.o` files** — treated as pre-compiled object files. They are **not**
+  parsed as K source; instead they are passed directly to the linker (or
+  archiver) alongside the K-generated object code.  All symbols defined in
+  these files end up in the final binary (`.so`, `.a`, or executable).
+  At least one K source (`.k` or `--stdin`) must still be provided.
+* **All other files** — treated as K source and compiled as a single module
+  (see *Multi-file modules* in the language specification).
 
 **`--stdin`**  
 Read an additional K source from standard input. The content piped through
@@ -126,7 +144,9 @@ becomes the exit status of the **klangc** process itself. This makes
 `--jit-exec` suitable for scripting and rapid prototyping without the overhead
 of producing a native executable on disk.  
 `--jit-exec` takes precedence over `-c`, `--dyn-lib`, `--static-lib` and
-normal executable generation; `-o` is ignored.
+normal executable generation; `-o` is ignored.  
+Pre-compiled `.o` files **cannot** be passed in this mode (there is no linker
+involved); doing so is an error.
 
 **`--module-name` _name_**  
 Override the module name regardless of any `module` declaration in the source
@@ -522,12 +542,41 @@ loads its `.kdi` automatically because `cval.kdi` declares it in its
 
 ---
 
+**Link a pre-compiled C object file into a shared library:**
+
+```sh
+# Compile a C helper with clang
+clang -c -fPIC native_helpers.c -o native_helpers.o
+
+# Build a K shared library that includes the C symbols
+klangc --dyn-lib mylib.k native_helpers.o
+# Produces: libmylib.so  (contains both K and C symbols)
+```
+
+The C symbols from `native_helpers.o` are embedded in `libmylib.so` and
+visible to consumers via `nm --dynamic`.
+
+---
+
+**Link multiple .o files into an executable:**
+
+```sh
+gcc -c -fPIC utils.c -o utils.o
+gcc -c -fPIC math_ext.c -o math_ext.o
+klangc main.k utils.o math_ext.o -o myapp
+```
+
+All symbols from `utils.o` and `math_ext.o` end up in the `myapp` executable.
+
+---
+
 ## FILES
 
 | Path | Description |
 |------|-------------|
 | `*.k` | K language source file |
-| `*.o` | Native object file produced by `-c` |
+| `*.o` (input) | Pre-compiled object file passed to the linker / archiver (compiled externally, e.g. from C) |
+| `*.o` (output) | Native object file produced by `-c` |
 | `lib*.so` | Shared library produced by `--dyn-lib` or auto-detection |
 | `lib*.a` | Static archive produced by `--static-lib` |
 | `lib*.kdi` | K Description Interface file — generated automatically alongside every library |
@@ -613,6 +662,12 @@ kditool validate libmath.utils.kdi
 * All compilations use the **PIC** (Position-Independent Code) relocation
   model, making the generated objects compatible with both shared libraries
   and PIE executables.
+* **Pre-compiled object files** (`.o`) passed on the command line are forwarded
+  to the linker (`clang`) or archiver (`ar`) alongside the K-generated object
+  code.  Their symbols are included in the final binary as-is.  This is the
+  recommended way to embed C/C++ glue code, hand-written assembly, or any
+  externally compiled code into a K library or executable.  `.o` files are
+  rejected with `-c` (no link step) and `--jit-exec` (no linker involved).
 * The optimisation pipeline uses the LLVM legacy pass manager with the
   following passes: instruction combining, expression reassociation, GVN
   (global value numbering), dead-code elimination and CFG simplification.
