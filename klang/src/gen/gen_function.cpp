@@ -179,7 +179,7 @@ void signature_resolver::visit_parameter(parameter& param) {
             // Fallback for composite types wrapping an imported aggregate
             // (e.g. reference_type(unresolved("ns::Type"))).
             // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.
-            enum class WrapKind { Ref, Ptr, Link, View, Const, Owner };
+            enum class WrapKind { Ref, Ptr, Link, View, Const, Owner, Drain };
             std::vector<WrapKind> wrappers;
             auto inner = var_type;
             while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
@@ -189,6 +189,7 @@ void signature_resolver::visit_parameter(parameter& param) {
                 else if (type::is_view(inner))     wrappers.push_back(WrapKind::View);
                 else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
                 else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
+                else if (type::is_drain(inner))      wrappers.push_back(WrapKind::Drain);
                 else break;
                 inner = inner->get_subtype();
             }
@@ -205,6 +206,7 @@ void signature_resolver::visit_parameter(parameter& param) {
                             case WrapKind::View:   res_type = res_type->get_view();    break;
                             case WrapKind::Const: res_type = res_type->get_const();     break;
                             case WrapKind::Owner: res_type = res_type->get_owner();     break;
+                            case WrapKind::Drain: res_type = res_type->get_drain();     break;
                         }
                     }
                 }
@@ -244,7 +246,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
             // Fallback for composite types wrapping an imported aggregate
             // (e.g. reference_type(unresolved("ns::Type"))).
             // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.
-            enum class WrapKind { Ref, Ptr, Link, View, Const, Owner };
+            enum class WrapKind { Ref, Ptr, Link, View, Const, Owner, Drain };
             std::vector<WrapKind> wrappers;
             auto inner = var_type;
             while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
@@ -254,6 +256,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
                 else if (type::is_view(inner))     wrappers.push_back(WrapKind::View);
                 else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
                 else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
+                else if (type::is_drain(inner))      wrappers.push_back(WrapKind::Drain);
                 else break;
                 inner = inner->get_subtype();
             }
@@ -270,6 +273,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
                             case WrapKind::View:   res_type = res_type->get_view();    break;
                             case WrapKind::Const: res_type = res_type->get_const();     break;
                             case WrapKind::Owner: res_type = res_type->get_owner();     break;
+                            case WrapKind::Drain: res_type = res_type->get_drain();     break;
                         }
                     }
                 }
@@ -1510,10 +1514,6 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
     visit_function(ctor);
 }
 
-//
-// Destructor
-//
-
 void signature_resolver::visit_destructor(destructor& dtor) {
     visit_function(dtor);
 }
@@ -1734,7 +1734,7 @@ void implementation_generator::visit_global_constructor_function(global_construc
 //
 // Global destructor function
 // This generates the unique global destructor function (if needed) and registers it to llvm.global_dtors
-// Destruction order is the exact REVERSE of construction order.
+// Destruction order is the exact REVERSE of the construction order.
 //
 
 // type_reference_resolver::visit_global_destructor_function

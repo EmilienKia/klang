@@ -332,3 +332,152 @@ TEST_CASE("String equality operator", "[libk][string]") {
     REQUIRE(test_different_sizes);
     CHECK(test_different_sizes() == 1);
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 8. StringBuilder — drain constructor from StringBuilder
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("StringBuilder drain constructor — content", "[libk][string][builder][drain]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_drain_content__;
+
+        test_size() : unsigned int {
+            src : k::StringBuilder;
+            src.append_char('A');
+            src.append_char('B');
+            src.append_char('C');
+            dst : k::StringBuilder(#src);
+            return dst.size();
+        }
+
+        test_char0() : char {
+            src : k::StringBuilder;
+            src.append_char('A');
+            src.append_char('B');
+            src.append_char('C');
+            dst : k::StringBuilder(#src);
+            return dst.char_at(0);
+        }
+
+        test_char2() : char {
+            src : k::StringBuilder;
+            src.append_char('A');
+            src.append_char('B');
+            src.append_char('C');
+            dst : k::StringBuilder(#src);
+            return dst.char_at(2);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_size = jit->lookup_symbol<unsigned(*)()>("test_size");
+    REQUIRE(test_size);
+    CHECK(test_size() == 3);
+
+    auto test_char0 = jit->lookup_symbol<char(*)()>("test_char0");
+    REQUIRE(test_char0);
+    CHECK(test_char0() == 'A');
+
+    auto test_char2 = jit->lookup_symbol<char(*)()>("test_char2");
+    REQUIRE(test_char2);
+    CHECK(test_char2() == 'C');
+}
+
+TEST_CASE("StringBuilder drain constructor — source is drained", "[libk][string][builder][drain]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_drain_source__;
+
+        test_src_empty_after_drain() : int {
+            src : k::StringBuilder;
+            src.append_char('X');
+            src.append_char('Y');
+            dst : k::StringBuilder(#src);
+            // After drain, source should be empty
+            if (src.empty()) return 1;
+            return 0;
+        }
+
+        test_src_size_after_drain() : unsigned int {
+            src : k::StringBuilder;
+            src.append_char('X');
+            src.append_char('Y');
+            dst : k::StringBuilder(#src);
+            return src.size();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_src_empty = jit->lookup_symbol<int(*)()>("test_src_empty_after_drain");
+    REQUIRE(test_src_empty);
+    CHECK(test_src_empty() == 1);
+
+    auto test_src_size = jit->lookup_symbol<unsigned(*)()>("test_src_size_after_drain");
+    REQUIRE(test_src_size);
+    CHECK(test_src_size() == 0);
+}
+
+TEST_CASE("StringBuilder drain constructor from empty source", "[libk][string][builder][drain]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_drain_empty__;
+
+        test_empty() : int {
+            src : k::StringBuilder;
+            dst : k::StringBuilder(#src);
+            if (dst.empty()) return 1;
+            return 0;
+        }
+
+        test_size() : unsigned int {
+            src : k::StringBuilder;
+            dst : k::StringBuilder(#src);
+            return dst.size();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_empty = jit->lookup_symbol<int(*)()>("test_empty");
+    REQUIRE(test_empty);
+    CHECK(test_empty() == 1);
+
+    auto test_size = jit->lookup_symbol<unsigned(*)()>("test_size");
+    REQUIRE(test_size);
+    CHECK(test_size() == 0);
+}
+
+TEST_CASE("StringBuilder drain then reuse source", "[libk][string][builder][drain]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_drain_reuse__;
+
+        test_reuse_after_drain() : unsigned int {
+            src : k::StringBuilder;
+            src.append_char('A');
+            src.append_char('B');
+            dst : k::StringBuilder(#src);
+            // Source is now empty; reuse it
+            src.append_char('X');
+            src.append_char('Y');
+            src.append_char('Z');
+            return src.size();
+        }
+
+        test_reuse_content() : char {
+            src : k::StringBuilder;
+            src.append_char('A');
+            src.append_char('B');
+            dst : k::StringBuilder(#src);
+            // Source is now empty; reuse it
+            src.append_char('Q');
+            return src.char_at(0);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_reuse = jit->lookup_symbol<unsigned(*)()>("test_reuse_after_drain");
+    REQUIRE(test_reuse);
+    CHECK(test_reuse() == 3);
+
+    auto test_content = jit->lookup_symbol<char(*)()>("test_reuse_content");
+    REQUIRE(test_content);
+    CHECK(test_content() == 'Q');
+}
+

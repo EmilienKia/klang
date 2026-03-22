@@ -51,6 +51,8 @@
 // 'W' for owner (!) : owning pointer (unique ownership)
 #define SYMBOL_MODIFIER_VIEW       "Q"
 #define SYMBOL_MODIFIER_OWNER      "W"
+// 'D' for drain (#) : drainable (immutable binding, non-null) indirection
+#define SYMBOL_MODIFIER_DRAIN      "D"
 
 // Function reference type mangling:
 // PF<params>E       : pointer (*) to free function
@@ -313,6 +315,8 @@ std::string mangler::mangle_type(const type& ty) const {
         return SYMBOL_MODIFIER_VIEW + mangle_type(*view_ty->get_viewed_type());
     } else if (auto own_ty = dynamic_cast<const owner_type*>(&ty)) {
         return SYMBOL_MODIFIER_OWNER + mangle_type(*own_ty->get_owned_type());
+    } else if (auto drain_ty = dynamic_cast<const drain_type*>(&ty)) {
+        return SYMBOL_MODIFIER_DRAIN + mangle_type(*drain_ty->get_drained_type());
     } else if (auto mem_fn_ty = dynamic_cast<const member_function_reference_type*>(&ty)) {
         std::ostringstream s;
         // ref_kind modifier

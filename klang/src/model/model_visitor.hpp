@@ -128,6 +128,7 @@ public:
     virtual void visit_load_value_expression(load_value_expression&) =0;
     virtual void visit_owner_move_expression(owner_move_expression&) =0;
     virtual void visit_address_of_expression(address_of_expression&) =0;
+    virtual void visit_drain_expression(drain_expression&) =0;
     virtual void visit_dereference_expression(dereference_expression&) =0;
     virtual void visit_member_of_expression(member_of_expression&) =0;
     virtual void visit_member_of_object_expression(member_of_object_expression&) =0;
@@ -242,6 +243,7 @@ public:
     void visit_load_value_expression(load_value_expression&) override;
     void visit_owner_move_expression(owner_move_expression&) override;
     void visit_address_of_expression(address_of_expression&) override;
+    void visit_drain_expression(drain_expression&) override;
     void visit_dereference_expression(dereference_expression&) override;
 
     void visit_comparison_expression(comparison_expression&) override;

@@ -25,7 +25,7 @@
  * KDI type system DTOs.
  *
  * Types are described as a tagged variant (kdi_type).  The encoding mirrors the
- * K type system: primitives, four indirections (&, *, ~, ^), const, arrays,
+ * K type system: primitives, five indirections (&, *, +, ?, #), const, arrays,
  * function references, and named aggregate references.
  */
 
@@ -84,6 +84,11 @@ struct kdi_view_type {
     std::shared_ptr<kdi_type> inner;
 };
 
+/** Drain type (#inner) — immutable binding, non-null, drain permission. */
+struct kdi_drain_type {
+    std::shared_ptr<kdi_type> inner;
+};
+
 // ── Qualifiers ────────────────────────────────────────────────────────────────
 
 /** Const-qualified type. */
@@ -136,6 +141,7 @@ using kdi_type_variant = std::variant<
     kdi_ptr_type,
     kdi_link_type,
     kdi_view_type,
+    kdi_drain_type,
     kdi_const_type,
     kdi_array_type,
     kdi_sized_array_type,

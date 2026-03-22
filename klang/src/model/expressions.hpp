@@ -505,6 +505,30 @@ public:
     }
 };
 
+/**
+ * Drain expression (#expr).
+ * Produces a drain indirection (T#) from an lvalue, granting the consumer
+ * the permission to steal the internal resources of the referenced object.
+ */
+class drain_expression : public unary_expression {
+protected:
+    drain_expression() = default;
+public:
+    void accept(model_visitor &visitor) override;
+    static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
+        std::shared_ptr<drain_expression> expr{new drain_expression()};
+        expr->assign(sub_expr);
+        return std::shared_ptr<unary_expression>{expr};
+    }
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<drain_expression> c{new drain_expression()};
+        c->_type = _type;
+        c->_ast_node = _ast_node;
+        if (_sub_expr) c->assign(_sub_expr->clone());
+        return c;
+    }
+};
+
 class dereference_expression : public unary_expression {
 protected:
     dereference_expression() = default;

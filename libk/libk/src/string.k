@@ -225,6 +225,16 @@ public:
         }
     }
 
+    /** Drain constructor from another StringBuilder.
+     *  Steals the buffer, size and capacity from the source,
+     *  leaving it in a valid empty state.
+     */
+    StringBuilder(other : StringBuilder#) : _buf(other._buf), _size(other._size), _capacity(other._capacity) {
+        other._buf = null;
+        other._size = 0;
+        other._capacity = 0;
+    }
+
     // ── Accessors ───────────────────────────────────────────────────────
 
     /** Total number of characters. */

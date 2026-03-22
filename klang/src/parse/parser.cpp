@@ -915,6 +915,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                         case lex::operator_::QUESTION_MARK: result += "v"; break;  // view
                         case lex::operator_::PLUS: result += "lnk"; break;   // link
                         case lex::operator_::EXCLAMATION_MARK: result += "o"; break;  // owner
+                        case lex::operator_::HASH: result += "d"; break;     // drain
                         default: break;
                     }
                     return result;
@@ -1701,7 +1702,8 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
         auto lex = _lexer.get();
 
         if(lex == lex::operator_::STAR || lex == lex::operator_::AMPERSAND
-            || lex == lex::operator_::PLUS || lex == lex::operator_::QUESTION_MARK) {
+            || lex == lex::operator_::PLUS || lex == lex::operator_::QUESTION_MARK
+            || lex == lex::operator_::HASH) {
             res = std::make_shared<ast::pointer_type_specifier>(res, lex::as<lex::operator_>(lex));
             continue;
         }
@@ -2348,13 +2350,14 @@ ast::expr_ptr parser::parse_unary_expr()
                 lex::operator_::PLUS,
                 lex::operator_::MINUS,
                 lex::operator_::EXCLAMATION_MARK,
-                lex::operator_::TILDE>(lop)
+                lex::operator_::TILDE,
+                lex::operator_::HASH>(lop)
             ) {
         ast::expr_ptr expr = parse_cast_expr();
         if(expr) {
             return std::make_shared<ast::unary_prefix_expr>(lex::as<lex::operator_>(lop), expr);
         } else {
-            throw_error(0x0026, _lexer.pick_current(), "Unary expression is expecting a sub expression after the unary '++', '--', '*', '&', '+', '-', '!' or '~' operators");
+            throw_error(0x0026, _lexer.pick_current(), "Unary expression is expecting a sub expression after the unary '++', '--', '*', '&', '+', '-', '!', '~' or '#' operators");
         }
     } else {
         holder.rollback();

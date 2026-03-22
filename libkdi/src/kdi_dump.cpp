@@ -53,6 +53,8 @@ std::string type_str(const kdi_type& t) {
             return "~" + (v.inner ? type_str(*v.inner) : "?");
         if constexpr (std::is_same_v<T, kdi_view_type>)
             return "^" + (v.inner ? type_str(*v.inner) : "?");
+        if constexpr (std::is_same_v<T, kdi_drain_type>)
+            return "#" + (v.inner ? type_str(*v.inner) : "?");
         if constexpr (std::is_same_v<T, kdi_const_type>)
             return "const " + (v.inner ? type_str(*v.inner) : "?");
         if constexpr (std::is_same_v<T, kdi_array_type>)

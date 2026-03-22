@@ -353,6 +353,10 @@ void default_model_visitor::visit_address_of_expression(address_of_expression &e
     visit_unary_expression(expr);
 }
 
+void default_model_visitor::visit_drain_expression(drain_expression &expr) {
+    visit_unary_expression(expr);
+}
+
 void default_model_visitor::visit_dereference_expression(dereference_expression &expr) {
     visit_unary_expression(expr);
 }

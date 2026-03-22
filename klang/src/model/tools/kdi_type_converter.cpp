@@ -153,6 +153,12 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
             if (!inner) return nullptr;
             return inner->get_pointer();
         }
+        else if constexpr (std::is_same_v<T, kdi::kdi_drain_type>) {
+            if (!v.inner) return nullptr;
+            auto inner = convert(*v.inner, owner, ctx);
+            if (!inner) return nullptr;
+            return inner->get_drain();
+        }
         else if constexpr (std::is_same_v<T, kdi::kdi_const_type>) {
             if (!v.inner) return nullptr;
             auto inner = convert(*v.inner, owner, ctx);

@@ -115,6 +115,8 @@ static json to_json(const kdi_type& t) {
             return {{"kind","link"},{"inner",to_json(*v.inner)}};
         else if constexpr (std::is_same_v<T, kdi_view_type>)
             return {{"kind","view"},{"inner",to_json(*v.inner)}};
+        else if constexpr (std::is_same_v<T, kdi_drain_type>)
+            return {{"kind","drain"},{"inner",to_json(*v.inner)}};
         else if constexpr (std::is_same_v<T, kdi_const_type>)
             return {{"kind","const"},{"inner",to_json(*v.inner)}};
         else if constexpr (std::is_same_v<T, kdi_array_type>)
@@ -157,6 +159,10 @@ static kdi_type from_json_type(const json& j) {
     }
     if (kind == "view") {
         kdi_view_type r; r.inner = std::make_shared<kdi_type>(from_json_type(j.at("inner")));
+        return kdi_type{std::move(r)};
+    }
+    if (kind == "drain") {
+        kdi_drain_type r; r.inner = std::make_shared<kdi_type>(from_json_type(j.at("inner")));
         return kdi_type{std::move(r)};
     }
     if (kind == "const") {

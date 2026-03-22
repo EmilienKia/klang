@@ -14,8 +14,9 @@ Unary operators operate on a single operand.
 3. [Bitwise NOT](#3-bitwise-not)
 4. [Address-of operator (`&`)](#4-address-of-operator-)
 5. [Dereference operator (`*`)](#5-dereference-operator-)
-6. [Cast expression](#6-cast-expression)
-7. [Prefix increment and decrement](#7-prefix-increment-and-decrement)
+6. [Drain operator (`#`)](#6-drain-operator-)
+7. [Cast expression](#7-cast-expression)
+8. [Prefix increment and decrement](#8-prefix-increment-and-decrement)
 ---
 ## 1. Arithmetic unary operators
 ### Unary plus (`+`)
@@ -137,7 +138,54 @@ y : int = *p;    // null-check, then reads
 The dereference of a reference (`T&`) is not supported directly via `*` — a reference already acts as the object itself.
 
 ---
-## 6. Cast expression
+## 6. Drain operator (`#`)
+
+`#expr` produces a **drain** (`T#`) from an lvalue, granting the consumer permission to
+steal the internal resources of the referenced object.
+
+```
+DrainExpr:
+    '#' CastExpr
+```
+
+`expr` must be a mutable lvalue (variable, parameter, or struct member). The operand
+must **not** be `const` — draining a const object is a compile-time error.
+
+The result type is `T#` (a drain — non-null, immutable binding) when `expr` has type `T`.
+
+```k
+x : int = 42;
+consume(#x);          // passes x by drain to consume()
+
+struct Resource {
+    value : int = 0;
+    Resource(other : Resource#) {
+        value = other.value;
+        other.value = 0;  // reset source (drain semantics)
+    }
+}
+
+a : Resource(42);
+b : Resource(#a);     // drain constructor — steals a's resources
+// a.value is now 0, b.value is 42
+```
+
+**Key rules:**
+- A reference (`T&`) is **not** implicitly convertible to a drain (`T#`). The `#` operator
+  must be used explicitly.
+- A drain (`T#`) **is** implicitly convertible to a reference (`T&`), link (`T+`),
+  view (`T?`), or pointer (`T*`).
+- After draining, the source object must remain in a **valid, reusable state** (typically
+  equivalent to default construction).
+- When both reference and drain overloads exist for a function, the drain overload is
+  selected when the argument is a drain expression (`#x`), and the reference overload
+  is selected for plain references.
+
+> **Note:** Draining primitives (e.g. `int#`) is semantically a no-op — a copy is performed.
+> This is permitted but provides no performance benefit.
+
+---
+## 7. Cast expression
 Explicit type conversion. Converts `expr` to the specified type.
 ```
 CastExpr:
@@ -196,7 +244,7 @@ dl : Derived+ = (Derived+) bp;   // __fatal_null_dyncast() if bp ≠ Derived*
 See [Types — §11.5](../basic/types.md#115-explicit-cast) for full rules.
 
 ---
-## 7. Prefix increment and decrement
+## 8. Prefix increment and decrement
 `++expr` increments `expr` by 1 and returns the new value.  
 `--expr` decrements `expr` by 1 and returns the new value.
 ```

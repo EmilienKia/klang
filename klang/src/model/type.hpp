@@ -63,6 +63,7 @@ class pointer_type;
 class link_type;
 class view_type;
 class owner_type;
+class drain_type;
 class const_type;
 class sized_array_type;
 class array_type;
@@ -83,6 +84,7 @@ protected:
     std::shared_ptr<link_type> link;
     std::shared_ptr<view_type> view;
     std::shared_ptr<owner_type> owner;
+    std::shared_ptr<drain_type> drain;
     std::shared_ptr<const_type> const_;
     std::shared_ptr<array_type> array;
 
@@ -119,6 +121,7 @@ public:
     inline static bool is_link(const std::shared_ptr<type>& type);
     inline static bool is_view(const std::shared_ptr<type>& type);
     inline static bool is_owner(const std::shared_ptr<type>& type);
+    inline static bool is_drain(const std::shared_ptr<type>& type);
     /** True if the type is a const-qualified type. */
     inline static bool is_const(const std::shared_ptr<type>& type);
     /** Remove const qualifier if present, return the inner type. If not const, return as-is. */
@@ -148,6 +151,7 @@ public:
     std::shared_ptr<link_type> get_link();
     std::shared_ptr<view_type> get_view();
     std::shared_ptr<owner_type> get_owner();
+    std::shared_ptr<drain_type> get_drain();
     std::shared_ptr<const_type> get_const();
     std::shared_ptr<array_type> get_array();
     std::shared_ptr<sized_array_type> get_array(unsigned long size);
@@ -444,6 +448,35 @@ inline bool type::is_owner(const std::shared_ptr<type>& type) {
 }
 
 /**
+ * Drain type (#) — immutable binding, non-null, drainable indirection.
+ * Similar to a reference (&) but grants the consumer the permission to drain
+ * (steal the internal resources of) the referenced object.  The consumer may
+ * choose to drain or simply copy; if draining occurs the source object must be
+ * left in a valid, reusable state (typically equivalent to default construction).
+ * Represented in LLVM as an opaque pointer, identical to reference_type.
+ * Mangling modifier: 'D'
+ */
+class drain_type : public type {
+protected:
+    friend class type;
+
+    drain_type(const std::shared_ptr<type> &subtype);
+
+public:
+    bool is_resolved() const override;
+
+    llvm::Type* get_llvm_type() const override;
+
+    std::string to_string() const override;
+
+    std::shared_ptr<type> get_drained_type() const { return get_subtype(); }
+};
+
+inline bool type::is_drain(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<drain_type>(type) != nullptr;
+}
+
+/**
  * Const type — compile-time-only qualifier.
  * Wraps another type and marks it as immutable: no assignment or mutation is allowed
  * through a variable or indirection of this type.
@@ -479,11 +512,11 @@ inline std::shared_ptr<type> type::remove_const(const std::shared_ptr<type>& t) 
 }
 
 inline bool type::is_any_indirection(const std::shared_ptr<type>& t) {
-    return is_reference(t) || is_pointer(t) || is_link(t) || is_view(t) || is_owner(t);
+    return is_reference(t) || is_pointer(t) || is_link(t) || is_view(t) || is_owner(t) || is_drain(t);
 }
 
 inline bool type::is_strong_indirection(const std::shared_ptr<type>& t) {
-    return is_reference(t) || is_link(t);
+    return is_reference(t) || is_link(t) || is_drain(t);
 }
 
 inline bool type::is_mutable_indirection(const std::shared_ptr<type>& t) {
@@ -495,7 +528,7 @@ inline bool type::is_nullable_indirection(const std::shared_ptr<type>& t) {
 }
 
 inline bool type::is_immutable_indirection(const std::shared_ptr<type>& t) {
-    return is_reference(t) || is_view(t);
+    return is_reference(t) || is_view(t) || is_drain(t);
 }
 
 

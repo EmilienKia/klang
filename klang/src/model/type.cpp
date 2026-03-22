@@ -91,6 +91,14 @@ std::shared_ptr<owner_type> type::get_owner()
     return owner;
 }
 
+std::shared_ptr<drain_type> type::get_drain()
+{
+    if(!drain) {
+        drain = std::shared_ptr<drain_type>(new drain_type(shared_from_this()));
+    }
+    return drain;
+}
+
 std::shared_ptr<const_type> type::get_const()
 {
     if(!const_) {
@@ -358,6 +366,34 @@ std::string owner_type::to_string() const {
         return sub->to_string() + "!";
     } else {
         return "<<nosub>>!";
+    }
+}
+
+//
+// Drain type (#) — drainable indirection (immutable binding, non-null)
+//
+drain_type::drain_type(const std::shared_ptr<type> &subtype):
+type(subtype)
+{}
+
+bool drain_type::is_resolved() const
+{
+    return subtype.lock()->is_resolved();
+}
+
+llvm::Type* drain_type::get_llvm_type() const {
+    if(_llvm_type==nullptr && is_resolved()) {
+        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0);
+    }
+    return _llvm_type;
+}
+
+std::string drain_type::to_string() const {
+    auto sub = subtype.lock();
+    if(sub) {
+        return sub->to_string() + "#";
+    } else {
+        return "<<nosub>>#";
     }
 }
 

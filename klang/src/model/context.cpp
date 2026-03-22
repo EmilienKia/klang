@@ -264,6 +264,8 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             return subtype->get_link();
         } else if(ptr->pointer_type==lex::operator_::QUESTION_MARK) {
             return subtype->get_view();
+        } else if(ptr->pointer_type==lex::operator_::HASH) {
+            return subtype->get_drain();
         } else
             return {}; // Shall not happen
     } else if(auto own = dynamic_cast<const k::parse::ast::owner_type_specifier*>(&type_spec)) {
@@ -541,7 +543,7 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
         // resolve the underlying struct first so get_llvm_type() on the pointer/ref succeeds.
         // This handles the __parent__ field (reference to outer struct).
         auto effective_type = type;
-        if (type::is_pointer(type) || type::is_reference(type)) {
+        if (type::is_pointer(type) || type::is_reference(type) || type::is_drain(type)) {
             auto sub = type->get_subtype();
             if (sub) {
                 if (auto dep_st = std::dynamic_pointer_cast<struct_type>(sub)) {
@@ -777,6 +779,14 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
                 }
             }
             return res->get_owner();
+        }
+    } else if (type::is_drain(type)) {
+        auto res = resolve_type(type->get_subtype());
+        if (!res) {
+            std::cerr << "Error: cannot resolve drain subtype." << std::endl;
+            return nullptr;
+        } else {
+            return res->get_drain();
         }
     } else if (type::is_array(type)) {
         auto res = resolve_type(type->get_subtype());

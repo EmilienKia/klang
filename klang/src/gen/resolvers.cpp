@@ -957,7 +957,7 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
             auto owner_func = param.parent<function>();
             if (owner_func) {
                 // Collect wrapper kinds (from outermost to innermost unresolved_type)
-                enum class WrapKind { Ref, Ptr, Link, View, Const };
+                enum class WrapKind { Ref, Ptr, Link, View, Const, Owner, Drain };
                 std::vector<WrapKind> wrappers;
                 auto inner = param.get_type();
                 while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
@@ -966,6 +966,8 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
                     else if (type::is_link(inner))       wrappers.push_back(WrapKind::Link);
                     else if (type::is_view(inner))       wrappers.push_back(WrapKind::View);
                     else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
+                    else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
+                    else if (type::is_drain(inner))      wrappers.push_back(WrapKind::Drain);
                     else break;
                     inner = inner->get_subtype();
                 }
@@ -983,6 +985,8 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
                                 case WrapKind::Link:  res_type = res_type->get_link();      break;
                                 case WrapKind::View:  res_type = res_type->get_view();      break;
                                 case WrapKind::Const: res_type = res_type->get_const();     break;
+                                case WrapKind::Owner: res_type = res_type->get_owner();     break;
+                                case WrapKind::Drain: res_type = res_type->get_drain();     break;
                             }
                         }
                     }
@@ -1798,6 +1802,9 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             } else if (type::is_reference(var.get_type())) {
                 auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
                 if (inner && type::is_resolved(inner)) resolved = inner->get_reference();
+            } else if (type::is_drain(var.get_type())) {
+                auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
+                if (inner && type::is_resolved(inner)) resolved = inner->get_drain();
             } else {
                 // Fallback: delegate to context->resolve_type
                 resolved = _context->resolve_type(var.get_type());
@@ -2784,6 +2791,76 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         return CAST_IMPOSSIBLE;
     }
 
+    // --- Drain cases ---
+    // drain<T> behaves like a reference for conversion purposes, except that
+    // a reference is NOT implicitly convertible to a drain (explicit # required).
+    if (type::is_drain(type_src)) {
+        auto drn = std::dynamic_pointer_cast<drain_type>(type_src);
+        auto src_sub = drn->get_drained_type();
+        auto src_sub_nc = type::remove_const(src_sub);
+
+        // drain<T> → drain<T>: identity
+        if (type::is_drain(tgt_nc)) {
+            auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) return CAST_NONE;
+            // Struct upcast: drain<Derived> → drain<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                return CAST_REF_CONV;
+            }
+            return CAST_IMPOSSIBLE;
+        }
+        // drain<T> → ref<T>: implicit (drain can always be used as a reference)
+        if (type::is_reference(tgt_nc)) {
+            auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+            if (types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) return CAST_REF_CONV;
+            // Struct upcast: drain<Derived> → ref<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                return CAST_REF_CONV;
+            }
+            return CAST_IMPOSSIBLE;
+        }
+        // drain<T> → link<T>: implicit borrow
+        if (type::is_link(tgt_nc)) {
+            auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+            return CAST_IMPOSSIBLE;
+        }
+        // drain<T> → view<T> / ptr<T>: implicit borrow
+        if (type::is_view(tgt_nc) || type::is_pointer(tgt_nc)) {
+            auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+            return CAST_IMPOSSIBLE;
+        }
+        // drain<T> → value T: load through drain (like ref → value)
+        if (src_sub_nc == tgt_nc) return CAST_REF_CONV;
+
+        // drain<T> → different primitive: load + cast
+        auto prim_sub = std::dynamic_pointer_cast<primitive_type>(src_sub_nc);
+        auto prim_tgt_d = std::dynamic_pointer_cast<primitive_type>(tgt_nc);
+        if (prim_sub && prim_tgt_d) {
+            if (*prim_sub == *prim_tgt_d) return CAST_REF_CONV;
+            if (prim_sub->is_integer() && prim_tgt_d->is_integer() &&
+                prim_sub->is_unsigned() == prim_tgt_d->is_unsigned() &&
+                prim_tgt_d->type_size() >= prim_sub->type_size()) {
+                return CAST_WIDENING;
+            }
+            if (prim_sub->is_float() && prim_tgt_d->is_float() &&
+                prim_tgt_d->type_size() >= prim_sub->type_size()) {
+                return CAST_WIDENING;
+            }
+            return CAST_NARROWING;
+        }
+
+        return CAST_IMPOSSIBLE;
+    }
+
     // ref<owner<T>> → ptr<T>: load owner and borrow as pointer
     // Also handles ref<const<owner<T>>> (const class member) → ptr<T>
     if (type::is_reference(type_src) && !type::is_double_reference(type_src)) {
@@ -2857,6 +2934,34 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 auto src_sub_nc = type::remove_const(inner->get_subtype());
                 if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                     return CAST_REF_CONV;
+            }
+        }
+        // --- ref<drain<T>> → ...: unwrap the ref, then check drain conversions ──
+        if (type::is_drain(inner)) {
+            auto drn_sub_nc = type::remove_const(inner->get_subtype());
+            // ref<drain<T>> → drain<T>: load the stored drain
+            if (type::is_drain(tgt_nc)) {
+                auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+                if (drn_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+            }
+            // ref<drain<T>> → ref<T>: load drain, use as ref
+            if (type::is_reference(tgt_nc)) {
+                auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
+                if (drn_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+            }
+            // ref<drain<T>> → T: load drain, load value
+            if (drn_sub_nc == tgt_nc) return CAST_REF_CONV;
+            // ref<drain<T>> → link<T>, view<T>, ptr<T>: load drain, borrow
+            if (type::is_link(tgt_nc) || type::is_view(tgt_nc) || type::is_pointer(tgt_nc)) {
+                auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+                if (drn_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+            }
+            // ref<drain<T>> → different primitive: load + cast
+            auto prim_drn = std::dynamic_pointer_cast<primitive_type>(drn_sub_nc);
+            auto prim_tgt_w = std::dynamic_pointer_cast<primitive_type>(tgt_nc);
+            if (prim_drn && prim_tgt_w) {
+                if (*prim_drn == *prim_tgt_w) return CAST_REF_CONV;
+                return CAST_WIDENING;
             }
         }
     }
@@ -3468,6 +3573,10 @@ std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(
         // Strip const when loading a value: const is compile-time only.
         deref->set_type(k::model::type::remove_const(type->get_subtype()));
         return deref;
+    } else if(type::is_drain(type)) {
+        auto deref = load_value_expression::make_shared(expr);
+        deref->set_type(k::model::type::remove_const(type->get_subtype()));
+        return deref;
     } else {
         return expr;
     }
@@ -3710,6 +3819,80 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
         return {};
     }
 
+    // --- Drain type adaptation ---
+    // drain<T> → drain<T>: identity
+    // drain<T> → ref<T>: implicit (drain can be used as a reference)
+    // drain<T> → link<T>, view<T>, ptr<T>: implicit borrow
+    // drain<T> → value T: load through drain (like ref → value)
+    if (type::is_drain(type_src)) {
+        auto drn = std::dynamic_pointer_cast<drain_type>(type_src);
+        auto src_sub = drn->get_drained_type();
+        auto src_sub_nc = type::remove_const(src_sub);
+
+        // drain<T> → drain<T>: identity
+        if (type::is_drain(type_nc)) {
+            auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) return expr;
+            // Struct upcast: drain<Derived> → drain<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                auto upcast = cast_expression::make_shared(expr, type_nc);
+                upcast->set_type(type_nc);
+                return upcast;
+            }
+            return {};
+        }
+        // drain<T> → ref<T>: implicit cast (drain is a superset of reference)
+        if (type::is_reference(type_nc)) {
+            auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
+            if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
+            // Struct upcast: drain<Derived> → ref<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                auto upcast = cast_expression::make_shared(expr, type_nc);
+                upcast->set_type(type_nc);
+                return upcast;
+            }
+            return {};
+        }
+        // drain<T> → link<T>, view<T>, ptr<T>: implicit borrow
+        if (type::is_link(type_nc) || type::is_view(type_nc) || type::is_pointer(type_nc)) {
+            auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
+            if (src_sub_nc == tgt_sub_nc) {
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
+            }
+            return {};
+        }
+        // drain<T> → value T: load through drain (like ref → value)
+        if (src_sub_nc == type_nc) {
+            auto loaded = load_value_expression::make_shared(expr);
+            loaded->set_type(src_sub_nc);
+            return loaded;
+        }
+        // drain<primA> → primB: load first, then cast
+        auto prim_drn_sub = std::dynamic_pointer_cast<primitive_type>(src_sub_nc);
+        auto prim_drn_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
+        if (prim_drn_sub && prim_drn_tgt) {
+            auto loaded = load_value_expression::make_shared(expr);
+            loaded->set_type(src_sub_nc);
+            if (*prim_drn_sub == *prim_drn_tgt) return loaded;
+            auto cast = cast_expression::make_shared(loaded, prim_drn_tgt);
+            cast->set_type(prim_drn_tgt);
+            return cast;
+        }
+        return {};
+    }
+
     // ref<owner<T>> → ptr<T>: load the owner value (address) as an observer pointer
     // Also handles ref<const<owner<T>>> (const class member) → ptr<T>
     if (type::is_reference(type_src) && !type::is_double_reference(type_src)) {
@@ -3915,6 +4098,12 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
         if(ref_subtype == type_nc) {
             // ref<T> -> T : simple load
             return adapt_reference_load_value(expr);
+        }
+        // ref<drain<T>> → T/ref<T>/link<T>/...: load the drain, then adapt it
+        if (type::is_drain(ref_subtype)) {
+            auto loaded = load_value_expression::make_shared(expr);
+            loaded->set_type(ref_subtype);
+            return adapt_type(loaded, type_nc);
         }
         // ref<T> → link<T> or ref<T> → view<T>: pass the address directly (LLVM ptr is compatible)
         if (type::is_link(type_nc) || type::is_view(type_nc)) {

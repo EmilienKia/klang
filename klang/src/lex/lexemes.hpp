@@ -318,7 +318,8 @@ struct operator_ : public lexeme {
         DOUBLE_PIPE,
         DOUBLE_PLUS,
         DOUBLE_MINUS,
-        DOUBLE_STAR
+        DOUBLE_STAR,
+        HASH
     };
 
     type_t type;

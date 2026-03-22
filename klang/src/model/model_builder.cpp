@@ -1272,6 +1272,9 @@ namespace k::model {
             case lex::operator_::AMPERSAND:
                 unary = model::address_of_expression::make_shared(sub);
                 break;
+            case lex::operator_::HASH:
+                unary = model::drain_expression::make_shared(sub);
+                break;
             case lex::operator_::STAR:
                 unary = model::dereference_expression::make_shared(sub);
                 break;

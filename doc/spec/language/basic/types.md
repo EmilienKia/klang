@@ -15,31 +15,32 @@ K is a statically-typed language. Every expression has a type determined at comp
 5. [View (`?`)](#5-view-)
 6. [Pointer (`*`)](#6-pointer-)
 7. [Owner (`!`)](#7-owner-)
-8. [Indirection operators](#8-indirection-operators)
-9. [Array types](#9-array-types)
-   - 9.1 [Internal representation](#91-internal-representation)
-   - 9.2 [Sized array value — `T[N]`](#92-sized-array-value--tn)
-   - 9.3 [Sized array reference — `T[N]&`](#93-sized-array-reference--tn)
-   - 9.4 [Unsized array reference — `T[]`](#94-unsized-array-reference--t)
-   - 9.5 [Array assignment](#95-array-assignment)
-   - 9.6 [Subscript operator](#96-subscript-operator)
-   - 9.7 [Arrays of indirection types](#97-arrays-of-indirection-types)
-   - 9.8 [Virtual member `size`](#98-virtual-member-size)
-10. [Struct types](#10-struct-types)
-11. [Function reference types](#11-function-reference-types)
-    - 11.1 [Free function reference types](#111-free-function-reference-types)
-    - 11.2 [Member function reference types](#112-member-function-reference-types)
-12. [Type specifiers — grammar](#12-type-specifiers--grammar)
-13. [Implicit conversions](#13-implicit-conversions)
-    - 13.1 [Widening conversions (primitives)](#131-widening-conversions-no-data-loss)
-    - 13.2 [Narrowing conversions](#132-narrowing-conversions-possible-data-loss)
-    - 13.3 [Static indirection upcast (aggregate types)](#133-static-indirection-upcast-aggregate-types)
-    - 13.4 [Dynamic indirection downcast (class/interface)](#134-dynamic-indirection-downcast-classinterface)
-    - 13.5 [Owner upcast and downcast](#135-owner-upcast-and-downcast)
-    - 13.6 [Explicit cast](#136-explicit-cast)
-    - 13.7 [Implicit indirection-to-bool conversion](#137-implicit-indirection-to-bool-conversion)
-14. [Const-ness](#14-const-ness)
-15. [Enumeration types](#15-enumeration-types)
+8. [Drain (`#`)](#8-drain-)
+9. [Indirection operators](#9-indirection-operators)
+10. [Array types](#10-array-types)
+    - 10.1 [Internal representation](#101-internal-representation)
+    - 10.2 [Sized array value — `T[N]`](#102-sized-array-value--tn)
+    - 10.3 [Sized array reference — `T[N]&`](#103-sized-array-reference--tn)
+    - 10.4 [Unsized array reference — `T[]`](#104-unsized-array-reference--t)
+    - 10.5 [Array assignment](#105-array-assignment)
+    - 10.6 [Subscript operator](#106-subscript-operator)
+    - 10.7 [Arrays of indirection types](#107-arrays-of-indirection-types)
+    - 10.8 [Virtual member `size`](#108-virtual-member-size)
+11. [Struct types](#11-struct-types)
+12. [Function reference types](#12-function-reference-types)
+    - 12.1 [Free function reference types](#121-free-function-reference-types)
+    - 12.2 [Member function reference types](#122-member-function-reference-types)
+13. [Type specifiers — grammar](#13-type-specifiers--grammar)
+14. [Implicit conversions](#14-implicit-conversions)
+    - 14.1 [Widening conversions (primitives)](#141-widening-conversions-no-data-loss)
+    - 14.2 [Narrowing conversions](#142-narrowing-conversions-possible-data-loss)
+    - 14.3 [Static indirection upcast (aggregate types)](#143-static-indirection-upcast-aggregate-types)
+    - 14.4 [Dynamic indirection downcast (class/interface)](#144-dynamic-indirection-downcast-classinterface)
+    - 14.5 [Owner upcast and downcast](#145-owner-upcast-and-downcast)
+    - 14.6 [Explicit cast](#146-explicit-cast)
+    - 14.7 [Implicit indirection-to-bool conversion](#147-implicit-indirection-to-bool-conversion)
+15. [Const-ness](#15-const-ness)
+16. [Enumeration types](#16-enumeration-types)
 
 ---
 
@@ -81,8 +82,9 @@ Primitive types are built-in types that represent scalar values.
 
 ## 2. Indirection types — overview
 
-K has five indirection types.  Four of them form a 2×2 matrix along two independent axes; the
-fifth — the *owner* — has additional ownership semantics and is described separately.
+K has six indirection types.  Four of them form a 2×2 matrix along two independent axes; the
+fifth — the *owner* — has additional ownership semantics and is described separately; the
+sixth — the *drain* — adds resource-transfer semantics.
 
 ### The four observer indirections
 
@@ -100,7 +102,29 @@ above properties; their bit-width and calling convention are identical.  They ar
 **observers** because they do not own the pointed-to object — they are never responsible for
 deleting it.
 
-**Grammar (observer types):**
+### The drain (`T#`)
+
+`T#` is an **immutable binding**, **non-null** indirection with **drain permission**.
+It behaves like a reference (`T&`) in most respects but additionally grants the consumer
+the permission to *steal* the internal resources of the referenced object — a concept
+similar to C++ move semantics but with simpler rules.
+
+| Property | `T&` (reference) | `T#` (drain) |
+|---|---|---|
+| Immutable binding | yes | yes |
+| Non-null | yes | yes |
+| Drain permission | no | **yes** |
+| Implicit from reference | — | **no** (explicit `#` required) |
+| Implicit to reference | — | **yes** |
+
+After draining, the source object must remain in a valid, reusable state (typically
+equivalent to default construction).  Draining is optional — the consumer may choose to
+simply read through the drain like a reference.
+
+A reference is **not** implicitly convertible to a drain; the `#` operator must be used
+explicitly. A drain **is** implicitly convertible to a reference, link, view, or pointer.
+
+**Grammar (observer types, including drain):**
 
 ```
 TypeSuffix:
@@ -108,6 +132,7 @@ TypeSuffix:
     | '+'  -- link      (mutable binding,   non-null)
     | '?'  -- view    (immutable binding, nullable)
     | '*'  -- pointer   (mutable binding,   nullable)
+    | '#'  -- drain     (immutable binding, non-null, drain permission)
 ```
 
 **Assignment semantics summary:**
@@ -133,7 +158,7 @@ if null, `__fatal_null_dereference()` is called.
 When `Derived` inherits from `Base`, an indirection of type `T<Derived>` can be implicitly
 assigned to an indirection of type `T<Base>`.  
 The pointer is adjusted at compile time via a GEP to address the `Base` sub-object.  
-See [§13.3 — Static indirection upcast](#133-static-indirection-upcast-aggregate-types) for full details.
+See [§14.3 — Static indirection upcast](#143-static-indirection-upcast-aggregate-types) for full details.
 
 **Dynamic downcast (class/interface types):**
 
@@ -141,7 +166,7 @@ When a `Base` indirection may point to a `Derived` object at runtime (and both a
 `interface` types), it can be assigned to a `Derived` indirection.  
 A runtime RTTI check is emitted; on mismatch, null is assigned (and fatal for non-null
 targets).  
-See [§13.4 — Dynamic indirection downcast](#134-dynamic-indirection-downcast-classinterface) for full details.
+See [§14.4 — Dynamic indirection downcast](#144-dynamic-indirection-downcast-classinterface) for full details.
 
 ### The owner (`T!`)
 
@@ -169,6 +194,7 @@ TypeSuffix:
     | '+'                        -- link (mutable binding, non-null)
     | '?'                        -- view (immutable binding, nullable)
     | '*'                        -- pointer (mutable binding, nullable)
+    | '#'                        -- drain (immutable binding, non-null, drain permission)
 ```
 
 ### Null literal type
@@ -544,9 +570,73 @@ count is added.
 
 ---
 
-## 8. Indirection operators
+## 8. Drain (`#`)
 
-The following operators apply to all five indirection types (including owner).
+A drain is a **non-null**, **immutable-binding** indirection that additionally grants the
+consumer *drain permission* — the right to steal the internal resources of the referenced
+object.
+
+**Syntax:** `T#`
+
+**Properties:**
+
+- Immutable binding — cannot be rebound after initialisation.
+- Non-null — always refers to a valid object.
+- Drain permission — the consumer may (optionally) appropriate the object's internal
+  resources, leaving it in a valid default-like state.
+- Transparent — operations on a drain apply to the referenced object (same as reference).
+
+**Examples:**
+
+```k
+struct Buffer {
+    data : int = 0;
+    Buffer() {}
+    Buffer(v : int) { data = v; }
+
+    // Drain constructor — steals resources from 'other'
+    Buffer(other : Buffer#) {
+        data = other.data;
+        other.data = 0;   // leave source in valid state
+    }
+}
+
+test() : int {
+    a : Buffer(42);
+    b : Buffer(#a);       // drain constructor
+    return b.data;        // 42
+    // a.data is now 0
+}
+```
+
+**Key rules:**
+
+1. **Explicit drain required** — a reference (`T&`) is **not** implicitly convertible to a
+   drain. The `#` operator must be used:
+   ```k
+   consume(v : int#) : int { return v; }
+   x : int = 42;
+   consume(x);    // ERROR: no implicit ref→drain
+   consume(#x);   // OK: explicit drain
+   ```
+2. **Implicit to reference** — a drain is implicitly convertible to a reference (`T&`),
+   link (`T+`), view (`T?`), or pointer (`T*`).
+3. **Valid after drain** — after draining, the object must remain in a valid, reusable state
+   (typically equivalent to default construction). No memory leaks are permitted.
+4. **Const forbidden** — draining a const object is a compile-time error (draining may
+   modify the source).
+5. **Overload resolution** — when both reference and drain overloads exist, references
+   prefer the reference overload and drains prefer the drain overload.
+6. **Primitive no-op** — draining a primitive type is permitted but provides no benefit
+   (a copy is always performed).
+
+**Mangling:** Drain types use the `D` modifier in mangled names (e.g. `Di` for `int#`).
+
+---
+
+## 9. Indirection operators
+
+The following operators apply to all six indirection types (including owner and drain).
 
 ### Address-of (`&expr`)
 

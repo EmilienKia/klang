@@ -633,6 +633,7 @@ protected:
     void visit_logical_not_expression(logical_not_expression&) override;
 
     void visit_address_of_expression(address_of_expression&) override;
+    void visit_drain_expression(drain_expression&) override;
     void visit_load_value_expression(load_value_expression&) override;
     void visit_dereference_expression(dereference_expression&) override;
 //    void visit_member_of_expression(member_of_expression&) override;

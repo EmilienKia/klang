@@ -247,6 +247,13 @@ void address_of_expression::accept(model_visitor &visitor) {
 }
 
 //
+// Drain expression
+//
+void drain_expression::accept(model_visitor &visitor) {
+    visitor.visit_drain_expression(*this);
+}
+
+//
 // Dereference expression
 //
 void dereference_expression::accept(model_visitor &visitor) {

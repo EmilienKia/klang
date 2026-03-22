@@ -121,7 +121,8 @@ namespace k::lex {
         {"||", operator_::DOUBLE_PIPE},
         {"++", operator_::DOUBLE_PLUS},
         {"--", operator_::DOUBLE_MINUS},
-        {"**", operator_::DOUBLE_STAR}
+        {"**", operator_::DOUBLE_STAR},
+        {"#", operator_::HASH}
     };
 
     std::set<char> lexer::operator_punctuator_chars;

@@ -969,6 +969,9 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
     if(type::is_reference(target_type)) {
         // Target type must be de-referenced
         target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
+    } else if(type::is_drain(target_type)) {
+        // Drain type must be unwrapped like a reference
+        target_type = std::dynamic_pointer_cast<drain_type>(target_type)->get_drained_type();
     }
     // Detect constness before stripping const qualifier
     bool is_const_left = type::is_const(target_type);
@@ -1049,6 +1052,12 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
         source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
         right->set_type(source_type);
         expr.assign_right(right);
+    } else if(type::is_drain(source_type)) {
+        // Drain type must be dereferenced like a reference
+        right = load_value_expression::make_shared(right);
+        source_type = std::dynamic_pointer_cast<drain_type>(source_type)->get_drained_type();
+        right->set_type(source_type);
+        expr.assign_right(right);
     }
     // Convert right enum to underlying primitive too
     source_type = type::remove_const(source_type);
@@ -1101,9 +1110,8 @@ void implementation_generator::visit_addition_expression(addition_expression &ex
 
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type()->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -1132,9 +1140,8 @@ void implementation_generator::visit_substraction_expression(substraction_expres
 
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type()->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -1163,9 +1170,8 @@ void implementation_generator::visit_multiplication_expression(multiplication_ex
 
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type()->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -1196,9 +1202,8 @@ void implementation_generator::visit_division_expression(division_expression &ex
 
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type()->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -1233,9 +1238,8 @@ void implementation_generator::visit_modulo_expression(modulo_expression &expr) 
 
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type()->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -1270,9 +1274,8 @@ void implementation_generator::visit_bitwise_and_expression(bitwise_and_expressi
 
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type()->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -1307,9 +1310,8 @@ void implementation_generator::visit_bitwise_or_expression(bitwise_or_expression
 
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type()->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -1344,9 +1346,8 @@ void implementation_generator::visit_bitwise_xor_expression(bitwise_xor_expressi
 
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type()->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -1381,9 +1382,8 @@ void implementation_generator::visit_left_shift_expression(left_shift_expression
 
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type()->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -1419,9 +1419,8 @@ void implementation_generator::visit_right_shift_expression(right_shift_expressi
 
     // If left operand is a reference, dereference it.
     // Right is supposed to be already dereferenced
-    if(type::is_reference(expr.left()->get_type())) {
-        auto ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
-        llvm::Type* type = _context->get_llvm_type(ref_type->get_subtype());
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
+        llvm::Type* type = _context->get_llvm_type(expr.left()->get_type()->get_subtype());
         left = _builder->CreateLoad(type, left);
     }
 
@@ -3138,6 +3137,10 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
             expr.assign_left(left);
             left_type = left_type->get_subtype();
         }
+    } else if(type::is_drain(left_type)) {
+        left = adapt_reference_load_value(left);
+        expr.assign_left(left);
+        left_type = left_type->get_subtype();
     }
 
     if(type::is_reference(right_type)) {
@@ -3150,6 +3153,10 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
             expr.assign_right(right);
             right_type = right_type->get_subtype();
         }
+    } else if(type::is_drain(right_type)) {
+        right = adapt_reference_load_value(right);
+        expr.assign_right(right);
+        right_type = right_type->get_subtype();
     }
 
     if(!is_bool_compatible(left->get_type()) || !is_bool_compatible(right->get_type())) {
@@ -3213,7 +3220,7 @@ void implementation_generator::visit_logical_and_expression(logical_and_expressi
     }
 
     // If left operand is a reference, dereference it.
-    if (type::is_reference(expr.left()->get_type())) {
+    if (type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
         llvm::Type* ty = _context->get_llvm_type(expr.left()->get_type());
         left = _builder->CreateLoad(ty, left);
     }
@@ -3267,7 +3274,7 @@ void implementation_generator::visit_logical_or_expression(logical_or_expression
     }
 
     // If left operand is a reference, dereference it.
-    if (type::is_reference(expr.left()->get_type())) {
+    if (type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
         llvm::Type* ty = _context->get_llvm_type(expr.left()->get_type());
         left = _builder->CreateLoad(ty, left);
     }
@@ -3535,10 +3542,18 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         left = adapt_reference_load_value(left);
         expr.assign_left(left);
         left_type = left_type->get_subtype();
+    } else if(type::is_drain(left_type)) {
+        left = adapt_reference_load_value(left);
+        expr.assign_left(left);
+        left_type = left_type->get_subtype();
     }
     left_type = type::remove_const(left_type);
 
     if(type::is_reference(right_type)) {
+        right = adapt_reference_load_value(right);
+        expr.assign_right(right);
+        right_type = right_type->get_subtype();
+    } else if(type::is_drain(right_type)) {
         right = adapt_reference_load_value(right);
         expr.assign_right(right);
         right_type = right_type->get_subtype();
@@ -3654,12 +3669,12 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    // If operands are references, dereference them.
+    // If operands are references or drains, dereference them.
     llvm::Type* type = _context->get_llvm_type(expr.get_type());
-    if(type::is_reference(left_type)) {
+    if(type::is_reference(left_type) || type::is_drain(left_type)) {
         left = _builder->CreateLoad(type, left);
     }
-    if(type::is_reference(right_type)) {
+    if(type::is_reference(right_type) || type::is_drain(right_type)) {
         right = _builder->CreateLoad(type, right);
     }
 
@@ -3671,7 +3686,7 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim_left = type::is_reference(left_type) ? left_type->get_subtype() : left_type;
+    auto prim_left = (type::is_reference(left_type) || type::is_drain(left_type)) ? left_type->get_subtype() : left_type;
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left));
 
     if(prim->is_integer_or_bool()) {
@@ -3714,12 +3729,12 @@ void implementation_generator::visit_different_expression(different_expression& 
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    // If operands are references, dereference them.
+    // If operands are references or drains, dereference them.
     llvm::Type* type = _context->get_llvm_type(expr.get_type());
-    if(type::is_reference(left_type)) {
+    if(type::is_reference(left_type) || type::is_drain(left_type)) {
         left = _builder->CreateLoad(type, left);
     }
-    if(type::is_reference(right_type)) {
+    if(type::is_reference(right_type) || type::is_drain(right_type)) {
         right = _builder->CreateLoad(type, right);
     }
 
@@ -3731,7 +3746,7 @@ void implementation_generator::visit_different_expression(different_expression& 
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim_left_ne = type::is_reference(left_type) ? left_type->get_subtype() : left_type;
+    auto prim_left_ne = (type::is_reference(left_type) || type::is_drain(left_type)) ? left_type->get_subtype() : left_type;
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_ne));
 
     if(prim->is_integer_or_bool()) {
@@ -3759,7 +3774,7 @@ void implementation_generator::visit_lesser_expression(lesser_expression& expr) 
 
     // If operands are references, dereference them.
     llvm::Type* type = _context->get_llvm_type(expr.get_type());
-    if(type::is_reference(expr.left()->get_type())) {
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
         left = _builder->CreateLoad(type, left);
     }
     if(type::is_reference(expr.right()->get_type())) {
@@ -3774,7 +3789,7 @@ void implementation_generator::visit_lesser_expression(lesser_expression& expr) 
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim_left_lt = type::is_reference(expr.left()->get_type()) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
+    auto prim_left_lt = (type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_lt));
 
     if(prim->is_integer_or_bool()) {
@@ -3806,7 +3821,7 @@ void implementation_generator::visit_greater_expression(greater_expression& expr
 
     // If operands are references, dereference them.
     llvm::Type* type = _context->get_llvm_type(expr.get_type());
-    if(type::is_reference(expr.left()->get_type())) {
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
         left = _builder->CreateLoad(type, left);
     }
     if(type::is_reference(expr.right()->get_type())) {
@@ -3821,7 +3836,7 @@ void implementation_generator::visit_greater_expression(greater_expression& expr
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim_left_gt = type::is_reference(expr.left()->get_type()) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
+    auto prim_left_gt = (type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_gt));
 
     if(prim->is_integer_or_bool()) {
@@ -3853,7 +3868,7 @@ void implementation_generator::visit_lesser_equal_expression(lesser_equal_expres
 
     // If operands are references, dereference them.
     llvm::Type* type = _context->get_llvm_type(expr.get_type());
-    if(type::is_reference(expr.left()->get_type())) {
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
         left = _builder->CreateLoad(type, left);
     }
     if(type::is_reference(expr.right()->get_type())) {
@@ -3868,7 +3883,7 @@ void implementation_generator::visit_lesser_equal_expression(lesser_equal_expres
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim_left_le = type::is_reference(expr.left()->get_type()) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
+    auto prim_left_le = (type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_le));
 
     if(prim->is_integer_or_bool()) {
@@ -3900,7 +3915,7 @@ void implementation_generator::visit_greater_equal_expression(greater_equal_expr
 
     // If operands are references, dereference them.
     llvm::Type* type = _context->get_llvm_type(expr.get_type());
-    if(type::is_reference(expr.left()->get_type())) {
+    if(type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) {
         left = _builder->CreateLoad(type, left);
     }
     if(type::is_reference(expr.right()->get_type())) {
@@ -3915,7 +3930,7 @@ void implementation_generator::visit_greater_equal_expression(greater_equal_expr
 
     // For primitives, operand types are supposed to be aligned
     static auto bool_type = _context->from_type(primitive_type::BOOL);
-    auto prim_left_ge = type::is_reference(expr.left()->get_type()) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
+    auto prim_left_ge = (type::is_reference(expr.left()->get_type()) || type::is_drain(expr.left()->get_type())) ? expr.left()->get_type()->get_subtype() : expr.left()->get_type();
     auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(prim_left_ge));
 
     if(prim->is_integer_or_bool()) {

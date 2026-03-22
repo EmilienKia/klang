@@ -228,8 +228,8 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
             }
         }
         // Variable symbol will always be a reference to the variable type.
-        if (type::is_reference(var_type)) {
-            // Variable is already a reference, so symbol type is the variable type.
+        if (type::is_reference(var_type) || type::is_drain(var_type)) {
+            // Variable is already a reference/drain (indirection), so symbol type is the variable type.
             symbol.set_type(var_type);
         } else {
             // Variable is not a reference, so symbol type is a reference to the variable type.
@@ -408,8 +408,8 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
         llvm::Type* type = _context->get_llvm_type(var_type);
 
         if(ptr && type) {
-            if (type::is_reference(var_type)) {
-                // Type is a reference (pointer), so value is loaded from the pointer
+            if (type::is_reference(var_type) || type::is_drain(var_type)) {
+                // Type is a reference/drain (indirection), so value is loaded from the alloca
                 _value = _builder->CreateLoad(type, ptr, name + "_ref");
             } else {
                 // Value of a symbol (as a reference) is always its address.
@@ -590,6 +590,58 @@ void implementation_generator::visit_address_of_expression(address_of_expression
 }
 
 //
+// Drain expression (#expr)
+//
+
+void type_reference_resolver::visit_drain_expression(drain_expression& expr) {
+    default_model_visitor::visit_drain_expression(expr);
+
+    auto sub_expr = expr.sub_expr();
+    auto sub_type = sub_expr->get_type();
+
+    // Unwrap reference to get to the actual type
+    std::shared_ptr<type> inner;
+    if (auto ref_type = std::dynamic_pointer_cast<reference_type>(sub_type)) {
+        inner = ref_type->get_subtype();
+    } else if (type::is_drain(sub_type)) {
+        // #(drain) is a no-op: already a drain
+        expr.set_type(sub_type);
+        return;
+    } else {
+        throw_error(0x0090, expr.first_lexeme(),
+            "Cannot drain a non-reference expression: "
+            "the '#' operator requires a reference (i.e. an addressable location) as its operand, "
+            "but the operand has type '{}'",
+            {sub_type ? sub_type->to_string() : "?"});
+    }
+
+    // Cannot drain a const object
+    if (type::is_const(inner)) {
+        throw_error(0x0091, expr.first_lexeme(),
+            "Cannot drain a const object: "
+            "the '#' operator requires a mutable object, "
+            "but the operand has type '{}'",
+            {sub_type ? sub_type->to_string() : "?"});
+    }
+
+    // Produce drain<T> from ref<T>
+    expr.set_type(inner->get_drain());
+}
+
+void implementation_generator::visit_drain_expression(drain_expression& expr) {
+    _value = nullptr;
+    expr.sub_expr()->accept(*this);
+
+    if(!_value) {
+        throw_internal_error(0x000E, expr.first_lexeme(),
+            "Internal error: the sub-expression of a drain ('#') operator produced no LLVM value; "
+            "this indicates a code-generation bug");
+    }
+    // Drain is semantically identical to a reference at LLVM level — just an address.
+    // _value = _value;
+}
+
+//
 // Load value expression
 //
 
@@ -601,6 +653,9 @@ void type_reference_resolver::visit_load_value_expression(load_value_expression&
         expr.set_type(k::model::type::remove_const(ref_type->get_subtype()));
     } else if(auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type)) {
         expr.set_type(k::model::type::remove_const(ptr_type->get_subtype()));
+    } else if(auto drn_type = std::dynamic_pointer_cast<drain_type>(type)) {
+        // Loading through a drain is the same as loading through a reference
+        expr.set_type(k::model::type::remove_const(drn_type->get_drained_type()));
     } else {
         throw_error(0x0019, expr.first_lexeme(),
             "Cannot dereference a non-pointer/non-reference expression: "
@@ -621,6 +676,8 @@ void implementation_generator::visit_load_value_expression(load_value_expression
             load_type = k::model::type::remove_const(ref_t->get_subtype());
         } else if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(sub_t)) {
             load_type = k::model::type::remove_const(ptr_t->get_subtype());
+        } else if (auto drn_t = std::dynamic_pointer_cast<drain_type>(sub_t)) {
+            load_type = k::model::type::remove_const(drn_t->get_drained_type());
         }
     }
     if (load_type) {
@@ -729,7 +786,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         return;
     }
 
-    if(!type::is_reference(type)) {
+    if(!type::is_reference(type) && !type::is_drain(type)) {
         // ── Bare struct rvalue (e.g. function return value) ──────────────────
         // Allow member access on struct-typed rvalues (temporaries).
         // The implementation generator will materialize the temporary into an alloca.
@@ -1676,7 +1733,7 @@ void annotate_dispatch_info(function_invocation_expression& expr,
 
     // ── Determine the static receiver type ───────────────────────────────────
     auto this_type = member_callee->sub_expr()->get_type();
-    if (!type::is_reference(this_type)) {
+    if (!type::is_reference(this_type) && !type::is_drain(this_type)) {
         virtual_dispatch_info di;
         di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
         expr.set_dispatch_info(std::move(di));
@@ -1835,13 +1892,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         auto this_expr = member_callee->sub_expr();
         auto this_type = this_expr->get_type(); // should be ref<struct> (possibly base)
 
-        if (!type::is_reference(this_type) && !type::is_struct(this_type)) {
+        if (!type::is_reference(this_type) && !type::is_struct(this_type) && !type::is_drain(this_type)) {
             throw_error(0x0024, expr.first_lexeme(),
                 "The '.' operator requires the left-hand side to have a reference type, "
                 "but '{}' is not a reference; did you mean to use a reference parameter?",
                 {this_type ? this_type->to_string() : "?"});
         }
-        auto subtype = type::is_reference(this_type) ? this_type->get_subtype() : this_type;
+        auto subtype = (type::is_reference(this_type) || type::is_drain(this_type)) ? this_type->get_subtype() : this_type;
         // Detect if the object is accessed through a const reference (ref<const S>)
         bool is_const_this = type::is_const(subtype);
         auto bare_subtype = type::remove_const(subtype);
@@ -4641,6 +4698,14 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
                 expr.assign_argument(0, cast);
             }
         }
+    } else if (type::is_drain(var_type)) {
+        // Drain type init: adapt argument to drain type.
+        if (!expr.empty()) {
+            auto cast = adapt_type(expr.argument(0), var_type);
+            if (cast && cast != expr.argument(0)) {
+                expr.assign_argument(0, cast);
+            }
+        }
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
         auto st = st_type->get_struct();
         std::vector<std::shared_ptr<expression>> ctor_args = expr.arguments();
@@ -5106,6 +5171,32 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 {var_def->get_fq_name()});
         }
 
+    } else if (type::is_drain(var_type)) {
+        // Drain variable — store the drain address into the alloca.
+        // Similar to reference init: get the raw alloca and store the address.
+        llvm::Value* alloca_ptr = nullptr;
+        if (auto local_var = std::dynamic_pointer_cast<variable_statement>(var_def)) {
+            auto it = _context->_variables.find(local_var);
+            if (it != _context->_variables.end()) alloca_ptr = it->second;
+        } else if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_def)) {
+            auto it = _context->_global_vars.find(global_var);
+            if (it != _context->_global_vars.end()) alloca_ptr = it->second;
+        }
+        if (!alloca_ptr) {
+            throw_internal_error(0x001A, expr.first_lexeme(),
+                "Internal error: could not obtain the storage location for drain variable '{}'; "
+                "the variable must have been allocated before constructor code generation",
+                {var_def->get_fq_name()});
+        }
+        if (!expr.empty()) {
+            _value = nullptr;
+            expr.argument(0)->accept(*this);
+            if (_value) {
+                _builder->CreateStore(_value, alloca_ptr);
+            }
+        }
+        object_ref = alloca_ptr;
+
     } else if (auto sized_arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type)) {
         // Sized array value variable: int[N]
         // No explicit init — zero-initialise the entire struct, then set the count field.
@@ -5419,6 +5510,20 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         auto tgt_sub = type::remove_const(target_type->get_subtype());
         if (src_sub == tgt_sub) {
             // ref<T> and link<T>/pin<T> are both LLVM pointers — no IR conversion needed.
+            _value = nullptr;
+            expr.sub_expr()->accept(*this);
+            return;
+        }
+    }
+
+    // ── drain<T> ↔ ref<T> / drain<T> ↔ drain<T>: no-op (same LLVM opaque ptr) ──
+    if ((type::is_drain(source_type) || type::is_reference(source_type)) &&
+        (type::is_drain(target_type) || type::is_reference(target_type) ||
+         type::is_link(target_type) || type::is_view(target_type))) {
+        auto src_sub = type::remove_const(source_type->get_subtype());
+        auto tgt_sub = type::remove_const(target_type->get_subtype());
+        if (src_sub == tgt_sub) {
+            // drain<T> and ref<T> are both LLVM opaque pointers — no IR conversion needed.
             _value = nullptr;
             expr.sub_expr()->accept(*this);
             return;

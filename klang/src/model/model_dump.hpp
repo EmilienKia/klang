@@ -560,6 +560,13 @@ public:
         dump_expr_type(expr);
     }
 
+    void visit_drain_expression(drain_expression& expr) override {
+        _stm << "#(";
+        expr.sub_expr()->accept(*this);
+        _stm << ")";
+        dump_expr_type(expr);
+    }
+
     void visit_dereference_expression(dereference_expression& expr) override {
         _stm << "*(";
         expr.sub_expr()->accept(*this);
