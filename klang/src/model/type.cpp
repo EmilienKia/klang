@@ -75,12 +75,12 @@ std::shared_ptr<link_type> type::get_link()
     return link;
 }
 
-std::shared_ptr<pinned_type> type::get_pinned()
+std::shared_ptr<view_type> type::get_view()
 {
-    if(!pinned) {
-        pinned = std::shared_ptr<pinned_type>(new pinned_type(shared_from_this()));
+    if(!view) {
+        view = std::shared_ptr<view_type>(new view_type(shared_from_this()));
     }
-    return pinned;
+    return view;
 }
 
 std::shared_ptr<owner_type> type::get_owner()
@@ -155,8 +155,8 @@ std::string unresolved_function_ref_type::to_string() const {
     if (!_owner_name.empty()) stm << _owner_name.to_string() << "::";
     switch (_ref_kind) {
         case function_reference_type::ref_kind::pointer: stm << "*("; break;
-        case function_reference_type::ref_kind::pin:     stm << "^("; break;
-        case function_reference_type::ref_kind::link:    stm << "~("; break;
+        case function_reference_type::ref_kind::view:    stm << "?("; break;
+        case function_reference_type::ref_kind::link:    stm << "+("; break;
     }
     for (size_t i = 0; i < _parameter_types.size(); ++i) {
         if (i > 0) stm << ", ";
@@ -278,7 +278,7 @@ std::string reference_type::to_string() const {
 }
 
 //
-// Link type (~)
+// Link type (+)
 //
 link_type::link_type(const std::shared_ptr<type> &subtype):
 type(subtype)
@@ -299,37 +299,37 @@ llvm::Type* link_type::get_llvm_type() const {
 std::string link_type::to_string() const {
     auto sub = subtype.lock();
     if(sub) {
-        return sub->to_string() + "~";
+        return sub->to_string() + "+";
     } else {
-        return "<<nosub>>~";
+        return "<<nosub>>+";
     }
 }
 
 //
-// Pinned type (^)
+// View type (?)
 //
-pinned_type::pinned_type(const std::shared_ptr<type> &subtype):
+view_type::view_type(const std::shared_ptr<type> &subtype):
 type(subtype)
 {}
 
-bool pinned_type::is_resolved() const
+bool view_type::is_resolved() const
 {
     return subtype.lock()->is_resolved();
 }
 
-llvm::Type* pinned_type::get_llvm_type() const {
+llvm::Type* view_type::get_llvm_type() const {
     if(_llvm_type==nullptr && is_resolved()) {
         _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0);
     }
     return _llvm_type;
 }
 
-std::string pinned_type::to_string() const {
+std::string view_type::to_string() const {
     auto sub = subtype.lock();
     if(sub) {
-        return sub->to_string() + "^";
+        return sub->to_string() + "?";
     } else {
-        return "<<nosub>>^";
+        return "<<nosub>>?";
     }
 }
 
@@ -652,8 +652,8 @@ std::string function_reference_type::to_string() const {
     std::ostringstream stm;
     switch (_ref_kind) {
         case ref_kind::pointer: stm << "*("; break;
-        case ref_kind::pin:     stm << "^("; break;
-        case ref_kind::link:    stm << "~("; break;
+        case ref_kind::view:    stm << "?("; break;
+        case ref_kind::link:    stm << "+("; break;
     }
     for (size_t n = 0; n < _parameter_types.size(); ++n) {
         if (n > 0) stm << ", ";
@@ -690,8 +690,8 @@ std::string member_function_reference_type::to_string() const {
     }
     switch (_ref_kind) {
         case ref_kind::pointer: stm << "*("; break;
-        case ref_kind::pin:     stm << "^("; break;
-        case ref_kind::link:    stm << "~("; break;
+        case ref_kind::view:    stm << "?("; break;
+        case ref_kind::link:    stm << "+("; break;
     }
     for (size_t n = 0; n < _parameter_types.size(); ++n) {
         if (n > 0) stm << ", ";

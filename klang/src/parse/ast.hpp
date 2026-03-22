@@ -167,21 +167,21 @@ namespace k::parse {
         /**
          * Function reference type specifier.
          *
-         * Represents a reference (pointer *, pin ^, or link ~) to a function.
+         * Represents a reference (pointer *, view ?, or link +) to a function.
          * Syntax:
          *   RefKind '(' [ TypeSpec { ',' TypeSpec } ] ')'
          *   QualifiedIdentifier '::' RefKind '(' [ TypeSpec { ',' TypeSpec } ] ')'
          *
          * Examples:
-         *   *(int, double~)          — pointer to free function (int, double~)
-         *   ^(int)                   — pin to free function (int)
-         *   ~()                      — link to free function with no params
+         *   *(int, double+)          — pointer to free function (int, double+)
+         *   ?(int)                   — view to free function (int)
+         *   +()                      — link to free function with no params
          *   MyClass::*(int&)         — pointer to member function of MyClass taking int&
          *
          * No return type is specified (no overloading on return type in K).
          */
         struct function_ref_type_specifier : public type_specifier {
-            /** The reference qualifier operator: STAR (*), CARET (^), or TILDE (~). */
+            /** The reference qualifier operator: STAR (*), QUESTION_MARK (?), or PLUS (+). */
             lex::operator_ ref_op;
             /** Optional qualifier for member function pointer: "MyClass::" part. */
             std::optional<qualified_identifier> owner;

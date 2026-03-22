@@ -248,8 +248,8 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
             return subtype->get_reference();
         }
         // int[] is canonicalized to reference(array(int)) for stack/parameter use,
-        // but for indirection types (T[]*, T[]~, T[]^) we need pointer/link/pinned(array(T)),
-        // not pointer/link/pinned(ref(array(T))).  Unwrap the reference when it wraps
+        // but for indirection types (T[]*, T[]+, T[]?) we need pointer/link/view(array(T)),
+        // not pointer/link/view(ref(array(T))).  Unwrap the reference when it wraps
         // an unsized array, same as the owner case below.
         if (auto ref = std::dynamic_pointer_cast<reference_type>(subtype)) {
             if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
@@ -260,10 +260,10 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
         }
         if(ptr->pointer_type==lex::operator_::STAR) {
             return subtype->get_pointer();
-        } else if(ptr->pointer_type==lex::operator_::TILDE) {
+        } else if(ptr->pointer_type==lex::operator_::PLUS) {
             return subtype->get_link();
-        } else if(ptr->pointer_type==lex::operator_::CARET) {
-            return subtype->get_pinned();
+        } else if(ptr->pointer_type==lex::operator_::QUESTION_MARK) {
+            return subtype->get_view();
         } else
             return {}; // Shall not happen
     } else if(auto own = dynamic_cast<const k::parse::ast::owner_type_specifier*>(&type_spec)) {
@@ -291,9 +291,9 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
     } else if(auto frt = dynamic_cast<const k::parse::ast::function_ref_type_specifier*>(&type_spec)) {
         // Determine ref kind from operator token
         function_reference_type::ref_kind rk = function_reference_type::ref_kind::pointer;
-        if (frt->ref_op == lex::operator_::CARET) {
-            rk = function_reference_type::ref_kind::pin;
-        } else if (frt->ref_op == lex::operator_::TILDE) {
+        if (frt->ref_op == lex::operator_::QUESTION_MARK) {
+            rk = function_reference_type::ref_kind::view;
+        } else if (frt->ref_op == lex::operator_::PLUS) {
             rk = function_reference_type::ref_kind::link;
         }
 
@@ -752,13 +752,13 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
         } else {
             return res->get_link();
         }
-    } else if (type::is_pinned(type)) {
+    } else if (type::is_view(type)) {
         auto res = resolve_type(type->get_subtype());
         if (!res) {
-            std::cerr << "Error: cannot resolve pinned subtype." << std::endl;
+            std::cerr << "Error: cannot resolve view subtype." << std::endl;
             return nullptr;
         } else {
-            return res->get_pinned();
+            return res->get_view();
         }
     } else if (type::is_owner(type)) {
         auto res = resolve_type(type->get_subtype());

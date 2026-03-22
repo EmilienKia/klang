@@ -11,8 +11,8 @@ K is a statically-typed language. Every expression has a type determined at comp
 1. [Primitive types](#1-primitive-types)
 2. [Indirection types — overview](#2-indirection-types--overview)
 3. [Reference (`&`)](#3-reference-)
-4. [Link (`~`)](#4-link-)
-5. [Pinned (`^`)](#5-pinned-)
+4. [Link (`+`)](#4-link-)
+5. [View (`?`)](#5-view-)
 6. [Pointer (`*`)](#6-pointer-)
 7. [Owner (`!`)](#7-owner-)
 8. [Indirection operators](#8-indirection-operators)
@@ -88,8 +88,8 @@ fifth — the *owner* — has additional ownership semantics and is described se
 
 |              | **Non-null** (strong) | **Nullable** |
 |--------------|-----------------------|--------------|
-| **Immutable binding** | `T&` — reference      | `T^` — pinned |
-| **Mutable binding**   | `T~` — link           | `T*` — pointer |
+| **Immutable binding** | `T&` — reference      | `T?` — view |
+| **Mutable binding**   | `T+` — link           | `T*` — pointer |
 
 * **Binding mutability** — whether the indirection variable can be *rebound* after
   initialisation (i.e. made to point to a different object).
@@ -105,8 +105,8 @@ deleting it.
 ```
 TypeSuffix:
     '&'    -- reference (immutable binding, non-null)
-    | '~'  -- link      (mutable binding,   non-null)
-    | '^'  -- pinned    (immutable binding, nullable)
+    | '+'  -- link      (mutable binding,   non-null)
+    | '?'  -- view    (immutable binding, nullable)
     | '*'  -- pointer   (mutable binding,   nullable)
 ```
 
@@ -115,17 +115,17 @@ TypeSuffix:
 | Type | `x = val` (val is a value) | `x = &y` / `x = lnk` (val is an indirection) |
 |------|------|------|
 | `T&` | assigns `val` to the referenced object | compile-time error (rebind forbidden) |
-| `T~` | assigns `val` to the linked object | **rebinds** `x` to point to `y` |
-| `T^` | compile-time error (rebind forbidden) | compile-time error (rebind forbidden) |
+| `T+` | assigns `val` to the linked object | **rebinds** `x` to point to `y` |
+| `T?` | compile-time error (rebind forbidden) | compile-time error (rebind forbidden) |
 | `T*` | compile-time error (must use `*x = val`) | **rebinds** `x` to point to `y` |
 
 **Null safety:**
 
-Assigning or initialising a `T~` (link) from a nullable source (`T^` or `T*`) emits a
+Assigning or initialising a `T+` (link) from a nullable source (`T?` or `T*`) emits a
 **compile-time warning** and inserts a **runtime null-check**; if the source is null at
 runtime, `__fatal_null_assignation()` is called (which traps).
 
-Dereferencing (`*x` or `x->m`) a `T^` or `T*` value likewise inserts a runtime null-check;
+Dereferencing (`*x` or `x->m`) a `T?` or `T*` value likewise inserts a runtime null-check;
 if null, `__fatal_null_dereference()` is called.
 
 **Static upcast (aggregate types):**
@@ -166,8 +166,8 @@ TypeSuffix:
     '[' [ IntegerLiteral ] ']'   -- array (sized or unsized)
     | '!'                        -- owner (move-only, nullable, exclusive ownership)
     | '&'                        -- reference (immutable binding, non-null)
-    | '~'                        -- link (mutable binding, non-null)
-    | '^'                        -- pinned (immutable binding, nullable)
+    | '+'                        -- link (mutable binding, non-null)
+    | '?'                        -- view (immutable binding, nullable)
     | '*'                        -- pointer (mutable binding, nullable)
 ```
 
@@ -177,11 +177,11 @@ The `null` keyword is a literal with a dedicated type, distinct from every other
 in the type system.  It represents a null pointer value — an indirection that points to
 no object.
 
-`null` is implicitly convertible to **nullable** indirection types: `T*`, `T^`, and `T!`.
-It is **not** convertible to non-null types: `T&` (reference) and `T~` (link).
+`null` is implicitly convertible to **nullable** indirection types: `T*`, `T?`, and `T!`.
+It is **not** convertible to non-null types: `T&` (reference) and `T+` (link).
 
 In a boolean context (`if`, `while`, `for`, `&&`, `||`, `!`), `null` converts to `false`.
-When compared with `==` or `!=` against any indirection (including `T~` and `T^`), `null`
+When compared with `==` or `!=` against any indirection (including `T+` and `T?`), `null`
 participates in address comparison.
 
 See also: [Null literal](../expressions/literals.md#6-null-literal).
@@ -200,7 +200,7 @@ A reference is an alias for an existing object. It acts exactly as the object it
 - Non-null — always refers to a valid object.
 - Transparent — operations on a reference apply to the referenced object:
   `r = 42` assigns to the object, not to `r`.
-- Taking the address of a reference with `&r` returns a link (`T~`) to the same object.
+- Taking the address of a reference with `&r` returns a link (`T+`) to the same object.
 
 **Examples:**
 
@@ -244,18 +244,18 @@ test() : int {
 
 ---
 
-## 4. Link (`~`)
+## 4. Link (`+`)
 
 A link is a **rebindable**, non-null address. It combines the non-null safety of a reference with the ability to be pointed at a different object later.
 
-**Syntax:** `T~`
+**Syntax:** `T+`
 
 **Properties:**
 
-- Mutable binding — can be rebound after initialisation using `lnk = &y` or `lnk = other_link`.
+- Mutable binding — can be rebound after initialisation using ` link = &y` or ` link = other_link`.
 - Non-null — always points to a valid object; rebinding from a nullable source triggers a runtime null-check.
-- Transparent on value operations — `lnk = val` (where `val` is of type `T`) assigns to the linked object.
-- Rebind on address operations — `lnk = &y` or `lnk = other_link` rebinds the link.
+- Transparent on value operations — ` link = val` (where `val` is of type `T`) assigns to the linked object.
+- Rebind on address operations — ` link = &y` or ` link = other_link` rebinds the link.
 
 **Examples:**
 
@@ -263,9 +263,9 @@ A link is a **rebindable**, non-null address. It combines the non-null safety of
 test() : int {
     x : int = 10;
     y : int = 20;
-    lnk : int~ = &x;   // lnk points to x
-    lnk = 99;           // assigns 99 to x through lnk (transparent)
-    lnk = &y;           // REBIND: lnk now points to y
+     link : int+ = &x;   //  link points to x
+     link = 99;           // assigns 99 to x through  link (transparent)
+     link = &y;           // REBIND:  link now points to y
     return *lnk;        // returns 20 (y's value)
 }
 ```
@@ -278,57 +278,57 @@ test() : int {
 
 1. **Mandatory initialisation** — must be initialised at declaration:
    ```k
-   lnk : int~;         // ERROR: link without initialiser
+    link : int+;         // ERROR: link without initialiser
    ```
-2. **Initialiser must be an indirection** — must be initialised from a reference, link, pinned or pointer:
+2. **Initialiser must be an indirection** — must be initialised from a reference, link, view or pointer:
    ```k
-   lnk : int~ = 42;    // ERROR: 42 is not an address
+    link : int+ = 42;    // ERROR: 42 is not an address
    ```
-3. **Warning on nullable source** — if initialised or rebound from a `T^` or `T*`, a warning is emitted and a runtime null-check is inserted.
+3. **Warning on nullable source** — if initialised or rebound from a `T?` or `T*`, a warning is emitted and a runtime null-check is inserted.
 
 ---
 
-## 5. Pinned (`^`)
+## 5. View (`?`)
 
-A pinned is an **immutable binding** that may be null. Think of it as a non-rebindable raw pointer.
+A view is an **immutable binding** that may be null. Think of it as a non-rebindable raw pointer.
 
-**Syntax:** `T^`
+**Syntax:** `T?`
 
 **Properties:**
 
-- Immutable binding — cannot be rebound after initialisation. `pin = &y` is a compile-time error.
+- Immutable binding — cannot be rebound after initialisation. `view = &y` is a compile-time error.
 - Nullable — may hold null.
-- Requires explicit dereference — `*pin` to access the object (with a runtime null-check).
+- Requires explicit dereference — `*view` to access the object (with a runtime null-check).
 
 **Examples:**
 
 ```k
 test() : int {
     x : int = 42;
-    pin : int^ = &x;    // pin holds the address of x; cannot be changed later
-    return *pin;        // dereferences with null-check; returns 42
+    view : int? = &x;    // view holds the address of x; cannot be changed later
+    return *view;        // dereferences with null-check; returns 42
 }
 
 maybe_null() : int {
-    pin : int^ = null;
-    return *pin;        // runtime trap: __fatal_null_dereference()
+    view : int? = null;
+    return *view;        // runtime trap: __fatal_null_dereference()
 }
 ```
 
-**Dereference:** `*pin` inserts a runtime null-check. If null, `__fatal_null_dereference()` is called.
+**Dereference:** `*view` inserts a runtime null-check. If null, `__fatal_null_dereference()` is called.
 
-**Member access:** `pin->m` accesses member `m` of the pinned struct, with null-check.
+**Member access:** `view->m` accesses member `m` of the view struct, with null-check.
 
 **Constraints:**
 
 1. **Mandatory initialisation** — must be initialised at declaration:
    ```k
-   pin : int^;         // ERROR: pinned without initialiser
+   view : int?;         // ERROR: view without initialiser
    ```
-2. **No rebind** — any assignment to `pin` after initialisation is a compile-time error:
+2. **No rebind** — any assignment to `view` after initialisation is a compile-time error:
    ```k
-   pin : int^ = &x;
-   pin = &y;           // ERROR: pinned is immutable
+   view : int? = &x;
+   view = &y;           // ERROR: view is immutable
    ```
 
 ---
@@ -362,7 +362,7 @@ test() : int {
 
 **Member access:** `p->m` accesses member `m` of the pointed-to struct, with null-check.
 
-**Address-of:** `&p` yields a link (`T*~`) to the pointer variable itself (address of the pointer).
+**Address-of:** `&p` yields a link (`T*+`) to the pointer variable itself (address of the pointer).
 
 ---
 
@@ -385,7 +385,7 @@ owner can delete (destroy and free) the object it points to.
   set to `null`.  If the destination already held an object, that object is deleted first.
 - **Automatic destruction** — when an owner variable goes out of scope while non-null, its
   object is automatically deleted (destructor called + `free` issued).
-- **Observer-safe** — the four non-owner indirection types (`T&`, `T~`, `T^`, `T*`) may
+- **Observer-safe** — the four non-owner indirection types (`T&`, `T+`, `T?`, `T*`) may
   hold the address of the owned object; the owner retains exclusive responsibility for
   deletion.  These types are *non-owning observers* and must not outlive the owner.
 
@@ -462,7 +462,7 @@ owner **retains ownership**.  The receiving type is a non-owning observer:
 ```k
 owner : Foo! = new Foo(7);
 obs   : Foo* = owner;          // raw address; owner still owns Foo
-lnk   : Foo~ = owner;          // non-null check inserted at binding
+ link   : Foo+ = owner;          // non-null check inserted at binding
 ref   : Foo& = *owner;         // reference (via dereference, with null-check)
 ```
 
@@ -552,15 +552,15 @@ The following operators apply to all five indirection types (including owner).
 
 Takes the address of an lvalue. The result type depends on the context:
 
-- Applied to an ordinary variable or parameter of type `T`: produces `T~` (a link).
-- Applied to a `T&` reference variable: produces `T~` (a link to the same object).
+- Applied to an ordinary variable or parameter of type `T`: produces `T+` (a link).
+- Applied to a `T&` reference variable: produces `T+` (a link to the same object).
 
 ```k
 x : int = 5;
-lnk : int~ = &x;     // address-of produces a link
+ link : int+ = &x;     // address-of produces a link
 ```
 
-> **Note:** In previous versions, `&expr` returned `T*`. It now returns `T~` (non-null address), which can be widened to `T*` or `T^` by implicit conversion.
+> **Note:** In previous versions, `&expr` returned `T*`. It now returns `T+` (non-null address), which can be widened to `T*` or `T?` by implicit conversion.
 
 ### Dereference (`*expr`)
 
@@ -568,23 +568,23 @@ Yields a reference (`T&`) to the object at the address held by `expr`.
 
 | Operand type | Null-check at runtime |
 |---|---|
-| `T~` | No (link is non-null) |
-| `T^` | Yes — calls `__fatal_null_dereference()` if null |
+| `T+` | No (link is non-null) |
+| `T?` | Yes — calls `__fatal_null_dereference()` if null |
 | `T*` | Yes — calls `__fatal_null_dereference()` if null |
 | `T&` | Not applicable (& is not dereferenceable by `*`) |
 
 ```k
 p  : int* = &x;
-lnk : int~ = &x;
+ link : int+ = &x;
 *p   = 42;           // null-check + assign
-*lnk = 42;           // no null-check + assign
+* link = 42;           // no null-check + assign
 ```
 
 ### Member-of-pointer (`expr->m`)
 
 Accesses member `m` of the struct pointed to by `expr`. Equivalent to `(*expr).m`.
 
-Inserts a runtime null-check for `T^` and `T*` operands.
+Inserts a runtime null-check for `T?` and `T*` operands.
 
 ```k
 struct Point { x : int = 0; y : int = 0; }
@@ -782,8 +782,8 @@ The subscript operator works uniformly on arrays accessed through any indirectio
 | `T[N]&` / `T[]&` | Reference to an array |
 | `T[N]!` / `T[]!` | Owner of an array |
 | `T[N]*` / `T[]*` | Pointer to an array |
-| `T[N]~` / `T[]~` | Link to an array |
-| `T[N]^` / `T[]^` | Pinned to an array |
+| `T[N]+` / `T[]+` | Link to an array |
+| `T[N]?` / `T[]?` | View to an array |
 
 ```k
 arr : int[3]{10, 20, 30};
@@ -806,17 +806,17 @@ p[1] = 42;           // subscript through pointer — modifies arr[1]
 ### 9.7 Arrays of indirection types
 
 An array's element type can itself be an indirection type.
-This creates an array whose slots hold addresses (links, pointers, pinned references, or
+This creates an array whose slots hold addresses (links, pointers, view references, or
 owners) rather than plain values.
 
-Type suffixes are applied **left-to-right**, so `int~[3]` is parsed as `(int~)[3]` — a
+Type suffixes are applied **left-to-right**, so `int+[3]` is parsed as `(int+)[3]` — a
 3-element array of links to `int`.
 
 | Type expression | Meaning |
 |-----------------|---------|
-| `T~[N]`  | Array of `N` links to `T` |
+| `T+[N]`  | Array of `N` links to `T` |
 | `T*[N]`  | Array of `N` pointers to `T` |
-| `T^[N]`  | Array of `N` pinned to `T` |
+| `T?[N]`  | Array of `N` view to `T` |
 | `T![N]`  | Array of `N` owners of `T` |
 
 **Internal representation:**
@@ -828,8 +828,8 @@ representation (`ptr`).
 **Initialisation:**
 
 Each element must be initialised with an expression whose type is compatible with the
-element indirection type.  The `&` (address-of) operator produces a `T~` (link) which
-is implicitly convertible to `T*`, `T^`, or `T~` (see §13.3).  Owners are initialised
+element indirection type.  The `&` (address-of) operator produces a `T+` (link) which
+is implicitly convertible to `T*`, `T?`, or `T+` (see §13.3).  Owners are initialised
 with `new` expressions.
 
 ```k
@@ -837,14 +837,14 @@ a : int = 3;
 b : int = 5;
 c : int = 7;
 
-// Array of links — elements initialised with &var (produces T~)
-arr_lnk : int~[] {&a, &b, &c};
+// Array of links — elements initialised with &var (produces T+)
+arr_ link : int+[] {&a, &b, &c};
 
 // Array of pointers — links implicitly widened to pointers
 arr_ptr : int*[] {&a, &b, &c};
 
-// Array of pinned — links implicitly widened to pinned
-arr_pin : int^[] {&a, &b, &c};
+// Array of view — links implicitly widened to view
+arr_view : int?[] {&a, &b, &c};
 
 // Array of owners — elements initialised with new expressions
 arr_own : int![] {new int(10), new int(20), new int(30)};
@@ -856,17 +856,17 @@ The subscript operator returns a reference to the element, which is itself an
 indirection.  To reach the underlying value, apply the dereference operator `*`:
 
 ```k
-arr : int~[] {&a, &b, &c};
+arr : int+[] {&a, &b, &c};
 val : int = *arr[0];     // dereference the link at index 0 → 3
 ```
 
 **Write-through:**
 
-For mutable indirections (link `~`, pointer `*`, owner `!`), `*arr[i] = expr` modifies
+For mutable indirections (link `+`, pointer `*`, owner `!`), `*arr[i] = expr` modifies
 the object pointed to by the indirection, not the indirection itself:
 
 ```k
-arr : int~[] {&a, &b};
+arr : int+[] {&a, &b};
 *arr[0] = 100;           // modifies 'a' to 100
 *arr[1] = 200;           // modifies 'b' to 200
 ```
@@ -911,7 +911,7 @@ get_size(a : int[3]&) : unsigned int {
 
 **Indirection access (`->`):**
 
-When the array is accessed through a pointer (`*`), link (`~`), pinned (`^`),
+When the array is accessed through a pointer (`*`), link (`+`), view (`?`),
 or owner (`!`), the `->` operator is used:
 
 ```k
@@ -945,7 +945,7 @@ the outer element count, while `->size` on an element gives the inner count:
 ```k
 a : int[3]{1, 2, 3};
 b : int[3]{4, 5, 6};
-outer : int[3]~[]{&a, &b};
+outer : int[3]+[]{&a, &b};
 outer.size;            // 2 (outer array has 2 elements)
 outer[0]->size;        // 3 (inner array has 3 elements)
 ```
@@ -979,14 +979,14 @@ A free function reference holds the address of a free function or a `static` mem
 | Qualifier | Nullable | Rebindable |
 |-----------|----------|------------|
 | `*(Params)` | Yes | Yes |
-| `^(Params)` | Yes | No  |
-| `~(Params)` | No  | Yes |
+| `?(Params)` | Yes | No  |
+| `+(Params)` | No  | Yes |
 The return type is not written — it is inferred from the target function.
 ```k
 add_one(x : int) : int { return x + 1; }
 fp  : *(int) = add_one;    // nullable, rebindable pointer to (int)->?
-lnk : ~(int) = add_one;    // non-null link  to (int)->?
-pin : ^(int) = add_one;    // nullable, fixed pin to (int)->?
+ link : +(int) = add_one;    // non-null link  to (int)->?
+view : ?(int) = add_one;    // nullable, fixed view to (int)->?
 result : int = fp(41);     // call through the reference -> 42
 ```
 ### 11.2 Member function reference types
@@ -1003,9 +1003,9 @@ c : Counter;
 c.value = 40;
 result : int = (c.*mfp)(2);    // calls c.add(2) -> 42
 ```
-To call through an indirection (`*`, `^`, `~`), use `->*`:
+To call through an indirection (`*`, `?`, `+`), use `->*`:
 ```k
-lnk : Counter~ = c;
+ link : Counter+ = c;
 result : int = (lnk->*mfp)(2);   // -> 42
 ```
 See [Function References](../functions/function_references.md) for the full call syntax.
@@ -1029,14 +1029,14 @@ TypeSuffix:
     '[' [ IntegerLiteral ] ']'     -- array suffix (sized or unsized)
     | '!'                          -- owner (move-only, nullable, exclusive ownership)
     | '&'                          -- reference (immutable binding, non-null)
-    | '~'                          -- link (mutable binding, non-null)
-    | '^'                          -- pinned (immutable binding, nullable)
+    | '+'                          -- link (mutable binding, non-null)
+    | '?'                          -- view (immutable binding, nullable)
     | '*'                          -- pointer (mutable binding, nullable)
 ```
 
 Suffixes may be chained: `int*` is a pointer to int; `int[4]` is a 4-element int array;
 `int[4]&` is a reference to a 4-element int array.  An indirection suffix followed by
-an array suffix creates an **array of indirections**: `int~[3]` is a 3-element array of
+an array suffix creates an **array of indirections**: `int+[3]` is a 3-element array of
 links to int (see §9.7).
 
 Note: `T!` (owner) does **not** compose with further suffixes — `Foo!*` or `Foo!!` are not
@@ -1050,19 +1050,19 @@ int
 double
 unsigned int
 short*
-int~
-int^
+int+
+int?
 int[4]
 int[4]&
-int~[3]         -- array of 3 links to int (see §9.7)
+int+[3]         -- array of 3 links to int (see §9.7)
 int*[5]         -- array of 5 pointers to int
-int^[2]         -- array of 2 pinned to int
+int?[2]         -- array of 2 view to int
 int![4]         -- array of 4 owners of int
 plop&
-plop~
+plop+
 plop*
 plop!           -- owner of a dynamically allocated plop
-plop~[3]        -- array of 3 links to plop
+plop+[3]        -- array of 3 links to plop
 ```
 
 ---
@@ -1098,23 +1098,23 @@ This applies to all four indirection types:
 | Source                | Destination(s)           | Notes |
 |-----------------------|--------------------------|-------|
 | `Derived&`            | `Base&`                  | Only at construction (ref is immutable binding) |
-| `Derived~`            | `Base~`                  | Init and rebind |
-| `Derived~`            | `Base^`                  | Init only (link widened to pinned) |
-| `Derived^`            | `Base^`                  | Only at construction (pin is immutable binding) |
+| `Derived+`            | `Base+`                  | Init and rebind |
+| `Derived+`            | `Base?`                  | Init only (link widened to view) |
+| `Derived?`            | `Base?`                  | Only at construction (view is immutable binding) |
 | `Derived*`            | `Base*`                  | Init and rebind |
-| `Derived*` or `Derived~` | `Base~`               | Initialisation only (link is non-null; null-check inserted if source is nullable) |
-| `Derived~`            | `Base*`                  | Init and rebind (link widened to pointer) |
-| `Derived^` or `Derived*` | `Base*`               | Rebind |
+| `Derived*` or `Derived+` | `Base+`               | Initialisation only (link is non-null; null-check inserted if source is nullable) |
+| `Derived+`            | `Base*`                  | Init and rebind (link widened to pointer) |
+| `Derived?` or `Derived*` | `Base*`               | Rebind |
 
 **Rules:**
 
 1. `Base` must be a direct or transitive base class/struct/interface of `Derived`. The relationship is verified at compile time.
-2. If the types have no inheritance relationship, a **compile-time error** is emitted (`0x4506` for links, `0x4605` for pinned, `0x4700` for pointers, `0x4005` for references).
+2. If the types have no inheritance relationship, a **compile-time error** is emitted (`0x4506` for links, `0x4605` for view, `0x4700` for pointers, `0x4005` for references).
 3. Rebind constraints are respected:
-   - `ref` (`&`) and `pin` (`^`) can only be bound at construction — no rebind (compile-time error).
-   - `link` (`~`) and `ptr` (`*`) can be rebound at any time.
+   - `ref` (`&`) and `view` (`?`) can only be bound at construction — no rebind (compile-time error).
+   - `link` (`+`) and `ptr` (`*`) can be rebound at any time.
 4. Null-safety is preserved:
-   - Assigning a nullable source (`ptr*` or `pin^`) to a non-null destination (`link~` or `ref&`) inserts a **runtime null-check** (`__fatal_null_assignation()` if null) and emits **warning 0x4505**.
+   - Assigning a nullable source (ptr* or `view?`) to a non-null destination (`link+` or `ref&`) inserts a **runtime null-check** (`__fatal_null_assignation()` if null) and emits **warning 0x4505**.
 5. Transitive upcasts (e.g. `C*→A*` where `C→B→A`) are supported via chained GEP.
 6. Virtual base upcasts are supported via the vbptr mechanism.
 
@@ -1126,22 +1126,22 @@ conversions are safe because they either relax mutability or add nullability:
 
 | Source   | Destination | Notes |
 |----------|-------------|-------|
-| `T~` (link) | `T*` (pointer) | Mutable→mutable; adds nullability |
-| `T~` (link) | `T^` (pinned)  | Mutable→immutable; adds nullability |
-| `ref<T>`    | `T~` (link)    | Immutable binding→mutable address (pointer values are identical in IR) |
-| `ref<T>`    | `T^` (pinned)  | Immutable binding→immutable nullable address |
+| `T+` (link) | `T*` (pointer) | Mutable→mutable; adds nullability |
+| `T+` (link) | `T?` (view)  | Mutable→immutable; adds nullability |
+| `ref<T>`    | `T+` (link)    | Immutable binding→mutable address (pointer values are identical in IR) |
+| `ref<T>`    | `T?` (view)  | Immutable binding→immutable nullable address |
 
 These conversions require no code at the LLVM IR level — all indirections are opaque
 pointers (`ptr`); only the K-level type annotation changes.
 
 This is particularly useful when initialising arrays of indirections (§9.7), where the
-address-of operator `&` (which produces a link `T~`) can be used to fill arrays of
-pointers, pinned, or links:
+address-of operator `&` (which produces a link `T+`) can be used to fill arrays of
+pointers, view, or links:
 
 ```k
 a : int = 5;
-arr_ptr : int*[] {&a};   // &a → int~ → int* (link widened to pointer)
-arr_pin : int^[] {&a};   // &a → int~ → int^ (link widened to pinned)
+arr_ptr : int*[] {&a};   // &a → int+ → int* (link widened to pointer)
+arr_view : int?[] {&a};   // &a → int+ → int? (link widened to view)
 ```
 
 ```k
@@ -1163,12 +1163,12 @@ use() {
 
     // lien: bind and rebind
     d2 : Dog(2);
-    lnk : Animal~ = &d;      // OK
-    lnk = &d2;               // rebind to d2
+     link : Animal+ = &d;      // OK
+     link = &d2;               // rebind to d2
 
-    // pin: bind once (nullable)
-    p : Animal^ = &d;        // OK
-    // p = &d2;              // ERROR: pin cannot be rebound
+    //view: bind once (nullable)
+    p : Animal? = &d;        // OK
+    // p = &d2;              // ERROR: view cannot be rebound
 
     // ptr: bind and rebind (nullable)
     ptr : Animal* = &d;      // OK
@@ -1177,7 +1177,7 @@ use() {
 
     // Init lien from ptr (nullable → non-null: null-check inserted)
     dp : Dog* = &d;
-    lnk2 : Animal~ = dp;    // Warning 0x4505: null-check at runtime
+    lnk2 : Animal+ = dp;    // Warning 0x4505: null-check at runtime
 
     // Error: unrelated type
     // struct Cat { name_hash : int; Cat() : name_hash(0) {} }
@@ -1188,8 +1188,8 @@ use() {
 
 ### 13.4 Dynamic indirection downcast (class/interface)
 
-When a `Base*` (or `Base~`, `Base^`, `Base&`) indirection may actually point to a `Derived` object
-at runtime, K allows assigning it to a `Derived*` (or `Derived~`, `Derived^`, `Derived&`).
+When a `Base*` (or `Base+`, `Base?`, `Base&`) indirection may actually point to a `Derived` object
+at runtime, K allows assigning it to a `Derived*` (or `Derived+`, `Derived?`, `Derived&`).
 This is a **dynamic (RTTI-based) downcast** — the compiler inserts a runtime type check.
 
 **Applicability:**
@@ -1206,15 +1206,15 @@ This is a **dynamic (RTTI-based) downcast** — the compiler inserts a runtime t
 1. At runtime, the RTTI pointer stored in the object's vtable is compared with the RTTI descriptor of `Derived`.
 2. If they match, the pointer is adjusted (byte offset subtracted) to point to the start of the `Derived` sub-object, and the result is assigned.
 3. If they do not match, **null** is assigned to the target.
-4. Null assigned to a **non-null** indirection (`link ~` or `reference &`) immediately invokes `__fatal_null_dyncast()`.
+4. Null assigned to a **non-null** indirection (`link +` or `reference &`) immediately invokes `__fatal_null_dyncast()`.
 
 **Binding rules (same as static upcast):**
 
 | Target type | When allowed | Null-on-mismatch behaviour |
 |-------------|--------------|---------------------------|
 | `Derived&`  | Init only (immutable binding) | fatal trap (non-null) |
-| `Derived~`  | Init only (immutable binding) | fatal trap (non-null) |
-| `Derived^`  | Init only (immutable binding, nullable) | null assigned |
+| `Derived+`  | Init only (immutable binding) | fatal trap (non-null) |
+| `Derived?`  | Init only (immutable binding, nullable) | null assigned |
 | `Derived*`  | Init and rebind | null assigned |
 
 **Error conditions:**
@@ -1223,7 +1223,7 @@ This is a **dynamic (RTTI-based) downcast** — the compiler inserts a runtime t
 |-----------|--------|
 | Source and target are unrelated classes | Compile error |
 | Source or target is a `struct` type | Compile error |
-| Rebinding a `ref` or `pin` | Compile error |
+| Rebinding a `ref` or `view` | Compile error |
 
 **Examples:**
 
@@ -1249,11 +1249,11 @@ test() : int {
     dp : Derived* = bp;          // dynamic downcast; dp non-null if RTTI matches
     // *dp crashes if dp is null
 
-    // pin — nullable, null on mismatch  
-    pp : Derived^ = bp;          // same as ptr but immutable binding
+    // view — nullable, null on mismatch  
+    pp : Derived? = bp;          // same as ptr but immutable binding
 
-    // lnk — non-null; fatal trap if RTTI mismatches
-    dl : Derived~ = bp;          // __fatal_null_dyncast() if bp does not point to Derived
+    //  link — non-null; fatal trap if RTTI mismatches
+    dl : Derived+ = bp;          // __fatal_null_dyncast() if bp does not point to Derived
 
     // ref — non-null; fatal trap if RTTI mismatches
     dr : Derived& = d;           // ref<Base> bound to d
@@ -1368,7 +1368,7 @@ i : int = (int) d;          // truncates to 3
 b : byte = (byte) largeInt; // narrow
 ```
 
-#### 13.6.2 Explicit cast for indirection types (ref / lnk / pin / ptr)
+#### 13.6.2 Explicit cast for indirection types (ref /  link / view / ptr)
 
 An explicit cast may be applied to any observer indirection type.  
 Two cases are distinguished based on the direction of the cast:
@@ -1382,12 +1382,12 @@ Allowed source → target combinations:
 | Source expression type        | Explicit cast target | Notes |
 |-------------------------------|----------------------|-------|
 | `ptr<Derived>`                | `(Base*)`            | GEP to base subobject |
-| `lnk<Derived>`                | `(Base~)`            | GEP to base subobject |
-| `pin<Derived>`                | `(Base^)`            | GEP to base subobject |
+| `lnk<Derived>`                | `(Base+)`            | GEP to base subobject |
+| `view<Derived>`                | `(Base?)`            | GEP to base subobject |
 | `ref<Derived>` (via variable) | `(Base&)`            | GEP to base subobject |
 | `lnk<Derived>`                | `(Base*)`            | Cross-kind: GEP; result is nullable |
-| `pin<Derived>`                | `(Base*)`            | Cross-kind: GEP; result is nullable |
-| `ptr<Derived>`                | `(Base~)`            | Cross-kind: GEP; note: ptr is nullable but ~ is non-null (null-check inserted) |
+| `view<Derived>`                | `(Base*)`            | Cross-kind: GEP; result is nullable |
+| `ptr<Derived>`                | `(Base+)`            | Cross-kind: GEP; note: ptr is nullable but ~ is non-null (null-check inserted) |
 
 ```k
 struct Base { val : int; Base(v : int) : val(v) {} }
@@ -1396,7 +1396,7 @@ struct Derived : public Base { extra : int; Derived(v : int) : Base(v), extra(0)
 d  : Derived(42);
 pd : Derived* = &d;
 pb : Base* = (Base*) pd;    // explicit static upcast: GEP
-lb : Base~ = (Base~) pd;    // cross-kind with null-check
+lb : Base+ = (Base+) pd;    // cross-kind with null-check
 ```
 
 **B. Explicit dynamic downcast (Base→Derived)**
@@ -1411,9 +1411,9 @@ Applies only to `class` and `interface` types. **Not allowed for `struct` types*
 | Source expression type | Explicit cast target | Null-on-mismatch behaviour |
 |------------------------|----------------------|---------------------------|
 | `ptr<Base>`            | `(Derived*)`         | null assigned |
-| `ptr<Base>`            | `(Derived^)`         | null assigned |
-| `ptr<Base>`            | `(Derived~)`         | fatal trap (`__fatal_null_dyncast`) |
-| `lnk<Base>`            | `(Derived~)`         | fatal trap |
+| `ptr<Base>`            | `(Derived?)`         | null assigned |
+| `ptr<Base>`            | `(Derived+)`         | fatal trap (`__fatal_null_dyncast`) |
+| `lnk<Base>`            | `(Derived+)`         | fatal trap |
 | `lnk<Base>`            | `(Derived*)`         | null assigned |
 | `ref<Base>`            | `(Derived&)`         | fatal trap |
 
@@ -1436,8 +1436,8 @@ test() : int {
     bp : Base* = &d;          // static upcast
 
     dp  : Derived* = (Derived*) bp;   // explicit downcast — null if RTTI fails
-    dl  : Derived~ = (Derived~) bp;   // explicit downcast — fatal if RTTI fails
-    dp2 : Derived^ = (Derived^) bp;   // explicit downcast — null if RTTI fails
+    dl  : Derived+ = (Derived+) bp;   // explicit downcast — fatal if RTTI fails
+    dp2 : Derived? = (Derived?) bp;   // explicit downcast — null if RTTI fails
 
     return get_fn(*dp);    // → 99 (if dp is non-null)
 }
@@ -1454,7 +1454,7 @@ test() : int {
 
 #### 13.6.3 Implicit cast in function call arguments
 
-When a function expects a `Base*`, `Base~`, `Base^`, or `Base&` parameter, and the caller passes a `Derived*`, `Derived~`, `Derived^`, or `Derived&` expression, the compiler automatically inserts a **static upcast** — no explicit cast syntax is needed.
+When a function expects a `Base*`, `Base+`, `Base?`, or `Base&` parameter, and the caller passes a `Derived*`, `Derived+`, `Derived?`, or `Derived&` expression, the compiler automatically inserts a **static upcast** — no explicit cast syntax is needed.
 
 ```k
 get_val(p : Base*) : int { return p->val; }
@@ -1470,13 +1470,13 @@ This also works for `ref<ptr<Derived>>` when the parameter expects `ptr<Base>` �
 
 ### 13.7 Implicit indirection-to-bool conversion
 
-Indirection types — `T*`, `T~`, `T^`, `T!` — and the `null` literal are implicitly
+Indirection types — `T*`, `T+`, `T?`, `T!` — and the `null` literal are implicitly
 convertible to `bool` wherever a boolean is expected:
 
 | Source | Result |
 |---|---|
-| Non-null `T*`, `T~`, `T^`, `T!` | `true` |
-| Null `T*`, `T^`, `T!` | `false` |
+| Non-null `T*`, `T+`, `T?`, `T!` | `true` |
+| Null `T*`, `T?`, `T!` | `false` |
 | `null` literal | `false` |
 
 This applies in `if`/`while`/`for` conditions, logical operators (`&&`, `||`, `!`),
@@ -1523,9 +1523,9 @@ f(const n : const int) : int { return n; } // both forms — identical
 For indirection types, the `const` qualifier always applies to the **pointed-at object**, whether it is specified via the variable specifier or via the type:
 
 ```k
-const lnk : int~  = &x;  // "const lnk : int~"   → link to const int
-lnk : const int~  = &x;  // "lnk : const int~"   → link to const int — identical
-const lnk : const int~ = &x; // both — identical
+const  link : int+  = &x;  // "const  link : int+"   → link to const int
+ link : const int+  = &x;  // " link : const int+"   → link to const int — identical
+const  link : const int+ = &x; // both — identical
 ```
 
 A `const` variable/parameter:
@@ -1549,7 +1549,7 @@ This is equivalent to placing `const` as a variable specifier (see §14.1).
 ```k
 x   : int      = 10;
 cp  : const int* = &x;    // pointer to const int — the pointed value cannot be modified
-lnk : const int~ = &x;   // link to const int
+ link : const int+ = &x;   // link to const int
 ```
 
 The full grammar for type specifiers with `const`:
@@ -1568,8 +1568,8 @@ BaseTypeSpec:
 pointed to cannot be modified through it.
 
 > **Note:** `const` always applies to the **base type** that follows it — before any indirection
-> suffixes (`*`, `~`, `^`, `&`). It is not possible to write a "const pointer" (i.e. a pointer
-> whose binding is immutable); for that, use a pinned (`^`) or reference (`&`).
+> suffixes (`*`, `+`, `?`, `&`). It is not possible to write a "const pointer" (i.e. a pointer
+> whose binding is immutable); for that, use a view (`?`) or reference (`&`).
 
 The three forms of a const pointer declaration are all equivalent:
 
@@ -1583,20 +1583,20 @@ const p : const int* = &x;     // both — all three mean "pointer to const int"
 
 ### 14.3 Const and indirection types
 
-For all four indirection kinds, `const` applies to the **pointed-at object**, not to the pointer/reference/link/pinned itself:
+For all four indirection kinds, `const` applies to the **pointed-at object**, not to the pointer/reference/link/view itself:
 
 | Indirection type  | Mutable binding? | Pointed value mutable? |
 |-------------------|-----------------|------------------------|
 | `T&`              | no (always immutable) | yes |
 | `const T&`        | no              | no  |
-| `T~`              | yes (rebindable)| yes |
-| `const T~`        | yes (rebindable)| no  |
-| `T^`              | no (immutable)  | yes |
-| `const T^`        | no              | no  |
+| `T+`              | yes (rebindable)| yes |
+| `const T+`        | yes (rebindable)| no  |
+| `T?`              | no (immutable)  | yes |
+| `const T?`        | no              | no  |
 | `T*`              | yes             | yes |
 | `const T*`        | yes             | no  |
 
-> Immutable-binding indirections (references `&` and pinned `^`) are not further constrained by `const`
+> Immutable-binding indirections (references `&` and view `?`) are not further constrained by `const`
 > on the binding itself (they are already immutable by design), but `const` still restricts modifications
 > to the pointed object.
 
@@ -1604,7 +1604,7 @@ For all four indirection kinds, `const` applies to the **pointed-at object**, no
 
 ### 14.4 Const pointer/link compatibility rules
 
-A `const T*` (or `const T~`) **can** be initialised or assigned from a `T*` (or `T~`) — this is a safe widening:
+A `const T*` (or `const T+`) **can** be initialised or assigned from a `T*` (or `T+`) — this is a safe widening:
 
 ```k
 x  : int  = 5;
@@ -1622,16 +1622,16 @@ p  : int* = cp;   // Error: cannot assign pointer-to-const to pointer-to-mutable
 Similarly for links:
 
 ```k
-clnk : const int~ = &x;
-lnk  : int~ = clnk;   // Error: cannot initialise link-to-mutable from link-to-const
+c link : const int+ = &x;
+ link  : int+ = clnk;   // Error: cannot initialise link-to-mutable from link-to-const
 ```
 
 A const variable can only be addressed or referenced by a const indirection:
 
 ```k
 const x : int = 42;
-lnk  : int~       = &x;  // Error: '&x' has type 'const int~'; cannot bind to mutable link
-clnk : const int~ = &x;  // OK
+ link  : int+       = &x;  // Error: '&x' has type 'const int+'; cannot bind to mutable link
+c link : const int+ = &x;  // OK
 ```
 
 ---
@@ -1664,8 +1664,8 @@ The const qualifier is encoded in the mangled symbol name using the modifier pre
 | `const int` | `Ki`     |
 | `int*`      | `Pi`     |
 | `const int*`| `PKi`    |
-| `int~`      | `Li`     |
-| `const int~`| `LKi`    |
+| `int+`      | `Li`     |
+| `const int+`| `LKi`    |
 
 A function `f(const n : int) : int` has its parameter encoded as `Ki` instead of `i`.
 

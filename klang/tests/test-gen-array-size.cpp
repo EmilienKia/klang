@@ -21,7 +21,7 @@
  *
  * Arrays expose a virtual read-only member `size` that returns the element
  * count as an unsigned int (i32), stored in field 0 of the LLVM struct.
- * Access is via `.` (direct / reference) or `->` (pointer / link / pinned / owner).
+ * Access is via `.` (direct / reference) or `->` (pointer / link / view / owner).
  */
 
 #include <catch2/catch_all.hpp>
@@ -66,7 +66,7 @@ TEST_CASE("Array .size — sized array via reference parameter", "[gen][array-si
     REQUIRE(test() == 3);
 }
 
-// NOTE: int[] (unsized) parameter and indirection tests (int[]*, int[]~, int[]^)
+// NOTE: int[] (unsized) parameter and indirection tests (int[]*, int[]+, int[]?)
 // are not included here because sized→unsized array conversion (e.g. int[4] → int[])
 // is not yet supported. The .size feature itself handles unsized arrays correctly;
 // only the conversion path is missing.
@@ -118,13 +118,13 @@ TEST_CASE("Array ->size — link to sized array", "[gen][array-size]") {
     auto jit = gen_jit(R"SRC(
         module test;
 
-        get_size(l : int[3]~) : unsigned int {
+        get_size(l : int[3]+) : unsigned int {
             return l->size;
         }
 
         test() : unsigned int {
             arr : int[3]{1, 2, 3};
-            l : int[3]~ = &arr;
+            l : int[3]+ = &arr;
             return get_size(l);
         }
     )SRC");
@@ -138,17 +138,17 @@ TEST_CASE("Array ->size — link to sized array", "[gen][array-size]") {
 // Pinned access (->)
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST_CASE("Array ->size — pinned to sized array", "[gen][array-size]") {
+TEST_CASE("Array ->size — view to sized array", "[gen][array-size]") {
     auto jit = gen_jit(R"SRC(
         module test;
 
-        get_size(p : int[2]^) : unsigned int {
+        get_size(p : int[2]?) : unsigned int {
             return p->size;
         }
 
         test() : unsigned int {
             arr : int[2]{7, 8};
-            p : int[2]^ = &arr;
+            p : int[2]? = &arr;
             return get_size(p);
         }
     )SRC");
@@ -228,7 +228,7 @@ TEST_CASE("Array .size — outer size of array of links to sized arrays", "[gen]
         test() : unsigned int {
             a : int[3]{1, 2, 3};
             b : int[3]{4, 5, 6};
-            outer : int[3]~[]{&a, &b};
+            outer : int[3]+[]{&a, &b};
             return outer.size;
         }
     )SRC");
@@ -245,8 +245,8 @@ TEST_CASE("Array ->size — inner array via link (same size)", "[gen][array-size
         test() : unsigned int {
             a : int[3]{1, 2, 3};
             b : int[3]{4, 5, 6};
-            outer : int[3]~[]{&a, &b};
-            lnk : int[3]~ = outer[1];
+            outer : int[3]+[]{&a, &b};
+            lnk : int[3]+ = outer[1];
             return lnk->size;
         }
     )SRC");

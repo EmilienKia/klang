@@ -245,7 +245,7 @@ TEST_CASE("CBOR: all type kinds round-trip", "[cbor][types]") {
     add_fn("f_ref",    kdi_type{kdi_ref_type{std::make_shared<kdi_type>(kdi_type::make_int(32))}});
     add_fn("f_ptr",    kdi_type{kdi_ptr_type{std::make_shared<kdi_type>(kdi_type::make_int(32))}});
     add_fn("f_link",   kdi_type{kdi_link_type{std::make_shared<kdi_type>(kdi_type::make_int(32))}});
-    add_fn("f_pinned", kdi_type{kdi_pinned_type{std::make_shared<kdi_type>(kdi_type::make_int(32))}});
+    add_fn("f_view",   kdi_type{kdi_view_type{std::make_shared<kdi_type>(kdi_type::make_int(32))}});
     add_fn("f_const",  kdi_type{kdi_const_type{std::make_shared<kdi_type>(kdi_type::make_int(32))}});
     add_fn("f_arr",    kdi_type{kdi_array_type{std::make_shared<kdi_type>(kdi_type::make_int(32))}});
     add_fn("f_sarr",   kdi_type{kdi_sized_array_type{std::make_shared<kdi_type>(kdi_type::make_int(32)), 10}});
@@ -272,7 +272,7 @@ TEST_CASE("CBOR: all type kinds round-trip", "[cbor][types]") {
     REQUIRE(std::holds_alternative<kdi_ref_type>(fns[7].return_type.value));
     REQUIRE(std::holds_alternative<kdi_ptr_type>(fns[8].return_type.value));
     REQUIRE(std::holds_alternative<kdi_link_type>(fns[9].return_type.value));
-    REQUIRE(std::holds_alternative<kdi_pinned_type>(fns[10].return_type.value));
+    REQUIRE(std::holds_alternative<kdi_view_type>(fns[10].return_type.value));
     REQUIRE(std::holds_alternative<kdi_const_type>(fns[11].return_type.value));
     REQUIRE(std::holds_alternative<kdi_array_type>(fns[12].return_type.value));
     auto& sarr = std::get<kdi_sized_array_type>(fns[13].return_type.value);

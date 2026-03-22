@@ -19,7 +19,7 @@
 /**
  * Tests for function references (pointers, pins and links to functions).
  * Covers:
- *  - Type syntax: *(int), ^(int, double), ~()
+ *  - Type syntax: *(int), ?(int, double), +()
  *  - Variable declaration with function reference type
  *  - Taking the address of a function (symbol without call parens)
  *  - Calling a function through a function reference
@@ -59,7 +59,7 @@ TEST_CASE("Function reference type: function address assigned to link",
         module test;
         double_it(x : int) : int { return x * 2; }
         test() : int {
-            fp : ~(int) = double_it;
+            fp : +(int) = double_it;
             return fp(21);
         }
     )SRC");
@@ -76,7 +76,7 @@ TEST_CASE("Function reference type: function address assigned to pin",
         module test;
         triple_it(x : int) : int { return x * 3; }
         test() : int {
-            fp : ^(int) = triple_it;
+            fp : ?(int) = triple_it;
             return fp(14);
         }
     )SRC");
@@ -286,8 +286,8 @@ TEST_CASE("Function reference type: pass member function pointer as parameter an
 TEST_CASE("Function reference type: call member function via ->* on a link",
     "[gen][function_ref_type][mfp][arrow_star]")
 {
-    // ->* operator: LHS is a link (Counter~)
-    // lnk : Counter~ = c  → lnk is a non-null reference (link) to c
+    // ->* operator: LHS is a link (Counter+)
+    // lnk : Counter+ = c  → lnk is a non-null reference (link) to c
     // (lnk->*mfp)(2) invokes add through the link
     auto jit = gen_jit(R"SRC(
         module test;
@@ -299,7 +299,7 @@ TEST_CASE("Function reference type: call member function via ->* on a link",
             mfp : Counter::*(int) = Counter::add;
             c : Counter;
             c.value = 40;
-            lnk : Counter~ = c;
+            lnk : Counter+ = c;
             return (lnk->*mfp)(2);
         }
     )SRC");
@@ -319,7 +319,7 @@ TEST_CASE("Function reference type: pass mfp and link as parameters, call via ->
             value : int;
             add(x : int) : int { return value + x; }
         }
-        invoke_link(mfp : Counter::*(int), lnk : Counter~, x : int) : int {
+        invoke_link(mfp : Counter::*(int), lnk : Counter+, x : int) : int {
             return (lnk->*mfp)(x);
         }
         test() : int {
@@ -410,10 +410,10 @@ TEST_CASE("Function reference type: ->* on a pointer (Counter*)",
     REQUIRE(test_fn != nullptr);
     REQUIRE(test_fn() == 42);
 }
-TEST_CASE("Function reference type: ->* on a pin (Counter^)",
+TEST_CASE("Function reference type: ->* on a pin (Counter?)",
     "[gen][function_ref_type][mfp][arrow_star]")
 {
-    // ->* with a pinned pointer: pin : Counter^ = c; (pin->*mfp)(2)
+    // ->* with a view pointer: pin : Counter? = c; (pin->*mfp)(2)
     auto jit = gen_jit(R"SRC(
         module test;
         struct Counter {
@@ -424,7 +424,7 @@ TEST_CASE("Function reference type: ->* on a pin (Counter^)",
             mfp : Counter::*(int) = Counter::add;
             c : Counter;
             c.value = 40;
-            pin : Counter^ = c;
+            pin : Counter? = c;
             return (pin->*mfp)(2);
         }
     )SRC");
@@ -456,10 +456,10 @@ TEST_CASE("Function reference type: return member function pointer from function
     REQUIRE(test_fn != nullptr);
     REQUIRE(test_fn() == 42);
 }
-TEST_CASE("Function reference type: pin member function pointer Counter::^(int)",
+TEST_CASE("Function reference type: view member function pointer Counter::?(int)",
     "[gen][function_ref_type][mfp]")
 {
-    // Counter::^(int) is a pinned (non-null, non-reassignable) member function pointer
+    // Counter::?(int) is a view (non-null, non-reassignable) member function pointer
     auto jit = gen_jit(R"SRC(
         module test;
         struct Counter {
@@ -467,7 +467,7 @@ TEST_CASE("Function reference type: pin member function pointer Counter::^(int)"
             add(x : int) : int { return value + x; }
         }
         test() : int {
-            mfp : Counter::^(int) = Counter::add;
+            mfp : Counter::?(int) = Counter::add;
             c : Counter;
             c.value = 40;
             return (c.*mfp)(2);
@@ -478,10 +478,10 @@ TEST_CASE("Function reference type: pin member function pointer Counter::^(int)"
     REQUIRE(test_fn != nullptr);
     REQUIRE(test_fn() == 42);
 }
-TEST_CASE("Function reference type: link member function pointer Counter::~(int)",
+TEST_CASE("Function reference type: link member function pointer Counter::+(int)",
     "[gen][function_ref_type][mfp]")
 {
-    // Counter::~(int) is a link (non-null) member function pointer
+    // Counter::+(int) is a link (non-null) member function pointer
     auto jit = gen_jit(R"SRC(
         module test;
         struct Counter {
@@ -489,7 +489,7 @@ TEST_CASE("Function reference type: link member function pointer Counter::~(int)
             add(x : int) : int { return value + x; }
         }
         test() : int {
-            mfp : Counter::~(int) = Counter::add;
+            mfp : Counter::+(int) = Counter::add;
             c : Counter;
             c.value = 40;
             return (c.*mfp)(2);

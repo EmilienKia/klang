@@ -140,7 +140,7 @@ public:
     /** Return a non-owning pointer to the internal buffer.
      *  Valid as long as this String is alive. Returns null for empty strings.
      */
-    const data() : char[]^ {
+    const data() : char[]? {
         return _buf;
     }
 

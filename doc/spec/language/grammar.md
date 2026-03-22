@@ -72,8 +72,8 @@ Grammar notation used here:
 <a id="operator"></a>**Operator:**
     *(one of)*
     `.` `->` `.*` `->*`
-    `?` `:` `!` `~`
-    `=` `+` `-` `*` `/` `&` `|` `^` `%`
+    `?` `:` `!` `+`
+    `=` `+` `-` `*` `/` `&` `|` `?` `%`
     `<<` `>>`
     `+=` `-=` `*=` `/=` `&=` `|=` `^=` `%=` `<<=` `>>=`
     `==` `!=` `<` `>` `<=` `>=`
@@ -117,7 +117,7 @@ Grammar notation used here:
 <a id="basespec"></a>**BaseSpec:**
     `[` `(` `'public'` | `'protected'` | `'private'` `)` `]` [Identifier](#identifier)
 <a id="functiondecl"></a>**FunctionDecl:**
-    {{ [Specifier](#specifier) }} `[` `'~'` `]` [Identifier](#identifier) `'('` `[` [ParameterList](#parameterlist) `]` `')'`
+    {{ [Specifier](#specifier) }} `[` `'+'` `]` [Identifier](#identifier) `'('` `[` [ParameterList](#parameterlist) `]` `')'`
     `[` [Identifier](#identifier) `]`
     `[` `':'` [TypeSpec](#typespec) `[` [Initialiser](#initialiser) `]` `]`
     `[` `':'` `(` [MemberInitList](#memberinitlist) | [StaticDepList](#staticdeplist) `)` `]`
@@ -140,7 +140,7 @@ Grammar notation used here:
 
 <a id="operatorsymbol"></a>**OperatorSymbol:**
     *(one of)*
-    `+` `-` `*` `/` `%` `&` `|` `^` `~` `<<` `>>` `&&` `||` `!`
+    `+` `-` `*` `/` `%` `&` `|` `?` `+` `<<` `>>` `&&` `||` `!`
     `==` `!=` `<` `>` `<=` `>=`
     `=` `+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`
     `++_` `--_` `_++` `_--`
@@ -163,7 +163,7 @@ Grammar notation used here:
 <a id="functionreftype"></a>**FunctionRefType:**
     [FunctionRefQualifier](#functionrefqualifier) `'('` `[` [TypeList](#typelist) `]` `')'`
 <a id="functionrefqualifier"></a>**FunctionRefQualifier:**
-    `'*'` | `'^'` | `'~'`
+    `'*'` | `'?'` | `'+'`
 <a id="typelist"></a>**TypeList:**
     [TypeSpec](#typespec) {{ `','` [TypeSpec](#typespec) }}
 *Full description:* [Function References](functions/function_references.md)
@@ -175,11 +175,11 @@ Grammar notation used here:
     | `'!'`                                 -- owner (move-only, nullable, exclusive ownership)
     | `'*'`                                 -- pointer (mutable, nullable)
     | `'&'`                                 -- reference (immutable binding, non-null)
-    | `'~'`                                 -- link (mutable binding, non-null)
-    | `'^'`                                 -- pinned (immutable binding, nullable)
+    | `'+'`                                 -- link (mutable binding, non-null)
+    | `'?'`                                 -- view (immutable binding, nullable)
 
 *Suffixes are applied left-to-right. An indirection suffix followed by an array suffix
-creates an array of indirections: `int~[3]` = array of 3 links to int.
+creates an array of indirections: `int+[3]` = array of 3 links to int.
 See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
 ### Parameters
 *Full description:* [Functions - Parameters](functions/functions.md#2-parameters)
@@ -264,7 +264,7 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
 <a id="inclusivebinoexpr"></a>**InclusiveBinOrExpr:**
     [ExclusiveBinOrExpr](#exclusivebinoexpr) {{ `'|'` [ExclusiveBinOrExpr](#exclusivebinoexpr) }}
 <a id="exclusivebinoexpr"></a>**ExclusiveBinOrExpr:**
-    [BinAndExpr](#binandexpr) {{ `'^'` [BinAndExpr](#binandexpr) }}
+    [BinAndExpr](#binandexpr) {{ `'?'` [BinAndExpr](#binandexpr) }}
 <a id="binandexpr"></a>**BinAndExpr:**
     [EqualityExpr](#equalityexpr) {{ `'&'` [EqualityExpr](#equalityexpr) }}
 <a id="equalityexpr"></a>**EqualityExpr:**
@@ -289,7 +289,7 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     | `'new'` [TypeName](#typename) `'['` `[` [IntegerLiteral](#integerliteral) `]` `']'` `[` [BraceInitList](#braceinitlist) `]`
     | `'new'` [TypeName](#typename) [BraceInitList](#braceinitlist)
     | `'delete'` [CastExpr](#castexpr)
-    | `(` `'++'` | `'--'` | `'*'` | `'&'` | `'+'` | `'-'` | `'!'` | `'~'` `)` [CastExpr](#castexpr)
+    | `(` `'++'` | `'--'` | `'*'` | `'&'` | `'+'` | `'-'` | `'!'` | `'+'` `)` [CastExpr](#castexpr)
     | [PostfixExpr](#postfixexpr)
 
     *Note: `'new' TypeName '(' … ')'` returns a `T!` owner.  `'new' TypeName '(' … ')' '[' … ']'` returns a `T[N]!` or `T[]!` uniform array owner (see [Uniform Array Initialization](memory/uniform-array-init.md)).  `'new' TypeName '[' … ']' …` and `'new' TypeName '{' … '}'` return a `T[N]!` array owner.  `'delete' CastExpr` returns `void` and may only appear as an expression statement.*

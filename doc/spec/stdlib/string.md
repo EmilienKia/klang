@@ -30,8 +30,8 @@ Static utility class providing low-level operations on `char[]` buffers.
 All methods are `public static`. No instances are ever created.
 
 The `src` and other read-only buffer parameters are typed `const char[]` so
-that owners (`char[]!`), pointers (`char[]*`), links (`char[]~`), pinned
-(`char[]^`), and raw references (`char[]`) can all be passed without
+that owners (`char[]!`), pointers (`char[]*`), links (`char[]+`), view
+(`char[]?`), and raw references (`char[]`) can all be passed without
 ownership transfer or an explicit cast. String literals (`const char[N]&`)
 also widen to `const char[]` automatically.
 
@@ -84,7 +84,7 @@ Because the class is declared `const`, all methods are implicitly `const`
 | `size()` | `unsigned int` | Number of characters (excluding the null terminator `'\0'`). |
 | `empty()` | `bool` | `true` when the string has zero characters. |
 | `at(index: int)` | `char` | Character at position `index`. No bounds check — behaviour is undefined if `index < 0` or `index >= size()`. |
-| `data()` | `char[]^` | Non-owning pin to the internal null-terminated buffer. Valid only as long as the `String` object is alive. Returns `null` for an empty string. |
+| `data()` | `char[]?` | Non-owning view to the internal null-terminated buffer. Valid only as long as the `String` object is alive. Returns `null` for an empty string. |
 
 ### Operators
 

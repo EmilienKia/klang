@@ -21,7 +21,7 @@ In K, a function is always declared with its full definition (body).
 There are no forward declarations without a body in the current language version.
 ### Grammar
 ```
-    { Specifier } [ '~' ] Identifier '(' [ ParameterList ] ')'
+    { Specifier } [ '+' ] Identifier '(' [ ParameterList ] ')'
         [ Identifier ]
         [ ':' TypeSpec [ Initialiser ] ]
         FunctionBody
@@ -30,7 +30,7 @@ FunctionBody: (one of)
     '->' QualifiedIdentifier [ '(' [ TypeSpecList ] ')' ] ';'
     '->' 'default' ';'
     '->' 'delete' ';'
-    { Specifier } [ '~' ] Identifier '(' [ ParameterList ] ')' [ ':' TypeSpec ] BlockStatement
+    { Specifier } [ '+' ] Identifier '(' [ ParameterList ] ')' [ ':' TypeSpec ] BlockStatement
 ParameterList:
     ParameterSpec { ',' ParameterSpec }
 ParameterSpec:
@@ -38,7 +38,7 @@ ParameterSpec:
 Specifier: (one of)
     'public'  'protected'  'private'  'static'
 ```
-- The function name is an identifier (preceded optionally by `~` for destructors).
+- The function name is an identifier (preceded optionally by `+` for destructors).
 - Parameters are enclosed in parentheses, separated by commas.
 - The optional return type follows a `:`.
 - An optional identifier before the `:` names the return variable (see [Named Return Variables](named-return.md)).

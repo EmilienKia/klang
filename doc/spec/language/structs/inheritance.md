@@ -51,7 +51,7 @@ struct may only inherit from struct; class only from class or interface; interfa
 
 ## Static indirection upcast
 
-When `Derived` inherits from `Base`, an indirection (`&`, `~`, `^`, `*`) to `Derived` can be
+When `Derived` inherits from `Base`, an indirection (`&`, `+`, `?`, `*`) to `Derived` can be
 implicitly assigned to an indirection to `Base`. The compiler inserts a compile-time GEP
 adjustment to address the `Base` sub-object within the `Derived` object.
 
@@ -63,8 +63,8 @@ use() {
     d : Dog(4);
 
     r   : Animal& = d;      // ref<Base> — immutable binding
-    lnk : Animal~ = &d;     // lien<Base> — mutable binding
-    p   : Animal^ = &d;     // pin<Base>  — immutable binding, nullable
+    lnk : Animal+ = &d;     // lien<Base> — mutable binding
+    p   : Animal? = &d;     // view<Base>  — immutable binding, nullable
     ptr : Animal* = &d;     // ptr<Base>  — mutable binding, nullable
 
     // Rebind (link and ptr only):
@@ -72,7 +72,7 @@ use() {
     lnk = &d2;     // OK: link can rebind
     ptr = &d2;     // OK: ptr can rebind
     // r = d2;     // ERROR: ref cannot rebind
-    // p = &d2;    // ERROR: pin cannot rebind
+    // p = &d2;    // ERROR: view cannot rebind
 }
 ```
 
@@ -81,12 +81,12 @@ use() {
 | Situation | Result |
 |-----------|--------|
 | `Derived&` → `Base&` (init) | OK — compile-time GEP |
-| `Derived~` → `Base~` (init or rebind) | OK |
-| `Derived^` → `Base^` (init) | OK |
+| `Derived+` → `Base+` (init or rebind) | OK |
+| `Derived?` → `Base?` (init) | OK |
 | `Derived*` → `Base*` (init or rebind) | OK |
-| Nullable source (`^` or `*`) → non-null target (`~` or `&`) | Warning 0x4505 + runtime null-check |
+| Nullable source (`?` or `*`) → non-null target (`+` or `&`) | Warning 0x4505 + runtime null-check |
 | Types have no inheritance relationship | Compile error (0x4005 / 0x4506 / 0x4605 / 0x4700) |
-| Rebinding an immutable indirection (`ref`, `pin`) | Compile error |
+| Rebinding an immutable indirection (`ref`, `view`) | Compile error |
 
 *See also:* [Types — §11.3](../basic/types.md#113-static-indirection-upcast-aggregate-types)
 
@@ -94,8 +94,8 @@ use() {
 
 ## Dynamic indirection downcast (class/interface only)
 
-When a `Base*` (or `Base~`, `Base^`, `Base&`) indirection may point at a `Derived` object at
-runtime, K allows assigning it to a `Derived*` (or `Derived~`, `Derived^`, `Derived&`) via a
+When a `Base*` (or `Base+`, `Base?`, `Base&`) indirection may point at a `Derived` object at
+runtime, K allows assigning it to a `Derived*` (or `Derived+`, `Derived?`, `Derived&`) via a
 **runtime RTTI check**.
 
 This applies **only to `class` and `interface` types** — structs have no vtable/RTTI and
@@ -108,15 +108,15 @@ attempting a dynamic downcast on struct pointers is a **compile-time error**.
 3. On match: the raw pointer is adjusted (byte-offset subtraction) to point to the start of the
    `Derived` sub-object; the result is assigned.
 4. On mismatch: **null** is assigned.
-5. Null assigned to a non-null target (`~` or `&`) immediately calls `__fatal_null_dyncast()`.
+5. Null assigned to a non-null target (`+` or `&`) immediately calls `__fatal_null_dyncast()`.
 
 **Binding constraints:**
 
 | Target type | When allowed | On RTTI mismatch |
 |-------------|--------------|-----------------|
 | `Derived&`  | Init only (immutable binding) | fatal trap |
-| `Derived~`  | Init only (non-null link) | fatal trap |
-| `Derived^`  | Init only (nullable pin) | null assigned |
+| `Derived+`  | Init only (non-null link) | fatal trap |
+| `Derived?`  | Init only (nullable view) | null assigned |
 | `Derived*`  | Init and rebind (nullable ptr) | null assigned |
 
 **Examples:**
@@ -138,8 +138,8 @@ tricks_fn(d : Dog&) : int { return d.get_tricks(); }
 
 test() : int {
     d   : Dog(7);
-    al  : Animal~ = &d;      // static upcast to Animal~
-    dl  : Dog~    = al;      // dynamic downcast; traps if RTTI mismatches
+    al  : Animal+ = &d;      // static upcast to Animal+
+    dl  : Dog+    = al;      // dynamic downcast; traps if RTTI mismatches
     return tricks_fn(*dl);   // → 14
 }
 ```

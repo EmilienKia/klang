@@ -152,8 +152,8 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {
         kdi::kdi_link_type k; k.inner = std::make_shared<kdi::kdi_type>(to_kdi_type(lt->get_subtype()));
         return kdi::kdi_type{std::move(k)};
     }
-    if (auto pt = std::dynamic_pointer_cast<pinned_type>(t)) {
-        kdi::kdi_pinned_type k; k.inner = std::make_shared<kdi::kdi_type>(to_kdi_type(pt->get_subtype()));
+    if (auto pt = std::dynamic_pointer_cast<view_type>(t)) {
+        kdi::kdi_view_type k; k.inner = std::make_shared<kdi::kdi_type>(to_kdi_type(pt->get_subtype()));
         return kdi::kdi_type{std::move(k)};
     }
     if (auto ot = std::dynamic_pointer_cast<owner_type>(t)) {

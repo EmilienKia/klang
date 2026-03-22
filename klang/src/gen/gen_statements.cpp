@@ -861,7 +861,7 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     if (k::model::type::is_owner(var_type)
         || k::model::type::is_pointer(var_type)
         || k::model::type::is_link(var_type)
-        || k::model::type::is_pinned(var_type)) {
+        || k::model::type::is_view(var_type)) {
         // ...existing owner/pointer/link/pin init code...
         auto& llvm_ctx = _builder->getContext();
         auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);

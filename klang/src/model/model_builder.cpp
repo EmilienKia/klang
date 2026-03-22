@@ -514,8 +514,8 @@ namespace k::model {
             } else if (type::is_owner(var_type)
                 || type::is_pointer(var_type)
                 || type::is_link(var_type)
-                || type::is_pinned(var_type)) {
-                // Owner/pointer/link/pin variable: the init expression is an address-valued
+                || type::is_view(var_type)) {
+                // Owner/pointer/link/view variable: the init expression is an address-valued
                 // expression (new_expression, symbol, &expr, null …).
                 // Store it directly — no constructor_invocation_expression wrapper.
                 _expr.reset();
@@ -546,7 +546,7 @@ namespace k::model {
         } else if (!type::is_owner(var_type)
                    && !type::is_pointer(var_type)
                    && !type::is_link(var_type)
-                   && !type::is_pinned(var_type)) {
+                   && !type::is_view(var_type)) {
             // Non-indirection with no initializer: use empty constructor_invocation.
             var->set_init_expr(model::constructor_invocation_expression::make_shared(var, {}));
         }

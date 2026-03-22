@@ -20,7 +20,7 @@
  * Tests for subscript operator '[]' through all indirection types.
  *
  * The subscript operator must work uniformly on arrays accessed through
- * any indirection: reference (&), pointer (*), link (~), pinned (^),
+ * any indirection: reference (&), pointer (*), link (+), view (?),
  * and owner (!).
  */
 
@@ -156,20 +156,20 @@ TEST_CASE("Subscript through pointer — write modifies original", "[gen][subscr
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NEW: subscript through link (~)
+// NEW: subscript through link (+)
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_CASE("Subscript through link — read", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
         module test;
 
-        get(l : int[3]~, i : int) : int {
+        get(l : int[3]+, i : int) : int {
             return l[i];
         }
 
         test() : int {
             arr : int[3]{10, 20, 30};
-            l : int[3]~ = &arr;
+            l : int[3]+ = &arr;
             return get(l, 1);
         }
     )SRC");
@@ -183,13 +183,13 @@ TEST_CASE("Subscript through link — write modifies original", "[gen][subscript
     auto jit = gen_jit(R"SRC(
         module test;
 
-        set(l : int[3]~, i : int, v : int) {
+        set(l : int[3]+, i : int, v : int) {
             l[i] = v;
         }
 
         test() : int {
             arr : int[3]{10, 20, 30};
-            l : int[3]~ = &arr;
+            l : int[3]+ = &arr;
             set(l, 0, 55);
             return arr[0];
         }
@@ -201,20 +201,20 @@ TEST_CASE("Subscript through link — write modifies original", "[gen][subscript
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NEW: subscript through pinned (^)
+// NEW: subscript through view (?)
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST_CASE("Subscript through pinned — read", "[gen][subscript-indirection]") {
+TEST_CASE("Subscript through view — read", "[gen][subscript-indirection]") {
     auto jit = gen_jit(R"SRC(
         module test;
 
-        get(q : int[3]^, i : int) : int {
+        get(q : int[3]?, i : int) : int {
             return q[i];
         }
 
         test() : int {
             arr : int[3]{10, 20, 30};
-            q : int[3]^ = &arr;
+            q : int[3]? = &arr;
             return get(q, 2);
         }
     )SRC");
@@ -266,7 +266,7 @@ TEST_CASE("Subscript through link — struct member access", "[gen][subscript-in
             arr : Point[2];
             arr[0].x = 5;
             arr[1].x = 15;
-            l : Point[2]~ = &arr;
+            l : Point[2]+ = &arr;
             return l[0].x + l[1].x;
         }
     )SRC");
@@ -325,7 +325,7 @@ TEST_CASE("Array of links — read", "[gen][subscript-indirection][array-of-indi
             a : int = 3;
             b : int = 5;
             c : int = 7;
-            arr : int~[]{&a, &b, &c};
+            arr : int+[]{&a, &b, &c};
             return *arr[0] + *arr[1] + *arr[2];
         }
     )SRC");
@@ -342,7 +342,7 @@ TEST_CASE("Array of links — write-through", "[gen][subscript-indirection][arra
         test() : int {
             a : int = 1;
             b : int = 2;
-            arr : int~[]{&a, &b};
+            arr : int+[]{&a, &b};
             *arr[0] = 10;
             *arr[1] = 20;
             return a + b;
@@ -396,10 +396,10 @@ TEST_CASE("Array of pointers — write-through", "[gen][subscript-indirection][a
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Arrays of pinned (^)
+// Arrays of view (?)
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST_CASE("Array of pinned — read", "[gen][subscript-indirection][array-of-indir]") {
+TEST_CASE("Array of view — read", "[gen][subscript-indirection][array-of-indir]") {
     auto jit = gen_jit(R"SRC(
         module test;
 
@@ -407,7 +407,7 @@ TEST_CASE("Array of pinned — read", "[gen][subscript-indirection][array-of-ind
             a : int = 4;
             b : int = 5;
             c : int = 6;
-            arr : int^[]{&a, &b, &c};
+            arr : int?[]{&a, &b, &c};
             return *arr[0] + *arr[1] + *arr[2];
         }
     )SRC");

@@ -18,7 +18,7 @@
 
 /**
  * Tests for null semantics:
- *  Step 2: Null construction & assignment for pointer, pinned, owner.
+ *  Step 2: Null construction & assignment for pointer, view, owner.
  *  Step 3: Address comparison (==, !=) between indirection types and with null.
  *  Step 4: Implicit bool conversion for indirection types.
  */
@@ -47,7 +47,7 @@ TEST_CASE("Pinned init with null", "[gen][null][construction]") {
     auto jit = gen_jit(R"SRC(
         module __null_pin_init__;
         test() : int {
-            p : int^ = null;
+            p : int? = null;
             return 0;
         }
     )SRC");
@@ -98,7 +98,7 @@ TEST_CASE("Pinned assign null is rejected", "[gen][null][assignment]") {
         module __null_pin_assign__;
         test() : int {
             x : int = 42;
-            p : int^ = &x;
+            p : int? = &x;
             p = null;
             return 0;
         }
@@ -224,7 +224,7 @@ TEST_CASE("Pinned == null", "[gen][null][comparison]") {
     auto jit = gen_jit(R"SRC(
         module __pin_eq_null__;
         test() : int {
-            p : int^ = null;
+            p : int? = null;
             if (p == null) { return 1; }
             return 0;
         }
@@ -241,7 +241,7 @@ TEST_CASE("Pointer == link (same address)", "[gen][null][comparison]") {
         test() : int {
             x : int = 42;
             p : int* = &x;
-            l : int~ = &x;
+            l : int+ = &x;
             if (p == l) { return 1; }
             return 0;
         }
@@ -335,14 +335,14 @@ TEST_CASE("if(owner) — null owner is falsy", "[gen][null][bool]") {
     REQUIRE(fn() == 0);
 }
 
-// ── if() with pinned ────────────────────────────────────────────────────────
+// ── if() with view ────────────────────────────────────────────────────────
 
-TEST_CASE("if(pinned) — non-null pinned is truthy", "[gen][null][bool]") {
+TEST_CASE("if(view) — non-null view is truthy", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
         module __if_pin_truthy__;
         test() : int {
             x : int = 10;
-            p : int^ = &x;
+            p : int? = &x;
             if (p) { return 1; }
             return 0;
         }
@@ -353,11 +353,11 @@ TEST_CASE("if(pinned) — non-null pinned is truthy", "[gen][null][bool]") {
     REQUIRE(fn() == 1);
 }
 
-TEST_CASE("if(pinned) — null pinned is falsy", "[gen][null][bool]") {
+TEST_CASE("if(view) — null view is falsy", "[gen][null][bool]") {
     auto jit = gen_jit(R"SRC(
         module __if_pin_falsy__;
         test() : int {
-            p : int^ = null;
+            p : int? = null;
             if (p) { return 1; }
             return 0;
         }
@@ -536,7 +536,7 @@ TEST_CASE("if(link) — non-null link is truthy", "[gen][null][bool]") {
         module __if_link_truthy__;
         test() : int {
             x : int = 42;
-            l : int~ = &x;
+            l : int+ = &x;
             if (l) { return 1; }
             return 0;
         }
@@ -599,7 +599,7 @@ TEST_CASE("Link init with null is rejected", "[gen][null][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __link_null_init_err__;
         test() : int {
-            l : int~ = null;
+            l : int+ = null;
             return 0;
         }
     )SRC"));

@@ -26,8 +26,8 @@
  *
  * Static upcast (Derived→Base):
  *   [EC1]  (Base*)  ptr<Derived>    → ptr<Base>  success
- *   [EC2]  (Base~)  lnk<Derived>    → lnk<Base>  success
- *   [EC3]  (Base^)  pin<Derived>    → pin<Base>  success
+ *   [EC2]  (Base+)  lnk<Derived>    → lnk<Base>  success
+ *   [EC3]  (Base?)  pin<Derived>    → pin<Base>  success
  *   [EC4]  (Base&)  ref<Derived>    → ref<Base>  success
  *   [EC5]  (Base*)  lnk<Derived>    → ptr<Base>  success
  *   [EC6]  (Base*)  pin<Derived>    → ptr<Base>  success
@@ -36,10 +36,10 @@
  * Dynamic downcast (Base→Derived, RTTI for class/interface):
  *   [ED1]  (Derived*)  ptr<Base> actual Derived  → success (non-null)
  *   [ED2]  (Derived*)  ptr<Base> wrong type      → null  → crash on deref
- *   [ED3]  (Derived~)  lnk<Base> actual Derived  → success (non-null)
- *   [ED4]  (Derived~)  ptr<Base> wrong type      → fatal trap (lnk is non-null)
- *   [ED5]  (Derived^)  ptr<Base> actual Derived  → success
- *   [ED6]  (Derived^)  ptr<Base> wrong type      → null → crash
+ *   [ED3]  (Derived+)  lnk<Base> actual Derived  → success (non-null)
+ *   [ED4]  (Derived+)  ptr<Base> wrong type      → fatal trap (lnk is non-null)
+ *   [ED5]  (Derived?)  ptr<Base> actual Derived  → success
+ *   [ED6]  (Derived?)  ptr<Base> wrong type      → null → crash
  *   [ED7]  (Derived&)  ref<Base> actual Derived  → success (fatal if wrong)
  *   [ED8]  (Derived*)  ptr<interface> actual     → success
  *
@@ -52,11 +52,11 @@
  *
  * Passing an indirection of derived type where base type is expected:
  *   [IC1]  f(p : Base*)    called with ptr<Derived>   → upcast implicit
- *   [IC2]  f(l : Base~)    called with lnk<Derived>   → upcast implicit
- *   [IC3]  f(p : Base^)    called with pin<Derived>   → upcast implicit
+ *   [IC2]  f(l : Base+)    called with lnk<Derived>   → upcast implicit
+ *   [IC3]  f(p : Base?)    called with pin<Derived>   → upcast implicit
  *   [IC4]  f(r : Base&)    called with ref<Derived>   → upcast implicit (via ref)
  *   [IC5]  f(p : Base*)    called with ref<ptr<Derived>> — load+upcast
- *   [IC6]  f(l : Base~)    called with ref<lnk<Derived>> — load+upcast
+ *   [IC6]  f(l : Base+)    called with ref<lnk<Derived>> — load+upcast
  */
 
 #include <catch2/catch_all.hpp>
@@ -93,9 +93,9 @@ TEST_CASE("Explicit cast: (Base*) ptr<Derived> is static upcast", "[gen][cast][e
 }
 
 // =============================================================================
-// [EC2] Explicit (Base~) lnk<Derived> — static upcast
+// [EC2] Explicit (Base+) lnk<Derived> — static upcast
 // =============================================================================
-TEST_CASE("Explicit cast: (Base~) lnk<Derived> is static upcast", "[gen][cast][explicit][lnk]") {
+TEST_CASE("Explicit cast: (Base+) lnk<Derived> is static upcast", "[gen][cast][explicit][lnk]") {
     auto jit = gen_jit(R"SRC(
         module __ec_lnk_upcast__;
 
@@ -111,8 +111,8 @@ TEST_CASE("Explicit cast: (Base~) lnk<Derived> is static upcast", "[gen][cast][e
 
         test() : int {
             d : Derived(77);
-            ld : Derived~ = &d;
-            lb : Base~ = (Base~) ld;   // explicit static upcast
+            ld : Derived+ = &d;
+            lb : Base+ = (Base+) ld;   // explicit static upcast
             return lb->val;            // must see 77
         }
     )SRC");
@@ -123,9 +123,9 @@ TEST_CASE("Explicit cast: (Base~) lnk<Derived> is static upcast", "[gen][cast][e
 }
 
 // =============================================================================
-// [EC3] Explicit (Base^) pin<Derived> — static upcast
+// [EC3] Explicit (Base?) pin<Derived> — static upcast
 // =============================================================================
-TEST_CASE("Explicit cast: (Base^) pin<Derived> is static upcast", "[gen][cast][explicit][pin]") {
+TEST_CASE("Explicit cast: (Base?) pin<Derived> is static upcast", "[gen][cast][explicit][view]") {
     auto jit = gen_jit(R"SRC(
         module __ec_pin_upcast__;
 
@@ -141,8 +141,8 @@ TEST_CASE("Explicit cast: (Base^) pin<Derived> is static upcast", "[gen][cast][e
 
         test() : int {
             d : Derived(33);
-            pd : Derived^ = &d;
-            pb : Base^ = (Base^) pd;   // explicit static upcast
+            pd : Derived? = &d;
+            pb : Base? = (Base?) pd;   // explicit static upcast
             return pb->val;            // must see 33
         }
     )SRC");
@@ -202,7 +202,7 @@ TEST_CASE("Explicit cast: (Base*) lnk<Derived> cross-kind upcast", "[gen][cast][
 
         test() : int {
             d : Derived(44);
-            ld : Derived~ = &d;
+            ld : Derived+ = &d;
             pb : Base* = (Base*) ld;   // lnk<Derived>→ptr<Base>
             return pb->val;            // must see 44
         }
@@ -216,7 +216,7 @@ TEST_CASE("Explicit cast: (Base*) lnk<Derived> cross-kind upcast", "[gen][cast][
 // =============================================================================
 // [EC6] Explicit (Base*) pin<Derived> — cross-kind upcast (pin→ptr)
 // =============================================================================
-TEST_CASE("Explicit cast: (Base*) pin<Derived> cross-kind upcast", "[gen][cast][explicit][pin][ptr]") {
+TEST_CASE("Explicit cast: (Base*) pin<Derived> cross-kind upcast", "[gen][cast][explicit][view][ptr]") {
     auto jit = gen_jit(R"SRC(
         module __ec_pin_to_ptr_upcast__;
 
@@ -232,7 +232,7 @@ TEST_CASE("Explicit cast: (Base*) pin<Derived> cross-kind upcast", "[gen][cast][
 
         test() : int {
             d : Derived(11);
-            pd : Derived^ = &d;
+            pd : Derived? = &d;
             pb : Base* = (Base*) pd;   // pin<Derived>→ptr<Base>
             return pb->val;            // must see 11
         }
@@ -313,9 +313,9 @@ TEST_CASE("Explicit cast: (Derived*) ptr<Base> wrong type → null → crash", "
 }
 
 // =============================================================================
-// [ED3] Explicit (Derived~) lnk<Base> — dynamic downcast, correct type → success
+// [ED3] Explicit (Derived+) lnk<Base> — dynamic downcast, correct type → success
 // =============================================================================
-TEST_CASE("Explicit cast: (Derived~) lnk<Base> dynamic downcast correct type succeeds", "[gen][cast][explicit][dyncast][lnk]") {
+TEST_CASE("Explicit cast: (Derived+) lnk<Base> dynamic downcast correct type succeeds", "[gen][cast][explicit][dyncast][lnk]") {
     auto jit = gen_jit(R"SRC(
         module __ed_lnk_ok__;
 
@@ -335,8 +335,8 @@ TEST_CASE("Explicit cast: (Derived~) lnk<Base> dynamic downcast correct type suc
 
         test() : int {
             d : Derived(5);
-            bl : Base~ = &d;
-            dl : Derived~ = (Derived~) bl;    // explicit dynamic downcast lnk
+            bl : Base+ = &d;
+            dl : Derived+ = (Derived+) bl;    // explicit dynamic downcast lnk
             return get_extra_fn(*dl);          // must return 77
         }
     )SRC");
@@ -347,9 +347,9 @@ TEST_CASE("Explicit cast: (Derived~) lnk<Base> dynamic downcast correct type suc
 }
 
 // =============================================================================
-// [ED4] Explicit (Derived~) ptr<Base> — wrong type → fatal trap (lnk non-null)
+// [ED4] Explicit (Derived+) ptr<Base> — wrong type → fatal trap (lnk non-null)
 // =============================================================================
-TEST_CASE("Explicit cast: (Derived~) ptr<Base> wrong type → fatal trap", "[gen][cast][explicit][dyncast][lnk][fatal]") {
+TEST_CASE("Explicit cast: (Derived+) ptr<Base> wrong type → fatal trap", "[gen][cast][explicit][dyncast][lnk][fatal]") {
     auto res = build_and_exec(R"SRC(
         module __ed_lnk_fatal__;
 
@@ -371,7 +371,7 @@ TEST_CASE("Explicit cast: (Derived~) ptr<Base> wrong type → fatal trap", "[gen
         main() : int {
             o : Other(1);
             bp : Base* = &o;
-            dl : Derived~ = (Derived~) bp;   // RTTI fail → null → debugtrap (lnk non-null)
+            dl : Derived+ = (Derived+) bp;   // RTTI fail → null → debugtrap (lnk non-null)
             return 0;
         }
     )SRC");
@@ -379,9 +379,9 @@ TEST_CASE("Explicit cast: (Derived~) ptr<Base> wrong type → fatal trap", "[gen
 }
 
 // =============================================================================
-// [ED5] Explicit (Derived^) ptr<Base> — correct type → success
+// [ED5] Explicit (Derived?) ptr<Base> — correct type → success
 // =============================================================================
-TEST_CASE("Explicit cast: (Derived^) ptr<Base> dynamic downcast correct type succeeds", "[gen][cast][explicit][dyncast][pin]") {
+TEST_CASE("Explicit cast: (Derived?) ptr<Base> dynamic downcast correct type succeeds", "[gen][cast][explicit][dyncast][view]") {
     auto jit = gen_jit(R"SRC(
         module __ed_pin_ok__;
 
@@ -402,7 +402,7 @@ TEST_CASE("Explicit cast: (Derived^) ptr<Base> dynamic downcast correct type suc
         test() : int {
             d : Derived(3);
             bp : Base* = &d;
-            dp : Derived^ = (Derived^) bp;    // explicit dynamic downcast pin
+            dp : Derived? = (Derived?) bp;    // explicit dynamic downcast pin
             return get_extra_fn(*dp);          // must return 55
         }
     )SRC");
@@ -413,9 +413,9 @@ TEST_CASE("Explicit cast: (Derived^) ptr<Base> dynamic downcast correct type suc
 }
 
 // =============================================================================
-// [ED6] Explicit (Derived^) ptr<Base> — wrong type → null → crash
+// [ED6] Explicit (Derived?) ptr<Base> — wrong type → null → crash
 // =============================================================================
-TEST_CASE("Explicit cast: (Derived^) ptr<Base> wrong type → null → crash", "[gen][cast][explicit][dyncast][pin][null]") {
+TEST_CASE("Explicit cast: (Derived?) ptr<Base> wrong type → null → crash", "[gen][cast][explicit][dyncast][view][null]") {
     auto res = build_and_exec(R"SRC(
         module __ed_pin_null__;
 
@@ -440,7 +440,7 @@ TEST_CASE("Explicit cast: (Derived^) ptr<Base> wrong type → null → crash", "
         main() : int {
             o : Other(7);
             bp : Base* = &o;
-            dp : Derived^ = (Derived^) bp;         // RTTI fail → null
+            dp : Derived? = (Derived?) bp;         // RTTI fail → null
             return get_extra_fn(*dp);               // null deref → crash
         }
     )SRC");
@@ -545,8 +545,8 @@ TEST_CASE("Explicit cast error: lnk<Base>→lnk<Unrelated> is rejected", "[gen][
 
         test() : int {
             b : Base();
-            bl : Base~ = &b;
-            ul : Unrelated~ = (Unrelated~) bl;   // ERROR: no inheritance
+            bl : Base+ = &b;
+            ul : Unrelated+ = (Unrelated+) bl;   // ERROR: no inheritance
             return 0;
         }
     )SRC"));
@@ -603,9 +603,9 @@ TEST_CASE("Implicit upcast: f(Base*) called with ptr<Derived> — succeeds", "[g
 }
 
 // =============================================================================
-// [IC2] Implicit upcast — f(l : Base~) called with lnk<Derived>
+// [IC2] Implicit upcast — f(l : Base+) called with lnk<Derived>
 // =============================================================================
-TEST_CASE("Implicit upcast: f(Base~) called with lnk<Derived> — succeeds", "[gen][cast][implicit][lnk]") {
+TEST_CASE("Implicit upcast: f(Base+) called with lnk<Derived> — succeeds", "[gen][cast][implicit][lnk]") {
     auto jit = gen_jit(R"SRC(
         module __ic_lnk__;
 
@@ -619,11 +619,11 @@ TEST_CASE("Implicit upcast: f(Base~) called with lnk<Derived> — succeeds", "[g
             Derived(v : int) : Base(v), extra(1) {}
         }
 
-        get_val(l : Base~) : int { return l->val; }
+        get_val(l : Base+) : int { return l->val; }
 
         test() : int {
             d : Derived(88);
-            ld : Derived~ = &d;
+            ld : Derived+ = &d;
             return get_val(ld);   // implicit upcast lnk<Derived>→lnk<Base>
         }
     )SRC");
@@ -634,9 +634,9 @@ TEST_CASE("Implicit upcast: f(Base~) called with lnk<Derived> — succeeds", "[g
 }
 
 // =============================================================================
-// [IC3] Implicit upcast — f(p : Base^) called with pin<Derived>
+// [IC3] Implicit upcast — f(p : Base?) called with pin<Derived>
 // =============================================================================
-TEST_CASE("Implicit upcast: f(Base^) called with pin<Derived> — succeeds", "[gen][cast][implicit][pin]") {
+TEST_CASE("Implicit upcast: f(Base?) called with pin<Derived> — succeeds", "[gen][cast][implicit][view]") {
     auto jit = gen_jit(R"SRC(
         module __ic_pin__;
 
@@ -650,11 +650,11 @@ TEST_CASE("Implicit upcast: f(Base^) called with pin<Derived> — succeeds", "[g
             Derived(v : int) : Base(v), extra(2) {}
         }
 
-        get_val(p : Base^) : int { return p->val; }
+        get_val(p : Base?) : int { return p->val; }
 
         test() : int {
             d : Derived(13);
-            pd : Derived^ = &d;
+            pd : Derived? = &d;
             return get_val(pd);   // implicit upcast pin<Derived>→pin<Base>
         }
     )SRC");
@@ -726,9 +726,9 @@ TEST_CASE("Implicit upcast: f(Base*) called with ref<ptr<Derived>> — load+upca
 }
 
 // =============================================================================
-// [IC6] Implicit upcast — f(l : Base~) called with ref<lnk<Derived>> (load+upcast)
+// [IC6] Implicit upcast — f(l : Base+) called with ref<lnk<Derived>> (load+upcast)
 // =============================================================================
-TEST_CASE("Implicit upcast: f(Base~) called with ref<lnk<Derived>> — load+upcast", "[gen][cast][implicit][ref][lnk]") {
+TEST_CASE("Implicit upcast: f(Base+) called with ref<lnk<Derived>> — load+upcast", "[gen][cast][implicit][ref][lnk]") {
     auto jit = gen_jit(R"SRC(
         module __ic_ref_lnk__;
 
@@ -742,11 +742,11 @@ TEST_CASE("Implicit upcast: f(Base~) called with ref<lnk<Derived>> — load+upca
             Derived(v : int) : Base(v), extra(5) {}
         }
 
-        get_val(l : Base~) : int { return l->val; }
+        get_val(l : Base+) : int { return l->val; }
 
         test() : int {
             d : Derived(37);
-            ld : Derived~ = &d;
+            ld : Derived+ = &d;
             return get_val(ld);   // ref<lnk<Derived>> loaded and upcast to lnk<Base>
         }
     )SRC");
@@ -805,9 +805,9 @@ TEST_CASE("Explicit cast: chain lnk<Derived>→ptr<Base>→lnk<Base> via interme
 
         test() : int {
             d : Derived(22);
-            ld : Derived~ = &d;
+            ld : Derived+ = &d;
             pb : Base* = (Base*) ld;    // lnk<Derived>→ptr<Base>
-            lb : Base~ = pb;            // ptr<Base>→lnk<Base> (warning: nullable→non-null)
+            lb : Base+ = pb;            // ptr<Base>→lnk<Base> (warning: nullable→non-null)
             return lb->val;             // must see 22
         }
     )SRC");

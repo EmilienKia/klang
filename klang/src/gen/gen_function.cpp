@@ -179,14 +179,14 @@ void signature_resolver::visit_parameter(parameter& param) {
             // Fallback for composite types wrapping an imported aggregate
             // (e.g. reference_type(unresolved("ns::Type"))).
             // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.
-            enum class WrapKind { Ref, Ptr, Link, Pin, Const, Owner };
+            enum class WrapKind { Ref, Ptr, Link, View, Const, Owner };
             std::vector<WrapKind> wrappers;
             auto inner = var_type;
             while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
                 if      (type::is_reference(inner))  wrappers.push_back(WrapKind::Ref);
                 else if (type::is_pointer(inner))    wrappers.push_back(WrapKind::Ptr);
                 else if (type::is_link(inner))       wrappers.push_back(WrapKind::Link);
-                else if (type::is_pinned(inner))     wrappers.push_back(WrapKind::Pin);
+                else if (type::is_view(inner))     wrappers.push_back(WrapKind::View);
                 else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
                 else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
                 else break;
@@ -202,7 +202,7 @@ void signature_resolver::visit_parameter(parameter& param) {
                             case WrapKind::Ref:   res_type = res_type->get_reference(); break;
                             case WrapKind::Ptr:   res_type = res_type->get_pointer();   break;
                             case WrapKind::Link:  res_type = res_type->get_link();      break;
-                            case WrapKind::Pin:   res_type = res_type->get_pinned();    break;
+                            case WrapKind::View:   res_type = res_type->get_view();    break;
                             case WrapKind::Const: res_type = res_type->get_const();     break;
                             case WrapKind::Owner: res_type = res_type->get_owner();     break;
                         }
@@ -244,14 +244,14 @@ void type_reference_resolver::visit_parameter(parameter& param) {
             // Fallback for composite types wrapping an imported aggregate
             // (e.g. reference_type(unresolved("ns::Type"))).
             // Peel wrappers, resolve the inner aggregate from imports, then re-wrap.
-            enum class WrapKind { Ref, Ptr, Link, Pin, Const, Owner };
+            enum class WrapKind { Ref, Ptr, Link, View, Const, Owner };
             std::vector<WrapKind> wrappers;
             auto inner = var_type;
             while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
                 if      (type::is_reference(inner))  wrappers.push_back(WrapKind::Ref);
                 else if (type::is_pointer(inner))    wrappers.push_back(WrapKind::Ptr);
                 else if (type::is_link(inner))       wrappers.push_back(WrapKind::Link);
-                else if (type::is_pinned(inner))     wrappers.push_back(WrapKind::Pin);
+                else if (type::is_view(inner))     wrappers.push_back(WrapKind::View);
                 else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
                 else if (type::is_owner(inner))      wrappers.push_back(WrapKind::Owner);
                 else break;
@@ -267,7 +267,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
                             case WrapKind::Ref:   res_type = res_type->get_reference(); break;
                             case WrapKind::Ptr:   res_type = res_type->get_pointer();   break;
                             case WrapKind::Link:  res_type = res_type->get_link();      break;
-                            case WrapKind::Pin:   res_type = res_type->get_pinned();    break;
+                            case WrapKind::View:   res_type = res_type->get_view();    break;
                             case WrapKind::Const: res_type = res_type->get_const();     break;
                             case WrapKind::Owner: res_type = res_type->get_owner();     break;
                         }
@@ -633,9 +633,9 @@ void implementation_generator::visit_function(function &function) {
         std::vector<std::shared_ptr<parameter>> struct_params;
         for (const auto& param : function.parameters()) {
             auto pt = param->get_type();
-            // Skip reference, pointer, link, pinned, owner types — only plain struct by value
+            // Skip reference, pointer, link, view, owner types — only plain struct by value
             if (type::is_reference(pt) || type::is_pointer(pt) || type::is_link(pt)
-                || type::is_pinned(pt) || type::is_owner(pt)) continue;
+                || type::is_view(pt) || type::is_owner(pt)) continue;
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(pt)) {
                 if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
                     struct_params.push_back(param);

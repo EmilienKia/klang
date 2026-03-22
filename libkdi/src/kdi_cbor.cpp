@@ -304,8 +304,8 @@ cbor_item_t* encode_type(const kdi_type& t) {
         } else if constexpr (std::is_same_v<T, kdi_link_type>) {
             map_push(m, "kind",  cbor_str("link"));
             map_push(m, "inner", encode_type(*v.inner));
-        } else if constexpr (std::is_same_v<T, kdi_pinned_type>) {
-            map_push(m, "kind",  cbor_str("pinned"));
+        } else if constexpr (std::is_same_v<T, kdi_view_type>) {
+            map_push(m, "kind",  cbor_str("view"));
             map_push(m, "inner", encode_type(*v.inner));
         } else if constexpr (std::is_same_v<T, kdi_const_type>) {
             map_push(m, "kind",  cbor_str("const"));
@@ -362,7 +362,7 @@ kdi_type decode_type(cbor_item_t* item, const std::string& path) {
     if (kind == "ref")    return {kdi_ref_type{decode_inner("inner")}};
     if (kind == "ptr")    return {kdi_ptr_type{decode_inner("inner")}};
     if (kind == "link")   return {kdi_link_type{decode_inner("inner")}};
-    if (kind == "pinned") return {kdi_pinned_type{decode_inner("inner")}};
+    if (kind == "view") return {kdi_view_type{decode_inner("inner")}};
     if (kind == "const")  return {kdi_const_type{decode_inner("inner")}};
     if (kind == "array")  return {kdi_array_type{decode_inner("elem")}};
     if (kind == "sized_array") {

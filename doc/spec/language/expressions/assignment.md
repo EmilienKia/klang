@@ -12,8 +12,8 @@ Assignment operators store a value into a variable or memory location.
 1. [Simple assignment](#1-simple-assignment)
 2. [Assignment through indirection types](#2-assignment-through-indirection-types)
    - [Reference (`T&`)](#reference-t--transparent-object-semantics)
-   - [Link (`T~`)](#link-t--rebind-or-transparent-depending-on-rhs-type)
-   - [Pinned (`T^`)](#pinned-t--immutable-binding)
+   - [Link (`T+`)](#link-t--rebind-or-transparent-depending-on-rhs-type)
+   - [View (`T?`)](#view-t--immutable-binding)
    - [Pointer (`T*`)](#pointer-t--rebind)
    - [Owner (`T!`)](#owner-t--move-semantics)
 3. [Compound assignment operators](#3-compound-assignment-operators)
@@ -60,39 +60,39 @@ r = y;              // copies y's value into x; r remains bound to x
 r = 99;             // assigns 99 to x
 ```
 
-Taking the address of a reference with `&r` produces a `T~` pointing to the same object.
+Taking the address of a reference with `&r` produces a `T+` pointing to the same object.
 
-### Link (`T~`) — rebind or transparent, depending on RHS type
+### Link (`T+`) — rebind or transparent, depending on RHS type
 
 The compiler distinguishes between a **rebind** and an **assignment to the pointed-to object** by the type of the right-hand side:
 
-- If the RHS is an **indirection of the same element type** (`T~`, `T^`, or `T*`), the assignment **rebinds** the link — the link is made to point to the new address.
+- If the RHS is an **indirection of the same element type** (`T+`, `T?`, or `T*`), the assignment **rebinds** the link — the link is made to point to the new address.
 - Otherwise the assignment is **transparent** — it assigns to the linked object.
 
 ```k
 x : int = 10;
 y : int = 20;
-lnk : int~ = &x;
+lnk : int+ = &x;
 
 lnk = 99;           // transparent: assigns 99 to x (RHS is int, not int*)
-lnk = &y;           // REBIND: lnk now points to y (RHS is int~)
+lnk = &y;           // REBIND: lnk now points to y (RHS is int+)
 lnk = &x;           // REBIND back to x
 ```
 
-Rebinding a link from a nullable source (`T^` or `T*`) emits a **compile-time warning** and inserts a **runtime null-check** (`__fatal_null_assignation()` if null).
+Rebinding a link from a nullable source (`T?` or `T*`) emits a **compile-time warning** and inserts a **runtime null-check** (`__fatal_null_assignation()` if null).
 
-### Pinned (`T^`) — immutable binding
+### View (`T?`) — immutable binding
 
-Assigning to a pinned variable after its initialisation is a **compile-time error**.
+Assigning to a view variable after its initialisation is a **compile-time error**.
 
 ```k
-pin : int^ = &x;
-pin = &y;           // ERROR: pinned is immutable — cannot be rebound
+view : int? = &x;
+view = &y;           // ERROR: view is immutable — cannot be rebound
 ```
 
 To modify the pointed-to object, use dereference:
 ```k
-*pin = 99;          // modifies the object (with null-check at runtime)
+*view = 99;          // modifies the object (with null-check at runtime)
 ```
 
 ### Pointer (`T*`) — rebind
@@ -107,7 +107,7 @@ p = null;           // rebind: p now points to nothing (null)
 *p = 99;            // modifies y (with null-check)
 ```
 
-The RHS of a pointer assignment must be a pointer (`T*`), a link (`T~`), a pinned (`T^`),
+The RHS of a pointer assignment must be a pointer (`T*`), a link (`T+`), a view (`T?`),
 or `null`.  Assigning a plain value is a compile-time error.
 
 ### Owner (`T!`) — move semantics
@@ -131,7 +131,7 @@ The right-hand side of a `T!` assignment must be:
 - `null` (deletes the current object if any), or
 - a `new T(args)` expression.
 
-Assigning a raw pointer/link/pinned to a `T!` variable is a **compile-time error** — an owner
+Assigning a raw pointer/link/view to a `T!` variable is a **compile-time error** — an owner
 can only be populated by `new` or by a move from another owner.
 
 **Summary of owner assignment:**
@@ -141,15 +141,15 @@ can only be populated by `new` or by a move from another owner.
 | `T!` variable | Move: RHS ← null; LHS takes ownership (LHS previous object deleted) |
 | `new T(args)` | LHS takes ownership of fresh object (LHS previous object deleted) |
 | `null` | LHS previous object deleted; LHS ← null |
-| `T*`, `T~`, `T^`, `T&` | **Compile-time error** |
+| `T*`, `T+`, `T?`, `T&` | **Compile-time error** |
 
 ### Summary table (all indirection types)
 
-| LHS type | `x = val` (val is `T`) | `x = &y` / `x = lnk` (val is `T~`, `T*`, `T^`) | `x = owner` (val is `T!`) |
+| LHS type | `x = val` (val is `T`) | `x = &y` / `x = lnk` (val is `T+`, `T*`, `T?`) | `x = owner` (val is `T!`) |
 |---|---|---|---|
 | `T&` | Assigns `val` to the referenced object | Compile-time error (no rebind) | Compile-time error |
-| `T~` | Assigns `val` to the linked object | **Rebinds** `x` to point to `y` | Copies raw address (observer; owner retains ownership) |
-| `T^` | Compile-time error (no rebind) | Compile-time error (no rebind) | Compile-time error |
+| `T+` | Assigns `val` to the linked object | **Rebinds** `x` to point to `y` | Copies raw address (observer; owner retains ownership) |
+| `T?` | Compile-time error (no rebind) | Compile-time error (no rebind) | Compile-time error |
 | `T*` | Compile-time error (must use `*x = val`) | **Rebinds** `x` to point to `y` | Copies raw address (observer; owner retains ownership) |
 | `T!` | Compile-time error | Compile-time error | **Move**: source ← null; destination takes ownership |
 
@@ -169,7 +169,7 @@ use() {
     // r = d2;             // ERROR: ref cannot rebind
 
     // lien: init and rebind
-    lnk : Animal~ = &d;    // OK
+    lnk : Animal+ = &d;    // OK
     d2 : Dog(2);
     lnk = &d2;             // OK: rebind to another Derived
 
@@ -177,13 +177,13 @@ use() {
     ptr : Animal* = &d;    // OK
     ptr = &d2;             // OK
 
-    // pin: only at construction
-    p : Animal^ = &d;      // OK
-    // p = &d2;            // ERROR: pin cannot rebind
+    //view: only at construction
+    p : Animal? = &d;      // OK
+    // p = &d2;            // ERROR: view cannot rebind
 
     // Nullable source → non-null target: warning + runtime null-check
     dp : Dog* = &d;
-    lnk2 : Animal~ = dp;   // Warning 0x4505 — null-check at runtime
+    lnk2 : Animal+ = dp;   // Warning 0x4505 — null-check at runtime
 
     // Type mismatch
     // struct Cat {}
@@ -209,7 +209,7 @@ Compound assignment applies a binary operation and stores the result back in the
 | `%=`     | `lhs = lhs % rhs` |
 | `&=`     | `lhs = lhs & rhs` |
 | `\|=`    | `lhs = lhs \| rhs` |
-| `^=`     | `lhs = lhs ^ rhs` |
+| `^=`     | `lhs = lhs ? rhs` |
 | `<<=`    | `lhs = lhs << rhs` |
 | `>>=`    | `lhs = lhs >> rhs` |
 
@@ -225,8 +225,8 @@ n += 1;        // increment by 1 (same as ++n)
 ---
 ## 4. Operand requirements
 
-- The left-hand side (`lhs`) must be an assignable location (lvalue): a variable, a parameter, a dereferenced pointer/link/pinned, an array subscript, or a struct field access.
-- Assigning to a `T^` (pinned) variable directly (rebind) is a compile-time error.
+- The left-hand side (`lhs`) must be an assignable location (lvalue): a variable, a parameter, a dereferenced pointer/link/view, an array subscript, or a struct field access.
+- Assigning to a `T?` (view) variable directly (rebind) is a compile-time error.
 - The right-hand side (`rhs`) is an expression of a compatible type.
 - Implicit widening or narrowing conversions are applied as described in [Types — Implicit conversions](../basic/types.md#13-implicit-conversions).
 

@@ -45,7 +45,7 @@ neg : double = -3.14d;
 The result type is `bool`.
 
 The operand must be of a boolean-compatible type: `bool`, any numeric primitive, or
-an indirection type (`T*`, `T~`, `T^`, `T!`). For indirection types, `!ptr` is
+an indirection type (`T*`, `T+`, `T?`, `T!`). For indirection types, `!ptr` is
 equivalent to `ptr == null`.
 ```
 LogicalNotExpr:
@@ -59,11 +59,11 @@ if (!p) { /* p is null */ }
 ```
 ---
 ## 3. Bitwise NOT
-`~` (tilde) inverts all bits of its operand.  
+`+` (tilde) inverts all bits of its operand.  
 Operand must be of integer type.
 ```
 BitwiseNotExpr:
-    '~' CastExpr
+    '+' CastExpr
 ```
 ```k
 mask : int = ~0xFF;    // all bits set except the low 8
@@ -79,39 +79,39 @@ AddressOfExpr:
     '&' CastExpr
 ```
 
-The result type is `T~` (a **link** — non-null, mutable address) when `expr` has type `T`.
-When `expr` denotes a **const** object (type `const T`), the result is `const T~` — a link to const.
+The result type is `T+` (a **link** — non-null, mutable address) when `expr` has type `T`.
+When `expr` denotes a **const** object (type `const T`), the result is `const T+` — a link to const.
 
 ```k
 a      : int      = 5;
-lnk    : int~     = &a;     // link to a (non-null)
+lnk    : int+     = &a;     // link to a (non-null)
 p      : int*     = &a;     // implicitly widened to pointer
 
 const b : int     = 7;
-clnk   : const int~ = &b;  // link to const — OK
-bad    : int~       = &b;  // Error: '&b' has type 'const int~'; cannot bind to mutable link
+clnk   : const int+ = &b;  // link to const — OK
+bad    : int+       = &b;  // Error: '&b' has type 'const int+'; cannot bind to mutable link
 ```
 
-> **Note:** `&expr` always produces a non-null address. It can be implicitly widened to a nullable type (`T*`, `T^`) but not the other way around.
+> **Note:** `&expr` always produces a non-null address. It can be implicitly widened to a nullable type (`T*`, `T?`) but not the other way around.
 
 This makes `&` the natural way to populate arrays of indirections (see [Types — §9.7](../basic/types.md#97-arrays-of-indirection-types)):
 
 ```k
 a : int = 1;
 b : int = 2;
-arr : int~[] {&a, &b};   // array of links
+arr : int+[] {&a, &b};   // array of links
 ptrs : int*[] {&a, &b};  // array of pointers (link widened to pointer)
-pins : int^[] {&a, &b};  // array of pinned (link widened to pinned)
+views : int?[] {&a, &b};  // array of view (link widened to view)
 ```
 
-Applied to a reference variable `r : T&`, `&r` returns a `T~` pointing to the same object as `r`.
-Applied to a reference variable `r : const T&`, `&r` returns a `const T~`.
+Applied to a reference variable `r : T&`, `&r` returns a `T+` pointing to the same object as `r`.
+Applied to a reference variable `r : const T&`, `&r` returns a `const T+`.
 
 ---
 ## 5. Dereference operator (`*`)
 
 `*expr` dereferences an indirection, yielding a **reference** (`T&`) to the pointed-to object.
-`expr` must be of type `T~`, `T^`, or `T*`.
+`expr` must be of type `T+`, `T?`, or `T*`.
 
 ```
 DereferenceExpr:
@@ -120,13 +120,13 @@ DereferenceExpr:
 
 | Operand type | Null-check inserted |
 |---|---|
-| `T~` (link)    | No — link is non-null |
-| `T^` (pinned)  | Yes — calls `__fatal_null_dereference()` if null |
+| `T+` (link)    | No — link is non-null |
+| `T?` (view)  | Yes — calls `__fatal_null_dereference()` if null |
 | `T*` (pointer) | Yes — calls `__fatal_null_dereference()` if null |
 
 ```k
 x   : int  = 42;
-lnk : int~ = &x;
+lnk : int+ = &x;
 p   : int* = &x;
 
 *lnk = 10;       // no null-check; assigns 10 to x
@@ -152,7 +152,7 @@ i : int = (int) d;        // truncates to 3
 b : byte = (byte) largeInt;
 ```
 
-### Indirection casts (ref / lnk / pin / ptr)
+### Indirection casts (ref / lnk / view / ptr)
 
 #### Static upcast (Derived→Base) — compile-time GEP
 
@@ -162,10 +162,10 @@ struct Derived : public Base { extra : int; Derived(v : int) : Base(v), extra(0)
 
 d  : Derived(55);
 pd : Derived* = &d;
-ld : Derived~ = &d;
+ld : Derived+ = &d;
 
 pb : Base*  = (Base*) pd;    // ptr<Derived> → ptr<Base>
-lb : Base~  = (Base~) ld;    // lnk<Derived> → lnk<Base>
+lb : Base+  = (Base+) ld;    // lnk<Derived> → lnk<Base>
 pb2 : Base* = (Base*) ld;   // lnk<Derived> → ptr<Base> (cross-kind)
 ```
 
@@ -185,12 +185,12 @@ class Derived : public Base {
 
 bp : Base* = &some_derived_obj;
 
-// ptr/pin target — nullable: null if RTTI mismatch
+// ptr/view target — nullable: null if RTTI mismatch
 dp  : Derived* = (Derived*) bp;
-dp2 : Derived^ = (Derived^) bp;
+dp2 : Derived? = (Derived?) bp;
 
 // lnk/ref target — non-null: fatal trap if RTTI mismatch
-dl : Derived~ = (Derived~) bp;   // __fatal_null_dyncast() if bp ≠ Derived*
+dl : Derived+ = (Derived+) bp;   // __fatal_null_dyncast() if bp ≠ Derived*
 ```
 
 See [Types — §11.5](../basic/types.md#115-explicit-cast) for full rules.

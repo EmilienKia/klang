@@ -34,7 +34,7 @@ LogicalAndExpr:
 InclusiveBinOrExpr:
     ExclusiveBinOrExpr { '|' ExclusiveBinOrExpr }
 ExclusiveBinOrExpr:
-    BinAndExpr { '^' BinAndExpr }
+    BinAndExpr { '?' BinAndExpr }
 BinAndExpr:
     EqualityExpr { '&' EqualityExpr }
 EqualityExpr:
@@ -55,7 +55,7 @@ CastExpr:
 UnaryExpr:
     'new' TypeName '(' [ ExpressionList ] ')'
     | 'delete' CastExpr
-    | ( '++' | '--' | '*' | '&' | '+' | '-' | '!' | '~' ) CastExpr
+    | ( '++' | '--' | '*' | '&' | '+' | '-' | '!' | '+' ) CastExpr
     | PostfixExpr
 PostfixExpr:
     PrimaryExpr { PostfixOp }
@@ -112,7 +112,7 @@ Higher rows bind more tightly (higher precedence).
 | Precedence | Operators | Associativity |
 |------------|-----------|---------------|
 | 1 (highest) | `()` (call), `[]` (subscript), `.`, `->`, `++` (post), `--` (post) | Left-to-right |
-| 2 | `++` (pre), `--` (pre), unary `+`, unary `-`, `!`, `~`, `&` (address-of), `*` (dereference), `(type)` (cast), `new`, `delete` | Right-to-left |
+| 2 | `++` (pre), `--` (pre), unary `+`, unary `-`, `!`, `+`, `&` (address-of), `*` (dereference), `(type)` (cast), `new`, `delete` | Right-to-left |
 | 3 | `.*`, `->*` | Left-to-right |
 | 4 | `*`, `/`, `%` | Left-to-right |
 | 5 | `+`, `-` | Left-to-right |
@@ -120,7 +120,7 @@ Higher rows bind more tightly (higher precedence).
 | 7 | `<`, `>`, `<=`, `>=` | Left-to-right |
 | 8 | `==`, `!=` | Left-to-right |
 | 9 | `&` (bitwise AND) | Left-to-right |
-| 10 | `^` (bitwise XOR) | Left-to-right |
+| 10 | `?` (bitwise XOR) | Left-to-right |
 | 11 | `\|` (bitwise OR) | Left-to-right |
 | 12 | `&&` (logical AND) | Left-to-right |
 | 13 | `\|\|` (logical OR) | Left-to-right |

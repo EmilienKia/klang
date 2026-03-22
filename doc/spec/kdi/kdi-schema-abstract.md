@@ -84,8 +84,8 @@ KdiType = one of:
   { kind: "char" }
   { kind: "ref",    inner: KdiType }
   { kind: "ptr",    inner: KdiType }
-  { kind: "link",   inner: KdiType }     -- ~ operator
-  { kind: "pinned", inner: KdiType }     -- ^ operator
+  { kind: "link",   inner: KdiType }     -- + operator
+  { kind: "view", inner: KdiType }     -- ? operator
   { kind: "const",  inner: KdiType }
   { kind: "array",  elem: KdiType }
   { kind: "sized_array", elem: KdiType, size: uint }

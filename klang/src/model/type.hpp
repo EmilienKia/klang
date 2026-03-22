@@ -61,7 +61,7 @@ class null_type;
 class reference_type;
 class pointer_type;
 class link_type;
-class pinned_type;
+class view_type;
 class owner_type;
 class const_type;
 class sized_array_type;
@@ -81,7 +81,7 @@ protected:
     std::shared_ptr<reference_type> reference;
     std::shared_ptr<pointer_type> pointer;
     std::shared_ptr<link_type> link;
-    std::shared_ptr<pinned_type> pinned;
+    std::shared_ptr<view_type> view;
     std::shared_ptr<owner_type> owner;
     std::shared_ptr<const_type> const_;
     std::shared_ptr<array_type> array;
@@ -117,21 +117,21 @@ public:
     inline static bool is_double_reference(const std::shared_ptr<type>& type);
     inline static bool is_pointer(const std::shared_ptr<type>& type);
     inline static bool is_link(const std::shared_ptr<type>& type);
-    inline static bool is_pinned(const std::shared_ptr<type>& type);
+    inline static bool is_view(const std::shared_ptr<type>& type);
     inline static bool is_owner(const std::shared_ptr<type>& type);
     /** True if the type is a const-qualified type. */
     inline static bool is_const(const std::shared_ptr<type>& type);
     /** Remove const qualifier if present, return the inner type. If not const, return as-is. */
     inline static std::shared_ptr<type> remove_const(const std::shared_ptr<type>& type);
-    /** True for any of the four indirection kinds: reference, pointer, link, pinned. */
+    /** True for any of the four indirection kinds: reference, pointer, link, view. */
     inline static bool is_any_indirection(const std::shared_ptr<type>& type);
     /** True for indirections that are non-null (reference and link). */
     inline static bool is_strong_indirection(const std::shared_ptr<type>& type);
     /** True for indirections that are mutable (link and pointer). */
     inline static bool is_mutable_indirection(const std::shared_ptr<type>& type);
-    /** True for indirections that may be null (pointer and pinned). */
+    /** True for indirections that may be null (pointer and view). */
     inline static bool is_nullable_indirection(const std::shared_ptr<type>& type);
-    /** True for indirections that are immutable (reference and pinned). */
+    /** True for indirections that are immutable (reference and view). */
     inline static bool is_immutable_indirection(const std::shared_ptr<type>& type);
     inline static bool is_sized_array(const std::shared_ptr<type>& type);
     inline static bool is_array(const std::shared_ptr<type>& type);
@@ -146,7 +146,7 @@ public:
     virtual std::shared_ptr<reference_type> get_reference();
     std::shared_ptr<pointer_type> get_pointer();
     std::shared_ptr<link_type> get_link();
-    std::shared_ptr<pinned_type> get_pinned();
+    std::shared_ptr<view_type> get_view();
     std::shared_ptr<owner_type> get_owner();
     std::shared_ptr<const_type> get_const();
     std::shared_ptr<array_type> get_array();
@@ -189,7 +189,7 @@ public:
  * Null literal type.
  *
  * Sentinel type representing the `null` literal.  It is implicitly convertible
- * to any nullable indirection type (pointer, pinned, owner) and can appear on
+ * to any nullable indirection type (pointer, view, owner) and can appear on
  * either side of an address-equality comparison (==, !=) with any indirection.
  *
  * A single instance is held by `context` (singleton pattern).
@@ -363,7 +363,7 @@ inline bool type::is_pointer(const std::shared_ptr<type>& type) {
 
 
 /**
- * Link type (~) — mutable, non-null (strong) indirection.
+ * Link type (+) — mutable, non-null (strong) indirection.
  * Like a reference but rebindable (via assignment to the link itself).
  * Represented in LLVM as an opaque pointer, identical to pointer_type.
  * Mangling modifier: 'L'
@@ -390,16 +390,16 @@ inline bool type::is_link(const std::shared_ptr<type>& type) {
 
 
 /**
- * Pinned type (^) — immutable (not rebindable after construction), nullable indirection.
+ * View type (?) — immutable (not rebindable after construction), nullable indirection.
  * Like a const pointer: can be null, but cannot be rebound after initialisation.
  * Represented in LLVM as an opaque pointer, identical to pointer_type.
  * Mangling modifier: 'Q'
  */
-class pinned_type : public type {
+class view_type : public type {
 protected:
     friend class type;
 
-    pinned_type(const std::shared_ptr<type> &subtype);
+    view_type(const std::shared_ptr<type> &subtype);
 
 public:
     bool is_resolved() const override;
@@ -408,11 +408,11 @@ public:
 
     std::string to_string() const override;
 
-    std::shared_ptr<type> get_pinned_type() const {return get_subtype();}
+    std::shared_ptr<type> get_viewed_type() const {return get_subtype();}
 };
 
-inline bool type::is_pinned(const std::shared_ptr<type>& type) {
-    return std::dynamic_pointer_cast<pinned_type>(type) != nullptr;
+inline bool type::is_view(const std::shared_ptr<type>& type) {
+    return std::dynamic_pointer_cast<view_type>(type) != nullptr;
 }
 
 /**
@@ -479,7 +479,7 @@ inline std::shared_ptr<type> type::remove_const(const std::shared_ptr<type>& t) 
 }
 
 inline bool type::is_any_indirection(const std::shared_ptr<type>& t) {
-    return is_reference(t) || is_pointer(t) || is_link(t) || is_pinned(t) || is_owner(t);
+    return is_reference(t) || is_pointer(t) || is_link(t) || is_view(t) || is_owner(t);
 }
 
 inline bool type::is_strong_indirection(const std::shared_ptr<type>& t) {
@@ -491,11 +491,11 @@ inline bool type::is_mutable_indirection(const std::shared_ptr<type>& t) {
 }
 
 inline bool type::is_nullable_indirection(const std::shared_ptr<type>& t) {
-    return is_pointer(t) || is_pinned(t) || is_owner(t);
+    return is_pointer(t) || is_view(t) || is_owner(t);
 }
 
 inline bool type::is_immutable_indirection(const std::shared_ptr<type>& t) {
-    return is_reference(t) || is_pinned(t);
+    return is_reference(t) || is_view(t);
 }
 
 
@@ -676,7 +676,7 @@ inline bool type::is_struct(const std::shared_ptr<type>& t) {
 /**
  * Function reference type.
  *
- * Represents the type of a reference (pointer *, pin ^, or link ~) to a free or
+ * Represents the type of a reference (pointer *, view ?, or link +) to a free or
  * static function.  The "ref_kind" field records which of the three reference
  * flavours was declared; however all three share the same LLVM representation
  * (an opaque function pointer).
@@ -684,13 +684,13 @@ inline bool type::is_struct(const std::shared_ptr<type>& t) {
  * A symbol that resolves to a function (without the call parentheses) has a type
  * that is always a reference_type wrapping a function_reference_type — because a
  * function address is non-null and immutable, which matches the semantics of a
- * reference (& in K).  It can be assigned at construction to a pin (^) or link (~)
+ * reference (& in K).  It can be assigned at construction to a view (?) or link (+)
  * variable, and at construction and re-assignment to a pointer (*) variable.
  */
 class function_reference_type : public type {
 public:
-    /** The reference qualifier declared in source (*, ^, ~) — informational only for LLVM. */
-    enum class ref_kind { pointer, pin, link };
+    /** The reference qualifier declared in source (*, ?, +) — informational only for LLVM. */
+    enum class ref_kind { pointer, view, link };
 
 protected:
     friend class type;

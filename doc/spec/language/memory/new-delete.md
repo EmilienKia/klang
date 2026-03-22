@@ -198,7 +198,7 @@ arr[2] = 99;            // arr[2] is now 99
 ```
 
 The subscript operator works uniformly through any indirection type pointing to an array
-(reference, pointer, link, pinned, owner).  See [Subscript operator](../basic/types.md#96-subscript-operator)
+(reference, pointer, link, view, owner).  See [Subscript operator](../basic/types.md#96-subscript-operator)
 for the full list of supported types.
 
 A **runtime bounds check** is performed on every subscript access: the index is compared
@@ -413,14 +413,14 @@ copied but the owner **retains exclusive ownership**.  The receiving indirection
 | Assignment form | Observer type | Null-check |
 |---|---|---|
 | `obs : T* = owner;` | Pointer — mutable, nullable | — |
-| `obs : T^ = owner;` | Pinned — immutable, nullable | — |
-| `lnk : T~ = owner;` | Link — mutable, non-null | Yes (at binding site) |
+| `obs : T? = owner;` | View — immutable, nullable | — |
+| `lnk : T+ = owner;` | Link — mutable, non-null | Yes (at binding site) |
 | `ref : T& = *owner;` | Reference (via dereference) | Yes (from `*owner`) |
 
 ```k
 owner : Foo! = new Foo(42);
 obs   : Foo* = owner;          // observer pointer; owner still owns Foo
-lnk   : Foo~ = owner;          // observer link; non-null check inserted
+lnk   : Foo+ = owner;          // observer link; non-null check inserted
 ref   : Foo& = *owner;         // observer reference (via dereference)
 ```
 
@@ -430,7 +430,7 @@ ref   : Foo& = *owner;         // observer reference (via dereference)
 
 ### Non-owner parameter (pass by observer)
 
-Passing an owner to a function that expects a `T*`, `T~`, `T^`, or `T&` parameter copies the
+Passing an owner to a function that expects a `T*`, `T+`, `T?`, or `T&` parameter copies the
 raw address **without** transferring ownership.  The called function is an observer:
 
 ```k
@@ -474,7 +474,7 @@ UnaryExpr:
     | 'new' TypeName '[' [ Expression ] ']' [ BraceInitList ]        -- NewArrayExpr
     | 'new' TypeName BraceInitList                                   -- NewBareArrayExpr
     | 'delete' CastExpr                                              -- DeleteExpr
-    | ( '++' | '--' | '*' | '&' | '+' | '-' | '!' | '~' ) CastExpr
+    | ( '++' | '--' | '*' | '&' | '+' | '-' | '!' | '+' ) CastExpr
     | PostfixExpr
 
 TypeName:
@@ -527,8 +527,8 @@ TypeSuffix:
     '[' [ IntegerLiteral ] ']'   -- array (sized or unsized)
     | '!'                        -- owner (move-only, nullable, exclusive ownership)
     | '&'                        -- reference (immutable binding, non-null)
-    | '~'                        -- link (mutable binding, non-null)
-    | '^'                        -- pinned (immutable binding, nullable)
+    | '+'                        -- link (mutable binding, non-null)
+    | '?'                        -- view (immutable binding, nullable)
     | '*'                        -- pointer (mutable binding, nullable)
 ```
 

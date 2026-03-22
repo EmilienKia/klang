@@ -44,17 +44,17 @@ Bitwise operators require integer operands. They operate on the binary represent
 |----------|-----------|--------------|
 | `&`      | Bitwise AND | `BinAndExpr '&' EqualityExpr` |
 | `\|`     | Bitwise OR  | `InclusiveBinOrExpr '\|' ExclusiveBinOrExpr` |
-| `^`      | Bitwise XOR | `ExclusiveBinOrExpr '^' BinAndExpr` |
+| `?`      | Bitwise XOR | `ExclusiveBinOrExpr '?' BinAndExpr` |
 ```k
 a & b        // bitwise AND
 a | b        // bitwise OR
-a ^ b        // bitwise XOR
+a ? b        // bitwise XOR
 ```
 **Examples:**
 ```k
 mask : int = flags & 0xFF;   // keep low 8 bits
 combined : int = a | b;      // set union
-toggled : int = state ^ bit; // toggle bit
+toggled : int = state ? bit; // toggle bit
 ```
 ---
 ## 3. Shift operators
@@ -92,7 +92,7 @@ a >= b       // true if a is greater than or equal to b
 ### Address comparison for indirection types
 
 The `==` and `!=` operators can be used to compare the **addresses** held by
-indirection types: pointer (`T*`), link (`T~`), pinned (`T^`), and owner (`T!`).
+indirection types: pointer (`T*`), link (`T+`), view (`T?`), and owner (`T!`).
 The `null` literal may appear on either side.
 
 These operators compare the raw pointer addresses, **not** the pointed-to objects.
@@ -109,9 +109,9 @@ null == null  // true
 
 | Left type | Right type | Result | Semantics |
 |---|---|---|---|
-| `T*`, `T~`, `T^`, `T!` | `T*`, `T~`, `T^`, `T!` | `bool` | Address comparison |
-| `T*`, `T~`, `T^`, `T!` | `null` | `bool` | Null check |
-| `null` | `T*`, `T~`, `T^`, `T!` | `bool` | Null check |
+| `T*`, `T+`, `T?`, `T!` | `T*`, `T+`, `T?`, `T!` | `bool` | Address comparison |
+| `T*`, `T+`, `T?`, `T!` | `null` | `bool` | Null check |
+| `null` | `T*`, `T+`, `T?`, `T!` | `bool` | Null check |
 | `null` | `null` | `bool` | Always `true` for `==`, `false` for `!=` |
 
 > **Note:** References (`T&`) are **excluded** from address comparison. When `==`
@@ -160,7 +160,7 @@ if (failed || *fallback == 0) { ... }  // *fallback skipped if failed is true
 
 ### Implicit boolean conversion for indirection types
 
-Indirection types — pointer (`T*`), link (`T~`), pinned (`T^`), and owner (`T!`) —
+Indirection types — pointer (`T*`), link (`T+`), view (`T?`), and owner (`T!`) —
 are **implicitly convertible to `bool`**. A non-null indirection converts to `true`;
 a null indirection converts to `false`.
 
@@ -171,8 +171,8 @@ This implicit conversion applies wherever a `bool` is expected:
 
 | Source type | Conversion | Result |
 |---|---|---|
-| `T*`, `T~`, `T^`, `T!` (non-null) | → `bool` | `true` |
-| `T*`, `T~`, `T^`, `T!` (null) | → `bool` | `false` |
+| `T*`, `T+`, `T?`, `T!` (non-null) | → `bool` | `true` |
+| `T*`, `T+`, `T?`, `T!` (null) | → `bool` | `false` |
 | `null` literal | → `bool` | `false` |
 
 > **Note:** References (`T&`) are **not** implicitly convertible to `bool`.

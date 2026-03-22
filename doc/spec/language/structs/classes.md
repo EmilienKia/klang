@@ -838,8 +838,8 @@ always yields `Derived`'s RTTI.
 
 ### 14.2 Dynamic downcast semantics
 
-A **dynamic downcast** assigns a `Base*` (or `Base~`, `Base^`, `Base&`) to a `Derived*`
-(or `Derived~`, `Derived^`, `Derived&`) with a runtime type check:
+A **dynamic downcast** assigns a `Base*` (or `Base+`, `Base?`, `Base&`) to a `Derived*`
+(or `Derived+`, `Derived?`, `Derived&`) with a runtime type check:
 
 1. Load the vptr from field 0 of the pointed-at object (via the Base sub-object layout).
 2. Load vtable[0] — the actual RTTI pointer of the concrete object.
@@ -847,7 +847,7 @@ A **dynamic downcast** assigns a `Base*` (or `Base~`, `Base^`, `Base&`) to a `De
 4. **Match** → subtract the byte offset of the Base sub-object inside Derived from the source
    pointer to obtain the start of Derived; assign the adjusted pointer.
 5. **Mismatch** → assign **null**.
-6. If null is assigned to a non-null target (`~` link or `&` reference) → call
+6. If null is assigned to a non-null target (`+` link or `&` reference) → call
    `__fatal_null_dyncast()`.
 
 The operation is emitted implicitly whenever the compiler detects that a `Base` indirection is
@@ -858,8 +858,8 @@ being assigned to a `Derived` indirection and `Derived` is a class/interface der
 | Target type | Allowed when | On RTTI mismatch |
 |-------------|--------------|-----------------|
 | `Derived&`  | Init only (immutable binding) | `__fatal_null_dyncast()` |
-| `Derived~`  | Init only (non-null link) | `__fatal_null_dyncast()` |
-| `Derived^`  | Init only (nullable pin) | null assigned |
+| `Derived+`  | Init only (non-null link) | `__fatal_null_dyncast()` |
+| `Derived?`  | Init only (nullable view) | null assigned |
 | `Derived*`  | Init and rebind (nullable ptr) | null assigned |
 
 ### 14.4 Applicability
@@ -896,8 +896,8 @@ test_ptr() : int {
 
 test_lnk() : int {
     d   : Derived(7);
-    bl  : Base~   = &d;
-    dl  : Derived~ = bl;      // dynamic downcast — dl non-null; fatal if RTTI mismatches
+    bl  : Base+   = &d;
+    dl  : Derived+ = bl;      // dynamic downcast — dl non-null; fatal if RTTI mismatches
     return get_extra_fn(*dl); // → 99
 }
 

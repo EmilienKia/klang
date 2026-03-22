@@ -143,30 +143,30 @@ TEST_CASE("Parse function pointer type spec *(int)", "[parser][type][function_re
     REQUIRE(pt->keyword.type == k::lex::keyword::INT);
 }
 
-TEST_CASE("Parse function pin type spec ^(int, double~)", "[parser][type][function_ref_type]") {
+TEST_CASE("Parse function view type spec ?(int, double+)", "[parser][type][function_ref_type]") {
     test_logger log;
-    k::source src{"^(int, double~)"};
+    k::source src{"?(int, double+)"};
     k::parse::parser parser(log, src);
     auto spec = parser.parse_type_spec();
     REQUIRE(spec);
 
     auto frt = std::dynamic_pointer_cast<ast::function_ref_type_specifier>(spec);
     REQUIRE(frt);
-    REQUIRE(frt->ref_op.type == k::lex::operator_::CARET);
+    REQUIRE(frt->ref_op.type == k::lex::operator_::QUESTION_MARK);
     REQUIRE(!frt->owner.has_value());
     REQUIRE(frt->param_types.size() == 2);
 }
 
-TEST_CASE("Parse function link type spec ~()", "[parser][type][function_ref_type]") {
+TEST_CASE("Parse function link type spec +()", "[parser][type][function_ref_type]") {
     test_logger log;
-    k::source src{"~()"};
+    k::source src{"+()"};
     k::parse::parser parser(log, src);
     auto spec = parser.parse_type_spec();
     REQUIRE(spec);
 
     auto frt = std::dynamic_pointer_cast<ast::function_ref_type_specifier>(spec);
     REQUIRE(frt);
-    REQUIRE(frt->ref_op.type == k::lex::operator_::TILDE);
+    REQUIRE(frt->ref_op.type == k::lex::operator_::PLUS);
     REQUIRE(!frt->owner.has_value());
     REQUIRE(frt->param_types.empty());
 }

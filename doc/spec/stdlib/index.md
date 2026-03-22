@@ -61,8 +61,8 @@ K language:
 
 - Array parameters that are **read-only** use `const char[]`; those that are
   mutated in-place (without reallocation) use `char[]`.
-- Owners (`char[]!`), pointers (`char[]*`), links (`char[]~`), and pins
-  (`char[]^`) widen implicitly to `char[]` or `const char[]` without
+- Owners (`char[]!`), pointers (`char[]*`), links (`char[]+`), and views
+  (`char[]?`) widen implicitly to `char[]` or `const char[]` without
   ownership transfer.
 - **String literals** have type `const char[N]&` and widen automatically to
   `const char[]` — they can therefore be passed directly to any `const char[]`
@@ -73,7 +73,7 @@ K language:
 
 - Heap-allocated buffers are held as owners (`T!`).
 - Public accessors that expose internal data without transferring ownership
-  return a pin (`T^`) or pointer (`T*`), never an owner.
+  return a view (`T?`) or pointer (`T*`), never an owner.
 - Copy constructors allocate fresh buffers; the original is unmodified.
 
 ---

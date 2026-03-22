@@ -18,7 +18,7 @@
 
 /**
  * Tests for dynamic upcast (RTTI-based): binding a derived-typed indirection
- * from a base-typed indirection (pointer, link, pinned, reference) via
+ * from a base-typed indirection (pointer, link, view, reference) via
  * runtime type checking.
  *
  * "Dynamic upcast" here means: Base* → Derived* where Derived derives from Base.
@@ -145,8 +145,8 @@ TEST_CASE("Dynamic upcast: lnk<Derived> from lnk<Base> to actual Derived succeed
 
         test() : int {
             d : Derived(5);
-            blnk : Base~ = &d;
-            dlnk : Derived~ = blnk;
+            blnk : Base+ = &d;
+            dlnk : Derived+ = blnk;
             return get_extra_fn(*dlnk);
         }
     )SRC");
@@ -181,7 +181,7 @@ TEST_CASE("Dynamic upcast: lnk<Derived> from ptr<Base> wrong type triggers fatal
         main() : int {
             o : Other(1);
             bp : Base* = &o;
-            dlnk : Derived~ = bp;    // RTTI fail → null → debugtrap
+            dlnk : Derived+ = bp;    // RTTI fail → null → debugtrap
             return 0;
         }
     )SRC");
@@ -191,7 +191,7 @@ TEST_CASE("Dynamic upcast: lnk<Derived> from ptr<Base> wrong type triggers fatal
 // =============================================================================
 // [U5] pin<Derived> from ptr<Base> to actual Derived — success
 // =============================================================================
-TEST_CASE("Dynamic upcast: pin<Derived> from ptr<Base> to actual Derived is non-null", "[gen][dyncast][pin]") {
+TEST_CASE("Dynamic upcast: pin<Derived> from ptr<Base> to actual Derived is non-null", "[gen][dyncast][view]") {
     auto jit = gen_jit(R"SRC(
         module __du_pin_ok__;
 
@@ -212,7 +212,7 @@ TEST_CASE("Dynamic upcast: pin<Derived> from ptr<Base> to actual Derived is non-
         test() : int {
             d : Derived(3);
             bp : Base* = &d;
-            dp : Derived^ = bp;
+            dp : Derived? = bp;
             return get_extra_fn(*dp);
         }
     )SRC");
@@ -225,7 +225,7 @@ TEST_CASE("Dynamic upcast: pin<Derived> from ptr<Base> to actual Derived is non-
 // =============================================================================
 // [U6] pin<Derived> from ptr<Base> wrong type → null → crash on deref
 // =============================================================================
-TEST_CASE("Dynamic upcast: pin<Derived> from ptr<Base> wrong type → null → crash", "[gen][dyncast][pin][null]") {
+TEST_CASE("Dynamic upcast: pin<Derived> from ptr<Base> wrong type → null → crash", "[gen][dyncast][view][null]") {
     auto res = build_and_exec(R"SRC(
         module __du_pin_null__;
 
@@ -250,7 +250,7 @@ TEST_CASE("Dynamic upcast: pin<Derived> from ptr<Base> wrong type → null → c
         main() : int {
             o : Other(7);
             bp : Base* = &o;
-            dp : Derived^ = bp;         // RTTI fail → null
+            dp : Derived? = bp;         // RTTI fail → null
             return get_extra_fn(*dp);   // null deref → crash
         }
     )SRC");
@@ -315,7 +315,7 @@ TEST_CASE("Dynamic upcast: lnk<Derived> rebind from ptr<Base> of actual Derived 
         test() : int {
             d1 : Derived(1);
             d2 : Derived(2);
-            lnk : Derived~ = &d1;
+            lnk : Derived+ = &d1;
             bp : Base* = &d2;
             lnk = bp;
             return get_extra_fn(*lnk);
@@ -461,8 +461,8 @@ TEST_CASE("Dynamic upcast: lnk<Dog> from lnk<Animal> to actual Dog succeeds", "[
 
         test() : int {
             d : Dog(7);
-            al : Animal~ = &d;
-            dl : Dog~ = al;
+            al : Animal+ = &d;
+            dl : Dog+ = al;
             return tricks_fn(*dl);   // must return 14 (7*2)
         }
     )SRC");

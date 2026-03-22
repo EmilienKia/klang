@@ -8,10 +8,10 @@ K distinguishes two flavours:
 
 | Flavour | Syntax | Holds |
 |---------|--------|-------|
-| **Free function reference** | `*(Params)`, `^(Params)`, `~(Params)` | Address of a free (or static member) function |
-| **Member function reference** | `T::*(Params)`, `T::^(Params)`, `T::~(Params)` | Address of a non-static member function of struct `T` |
+| **Free function reference** | `*(Params)`, `?(Params)`, `+(Params)` | Address of a free (or static member) function |
+| **Member function reference** | `T::*(Params)`, `T::?(Params)`, `T::+(Params)` | Address of a non-static member function of struct `T` |
 
-The three reference-qualifier variants (`*`, `^`, `~`) share the same runtime representation (an opaque pointer) but carry compile-time nullability and rebindability information, exactly as for object indirections (see [Types §2](../basic/types.md#2-indirection-types--overview)).
+The three reference-qualifier variants (`*`, `?`, `+`) share the same runtime representation (an opaque pointer) but carry compile-time nullability and rebindability information, exactly as for object indirections (see [Types §2](../basic/types.md#2-indirection-types--overview)).
 
 ---
 
@@ -39,8 +39,8 @@ A *free function reference type* describes the type of a variable that holds the
 FreeRefQualifier '(' [ TypeList ] ')'
 FreeRefQualifier:
     '*'   -- pointer  (nullable,     rebindable)
-    '^'   -- pinned   (nullable,     immutable binding)
-    '~'   -- link     (non-null,     rebindable)
+    '?'   -- view   (nullable,     immutable binding)
+    '+'   -- link     (non-null,     rebindable)
 ```
 
 The parameter types are listed inside the parentheses, separated by commas. The return type is **not** written — it is inferred from the target function. This avoids ambiguity, since K does not support overloading on return type alone.
@@ -49,8 +49,8 @@ The parameter types are listed inside the parentheses, separated by commas. The 
 
 ```k
 fp  : *(int)           // pointer to a function (int) → ?  (nullable, rebindable)
-pin : ^(int, double)   // pinned  to a function (int, double) → ?  (nullable, immutable)
-lnk : ~(int)           // link    to a function (int) → ?  (non-null, rebindable)
+view : ?(int, double)   // view  to a function (int, double) → ?  (nullable, immutable)
+lnk : +(int)           // link    to a function (int) → ?  (non-null, rebindable)
 ```
 
 **No-parameter functions** use an empty parameter list:
@@ -77,8 +77,8 @@ The `StructName::` prefix qualifies the struct whose method is referenced. Quali
 
 ```k
 mfp  : Counter::*(int)           // pointer to a Counter member function (int) → ?
-mpin : Counter::^(int, double)   // pinned   to a Counter member function
-mlnk : Counter::~(int)           // link     to a Counter member function (non-null)
+mpin : Counter::?(int, double)   // view   to a Counter member function
+mlnk : Counter::+(int)           // link     to a Counter member function (non-null)
 ```
 
 The implicit `this` parameter is **not** listed — it is supplied by the `.*` / `->*` call syntax.
@@ -108,7 +108,7 @@ The compiler verifies that the type of the referenced function matches the decla
 **Assignment after declaration** follows the same rules:
 
 ```k
-fp = add_one;           // fp is re-pointed at add_one (fp is a * or ~)
+fp = add_one;           // fp is re-pointed at add_one (fp is a * or +)
 mfp = Counter::add;     // mfp is re-pointed at Counter::add
 ```
 
@@ -129,7 +129,7 @@ test() : int {
 
 The call site must provide exactly the arguments required by the parameter list. The compiler adapts the argument types according to the usual implicit conversion rules.
 
-**Null pointer call:** Calling a `*` or `^` reference that holds null results in undefined behaviour (no automatic null-check is emitted at call sites; the caller is responsible).
+**Null pointer call:** Calling a `*` or `?` reference that holds null results in undefined behaviour (no automatic null-check is emitted at call sites; the caller is responsible).
 
 ---
 
@@ -166,14 +166,14 @@ test() : int {
 '(' IndirExpr '->*' MfpExpr ')' '(' [ ArgumentList ] ')'
 ```
 
-`IndirExpr` must be of type `T*`, `T^`, or `T~` — any of the three indirection types for `T`.
+`IndirExpr` must be of type `T*`, `T?`, or `T+` — any of the three indirection types for `T`.
 
 ```k
 test_link() : int {
     mfp : Counter::*(int) = Counter::add;
     c   : Counter;
     c.value = 40;
-    lnk : Counter~ = c;
+    lnk : Counter+ = c;
     return (lnk->*mfp)(2);  // calls c.add(2) via link → 42
 }
 
@@ -189,8 +189,8 @@ test_pin() : int {
     mfp : Counter::*(int) = Counter::add;
     c   : Counter;
     c.value = 40;
-    pin : Counter^ = c;
-    return (pin->*mfp)(2);  // calls c.add(2) via pin → 42
+    view : Counter? = c;
+    return (view->*mfp)(2);  // calls c.add(2) via view → 42
 }
 ```
 
@@ -212,7 +212,7 @@ invoke(mfp : Counter::*(int), c : Counter, x : int) : int {
     return (c.*mfp)(x);
 }
 
-invoke_via_link(mfp : Counter::*(int), lnk : Counter~, x : int) : int {
+invoke_via_link(mfp : Counter::*(int), lnk : Counter+, x : int) : int {
     return (lnk->*mfp)(x);
 }
 
@@ -316,8 +316,8 @@ The reference qualifier controls nullability, mirroring object indirections:
 | Qualifier | Nullable | Rebindable | Notes |
 |-----------|----------|------------|-------|
 | `*` (pointer) | Yes | Yes | May be `null`; no automatic null-check at call site |
-| `^` (pinned)  | Yes | No  | May be `null`; no automatic null-check at call site |
-| `~` (link)    | No  | Yes | Initialisation from nullable source triggers runtime null-check |
+| `?` (view)  | Yes | No  | May be `null`; no automatic null-check at call site |
+| `+` (link)    | No  | Yes | Initialisation from nullable source triggers runtime null-check |
 
 **Assigning null:**
 
@@ -330,7 +330,7 @@ fp(42);                // undefined behaviour if fp is null (no auto null-check)
 
 ```k
 fp_ptr : *(int) = add_one;
-fp_lnk : ~(int) = fp_ptr;   // runtime null-check inserted: fp_ptr must not be null
+fp_lnk : +(int) = fp_ptr;   // runtime null-check inserted: fp_ptr must not be null
 ```
 
 ---
@@ -343,7 +343,7 @@ FunctionReferenceType:
   | StructQualifiedName '::' FreeRefQualifier '(' [ TypeList ] ')'
 
 FreeRefQualifier:
-    '*' | '^' | '~'
+    '*' | '?' | '+'
 
 StructQualifiedName:
     Identifier { '::' Identifier }
@@ -368,7 +368,7 @@ ObjExpr:
     -- expression of struct type T (value or T&)
 
 IndirExpr:
-    -- expression of type T*, T^, or T~
+    -- expression of type T*, T?, or T+
 ```
 
 ---

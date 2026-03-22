@@ -440,7 +440,7 @@ TEST_CASE("Owner to link observer: read and write", "[gen][owner][indirection][j
         module __own_obs_link__;
         test_link() : int {
             p : int! = new int(7);
-            lnk : int~ = p;
+            lnk : int+ = p;
             *lnk = 99;
             result : int = *p;
             delete p;
@@ -462,7 +462,7 @@ TEST_CASE("Owner to pin observer: read", "[gen][owner][indirection][jit]") {
         module __own_obs_pin__;
         test_pin() : int {
             p : int! = new int(33);
-            pin : int^ = p;
+            pin : int? = p;
             result : int = *pin;
             delete p;
             return result;
@@ -540,7 +540,7 @@ TEST_CASE("Owner<struct> to link observer: read and write field", "[gen][owner][
 
         test_link_struct() : int {
             p : Point! = new Point(5, 6);
-            lnk : Point~ = p;
+            lnk : Point+ = p;
             lnk->x = 9;
             result : int = p->x * 10 + p->y;
             delete p;
@@ -565,7 +565,7 @@ TEST_CASE("Owner<struct> to pin observer: read field", "[gen][owner][indirection
 
         test_pin_struct() : int {
             p : Point! = new Point(7, 8);
-            pin : Point^ = p;
+            pin : Point? = p;
             result : int = pin->x * 10 + pin->y;
             delete p;
             return result;
@@ -595,7 +595,7 @@ TEST_CASE("Owner keeps ownership after observer assignment", "[gen][owner][indir
         test() : int {
             owner : Tracked! = new Tracked();
             obs_ptr  : Tracked* = owner;
-            obs_pin  : Tracked^ = owner;
+            obs_pin  : Tracked? = owner;
             delete owner;
             return g_dtors;
         }

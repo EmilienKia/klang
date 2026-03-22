@@ -97,8 +97,8 @@ an integer.  The result is a reference (`&`) to the element at the given index.
 | `T[N]&` / `T[]&` | Reference to an array |
 | `T[N]!` / `T[]!` | Owner of an array |
 | `T[N]*` / `T[]*` | Pointer to an array |
-| `T[N]~` / `T[]~` | Link to an array |
-| `T[N]^` / `T[]^` | Pinned to an array |
+| `T[N]+` / `T[]+` | Link to an array |
+| `T[N]?` / `T[]?` | View to an array |
 
 For all indirection types, the subscript operator transparently dereferences the indirection
 to access the underlying array element.
@@ -120,7 +120,7 @@ Apply `*` to dereference the pointed-to value:
 ```k
 a : int = 10;
 b : int = 20;
-arr : int~[] {&a, &b};
+arr : int+[] {&a, &b};
 val : int = *arr[0];     // dereference the link at index 0 → 10
 *arr[1] = 99;            // write-through: modifies 'b' to 99
 ```
@@ -222,7 +222,7 @@ p->next = null;
 **Array virtual member — `size`:**
 
 The `->` operator also provides access to the virtual `size` member on arrays
-accessed through any indirection type (pointer, link, pinned, owner):
+accessed through any indirection type (pointer, link, view, owner):
 
 ```k
 o : int[3]! = new int[]{1, 2, 3};
@@ -232,7 +232,7 @@ sz : unsigned int = o->size;    // 3
 See [Types — §9.8](../basic/types.md#98-virtual-member-size) for full details.
 ---
 ## 6. Pointer-to-member call — operators `.*` and `->*`
-These operators call a *member function reference* (a variable of type `T::*(Params)`, `T::^(Params)` or `T::~(Params)`) on a specific receiver object.
+These operators call a *member function reference* (a variable of type `T::*(Params)`, `T::?(Params)` or `T::+(Params)`) on a specific receiver object.
 ### Grammar
 ```
 MemberRefCallExpr:
@@ -254,14 +254,14 @@ test() : int {
     return (c.*mfp)(2);     // calls c.add(2) -> 42
 }
 ```
-### `->*` — call through a pointer, link, or pin
-`IndirExpr` must be of type `T*`, `T^`, or `T~`.
+### `->*` — call through a pointer, link, or view
+`IndirExpr` must be of type `T*`, `T?`, or `T+`.
 ```k
 test_link() : int {
     mfp : Counter::*(int) = Counter::add;
     c   : Counter;
     c.value = 40;
-    lnk : Counter~ = c;
+    lnk : Counter+ = c;
     return (lnk->*mfp)(2);  // -> 42  (via link)
 }
 test_ptr() : int {

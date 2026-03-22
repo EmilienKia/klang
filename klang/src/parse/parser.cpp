@@ -912,8 +912,8 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                     switch(ptr->pointer_type.type) {
                         case lex::operator_::STAR: result += "p"; break;      // pointer
                         case lex::operator_::AMPERSAND: result += "r"; break; // reference
-                        case lex::operator_::CARET: result += "l"; break;     // link (pin)
-                        case lex::operator_::TILDE: result += "lnk"; break;   // link
+                        case lex::operator_::QUESTION_MARK: result += "v"; break;  // view
+                        case lex::operator_::PLUS: result += "lnk"; break;   // link
                         case lex::operator_::EXCLAMATION_MARK: result += "o"; break;  // owner
                         default: break;
                     }
@@ -1579,7 +1579,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
                         break;
                     }
                     auto next = _lexer.get();
-                    if (next == lex::operator_::STAR || next == lex::operator_::CARET || next == lex::operator_::TILDE) {
+                    if (next == lex::operator_::STAR || next == lex::operator_::QUESTION_MARK || next == lex::operator_::PLUS) {
                         // ":: RefKind" — check for '('
                         auto par = _lexer.get();
                         if (par == lex::punctuator::PARENTHESIS_OPEN) {
@@ -1619,8 +1619,8 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
         // Now try to read the ref-kind operator (with or without owner)
         auto ref_tok = _lexer.get();
         if (ref_tok == lex::operator_::STAR ||
-            ref_tok == lex::operator_::CARET ||
-            ref_tok == lex::operator_::TILDE) {
+            ref_tok == lex::operator_::QUESTION_MARK ||
+            ref_tok == lex::operator_::PLUS) {
             // Must be immediately followed by '(' to be a function ref type
             auto par_tok = _lexer.get();
             if (par_tok == lex::punctuator::PARENTHESIS_OPEN) {
@@ -1701,7 +1701,7 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
         auto lex = _lexer.get();
 
         if(lex == lex::operator_::STAR || lex == lex::operator_::AMPERSAND
-            || lex == lex::operator_::TILDE || lex == lex::operator_::CARET) {
+            || lex == lex::operator_::PLUS || lex == lex::operator_::QUESTION_MARK) {
             res = std::make_shared<ast::pointer_type_specifier>(res, lex::as<lex::operator_>(lex));
             continue;
         }

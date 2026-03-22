@@ -110,7 +110,7 @@ TEST_CASE("Downcast: lien<Base> init from &Derived reads Base field", "[gen][dow
 
         test() : int {
             d : Derived();
-            lnk : Base~ = &d;   // lien<Base> bound to Derived object
+            lnk : Base+ = &d;   // lien<Base> bound to Derived object
             return lnk->val;    // must see d.val = 55
         }
     )SRC");
@@ -140,7 +140,7 @@ TEST_CASE("Downcast: lien<Base> can be rebound to another Derived", "[gen][downc
         test() : int {
             d1 : Derived(11);
             d2 : Derived(22);
-            lnk : Base~ = &d1;
+            lnk : Base+ = &d1;
             lnk = &d2;           // rebind to d2
             return lnk->val;     // must see d2.val = 22
         }
@@ -154,7 +154,7 @@ TEST_CASE("Downcast: lien<Base> can be rebound to another Derived", "[gen][downc
 // =============================================================================
 // [T4] pin<Base> init from &Derived — success
 // =============================================================================
-TEST_CASE("Downcast: pin<Base> init from &Derived reads Base field", "[gen][downcast][pin]") {
+TEST_CASE("Downcast: pin<Base> init from &Derived reads Base field", "[gen][downcast][view]") {
     auto jit = gen_jit(R"SRC(
         module __dc_pin_init__;
 
@@ -170,7 +170,7 @@ TEST_CASE("Downcast: pin<Base> init from &Derived reads Base field", "[gen][down
 
         test() : int {
             d : Derived(77);
-            p : Base^ = &d;     // pin<Base> bound to Derived object
+            p : Base? = &d;     // pin<Base> bound to Derived object
             return p->val;      // must see d.val = 77
         }
     )SRC");
@@ -260,7 +260,7 @@ TEST_CASE("Downcast: lien<Base> init from non-null ptr<Derived> succeeds", "[gen
         test() : int {
             d : Derived(33);
             p : Derived* = &d;
-            lnk : Base~ = p;    // warning: nullable source; null-check inserted
+            lnk : Base+ = p;    // warning: nullable source; null-check inserted
             return lnk->val;    // must see 33
         }
     )SRC");
@@ -360,7 +360,7 @@ TEST_CASE("Downcast error: lien<Base> init from unrelated type is rejected", "[g
 
         test() : int {
             u : Unrelated();
-            lnk : Base~ = &u;   // ERROR: Unrelated does not inherit from Base
+            lnk : Base+ = &u;   // ERROR: Unrelated does not inherit from Base
             return 0;
         }
     )SRC"));
@@ -397,7 +397,7 @@ TEST_CASE("Downcast error: pin<Base> cannot be rebound after construction", "[ge
         test() : int {
             d1 : Derived();
             d2 : Derived();
-            p : Base^ = &d1;
+            p : Base? = &d1;
             p = &d2;            // ERROR: pin is immutable after construction
             return 0;
         }
@@ -490,7 +490,7 @@ TEST_CASE("Downcast: writing through lien<Base> modifies Derived's Base field", 
 
         test() : int {
             d : Derived(5);
-            lnk : Base~ = &d;
+            lnk : Base+ = &d;
             lnk->val = 200;      // write through base link
             return d.val;        // must see 200
         }
@@ -520,7 +520,7 @@ TEST_CASE("Downcast: ptr<Base> assigned from pin<Derived>", "[gen][downcast][ptr
 
         test() : int {
             d : Derived(66);
-            pin : Derived^ = &d;
+            pin : Derived? = &d;
             p : Base* = pin;     // ptr<Base> from pin<Derived>
             return p->val;       // must see 66
         }

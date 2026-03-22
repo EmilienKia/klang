@@ -20,7 +20,7 @@
  * Tests for the four indirection types:
  *   reference (&) — immutable, non-null
  *   link      (~) — mutable,   non-null
- *   pinned    (^) — immutable, nullable
+ *   view      (?) — immutable, nullable
  *   pointer   (*) — mutable,   nullable
  */
 
@@ -40,7 +40,7 @@ TEST_CASE("Link basic read", "[gen][indirection][link]") {
 
         test() : int {
             x : int = 42;
-            lnk : int~ = &x;
+            lnk : int+ = &x;
             return *lnk;
         }
     )SRC");
@@ -60,7 +60,7 @@ TEST_CASE("Link write modifies original", "[gen][indirection][link]") {
         a : int;
 
         set_via_link() {
-            lnk : int~ = &a;
+            lnk : int+ = &a;
             *lnk = 99;
         }
 
@@ -85,7 +85,7 @@ TEST_CASE("Link rebind", "[gen][indirection][link]") {
         test() : int {
             x : int = 1;
             y : int = 2;
-            lnk : int~ = &x;
+            lnk : int+ = &x;
             lnk = &y;          // rebind to y
             return *lnk;
         }
@@ -107,7 +107,7 @@ TEST_CASE("Link init from non-null pointer succeeds", "[gen][indirection][link]"
         test() : int {
             x : int = 7;
             p : int* = &x;
-            lnk : int~ = p;    // warning: nullable source, null-check inserted
+            lnk : int+ = p;    // warning: nullable source, null-check inserted
             return *lnk;
         }
     )SRC");
@@ -124,7 +124,7 @@ TEST_CASE("Link without initialiser is rejected", "[gen][resolution][link]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __link_no_init__;
         test() : int {
-            lnk : int~;    // ERROR: link must be initialised at declaration
+            lnk : int+;    // ERROR: link must be initialised at declaration
             return 0;
         }
     )SRC"));
@@ -137,26 +137,26 @@ TEST_CASE("Link initialised from a literal is rejected", "[gen][resolution][link
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __link_literal__;
         test() : int {
-            lnk : int~ = 42;   // ERROR: 42 is not an address
+            lnk : int+ = 42;   // ERROR: 42 is not an address
             return 0;
         }
     )SRC"));
 }
 
 // =============================================================================
-// PINNED (^) — immutable, nullable
+// VIEW (^) — immutable, nullable
 // =============================================================================
 
 // -----------------------------------------------------------------------------
 // Pinned basic: declare and read through it.
 // -----------------------------------------------------------------------------
-TEST_CASE("Pinned basic read", "[gen][indirection][pinned]") {
+TEST_CASE("Pinned basic read", "[gen][indirection][view]") {
     auto jit = gen_jit(R"SRC(
-        module __pinned_basic__;
+        module __view_basic__;
 
         test() : int {
             x : int = 55;
-            pin : int^ = &x;
+            pin : int? = &x;
             return *pin;
         }
     )SRC");
@@ -169,14 +169,14 @@ TEST_CASE("Pinned basic read", "[gen][indirection][pinned]") {
 // -----------------------------------------------------------------------------
 // Pinned from pointer: if pointer is non-null, dereference works.
 // -----------------------------------------------------------------------------
-TEST_CASE("Pinned init from non-null pointer succeeds", "[gen][indirection][pinned]") {
+TEST_CASE("Pinned init from non-null pointer succeeds", "[gen][indirection][view]") {
     auto jit = gen_jit(R"SRC(
-        module __pinned_from_ptr__;
+        module __view_from_ptr__;
 
         test() : int {
             x : int = 13;
             p : int* = &x;
-            pin : int^ = p;
+            pin : int? = p;
             return *pin;
         }
     )SRC");
@@ -187,29 +187,29 @@ TEST_CASE("Pinned init from non-null pointer succeeds", "[gen][indirection][pinn
 }
 
 // -----------------------------------------------------------------------------
-// ERROR: pinned without initialiser must be rejected.
+// ERROR: view without initialiser must be rejected.
 // -----------------------------------------------------------------------------
-TEST_CASE("Pinned without initialiser is rejected", "[gen][resolution][pinned]") {
+TEST_CASE("Pinned without initialiser is rejected", "[gen][resolution][view]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __pinned_no_init__;
+        module __view_no_init__;
         test() : int {
-            pin : int^;    // ERROR: pinned must be initialised at declaration
+            pin : int?;    // ERROR: view must be initialised at declaration
             return 0;
         }
     )SRC"));
 }
 
 // -----------------------------------------------------------------------------
-// ERROR: rebinding a pinned must be rejected.
+// ERROR: rebinding a view must be rejected.
 // -----------------------------------------------------------------------------
-TEST_CASE("Pinned rebind is rejected", "[gen][resolution][pinned]") {
+TEST_CASE("Pinned rebind is rejected", "[gen][resolution][view]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __pinned_rebind__;
+        module __view_rebind__;
         test() : int {
             x : int = 1;
             y : int = 2;
-            pin : int^ = &x;
-            pin = &y;        // ERROR: pinned is immutable
+            pin : int? = &x;
+            pin = &y;        // ERROR: view is immutable
             return 0;
         }
     )SRC"));
@@ -274,7 +274,7 @@ TEST_CASE("Address-of produces a link", "[gen][indirection][address_of]") {
 
         test() : int {
             x : int = 21;
-            lnk : int~ = &x;    // &x produces int~
+            lnk : int+ = &x;    // &x produces int+
             *lnk = 42;
             return x;
         }
@@ -315,7 +315,7 @@ TEST_CASE("Pointer assigned from a link", "[gen][indirection][pointer]") {
 
         test() : int {
             x : int = 33;
-            lnk : int~ = &x;
+            lnk : int+ = &x;
             p : int* = &x;
             p = lnk;          // link -> pointer: safe widening
             return *p;
@@ -384,7 +384,7 @@ TEST_CASE("Member-of-pointer (->) on a link to struct", "[gen][indirection][arro
 
         test() : int {
             pr : Pair();
-            lnk : Pair~ = &pr;
+            lnk : Pair+ = &pr;
             return lnk->a + lnk->b;
         }
     )SRC");
@@ -408,7 +408,7 @@ TEST_CASE("Link passed as function parameter behaves like object", "[gen][indire
 
         test() : int {
             x : int = 6;
-            lnk : int~ = &x;
+            lnk : int+ = &x;
             return double_it(*lnk);
         }
     )SRC");

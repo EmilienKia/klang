@@ -16,12 +16,12 @@ A *destructor* is a special member function called automatically when a struct i
 7. [Examples](#7-examples)
 ---
 ## 1. Instance destructors
-An instance destructor is a member function whose name is `~` followed by the struct name.  
+An instance destructor is a member function whose name is `+` followed by the struct name.  
 It takes no parameters and has no return type.
 ### Grammar
 ```
 DestructorDecl:
-    '~' Identifier '(' ')' BlockStatement
+    '+' Identifier '(' ')' BlockStatement
 ```
 **Example:**
 ```k
@@ -203,12 +203,12 @@ res : int = make(42).get();         // member function call on temporary
 ---
 
 ## 5. Static destructors (class finalizers)
-A *static destructor* is a static no-argument void function whose name is `~` followed by the struct name.  
+A *static destructor* is a static no-argument void function whose name is `+` followed by the struct name.  
 It acts as a class-level finaliser, called once at program shutdown (after `main` returns), via the global destructor function.
 ### Grammar
 ```
 StaticDestructorDecl:
-    'static' '~' Identifier '(' ')' BlockStatement
+    'static' '+' Identifier '(' ')' BlockStatement
 ```
 **Example:**
 ```k

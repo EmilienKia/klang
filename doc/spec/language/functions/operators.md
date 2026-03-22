@@ -57,7 +57,7 @@ OperatorFunctionDecl:
 ```
 OperatorSymbol: (one of)
     +   -   *   /   %                          // arithmetic
-    &   |   ^   ~                              // bitwise
+    &   |   ?   ~                              // bitwise
     <<  >>                                     // shift
     &&  ||  !                                  // logical
     ==  !=  <  >  <=  >=                       // comparison
@@ -90,7 +90,7 @@ struct Vec2 {
 | Category | Operators |
 |----------|-----------|
 | Arithmetic | `+` `-` `*` `/` `%` |
-| Bitwise | `&` `\|` `^` |
+| Bitwise | `&` `\|` `?` |
 | Shift | `<<` `>>` |
 | Logical | `&&` `\|\|` |
 | Comparison | `==` `!=` `<` `>` `<=` `>=` |
@@ -105,7 +105,7 @@ A non-member binary operator takes **two parameters**: the left-hand operand fir
 | Category | Operators |
 |----------|-----------|
 | Arithmetic | `+` (unary plus), `-` (unary minus) |
-| Bitwise | `~` (bitwise NOT) |
+| Bitwise | `+` (bitwise NOT) |
 | Logical | `!` (logical NOT) |
 | Increment/Decrement | `++_` (prefix `++`), `--_` (prefix `--`), `_++` (postfix `++`), `_--` (postfix `--`) |
 
@@ -643,8 +643,8 @@ The compiler maps each operator declaration to an internal canonical function na
 | `%` | `operator %` | `__operator_rm_` |
 | `&` (bitwise) | `operator &` | `__operator_an_` |
 | `\|` | `operator \|` | `__operator_or_` |
-| `^` (bitwise XOR) | `operator ^` | `__operator_eo_` |
-| `~` | `operator ~` | `__operator_co_` |
+| `?` (bitwise XOR) | `operator ^` | `__operator_eo_` |
+| `+` | `operator ~` | `__operator_co_` |
 | `<<` | `operator <<` | `__operator_ls_` |
 | `>>` | `operator >>` | `__operator_rs_` |
 | `&&` | `operator &&` | `__operator_aa_` |

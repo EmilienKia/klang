@@ -229,8 +229,8 @@ TEST_CASE("Mutable link to const link widening", "[gen][const]") {
 
         test() : int {
             x   : int  = 9;
-            lnk : int~ = &x;
-            clnk : const int~ = &x;   // mutable -> const: OK
+            lnk : int+ = &x;
+            clnk : const int+ = &x;   // mutable -> const: OK
             return *clnk;
         }
     )SRC");
@@ -247,8 +247,8 @@ TEST_CASE("Const link to mutable link rebind rejected", "[gen][const][error]") {
 
         test() {
             x    : int      = 3;
-            clnk : const int~ = &x;
-            lnk  : int~        = clnk;  // const -> mutable: forbidden
+            clnk : const int+ = &x;
+            lnk  : int+        = clnk;  // const -> mutable: forbidden
         }
     )SRC"), k::log::compiler_error);
 }
@@ -260,7 +260,7 @@ TEST_CASE("Address of const variable yields const link", "[gen][const]") {
 
         test() : int {
             const x : int = 55;
-            clnk : const int~ = &x;
+            clnk : const int+ = &x;
             return *clnk;
         }
     )SRC");
@@ -277,7 +277,7 @@ TEST_CASE("Address of const variable to mutable link rejected", "[gen][const][er
 
         test() {
             const x : int = 1;
-            lnk : int~ = &x;   // &x has type const int~; assigning to int~ loses const
+            lnk : int+ = &x;   // &x has type const int+; assigning to int+ loses const
         }
     )SRC"), k::log::compiler_error);
 }
@@ -390,7 +390,7 @@ TEST_CASE("Const link form equivalence — specifier side write rejected", "[gen
         module __const_link_spec_write__;
         test() {
             x : int = 3;
-            const lnk : int~ = &x;
+            const lnk : int+ = &x;
             *lnk = 5;   // must be rejected
         }
     )SRC"), k::log::compiler_error);
@@ -401,7 +401,7 @@ TEST_CASE("Const link form equivalence — type side write rejected", "[gen][con
         module __const_link_type_write__;
         test() {
             x : int = 3;
-            lnk : const int~ = &x;
+            lnk : const int+ = &x;
             *lnk = 5;   // must be rejected
         }
     )SRC"), k::log::compiler_error);

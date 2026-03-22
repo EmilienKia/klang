@@ -21,7 +21,7 @@
  *
  * A sized array T[N] can be implicitly converted (widened) to an unsized
  * array reference T[] (= T[]&). This applies to all indirection types:
- * reference (&), link (~), pointer (*), pinned (^), and owner (!).
+ * reference (&), link (+), pointer (*), view (?), and owner (!).
  */
 
 #include <catch2/catch_all.hpp>
@@ -105,7 +105,7 @@ TEST_CASE("Sized→unsized — link to unsized array", "[gen][array-unsized]") {
 
         test() : unsigned int {
             arr : int[3]{1, 2, 3};
-            l : int[]~ = &arr;
+            l : int[]+ = &arr;
             return l->size;
         }
     )SRC");
@@ -119,13 +119,13 @@ TEST_CASE("Sized→unsized — link to unsized array, read element", "[gen][arra
     auto jit = gen_jit(R"SRC(
         module test;
 
-        get_first(l : int[]~) : int {
+        get_first(l : int[]+) : int {
             return l[0];
         }
 
         test() : int {
             arr : int[3]{42, 99, 7};
-            l : int[]~ = &arr;
+            l : int[]+ = &arr;
             return get_first(l);
         }
     )SRC");
@@ -176,16 +176,16 @@ TEST_CASE("Sized→unsized — pointer to unsized array, subscript", "[gen][arra
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pinned widening: pinned<T[N]> → pinned<T[]>
+// View widening: view<T[N]> → view<T[]>
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST_CASE("Sized→unsized — pinned to unsized array", "[gen][array-unsized]") {
+TEST_CASE("Sized→unsized — view to unsized array", "[gen][array-unsized]") {
     auto jit = gen_jit(R"SRC(
         module test;
 
         test() : unsigned int {
             arr : int[2]{7, 8};
-            p : int[]^ = &arr;
+            p : int[]? = &arr;
             return p->size;
         }
     )SRC");
@@ -240,7 +240,7 @@ TEST_CASE("Sized→unsized — array of links to unsized, different sizes", "[ge
         test() : unsigned int {
             a : int[2]{1, 2};
             b : int[4]{3, 4, 5, 6};
-            outer : int[]~[]{&a, &b};
+            outer : int[]+[]{&a, &b};
             return outer[1]->size;
         }
     )SRC");

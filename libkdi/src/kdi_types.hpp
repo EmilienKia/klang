@@ -74,13 +74,13 @@ struct kdi_ptr_type {
     std::shared_ptr<kdi_type> inner;
 };
 
-/** Link type (~inner) — mutable, non-null, rebindable. */
+/** Link type (+inner) — mutable, non-null, rebindable. */
 struct kdi_link_type {
     std::shared_ptr<kdi_type> inner;
 };
 
-/** Pinned type (^inner) — immutable, nullable. */
-struct kdi_pinned_type {
+/** View type (?inner) — immutable, nullable. */
+struct kdi_view_type {
     std::shared_ptr<kdi_type> inner;
 };
 
@@ -135,7 +135,7 @@ using kdi_type_variant = std::variant<
     kdi_ref_type,
     kdi_ptr_type,
     kdi_link_type,
-    kdi_pinned_type,
+    kdi_view_type,
     kdi_const_type,
     kdi_array_type,
     kdi_sized_array_type,

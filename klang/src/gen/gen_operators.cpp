@@ -78,7 +78,7 @@ std::string encode_type_for_cast_operator(const std::shared_ptr<type>& t) {
     if (type::is_pointer(t)) return encode_type_for_cast_operator(t->get_subtype()) + "p";
     if (type::is_reference(t)) return encode_type_for_cast_operator(t->get_subtype()) + "r";
     if (type::is_link(t)) return encode_type_for_cast_operator(t->get_subtype()) + "lnk";
-    if (type::is_pinned(t)) return encode_type_for_cast_operator(t->get_subtype()) + "l";
+    if (type::is_view(t)) return encode_type_for_cast_operator(t->get_subtype()) + "l";
     if (type::is_owner(t)) return encode_type_for_cast_operator(t->get_subtype()) + "o";
 
     // Struct types
@@ -1496,7 +1496,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         auto rhs_effective = rhs_type;
         if (type::is_reference(rhs_type)) {
             auto inner = std::dynamic_pointer_cast<reference_type>(rhs_type)->get_subtype();
-            if (type::is_link(inner) || type::is_pointer(inner) || type::is_pinned(inner)) {
+            if (type::is_link(inner) || type::is_pointer(inner) || type::is_view(inner)) {
                 rhs_effective = inner;
             }
         }
@@ -1576,10 +1576,10 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         expr.assign_left(left);
         target_type = link_subtype;
         ref_target_type = ref_to_target;
-    } else if (type::is_pinned(target_type)) {
+    } else if (type::is_view(target_type)) {
         throw_error(0x0070, expr.first_lexeme(),
-            "Cannot assign to a pinned indirection (type '{}'): "
-            "a pinned ('^') is immutable after initialisation",
+            "Cannot assign to a view indirection (type '{}'): "
+            "a view ('?') is immutable after initialisation",
             {target_type ? target_type->to_string() : "?"});
     }
 
@@ -1589,7 +1589,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     auto effective_source_type = source_type;
     if (type::is_reference(source_type)) {
         auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
-        if (type::is_link(inner) || type::is_pointer(inner) || type::is_pinned(inner)) {
+        if (type::is_link(inner) || type::is_pointer(inner) || type::is_view(inner)) {
             effective_source_type = inner;
         }
     }
@@ -1601,7 +1601,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             return;
         }
         if(type::is_pointer(effective_source_type) || type::is_link(effective_source_type)
-           || type::is_pinned(effective_source_type)) {
+           || type::is_view(effective_source_type)) {
             auto src_sub = effective_source_type->get_subtype();
             auto tgt_sub = target_type->get_subtype();
             // Strip const from both sides for structural comparison
@@ -1734,7 +1734,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         // target_type is a function_reference_type; source should be ref<frt> (function symbol)
         // or frt itself (another variable). The ref wrapper is stripped below if present.
         //
-        // Check: only pointer (*) frt is rebindable; pin (^) and link (~) are immutable.
+        // Check: only pointer (*) frt is rebindable; view (?) and link (+) are immutable.
         auto frt_target = std::dynamic_pointer_cast<function_reference_type>(target_type);
         if (frt_target && frt_target->get_ref_kind() != function_reference_type::ref_kind::pointer) {
             throw_error(0x0090, expr.first_lexeme(),
@@ -3076,13 +3076,13 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
     // Helper: is the type boolean-compatible? (primitive or indirection/null → bool via adapt_type)
     auto is_bool_compatible = [](const std::shared_ptr<type>& t) {
         if (type::is_primitive(t)) return true;
-        if (type::is_pointer(t) || type::is_link(t) || type::is_pinned(t)
+        if (type::is_pointer(t) || type::is_link(t) || type::is_view(t)
             || type::is_owner(t) || type::is_null(t)) return true;
         // Also accept ref<indirection>
         if (type::is_reference(t)) {
             auto inner = t->get_subtype();
             if (type::is_pointer(inner) || type::is_link(inner) ||
-                type::is_pinned(inner) || type::is_owner(inner)) return true;
+                type::is_view(inner) || type::is_owner(inner)) return true;
         }
         return false;
     };
@@ -3130,7 +3130,7 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
     if(type::is_reference(left_type)) {
         // For ref<indirection>, don't unwrap — adapt_type handles ref<indirection>→bool.
         auto inner = left_type->get_subtype();
-        if (type::is_pointer(inner) || type::is_link(inner) || type::is_pinned(inner)
+        if (type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner)
             || type::is_owner(inner)) {
             // Leave as-is; adapt_type will handle ref<indirection>→bool.
         } else {
@@ -3142,7 +3142,7 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
 
     if(type::is_reference(right_type)) {
         auto inner = right_type->get_subtype();
-        if (type::is_pointer(inner) || type::is_link(inner) || type::is_pinned(inner)
+        if (type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner)
             || type::is_owner(inner)) {
             // Leave as-is; adapt_type will handle ref<indirection>→bool.
         } else {
@@ -3318,7 +3318,7 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
         // For ref<indirection>, don't unwrap — adapt_type handles it.
         auto inner = type->get_subtype();
         if (!type::is_pointer(inner) && !type::is_link(inner) &&
-            !type::is_pinned(inner) && !type::is_owner(inner)) {
+            !type::is_view(inner) && !type::is_owner(inner)) {
             type = type->get_subtype();
         }
     }
@@ -3359,13 +3359,13 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
     // Check bool-compatibility: primitive, indirection, or null.
     auto is_bool_compatible = [](const std::shared_ptr<k::model::type>& t) {
         if (type::is_primitive(t)) return true;
-        if (type::is_pointer(t) || type::is_link(t) || type::is_pinned(t)
+        if (type::is_pointer(t) || type::is_link(t) || type::is_view(t)
             || type::is_owner(t) || type::is_null(t)) return true;
         // Also accept ref<indirection>
         if (type::is_reference(t)) {
             auto inner = t->get_subtype();
             if (type::is_pointer(inner) || type::is_link(inner) ||
-                type::is_pinned(inner) || type::is_owner(inner)) return true;
+                type::is_view(inner) || type::is_owner(inner)) return true;
         }
         return false;
     };
@@ -3439,7 +3439,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
     // Pointer, link, pinned, owner, and the null literal type can all participate
     // in address equality/inequality comparisons.
     auto is_address_comparable = [](const std::shared_ptr<type>& t) -> bool {
-        return type::is_pointer(t) || type::is_link(t) || type::is_pinned(t)
+        return type::is_pointer(t) || type::is_link(t) || type::is_view(t)
             || type::is_owner(t)   || type::is_null(t);
     };
 
@@ -3642,7 +3642,7 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
 
     // ── Address comparison for indirection types ─────────────────────────────
     auto is_addr = [](const std::shared_ptr<type>& t) {
-        return type::is_pointer(t) || type::is_link(t) || type::is_pinned(t)
+        return type::is_pointer(t) || type::is_link(t) || type::is_view(t)
             || type::is_owner(t)   || type::is_null(t);
     };
     if (is_addr(left_type) || is_addr(right_type)) {
@@ -3702,7 +3702,7 @@ void implementation_generator::visit_different_expression(different_expression& 
 
     // ── Address comparison for indirection types ─────────────────────────────
     auto is_addr = [](const std::shared_ptr<type>& t) {
-        return type::is_pointer(t) || type::is_link(t) || type::is_pinned(t)
+        return type::is_pointer(t) || type::is_link(t) || type::is_view(t)
             || type::is_owner(t)   || type::is_null(t);
     };
     if (is_addr(left_type) || is_addr(right_type)) {

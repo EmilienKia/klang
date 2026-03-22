@@ -45,20 +45,20 @@
 #define SYMBOL_MODIFIER_REF        "R"
 #define SYMBOL_MODIFIER_REF_LVAL   SYMBOL_MODIFIER_REF
 #define SYMBOL_MODIFIER_REF_RVAL   "O"
-// 'L' for link (~) : mutable strong (non-null) indirection
+// 'L' for link (+) : mutable strong (non-null) indirection
 #define SYMBOL_MODIFIER_LINK       "L"
-// 'Q' for pinned (^) : immutable nullable indirection
+// 'Q' for view (?) : immutable nullable indirection
 // 'W' for owner (!) : owning pointer (unique ownership)
-#define SYMBOL_MODIFIER_PINNED     "Q"
+#define SYMBOL_MODIFIER_VIEW       "Q"
 #define SYMBOL_MODIFIER_OWNER      "W"
 
 // Function reference type mangling:
 // PF<params>E       : pointer (*) to free function
-// QF<params>E       : pin (^) to free function
-// LF<params>E       : link (~) to free function
+// QF<params>E       : view (?) to free function
+// LF<params>E       : link (+) to free function
 // PM<class>F<params>E  : pointer (*) to member function of <class>
-// QM<class>F<params>E  : pin (^)
-// LM<class>F<params>E  : link (~)
+// QM<class>F<params>E  : view (?)
+// LM<class>F<params>E  : link (+)
 #define SYMBOL_MODIFIER_FN_REF     "F"
 #define SYMBOL_MODIFIER_MEM_FN     "M"
 
@@ -309,8 +309,8 @@ std::string mangler::mangle_type(const type& ty) const {
         return SYMBOL_MODIFIER_PTR + mangle_type(*ptr_ty->get_pointed_type());
     } else if (auto link_ty = dynamic_cast<const link_type*>(&ty)) {
         return SYMBOL_MODIFIER_LINK + mangle_type(*link_ty->get_linked_type());
-    } else if (auto pin_ty = dynamic_cast<const pinned_type*>(&ty)) {
-        return SYMBOL_MODIFIER_PINNED + mangle_type(*pin_ty->get_pinned_type());
+    } else if (auto view_ty = dynamic_cast<const view_type*>(&ty)) {
+        return SYMBOL_MODIFIER_VIEW + mangle_type(*view_ty->get_viewed_type());
     } else if (auto own_ty = dynamic_cast<const owner_type*>(&ty)) {
         return SYMBOL_MODIFIER_OWNER + mangle_type(*own_ty->get_owned_type());
     } else if (auto mem_fn_ty = dynamic_cast<const member_function_reference_type*>(&ty)) {
@@ -318,7 +318,7 @@ std::string mangler::mangle_type(const type& ty) const {
         // ref_kind modifier
         switch (mem_fn_ty->get_ref_kind()) {
             case function_reference_type::ref_kind::pointer: s << SYMBOL_MODIFIER_PTR;    break;
-            case function_reference_type::ref_kind::pin:     s << SYMBOL_MODIFIER_PINNED; break;
+            case function_reference_type::ref_kind::view:    s << SYMBOL_MODIFIER_VIEW;   break;
             case function_reference_type::ref_kind::link:    s << SYMBOL_MODIFIER_LINK;   break;
         }
         s << SYMBOL_MODIFIER_FN_REF SYMBOL_MODIFIER_MEM_FN;
@@ -340,7 +340,7 @@ std::string mangler::mangle_type(const type& ty) const {
         std::ostringstream s;
         switch (fn_ty->get_ref_kind()) {
             case function_reference_type::ref_kind::pointer: s << SYMBOL_MODIFIER_PTR;    break;
-            case function_reference_type::ref_kind::pin:     s << SYMBOL_MODIFIER_PINNED; break;
+            case function_reference_type::ref_kind::view:    s << SYMBOL_MODIFIER_VIEW;   break;
             case function_reference_type::ref_kind::link:    s << SYMBOL_MODIFIER_LINK;   break;
         }
         s << SYMBOL_MODIFIER_FN_REF;

@@ -113,8 +113,8 @@ static json to_json(const kdi_type& t) {
             return {{"kind","ptr"},{"inner",to_json(*v.inner)}};
         else if constexpr (std::is_same_v<T, kdi_link_type>)
             return {{"kind","link"},{"inner",to_json(*v.inner)}};
-        else if constexpr (std::is_same_v<T, kdi_pinned_type>)
-            return {{"kind","pinned"},{"inner",to_json(*v.inner)}};
+        else if constexpr (std::is_same_v<T, kdi_view_type>)
+            return {{"kind","view"},{"inner",to_json(*v.inner)}};
         else if constexpr (std::is_same_v<T, kdi_const_type>)
             return {{"kind","const"},{"inner",to_json(*v.inner)}};
         else if constexpr (std::is_same_v<T, kdi_array_type>)
@@ -155,8 +155,8 @@ static kdi_type from_json_type(const json& j) {
         kdi_link_type r; r.inner = std::make_shared<kdi_type>(from_json_type(j.at("inner")));
         return kdi_type{std::move(r)};
     }
-    if (kind == "pinned") {
-        kdi_pinned_type r; r.inner = std::make_shared<kdi_type>(from_json_type(j.at("inner")));
+    if (kind == "view") {
+        kdi_view_type r; r.inner = std::make_shared<kdi_type>(from_json_type(j.at("inner")));
         return kdi_type{std::move(r)};
     }
     if (kind == "const") {

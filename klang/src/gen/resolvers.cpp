@@ -957,14 +957,14 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
             auto owner_func = param.parent<function>();
             if (owner_func) {
                 // Collect wrapper kinds (from outermost to innermost unresolved_type)
-                enum class WrapKind { Ref, Ptr, Link, Pin, Const };
+                enum class WrapKind { Ref, Ptr, Link, View, Const };
                 std::vector<WrapKind> wrappers;
                 auto inner = param.get_type();
                 while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
                     if      (type::is_reference(inner))  wrappers.push_back(WrapKind::Ref);
                     else if (type::is_pointer(inner))    wrappers.push_back(WrapKind::Ptr);
                     else if (type::is_link(inner))       wrappers.push_back(WrapKind::Link);
-                    else if (type::is_pinned(inner))     wrappers.push_back(WrapKind::Pin);
+                    else if (type::is_view(inner))       wrappers.push_back(WrapKind::View);
                     else if (type::is_const(inner))      wrappers.push_back(WrapKind::Const);
                     else break;
                     inner = inner->get_subtype();
@@ -981,7 +981,7 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
                                 case WrapKind::Ref:   res_type = res_type->get_reference(); break;
                                 case WrapKind::Ptr:   res_type = res_type->get_pointer();   break;
                                 case WrapKind::Link:  res_type = res_type->get_link();      break;
-                                case WrapKind::Pin:   res_type = res_type->get_pinned();    break;
+                                case WrapKind::View:  res_type = res_type->get_view();      break;
                                 case WrapKind::Const: res_type = res_type->get_const();     break;
                             }
                         }
@@ -1792,9 +1792,9 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             } else if (type::is_link(var.get_type())) {
                 auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
                 if (inner && type::is_resolved(inner)) resolved = inner->get_link();
-            } else if (type::is_pinned(var.get_type())) {
+            } else if (type::is_view(var.get_type())) {
                 auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
-                if (inner && type::is_resolved(inner)) resolved = inner->get_pinned();
+                if (inner && type::is_resolved(inner)) resolved = inner->get_view();
             } else if (type::is_reference(var.get_type())) {
                 auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
                 if (inner && type::is_resolved(inner)) resolved = inner->get_reference();
@@ -2228,8 +2228,8 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     src_sub = src_ptr->get_subtype();
                 } else if (auto src_lnk = std::dynamic_pointer_cast<link_type>(effective_arg)) {
                     src_sub = src_lnk->get_linked_type();
-                } else if (auto src_pin = std::dynamic_pointer_cast<pinned_type>(effective_arg)) {
-                    src_sub = src_pin->get_pinned_type();
+                } else if (auto src_view = std::dynamic_pointer_cast<view_type>(effective_arg)) {
+                    src_sub = src_view->get_viewed_type();
                 } else if (auto src_own = std::dynamic_pointer_cast<owner_type>(effective_arg)) {
                     src_sub = src_own->get_owned_type();
                 }
@@ -2295,11 +2295,11 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             return;
         }
         auto arg_type = arg->get_type();
-        // The initialiser must provide an address: reference, link, pinned, pointer or owner.
+        // The initialiser must provide an address: reference, link, view, pointer or owner.
         if (!type::is_any_indirection(arg_type) && !type::is_owner(arg_type)) {
             throw_error(0x4504, var_lexeme,
                 "Link variable '{}' of type '{}' must be initialised with an addressable expression "
-                "(reference, link, pinned, pointer or owner), but the initialiser has type '{}' "
+                "(reference, link, view, pointer or owner), but the initialiser has type '{}' "
                 "which is not an indirection type",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?",
                  arg_type ? arg_type->to_string() : "?"});
@@ -2331,7 +2331,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     {var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
             }
         }
-        // If initialising from a nullable indirection (pinned, pointer or owner), emit a warning:
+        // If initialising from a nullable indirection (view, pointer or owner), emit a warning:
         if (type::is_nullable_indirection(arg_type) || type::is_owner(arg_type)) {
             auto diag = k::log::diagnostic::make_warning(with_flag(0x4505),
                 "Link variable '{}' of type '{}' is being initialised from a nullable source "
@@ -2352,8 +2352,8 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 src_pointed_nc = type::remove_const(lnk_t->get_linked_type());
             } else if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(effective_arg)) {
                 src_pointed_nc = type::remove_const(ptr_t->get_pointed_type());
-            } else if (auto pin_t = std::dynamic_pointer_cast<pinned_type>(effective_arg)) {
-                src_pointed_nc = type::remove_const(pin_t->get_pinned_type());
+            } else if (auto view_t = std::dynamic_pointer_cast<view_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(view_t->get_viewed_type());
             } else if (auto own_t = std::dynamic_pointer_cast<owner_type>(effective_arg)) {
                 src_pointed_nc = type::remove_const(own_t->get_owned_type());
             } else if (auto ref_t2 = std::dynamic_pointer_cast<reference_type>(effective_arg)) {
@@ -2389,13 +2389,13 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
             }
         }
 
-    } else if (type::is_pinned(var.get_type())) {
+    } else if (type::is_view(var.get_type())) {
         // Pinned variable (^): immutable (not rebindable after init), nullable.
         // Must be initialised at declaration; initialiser can be any indirection, owner or null.
         if (!has_single_init_arg()) {
             throw_error(0x4601, var_lexeme,
                 "Pinned variable '{}' of type '{}' must be initialised at its declaration: "
-                "a pinned indirection cannot be left unbound",
+                "a view indirection cannot be left unbound",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?"});
             return;
         }
@@ -2416,16 +2416,16 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         }
         if (!is_null_init && !type::is_any_indirection(arg_type) && !type::is_owner(arg_type)) {
             throw_error(0x4604, var_lexeme,
-                "Pinned variable '{}' of type '{}' must be initialised with an addressable expression "
-                "(reference, link, pinned, pointer, owner or null), but the initialiser has type '{}' "
+                "View variable '{}' of type '{}' must be initialised with an addressable expression "
+                "(reference, link, view, pointer, owner or null), but the initialiser has type '{}' "
                 "which is not an indirection type",
                 {var.get_fq_name(), var_type ? var_type->to_string() : "?",
                  arg_type ? arg_type->to_string() : "?"});
             return;
         }
         if (!is_null_init && (type::is_any_indirection(arg_type) || type::is_owner(arg_type))) {
-            auto pin_var_type = std::dynamic_pointer_cast<pinned_type>(var.get_type());
-            auto pin_sub_nc = type::remove_const(pin_var_type->get_pinned_type());
+            auto view_var_type = std::dynamic_pointer_cast<view_type>(var.get_type());
+            auto view_sub_nc = type::remove_const(view_var_type->get_viewed_type());
             auto effective_arg = arg_type;
             if (auto ref_t = std::dynamic_pointer_cast<reference_type>(arg_type)) {
                 effective_arg = ref_t->get_subtype();
@@ -2435,16 +2435,16 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 src_pointed_nc = type::remove_const(lnk_t->get_linked_type());
             } else if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(effective_arg)) {
                 src_pointed_nc = type::remove_const(ptr_t->get_pointed_type());
-            } else if (auto pin_t = std::dynamic_pointer_cast<pinned_type>(effective_arg)) {
-                src_pointed_nc = type::remove_const(pin_t->get_pinned_type());
+            } else if (auto view_t = std::dynamic_pointer_cast<view_type>(effective_arg)) {
+                src_pointed_nc = type::remove_const(view_t->get_viewed_type());
             } else if (auto own_t = std::dynamic_pointer_cast<owner_type>(effective_arg)) {
                 src_pointed_nc = type::remove_const(own_t->get_owned_type());
             } else if (auto ref_t2 = std::dynamic_pointer_cast<reference_type>(effective_arg)) {
                 src_pointed_nc = type::remove_const(ref_t2->get_subtype());
             }
-            if (src_pointed_nc && !type::are_equal(src_pointed_nc, pin_sub_nc)) {
+            if (src_pointed_nc && !type::are_equal(src_pointed_nc, view_sub_nc)) {
                 auto src_st = std::dynamic_pointer_cast<struct_type>(src_pointed_nc);
-                auto tgt_st = std::dynamic_pointer_cast<struct_type>(pin_sub_nc);
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(view_sub_nc);
                 bool is_static_upcast = src_st && tgt_st &&
                                  src_st->get_struct() && tgt_st->get_struct() &&
                                  src_st->get_struct()->is_derived_from(tgt_st->get_struct());
@@ -2462,8 +2462,8 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                         assign_single_init_arg(dc);
                     } else {
                         throw_error(0x4605, var_lexeme,
-                            "Pinned variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
-                            "the pinned types are incompatible (no inheritance relationship)",
+                            "View variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
+                            "the view types are incompatible (no inheritance relationship)",
                             {var.get_fq_name(), var_type ? var_type->to_string() : "?",
                              arg_type ? arg_type->to_string() : "?"});
                         return;
@@ -2699,8 +2699,8 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     }
 
     // --- Pinned cases ---
-    if (type::is_pinned(type_src)) {
-        if (type::is_pinned(tgt_nc) || type::is_pointer(tgt_nc)) {
+    if (type::is_view(type_src)) {
+        if (type::is_view(tgt_nc) || type::is_pointer(tgt_nc)) {
             auto src_sub = type_src->get_subtype();
             auto tgt_sub = tgt_nc->get_subtype();
             auto src_sub_nc = type::remove_const(src_sub);
@@ -2721,7 +2721,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             }
             return CAST_IMPOSSIBLE;
         }
-        // pin<T> → ref<T>: borrow pinned target as reference
+        // view<T> → ref<T>: borrow view target as reference
         if (type::is_reference(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
             auto src_sub_nc = type::remove_const(type_src->get_subtype());
@@ -2769,8 +2769,8 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             }
             return CAST_IMPOSSIBLE;
         }
-        // owner<T> → lnk<T> / pin<T>: borrow as link or pinned
-        if (type::is_link(tgt_nc) || type::is_pinned(tgt_nc)) {
+        // owner<T> → lnk<T> / view<T>: borrow as link or view
+        if (type::is_link(tgt_nc) || type::is_view(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
             if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                 return CAST_WIDENING;
@@ -2809,8 +2809,8 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
                 if (own_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
             }
-            // ref<owner<T>> → lnk<T> / pin<T>: load owner, borrow as link or pinned
-            if (type::is_link(tgt_nc) || type::is_pinned(tgt_nc)) {
+            // ref<owner<T>> → lnk<T> / view<T>: load owner, borrow as link or view
+            if (type::is_link(tgt_nc) || type::is_view(tgt_nc)) {
                 auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
                 if (own_sub_nc == tgt_sub_nc || types_match_array_const_compatible(own_sub_nc, tgt_sub_nc))
                     return CAST_REF_CONV;
@@ -2829,8 +2829,8 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     if (type::is_reference(type_src) && !type::is_double_reference(type_src)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
         auto inner = ref_src->get_subtype();
-        if (type::is_pointer(inner) || type::is_link(inner) || type::is_pinned(inner)) {
-            if (type::is_pointer(tgt_nc) || type::is_link(tgt_nc) || type::is_pinned(tgt_nc)) {
+        if (type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner)) {
+            if (type::is_pointer(tgt_nc) || type::is_link(tgt_nc) || type::is_view(tgt_nc)) {
                 auto src_sub = inner->get_subtype();
                 auto tgt_sub = tgt_nc->get_subtype();
                 auto src_sub_nc = type::remove_const(src_sub);
@@ -2851,7 +2851,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 }
                 return CAST_IMPOSSIBLE;
             }
-            // ref<ptr/lnk/pin<T>> → ref<T>: load indirection value, use as reference
+            // ref<ptr/lnk/view<T>> → ref<T>: load indirection value, use as reference
             if (type::is_reference(tgt_nc)) {
                 auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
                 auto src_sub_nc = type::remove_const(inner->get_subtype());
@@ -2933,8 +2933,8 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 return CAST_REF_CONV;
             }
         }
-        // ref<T> → pin<T>: passing an object as a pinned reference
-        if (type::is_pinned(tgt_nc)) {
+        // ref<T> → view<T>: passing an object as a view reference
+        if (type::is_view(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
             if (sub == tgt_sub_nc) return CAST_REF_CONV;
         }
@@ -3568,7 +3568,7 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     }
 
     if(type::is_link(type_src)) {
-        if(type::is_link(type_nc) || type::is_pointer(type_nc) || type::is_pinned(type_nc)) {
+        if(type::is_link(type_nc) || type::is_pointer(type_nc) || type::is_view(type_nc)) {
             if (type_nc == type_src || type == type_src) {
                 return expr;
             }
@@ -3607,8 +3607,8 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
         }
     }
 
-    if(type::is_pinned(type_src)) {
-        if(type::is_pinned(type_nc) || type::is_pointer(type_nc)) {
+    if(type::is_view(type_src)) {
+        if(type::is_view(type_nc) || type::is_pointer(type_nc)) {
             if (type_nc == type_src || type == type_src) {
                 return expr;
             }
@@ -3633,7 +3633,7 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             }
             return expr;
         } else {
-            // pin<T> → ref<T>: borrow pinned target as reference
+            // view<T> → ref<T>: borrow view target as reference
             if (type::is_reference(type_nc)) {
                 auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
                 auto src_sub_nc = type::remove_const(type_src->get_subtype());
@@ -3689,8 +3689,8 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             }
             return {};
         }
-        // owner<T> → lnk<T> / pin<T>: borrow as link or pinned (same LLVM representation)
-        if (type::is_link(type_nc) || type::is_pinned(type_nc)) {
+        // owner<T> → lnk<T> / view<T>: borrow as link or view (same LLVM representation)
+        if (type::is_link(type_nc) || type::is_view(type_nc)) {
             auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
             if (src_sub_nc == tgt_sub_nc) {
                 auto cast = cast_expression::make_shared(expr, type_nc);
@@ -3761,8 +3761,8 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                     return upcast;
                 }
             }
-            // ref<owner<T>> → lnk<T> / pin<T>: load owner, borrow as link or pinned
-            if (type::is_link(type_nc) || type::is_pinned(type_nc)) {
+            // ref<owner<T>> → lnk<T> / view<T>: load owner, borrow as link or view
+            if (type::is_link(type_nc) || type::is_view(type_nc)) {
                 auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
                 if (own_sub_nc == tgt_sub_nc || types_match_array_const_compatible(own_sub_nc, tgt_sub_nc)) {
                     auto loaded = load_value_expression::make_shared(expr);
@@ -3795,13 +3795,13 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     }
 
     if(type::is_reference(type_src)) {
-        // ── ref<ptr/lnk/pin<T>> → ptr/lnk/pin<Base>: load the stored pointer then upcast ──
-        // ── ref<ptr/lnk/pin<T>> → ref<T>: load the indirection value, use as reference ──
+        // ── ref<ptr/lnk/view<T>> → ptr/lnk/pin<Base>: load the stored pointer then upcast ──
+        // ── ref<ptr/lnk/view<T>> → ref<T>: load the indirection value, use as reference ──
         if (!type::is_reference(type_nc)) {
             auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
             auto inner = ref_src->get_subtype();
-            if ((type::is_pointer(inner) || type::is_link(inner) || type::is_pinned(inner)) &&
-                (type::is_pointer(type_nc) || type::is_link(type_nc) || type::is_pinned(type_nc))) {
+            if ((type::is_pointer(inner) || type::is_link(inner) || type::is_view(inner)) &&
+                (type::is_pointer(type_nc) || type::is_link(type_nc) || type::is_view(type_nc))) {
                 // Load the pointer value stored in the ref slot
                 auto loaded = load_value_expression::make_shared(expr);
                 loaded->set_type(inner);
@@ -3810,11 +3810,11 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
                 return adapted ? adapted : loaded;
             }
         } else {
-            // ref<ptr/lnk/pin<T>> → ref<T>: load indirection value, reinterpret as reference
+            // ref<ptr/lnk/view<T>> → ref<T>: load indirection value, reinterpret as reference
             auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
             auto inner = ref_src->get_subtype();
             auto inner_nc = type::remove_const(inner);
-            if (type::is_pointer(inner_nc) || type::is_link(inner_nc) || type::is_pinned(inner_nc)) {
+            if (type::is_pointer(inner_nc) || type::is_link(inner_nc) || type::is_view(inner_nc)) {
                 auto tgt_ref = std::dynamic_pointer_cast<reference_type>(type_nc);
                 auto tgt_sub_nc = type::remove_const(tgt_ref->get_subtype());
                 auto src_sub_nc = type::remove_const(inner_nc->get_subtype());
@@ -3916,8 +3916,8 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
             // ref<T> -> T : simple load
             return adapt_reference_load_value(expr);
         }
-        // ref<T> → link<T> or ref<T> → pin<T>: pass the address directly (LLVM ptr is compatible)
-        if (type::is_link(type_nc) || type::is_pinned(type_nc)) {
+        // ref<T> → link<T> or ref<T> → view<T>: pass the address directly (LLVM ptr is compatible)
+        if (type::is_link(type_nc) || type::is_view(type_nc)) {
             auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
             if (ref_subtype == tgt_sub_nc) {
                 // Same underlying type: the ref address IS the link address — no conversion needed.
@@ -3957,7 +3957,7 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
         // ref<indirection> → bool: load the pointer then compare to null.
         if (type::is_prim_bool(type_nc)) {
             if (type::is_pointer(ref_subtype) || type::is_link(ref_subtype) ||
-                type::is_pinned(ref_subtype) || type::is_owner(ref_subtype)) {
+                type::is_view(ref_subtype) || type::is_owner(ref_subtype)) {
                 auto loaded = adapt_reference_load_value(expr);
                 if (!loaded) return {};
                 auto bool_type = _context->from_type(primitive_type::BOOL);
@@ -3975,7 +3975,7 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     // ICmpNE(value, null) at codegen time.
     if (type::is_prim_bool(type_nc)) {
         if (type::is_pointer(type_src) || type::is_link(type_src) ||
-            type::is_pinned(type_src) || type::is_owner(type_src) ||
+            type::is_view(type_src) || type::is_owner(type_src) ||
             type::is_null(type_src)) {
             auto bool_type = _context->from_type(primitive_type::BOOL);
             auto cast = cast_expression::make_shared(expr, bool_type);

@@ -97,7 +97,7 @@ TEST_CASE("Class upcast: lien<Base> init from &Derived class reads Base field", 
 
         test() : int {
             d : Derived();
-            lnk : Base~ = &d;   // lien<Base class> bound to Derived object
+            lnk : Base+ = &d;   // lien<Base class> bound to Derived object
             return lnk->val;    // must see d.val = 55
         }
     )SRC");
@@ -127,7 +127,7 @@ TEST_CASE("Class upcast: lien<Base> can be rebound to another Derived class", "[
         test() : int {
             d1 : Derived(11);
             d2 : Derived(22);
-            lnk : Base~ = &d1;
+            lnk : Base+ = &d1;
             lnk = &d2;           // rebind to d2
             return lnk->val;     // must see d2.val = 22
         }
@@ -141,7 +141,7 @@ TEST_CASE("Class upcast: lien<Base> can be rebound to another Derived class", "[
 // =============================================================================
 // [T4] pin<Base class> init from &Derived — success
 // =============================================================================
-TEST_CASE("Class upcast: pin<Base> init from &Derived class reads Base field", "[gen][upcast][class][pin]") {
+TEST_CASE("Class upcast: pin<Base> init from &Derived class reads Base field", "[gen][upcast][class][view]") {
     auto jit = gen_jit(R"SRC(
         module __cu_pin_init__;
 
@@ -157,7 +157,7 @@ TEST_CASE("Class upcast: pin<Base> init from &Derived class reads Base field", "
 
         test() : int {
             d : Derived(77);
-            p : Base^ = &d;     // pin<Base class> bound to Derived object
+            p : Base? = &d;     // pin<Base class> bound to Derived object
             return p->val;      // must see d.val = 77
         }
     )SRC");
@@ -247,7 +247,7 @@ TEST_CASE("Class upcast: lien<Base> init from non-null ptr<Derived class> succee
         test() : int {
             d : Derived(33);
             p : Derived* = &d;
-            lnk : Base~ = p;    // lien<Base class> init from non-null ptr<Derived>
+            lnk : Base+ = p;    // lien<Base class> init from non-null ptr<Derived>
             return lnk->val;    // must see 33
         }
     )SRC");
@@ -432,7 +432,7 @@ TEST_CASE("Class upcast error: lien<Base class> init from &unrelated class is re
 
         test() : int {
             b : B();
-            lnk : A~ = &b;   // ERROR: B is not derived from A
+            lnk : A+ = &b;   // ERROR: B is not derived from A
             return 0;
         }
     )SRC"));
@@ -457,7 +457,7 @@ TEST_CASE("Class upcast error: pin<Base class> cannot be rebound after construct
         test() : int {
             d1 : Derived();
             d2 : Derived();
-            p : Base^ = &d1;
+            p : Base? = &d1;
             p = &d2;            // ERROR: pin is immutable after construction
             return 0;
         }
@@ -483,7 +483,7 @@ TEST_CASE("Class upcast: writing through lien<Base class> modifies Derived's Bas
 
         test() : int {
             d : Derived(5);
-            lnk : Base~ = &d;
+            lnk : Base+ = &d;
             lnk->val = 200;      // write through base class link
             return d.val;        // must see 200
         }
@@ -515,7 +515,7 @@ TEST_CASE("Class upcast: virtual call via lien<interface> bound to class dispatc
 
         test() : int {
             w : Widget(5);
-            lnk : Describable~ = &w;   // lien<interface> bound to class
+            lnk : Describable+ = &w;   // lien<interface> bound to class
             return call_describe(*lnk); // dispatch: Widget::describe() → 5+100 = 105
         }
     )SRC");
@@ -544,7 +544,7 @@ TEST_CASE("Class upcast: ptr<Base class> assigned from pin<Derived class>", "[ge
 
         test() : int {
             d : Derived(66);
-            pin : Derived^ = &d;
+            pin : Derived? = &d;
             p : Base* = pin;     // ptr<Base class> from pin<Derived class>
             return p->val;       // must see 66
         }

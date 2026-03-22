@@ -131,9 +131,9 @@ cptr : const int* = &x;      // pointer to const int — pointed value cannot be
 ref : int& = x;              // reference bound to x — x must be an addressable variable
 own : Foo! = new Foo(42);    // owner — Foo allocated on the heap
 arrOwn : int[3]! = new int[3]{1, 2, 3};  // owner of a dynamically allocated array
-arrLnk : int~[] {&x, &n};   // array of links to int (see Types §9.7)
+arrLnk : int+[] {&x, &n};   // array of links to int (see Types §9.7)
 arrPtr : int*[] {&x, &n};   // array of pointers to int
-arrPin : int^[] {&x, &n};   // array of pinned to int
+arrView : int?[] {&x, &n};   // array of view to int
 arrOwnI : int![] {new int(1), new int(2)};  // array of owners of int
 pt : Point { .x = 10, .y = 20 };            // designated struct init
 tr : Trio { .b = 42 };                       // partial designated init (a, c default to 0)

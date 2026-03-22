@@ -106,7 +106,7 @@ Type =
 | { "kind": "ref",    "inner": Type }
 | { "kind": "ptr",    "inner": Type }
 | { "kind": "link",   "inner": Type }
-| { "kind": "pinned", "inner": Type }
+| { "kind": "view", "inner": Type }
 | { "kind": "const",  "inner": Type }
 | { "kind": "array",  "elem": Type }
 | { "kind": "sized_array", "elem": Type, "size": uint }
