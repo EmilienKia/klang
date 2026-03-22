@@ -57,6 +57,7 @@ set(KLANG_STDLIB_LIB_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
 # ─────────────────────────────────────────────────────────────────────────────
 add_executable(libk-tests
     tests/test-string.cpp
+    tests/test-string-literal.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)

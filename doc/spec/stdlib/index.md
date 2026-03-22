@@ -59,11 +59,14 @@ K language:
 
 ### Parameter passing
 
-- Array parameters that are **read-only** or **mutated in-place** (without
-  reallocation) use references: `char[]` (shorthand for `char[]&`).
+- Array parameters that are **read-only** use `const char[]`; those that are
+  mutated in-place (without reallocation) use `char[]`.
 - Owners (`char[]!`), pointers (`char[]*`), links (`char[]~`), and pins
-  (`char[]^`) are implicitly convertible to the corresponding reference type,
-  so callers can pass any addresser to a reference parameter.
+  (`char[]^`) widen implicitly to `char[]` or `const char[]` without
+  ownership transfer.
+- **String literals** have type `const char[N]&` and widen automatically to
+  `const char[]` — they can therefore be passed directly to any `const char[]`
+  parameter and used to construct `String` or `StringBuilder` objects.
 - **Constness** is applied whenever the parameter is not modified.
 
 ### Ownership

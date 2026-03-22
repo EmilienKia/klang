@@ -22,6 +22,8 @@
 
 #include "expressions.hpp"
 #include "model.hpp"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/IRReader/IRReader.h"
@@ -71,6 +73,7 @@ void context::reset() {
     _parameter_variables.clear();
     _function_this_variables.clear();
     _variables.clear();
+    _string_pool.clear();
     init_primitive_types();
 }
 
@@ -347,6 +350,16 @@ std::shared_ptr<type> context::from_literal(const k::lex::any_literal &literal) 
         }
     } else if (std::holds_alternative<lex::character>(literal)) {
         return from_type(primitive_type::CHAR);
+    } else if (std::holds_alternative<lex::string>(literal)) {
+        const auto& s = literal.get<lex::string>();
+        // TODO Decode escape sequences (only ASCII for now)
+        auto str = std::get<std::string>(s.value());
+        // +1 for null terminator
+        size_t len = str.size() + 1;
+        // String literals are static globals: their LLVM value is a pointer
+        // to { i32, [N x i8] }, so the model type is const char[N]&.
+        // Use const<char> as element type so it matches 'const char[]' parameter types.
+        return from_type(primitive_type::CHAR)->get_const()->get_array(len)->get_reference();
     } else if (std::holds_alternative<lex::boolean>(literal)) {
         return from_type(primitive_type::BOOL);
     } else if (std::holds_alternative<lex::null>(literal)) {
@@ -377,6 +390,13 @@ llvm::Constant* context::get_llvm_constant_from_literal(const k::lex::any_litera
         const auto &c = literal.get<lex::character>();
         auto val = llvm::APInt(8, static_cast<uint64_t>(std::get<char>(c.value())));
         return llvm::ConstantInt::get(**this, val);
+    } else if (std::holds_alternative<lex::string>(literal)) {
+        const auto &s = literal.get<lex::string>();
+        // TODO Decode escape sequences (only raw ASCII content for now)
+        auto str = std::get<std::string>(s.value());
+        // Append null terminator
+        str.push_back('\0');
+        return get_or_create_string_literal(str);
     } else if (std::holds_alternative<lex::boolean>(literal)) {
         const auto& b = literal.get<lex::boolean>();
         if(std::get<bool>(b.value())) {
@@ -416,6 +436,12 @@ llvm::Constant* context::get_llvm_constant_from_value(const k::value_type &value
         return llvm::ConstantFP::get(llvm::Type::getFloatTy(**this), std::get<float>(value));
     } else if (std::holds_alternative<double>(value)) {
         return llvm::ConstantFP::get(llvm::Type::getDoubleTy(**this), std::get<double>(value));
+    } else if (std::holds_alternative<std::string>(value)) {
+        // TODO Decode escape sequences (only raw ASCII content for now)
+        auto str = std::get<std::string>(value);
+        // Append null terminator
+        str.push_back('\0');
+        return get_or_create_string_literal(str);
     } else {
         // TODO handle other literal types
         return nullptr;
@@ -428,6 +454,42 @@ llvm::Constant* context::get_llvm_constant_from_value_expression(const value_exp
     } else {
         return get_llvm_constant_from_value(value.get_value());
     }
+}
+
+llvm::Constant* context::get_or_create_string_literal(const std::string& content) {
+    // content already includes the null terminator.
+    // Deduplicate: return an existing global if we already emitted this string.
+    auto it = _string_pool.find(content);
+    if (it != _string_pool.end()) {
+        return it->second;
+    }
+
+    auto& llvm_ctx = *_context;
+    size_t N = content.size(); // includes null terminator
+
+    // Build the K sized-array struct constant: { i32 size, [N x i8] data }
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* i8_ty  = llvm::Type::getInt8Ty(llvm_ctx);
+    auto* arr_ty = llvm::ArrayType::get(i8_ty, N);
+    auto* struct_ty = llvm::StructType::get(llvm_ctx, {i32_ty, arr_ty}, /*isPacked=*/false);
+
+    // The size field stores the total number of bytes including the null terminator
+    auto* size_const = llvm::ConstantInt::get(i32_ty, N, /*isSigned=*/false);
+    // TODO Decode escape sequences — content is raw ASCII for now
+    auto* data_const = llvm::ConstantDataArray::getString(llvm_ctx, llvm::StringRef(content.data(), N), /*AddNull=*/false);
+
+    llvm::Constant* fields[] = {size_const, data_const};
+    auto* init = llvm::ConstantStruct::get(struct_ty, fields);
+
+    auto* gv = new llvm::GlobalVariable(
+        *_module, struct_ty,
+        /*isConstant=*/true,
+        llvm::GlobalValue::PrivateLinkage,
+        init, ".str");
+    gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+    _string_pool[content] = gv;
+    return gv;
 }
 
 

@@ -85,6 +85,9 @@ protected:
     // LLVM module
     std::unique_ptr<llvm::Module> _module;
 
+    // String literal deduplication pool: maps string content → LLVM global constant
+    std::map<std::string, llvm::GlobalVariable*> _string_pool;
+
     context();
 
 public:
@@ -131,6 +134,14 @@ public:
     llvm::Constant* get_llvm_constant_from_literal(const k::lex::any_literal &literal);
     llvm::Constant* get_llvm_constant_from_value(const k::value_type &value);
     llvm::Constant* get_llvm_constant_from_value_expression(const value_expression& value);
+
+    /**
+     * Return (or create) a global constant for a string literal.
+     * The global has type { i32, [N x i8] } where N = content.size()
+     * (content must already include the null terminator).
+     * Deduplicates identical strings via _string_pool.
+     */
+    llvm::Constant* get_or_create_string_literal(const std::string& content);
 
     void resolve_types();
 

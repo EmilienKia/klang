@@ -32,7 +32,7 @@ public final class CharHelpers {
 public:
 
     /** Copy `count` chars from src[src_off..] to dst[dst_off..]. */
-    public static copy(dst: char[], dst_off: unsigned int, const src: char[], src_off: unsigned int, count: unsigned int) {
+    public static copy(dst: char[], dst_off: unsigned int, src: const char[], src_off: unsigned int, count: unsigned int) {
         i : int = 0;
         while (i < count) {
             dst[dst_off + i] = src[src_off + i];
@@ -42,7 +42,7 @@ public:
 
     /** Compare `len` chars starting from position 0 in both arrays.
      *  Returns true if all characters match. */
-    public static equals(a: char[], b: char[], len: unsigned int) : bool {
+    public static equals(a: const char[], b: const char[], len: unsigned int) : bool {
         i : int = 0;
         while (i < len) {
             if (a[i] != b[i]) return false;
@@ -94,6 +94,20 @@ public:
             alloc_sz : unsigned int = _size + 1;
             _buf = new char[alloc_sz];
             CharHelpers::copy(_buf, 0, other._buf, 0, _size + 1);
+        }
+    }
+
+    /** Construct from a const char[] (e.g. a string literal).
+     *  The source array is expected to include a null terminator:
+     *  src.size == number_of_characters + 1.
+     *  A new owned buffer is allocated and the content is copied.
+     */
+    String(src : const char[]) : _buf(null), _size(0) {
+        if (src.size > 1) {
+            _size = src.size - 1;
+            alloc_sz : unsigned int = src.size;
+            _buf = new char[alloc_sz];
+            CharHelpers::copy(_buf, 0, src, 0, src.size);
         }
     }
 
@@ -185,6 +199,21 @@ public:
         }
     }
 
+    /** Construct from a const char[] (e.g. a string literal).
+     *  The source array is expected to include a null terminator:
+     *  src.size == number_of_characters + 1.
+     *  A new owned buffer is allocated and the content is copied.
+     */
+    StringBuilder(src : const char[]) : _buf(null), _size(0), _capacity(0) {
+        if (src.size > 1) {
+            _size = src.size - 1;
+            _capacity = _size;
+            alloc_sz : unsigned int = src.size;
+            _buf = new char[alloc_sz];
+            CharHelpers::copy(_buf, 0, src, 0, src.size);
+        }
+    }
+
     /** Copy constructor. */
     StringBuilder(other : const StringBuilder&) : _buf(null), _size(0), _capacity(0) {
         if (other._size > 0) {
@@ -231,6 +260,20 @@ public:
             _ensure_capacity(s.size());
             CharHelpers::copy(_buf, _size, s.data(), 0, s.size());
             _size = _size + s.size();
+            _buf[_size] = '\0';
+        }
+        return this;
+    }
+
+    /** Append a const char[] (e.g. a string literal).
+     *  src.size is expected to include the null terminator.
+     */
+    append(src : const char[]) : StringBuilder& {
+        if (src.size > 1) {
+            count : unsigned int = src.size - 1;
+            _ensure_capacity(count);
+            CharHelpers::copy(_buf, _size, src, 0, count);
+            _size = _size + count;
             _buf[_size] = '\0';
         }
         return this;
