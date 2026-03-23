@@ -53,6 +53,10 @@ void ast::using_decl::visit(ast_visitor &visitor) {
     visitor.visit_using_decl(*this);
 }
 
+void ast::friend_decl::visit(ast_visitor &visitor) {
+    visitor.visit_friend_decl(*this);
+}
+
 void ast::aggregate_decl::visit(ast_visitor &visitor) {
     visitor.visit_aggregate_decl(*this);
 }
@@ -271,6 +275,9 @@ void default_ast_visitor::visit_namespace_decl(ast::namespace_decl &ns) {
 }
 
 void default_ast_visitor::visit_using_decl(ast::using_decl &) {
+}
+
+void default_ast_visitor::visit_friend_decl(ast::friend_decl &) {
 }
 
 void default_ast_visitor::visit_aggregate_decl(ast::aggregate_decl &st) {

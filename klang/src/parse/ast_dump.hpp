@@ -207,6 +207,17 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             _stm << std::endl;
         }
 
+        void visit_friend_decl(ast::friend_decl& decl) override {
+            prefix() << "friend ";
+            if (decl.element_filter) {
+                _stm << std::string{decl.element_filter->content} << " ";
+            }
+            if (decl.qname) {
+                visit_qualified_identifier(*decl.qname);
+            }
+            _stm << std::endl;
+        }
+
         void visit_aggregate_decl(ast::aggregate_decl& decl) override {
             prefix() << decl.kw_aggregate_type.content << " " << decl.name.content << std::endl;
             auto pf = prefix_inc();

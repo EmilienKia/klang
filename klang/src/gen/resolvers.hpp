@@ -133,6 +133,26 @@ public:
         const std::shared_ptr<aggregate>& owner_st_shared,
         const std::vector<std::shared_ptr<function>>& function_stack);
 
+    /**
+     * Check whether the current access site (described by function_stack) is
+     * a friend of the given aggregate.
+     *
+     * Friendship rules:
+     *  - If the friend target is an aggregate, any direct member function (not
+     *    inherited, not from nested aggregates) of that aggregate is a friend.
+     *  - If the friend target is a function, only that exact function is a friend.
+     *  - Friendship does NOT propagate through inheritance or nesting.
+     *
+     * @param owner_agg       The aggregate whose friend list is checked.
+     * @param function_stack  The resolver's current function call stack (innermost last).
+     * @param unit            The compilation unit (for name resolution).
+     * @return true if the access site is a friend of owner_agg.
+     */
+    static bool is_friend_of(
+        const aggregate& owner_agg,
+        const std::vector<std::shared_ptr<function>>& function_stack,
+        const unit& unit);
+
 private:
     scope_lookup() = delete; // static-only utility class
 };

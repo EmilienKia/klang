@@ -131,6 +131,7 @@ add_executable(klang-tests
         tests/test-gen-string-literal.cpp
         tests/test-gen-drain.cpp
         tests/test-gen-using.cpp
+        tests/test-gen-friend.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
 

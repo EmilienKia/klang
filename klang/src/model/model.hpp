@@ -616,6 +616,50 @@ protected:
 
 
 /**
+ * A friend directive grants another named entity (aggregate, function, or
+ * variable) access to the protected members of the declaring aggregate.
+ *
+ * Syntax: 'friend' ['struct'|'interface'|'class']? qualified_identifier ';'
+ *
+ * Friendship is NOT inherited, and does NOT propagate to nested aggregates.
+ * Friends currently gain access to protected members only (not private).
+ */
+struct friend_directive {
+    /// What kind of element is targeted (NONE = any).
+    enum class filter_t { NONE, STRUCT, INTERFACE, CLASS };
+
+    filter_t filter = filter_t::NONE;
+
+    /// The fully-qualified name of the friend entity.
+    k::name target_name;
+
+    /// AST node for error reporting (may be null).
+    std::shared_ptr<k::parse::ast::ast_node> ast_node;
+};
+
+
+/**
+ * Interface for scopes that can hold 'friend' directives.
+ *
+ * Mixed into aggregate — friendship is only declared inside aggregate bodies.
+ */
+class friend_holder
+{
+public:
+    void add_friend_directive(friend_directive directive) {
+        _friend_directives.push_back(std::move(directive));
+    }
+
+    const std::vector<friend_directive>& get_friend_directives() const {
+        return _friend_directives;
+    }
+
+protected:
+    std::vector<friend_directive> _friend_directives;
+};
+
+
+/**
  * A single entry in an enumeration definition.
  */
 struct enum_entry_def {
@@ -808,7 +852,7 @@ struct base_spec {
  * Holds all common member data: member variables, functions, constructors,
  * destructor, static ctor/dtor, nested aggregates, bases, vtable, vptrs, etc.
  */
-class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public using_holder {
+class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public using_holder, public friend_holder {
 protected:
     friend class ns;
     friend class gen::implementation_generator;

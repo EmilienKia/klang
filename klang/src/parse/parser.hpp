@@ -133,6 +133,12 @@ public:
     std::shared_ptr<ast::using_decl> parse_using_decl();
 
     /**
+     * FRIEND_DECL := 'friend' ['struct'|'interface'|'class']? QUALIFIED_IDENTIFIER ';'
+     * @return The friend declaration, if any, null if not present.
+     */
+    std::shared_ptr<ast::friend_decl> parse_friend_decl();
+
+    /**
      * AGGREGATE_DECLARATION := SPECIFIERS ['struct'|'class', 'interface'] identifier '{' DECLARATIONS '}'
      */
     std::shared_ptr<ast::aggregate_decl> parse_aggregate_decl();

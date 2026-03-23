@@ -160,6 +160,11 @@ ast::decl_ptr parser::parse_declaration()
         return decl;
     }
 
+    // Look for a friend decl
+    if(auto decl = parse_friend_decl()) {
+        return decl;
+    }
+
     // Look for a struct decl
     if(auto decl = parse_aggregate_decl()) {
         return decl;
@@ -302,6 +307,45 @@ std::shared_ptr<ast::using_decl> parser::parse_using_decl()
             lex::as<lex::keyword>(lusing),
             element_filter,
             alias_name,
+            std::move(qname));
+}
+
+std::shared_ptr<ast::friend_decl> parser::parse_friend_decl()
+{
+    lex::lex_holder holder(_lexer);
+
+    // Expect the 'friend' keyword
+    auto lfriend = _lexer.get();
+    if (lfriend != lex::keyword::FRIEND) {
+        holder.rollback();
+        return {};
+    }
+
+    // Optionally consume a type filter keyword: struct, interface, class
+    std::optional<lex::keyword> element_filter;
+    auto lfilter = _lexer.get();
+    if (lfilter == lex::keyword::STRUCT ||
+        lfilter == lex::keyword::INTERFACE ||
+        lfilter == lex::keyword::CLASS) {
+        element_filter = lex::as<lex::keyword>(lfilter);
+    } else {
+        _lexer.unget();
+    }
+
+    // Expect a qualified identifier
+    auto qname = parse_qualified_identifier();
+    if (!qname || qname->names.empty()) {
+        throw_error(0x0070, _lexer.pick_current(), "Friend declaration expects a qualified identifier after 'friend'");
+    }
+
+    // Expect a semicolon
+    if (auto lsemicolon = _lexer.get(); lsemicolon != lex::punctuator::SEMICOLON) {
+        throw_error(0x0071, _lexer.pick_current(), "Semicolon is missing at end of friend declaration");
+    }
+
+    return std::make_shared<ast::friend_decl>(
+            lex::as<lex::keyword>(lfriend),
+            element_filter,
             std::move(qname));
 }
 

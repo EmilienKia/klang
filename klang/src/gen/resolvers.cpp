@@ -152,6 +152,101 @@ bool scope_lookup::is_struct_member_accessible(
     return false;
 }
 
+bool scope_lookup::is_friend_of(
+    const aggregate& owner_agg,
+    const std::vector<std::shared_ptr<function>>& function_stack,
+    const unit& unit)
+{
+    if (function_stack.empty()) return false;
+
+    const auto& directives = owner_agg.get_friend_directives();
+    if (directives.empty()) return false;
+
+    // The innermost function on the stack is the current access site
+    const auto& current_fn = function_stack.back();
+
+    for (const auto& dir : directives) {
+        // Resolve the friend target name from the unit root
+        auto root = unit.get_root_namespace();
+        if (!root) continue;
+
+        // Resolve the target name step by step from root
+        std::shared_ptr<const element> current = root;
+        bool resolved = true;
+        for (size_t i = 0; i < dir.target_name.size(); ++i) {
+            const auto& part = dir.target_name[i];
+            bool stepped = false;
+
+            // Try child namespace
+            if (auto nspc = std::dynamic_pointer_cast<const ns>(current)) {
+                if (auto child = nspc->get_child_namespace(part)) {
+                    current = child;
+                    stepped = true;
+                }
+            }
+            // Try aggregate
+            if (!stepped) {
+                if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(current)) {
+                    if (auto agg = ah->get_aggregate(part)) {
+                        current = std::dynamic_pointer_cast<const element>(agg);
+                        stepped = true;
+                    }
+                }
+            }
+            // Try function (only if last component)
+            if (!stepped && i == dir.target_name.size() - 1) {
+                if (auto fh = std::dynamic_pointer_cast<const function_holder>(current)) {
+                    if (auto fn = fh->get_function(part)) {
+                        current = std::dynamic_pointer_cast<const element>(fn);
+                        stepped = true;
+                    }
+                }
+            }
+            if (!stepped) {
+                resolved = false;
+                break;
+            }
+        }
+
+        if (!resolved || !current) continue;
+
+        auto target = current;
+
+        // Check filter: if a type filter is specified, the target must match
+        if (auto target_agg = std::dynamic_pointer_cast<const aggregate>(target)) {
+            if (dir.filter != friend_directive::filter_t::NONE) {
+                bool filter_match = false;
+                if (dir.filter == friend_directive::filter_t::STRUCT) {
+                    filter_match = (dynamic_cast<const structure*>(target.get()) != nullptr);
+                } else if (dir.filter == friend_directive::filter_t::CLASS) {
+                    filter_match = target_agg->is_class() && (dynamic_cast<const interface*>(target.get()) == nullptr);
+                } else if (dir.filter == friend_directive::filter_t::INTERFACE) {
+                    filter_match = (dynamic_cast<const interface*>(target.get()) != nullptr);
+                }
+                if (!filter_match) continue;
+            }
+
+            // Friend is an aggregate: check if current function is a DIRECT member
+            // (not inherited, not from nested aggregates).
+            auto fn_owner = current_fn->get_owner();
+            if (fn_owner && fn_owner.get() == target_agg.get()) {
+                return true;
+            }
+        } else if (auto target_fn = std::dynamic_pointer_cast<const function>(target)) {
+            // Friend is a function: only that exact function is a friend
+            if (dir.filter != friend_directive::filter_t::NONE) {
+                // A type filter on a function target means no match
+                continue;
+            }
+            if (current_fn.get() == target_fn.get()) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 
 //
 // scope_lookup — all scope-chain resolution logic, isolated from the model
@@ -733,6 +828,7 @@ void symbol_resolver::check_variable_visibility(const variable_definition& var, 
         auto vis = mv->get_visibility();
         if (vis == PUBLIC) return;
         if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
+        if (vis == PROTECTED && scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
         lex::opt_any_lexeme agg_lexeme;
         if (auto ast_ad = owner_agg->get_ast_aggregate_decl()) agg_lexeme = lex::any_lexeme{ast_ad->name};
         throw_error(0x000F, agg_lexeme,
@@ -740,7 +836,7 @@ void symbol_resolver::check_variable_visibility(const variable_definition& var, 
             "it can only be accessed from member functions of '{}'{}",
             {vis == PROTECTED ? "protected" : "private",
              mv->get_short_name(), owner_agg->get_short_name(), owner_agg->get_short_name(),
-             vis == PROTECTED ? " or its subclasses" : ""});
+             vis == PROTECTED ? " or its subclasses or friends" : ""});
     }
 
     // Global variable in a namespace
@@ -1613,12 +1709,13 @@ void type_reference_resolver::check_function_visibility(const function& func, co
     auto owner_agg = std::const_pointer_cast<aggregate>(func.get_owner());
     if (owner_agg) {
         if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
+        if (vis == PROTECTED && scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
         throw_error(0x002F, func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "{} member function '{}' of struct '{}' is not accessible here; "
             "it can only be called from member functions of '{}'{}",
             {vis == PROTECTED ? "protected" : "private",
              func.get_short_name(), owner_agg->get_short_name(), owner_agg->get_short_name(),
-             vis == PROTECTED ? " or its subclasses" : ""});
+             vis == PROTECTED ? " or its subclasses or friends" : ""});
     } else {
         // Namespace-level function
         auto owner_ns = scope_lookup::enclosing_namespace(func);
@@ -1653,13 +1750,14 @@ void type_reference_resolver::check_constructor_visibility(const constructor& ct
     if (!owner_agg) return;
 
     if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
+    if (vis == PROTECTED && scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
 
     throw_error(0x0030, ctor.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{ctor.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
         "{} constructor of struct '{}' is not accessible here; "
         "it can only be called from member functions of '{}'{}",
         {vis == PROTECTED ? "protected" : "private",
          owner_agg->get_short_name(), owner_agg->get_short_name(),
-         vis == PROTECTED ? " or its subclasses" : ""});
+         vis == PROTECTED ? " or its subclasses or friends" : ""});
 }
 
 /**

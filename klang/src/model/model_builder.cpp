@@ -200,6 +200,38 @@ namespace k::model {
             "Using declaration is not allowed here; it must appear inside a namespace, structure, or block scope");
     }
 
+    void model_builder::visit_friend_decl(parse::ast::friend_decl &decl) {
+        // Build the friend_directive descriptor from the AST node
+        model::friend_directive dir;
+
+        // Map the optional element-type filter keyword
+        if (decl.element_filter.has_value()) {
+            switch (decl.element_filter->type) {
+                case lex::keyword::STRUCT:    dir.filter = model::friend_directive::filter_t::STRUCT;    break;
+                case lex::keyword::INTERFACE: dir.filter = model::friend_directive::filter_t::INTERFACE; break;
+                case lex::keyword::CLASS:     dir.filter = model::friend_directive::filter_t::CLASS;     break;
+                default:
+                    throw_error(0x0072, decl.element_filter.value(),
+                        "'{}' is not a valid filter for a friend declaration; expected 'struct', 'interface' or 'class'",
+                        {std::string{decl.element_filter->content}});
+            }
+        }
+
+        // Convert the qualified identifier to a k::name
+        if (decl.qname) {
+            dir.target_name = decl.qname->to_name();
+        }
+
+        // Friend declarations are only valid inside aggregate bodies
+        if (auto agg_scope = current_context_content<model::aggregate>()) {
+            agg_scope->add_friend_directive(std::move(dir));
+            return;
+        }
+
+        throw_error(0x0070, decl.friend_kw,
+            "Friend declaration is not allowed here; it must appear inside a struct, class or interface body");
+    }
+
     void model_builder::visit_aggregate_decl(parse::ast::aggregate_decl& st) {
         std::shared_ptr<model::aggregate_holder> parent_scope = current_context_content<model::aggregate_holder>();
         if(!parent_scope){

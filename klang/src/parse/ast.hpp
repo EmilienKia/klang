@@ -252,6 +252,7 @@ namespace k::parse {
         struct visibility_decl;
         struct namespace_decl;
         struct using_decl;
+        struct friend_decl;
         struct variable_decl;
         struct function_decl;
 
@@ -718,6 +719,33 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * Friend declaration — grants another entity access to protected members.
+         *
+         * Syntax: 'friend' ['struct'|'interface'|'class']? qualified_identifier ';'
+         *
+         * Only valid inside an aggregate (struct/class/interface) body.
+         * The optional type filter restricts friendship to the specified element kind.
+         */
+        struct friend_decl : public declaration {
+            /// The 'friend' keyword token.
+            lex::keyword friend_kw;
+
+            /// Optional element type filter: STRUCT, INTERFACE, CLASS, or nullopt.
+            std::optional<lex::keyword> element_filter;
+
+            /// The qualified name of the friend entity.
+            std::shared_ptr<qualified_identifier> qname;
+
+            friend_decl(const lex::keyword& friend_kw,
+                        const std::optional<lex::keyword>& element_filter,
+                        std::shared_ptr<qualified_identifier> qname)
+                : friend_kw(friend_kw), element_filter(element_filter),
+                  qname(std::move(qname)) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct aggregate_decl : public declaration {
             std::vector <lex::keyword> specifiers;
             lex::keyword kw_aggregate_type;
@@ -1072,6 +1100,7 @@ namespace k::parse {
         virtual void visit_visibility_decl(ast::visibility_decl &) = 0;
         virtual void visit_namespace_decl(ast::namespace_decl &) = 0;
         virtual void visit_using_decl(ast::using_decl &) = 0;
+        virtual void visit_friend_decl(ast::friend_decl &) = 0;
         virtual void visit_aggregate_decl(ast::aggregate_decl &) = 0;
         virtual void visit_enum_decl(ast::enum_decl &) = 0;
         virtual void visit_variable_decl(ast::variable_decl &) = 0;
@@ -1129,6 +1158,7 @@ namespace k::parse {
         void visit_visibility_decl(ast::visibility_decl &) override;
         void visit_namespace_decl(ast::namespace_decl &) override;
         void visit_using_decl(ast::using_decl &) override;
+        void visit_friend_decl(ast::friend_decl &) override;
         void visit_aggregate_decl(ast::aggregate_decl &) override;
         void visit_enum_decl(ast::enum_decl &) override;
         void visit_variable_decl(ast::variable_decl &) override;
