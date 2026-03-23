@@ -35,7 +35,7 @@ Grammar notation used here:
     *(one of)*
     `bool` `byte` `char` `short` `int` `long`
     `float` `double` `unsigned`
-    `struct` `namespace` `module` `import`
+    `struct` `namespace` `module` `import` `using`
     `static` `const` `abstract` `final`
     `public` `protected` `private`
     `this` `return`
@@ -95,10 +95,11 @@ Grammar notation used here:
 <a id="qualifiedidentifier"></a>**QualifiedIdentifier:**
     `[` `'::'` `]` [Identifier](#identifier) {{ `'::'` [Identifier](#identifier) }}
 ### Declarations
-*Full description:* [Functions](functions/functions.md) - [Structures](structs/structs.md) - [Names and Lookup](basic/names.md)
+*Full description:* [Functions](functions/functions.md) - [Structures](structs/structs.md) - [Names and Lookup](basic/names.md) - [Using Directives](basic/using.md)
 <a id="declaration"></a>**Declaration:**
     [VisibilityDecl](#visibilitydecl)
     | [NamespaceDecl](#namespacedecl)
+    | [UsingDecl](#usingdecl)
     | [AggregateDecl](#aggregatedecl)
     | [FunctionDecl](#functiondecl)
     | [VariableDecl](#variabledecl)
@@ -106,6 +107,14 @@ Grammar notation used here:
     `(` `'public'` | `'protected'` | `'private'` `)` `':'`
 <a id="namespacedecl"></a>**NamespaceDecl:**
     `'namespace'` `[` [Identifier](#identifier) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
+<a id="usingdecl"></a>**UsingDecl:**
+    `'using'` `[` [UsingFilter](#usingfilter) `]` `[` [Identifier](#identifier) `'='` `]` [QualifiedIdentifier](#qualifiedidentifier) `';'`
+
+    *A `using` directive can appear in both declaration context (namespace or aggregate body)
+    and statement context (function body or block).  See [Using Directives](basic/using.md).*
+
+<a id="usingfilter"></a>**UsingFilter:**
+    `(` `'namespace'` | `'struct'` | `'interface'` | `'class'` `)`
 <a id="aggregatedecl"></a>**AggregateDecl:**
     {{ [Specifier](#specifier) }} `(` `'struct'` | `'class'` | `'interface'` `)` [Identifier](#identifier) `[` `':'` [BaseClause](#baseclause) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
 
@@ -227,6 +236,7 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     | [IfElseStatement](#ifelsestatement)
     | [WhileStatement](#whilestatement)
     | [ForStatement](#forstatement)
+    | [UsingDecl](#usingdecl)
     | [VariableDecl](#variabledecl) `';'`
     | [ExpressionStatement](#expressionstatement)
 <a id="blockstatement"></a>**BlockStatement:**

@@ -560,9 +560,13 @@ protected:
  * were direct members of the enclosing scope.  It does NOT create or
  * materialise new symbols — it only affects name-lookup priority.
  *
- * Two forms:
- *  - Namespace using: 'using namespace X::Y;'   — all members of X::Y are injected.
- *  - Specific using:  'using X::Y::foo;'        — only 'foo' (possibly overloaded) is injected.
+ * Three forms:
+ *  - Namespace using:   'using namespace X::Y;'        — all members of X::Y are injected.
+ *  - Specific using:    'using X::Y::foo;'             — only 'foo' is injected.
+ *  - Aliased using:     'using Alias = X::Y::foo;'     — 'foo' is accessible as 'Alias'.
+ *                       'using NS = namespace X::Y;'   — X::Y is accessible via NS::member.
+ *
+ * Aliasing is purely local: exports/imports always use the real (de-aliased) names.
  */
 struct using_directive {
     /// What kind of element is targeted (NONE = any).
@@ -573,8 +577,15 @@ struct using_directive {
     /// The fully-qualified name being imported.
     k::name target_name;
 
+    /// Optional alias name. When set, the target is accessible under this
+    /// name instead of its original short name.
+    std::optional<std::string> alias_name;
+
     /// Whether this is a namespace using (using namespace X) vs specific element using (using X::foo).
     bool is_namespace() const { return filter == filter_t::NAMESPACE; }
+
+    /// Whether this directive carries a local alias.
+    bool has_alias() const { return alias_name.has_value(); }
 
     /// AST node for error reporting (may be null).
     std::shared_ptr<k::parse::ast::ast_node> ast_node;

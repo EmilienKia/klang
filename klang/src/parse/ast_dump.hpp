@@ -198,6 +198,9 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             if (decl.element_filter) {
                 _stm << std::string{decl.element_filter->content} << " ";
             }
+            if (decl.alias_name) {
+                _stm << std::string{decl.alias_name->content} << " = ";
+            }
             if (decl.qname) {
                 visit_qualified_identifier(*decl.qname);
             }

@@ -595,13 +595,11 @@ symbol_resolver::resolve_via_using(const element& elem, const name& name) {
     for (const auto& dir : directives) {
         std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>> candidate = std::monostate{};
 
-        if (dir.is_namespace()) {
-            // Case 1: 'using namespace X::Y;'
+        if (dir.is_namespace() && !dir.has_alias()) {
+            // Case 1: 'using namespace X::Y;' (anonymous)
             // All members of X::Y are virtually injected.
-            // Try to resolve the ENTIRE name from within the target namespace/aggregate.
             auto target_elem = resolve_using_target(dir.target_name, _unit);
             if (!target_elem) {
-                // Target namespace not found in local model; try imported modules
                 if (auto imp_agg = _unit.get_or_create_imported_aggregate(dir.target_name, _context)) {
                     target_elem = std::dynamic_pointer_cast<const element>(imp_agg);
                 }
@@ -609,14 +607,55 @@ symbol_resolver::resolve_via_using(const element& elem, const name& name) {
             if (target_elem) {
                 candidate = resolve_qualified_from(*target_elem, name);
             }
-        } else {
-            // Case 2: 'using X::Y::foo;' (specific element)
-            // Only match if the first component of name equals the last component of the target.
-            const std::string& injected_name = dir.target_name.back();
 
-            if (name.front() == injected_name) {
-                // Resolve the full target to get the element
-                // For a specific using, the target is the full qualified name
+        } else if (dir.is_namespace() && dir.has_alias()) {
+            // Case 2: 'using M = namespace X::Y;' (aliased namespace)
+            // The namespace is accessible as a prefix: M::member
+            if (name.front() == *dir.alias_name && name.size() > 1) {
+                auto rest = name.without_front();
+                auto target_elem = resolve_using_target(dir.target_name, _unit);
+                if (!target_elem) {
+                    if (auto imp_agg = _unit.get_or_create_imported_aggregate(dir.target_name, _context)) {
+                        target_elem = std::dynamic_pointer_cast<const element>(imp_agg);
+                    }
+                }
+                if (target_elem) {
+                    candidate = resolve_qualified_from(*target_elem, rest);
+                }
+                // Fallback: construct fully-qualified name and search imported modules directly
+                if (candidate.index() == 0) {
+                    auto fq = dir.target_name;
+                    for (size_t i = 0; i < rest.size(); ++i) fq = fq.with_back(rest[i]);
+                    // Try imported function
+                    if (auto* kdi_fn = _unit.find_imported_function(fq)) {
+                        candidate = _unit.get_or_create_imported_function(kdi_fn, _context);
+                    }
+                    // Try imported variable
+                    if (candidate.index() == 0) {
+                        if (auto* kdi_var = _unit.find_imported_variable(fq)) {
+                            candidate = _unit.get_or_create_imported_variable(kdi_var, _context);
+                        }
+                    }
+                    // Try imported aggregate static method (rest has 2+ parts: Struct::method)
+                    if (candidate.index() == 0 && rest.size() >= 2) {
+                        auto agg_name = fq.without_back();
+                        auto func_name = fq.back();
+                        if (auto imp_agg = _unit.get_or_create_imported_aggregate(agg_name, _context)) {
+                            if (auto fn = imp_agg->get_function(func_name)) {
+                                candidate = fn;
+                            }
+                        }
+                    }
+                }
+            }
+
+        } else {
+            // Cases 3 & 4: specific element using, with or without alias
+            // 'using X::Y::foo;' or 'using Bar = X::Y::foo;'
+            const std::string& real_name = dir.target_name.back();
+            const std::string& lookup_name = dir.has_alias() ? *dir.alias_name : real_name;
+
+            if (name.front() == lookup_name) {
                 auto target_name_parent = dir.target_name.without_back();
 
                 std::shared_ptr<const element> target_parent;
@@ -633,31 +672,39 @@ symbol_resolver::resolve_via_using(const element& elem, const name& name) {
 
                 if (target_parent) {
                     if (name.size() == 1) {
-                        // Simple name match: resolve the target symbol directly
-                        candidate = resolve_qualified_from(*target_parent, k::name{injected_name});
+                        // Simple name match: resolve the real target symbol directly
+                        candidate = resolve_qualified_from(*target_parent, k::name{real_name});
                     } else {
-                        // Qualified name: matched first component, descend for the rest.
-                        // First resolve the target element itself
-                        auto target_elem = resolve_qualified_from(*target_parent, k::name{injected_name});
+                        // Qualified name: matched first component (alias or real name), descend for the rest.
+                        auto target_elem = resolve_qualified_from(*target_parent, k::name{real_name});
                         if (target_elem.index() != 0) {
                             // The target is a function or variable — cannot descend further
-                            // This is not a valid match for a qualified name
                         } else {
-                            // Target might be an aggregate or namespace (not a var/func)
-                            // Try to find it as an aggregate
+                            // Target might be an aggregate or namespace
                             if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(target_parent)) {
-                                if (auto agg = ah->get_aggregate(injected_name)) {
+                                if (auto agg = ah->get_aggregate(real_name)) {
                                     candidate = resolve_qualified_from(*agg, name.without_front());
                                 }
                             }
-                            // Try as a child namespace
                             if (candidate.index() == 0) {
                                 if (auto nspc = std::dynamic_pointer_cast<const ns>(target_parent)) {
-                                    if (auto child = nspc->get_child_namespace(injected_name)) {
+                                    if (auto child = nspc->get_child_namespace(real_name)) {
                                         candidate = resolve_qualified_from(*child, name.without_front());
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Fallback: try imported modules directly using the full target name
+                if (candidate.index() == 0 && name.size() == 1) {
+                    if (auto* kdi_fn = _unit.find_imported_function(dir.target_name)) {
+                        candidate = _unit.get_or_create_imported_function(kdi_fn, _context);
+                    }
+                    if (candidate.index() == 0) {
+                        if (auto* kdi_var = _unit.find_imported_variable(dir.target_name)) {
+                            candidate = _unit.get_or_create_imported_variable(kdi_var, _context);
                         }
                     }
                 }
@@ -893,9 +940,14 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
         // Check using directives at this scope level for type resolution
         if (auto uh = std::dynamic_pointer_cast<const using_holder>(current)) {
             for (const auto& dir : uh->get_using_directives()) {
-                if (dir.is_namespace()) {
-                    // 'using namespace X::Y;' — search type_name within the target namespace
+                if (dir.is_namespace() && !dir.has_alias()) {
+                    // 'using namespace X::Y;' (anonymous) — search type_name within the target
                     auto target_elem = resolve_using_target(dir.target_name, _unit);
+                    if (!target_elem) {
+                        if (auto imp_agg = _unit.get_or_create_imported_aggregate(dir.target_name, _context)) {
+                            target_elem = std::dynamic_pointer_cast<const element>(imp_agg);
+                        }
+                    }
                     if (target_elem) {
                         if (auto st = resolve_struct_from(*target_elem, type_name)) return st->get_struct_type();
                         if (type_name.size() == 1) {
@@ -906,36 +958,83 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
                             }
                         }
                     }
+
+                } else if (dir.is_namespace() && dir.has_alias()) {
+                    // 'using M = namespace X::Y;' — M acts as a prefix: M::Type
+                    if (type_name.front() == *dir.alias_name && type_name.size() > 1) {
+                        auto rest = type_name.without_front();
+                        auto target_elem = resolve_using_target(dir.target_name, _unit);
+                        if (!target_elem) {
+                            if (auto imp_agg = _unit.get_or_create_imported_aggregate(dir.target_name, _context)) {
+                                target_elem = std::dynamic_pointer_cast<const element>(imp_agg);
+                            }
+                        }
+                        if (target_elem) {
+                            if (auto st = resolve_struct_from(*target_elem, rest)) return st->get_struct_type();
+                            if (rest.size() == 1) {
+                                if (auto eh = std::dynamic_pointer_cast<const enum_holder>(target_elem)) {
+                                    if (auto en = eh->get_enum(rest.front())) {
+                                        return en->get_enum_type();
+                                    }
+                                }
+                            }
+                        }
+                        // Fallback: construct FQ name and search imported modules
+                        {
+                            auto fq = dir.target_name;
+                            for (size_t i = 0; i < rest.size(); ++i) fq = fq.with_back(rest[i]);
+                            if (auto imp_agg = _unit.get_or_create_imported_aggregate(fq, _context)) {
+                                return imp_agg->get_struct_type();
+                            }
+                            if (auto imp_en = _unit.get_or_create_imported_enum(fq, _context)) {
+                                return imp_en->get_enum_type();
+                            }
+                        }
+                    }
+
                 } else {
-                    // 'using X::Y::Foo;' — match if type_name starts with 'Foo'
-                    const std::string& injected = dir.target_name.back();
-                    if (type_name.front() == injected) {
+                    // Specific using, with or without alias
+                    const std::string& real_name = dir.target_name.back();
+                    const std::string& lookup_name = dir.has_alias() ? *dir.alias_name : real_name;
+                    if (type_name.front() == lookup_name) {
                         auto parent_name = dir.target_name.without_back();
                         std::shared_ptr<const element> parent_elem;
                         if (parent_name.empty()) {
                             parent_elem = _unit.get_root_namespace();
                         } else {
                             parent_elem = resolve_using_target(parent_name, _unit);
+                            if (!parent_elem) {
+                                if (auto imp_agg = _unit.get_or_create_imported_aggregate(parent_name, _context)) {
+                                    parent_elem = std::dynamic_pointer_cast<const element>(imp_agg);
+                                }
+                            }
                         }
                         if (parent_elem) {
                             if (type_name.size() == 1) {
-                                // Simple name: resolve directly
-                                if (auto st = resolve_struct_from(*parent_elem, k::name{injected})) return st->get_struct_type();
+                                if (auto st = resolve_struct_from(*parent_elem, k::name{real_name})) return st->get_struct_type();
                                 if (auto eh = std::dynamic_pointer_cast<const enum_holder>(parent_elem)) {
-                                    if (auto en = eh->get_enum(injected)) return en->get_enum_type();
+                                    if (auto en = eh->get_enum(real_name)) return en->get_enum_type();
                                 }
                             } else {
-                                // Qualified: first component matched, descend for the rest
                                 if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(parent_elem)) {
-                                    if (auto agg = ah->get_aggregate(injected)) {
+                                    if (auto agg = ah->get_aggregate(real_name)) {
                                         if (auto st = resolve_struct_from(*agg, type_name.without_front())) return st->get_struct_type();
                                     }
                                 }
                                 if (auto nspc = std::dynamic_pointer_cast<const ns>(parent_elem)) {
-                                    if (auto child = nspc->get_child_namespace(injected)) {
+                                    if (auto child = nspc->get_child_namespace(real_name)) {
                                         if (auto st = resolve_struct_from(*child, type_name.without_front())) return st->get_struct_type();
                                     }
                                 }
+                            }
+                        }
+                        // Fallback: try imported modules directly using the full target name
+                        if (type_name.size() == 1) {
+                            if (auto imp_agg = _unit.get_or_create_imported_aggregate(dir.target_name, _context)) {
+                                return imp_agg->get_struct_type();
+                            }
+                            if (auto imp_en = _unit.get_or_create_imported_enum(dir.target_name, _context)) {
+                                return imp_en->get_enum_type();
                             }
                         }
                     }
@@ -1681,6 +1780,111 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
             if (auto eh = std::dynamic_pointer_cast<const enum_holder>(current)) {
                 if (auto en = eh->get_enum(type_name.front())) {
                     return en->get_enum_type();
+                }
+            }
+        }
+
+        // Check using directives at this scope level for type resolution
+        if (auto uh = std::dynamic_pointer_cast<const using_holder>(current)) {
+            for (const auto& dir : uh->get_using_directives()) {
+                if (dir.is_namespace() && !dir.has_alias()) {
+                    // 'using namespace X::Y;' (anonymous) — search type_name within the target
+                    auto target_elem = resolve_using_target(dir.target_name, _unit);
+                    if (!target_elem) {
+                        if (auto imp_agg = _unit.get_or_create_imported_aggregate(dir.target_name, _context)) {
+                            target_elem = std::dynamic_pointer_cast<const element>(imp_agg);
+                        }
+                    }
+                    if (target_elem) {
+                        if (auto st = resolve_struct_from(*target_elem, type_name)) return st->get_struct_type();
+                        if (type_name.size() == 1) {
+                            if (auto eh = std::dynamic_pointer_cast<const enum_holder>(target_elem)) {
+                                if (auto en = eh->get_enum(type_name.front())) {
+                                    return en->get_enum_type();
+                                }
+                            }
+                        }
+                    }
+
+                } else if (dir.is_namespace() && dir.has_alias()) {
+                    // 'using M = namespace X::Y;' — M acts as a prefix: M::Type
+                    if (type_name.front() == *dir.alias_name && type_name.size() > 1) {
+                        auto rest = type_name.without_front();
+                        auto target_elem = resolve_using_target(dir.target_name, _unit);
+                        if (!target_elem) {
+                            if (auto imp_agg = _unit.get_or_create_imported_aggregate(dir.target_name, _context)) {
+                                target_elem = std::dynamic_pointer_cast<const element>(imp_agg);
+                            }
+                        }
+                        if (target_elem) {
+                            if (auto st = resolve_struct_from(*target_elem, rest)) return st->get_struct_type();
+                            if (rest.size() == 1) {
+                                if (auto eh = std::dynamic_pointer_cast<const enum_holder>(target_elem)) {
+                                    if (auto en = eh->get_enum(rest.front())) {
+                                        return en->get_enum_type();
+                                    }
+                                }
+                            }
+                        }
+                        // Fallback: construct fully-qualified name and search imported modules
+                        {
+                            auto fq = dir.target_name;
+                            for (size_t i = 0; i < rest.size(); ++i) fq = fq.with_back(rest[i]);
+                            if (auto imp_agg = _unit.get_or_create_imported_aggregate(fq, _context)) {
+                                return imp_agg->get_struct_type();
+                            }
+                            if (auto imp_en = _unit.get_or_create_imported_enum(fq, _context)) {
+                                return imp_en->get_enum_type();
+                            }
+                        }
+                    }
+
+                } else {
+                    // Specific using, with or without alias
+                    const std::string& real_name = dir.target_name.back();
+                    const std::string& lookup_name = dir.has_alias() ? *dir.alias_name : real_name;
+                    if (type_name.front() == lookup_name) {
+                        auto parent_name = dir.target_name.without_back();
+                        std::shared_ptr<const element> parent_elem;
+                        if (parent_name.empty()) {
+                            parent_elem = _unit.get_root_namespace();
+                        } else {
+                            parent_elem = resolve_using_target(parent_name, _unit);
+                            if (!parent_elem) {
+                                if (auto imp_agg = _unit.get_or_create_imported_aggregate(parent_name, _context)) {
+                                    parent_elem = std::dynamic_pointer_cast<const element>(imp_agg);
+                                }
+                            }
+                        }
+                        if (parent_elem) {
+                            if (type_name.size() == 1) {
+                                if (auto st = resolve_struct_from(*parent_elem, k::name{real_name})) return st->get_struct_type();
+                                if (auto eh = std::dynamic_pointer_cast<const enum_holder>(parent_elem)) {
+                                    if (auto en = eh->get_enum(real_name)) return en->get_enum_type();
+                                }
+                            } else {
+                                if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(parent_elem)) {
+                                    if (auto agg = ah->get_aggregate(real_name)) {
+                                        if (auto st = resolve_struct_from(*agg, type_name.without_front())) return st->get_struct_type();
+                                    }
+                                }
+                                if (auto nspc = std::dynamic_pointer_cast<const ns>(parent_elem)) {
+                                    if (auto child = nspc->get_child_namespace(real_name)) {
+                                        if (auto st = resolve_struct_from(*child, type_name.without_front())) return st->get_struct_type();
+                                    }
+                                }
+                            }
+                        }
+                        // Fallback: try imported modules directly using the full target name
+                        if (type_name.size() == 1) {
+                            if (auto imp_agg = _unit.get_or_create_imported_aggregate(dir.target_name, _context)) {
+                                return imp_agg->get_struct_type();
+                            }
+                            if (auto imp_en = _unit.get_or_create_imported_enum(dir.target_name, _context)) {
+                                return imp_en->get_enum_type();
+                            }
+                        }
+                    }
                 }
             }
         }

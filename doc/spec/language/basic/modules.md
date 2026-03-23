@@ -207,6 +207,37 @@ directly from the root namespace; it is always unambiguous:
     return ::math::vec::dot(3, 4);
 ```
 
+### Using directives with imports
+
+A `using` directive can relax the fully-qualified requirement for imported
+symbols.  See [Using Directives](using.md) for the full specification.
+
+```k
+module myapp;
+import math::vec;
+
+using namespace math::vec;        // inject all members
+
+main() : int {
+    return dot(3, 4);             // OK: resolves via using
+}
+```
+
+Aliases provide a short local name without injecting all members:
+
+```k
+module myapp;
+import very_long_module;
+
+using namespace m = very_long_module;  // namespace alias
+
+main() : int {
+    return m::compute(21);        // OK: resolves via alias
+}
+```
+
+Aliases are purely local — they are never exported to the `.kdi` file.
+
 **Imported types** (struct, class, interface) are also used with their full
 qualified name:
 
@@ -284,4 +315,4 @@ The mangling scheme encodes:
 
 ---
 
-*See also:* [Names and Lookup](names.md) · [Libraries — Export and Import](libraries.md) · [Main Function](main.md)
+*See also:* [Names and Lookup](names.md) · [Using Directives](using.md) · [Libraries — Export and Import](libraries.md) · [Main Function](main.md)

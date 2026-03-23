@@ -580,3 +580,434 @@ TEST_CASE("Using inside function body — imported module function", "[gen][usin
     REQUIRE(result.exit_code == 42);
 }
 
+// ── using alias — function alias ────────────────────────────────────────────
+
+TEST_CASE("Using alias — function alias", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_func__;
+        namespace math {
+            add(a : int, b : int) : int {
+                return a + b;
+            }
+        }
+        using sum = math::add;
+        test() : int {
+            return sum(10, 32);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Using alias — variable alias", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_var__;
+        namespace config {
+            answer : int = 42;
+        }
+        using the_answer = config::answer;
+        test() : int {
+            return the_answer;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+// ── using alias — type alias ────────────────────────────────────────────────
+
+TEST_CASE("Using alias — type alias for struct", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_type__;
+        namespace geom {
+            struct Vector2 {
+                x : int;
+                y : int;
+            }
+        }
+        using Vec2 = geom::Vector2;
+        test() : int {
+            v : Vec2;
+            v.x = 20;
+            v.y = 22;
+            return v.x + v.y;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Using alias — type alias with method call", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_type_method__;
+        namespace shapes {
+            struct Rect {
+                w : int;
+                h : int;
+                area() : int { return w * h; }
+            }
+        }
+        using Box = shapes::Rect;
+        test() : int {
+            b : Box;
+            b.w = 6;
+            b.h = 7;
+            return b.area();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+// ── using alias — namespace alias ───────────────────────────────────────────
+
+TEST_CASE("Using alias — namespace alias, access function via prefix", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_ns_func__;
+        namespace very_long_namespace_name {
+            compute(x : int) : int {
+                return x * 2;
+            }
+        }
+        using namespace ns = very_long_namespace_name;
+        test() : int {
+            return ns::compute(21);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Using alias — namespace alias, access type via prefix", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_ns_type__;
+        namespace geo {
+            struct Point {
+                x : int;
+                y : int;
+            }
+        }
+        using namespace g = geo;
+        test() : int {
+            p : g::Point;
+            p.x = 10;
+            p.y = 32;
+            return p.x + p.y;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Using alias — namespace alias, access variable via prefix", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_ns_var__;
+        namespace globals {
+            value : int = 42;
+        }
+        using namespace g = globals;
+        test() : int {
+            return g::value;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Using alias — namespace alias for deeply nested namespace", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_ns_deep__;
+        namespace a {
+            namespace b {
+                namespace c {
+                    get_val() : int {
+                        return 42;
+                    }
+                }
+            }
+        }
+        using namespace deep = a::b::c;
+        test() : int {
+            return deep::get_val();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+// ── using alias — static struct members ─────────────────────────────────────
+
+TEST_CASE("Using alias — alias struct with static method access", "[gen][using][alias][static]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_static_method__;
+        namespace tools {
+            struct Calculator {
+                static add(a : int, b : int) : int {
+                    return a + b;
+                }
+            }
+        }
+        using Calc = tools::Calculator;
+        test() : int {
+            return Calc::add(10, 32);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Using alias — alias struct with static variable access", "[gen][using][alias][static]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_static_var__;
+        namespace data {
+            struct Config {
+                static val : int = 42;
+            }
+        }
+        using Cfg = data::Config;
+        test() : int {
+            return Cfg::val;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Using alias — namespace alias gives access to struct static members", "[gen][using][alias][static]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_ns_static__;
+        namespace math {
+            struct Ops {
+                static mul(a : int, b : int) : int {
+                    return a * b;
+                }
+            }
+        }
+        using namespace m = math;
+        test() : int {
+            return m::Ops::mul(6, 7);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+// ── using alias — inside function body ──────────────────────────────────────
+
+TEST_CASE("Using alias — function alias inside function body", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_func_body__;
+        namespace ops {
+            negate(x : int) : int {
+                return 0 - x;
+            }
+        }
+        test() : int {
+            using neg = ops::negate;
+            return neg(0 - 42);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Using alias — namespace alias inside function body", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_ns_func_body__;
+        namespace helpers {
+            double_it(x : int) : int {
+                return x * 2;
+            }
+        }
+        test() : int {
+            using namespace h = helpers;
+            return h::double_it(21);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+TEST_CASE("Using alias — type alias inside function body", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_type_func_body__;
+        namespace geom {
+            struct Vec {
+                x : int;
+                y : int;
+            }
+        }
+        test() : int {
+            using V = geom::Vec;
+            v : V;
+            v.x = 20;
+            v.y = 22;
+            return v.x + v.y;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+// ── using alias — with imported libraries ───────────────────────────────────
+
+TEST_CASE("Using alias — function alias from imported module", "[gen][using][alias][import]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module arithlib;
+            add(a: int, b: int) : int { return a + b; }
+        )K",
+        R"K(
+            module consumer;
+            import arithlib;
+            using sum = arithlib::add;
+            main() : int {
+                return sum(10, 32);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("Using alias — type alias from imported module", "[gen][using][alias][import]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module shapelib;
+            struct Point {
+                x : int;
+                y : int;
+            }
+        )K",
+        R"K(
+            module consumer;
+            import shapelib;
+            using Pt = shapelib::Point;
+            main() : int {
+                p : Pt;
+                p.x = 20;
+                p.y = 22;
+                return p.x + p.y;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("Using alias — namespace alias for imported module", "[gen][using][alias][import]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module very_long_module_name;
+            compute(x: int) : int { return x * 2; }
+        )K",
+        R"K(
+            module consumer;
+            import very_long_module_name;
+            using namespace m = very_long_module_name;
+            main() : int {
+                return m::compute(21);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("Using alias — namespace alias for imported module with struct", "[gen][using][alias][import]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module geolib;
+            struct Circle {
+                r : int;
+                diameter() : int { return this.r * 2; }
+            }
+        )K",
+        R"K(
+            module consumer;
+            import geolib;
+            using namespace g = geolib;
+            main() : int {
+                c : g::Circle;
+                c.r = 21;
+                return c.diameter();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE(result.exit_code == 42);
+}
+
+// ── using alias — original name still works ─────────────────────────────────
+
+TEST_CASE("Using alias — original qualified name still works alongside alias", "[gen][using][alias]") {
+    auto jit = gen_jit(R"SRC(
+        module __alias_coexist__;
+        namespace math {
+            add(a : int, b : int) : int {
+                return a + b;
+            }
+        }
+        using sum = math::add;
+        test() : int {
+            r1 : int = sum(10, 12);
+            r2 : int = math::add(10, 10);
+            return r1 + r2;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}

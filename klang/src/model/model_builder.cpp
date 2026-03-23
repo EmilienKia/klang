@@ -165,6 +165,11 @@ namespace k::model {
             dir.target_name = decl.qname->to_name();
         }
 
+        // Transfer alias name if present
+        if (decl.alias_name.has_value()) {
+            dir.alias_name = std::string{decl.alias_name->content};
+        }
+
         // Store the AST node for error reporting
         // Note: using_decl has diamond inheritance (declaration + statement → ast_node),
         // so shared_from_this() is ambiguous. We skip it; the using_kw token is enough.

@@ -193,17 +193,19 @@ When the compiler encounters a name, it looks it up using the following rules (i
 3. **Static local variables** of the enclosing function.
 4. **Members** of `this` (if inside a non-static member function) — implicit `this.member` lookup.
 5. **Enclosing struct members** (for inner/nested struct methods, outer struct members are accessible if there is an implicit `__parent__` reference).
-6. **Declarations in the current namespace** (the module namespace).
-7. **Declarations in enclosing namespaces**, outward to the root namespace.
-8. **Imported modules** — a *qualified* name whose leading component matches an imported (or transitively imported) module is resolved against that module's exported namespace tree.
+6. **Using directives** at the current scope level — names injected by `using` directives (see [Using Directives](using.md)).
+7. **Declarations in the current namespace** (the module namespace).
+8. **Declarations in enclosing namespaces**, outward to the root namespace.
+9. **Imported modules** — a *qualified* name whose leading component matches an imported (or transitively imported) module is resolved against that module's exported namespace tree.
 
 The first matching declaration wins. If no declaration is found, the compiler reports an error.
 
-> **Step 8 is reached only for qualified names.**  A bare identifier is never
-> implicitly resolved to an imported symbol.  Write `mylib::Foo` (or
-> `::mylib::Foo` for the absolute form), never just `Foo`.
+> **Step 9 is reached only for qualified names.**  A bare identifier is never
+> implicitly resolved to an imported symbol (unless a `using` directive brings
+> it into scope).  Write `mylib::Foo` (or `::mylib::Foo` for the absolute form),
+> or use a `using` directive.
 
-### Imported symbol resolution (step 8)
+### Imported symbol resolution (step 9)
 
 An `import mylib;` declaration does **not** inject names into the current
 namespace.  It registers `mylib`'s exported API so that a subsequent
@@ -274,4 +276,4 @@ Outer::Inner         // type name of nested struct
 
 ---
 
-*See also:* [Lexical Conventions](lexical.md) · [Keywords](keywords.md) · [Types](types.md) · [Module System](modules.md) · [Libraries — Export and Import](libraries.md) · [Structures](../structs/structs.md#10-member-visibility)
+*See also:* [Lexical Conventions](lexical.md) · [Keywords](keywords.md) · [Types](types.md) · [Module System](modules.md) · [Using Directives](using.md) · [Libraries — Export and Import](libraries.md) · [Structures](../structs/structs.md#10-member-visibility)

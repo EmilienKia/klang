@@ -267,6 +267,26 @@ std::shared_ptr<ast::using_decl> parser::parse_using_decl()
         _lexer.unget();
     }
 
+    // Optionally consume an alias: identifier '='
+    // 'using Foo = X::Y::bar;' or 'using M = namespace X::Y;'
+    std::optional<lex::identifier> alias_name;
+    {
+        auto l1 = _lexer.get();
+        if (lex::is<lex::identifier>(l1)) {
+            auto l2 = _lexer.get();
+            if (l2 == lex::operator_::EQUAL) {
+                // Confirmed: this is an alias
+                alias_name = lex::as<lex::identifier>(l1);
+            } else {
+                // Not an alias — put both tokens back
+                _lexer.unget();
+                _lexer.unget();
+            }
+        } else {
+            _lexer.unget();
+        }
+    }
+
     // Expect a qualified identifier
     auto qname = parse_qualified_identifier();
     if (!qname || qname->names.empty()) {
@@ -281,6 +301,7 @@ std::shared_ptr<ast::using_decl> parser::parse_using_decl()
     return std::make_shared<ast::using_decl>(
             lex::as<lex::keyword>(lusing),
             element_filter,
+            alias_name,
             std::move(qname));
 }
 

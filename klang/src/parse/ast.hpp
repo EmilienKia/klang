@@ -682,12 +682,18 @@ namespace k::parse {
 
         /**
          * Using directive declaration.
-         * Syntax: 'using' ['namespace'|'struct'|'interface'|'class']? QUALIFIED_IDENTIFIER ';'
+         * Syntax: 'using' [filter]? [identifier '=']? QUALIFIED_IDENTIFIER ';'
          *
          * Can appear in both declaration context (namespace, aggregate body) and
          * statement context (function body, block).
-         * Makes the targeted element(s) resolvable as if they were direct members
-         * of the enclosing scope.
+         *
+         * Without alias: makes the targeted element(s) resolvable as if they
+         * were direct members of the enclosing scope.
+         * With alias: the target is accessible under the alias name only.
+         *   - For namespaces: 'using M = namespace X::Y;' makes X::Y accessible
+         *     as M::member (members are NOT injected directly).
+         *   - For other elements: 'using Foo = X::Y::bar;' makes bar accessible
+         *     as Foo in the current scope.
          */
         struct using_decl : public declaration, public statement {
             /// The 'using' keyword token.
@@ -696,13 +702,18 @@ namespace k::parse {
             /// Optional element type filter: NAMESPACE, STRUCT, INTERFACE, CLASS, or nullopt.
             std::optional<lex::keyword> element_filter;
 
+            /// Optional alias name (the identifier before '=').
+            std::optional<lex::identifier> alias_name;
+
             /// The qualified name being imported into the current scope.
             std::shared_ptr<qualified_identifier> qname;
 
             using_decl(const lex::keyword& using_kw,
                        const std::optional<lex::keyword>& element_filter,
+                       const std::optional<lex::identifier>& alias_name,
                        std::shared_ptr<qualified_identifier> qname)
-                : using_kw(using_kw), element_filter(element_filter), qname(std::move(qname)) {}
+                : using_kw(using_kw), element_filter(element_filter),
+                  alias_name(alias_name), qname(std::move(qname)) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

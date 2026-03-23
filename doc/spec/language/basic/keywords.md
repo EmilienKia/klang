@@ -26,6 +26,7 @@ They may **not** be used as ordinary identifiers.
 | `namespace` | Namespace declaration |
 | `module`    | Module (compilation unit) name declaration |
 | `import`    | Import declaration |
+| `using`     | Using directive: namespace injection, element injection, or alias |
 | `static`    | Static storage / static member modifier |
 | `const`     | Constant qualifier: marks a variable or parameter as immutable after construction |
 | `public`    | Public visibility modifier |
@@ -49,7 +50,7 @@ They may **not** be used as ordinary identifiers.
 Keyword: (one of)
     bool     byte     char     short    int      long
     float    double   unsigned
-    struct   class    interface   namespace   module   import
+    struct   class    interface   namespace   module   import   using
     static   const    abstract   final
     public   protected   private
     this     return
