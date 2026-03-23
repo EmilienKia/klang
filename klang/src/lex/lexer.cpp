@@ -63,7 +63,9 @@ namespace k::lex {
         {"float", keyword::FLOAT},
         {"double", keyword::DOUBLE},
 
-        {"unsigned", keyword::UNSIGNED}
+        {"unsigned", keyword::UNSIGNED},
+
+        {"using", keyword::USING}
     };
 
     const std::map<std::string, punctuator::type_t> punctuators {

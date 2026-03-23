@@ -251,6 +251,7 @@ namespace k::parse {
 
         struct visibility_decl;
         struct namespace_decl;
+        struct using_decl;
         struct variable_decl;
         struct function_decl;
 
@@ -679,6 +680,33 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * Using directive declaration.
+         * Syntax: 'using' ['namespace'|'struct'|'interface'|'class']? QUALIFIED_IDENTIFIER ';'
+         *
+         * Can appear in both declaration context (namespace, aggregate body) and
+         * statement context (function body, block).
+         * Makes the targeted element(s) resolvable as if they were direct members
+         * of the enclosing scope.
+         */
+        struct using_decl : public declaration, public statement {
+            /// The 'using' keyword token.
+            lex::keyword using_kw;
+
+            /// Optional element type filter: NAMESPACE, STRUCT, INTERFACE, CLASS, or nullopt.
+            std::optional<lex::keyword> element_filter;
+
+            /// The qualified name being imported into the current scope.
+            std::shared_ptr<qualified_identifier> qname;
+
+            using_decl(const lex::keyword& using_kw,
+                       const std::optional<lex::keyword>& element_filter,
+                       std::shared_ptr<qualified_identifier> qname)
+                : using_kw(using_kw), element_filter(element_filter), qname(std::move(qname)) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct aggregate_decl : public declaration {
             std::vector <lex::keyword> specifiers;
             lex::keyword kw_aggregate_type;
@@ -1032,6 +1060,7 @@ namespace k::parse {
 
         virtual void visit_visibility_decl(ast::visibility_decl &) = 0;
         virtual void visit_namespace_decl(ast::namespace_decl &) = 0;
+        virtual void visit_using_decl(ast::using_decl &) = 0;
         virtual void visit_aggregate_decl(ast::aggregate_decl &) = 0;
         virtual void visit_enum_decl(ast::enum_decl &) = 0;
         virtual void visit_variable_decl(ast::variable_decl &) = 0;
@@ -1088,6 +1117,7 @@ namespace k::parse {
 
         void visit_visibility_decl(ast::visibility_decl &) override;
         void visit_namespace_decl(ast::namespace_decl &) override;
+        void visit_using_decl(ast::using_decl &) override;
         void visit_aggregate_decl(ast::aggregate_decl &) override;
         void visit_enum_decl(ast::enum_decl &) override;
         void visit_variable_decl(ast::variable_decl &) override;

@@ -506,6 +506,12 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
         }
     }
 
+    // Check using directives at this scope level (between direct members and parent scope)
+    {
+        auto using_result = resolve_via_using(elem, name);
+        if (using_result.index() != 0) return using_result;
+    }
+
     if (auto parent_elem = elem.parent<element>()) {
         // Try to find the symbol in the parent element context
         return resolve_symbol(*parent_elem, name);
@@ -535,6 +541,141 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
 
         return std::monostate{};
     }
+}
+
+// ── Using directive resolution ────────────────────────────────────────────────
+
+/**
+ * Helper: resolve the model element targeted by a using directive's target_name.
+ * Returns the element (as ns or aggregate) or nullptr if not found.
+ */
+static std::shared_ptr<const element>
+resolve_using_target(const k::name& target_name, const unit& unit) {
+    auto root = unit.get_root_namespace();
+    if (!root) return nullptr;
+
+    // Walk from root namespace, descending through child namespaces / aggregates
+    std::shared_ptr<const element> current = root;
+    for (size_t i = 0; i < target_name.size(); ++i) {
+        const auto& part = target_name[i];
+
+        // Try child namespace
+        if (auto nspc = std::dynamic_pointer_cast<const ns>(current)) {
+            if (auto child = nspc->get_child_namespace(part)) {
+                current = child;
+                continue;
+            }
+        }
+        // Try aggregate
+        if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(current)) {
+            if (auto agg = ah->get_aggregate(part)) {
+                current = std::dynamic_pointer_cast<const element>(agg);
+                continue;
+            }
+        }
+        // Not found at this level
+        return nullptr;
+    }
+    return current;
+}
+
+std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+symbol_resolver::resolve_via_using(const element& elem, const name& name) {
+    const using_holder* uh = dynamic_cast<const using_holder*>(&elem);
+    if (!uh) return std::monostate{};
+
+    const auto& directives = uh->get_using_directives();
+    if (directives.empty()) return std::monostate{};
+
+    // Collect all matches from using directives (for ambiguity detection)
+    std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>> result = std::monostate{};
+    // Track which directive produced the first match (for error reporting)
+    const using_directive* first_match_dir = nullptr;
+
+    for (const auto& dir : directives) {
+        std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>> candidate = std::monostate{};
+
+        if (dir.is_namespace()) {
+            // Case 1: 'using namespace X::Y;'
+            // All members of X::Y are virtually injected.
+            // Try to resolve the ENTIRE name from within the target namespace/aggregate.
+            auto target_elem = resolve_using_target(dir.target_name, _unit);
+            if (!target_elem) {
+                // Target namespace not found in local model; try imported modules
+                if (auto imp_agg = _unit.get_or_create_imported_aggregate(dir.target_name, _context)) {
+                    target_elem = std::dynamic_pointer_cast<const element>(imp_agg);
+                }
+            }
+            if (target_elem) {
+                candidate = resolve_qualified_from(*target_elem, name);
+            }
+        } else {
+            // Case 2: 'using X::Y::foo;' (specific element)
+            // Only match if the first component of name equals the last component of the target.
+            const std::string& injected_name = dir.target_name.back();
+
+            if (name.front() == injected_name) {
+                // Resolve the full target to get the element
+                // For a specific using, the target is the full qualified name
+                auto target_name_parent = dir.target_name.without_back();
+
+                std::shared_ptr<const element> target_parent;
+                if (target_name_parent.empty()) {
+                    target_parent = _unit.get_root_namespace();
+                } else {
+                    target_parent = resolve_using_target(target_name_parent, _unit);
+                    if (!target_parent) {
+                        if (auto imp_agg = _unit.get_or_create_imported_aggregate(target_name_parent, _context)) {
+                            target_parent = std::dynamic_pointer_cast<const element>(imp_agg);
+                        }
+                    }
+                }
+
+                if (target_parent) {
+                    if (name.size() == 1) {
+                        // Simple name match: resolve the target symbol directly
+                        candidate = resolve_qualified_from(*target_parent, k::name{injected_name});
+                    } else {
+                        // Qualified name: matched first component, descend for the rest.
+                        // First resolve the target element itself
+                        auto target_elem = resolve_qualified_from(*target_parent, k::name{injected_name});
+                        if (target_elem.index() != 0) {
+                            // The target is a function or variable — cannot descend further
+                            // This is not a valid match for a qualified name
+                        } else {
+                            // Target might be an aggregate or namespace (not a var/func)
+                            // Try to find it as an aggregate
+                            if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(target_parent)) {
+                                if (auto agg = ah->get_aggregate(injected_name)) {
+                                    candidate = resolve_qualified_from(*agg, name.without_front());
+                                }
+                            }
+                            // Try as a child namespace
+                            if (candidate.index() == 0) {
+                                if (auto nspc = std::dynamic_pointer_cast<const ns>(target_parent)) {
+                                    if (auto child = nspc->get_child_namespace(injected_name)) {
+                                        candidate = resolve_qualified_from(*child, name.without_front());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (candidate.index() != 0) {
+            if (result.index() != 0 && first_match_dir) {
+                // Ambiguity: two different using directives matched the same name
+                // For now, we just take the first match (TODO: proper ambiguity error)
+                continue;
+            }
+            result = candidate;
+            first_match_dir = &dir;
+        }
+    }
+
+    return result;
 }
 
 void symbol_resolver::check_variable_visibility(const variable_definition& var, const element& /*access_site*/) {
@@ -745,6 +886,59 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
             if (auto eh = std::dynamic_pointer_cast<const enum_holder>(current)) {
                 if (auto en = eh->get_enum(type_name.front())) {
                     return en->get_enum_type();
+                }
+            }
+        }
+
+        // Check using directives at this scope level for type resolution
+        if (auto uh = std::dynamic_pointer_cast<const using_holder>(current)) {
+            for (const auto& dir : uh->get_using_directives()) {
+                if (dir.is_namespace()) {
+                    // 'using namespace X::Y;' — search type_name within the target namespace
+                    auto target_elem = resolve_using_target(dir.target_name, _unit);
+                    if (target_elem) {
+                        if (auto st = resolve_struct_from(*target_elem, type_name)) return st->get_struct_type();
+                        if (type_name.size() == 1) {
+                            if (auto eh = std::dynamic_pointer_cast<const enum_holder>(target_elem)) {
+                                if (auto en = eh->get_enum(type_name.front())) {
+                                    return en->get_enum_type();
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // 'using X::Y::Foo;' — match if type_name starts with 'Foo'
+                    const std::string& injected = dir.target_name.back();
+                    if (type_name.front() == injected) {
+                        auto parent_name = dir.target_name.without_back();
+                        std::shared_ptr<const element> parent_elem;
+                        if (parent_name.empty()) {
+                            parent_elem = _unit.get_root_namespace();
+                        } else {
+                            parent_elem = resolve_using_target(parent_name, _unit);
+                        }
+                        if (parent_elem) {
+                            if (type_name.size() == 1) {
+                                // Simple name: resolve directly
+                                if (auto st = resolve_struct_from(*parent_elem, k::name{injected})) return st->get_struct_type();
+                                if (auto eh = std::dynamic_pointer_cast<const enum_holder>(parent_elem)) {
+                                    if (auto en = eh->get_enum(injected)) return en->get_enum_type();
+                                }
+                            } else {
+                                // Qualified: first component matched, descend for the rest
+                                if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(parent_elem)) {
+                                    if (auto agg = ah->get_aggregate(injected)) {
+                                        if (auto st = resolve_struct_from(*agg, type_name.without_front())) return st->get_struct_type();
+                                    }
+                                }
+                                if (auto nspc = std::dynamic_pointer_cast<const ns>(parent_elem)) {
+                                    if (auto child = nspc->get_child_namespace(injected)) {
+                                        if (auto st = resolve_struct_from(*child, type_name.without_front())) return st->get_struct_type();
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

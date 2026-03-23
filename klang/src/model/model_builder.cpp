@@ -142,6 +142,59 @@ namespace k::model {
         }
     }
 
+    void model_builder::visit_using_decl(parse::ast::using_decl &decl) {
+        // Build the using_directive descriptor from the AST node
+        model::using_directive dir;
+
+        // Map the optional element-type filter keyword
+        if (decl.element_filter.has_value()) {
+            switch (decl.element_filter->type) {
+                case lex::keyword::NAMESPACE: dir.filter = model::using_directive::filter_t::NAMESPACE; break;
+                case lex::keyword::STRUCT:    dir.filter = model::using_directive::filter_t::STRUCT;    break;
+                case lex::keyword::INTERFACE: dir.filter = model::using_directive::filter_t::INTERFACE; break;
+                case lex::keyword::CLASS:     dir.filter = model::using_directive::filter_t::CLASS;     break;
+                default:
+                    throw_error(0x0062, decl.element_filter.value(),
+                        "'{}' is not a valid filter for a using declaration; expected 'namespace', 'struct', 'interface' or 'class'",
+                        {std::string{decl.element_filter->content}});
+            }
+        }
+
+        // Convert the qualified identifier to a k::name
+        if (decl.qname) {
+            dir.target_name = decl.qname->to_name();
+        }
+
+        // Store the AST node for error reporting
+        // Note: using_decl has diamond inheritance (declaration + statement → ast_node),
+        // so shared_from_this() is ambiguous. We skip it; the using_kw token is enough.
+
+        // Find the current scope and add the directive
+        // Try ns (namespace scope)
+        if (auto ns_scope = current_context_content<model::ns>()) {
+            ns_scope->add_using_directive(std::move(dir));
+            return;
+        }
+        // Try aggregate (struct/class/interface body)
+        if (auto agg_scope = current_context_content<model::aggregate>()) {
+            agg_scope->add_using_directive(std::move(dir));
+            return;
+        }
+        // Try block (function body or nested block)
+        if (auto block_scope = current_context_content<model::block>()) {
+            block_scope->add_using_directive(std::move(dir));
+            return;
+        }
+        // Try for_statement
+        if (auto for_scope = current_context_content<model::for_statement>()) {
+            for_scope->add_using_directive(std::move(dir));
+            return;
+        }
+
+        throw_error(0x0063, decl.using_kw,
+            "Using declaration is not allowed here; it must appear inside a namespace, structure, or block scope");
+    }
+
     void model_builder::visit_aggregate_decl(parse::ast::aggregate_decl& st) {
         std::shared_ptr<model::aggregate_holder> parent_scope = current_context_content<model::aggregate_holder>();
         if(!parent_scope){

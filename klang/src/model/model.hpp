@@ -554,6 +554,57 @@ protected:
 
 
 /**
+ * Describes a single 'using' directive in a scope.
+ *
+ * A using directive makes elements from another scope resolvable as if they
+ * were direct members of the enclosing scope.  It does NOT create or
+ * materialise new symbols — it only affects name-lookup priority.
+ *
+ * Two forms:
+ *  - Namespace using: 'using namespace X::Y;'   — all members of X::Y are injected.
+ *  - Specific using:  'using X::Y::foo;'        — only 'foo' (possibly overloaded) is injected.
+ */
+struct using_directive {
+    /// What kind of element is targeted (NONE = any).
+    enum class filter_t { NONE, NAMESPACE, STRUCT, INTERFACE, CLASS };
+
+    filter_t filter = filter_t::NONE;
+
+    /// The fully-qualified name being imported.
+    k::name target_name;
+
+    /// Whether this is a namespace using (using namespace X) vs specific element using (using X::foo).
+    bool is_namespace() const { return filter == filter_t::NAMESPACE; }
+
+    /// AST node for error reporting (may be null).
+    std::shared_ptr<k::parse::ast::ast_node> ast_node;
+};
+
+
+/**
+ * Interface for scopes that can hold 'using' directives.
+ *
+ * Mixed into ns, aggregate, block, and for_statement — any scope where a
+ * using declaration may appear or whose name lookup should honour inherited
+ * using directives.
+ */
+class using_holder
+{
+public:
+    void add_using_directive(using_directive directive) {
+        _using_directives.push_back(std::move(directive));
+    }
+
+    const std::vector<using_directive>& get_using_directives() const {
+        return _using_directives;
+    }
+
+protected:
+    std::vector<using_directive> _using_directives;
+};
+
+
+/**
  * A single entry in an enumeration definition.
  */
 struct enum_entry_def {
@@ -746,7 +797,7 @@ struct base_spec {
  * Holds all common member data: member variables, functions, constructors,
  * destructor, static ctor/dtor, nested aggregates, bases, vtable, vptrs, etc.
  */
-class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder {
+class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public using_holder {
 protected:
     friend class ns;
     friend class gen::implementation_generator;
@@ -1682,7 +1733,7 @@ public:
 };
 
 
-class ns : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder {
+class ns : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public using_holder {
 protected:
 
     friend class unit;

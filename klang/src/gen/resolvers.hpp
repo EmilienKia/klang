@@ -25,6 +25,7 @@
 
 #include "../model/model.hpp"
 #include "../model/model_visitor.hpp"
+#include "../model/statements.hpp"
 
 #include "../model/context.hpp"
 
@@ -177,6 +178,14 @@ protected:
     /** Resolve a qualified name (no root prefix) anchored at a given element, without climbing to parents. */
     static std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
     resolve_qualified_from(const element& elem, const name& qualified_name);
+
+    /**
+     * Try to resolve a name through the using directives of the given scope element.
+     * Returns a non-monostate result if the name can be resolved via a using directive.
+     * If multiple using directives match (ambiguity), reports an error.
+     */
+    std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+    resolve_via_using(const element& elem, const name& name);
 
     /**
      * Base offset for internal-error codes.

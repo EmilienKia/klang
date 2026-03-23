@@ -127,6 +127,12 @@ public:
     std::shared_ptr<ast::namespace_decl> parse_namespace_decl();
 
     /**
+     * USING_DECL := 'using' ['namespace'|'struct'|'interface'|'class']? QUALIFIED_IDENTIFIER ';'
+     * @return The using declaration, if any, null if not present.
+     */
+    std::shared_ptr<ast::using_decl> parse_using_decl();
+
+    /**
      * AGGREGATE_DECLARATION := SPECIFIERS ['struct'|'class', 'interface'] identifier '{' DECLARATIONS '}'
      */
     std::shared_ptr<ast::aggregate_decl> parse_aggregate_decl();

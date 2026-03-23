@@ -155,6 +155,11 @@ ast::decl_ptr parser::parse_declaration()
         return decl;
     }
 
+    // Look for a using decl
+    if(auto decl = parse_using_decl()) {
+        return decl;
+    }
+
     // Look for a struct decl
     if(auto decl = parse_aggregate_decl()) {
         return decl;
@@ -237,6 +242,46 @@ std::shared_ptr<ast::namespace_decl> parser::parse_namespace_decl()
     }
 
     return std::make_shared<ast::namespace_decl>(*ns, *open_par, *close_par, name, declarations);
+}
+
+std::shared_ptr<ast::using_decl> parser::parse_using_decl()
+{
+    lex::lex_holder holder(_lexer);
+
+    // Expect the 'using' keyword
+    auto lusing = _lexer.get();
+    if (lusing != lex::keyword::USING) {
+        holder.rollback();
+        return {};
+    }
+
+    // Optionally consume a type filter keyword: namespace, struct, interface, class
+    std::optional<lex::keyword> element_filter;
+    auto lfilter = _lexer.get();
+    if (lfilter == lex::keyword::NAMESPACE ||
+        lfilter == lex::keyword::STRUCT ||
+        lfilter == lex::keyword::INTERFACE ||
+        lfilter == lex::keyword::CLASS) {
+        element_filter = lex::as<lex::keyword>(lfilter);
+    } else {
+        _lexer.unget();
+    }
+
+    // Expect a qualified identifier
+    auto qname = parse_qualified_identifier();
+    if (!qname || qname->names.empty()) {
+        throw_error(0x0060, _lexer.pick_current(), "Using declaration expects a qualified identifier after 'using'");
+    }
+
+    // Expect a semicolon
+    if (auto lsemicolon = _lexer.get(); lsemicolon != lex::punctuator::SEMICOLON) {
+        throw_error(0x0061, _lexer.pick_current(), "Semicolon is missing at end of using declaration");
+    }
+
+    return std::make_shared<ast::using_decl>(
+            lex::as<lex::keyword>(lusing),
+            element_filter,
+            std::move(qname));
 }
 
 std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
@@ -1427,6 +1472,10 @@ std::shared_ptr<ast::statement> parser::parse_statement()
 
     if(auto for_stmt = parse_for_statement()) {
         return for_stmt;
+    }
+
+    if(auto using_stmt = parse_using_decl()) {
+        return using_stmt;
     }
 
     if(auto var = parse_variable_decl()) {

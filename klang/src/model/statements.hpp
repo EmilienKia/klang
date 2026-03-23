@@ -202,7 +202,7 @@ public:
 /**
  * For statement
  */
-class for_statement : public statement , public variable_holder
+class for_statement : public statement , public variable_holder, public using_holder
 {
 protected:
     std::shared_ptr<variable_statement> _decl_stmt;
@@ -359,7 +359,7 @@ public:
 /**
  * Statement block.
  */
-class block : public statement , public variable_holder {
+class block : public statement , public variable_holder, public using_holder {
 protected:
     friend class function;
 

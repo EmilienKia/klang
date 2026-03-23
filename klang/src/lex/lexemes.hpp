@@ -141,8 +141,8 @@ struct keyword : public lexeme {
         DELETE,
         NEW,
         ENUM,
-        OPERATOR
-        /* TODO add new lexeme definition here. */
+        OPERATOR,
+        USING
     };
 
     type_t type;
