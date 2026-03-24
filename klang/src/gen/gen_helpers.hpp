@@ -198,6 +198,62 @@ inline void emit_owner_cleanup_if_nonnull(
     builder->SetInsertPoint(done_bb);
 }
 
+/**
+ * Emit cleanup for all elements of a stack-allocated sized array.
+ *
+ * For struct elements with a destructor: calls the destructor on each element
+ * in reverse order.
+ * For owner elements: calls emit_owner_cleanup_if_nonnull on each element
+ * in reverse order (conditional destroy+free, then null out the slot).
+ *
+ * @param builder     The IRBuilder positioned at the insertion point.
+ * @param mod         The LLVM module.
+ * @param functions   Map from K model functions to LLVM functions (for dtor lookup).
+ * @param arr_alloca  The alloca for the sized array variable (points to { i32, [N x T] }).
+ * @param arr_type    The K model sized_array_type.
+ */
+inline void emit_sized_array_elements_cleanup(
+    llvm::IRBuilder<>* builder,
+    llvm::Module& mod,
+    const std::map<std::shared_ptr<function>, llvm::Function*>& functions,
+    llvm::Value* arr_alloca,
+    const std::shared_ptr<sized_array_type>& arr_type)
+{
+    auto elem_type = arr_type->get_subtype();
+    auto* struct_llvm = arr_type->get_llvm_struct_type();
+    auto* llvm_arr_type = arr_type->get_llvm_data_array_type();
+    if (!struct_llvm || !llvm_arr_type) return;
+    size_t arr_size = arr_type->get_size();
+
+    llvm::Value* data_ptr = builder->CreateStructGEP(struct_llvm, arr_alloca,
+        sized_array_type::FIELD_DATA, "arr_cleanup_data");
+
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+        // Struct elements: call destructors in reverse order
+        auto st = st_type->get_struct();
+        auto dtor = st ? st->get_destructor() : nullptr;
+        if (!dtor) return;
+        auto dtor_it = functions.find(dtor->shared_as<function>());
+        if (dtor_it == functions.end()) return;
+        for (size_t ri = arr_size; ri > 0; --ri) {
+            size_t i = ri - 1;
+            llvm::Value* elem_ptr = builder->CreateConstInBoundsGEP2_32(
+                llvm_arr_type, data_ptr, 0, i, "arr_dtor_" + std::to_string(i));
+            builder->CreateCall(dtor_it->second, {elem_ptr});
+        }
+    } else if (auto own_elem = std::dynamic_pointer_cast<owner_type>(elem_type)) {
+        // Owner elements: conditional destroy+free each in reverse order
+        for (size_t ri = arr_size; ri > 0; --ri) {
+            size_t i = ri - 1;
+            llvm::Value* elem_ptr = builder->CreateConstInBoundsGEP2_32(
+                llvm_arr_type, data_ptr, 0, i, "arr_own_" + std::to_string(i));
+            emit_owner_cleanup_if_nonnull(builder, mod, functions,
+                elem_ptr, own_elem->get_owned_type(),
+                "arr_own_cleanup_" + std::to_string(i));
+        }
+    }
+}
+
 } // namespace k::model::gen
 
 namespace k::model::gen {

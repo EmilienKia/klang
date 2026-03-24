@@ -760,6 +760,9 @@ public:
 
     void arguments(const std::vector<std::shared_ptr<expression>> &arguments) {
         _arguments = arguments;
+        for (auto &arg : _arguments) {
+            if (arg) arg->set_parent_expression(shared_as<expression>());
+        }
     }
 
     /** Replace all arguments, properly setting their parent expression. */
@@ -860,6 +863,9 @@ public:
 
     void arguments(const std::vector<std::shared_ptr<expression>> &arguments) {
         _arguments = arguments;
+        for (auto &arg : _arguments) {
+            if (arg) arg->set_parent_expression(shared_as<expression>());
+        }
     }
 
     size_t size() const {

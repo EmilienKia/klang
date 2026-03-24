@@ -304,7 +304,10 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
 
             // Get 'this' pointer
             llvm::Value* this_value_ref = nullptr;
-            auto func = std::dynamic_pointer_cast<function>(symbol.find_statement()->get_function());
+            auto enclosing_stmt = symbol.find_statement();
+            auto func = enclosing_stmt
+                ? std::dynamic_pointer_cast<function>(enclosing_stmt->get_function())
+                : nullptr;
             if(!func) {
                 throw_internal_error(0x0001, symbol.first_lexeme(),
                     "Internal error: cannot find enclosing function context for member variable '{}' access; "

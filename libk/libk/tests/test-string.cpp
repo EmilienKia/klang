@@ -162,7 +162,7 @@ TEST_CASE("String.at() — character access", "[libk][string]") {
             buf : char[]! = new char[sz];
             buf[0] = 'A'; buf[1] = 'B'; buf[2] = 'C'; buf[3] = '\0';
             s : k::String(buf, 3u);
-            return s.at(0);
+            return s.at(0u);
         }
 
         test_at1() : char {
@@ -170,7 +170,7 @@ TEST_CASE("String.at() — character access", "[libk][string]") {
             buf : char[]! = new char[sz];
             buf[0] = 'A'; buf[1] = 'B'; buf[2] = 'C'; buf[3] = '\0';
             s : k::String(buf, 3u);
-            return s.at(1);
+            return s.at(1u);
         }
 
         test_at2() : char {
@@ -178,7 +178,7 @@ TEST_CASE("String.at() — character access", "[libk][string]") {
             buf : char[]! = new char[sz];
             buf[0] = 'A'; buf[1] = 'B'; buf[2] = 'C'; buf[3] = '\0';
             s : k::String(buf, 3u);
-            return s.at(2);
+            return s.at(2u);
         }
     )SRC");
     REQUIRE(jit);
@@ -197,27 +197,27 @@ TEST_CASE("String.at() — character access", "[libk][string]") {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 5. StringBuilder — append_char and size
+// 5. StringBuilder — appendChar and size
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("StringBuilder append_char and size", "[libk][string][builder]") {
+TEST_CASE("StringBuilder appendChar and size", "[libk][string][builder]") {
     auto jit = jit_k(R"SRC(
-        module __sb_append_char__;
+        module __sb_appendChar__;
 
         test_append_size() : unsigned int {
             sb : k::StringBuilder;
-            sb.append_char('A');
-            sb.append_char('B');
-            sb.append_char('C');
+            sb.appendChar('A');
+            sb.appendChar('B');
+            sb.appendChar('C');
             return sb.size();
         }
 
         test_append_content() : int {
             sb : k::StringBuilder;
-            sb.append_char('X');
-            sb.append_char('Y');
-            if (sb.char_at(0) != 'X') return 1;
-            if (sb.char_at(1) != 'Y') return 2;
+            sb.appendChar('X');
+            sb.appendChar('Y');
+            if (sb.charAt(0) != 'X') return 1;
+            if (sb.charAt(1) != 'Y') return 2;
             return 0;
         }
     )SRC");
@@ -242,15 +242,15 @@ TEST_CASE("StringBuilder clear resets to empty", "[libk][string][builder]") {
 
         test_clear_size() : unsigned int {
             sb : k::StringBuilder;
-            sb.append_char('A');
-            sb.append_char('B');
+            sb.appendChar('A');
+            sb.appendChar('B');
             sb.clear();
             return sb.size();
         }
 
         test_clear_empty() : int {
             sb : k::StringBuilder;
-            sb.append_char('X');
+            sb.appendChar('X');
             sb.clear();
             if (sb.empty()) return 1;
             return 0;
@@ -343,29 +343,29 @@ TEST_CASE("StringBuilder drain constructor — content", "[libk][string][builder
 
         test_size() : unsigned int {
             src : k::StringBuilder;
-            src.append_char('A');
-            src.append_char('B');
-            src.append_char('C');
+            src.appendChar('A');
+            src.appendChar('B');
+            src.appendChar('C');
             dst : k::StringBuilder(#src);
             return dst.size();
         }
 
         test_char0() : char {
             src : k::StringBuilder;
-            src.append_char('A');
-            src.append_char('B');
-            src.append_char('C');
+            src.appendChar('A');
+            src.appendChar('B');
+            src.appendChar('C');
             dst : k::StringBuilder(#src);
-            return dst.char_at(0);
+            return dst.charAt(0);
         }
 
         test_char2() : char {
             src : k::StringBuilder;
-            src.append_char('A');
-            src.append_char('B');
-            src.append_char('C');
+            src.appendChar('A');
+            src.appendChar('B');
+            src.appendChar('C');
             dst : k::StringBuilder(#src);
-            return dst.char_at(2);
+            return dst.charAt(2);
         }
     )SRC");
     REQUIRE(jit);
@@ -389,8 +389,8 @@ TEST_CASE("StringBuilder drain constructor — source is drained", "[libk][strin
 
         test_src_empty_after_drain() : int {
             src : k::StringBuilder;
-            src.append_char('X');
-            src.append_char('Y');
+            src.appendChar('X');
+            src.appendChar('Y');
             dst : k::StringBuilder(#src);
             // After drain, source should be empty
             if (src.empty()) return 1;
@@ -399,8 +399,8 @@ TEST_CASE("StringBuilder drain constructor — source is drained", "[libk][strin
 
         test_src_size_after_drain() : unsigned int {
             src : k::StringBuilder;
-            src.append_char('X');
-            src.append_char('Y');
+            src.appendChar('X');
+            src.appendChar('Y');
             dst : k::StringBuilder(#src);
             return src.size();
         }
@@ -450,24 +450,24 @@ TEST_CASE("StringBuilder drain then reuse source", "[libk][string][builder][drai
 
         test_reuse_after_drain() : unsigned int {
             src : k::StringBuilder;
-            src.append_char('A');
-            src.append_char('B');
+            src.appendChar('A');
+            src.appendChar('B');
             dst : k::StringBuilder(#src);
             // Source is now empty; reuse it
-            src.append_char('X');
-            src.append_char('Y');
-            src.append_char('Z');
+            src.appendChar('X');
+            src.appendChar('Y');
+            src.appendChar('Z');
             return src.size();
         }
 
         test_reuse_content() : char {
             src : k::StringBuilder;
-            src.append_char('A');
-            src.append_char('B');
+            src.appendChar('A');
+            src.appendChar('B');
             dst : k::StringBuilder(#src);
             // Source is now empty; reuse it
-            src.append_char('Q');
-            return src.char_at(0);
+            src.appendChar('Q');
+            return src.charAt(0);
         }
     )SRC");
     REQUIRE(jit);
@@ -480,4 +480,183 @@ TEST_CASE("StringBuilder drain then reuse source", "[libk][string][builder][drai
     REQUIRE(test_content);
     CHECK(test_content() == 'Q');
 }
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 9. StringBuilder — copy constructor
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("StringBuilder copy constructor — size and content", "[libk][string][builder][copy]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_copy_ctor__;
+
+        test_copy_size() : unsigned int {
+            src : k::StringBuilder("hello");
+            dst : k::StringBuilder(src);
+            return dst.size();
+        }
+
+        test_copy_content() : int {
+            src : k::StringBuilder("hello");
+            dst : k::StringBuilder(src);
+            if (dst.charAt(0u) != 'h') return 1;
+            if (dst.charAt(4u) != 'o') return 2;
+            return 0;
+        }
+
+        test_copy_equality() : int {
+            src : k::StringBuilder("hello");
+            dst : k::StringBuilder(src);
+            if (src == dst) return 1;
+            return 0;
+        }
+
+        test_copy_independence() : int {
+            src : k::StringBuilder("hello");
+            dst : k::StringBuilder(src);
+            src.append(" world");
+            // dst should still be "hello"
+            if (dst.size() == 5u) return 1;
+            return 0;
+        }
+
+        test_copy_empty() : int {
+            src : k::StringBuilder;
+            dst : k::StringBuilder(src);
+            if (dst.empty()) return 1;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_copy_size = jit->lookup_symbol<unsigned(*)()>("test_copy_size");
+    REQUIRE(test_copy_size);
+    CHECK(test_copy_size() == 5);
+
+    auto test_copy_content = jit->lookup_symbol<int(*)()>("test_copy_content");
+    REQUIRE(test_copy_content);
+    CHECK(test_copy_content() == 0);
+
+    auto test_copy_equality = jit->lookup_symbol<int(*)()>("test_copy_equality");
+    REQUIRE(test_copy_equality);
+    CHECK(test_copy_equality() == 1);
+
+    auto test_copy_independence = jit->lookup_symbol<int(*)()>("test_copy_independence");
+    REQUIRE(test_copy_independence);
+    CHECK(test_copy_independence() == 1);
+
+    auto test_copy_empty = jit->lookup_symbol<int(*)()>("test_copy_empty");
+    REQUIRE(test_copy_empty);
+    CHECK(test_copy_empty() == 1);
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 10. StringBuilder — append(String)
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("StringBuilder append(String)", "[libk][string][builder]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_append_str__;
+
+        test_append_str_size() : unsigned int {
+            sb : k::StringBuilder("hello");
+            s : k::String(" world");
+            sb.append(s);
+            return sb.size();
+        }
+
+        test_append_str_content() : int {
+            sb : k::StringBuilder("hello");
+            s : k::String(" world");
+            sb.append(s);
+            result : k::String(sb);
+            expected : k::String("hello world");
+            if (result == expected) return 1;
+            return 0;
+        }
+
+        test_append_empty_str() : int {
+            sb : k::StringBuilder("hello");
+            s : k::String;
+            sb.append(s);
+            if (sb.size() == 5u) return 1;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_append_str_size = jit->lookup_symbol<unsigned(*)()>("test_append_str_size");
+    REQUIRE(test_append_str_size);
+    CHECK(test_append_str_size() == 11);
+
+    auto test_append_str_content = jit->lookup_symbol<int(*)()>("test_append_str_content");
+    REQUIRE(test_append_str_content);
+    CHECK(test_append_str_content() == 1);
+
+    auto test_append_empty_str = jit->lookup_symbol<int(*)()>("test_append_empty_str");
+    REQUIRE(test_append_empty_str);
+    CHECK(test_append_empty_str() == 1);
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 11. String — construction from multi-fragment StringBuilder
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("String from multi-fragment StringBuilder", "[libk][string][builder]") {
+    auto jit = jit_k(R"SRC(
+        module __str_from_multifrag_sb__;
+
+        test_size() : unsigned int {
+            sb : k::StringBuilder("hello");
+            sb.append(" ");
+            sb.append("beautiful");
+            sb.append(" ");
+            sb.append("world");
+            s : k::String(sb);
+            return s.size();
+        }
+
+        test_content() : int {
+            sb : k::StringBuilder("hello");
+            sb.append(" ");
+            sb.append("beautiful");
+            sb.append(" ");
+            sb.append("world");
+            s : k::String(sb);
+            expected : k::String("hello beautiful world");
+            if (s == expected) return 1;
+            return 0;
+        }
+
+        test_at_boundary() : int {
+            sb : k::StringBuilder("AB");
+            sb.append("CD");
+            sb.append("EF");
+            s : k::String(sb);
+            if (s.at(0u) != 'A') return 1;
+            if (s.at(1u) != 'B') return 2;
+            if (s.at(2u) != 'C') return 3;
+            if (s.at(3u) != 'D') return 4;
+            if (s.at(4u) != 'E') return 5;
+            if (s.at(5u) != 'F') return 6;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_size = jit->lookup_symbol<unsigned(*)()>("test_size");
+    REQUIRE(test_size);
+    CHECK(test_size() == 21);
+
+    auto test_content = jit->lookup_symbol<int(*)()>("test_content");
+    REQUIRE(test_content);
+    CHECK(test_content() == 1);
+
+    auto test_at_boundary = jit->lookup_symbol<int(*)()>("test_at_boundary");
+    REQUIRE(test_at_boundary);
+    CHECK(test_at_boundary() == 0);
+}
+
 

@@ -218,9 +218,9 @@ TEST_CASE("StringBuilder from string literal — explicit construction", "[libk]
             return 1;
         }
 
-        test_char_at() : char {
+        test_charAt() : char {
             sb : k::StringBuilder("hello");
-            return sb.char_at(1);
+            return sb.charAt(1);
         }
     )SRC");
     REQUIRE(jit);
@@ -233,9 +233,9 @@ TEST_CASE("StringBuilder from string literal — explicit construction", "[libk]
     REQUIRE(test_empty);
     CHECK(test_empty() == 1);
 
-    auto test_char_at = jit->lookup_symbol<char(*)()>("test_char_at");
-    REQUIRE(test_char_at);
-    CHECK(test_char_at() == 'e');
+    auto test_charAt = jit->lookup_symbol<char(*)()>("test_charAt");
+    REQUIRE(test_charAt);
+    CHECK(test_charAt() == 'e');
 }
 
 TEST_CASE("StringBuilder from string literal — implicit construction", "[libk][string][builder][literal]") {
@@ -247,9 +247,9 @@ TEST_CASE("StringBuilder from string literal — implicit construction", "[libk]
             return sb.size();
         }
 
-        test_char_at() : char {
+        test_charAt() : char {
             sb : k::StringBuilder = "test";
-            return sb.char_at(0);
+            return sb.charAt(0);
         }
     )SRC");
     REQUIRE(jit);
@@ -258,9 +258,9 @@ TEST_CASE("StringBuilder from string literal — implicit construction", "[libk]
     REQUIRE(test_size);
     CHECK(test_size() == 4);
 
-    auto test_char_at = jit->lookup_symbol<char(*)()>("test_char_at");
-    REQUIRE(test_char_at);
-    CHECK(test_char_at() == 't');
+    auto test_charAt = jit->lookup_symbol<char(*)()>("test_charAt");
+    REQUIRE(test_charAt);
+    CHECK(test_charAt() == 't');
 }
 
 TEST_CASE("StringBuilder from empty string literal", "[libk][string][builder][literal]") {
@@ -306,8 +306,8 @@ TEST_CASE("StringBuilder append string literal", "[libk][string][builder][litera
         test_append_content() : int {
             sb : k::StringBuilder;
             sb.append("XY");
-            if (sb.char_at(0) != 'X') return 1;
-            if (sb.char_at(1) != 'Y') return 2;
+            if (sb.charAt(0) != 'X') return 1;
+            if (sb.charAt(1) != 'Y') return 2;
             return 0;
         }
 
@@ -323,10 +323,10 @@ TEST_CASE("StringBuilder append string literal", "[libk][string][builder][litera
             sb : k::StringBuilder;
             sb.append("AB");
             sb.append("CD");
-            if (sb.char_at(0) != 'A') return 1;
-            if (sb.char_at(1) != 'B') return 2;
-            if (sb.char_at(2) != 'C') return 3;
-            if (sb.char_at(3) != 'D') return 4;
+            if (sb.charAt(0) != 'A') return 1;
+            if (sb.charAt(1) != 'B') return 2;
+            if (sb.charAt(2) != 'C') return 3;
+            if (sb.charAt(3) != 'D') return 4;
             return 0;
         }
     )SRC");
@@ -353,35 +353,35 @@ TEST_CASE("StringBuilder append string literal", "[libk][string][builder][litera
 // 4. Character literals with StringBuilder
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("StringBuilder append_char with char literals", "[libk][string][builder][literal][char]") {
+TEST_CASE("StringBuilder appendChar with char literals", "[libk][string][builder][literal][char]") {
     auto jit = jit_k(R"SRC(
         module __sb_charlit__;
 
-        test_append_chars() : unsigned int {
+        test_appendChars() : unsigned int {
             sb : k::StringBuilder;
-            sb.append_char('H');
-            sb.append_char('i');
+            sb.appendChar('H');
+            sb.appendChar('i');
             return sb.size();
         }
 
-        test_append_chars_content() : int {
+        test_appendChars_content() : int {
             sb : k::StringBuilder;
-            sb.append_char('H');
-            sb.append_char('i');
-            if (sb.char_at(0) != 'H') return 1;
-            if (sb.char_at(1) != 'i') return 2;
+            sb.appendChar('H');
+            sb.appendChar('i');
+            if (sb.charAt(0) != 'H') return 1;
+            if (sb.charAt(1) != 'i') return 2;
             return 0;
         }
     )SRC");
     REQUIRE(jit);
 
-    auto test_append_chars = jit->lookup_symbol<unsigned(*)()>("test_append_chars");
-    REQUIRE(test_append_chars);
-    CHECK(test_append_chars() == 2);
+    auto test_appendChars = jit->lookup_symbol<unsigned(*)()>("test_appendChars");
+    REQUIRE(test_appendChars);
+    CHECK(test_appendChars() == 2);
 
-    auto test_append_chars_content = jit->lookup_symbol<int(*)()>("test_append_chars_content");
-    REQUIRE(test_append_chars_content);
-    CHECK(test_append_chars_content() == 0);
+    auto test_appendChars_content = jit->lookup_symbol<int(*)()>("test_appendChars_content");
+    REQUIRE(test_appendChars_content);
+    CHECK(test_appendChars_content() == 0);
 }
 
 TEST_CASE("StringBuilder mix string literal and char literal", "[libk][string][builder][literal]") {
@@ -390,11 +390,11 @@ TEST_CASE("StringBuilder mix string literal and char literal", "[libk][string][b
 
         test_mix() : int {
             sb : k::StringBuilder("hello");
-            sb.append_char('!');
+            sb.appendChar('!');
             if (sb.size() != 6) return 1;
-            if (sb.char_at(0) != 'h') return 2;
-            if (sb.char_at(4) != 'o') return 3;
-            if (sb.char_at(5) != '!') return 4;
+            if (sb.charAt(0) != 'h') return 2;
+            if (sb.charAt(4) != 'o') return 3;
+            if (sb.charAt(5) != '!') return 4;
             return 0;
         }
     )SRC");
@@ -483,14 +483,14 @@ TEST_CASE("StringBuilder to String conversion from literal", "[libk][string][bui
 
         test_convert_size() : unsigned int {
             sb : k::StringBuilder("hello");
-            sb.append_char('!');
+            sb.appendChar('!');
             s : k::String(sb);
             return s.size();
         }
 
         test_convert_content() : int {
             sb : k::StringBuilder("AB");
-            sb.append_char('C');
+            sb.appendChar('C');
             s : k::String(sb);
             if (s.at(0) != 'A') return 1;
             if (s.at(1) != 'B') return 2;
@@ -520,14 +520,14 @@ TEST_CASE("String from StringBuilder built with string and char literals", "[lib
         test_size() : unsigned int {
             sb : k::StringBuilder("Hello");
             sb.append(" ");
-            sb.append_char('W');
+            sb.appendChar('W');
             s : k::String(sb);
             return s.size();
         }
 
         test_content() : int {
             sb : k::StringBuilder("Hi");
-            sb.append_char('!');
+            sb.appendChar('!');
             s : k::String(sb);
             if (s.at(0) != 'H') return 1;
             if (s.at(1) != 'i') return 2;

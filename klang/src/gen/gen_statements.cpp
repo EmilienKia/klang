@@ -371,6 +371,10 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
                 } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
                     emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
                         alloca, own_type->get_owned_type(), "ret_owner");
+                } else if (auto arr_type = std::dynamic_pointer_cast<sized_array_type>(vt)) {
+                    // Sized array of owners or structs-with-dtors: cleanup each element
+                    emit_sized_array_elements_cleanup(_builder.get(), get_module(),
+                        _context->_functions, alloca, arr_type);
                 }
             }
         }
