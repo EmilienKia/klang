@@ -19,6 +19,28 @@ set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
 set(LIBK_A   ${LIBK_OUTPUT_DIR}/libk.a)
 set(LIBK_KDI ${LIBK_OUTPUT_DIR}/libk.kdi)
 set(LIBK_KDI_LINK ${LIBK_OUTPUT_DIR}/k.kdi)
+
+# ── Compile the C runtime helpers (fatal error functions) ────────────────
+# These are compiled to a .o and passed to klangc so they end up in both
+# libk.so and libk.a.  Every K module resolves the fatal symbols from libk
+# instead of duplicating them.
+set(FATAL_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/fatal.c)
+set(FATAL_OBJ ${LIBK_OUTPUT_DIR}/fatal.o)
+
+set(FATAL_C_FLAGS -c -fPIC)
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    list(APPEND FATAL_C_FLAGS -DNDEBUG)
+endif()
+
+add_custom_command(
+    OUTPUT  ${FATAL_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -o ${FATAL_OBJ} ${FATAL_C}
+    DEPENDS ${FATAL_C}
+    COMMENT "Compiling K runtime fatal helpers (fatal.c)"
+    VERBATIM
+)
+
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
     OUTPUT  ${LIBK_SO} ${LIBK_A} ${LIBK_KDI}
@@ -26,7 +48,8 @@ add_custom_command(
             --dyn-lib --static-lib
             --module-name k
             ${LIBK_SOURCES}
-    DEPENDS klangc ${LIBK_SOURCES}
+            ${FATAL_OBJ}
+    DEPENDS klangc ${LIBK_SOURCES} ${FATAL_OBJ}
     WORKING_DIRECTORY ${LIBK_OUTPUT_DIR}
     COMMENT "Compiling K base standard library (module k)"
     VERBATIM

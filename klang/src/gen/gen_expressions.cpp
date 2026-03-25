@@ -753,7 +753,7 @@ void implementation_generator::visit_dereference_expression(dereference_expressi
     if (std::dynamic_pointer_cast<pointer_type>(inner_type) ||
         std::dynamic_pointer_cast<view_type>(inner_type) ||
         std::dynamic_pointer_cast<owner_type>(inner_type)) {
-        auto* fatal = get_or_declare_fatal_null_function("__fatal_null_dereference");
+        auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_dereference");
         emit_null_check(_value, fatal, "deref");
     }
     // _value now holds the raw pointer — acts as a reference to the pointed object
@@ -1367,7 +1367,7 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
     if (std::dynamic_pointer_cast<pointer_type>(inner_type) ||
         std::dynamic_pointer_cast<view_type>(inner_type) ||
         std::dynamic_pointer_cast<owner_type>(inner_type)) {
-        auto* fatal = get_or_declare_fatal_null_function("__fatal_null_dereference");
+        auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_dereference");
         emit_null_check(_value, fatal, "arrow");
     }
 
@@ -2477,7 +2477,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 // Null-check for nullable indirections
                 if (std::dynamic_pointer_cast<pointer_type>(inner) ||
                     std::dynamic_pointer_cast<view_type>(inner)) {
-                    auto* fatal = get_or_declare_fatal_null_function("__fatal_null_dereference");
+                    auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_dereference");
                     emit_null_check(this_val, fatal, "pm_arrow");
                 }
             }
@@ -5024,7 +5024,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                         }
                     }
                     if (effective_type && type::is_nullable_indirection(effective_type)) {
-                        auto* fatal = get_or_declare_fatal_null_function("__fatal_null_assignation");
+                        auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_assignation");
                         emit_null_check(_value, fatal, "link_ctor");
                     }
                 }
@@ -6208,7 +6208,7 @@ void implementation_generator::emit_dynamic_cast(
 
     // ── 8. Fatal-null check for lnk/ref targets ───────────────────────────────
     if (expr.null_is_fatal()) {
-        auto* fatal_fn = get_or_declare_fatal_null_function("__fatal_null_dyncast");
+        auto* fatal_fn = get_or_declare_fatal_null_function("__k_fatal_null_dyncast");
         emit_null_check(result, fatal_fn, "dyncast");
     }
 
@@ -6231,15 +6231,7 @@ llvm::Function* implementation_generator::get_or_declare_fatal_null_function(con
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::NoUnwind);
     fn->addFnAttr(llvm::Attribute::Cold);
-    auto* entry = llvm::BasicBlock::Create(llvm_ctx, "entry", fn);
-    llvm::IRBuilder<> b(entry);
-#ifdef NDEBUG
-    auto* trap_fn = llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::trap);
-#else
-    auto* trap_fn = llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::debugtrap);
-#endif
-    b.CreateCall(trap_fn, {});
-    b.CreateUnreachable();
+    // Body is provided by libk — only emit the extern declaration.
     return fn;
 }
 

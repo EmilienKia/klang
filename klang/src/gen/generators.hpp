@@ -365,7 +365,7 @@ protected:
     void optimize_function_dead_inst_elimination(llvm::Function& func);
 
     /**
-     * Emit or retrieve the declaration of @__fatal_null_assignation or @__fatal_null_dereference.
+     * Emit or retrieve the declaration of @__k_fatal_null_assignation or @__k_fatal_null_dereference.
      * The function is declared as: void() noreturn nounwind cold, calling llvm.trap or llvm.debugtrap.
      */
     llvm::Function* get_or_declare_fatal_null_function(const std::string& name);

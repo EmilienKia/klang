@@ -259,78 +259,33 @@ inline void emit_sized_array_elements_cleanup(
 namespace k::model::gen {
 
 /**
- * Get or create the __k_array_bounds_check_failed(index, size) function
- * in the given module. The function body is emitted directly in LLVM IR so
- * the generated code is self-contained (works for both JIT and AOT).
- *
- * The body calls fprintf(stderr, ...) then abort().
+ * Get or declare the __k_fatal_array_bounds_check_failed(index, size) function
+ * in the given module.  The actual body is provided by libk (fatal.c),
+ * so this only emits an extern declaration.
  */
 inline llvm::Function* get_or_create_bounds_check_failed_fn(
     llvm::Module& mod)
 {
-    if (auto* existing = mod.getFunction("__k_array_bounds_check_failed"))
+    if (auto* existing = mod.getFunction("__k_fatal_array_bounds_check_failed"))
         return existing;
 
     auto& ctx = mod.getContext();
     auto* i32_ty  = llvm::Type::getInt32Ty(ctx);
     auto* void_ty = llvm::Type::getVoidTy(ctx);
-    auto* ptr_ty  = llvm::PointerType::get(ctx, 0);
 
-    // Declare fprintf(ptr, ptr, ...) -> i32
-    llvm::Function* fprintf_fn = mod.getFunction("fprintf");
-    if (!fprintf_fn) {
-        auto* fprintf_ty = llvm::FunctionType::get(i32_ty, {ptr_ty, ptr_ty}, /*isVarArg=*/true);
-        fprintf_fn = llvm::Function::Create(fprintf_ty, llvm::Function::ExternalLinkage, "fprintf", mod);
-    }
-
-    // Declare abort() -> void
-    llvm::Function* abort_fn = mod.getFunction("abort");
-    if (!abort_fn) {
-        auto* abort_ty = llvm::FunctionType::get(void_ty, false);
-        abort_fn = llvm::Function::Create(abort_ty, llvm::Function::ExternalLinkage, "abort", mod);
-        abort_fn->addFnAttr(llvm::Attribute::NoReturn);
-        abort_fn->addFnAttr(llvm::Attribute::NoUnwind);
-    }
-
-    // Declare stderr as an external global (FILE* — opaque pointer)
-    llvm::GlobalVariable* stderr_var = mod.getGlobalVariable("stderr");
-    if (!stderr_var) {
-        stderr_var = new llvm::GlobalVariable(
-            mod, ptr_ty, false, llvm::GlobalValue::ExternalLinkage, nullptr, "stderr");
-    }
-
-    // Define __k_array_bounds_check_failed(i32 index, i32 size) -> void
+    // Declare __k_fatal_array_bounds_check_failed(i32 index, i32 size) -> void
     auto* fn_ty = llvm::FunctionType::get(void_ty, {i32_ty, i32_ty}, false);
-    auto* fn = llvm::Function::Create(fn_ty, llvm::Function::InternalLinkage,
-                                       "__k_array_bounds_check_failed", mod);
+    auto* fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
+                                       "__k_fatal_array_bounds_check_failed", mod);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::NoUnwind);
-
-    auto* entry_bb = llvm::BasicBlock::Create(ctx, "entry", fn);
-    llvm::IRBuilder<> b(entry_bb);
-
-    // Create the format string as a global constant
-    auto* fmt_str = b.CreateGlobalStringPtr(
-        "runtime error: array index out of bounds (index=%u, size=%u)\n",
-        "__k_bounds_fmt");
-
-    // Load stderr
-    llvm::Value* stderr_val = b.CreateLoad(ptr_ty, stderr_var, "stderr_val");
-
-    // fprintf(stderr, fmt, index, size)
-    auto* idx_arg = fn->getArg(0);
-    auto* sz_arg  = fn->getArg(1);
-    b.CreateCall(fprintf_fn, {stderr_val, fmt_str, idx_arg, sz_arg});
-
-    // abort()
-    b.CreateCall(abort_fn);
-    b.CreateUnreachable();
+    fn->addFnAttr(llvm::Attribute::Cold);
 
     return fn;
 }
 
 /**
- * Emit a runtime bounds check: if (index >= count) __k_array_bounds_check_failed(index, count).
+ * Emit a runtime bounds check: if (index >= count) __k_fatal_array_bounds_check_failed(index, count).
  *
  * @param builder     The IRBuilder positioned at the insertion point.
  * @param mod         The LLVM module.
@@ -347,7 +302,7 @@ inline void emit_array_bounds_check(
 {
     llvm::Function* fail_fn = get_or_create_bounds_check_failed_fn(mod);
 
-    // if (index >= count) { __k_array_bounds_check_failed(index, count); unreachable; }
+    // if (index >= count) { __k_fatal_array_bounds_check_failed(index, count); unreachable; }
     auto& llvm_ctx = builder->getContext();
     auto* fn = builder->GetInsertBlock()->getParent();
     auto* oob_bb  = llvm::BasicBlock::Create(llvm_ctx, label_prefix + "_oob",    fn);

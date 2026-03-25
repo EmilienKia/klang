@@ -108,7 +108,7 @@ attempting a dynamic downcast on struct pointers is a **compile-time error**.
 3. On match: the raw pointer is adjusted (byte-offset subtraction) to point to the start of the
    `Derived` sub-object; the result is assigned.
 4. On mismatch: **null** is assigned.
-5. Null assigned to a non-null target (`+` or `&`) immediately calls `__fatal_null_dyncast()`.
+5. Null assigned to a non-null target (`+` or `&`) immediately calls `__k_fatal_null_dyncast()`.
 
 **Binding constraints:**
 

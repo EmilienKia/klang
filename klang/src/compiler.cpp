@@ -662,10 +662,11 @@ std::vector<std::string> compiler::build_import_link_args() const {
 
     if (!_model_unit) return args;
 
-    // ── -L<dir> flags from the file resolver search paths ─────────────────
+    // ── -L<dir> and -rpath<dir> flags from the file resolver search paths ──
     if (auto plr = std::dynamic_pointer_cast<const path_lookup_file_resolver>(_file_resolver)) {
         for (const auto& dir : plr->get_lib_search_dirs()) {
             args.push_back("-L" + dir.string());
+            args.push_back("-Wl,-rpath," + dir.string());
         }
     }
 

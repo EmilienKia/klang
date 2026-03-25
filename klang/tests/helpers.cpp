@@ -34,7 +34,30 @@
 #include "../src/model/model_builder.hpp"
 #include "../src/model/model_dump.hpp"
 
+/**
+ * Ensure that libk.so is loaded into the current process so that the JIT's
+ * DynamicLibrarySearchGenerator can resolve symbols defined in libk (in
+ * particular the fatal runtime helpers).
+ *
+ * Uses the KLANG_STDLIB_LIB_DIR macro set by CMake; does nothing if the
+ * library has already been loaded.  Returns true on success.
+ */
+static bool ensure_libk_loaded() {
+    static void* libk_handle = nullptr;
+    if (libk_handle)
+        return true;
+    std::string libk_path = std::string(KLANG_STDLIB_LIB_DIR) + "/libk.so";
+    libk_handle = dlopen(libk_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+    if (!libk_handle) {
+        std::cerr << "ensure_libk_loaded: cannot load " << libk_path
+                  << ": " << dlerror() << std::endl;
+        return false;
+    }
+    return true;
+}
+
 std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump, bool optimize) {
+    if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
     try {
         comp->parse_source("", src, optimize, dump);
@@ -51,6 +74,7 @@ std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump, boo
 
 std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool dump, bool optimize) {
     // parse_source always rethrows — compiler_error subclasses propagate directly to the caller.
+    if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
     comp->parse_source("", src, optimize, dump);
     return comp->to_jit();
@@ -62,18 +86,7 @@ std::unique_ptr<k::model::gen::jit> gen_jit_with_stdlib(
     const std::string& stdlib_lib_dir,
     bool dump, bool optimize)
 {
-    // Load libk.so into the current process so the JIT's
-    // DynamicLibrarySearchGenerator can resolve its symbols.
-    static void* libk_handle = nullptr;
-    if (!libk_handle) {
-        std::string libk_path = stdlib_lib_dir + "/libk.so";
-        libk_handle = dlopen(libk_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
-        if (!libk_handle) {
-            std::cerr << "gen_jit_with_stdlib: cannot load " << libk_path
-                      << ": " << dlerror() << std::endl;
-            return nullptr;
-        }
-    }
+    if (!ensure_libk_loaded()) return nullptr;
 
     auto comp = k::compiler::create();
     // Configure the file resolver so `import k;` finds k.kdi.
@@ -96,6 +109,7 @@ std::unique_ptr<k::model::gen::jit> gen_jit_multi(
     std::vector<std::pair<std::string, std::string>> sources,
     bool dump, bool optimize,
     const std::string& forced_module_name) {
+    if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
     try {
         comp->parse_sources(std::move(sources), optimize, dump, forced_module_name);
@@ -112,11 +126,23 @@ std::unique_ptr<k::model::gen::jit> gen_jit_multi_throws(
     std::vector<std::pair<std::string, std::string>> sources,
     bool dump, bool optimize,
     const std::string& forced_module_name) {
+    if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
     comp->parse_sources(std::move(sources), optimize, dump, forced_module_name);
     return comp->to_jit();
 }
 
+
+/**
+ * Create a file resolver that knows where the K standard library lives.
+ * This allows the compiler to add -L<dir> for libk when linking executables
+ * and shared libraries, even when the source code does not `import k;`.
+ */
+static std::shared_ptr<k::path_lookup_file_resolver> make_stdlib_resolver() {
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    return resolver;
+}
 
 bool compile_text(const std::string_view& source, const std::string& out_file) {
     // Ensure LLVM targets are registered before any target lookup.
@@ -143,6 +169,7 @@ bool compile_text(const std::string_view& source, const std::string& out_file) {
             reloc_model);
 
     auto compiler = k::compiler::create(target_machine);
+    compiler->set_file_resolver(make_stdlib_resolver());
     try {
         compiler->parse_source("", source, true, false);
     } catch (const k::log::compiler_error&) {
@@ -369,6 +396,7 @@ k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
 
     // Build resolver with all KDIs and all library search dirs
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
     for (auto& spec : libs) {
         kdi::kdi_file kdi_data = kdi::kdi_read_cbor_file(spec.kdi_path);
         resolver->add_explicit_path(kdi_data.header.module_name, spec.kdi_path);

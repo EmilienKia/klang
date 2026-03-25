@@ -2211,7 +2211,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             }
         }
         if (rhs_type && type::is_nullable_indirection(rhs_type)) {
-            auto* fatal = get_or_declare_fatal_null_function("__fatal_null_assignation");
+            auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_assignation");
             emit_null_check(right, fatal, "link_rebind");
         }
     }

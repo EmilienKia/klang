@@ -73,10 +73,13 @@ add_library(klang-test-helpers STATIC
         tests/helpers.hpp
         tests/helpers.cpp
 )
-target_link_libraries(klang-test-helpers PUBLIC klangcomp ${LLVM_LIBRARIES} fmt::fmt kdi)
+target_link_libraries(klang-test-helpers PUBLIC klangcomp ${LLVM_LIBRARIES} fmt::fmt kdi dl)
 target_include_directories(klang-test-helpers PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/tests
     ${CMAKE_SOURCE_DIR}/libkdi/src
+)
+target_compile_definitions(klang-test-helpers PUBLIC
+    KLANG_STDLIB_LIB_DIR="${KLANG_STDLIB_LIB_DIR}"
 )
 
 add_executable(klang-tests
@@ -134,6 +137,7 @@ add_executable(klang-tests
         tests/test-gen-friend.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
+add_dependencies(klang-tests libk_stdlib)
 
 add_test(NAME klang-tests COMMAND klang-tests)
 
@@ -149,8 +153,8 @@ add_executable(klangc-tests
         tests/test-klangc-object-input.cpp
 )
 target_link_libraries(klangc-tests klang-test-helpers Catch2::Catch2WithMain)
-# Ensure klangc is built before running its integration tests
-add_dependencies(klangc-tests klangc)
+# Ensure klangc and libk are built before running integration tests
+add_dependencies(klangc-tests klangc libk_stdlib)
 
 add_test(NAME klangc-tests COMMAND klangc-tests)
 
