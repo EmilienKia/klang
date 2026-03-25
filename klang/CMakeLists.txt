@@ -135,8 +135,13 @@ add_executable(klang-tests
         tests/test-gen-drain.cpp
         tests/test-gen-using.cpp
         tests/test-gen-friend.cpp
+        tests/test-gen-extern.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
+# Export symbols from the test executable so that the JIT's
+# DynamicLibrarySearchGenerator (dlsym) can resolve extern "C" functions
+# defined in test source files (e.g. test-gen-extern.cpp).
+target_link_options(klang-tests PRIVATE -rdynamic)
 add_dependencies(klang-tests libk_stdlib)
 
 add_test(NAME klang-tests COMMAND klang-tests)

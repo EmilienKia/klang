@@ -740,6 +740,22 @@ namespace k::model {
         bool is_final_func = lex::keyword::has(func.specifiers, lex::keyword::FINAL);
         function->set_final_func(is_final_func);
 
+        // Propagate 'extern' specifier for functions
+        bool is_extern = lex::keyword::has(func.specifiers, lex::keyword::EXTERN);
+        if (is_extern) {
+            if (func.content) {
+                throw_error(0x0080, func.name,
+                    "Extern function '{}' must not have a body; remove the body or the 'extern' specifier",
+                    {func_name});
+            }
+            if (lex::keyword::has(func.specifiers, lex::keyword::ABSTRACT)) {
+                throw_error(0x0081, func.name,
+                    "Function '{}' cannot be both 'extern' and 'abstract'",
+                    {func_name});
+            }
+            function->set_extern(true);
+        }
+
         // Propagate 'abstract' specifier for functions
         if (lex::keyword::has(func.specifiers, lex::keyword::ABSTRACT)) {
             // abstract is only valid on non-static, non-private, non-final member functions of classes/interfaces
@@ -956,6 +972,7 @@ namespace k::model {
                 }
             }
         } else if (!function->is_abstract_func()
+                   && !function->is_extern()
                    && func.aliasing_spec == parse::ast::function_decl::aliasing_spec_t::NONE) {
             // A non-abstract function with no body is only valid inside an interface
             // (where it is implicitly abstract) or when using '-> default'/'-> delete'/'-> target'.

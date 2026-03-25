@@ -1306,6 +1306,13 @@ protected:
     bool _is_abstract_func = false;
 
     /**
+     * True if this function is declared 'extern': it has no body, no K mangling,
+     * and is resolved at link time from an external (C) library.
+     * The symbol name used in the LLVM module is the function's short name (no mangling).
+     */
+    bool _is_extern = false;
+
+    /**
      * Index of this function's slot in the vtable of its owning class.
      * -1 means "not in any vtable".
      */
@@ -1456,6 +1463,14 @@ public:
     bool is_abstract_func() const { return _is_abstract_func; }
     /** Set whether this function is abstract. */
     void set_abstract_func(bool v) { _is_abstract_func = v; }
+
+    /**
+     * True if this function is declared 'extern' (no body; resolved at link time
+     * from an external C library; symbol name = short name, no K mangling).
+     */
+    bool is_extern() const { return _is_extern; }
+    /** Set whether this function is extern. */
+    void set_extern(bool v) { _is_extern = v; }
 
     /**
      * True if this function is an external import (no body in this module).

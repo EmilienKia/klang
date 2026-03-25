@@ -326,7 +326,12 @@ std::shared_ptr<function> function::make_shared(std::shared_ptr<element> parent,
 }
 
 void function::update_mangled_name() {
-    _mangled_name = mangler(get_context()).mangle_function(*this);
+    if (_is_extern) {
+        // Extern functions use their short name as-is (C linkage, no K mangling).
+        _mangled_name = get_short_name();
+    } else {
+        _mangled_name = mangler(get_context()).mangle_function(*this);
+    }
 }
 
 void function::create_this_parameter() {

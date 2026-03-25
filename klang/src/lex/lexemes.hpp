@@ -143,7 +143,8 @@ struct keyword : public lexeme {
         ENUM,
         OPERATOR,
         USING,
-        FRIEND
+        FRIEND,
+        EXTERN
     };
 
     type_t type;

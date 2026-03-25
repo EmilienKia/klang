@@ -410,6 +410,31 @@ void declaration_generator::visit_function(function &function) {
         return;
     }
 
+    // Extern functions: emit a bare LLVM declaration with C linkage (no K mangling).
+    // The symbol name is the function's short name, resolved at link time from
+    // an external (C) library.
+    if (function.is_extern()) {
+        std::vector<llvm::Type*> param_types;
+        for (const auto& param : function.parameters()) {
+            auto ptype = _context->get_llvm_type(param->get_type());
+            if (!ptype) return;
+            param_types.push_back(ptype);
+        }
+        llvm::Type* ret_type = nullptr;
+        if (const auto& ret = function.get_return_type()) {
+            ret_type = _context->get_llvm_type(ret);
+        } else {
+            ret_type = llvm::Type::getVoidTy(**_context);
+        }
+        llvm::FunctionType* func_type = llvm::FunctionType::get(ret_type, param_types, false);
+        // Use the short name (no mangling) — this is the actual C symbol.
+        llvm::Function* func = llvm::Function::Create(
+            func_type, llvm::Function::ExternalLinkage,
+            function.get_short_name(), *_context->_module);
+        _context->_functions.insert({function.shared_as<k::model::function>(), func});
+        return;
+    }
+
     // Parameter types:
     std::vector<llvm::Type*> param_types;
     if (function.is_member()  && !function.is_static()) {
@@ -472,6 +497,10 @@ void implementation_generator::visit_function(function &function) {
     }
     // Abstract functions have no body and must not be materialized.
     if (function.is_abstract_func()) {
+        return;
+    }
+    // Extern functions have no body in this module (resolved at link time).
+    if (function.is_extern()) {
         return;
     }
     // Redirected functions are handled via GlobalAlias in declaration pass.
