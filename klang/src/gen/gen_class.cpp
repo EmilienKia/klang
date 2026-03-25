@@ -355,7 +355,9 @@ llvm::Value* emit_virtual_dispatch_call(
         "vtable_slot_addr");
     llvm::Value* fn_ptr = builder.CreateLoad(ptr_ty, fn_ptr_addr, "fn_ptr");
 
-    return builder.CreateCall(fn_type, fn_ptr, args, result_name);
+    // Void calls (including sret) cannot have a name in LLVM IR.
+    std::string call_name = fn_type->getReturnType()->isVoidTy() ? "" : result_name;
+    return builder.CreateCall(fn_type, fn_ptr, args, call_name);
 }
 
 

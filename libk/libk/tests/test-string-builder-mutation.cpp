@@ -948,11 +948,76 @@ TEST_CASE("StringBuilder += operator", "[libk][string][builder][operators]") {
     CHECK(test_plus_eq() == 1);
 }
 
-// NOTE: StringBuilder operator + test disabled — the K compiler has an LLVM
-// codegen bug when a const method returns a class type by value.
-// TEST_CASE("StringBuilder + operator", "[libk][string][builder][operators]") {
-//     ...disabled...
-// }
+TEST_CASE("StringBuilder + operator", "[libk][string][builder][operators]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_ops_plus__;
+
+        test_plus_content() : int {
+            sb : k::StringBuilder("hello");
+            s : k::String(" world");
+            sb2 : k::StringBuilder = sb + s;
+            result : k::String(sb2);
+            expected : k::String("hello world");
+            if (result == expected) return 1;
+            return 0;
+        }
+
+        test_plus_original_unchanged() : unsigned int {
+            sb : k::StringBuilder("hello");
+            s : k::String(" world");
+            sb2 : k::StringBuilder = sb + s;
+            return sb.size();
+        }
+
+        test_plus_result_size() : unsigned int {
+            sb : k::StringBuilder("hello");
+            s : k::String(" world");
+            sb2 : k::StringBuilder = sb + s;
+            return sb2.size();
+        }
+
+        test_plus_empty_lhs() : int {
+            sb : k::StringBuilder;
+            s : k::String("hello");
+            sb2 : k::StringBuilder = sb + s;
+            result : k::String(sb2);
+            expected : k::String("hello");
+            if (result == expected) return 1;
+            return 0;
+        }
+
+        test_plus_empty_rhs() : int {
+            sb : k::StringBuilder("hello");
+            s : k::String;
+            sb2 : k::StringBuilder = sb + s;
+            result : k::String(sb2);
+            expected : k::String("hello");
+            if (result == expected) return 1;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_plus_content = jit->lookup_symbol<int(*)()>("test_plus_content");
+    REQUIRE(test_plus_content);
+    CHECK(test_plus_content() == 1);
+
+    auto test_plus_original_unchanged = jit->lookup_symbol<unsigned(*)()>("test_plus_original_unchanged");
+    REQUIRE(test_plus_original_unchanged);
+    CHECK(test_plus_original_unchanged() == 5);
+
+    auto test_plus_result_size = jit->lookup_symbol<unsigned(*)()>("test_plus_result_size");
+    REQUIRE(test_plus_result_size);
+    CHECK(test_plus_result_size() == 11);
+
+    auto test_plus_empty_lhs = jit->lookup_symbol<int(*)()>("test_plus_empty_lhs");
+    REQUIRE(test_plus_empty_lhs);
+    CHECK(test_plus_empty_lhs() == 1);
+
+    auto test_plus_empty_rhs = jit->lookup_symbol<int(*)()>("test_plus_empty_rhs");
+    REQUIRE(test_plus_empty_rhs);
+    CHECK(test_plus_empty_rhs() == 1);
+}
 
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1408,3 +1473,186 @@ TEST_CASE("StringBuilder.find and rfind — empty builder", "[libk][string][buil
 }
 
 
+// ═════════════════════════════════════════════════════════════════════════════
+// 20. StringBuilder.count
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("StringBuilder.count — char and String", "[libk][string][builder][search]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_count__;
+
+        test_count_char() : unsigned int {
+            sb : k::StringBuilder("hello world");
+            return sb.count('l');
+        }
+
+        test_count_char_multi_frag() : unsigned int {
+            sb : k::StringBuilder("hel");
+            sb.append("lo wor");
+            sb.append("ld");
+            return sb.count('l');
+        }
+
+        test_count_char_not_found() : unsigned int {
+            sb : k::StringBuilder("hello");
+            return sb.count('z');
+        }
+
+        test_count_str() : unsigned int {
+            sb : k::StringBuilder("abcabcabc");
+            needle : k::String("abc");
+            return sb.count(needle);
+        }
+
+        test_count_str_empty_needle() : unsigned int {
+            sb : k::StringBuilder("hello");
+            needle : k::String;
+            return sb.count(needle);
+        }
+
+        test_count_empty_sb() : unsigned int {
+            sb : k::StringBuilder;
+            return sb.count('a');
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_count_char = jit->lookup_symbol<unsigned(*)()>("test_count_char");
+    REQUIRE(test_count_char);
+    CHECK(test_count_char() == 3);
+
+    auto test_count_char_multi_frag = jit->lookup_symbol<unsigned(*)()>("test_count_char_multi_frag");
+    REQUIRE(test_count_char_multi_frag);
+    CHECK(test_count_char_multi_frag() == 3);
+
+    auto test_count_char_not_found = jit->lookup_symbol<unsigned(*)()>("test_count_char_not_found");
+    REQUIRE(test_count_char_not_found);
+    CHECK(test_count_char_not_found() == 0);
+
+    auto test_count_str = jit->lookup_symbol<unsigned(*)()>("test_count_str");
+    REQUIRE(test_count_str);
+    CHECK(test_count_str() == 3);
+
+    auto test_count_str_empty_needle = jit->lookup_symbol<unsigned(*)()>("test_count_str_empty_needle");
+    REQUIRE(test_count_str_empty_needle);
+    CHECK(test_count_str_empty_needle() == 0);
+
+    auto test_count_empty_sb = jit->lookup_symbol<unsigned(*)()>("test_count_empty_sb");
+    REQUIRE(test_count_empty_sb);
+    CHECK(test_count_empty_sb() == 0);
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 21. StringBuilder.replaceAll
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("StringBuilder.replaceAll", "[libk][string][builder][mutate]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_replace_all__;
+
+        test_replaceAll_basic() : int {
+            sb : k::StringBuilder("hello world hello");
+            needle : k::String("hello");
+            repl : k::String("hi");
+            sb.replaceAll(needle, repl);
+            s : k::String(sb);
+            expected : k::String("hi world hi");
+            if (s == expected) return 1;
+            return 0;
+        }
+
+        test_replaceAll_no_match() : int {
+            sb : k::StringBuilder("hello world");
+            needle : k::String("xyz");
+            repl : k::String("abc");
+            sb.replaceAll(needle, repl);
+            s : k::String(sb);
+            expected : k::String("hello world");
+            if (s == expected) return 1;
+            return 0;
+        }
+
+        test_replaceAll_empty_needle() : int {
+            sb : k::StringBuilder("hello");
+            needle : k::String;
+            repl : k::String("x");
+            sb.replaceAll(needle, repl);
+            if (sb.size() == 5) return 1;
+            return 0;
+        }
+
+        test_replaceAll_longer_replacement() : int {
+            sb : k::StringBuilder("aXbXc");
+            needle : k::String("X");
+            repl : k::String("YY");
+            sb.replaceAll(needle, repl);
+            s : k::String(sb);
+            expected : k::String("aYYbYYc");
+            if (s == expected) return 1;
+            return 0;
+        }
+
+        test_replaceAll_shorter_replacement() : int {
+            sb : k::StringBuilder("aXXbXXc");
+            needle : k::String("XX");
+            repl : k::String("Y");
+            sb.replaceAll(needle, repl);
+            s : k::String(sb);
+            expected : k::String("aYbYc");
+            if (s == expected) return 1;
+            return 0;
+        }
+
+        test_replaceAll_empty_sb() : int {
+            sb : k::StringBuilder;
+            needle : k::String("abc");
+            repl : k::String("xyz");
+            sb.replaceAll(needle, repl);
+            if (sb.empty()) return 1;
+            return 0;
+        }
+
+        test_replaceAll_fluent() : int {
+            sb : k::StringBuilder("aXbYc");
+            n1 : k::String("X");
+            r1 : k::String("1");
+            n2 : k::String("Y");
+            r2 : k::String("2");
+            sb.replaceAll(n1, r1).replaceAll(n2, r2);
+            s : k::String(sb);
+            expected : k::String("a1b2c");
+            if (s == expected) return 1;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_replaceAll_basic = jit->lookup_symbol<int(*)()>("test_replaceAll_basic");
+    REQUIRE(test_replaceAll_basic);
+    CHECK(test_replaceAll_basic() == 1);
+
+    auto test_replaceAll_no_match = jit->lookup_symbol<int(*)()>("test_replaceAll_no_match");
+    REQUIRE(test_replaceAll_no_match);
+    CHECK(test_replaceAll_no_match() == 1);
+
+    auto test_replaceAll_empty_needle = jit->lookup_symbol<int(*)()>("test_replaceAll_empty_needle");
+    REQUIRE(test_replaceAll_empty_needle);
+    CHECK(test_replaceAll_empty_needle() == 1);
+
+    auto test_replaceAll_longer_replacement = jit->lookup_symbol<int(*)()>("test_replaceAll_longer_replacement");
+    REQUIRE(test_replaceAll_longer_replacement);
+    CHECK(test_replaceAll_longer_replacement() == 1);
+
+    auto test_replaceAll_shorter_replacement = jit->lookup_symbol<int(*)()>("test_replaceAll_shorter_replacement");
+    REQUIRE(test_replaceAll_shorter_replacement);
+    CHECK(test_replaceAll_shorter_replacement() == 1);
+
+    auto test_replaceAll_empty_sb = jit->lookup_symbol<int(*)()>("test_replaceAll_empty_sb");
+    REQUIRE(test_replaceAll_empty_sb);
+    CHECK(test_replaceAll_empty_sb() == 1);
+
+    auto test_replaceAll_fluent = jit->lookup_symbol<int(*)()>("test_replaceAll_fluent");
+    REQUIRE(test_replaceAll_fluent);
+    CHECK(test_replaceAll_fluent() == 1);
+}

@@ -580,19 +580,75 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
     }
     llvm::Function* llvm_func = (it != _context->_functions.end()) ? it->second : nullptr;
 
-    // Build the LLVM FunctionType (from llvm_func if available, or from the model)
+    // Build the LLVM FunctionType (from llvm_func if available, or from the model).
+    // When llvm_func is non-null its FunctionType already includes the sret parameter
+    // (if any).  When reconstructing from the model we must mirror what
+    // declaration_generator::visit_function does: prepend a ptr param and use void
+    // return when the return type needs sret ABI.
     auto build_fn_type = [&]() -> llvm::FunctionType* {
         if (llvm_func) return llvm_func->getFunctionType();
         // Reconstruct from model
         std::vector<llvm::Type*> param_types;
+        // sret parameter comes first (before this)
+        bool model_sret = op_func->has_return_type() && needs_sret_return(op_func->get_return_type());
+        if (model_sret)
+            param_types.push_back(llvm::PointerType::get(**_context, 0));
         if (op_func->is_member() && !op_func->is_static() && op_func->get_this_parameter())
             param_types.push_back(_context->get_llvm_type(op_func->get_this_parameter()->get_type()));
         for (const auto& param : op_func->parameters())
             param_types.push_back(_context->get_llvm_type(param->get_type()));
-        llvm::Type* ret_type = op_func->has_return_type()
-            ? _context->get_llvm_type(op_func->get_return_type())
-            : llvm::Type::getVoidTy(**_context);
+        llvm::Type* ret_type = llvm::Type::getVoidTy(**_context);
+        if (op_func->has_return_type() && !model_sret)
+            ret_type = _context->get_llvm_type(op_func->get_return_type());
         return llvm::FunctionType::get(ret_type, param_types, false);
+    };
+
+    // Helper: detect whether an operator call uses sret ABI.
+    auto op_needs_sret = [&]() -> bool {
+        return op_func->has_return_type() && needs_sret_return(op_func->get_return_type());
+    };
+
+    // Helper: allocate an sret temporary, insert it at the front of `args`,
+    // and track it for destructor cleanup.  Returns the sret alloca pointer.
+    auto prepare_sret_for_op = [&](std::vector<llvm::Value*>& args, bool use_sret_destination) -> llvm::AllocaInst* {
+        auto ret_type_nc = type::remove_const(op_func->get_return_type());
+        llvm::Type* llvm_ret = _context->get_llvm_type(ret_type_nc);
+        llvm::AllocaInst* sret_dest = nullptr;
+        bool consumed_sret_dest = false;
+
+        if (use_sret_destination && _sret_destination) {
+            sret_dest = llvm::dyn_cast<llvm::AllocaInst>(_sret_destination);
+            if (!sret_dest) {
+                // _sret_destination is not an alloca — create a temp instead
+                llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+                llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+                sret_dest = entry_builder.CreateAlloca(llvm_ret, nullptr, "op_sret_tmp");
+            } else {
+                _sret_destination = nullptr;
+                consumed_sret_dest = true;
+            }
+        } else {
+            llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+            llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+            sret_dest = entry_builder.CreateAlloca(llvm_ret, nullptr, "op_sret_tmp");
+        }
+
+        args.insert(args.begin(), sret_dest);
+
+        // Track for temporary cleanup only when not consumed from _sret_destination
+        if (!consumed_sret_dest) {
+            auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
+            if (ret_st && ret_st->get_struct()) {
+                auto dtor = ret_st->get_struct()->get_destructor();
+                if (dtor) {
+                    auto dtor_fn = dtor->shared_as<k::model::function>();
+                    auto dtor_it = _context->_functions.find(dtor_fn);
+                    if (dtor_it != _context->_functions.end())
+                        _expression_temporaries.push_back(std::make_pair(sret_dest, dtor_it->second));
+                }
+            }
+        }
+        return sret_dest;
     };
 
     // Build arguments
@@ -636,31 +692,14 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
         auto& di = expr.get_operator_dispatch_info();
         if (di.kind == virtual_dispatch_info::dispatch_kind::VTABLE) {
             llvm::FunctionType* fn_type = build_fn_type();
+            bool is_sret = fn_type->getReturnType()->isVoidTy() && op_needs_sret();
             if (di.dispatch_class) {
                 // Local class: use the standard virtual dispatch helper
-                bool op_vdisp_sret = fn_type->getReturnType()->isVoidTy()
-                    && op_func->has_return_type() && needs_sret_return(op_func->get_return_type());
-                if (op_vdisp_sret) {
-                    auto ret_type_nc = type::remove_const(op_func->get_return_type());
-                    llvm::Type* llvm_ret = _context->get_llvm_type(ret_type_nc);
-                    llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
-                    llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
-                    llvm::AllocaInst* sret_tmp = entry_builder.CreateAlloca(llvm_ret, nullptr, "op_vsret_tmp");
-                    args.insert(args.begin(), sret_tmp);
-                    auto result = emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[1],
+                if (is_sret) {
+                    auto* sret_tmp = prepare_sret_for_op(args, false);
+                    emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[1],
                         di.slot_index, fn_type, args, _context, "op_vcall");
                     _value = sret_tmp;
-                    // Track for cleanup
-                    auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
-                    if (ret_st && ret_st->get_struct()) {
-                        auto dtor = ret_st->get_struct()->get_destructor();
-                        if (dtor) {
-                            auto dtor_fn = dtor->shared_as<k::model::function>();
-                            auto dtor_it = _context->_functions.find(dtor_fn);
-                            if (dtor_it != _context->_functions.end())
-                                _expression_temporaries.push_back(std::make_pair(sret_tmp, dtor_it->second));
-                        }
-                    }
                     return true;
                 }
                 auto result = emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[0],
@@ -679,6 +718,24 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
                 if (struct_llvm_type) {
                     llvm::LLVMContext& llvm_ctx = **_context;
                     llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                    // When sret is used, this_ptr is at args[1] (after sret); GEP on args[0] is wrong
+                    if (is_sret) {
+                        auto* sret_tmp = prepare_sret_for_op(args, false);
+                        // this_ptr is now at args[1]
+                        llvm::Value* vptr_addr = _builder->CreateStructGEP(
+                            struct_llvm_type, args[1], 0, "op_imp_vptr_addr");
+                        llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "op_imp_vptr");
+                        const uint64_t ptr_size = 8;
+                        llvm::Value* slot_offset = llvm::ConstantInt::get(
+                            llvm::Type::getInt64Ty(llvm_ctx),
+                            (di.slot_index + 1) * ptr_size);
+                        llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
+                            llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "op_imp_vtbl_slot");
+                        llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "op_imp_fn_ptr");
+                        _builder->CreateCall(fn_type, fn_ptr, args);
+                        _value = sret_tmp;
+                        return true;
+                    }
                     llvm::Value* vptr_addr = _builder->CreateStructGEP(
                         struct_llvm_type, args[0], 0, "op_imp_vptr_addr");
                     llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "op_imp_vptr");
@@ -704,45 +761,11 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
     }
 
     // Direct call
-    bool op_uses_sret = llvm_func->getReturnType()->isVoidTy()
-        && op_func->has_return_type() && needs_sret_return(op_func->get_return_type());
+    bool op_uses_sret = llvm_func->getReturnType()->isVoidTy() && op_needs_sret();
     if (op_uses_sret) {
-        auto ret_type_nc = type::remove_const(op_func->get_return_type());
-        llvm::Type* llvm_ret = _context->get_llvm_type(ret_type_nc);
-
-        // Use _sret_destination if set (variable init), otherwise create a temp
-        llvm::Value* sret_dest = nullptr;
-        bool consumed_sret_dest = false;
-        if (_sret_destination) {
-            sret_dest = _sret_destination;
-            _sret_destination = nullptr;
-            consumed_sret_dest = true;
-        } else {
-            llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
-            llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
-            sret_dest = entry_builder.CreateAlloca(llvm_ret, nullptr, "op_sret_tmp");
-        }
-
-        args.insert(args.begin(), sret_dest);
+        auto* sret_dest = prepare_sret_for_op(args, true);
         _builder->CreateCall(llvm_func, args);
         _value = sret_dest;
-
-        // Track for temporary cleanup only if this is a temporary (not consumed from _sret_destination)
-        if (!consumed_sret_dest) {
-            auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
-            if (ret_st && ret_st->get_struct()) {
-                auto dtor = ret_st->get_struct()->get_destructor();
-                if (dtor) {
-                    auto dtor_fn = dtor->shared_as<k::model::function>();
-                    auto dtor_it = _context->_functions.find(dtor_fn);
-                    if (dtor_it != _context->_functions.end()) {
-                        if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(sret_dest)) {
-                            _expression_temporaries.push_back(std::make_pair(alloca, dtor_it->second));
-                        }
-                    }
-                }
-            }
-        }
     } else {
         _value = _builder->CreateCall(llvm_func, args,
             llvm_func->getReturnType()->isVoidTy() ? "" : "op_call");
@@ -769,19 +792,49 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
     }
     llvm::Function* llvm_func = (it != _context->_functions.end()) ? it->second : nullptr;
 
-    // Build the LLVM FunctionType (from llvm_func if available, or from the model)
+    // Build the LLVM FunctionType (from llvm_func if available, or from the model).
+    // Must match declaration_generator::visit_function: sret param first, void return.
     auto build_fn_type = [&]() -> llvm::FunctionType* {
         if (llvm_func) return llvm_func->getFunctionType();
         // Reconstruct from model
         std::vector<llvm::Type*> param_types;
+        bool model_sret = op_func->has_return_type() && needs_sret_return(op_func->get_return_type());
+        if (model_sret)
+            param_types.push_back(llvm::PointerType::get(**_context, 0));
         if (op_func->is_member() && !op_func->is_static() && op_func->get_this_parameter())
             param_types.push_back(_context->get_llvm_type(op_func->get_this_parameter()->get_type()));
         for (const auto& param : op_func->parameters())
             param_types.push_back(_context->get_llvm_type(param->get_type()));
-        llvm::Type* ret_type = op_func->has_return_type()
-            ? _context->get_llvm_type(op_func->get_return_type())
-            : llvm::Type::getVoidTy(**_context);
+        llvm::Type* ret_type = llvm::Type::getVoidTy(**_context);
+        if (op_func->has_return_type() && !model_sret)
+            ret_type = _context->get_llvm_type(op_func->get_return_type());
         return llvm::FunctionType::get(ret_type, param_types, false);
+    };
+
+    auto op_needs_sret = [&]() -> bool {
+        return op_func->has_return_type() && needs_sret_return(op_func->get_return_type());
+    };
+
+    // Helper: allocate sret temp, insert at front of args, track cleanup. Returns alloca.
+    auto prepare_sret_for_uop = [&](std::vector<llvm::Value*>& args) -> llvm::AllocaInst* {
+        auto ret_type_nc = type::remove_const(op_func->get_return_type());
+        llvm::Type* llvm_ret = _context->get_llvm_type(ret_type_nc);
+        llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+        llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+        auto* sret_tmp = entry_builder.CreateAlloca(llvm_ret, nullptr, "uop_sret_tmp");
+        args.insert(args.begin(), sret_tmp);
+        // Track for cleanup
+        auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
+        if (ret_st && ret_st->get_struct()) {
+            auto dtor = ret_st->get_struct()->get_destructor();
+            if (dtor) {
+                auto dtor_fn = dtor->shared_as<k::model::function>();
+                auto dtor_it = _context->_functions.find(dtor_fn);
+                if (dtor_it != _context->_functions.end())
+                    _expression_temporaries.push_back(std::make_pair(sret_tmp, dtor_it->second));
+            }
+        }
+        return sret_tmp;
     };
 
     // Build arguments
@@ -810,7 +863,15 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
         auto& di = expr.get_operator_dispatch_info();
         if (di.kind == virtual_dispatch_info::dispatch_kind::VTABLE) {
             llvm::FunctionType* fn_type = build_fn_type();
+            bool is_sret = fn_type->getReturnType()->isVoidTy() && op_needs_sret();
             if (di.dispatch_class) {
+                if (is_sret) {
+                    auto* sret_tmp = prepare_sret_for_uop(args);
+                    emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[1],
+                        di.slot_index, fn_type, args, _context, "uop_vcall");
+                    _value = sret_tmp;
+                    return true;
+                }
                 auto result = emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[0],
                     di.slot_index, fn_type, args, _context, "uop_vcall");
                 if (result) {
@@ -825,6 +886,22 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
                 if (struct_llvm_type) {
                     llvm::LLVMContext& llvm_ctx = **_context;
                     llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                    if (is_sret) {
+                        auto* sret_tmp = prepare_sret_for_uop(args);
+                        llvm::Value* vptr_addr = _builder->CreateStructGEP(
+                            struct_llvm_type, args[1], 0, "uop_imp_vptr_addr");
+                        llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "uop_imp_vptr");
+                        const uint64_t ptr_size = 8;
+                        llvm::Value* slot_offset = llvm::ConstantInt::get(
+                            llvm::Type::getInt64Ty(llvm_ctx),
+                            (di.slot_index + 1) * ptr_size);
+                        llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
+                            llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "uop_imp_vtbl_slot");
+                        llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "uop_imp_fn_ptr");
+                        _builder->CreateCall(fn_type, fn_ptr, args);
+                        _value = sret_tmp;
+                        return true;
+                    }
                     llvm::Value* vptr_addr = _builder->CreateStructGEP(
                         struct_llvm_type, args[0], 0, "uop_imp_vptr_addr");
                     llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "uop_imp_vptr");
@@ -850,8 +927,15 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
     }
 
     // Direct call
-    _value = _builder->CreateCall(llvm_func, args,
-        llvm_func->getReturnType()->isVoidTy() ? "" : "uop_call");
+    bool op_uses_sret = llvm_func->getReturnType()->isVoidTy() && op_needs_sret();
+    if (op_uses_sret) {
+        auto* sret_tmp = prepare_sret_for_uop(args);
+        _builder->CreateCall(llvm_func, args);
+        _value = sret_tmp;
+    } else {
+        _value = _builder->CreateCall(llvm_func, args,
+            llvm_func->getReturnType()->isVoidTy() ? "" : "uop_call");
+    }
     return true;
 }
 
@@ -874,19 +958,67 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
     }
     llvm::Function* llvm_func = (it != _context->_functions.end()) ? it->second : nullptr;
 
-    // Build the LLVM FunctionType (from llvm_func if available, or from the model)
+    // Build the LLVM FunctionType (from llvm_func if available, or from the model).
+    // Must match declaration_generator::visit_function: sret param first, void return.
     auto build_fn_type = [&]() -> llvm::FunctionType* {
         if (llvm_func) return llvm_func->getFunctionType();
         // Reconstruct from model
         std::vector<llvm::Type*> param_types;
+        bool model_sret = op_func->has_return_type() && needs_sret_return(op_func->get_return_type());
+        if (model_sret)
+            param_types.push_back(llvm::PointerType::get(**_context, 0));
         if (op_func->is_member() && !op_func->is_static() && op_func->get_this_parameter())
             param_types.push_back(_context->get_llvm_type(op_func->get_this_parameter()->get_type()));
         for (const auto& param : op_func->parameters())
             param_types.push_back(_context->get_llvm_type(param->get_type()));
-        llvm::Type* ret_type = op_func->has_return_type()
-            ? _context->get_llvm_type(op_func->get_return_type())
-            : llvm::Type::getVoidTy(**_context);
+        llvm::Type* ret_type = llvm::Type::getVoidTy(**_context);
+        if (op_func->has_return_type() && !model_sret)
+            ret_type = _context->get_llvm_type(op_func->get_return_type());
         return llvm::FunctionType::get(ret_type, param_types, false);
+    };
+
+    auto op_needs_sret = [&]() -> bool {
+        return op_func->has_return_type() && needs_sret_return(op_func->get_return_type());
+    };
+
+    // Helper: allocate sret temp, insert at front of args, track cleanup. Returns alloca.
+    auto prepare_sret_for_cast = [&](std::vector<llvm::Value*>& args, bool use_sret_destination) -> llvm::AllocaInst* {
+        auto ret_type_nc = type::remove_const(op_func->get_return_type());
+        llvm::Type* llvm_ret = _context->get_llvm_type(ret_type_nc);
+        llvm::AllocaInst* sret_dest = nullptr;
+        bool consumed_sret_dest = false;
+
+        if (use_sret_destination && _sret_destination) {
+            sret_dest = llvm::dyn_cast<llvm::AllocaInst>(_sret_destination);
+            if (!sret_dest) {
+                llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+                llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+                sret_dest = entry_builder.CreateAlloca(llvm_ret, nullptr, "cast_sret_tmp");
+            } else {
+                _sret_destination = nullptr;
+                consumed_sret_dest = true;
+            }
+        } else {
+            llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+            llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+            sret_dest = entry_builder.CreateAlloca(llvm_ret, nullptr, "cast_sret_tmp");
+        }
+
+        args.insert(args.begin(), sret_dest);
+
+        if (!consumed_sret_dest) {
+            auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
+            if (ret_st && ret_st->get_struct()) {
+                auto dtor = ret_st->get_struct()->get_destructor();
+                if (dtor) {
+                    auto dtor_fn = dtor->shared_as<k::model::function>();
+                    auto dtor_it = _context->_functions.find(dtor_fn);
+                    if (dtor_it != _context->_functions.end())
+                        _expression_temporaries.push_back(std::make_pair(sret_dest, dtor_it->second));
+                }
+            }
+        }
+        return sret_dest;
     };
 
     // Build arguments: only 'this' (the source object being cast)
@@ -905,7 +1037,15 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
         auto& di = expr.get_operator_dispatch_info();
         if (di.kind == virtual_dispatch_info::dispatch_kind::VTABLE) {
             llvm::FunctionType* fn_type = build_fn_type();
+            bool is_sret = fn_type->getReturnType()->isVoidTy() && op_needs_sret();
             if (di.dispatch_class) {
+                if (is_sret) {
+                    auto* sret_tmp = prepare_sret_for_cast(args, false);
+                    emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[1],
+                        di.slot_index, fn_type, args, _context, "cast_vcall");
+                    _value = sret_tmp;
+                    return true;
+                }
                 auto result = emit_virtual_dispatch_call(*_builder, *di.dispatch_class, args[0],
                     di.slot_index, fn_type, args, _context, "cast_vcall");
                 if (result) {
@@ -920,6 +1060,22 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
                 if (struct_llvm_type) {
                     llvm::LLVMContext& llvm_ctx = **_context;
                     llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                    if (is_sret) {
+                        auto* sret_tmp = prepare_sret_for_cast(args, false);
+                        llvm::Value* vptr_addr = _builder->CreateStructGEP(
+                            struct_llvm_type, args[1], 0, "cast_imp_vptr_addr");
+                        llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "cast_imp_vptr");
+                        const uint64_t ptr_size = 8;
+                        llvm::Value* slot_offset = llvm::ConstantInt::get(
+                            llvm::Type::getInt64Ty(llvm_ctx),
+                            (di.slot_index + 1) * ptr_size);
+                        llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
+                            llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "cast_imp_vtbl_slot");
+                        llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "cast_imp_fn_ptr");
+                        _builder->CreateCall(fn_type, fn_ptr, args);
+                        _value = sret_tmp;
+                        return true;
+                    }
                     llvm::Value* vptr_addr = _builder->CreateStructGEP(
                         struct_llvm_type, args[0], 0, "cast_imp_vptr_addr");
                     llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "cast_imp_vptr");
@@ -930,7 +1086,8 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
                     llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
                         llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "cast_imp_vtbl_slot");
                     llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "cast_imp_fn_ptr");
-                    _value = _builder->CreateCall(fn_type, fn_ptr, args, "cast_imp_vcall");
+                    _value = _builder->CreateCall(fn_type, fn_ptr, args,
+                        fn_type->getReturnType()->isVoidTy() ? "" : "cast_imp_vcall");
                     return true;
                 }
             }
@@ -944,7 +1101,15 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
     }
 
     // Direct call
-    _value = _builder->CreateCall(llvm_func, args, "cast_call");
+    bool op_uses_sret = llvm_func->getReturnType()->isVoidTy() && op_needs_sret();
+    if (op_uses_sret) {
+        auto* sret_dest = prepare_sret_for_cast(args, true);
+        _builder->CreateCall(llvm_func, args);
+        _value = sret_dest;
+    } else {
+        _value = _builder->CreateCall(llvm_func, args,
+            llvm_func->getReturnType()->isVoidTy() ? "" : "cast_call");
+    }
     return true;
 }
 

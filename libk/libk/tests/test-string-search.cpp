@@ -726,15 +726,77 @@ TEST_CASE("String drain constructor", "[libk][string][drain]") {
 // 9. String concatenation operator +
 // ═════════════════════════════════════════════════════════════════════════════
 
-// NOTE: String operator + test disabled — the K compiler has an LLVM codegen bug
-// when a const method of a class returns a different class type by value
-// (LLVM IR verification fails: "Incorrect number of arguments passed to
-// called function" and "Load operand must be a pointer"). This is a known
-// compiler issue to fix separately.
-//
-// TEST_CASE("String operator + concatenation", "[libk][string][concat]") {
-//     ...disabled...
-// }
+TEST_CASE("String operator + concatenation", "[libk][string][concat]") {
+    auto jit = jit_k(R"SRC(
+        module __str_concat__;
+
+        test_concat_size() : unsigned int {
+            a : k::String("hello");
+            b : k::String(" world");
+            sb : k::StringBuilder = a + b;
+            return sb.size();
+        }
+
+        test_concat_content() : int {
+            a : k::String("hello");
+            b : k::String(" world");
+            sb : k::StringBuilder = a + b;
+            result : k::String(sb);
+            expected : k::String("hello world");
+            if (result == expected) return 1;
+            return 0;
+        }
+
+        test_concat_empty_left() : int {
+            a : k::String;
+            b : k::String("world");
+            sb : k::StringBuilder = a + b;
+            result : k::String(sb);
+            expected : k::String("world");
+            if (result == expected) return 1;
+            return 0;
+        }
+
+        test_concat_empty_right() : int {
+            a : k::String("hello");
+            b : k::String;
+            sb : k::StringBuilder = a + b;
+            result : k::String(sb);
+            expected : k::String("hello");
+            if (result == expected) return 1;
+            return 0;
+        }
+
+        test_concat_both_empty() : int {
+            a : k::String;
+            b : k::String;
+            sb : k::StringBuilder = a + b;
+            if (sb.empty()) return 1;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_concat_size = jit->lookup_symbol<unsigned(*)()>("test_concat_size");
+    REQUIRE(test_concat_size);
+    CHECK(test_concat_size() == 11);
+
+    auto test_concat_content = jit->lookup_symbol<int(*)()>("test_concat_content");
+    REQUIRE(test_concat_content);
+    CHECK(test_concat_content() == 1);
+
+    auto test_concat_empty_left = jit->lookup_symbol<int(*)()>("test_concat_empty_left");
+    REQUIRE(test_concat_empty_left);
+    CHECK(test_concat_empty_left() == 1);
+
+    auto test_concat_empty_right = jit->lookup_symbol<int(*)()>("test_concat_empty_right");
+    REQUIRE(test_concat_empty_right);
+    CHECK(test_concat_empty_right() == 1);
+
+    auto test_concat_both_empty = jit->lookup_symbol<int(*)()>("test_concat_both_empty");
+    REQUIRE(test_concat_both_empty);
+    CHECK(test_concat_both_empty() == 1);
+}
 
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -807,4 +869,80 @@ TEST_CASE("String.find and rfind — empty string", "[libk][string][search]") {
 }
 
 
+// ═════════════════════════════════════════════════════════════════════════════
+// 11. String.count
+// ═════════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("String.count — char and String", "[libk][string][search]") {
+    auto jit = jit_k(R"SRC(
+        module __str_count__;
+
+        test_count_char() : unsigned int {
+            s : k::String("hello world");
+            return s.count('l');
+        }
+
+        test_count_char_not_found() : unsigned int {
+            s : k::String("hello");
+            return s.count('z');
+        }
+
+        test_count_char_empty() : unsigned int {
+            s : k::String;
+            return s.count('a');
+        }
+
+        test_count_str() : unsigned int {
+            s : k::String("abcabcabc");
+            needle : k::String("abc");
+            return s.count(needle);
+        }
+
+        test_count_str_overlapping() : unsigned int {
+            s : k::String("aaa");
+            needle : k::String("aa");
+            return s.count(needle);
+        }
+
+        test_count_str_not_found() : unsigned int {
+            s : k::String("hello");
+            needle : k::String("xyz");
+            return s.count(needle);
+        }
+
+        test_count_str_empty_needle() : unsigned int {
+            s : k::String("hello");
+            needle : k::String;
+            return s.count(needle);
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_count_char = jit->lookup_symbol<unsigned(*)()>("test_count_char");
+    REQUIRE(test_count_char);
+    CHECK(test_count_char() == 3);  // 'l' appears 3 times
+
+    auto test_count_char_not_found = jit->lookup_symbol<unsigned(*)()>("test_count_char_not_found");
+    REQUIRE(test_count_char_not_found);
+    CHECK(test_count_char_not_found() == 0);
+
+    auto test_count_char_empty = jit->lookup_symbol<unsigned(*)()>("test_count_char_empty");
+    REQUIRE(test_count_char_empty);
+    CHECK(test_count_char_empty() == 0);
+
+    auto test_count_str = jit->lookup_symbol<unsigned(*)()>("test_count_str");
+    REQUIRE(test_count_str);
+    CHECK(test_count_str() == 3);  // "abc" x 3
+
+    auto test_count_str_overlapping = jit->lookup_symbol<unsigned(*)()>("test_count_str_overlapping");
+    REQUIRE(test_count_str_overlapping);
+    CHECK(test_count_str_overlapping() == 1);  // non-overlapping: "aaa" has 1 non-overlapping "aa"
+
+    auto test_count_str_not_found = jit->lookup_symbol<unsigned(*)()>("test_count_str_not_found");
+    REQUIRE(test_count_str_not_found);
+    CHECK(test_count_str_not_found() == 0);
+
+    auto test_count_str_empty_needle = jit->lookup_symbol<unsigned(*)()>("test_count_str_empty_needle");
+    REQUIRE(test_count_str_empty_needle);
+    CHECK(test_count_str_empty_needle() == 0);
+}

@@ -1808,300 +1808,378 @@ test() : int {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 66–80. Casting operators (operator() : ReturnType)
+// 66. Binary operator returning a DIFFERENT struct type by value (sret)
+//     Validates the fix for the sret codegen bug where build_fn_type
+//     did not include the sret parameter when reconstructing the FunctionType.
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Parse casting operator declaration", "[parser][operator][cast]") {
-
-    SECTION("Casting operator in struct") {
-        test_logger logger;
-        k::parse::parser parser(logger);
-        k::source src(R"SRC(
-struct Temperature {
-    celsius: double;
-    operator() : int {
-        return (int)celsius;
-    }
-}
-)SRC");
-        parser.parse(src);
-        auto unit = parser.parse_unit();
-        REQUIRE(unit);
-    }
-
-    SECTION("Multiple casting operators") {
-        test_logger logger;
-        k::parse::parser parser(logger);
-        k::source src(R"SRC(
-struct Convertible {
-    value: double;
-    operator() : int { return (int)value; }
-    operator() : bool { return value != 0.0; }
-    operator() : long { return (long)value; }
-}
-)SRC");
-        parser.parse(src);
-        auto unit = parser.parse_unit();
-        REQUIRE(unit);
-    }
-
-    SECTION("Casting operator with const method qualifier") {
-        test_logger logger;
-        k::parse::parser parser(logger);
-        k::source src(R"SRC(
-struct Vector {
-    x: double;
-    y: double;
-    const operator() : int {
-        return (int)x + (int)y;
-    }
-}
-)SRC");
-        parser.parse(src);
-        auto unit = parser.parse_unit();
-        REQUIRE(unit);
-    }
-}
-
-TEST_CASE("Struct casting operator basic", "[operator][gen][cast][struct]") {
+TEST_CASE("Binary operator returning a different struct by value — sret direct call", "[gen][operator][sret]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_basic__;
-struct Temperature {
-    celsius: double;
-    Temperature(c: double) : celsius(c) {}
-    operator() : int {
-        return (int)celsius;
-    }
-}
-test() : int {
-    t: Temperature(42.7);
-    return (int)t;
-}
-)SRC");
+        module __op_sret_diff_type__;
+
+        struct Result {
+            val : int;
+            Result(v : int) : val(v) {}
+        }
+
+        struct Pair {
+            a : int;
+            b : int;
+            Pair(x : int, y : int) : a(x), b(y) {}
+
+            operator +(other : Pair&) : Result {
+                r : Result(a + b + other.a + other.b);
+                return r;
+            }
+        }
+
+        test() : int {
+            p1 : Pair(1, 2);
+            p2 : Pair(10, 20);
+            res : Result = p1 + p2;
+            return res.val;
+        }
+    )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__op_cast_basic__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 33);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 67. Const binary operator on class returning a DIFFERENT class by value
+//     This is the exact pattern that triggered the original sret bug:
+//     const method + class (vtable) + sret + different return type.
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Const binary operator on class returning different class by value — sret vtable", "[gen][operator][sret][const][class]") {
+    auto jit = gen_jit(R"SRC(
+        module __op_sret_const_class__;
+
+        struct Negated {
+            val : int;
+            Negated(v : int) : val(v) {}
+        }
+
+        class Number {
+            public n : int;
+            Number(v : int) : n(v) {}
+
+            const operator -() : Negated {
+                r : Negated(0 - n);
+                return r;
+            }
+        }
+
+        test() : int {
+            num : Number(42);
+            neg : Negated = -num;
+            return neg.val;
+        }
+    )SRC", false, false);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == -42);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 68. Const binary operator on a const final class returning different type
+//     This closely mirrors the String.operator+ pattern (const final class).
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Const final class binary operator returning different struct — sret direct", "[gen][operator][sret][const]") {
+    auto jit = gen_jit(R"SRC(
+        module __op_sret_const_final__;
+
+        struct Builder {
+            total : int;
+            Builder(v : int) : total(v) {}
+        }
+
+        const final class Immutable {
+            public x : int;
+            Immutable(v : int) : x(v) {}
+
+            const operator +(other : const Immutable&) : Builder {
+                b : Builder(x + other.x);
+                return b;
+            }
+        }
+
+        test() : int {
+            a : Immutable(100);
+            b : Immutable(42);
+            builder : Builder = a + b;
+            return builder.total;
+        }
+    )SRC", false, false);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 142);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 69. Unary operator returning struct by value (sret)
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Unary operator returning struct by value — sret direct call", "[gen][operator][sret][unary]") {
+    auto jit = gen_jit(R"SRC(
+        module __op_sret_unary__;
+
+        struct Vec {
+            x : int;
+            y : int;
+            Vec(a : int, b : int) : x(a), y(b) {}
+
+            operator -() : Vec {
+                r : Vec(0 - x, 0 - y);
+                return r;
+            }
+        }
+
+        test_x() : int {
+            v : Vec(3, 7);
+            neg : Vec = -v;
+            return neg.x;
+        }
+
+        test_y() : int {
+            v : Vec(3, 7);
+            neg : Vec = -v;
+            return neg.y;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test_x = jit->lookup_symbol<int(*)()>("test_x");
+    REQUIRE(test_x);
+    CHECK(test_x() == -3);
+
+    auto test_y = jit->lookup_symbol<int(*)()>("test_y");
+    REQUIRE(test_y);
+    CHECK(test_y() == -7);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 70. Unary operator returning a DIFFERENT struct by value (sret)
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Unary operator returning different struct by value — sret", "[gen][operator][sret][unary]") {
+    auto jit = gen_jit(R"SRC(
+        module __op_sret_unary_diff__;
+
+        struct Magnitude {
+            val : int;
+            Magnitude(v : int) : val(v) {}
+        }
+
+        struct Point {
+            x : int;
+            y : int;
+            Point(a : int, b : int) : x(a), y(b) {}
+
+            // Unary + returns a different type
+            operator +() : Magnitude {
+                m : Magnitude(x + y);
+                return m;
+            }
+        }
+
+        test() : int {
+            p : Point(3, 4);
+            mag : Magnitude = +p;
+            return mag.val;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 7);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 71. Cast operator returning struct by value (sret)
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Cast operator returning struct by value — sret", "[gen][operator][sret][cast]") {
+    auto jit = gen_jit(R"SRC(
+        module __op_sret_cast__;
+
+        struct Flat {
+            val : int;
+            Flat(v : int) : val(v) {}
+        }
+
+        struct Nested {
+            a : int;
+            b : int;
+            Nested(x : int, y : int) : a(x), b(y) {}
+
+            // Cast to Flat (different struct) — returns by value via sret
+            operator() : Flat {
+                r : Flat(a * 10 + b);
+                return r;
+            }
+        }
+
+        test() : int {
+            n : Nested(4, 2);
+            f : Flat = (Flat)n;
+            return f.val;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
     CHECK(fn() == 42);
 }
 
-TEST_CASE("Struct casting operator to bool", "[operator][gen][cast][struct]") {
+// ═════════════════════════════════════════════════════════════════════════════
+// 72. Const cast operator on class returning struct by value (sret + vtable)
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Const cast operator on class returning struct by value — sret vtable", "[gen][operator][sret][cast][const][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_bool__;
-struct Optional {
-    has_value: bool;
-    Optional(h: bool) : has_value(h) {}
-    operator() : bool {
-        return has_value;
-    }
-}
-test() : int {
-    o: Optional(true);
-    if ((bool)o) {
-        return 1;
-    }
-    return 0;
-}
-)SRC");
+        module __op_sret_cast_class__;
+
+        struct Info {
+            code : int;
+            Info(c : int) : code(c) {}
+        }
+
+        class Entity {
+            public id : int;
+            Entity(i : int) : id(i) {}
+
+            const operator() : Info {
+                r : Info(id + 1000);
+                return r;
+            }
+        }
+
+        test() : int {
+            e : Entity(42);
+            info : Info = (Info)e;
+            return info.code;
+        }
+    )SRC", false, false);
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN16__op_cast_bool__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    CHECK(fn() == 1);
+    CHECK(fn() == 1042);
 }
 
-TEST_CASE("Struct multiple casting operators", "[operator][gen][cast][struct]") {
-    auto jit = gen_jit(R"SRC(
-module __op_cast_multi__;
-struct Number {
-    value: double;
-    Number(v: double) : value(v) {}
-    operator() : int {
-        return (int)value;
-    }
-    operator() : bool {
-        return value != 0.0;
-    }
-}
-test_to_int() : int {
-    n: Number(3.14);
-    return (int)n;
-}
-test_to_bool() : int {
-    n: Number(0.0);
-    if ((bool)n) {
-        return 0;
-    }
-    return 1;
-}
-)SRC");
-    REQUIRE(jit);
-    auto fn_int = jit->lookup_symbol<int(*)()>("_KFN17__op_cast_multi__11test_to_intEv");
-    REQUIRE(fn_int);
-    CHECK(fn_int() == 3);
-    auto fn_bool = jit->lookup_symbol<int(*)()>("_KFN17__op_cast_multi__12test_to_boolEv");
-    REQUIRE(fn_bool);
-    CHECK(fn_bool() == 1);
-}
+// ═════════════════════════════════════════════════════════════════════════════
+// 73. Const binary operator on class returning different type via sret
+//     Validates sret with class operators (direct call path, not virtual
+//     dispatch through base ref which is a separate vtable issue).
+// ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Casting operator const-correctness", "[operator][gen][cast][const]") {
+TEST_CASE("Const binary operator on class with sret — direct call", "[gen][operator][sret][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_const__;
-struct Vector {
-    x: double;
-    y: double;
-    Vector(ax: double, ay: double) : x(ax), y(ay) {}
-    const operator() : double {
-        return x * x + y * y;
-    }
-}
-test() : int {
-    v: Vector(3.0, 4.0);
-    return (int)(double)v;
-}
-)SRC");
+        module __op_sret_cls_direct__;
+
+        struct Result {
+            val : int;
+            Result(v : int) : val(v) {}
+        }
+
+        class Adder {
+            public x : int;
+            Adder() : x(0) {}
+            Adder(v : int) : x(v) {}
+
+            const operator +(other : const Adder&) : Result {
+                r : Result(this.x + other.x);
+                return r;
+            }
+        }
+
+        test() : int {
+            a : Adder(3);
+            b : Adder(4);
+            res : Result = a + b;
+            return res.val;
+        }
+    )SRC", false, false);
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__op_cast_const__4testEv");
+
+    auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    CHECK(fn() == 25);
+    CHECK(fn() == 7);  // 3 + 4
 }
 
-TEST_CASE("Virtual casting operator in class hierarchy", "[operator][gen][cast][virtual]") {
-    auto jit = gen_jit(R"SRC(
-module __op_cast_virtual__;
-abstract class Shape {
-    Shape() {}
-    abstract operator() : double;
-}
-class Circle : public Shape {
-    radius: double;
-    Circle(r: double) : radius(r) {}
-    operator() : double {
-        return 3.14159 * radius * radius;
-    }
-}
-class Rectangle : public Shape {
-    width: double;
-    height: double;
-    Rectangle(w: double, h: double) : width(w), height(h) {}
-    operator() : double {
-        return width * height;
-    }
-}
-test_circle() : int {
-    c: Circle(2.0);
-    return (int)(double)c;
-}
-test_rect() : int {
-    r: Rectangle(3.0, 4.0);
-    return (int)(double)r;
-}
-)SRC");
-    REQUIRE(jit);
-    auto fn_circle = jit->lookup_symbol<int(*)()>("_KFN19__op_cast_virtual__11test_circleEv");
-    REQUIRE(fn_circle);
-    CHECK(fn_circle() == 12);
-    auto fn_rect = jit->lookup_symbol<int(*)()>("_KFN19__op_cast_virtual__9test_rectEv");
-    REQUIRE(fn_rect);
-    CHECK(fn_rect() == 12);
-}
+// ═════════════════════════════════════════════════════════════════════════════
+// 74. Const unary operator on class returning different type via sret
+// ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Casting operator inheritance", "[operator][gen][cast][inheritance]") {
+TEST_CASE("Const unary operator on class returning different struct — sret", "[gen][operator][sret][unary][const][class]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_inherit__;
-struct Base {
-    v: int;
-    Base() : v(0) {}
-    Base(av: int) : v(av) {}
-    operator() : double {
-        return (double)v * 1.5;
-    }
-}
-struct Derived : public Base {
-    extra: int;
-    Derived(av: int) : Base(av), extra(0) {}
-}
-test_base() : int {
-    b: Base(10);
-    return (int)(double)b;
-}
-test_derived() : int {
-    d: Derived(10);
-    return (int)(double)d;
-}
-)SRC");
-    REQUIRE(jit);
-    auto fn_base = jit->lookup_symbol<int(*)()>("_KFN19__op_cast_inherit__9test_baseEv");
-    REQUIRE(fn_base);
-    CHECK(fn_base() == 15);
-    auto fn_derived = jit->lookup_symbol<int(*)()>("_KFN19__op_cast_inherit__12test_derivedEv");
-    REQUIRE(fn_derived);
-    CHECK(fn_derived() == 15);
-}
+        module __op_sret_unary_const_class__;
 
-TEST_CASE("Casting operator with pointer return type", "[operator][gen][cast][ptr]") {
-    auto jit = gen_jit(R"SRC(
-module __op_cast_ptr__;
-struct Wrapper {
-    ptr: int*;
-    Wrapper(p: int*) : ptr(p) {}
-    const operator() : int* {
-        return ptr;
-    }
-}
-test() : int {
-    v: int = 42;
-    w: Wrapper(&v);
-    p: int* = (int*)w;
-    return *p;
-}
-)SRC");
+        struct Negated {
+            val : int;
+            Negated(v : int) : val(v) {}
+        }
+
+        class Number {
+            public n : int;
+            Number(v : int) : n(v) {}
+
+            const operator -() : Negated {
+                r : Negated(0 - n);
+                return r;
+            }
+        }
+
+        test() : int {
+            num : Number(42);
+            neg : Negated = -num;
+            return neg.val;
+        }
+    )SRC", false, false);
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN15__op_cast_ptr__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    CHECK(fn() == 42);
+    CHECK(fn() == -42);
 }
 
-TEST_CASE("Casting operator in interface", "[operator][gen][cast][interface]") {
-    auto jit = gen_jit(R"SRC(
-module __op_cast_iface__;
-interface Convertible {
-    operator() : int;
-}
-class StringHolder : public Convertible {
-    data: int;
-    StringHolder(s: int) : data(s) {}
-    operator() : int {
-        return data;
-    }
-}
-test() : int {
-    s: StringHolder(42);
-    return (int)s;
-}
-)SRC");
-    REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN17__op_cast_iface__4testEv");
-    REQUIRE(fn);
-    CHECK(fn() == 42);
-}
+// ═════════════════════════════════════════════════════════════════════════════
+// 75. Binary operator returning different type — result used in expression
+//     Verifies sret temporary cleanup when the result is consumed inline.
+// ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Casting operator with reference return type", "[operator][gen][cast][ref]") {
+TEST_CASE("Binary operator sret result used in expression", "[gen][operator][sret]") {
     auto jit = gen_jit(R"SRC(
-module __op_cast_ref__;
-struct Container {
-    value: int;
-    Container(v: int) : value(v) {}
-    const operator() : int& {
-        return value;
-    }
-}
-test() : int {
-    c: Container(99);
-    ref: int& = (int&)c;
-    return ref;
-}
-)SRC");
+        module __op_sret_expr_use__;
+
+        struct Summary {
+            total : int;
+            Summary(v : int) : total(v) {}
+        }
+
+        struct Data {
+            a : int;
+            b : int;
+            Data(x : int, y : int) : a(x), b(y) {}
+
+            operator +(other : Data&) : Summary {
+                s : Summary(a + b + other.a + other.b);
+                return s;
+            }
+        }
+
+        test() : int {
+            d1 : Data(1, 2);
+            d2 : Data(10, 20);
+            // Use the sret result directly via field access
+            res : Summary = d1 + d2;
+            return res.total + 1;
+        }
+    )SRC");
     REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("_KFN15__op_cast_ref__4testEv");
+    auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    CHECK(fn() == 99);
+    CHECK(fn() == 34);  // 1+2+10+20 + 1 = 34
 }

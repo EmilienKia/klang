@@ -322,6 +322,34 @@ public:
         return find(c);
     }
 
+    /** Count the number of non-overlapping occurrences of character `c`. */
+    const count(c : char) : unsigned int {
+        n : unsigned int = 0;
+        i : unsigned int = 0;
+        while (i < _size) {
+            if (_buf[i] == c) n = n + 1;
+            i = i + 1;
+        }
+        return n;
+    }
+
+    /** Count the number of non-overlapping occurrences of `needle`. */
+    const count(needle : const String&) : unsigned int {
+        if (needle._size == 0) return 0;
+        n : unsigned int = 0;
+        i : unsigned int = 0;
+        limit : unsigned int = _size;
+        while (i + needle._size <= limit) {
+            if (CharHelpers::equalsAt(_buf, i, needle._buf, 0, needle._size)) {
+                n = n + 1;
+                i = i + needle._size;
+            } else {
+                i = i + 1;
+            }
+        }
+        return n;
+    }
+
     // ── Prefix / suffix tests ───────────────────────────────────────────
 
     /** Return true if this string begins with `prefix`. */
@@ -681,6 +709,29 @@ public:
         return find(c);
     }
 
+    /** Count the number of non-overlapping occurrences of character `c`. */
+    const count(c : char) : unsigned int {
+        n : unsigned int = 0;
+        pos : unsigned int = 0;
+        i : unsigned int = 0;
+        while (i < _fragCount) {
+            j : unsigned int = 0;
+            while (j < _lens[i]) {
+                if (_pool[_starts[i] + j] == c) n = n + 1;
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return n;
+    }
+
+    /** Count the number of non-overlapping occurrences of `needle`. */
+    const count(needle : const String&) : unsigned int {
+        if (needle.size() == 0) return 0;
+        tmp : String(this);
+        return tmp.count(needle);
+    }
+
     /** Return true if the content begins with `prefix`. */
     const beginsWith(prefix : const String&) : bool {
         if (prefix.size() > _totalSize) return false;
@@ -924,6 +975,26 @@ public:
         return replace(start, count, tmp);
     }
 
+    /** Replace all non-overlapping occurrences of `needle` with `replacement`.
+     *  Consolidates first to ensure contiguous access.
+     *  Returns a reference to this builder for fluent chaining. */
+    replaceAll(needle : const String&, replacement : const String&) : StringBuilder& {
+        if (needle.size() == 0) return this;
+        if (_totalSize == 0) return this;
+        _consolidate();
+        // Search from the beginning, advancing past each replacement
+        pos : unsigned int = 0;
+        while (pos + needle.size() <= _totalSize) {
+            found : int = CharHelpers::find(_pool, pos, _totalSize - pos, needle.data(), 0, needle.size());
+            if (found < 0) return this;
+            ufound : unsigned int = found;
+            remove(ufound, needle.size());
+            insert(ufound, replacement);
+            pos = ufound + replacement.size();
+        }
+        return this;
+    }
+
     /** Reverse the entire content in place. Consolidates first. */
     reverse() : StringBuilder& {
         if (_totalSize <= 1) return this;
@@ -1083,8 +1154,6 @@ private:
         }
         newCap : unsigned int = _totalSize + 1;
         newPool : char[]! = new char[newCap];
-        // Inline copyTo to avoid compiler codegen bug with multi-fragment
-        // method calls in certain contexts.
         off : unsigned int = 0;
         i : unsigned int = 0;
         while (i < _fragCount) {

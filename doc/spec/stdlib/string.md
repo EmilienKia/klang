@@ -107,6 +107,8 @@ Because the class is declared `const`, all methods are implicitly `const`
 | `contains(needle: const String&)` | `bool` | `true` if the string contains `needle`. |
 | `indexOf(c: char)` | `int` | Alias for `find(c)`. |
 | `indexOf(needle: const String&)` | `int` | Alias for `find(needle)`. |
+| `count(c: char)` | `unsigned int` | Number of occurrences of character `c`. |
+| `count(needle: const String&)` | `unsigned int` | Number of non-overlapping occurrences of `needle`. Returns `0` for an empty needle. |
 | `beginsWith(prefix: const String&)` | `bool` | `true` if this string starts with `prefix`. |
 | `endsWith(suffix: const String&)` | `bool` | `true` if this string ends with `suffix`. |
 
@@ -222,6 +224,8 @@ sb.append("Hello").append(", ").appendChar('W').append("orld!");
 | `contains(needle: const String&)` | `bool` | `true` if the content contains `needle`. |
 | `indexOf(c: char)` | `int` | Alias for `find(c)`. |
 | `indexOf(needle: const String&)` | `int` | Alias for `find(needle)`. |
+| `count(c: char)` | `unsigned int` | Number of occurrences of character `c`. |
+| `count(needle: const String&)` | `unsigned int` | Number of non-overlapping occurrences of `needle`. Returns `0` for an empty needle. |
 | `beginsWith(prefix: const String&)` | `bool` | `true` if the content starts with `prefix`. |
 | `endsWith(suffix: const String&)` | `bool` | `true` if the content ends with `suffix`. |
 
@@ -251,6 +255,7 @@ All mutating methods return `StringBuilder&` for fluent chaining.
 | `remove(start: unsigned int, count: unsigned int)` | `StringBuilder&` | Remove `count` characters starting at `start`. |
 | `replace(start, count, s: const String&)` | `StringBuilder&` | Replace `count` characters at `start` with `s`. |
 | `replace(start, count, src: const char[])` | `StringBuilder&` | Replace with a `const char[]`. |
+| `replaceAll(needle: const String&, replacement: const String&)` | `StringBuilder&` | Replace all non-overlapping occurrences of `needle` with `replacement`. |
 | `reverse()` | `StringBuilder&` | Reverse the entire content in place. |
 | `trimLeft()` | `StringBuilder&` | Remove leading whitespace (space, tab, newline, CR). |
 | `trimRight()` | `StringBuilder&` | Remove trailing whitespace. |
