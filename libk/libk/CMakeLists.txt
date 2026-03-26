@@ -11,6 +11,7 @@
 # Every K program and library is automatically linked against libk.
 # ─────────────────────────────────────────────────────────────────────────────
 set(LIBK_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/object.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/string.k
 )
@@ -41,6 +42,21 @@ add_custom_command(
     VERBATIM
 )
 
+# ── Compile the RTTI C runtime helpers ───────────────────────────────────
+set(RTTI_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.c)
+set(RTTI_OBJ ${LIBK_OUTPUT_DIR}/rtti.o)
+
+add_custom_command(
+    OUTPUT  ${RTTI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -o ${RTTI_OBJ} ${RTTI_C}
+    DEPENDS ${RTTI_C}
+    COMMENT "Compiling K runtime RTTI helpers (rtti.c)"
+    VERBATIM
+)
+
+set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ})
+
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
     OUTPUT  ${LIBK_SO} ${LIBK_A} ${LIBK_KDI}
@@ -48,8 +64,8 @@ add_custom_command(
             --dyn-lib --static-lib
             --module-name k
             ${LIBK_SOURCES}
-            ${FATAL_OBJ}
-    DEPENDS klangc ${LIBK_SOURCES} ${FATAL_OBJ}
+            ${C_RUNTIME_OBJS}
+    DEPENDS klangc ${LIBK_SOURCES} ${C_RUNTIME_OBJS}
     WORKING_DIRECTORY ${LIBK_OUTPUT_DIR}
     COMMENT "Compiling K base standard library (module k)"
     VERBATIM
@@ -79,6 +95,7 @@ set(KLANG_STDLIB_LIB_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
 # the real stdlib types — no class definitions are duplicated.
 # ─────────────────────────────────────────────────────────────────────────────
 add_executable(libk-tests
+    tests/test-rtti.cpp
     tests/test-string.cpp
     tests/test-string-literal.cpp
     tests/test-string-search.cpp

@@ -56,9 +56,79 @@ void symbol_resolver::visit_named_element(named_element& named) {
 // But Global main method is
 //
 
+/// Return true if the given aggregate is ::k::Object (the root base class).
+/// The root namespace is named after the module (e.g. "k" for module k),
+/// so Object's parent namespace IS the root when compiling module k.
+static bool is_k_object(const aggregate& agg) {
+    if (agg.get_short_name() != "Object") return false;
+    auto parent_ns = agg.parent<ns>();
+    if (!parent_ns) return false;
+    // When compiling module k, the root_ns itself is named "k" (its parent is the unit).
+    // When Object would be in a sub-namespace k of another module, parent_ns would be
+    // a child of the root. Both cases: parent_ns short name must be "k".
+    if (parent_ns->get_short_name() != "k") return false;
+    return true;
+}
+
 void symbol_resolver::visit_unit(unit& unit)
 {
-    // ── Pre-pass: resolve base names for diamond detection ──────────────────────
+    // ── Pre-pass 0: implicit Object inheritance ─────────────────────────────────
+    // Every class that has no declared base classes (and is not ::k::Object itself)
+    // implicitly inherits from ::k::Object.  We inject that base before any
+    // resolution so that the rest of the pipeline sees it as a normal base.
+    //
+    // The injection only triggers when k::Object is actually reachable:
+    //   - the current compilation unit defines it (module k), or
+    //   - it is available through an imported module (import k;).
+    // In standalone test compilations that do not import k, the injection is skipped.
+    {
+        // Check if k::Object is locally defined.
+        // When compiling module k, the root namespace itself IS the "k" namespace
+        // (root_ns->get_short_name() == "k"), so Object is a direct child.
+        // In other modules, Object might be in a child namespace named "k".
+        bool object_available = false;
+        auto root_ns = _unit.get_root_namespace();
+        if (root_ns->get_short_name() == "k") {
+            // We ARE module k — Object is a direct aggregate in root_ns
+            if (root_ns->get_aggregate("Object")) {
+                object_available = true;
+            }
+        } else if (auto k_ns = root_ns->get_child_namespace("k")) {
+            if (k_ns->get_aggregate("Object")) {
+                object_available = true;
+            }
+        }
+        // Check if k::Object is available via imports
+        if (!object_available) {
+            k::name obj_name{false, {"k", "Object"}};
+            if (_unit.find_imported_type(obj_name)) {
+                object_available = true;
+            }
+        }
+
+        if (object_available) {
+            std::function<void(const std::vector<std::shared_ptr<element>>&)> inject_implicit_object;
+            inject_implicit_object = [&](const std::vector<std::shared_ptr<element>>& children) {
+                for (auto& child : children) {
+                    if (auto kl = std::dynamic_pointer_cast<klass>(child)) {
+                        // Only true classes (not interfaces) get implicit Object inheritance
+                        if (kl->is_class() && !kl->has_bases() && !is_k_object(*kl)) {
+                            kl->add_base("Object", PUBLIC);
+                        }
+                        // Recurse into nested aggregates
+                        inject_implicit_object(kl->get_children());
+                    } else if (auto st = std::dynamic_pointer_cast<aggregate>(child)) {
+                        inject_implicit_object(st->get_children());
+                    } else if (auto nspace = std::dynamic_pointer_cast<ns>(child)) {
+                        inject_implicit_object(nspace->get_children());
+                    }
+                }
+            };
+            inject_implicit_object(root_ns->get_children());
+        }
+    }
+
+    // ── Pre-pass 1: resolve base names for diamond detection ────────────────────
     // We need to call compute_virtual_bases() BEFORE visit_namespace() so that
     // is_virtual is set correctly before sub-objects are injected.
     // This pre-pass only sets base_spec::base pointers (name resolution),

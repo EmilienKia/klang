@@ -19,20 +19,35 @@
 module k;
 
 /**
+ * C runtime helper: extract the RTTI Class pointer from an object's vtable.
+ * Implemented in rtti.c. Takes the object pointer (void*) and returns
+ * the Class pointer from vtable slot 0.
+ */
+extern __k_object_get_class(obj : const Object&) : const Class&;
+
+/**
  * Object — root base class for all K objects.
  *
  * Provides a minimal common interface that every class in K can rely on.
  * The compiler auto-links the base standard library (module ::k) with every
  * K program or library.
  */
-class Object {
+const class Object {
 public:
     /**
      * Return a hash code for this object.
      * Default implementation returns 0 — subclasses should override.
      */
-    hash() : int {
+    const hash() : int {
         return 0;
+    }
+
+    /**
+     * Return the ::k::Class object describing the concrete class of this object.
+     * Delegates to the C runtime helper __k_object_get_class.
+     */
+    final const getClass() : const Class& {
+        return __k_object_get_class(this);
     }
 }
 

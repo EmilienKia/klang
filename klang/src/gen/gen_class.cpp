@@ -668,19 +668,30 @@ void declaration_generator::visit_klass(klass& klass) {
     if (!klass.has_vtable()) return;
 
     // ── Emit RTTI global for all classes and interfaces (including abstract) ────
-    // The RTTI struct layout:
-    //   { ptr self_rtti_ptr, ptr name_cstr, ptr null_introspection }
     //
-    // 'typeid' semantics: the address of the RTTI global itself (self-pointer).
-    // This guarantees uniqueness across dynamically-loaded modules:
-    //   - Each class has exactly one RTTI global with ExternalLinkage.
-    //   - The linker merges duplicate definitions across DSOs (ODR rule).
-    //   - Comparing two 'typeid' values is just a pointer equality check.
+    // Each RTTI global is a genuine ::k::Class instance laid out as:
+    //   { ptr __vptr__,  ptr __vptr_TypeInfo__,  ptr name }
+    //
+    // The __vptr__ and __vptr_TypeInfo__ point to the ::k::Class vtable and its
+    // secondary vtable for the TypeInfo interface.  These vtables are defined in
+    // the libk module; we declare them as extern in every other compilation unit.
+    //
+    // The 'name' field is a view (char[]?) pointing to a private global string
+    // containing the SHORT (unqualified) class name.
+    //
+    // The mangled RTTI symbol name (_KTRI...) is used as the GlobalVariable name
+    // so that the linker can merge duplicates across DSOs (ODR rule).
+    //
+    // The unique 'typeid' of a class is the address of its RTTI global.
+    //
+    // During the declaration pass we use null placeholders for the two Class
+    // vtable pointers (fields 0 and 1).  The implementation pass patches them
+    // once the Class vtable globals are guaranteed to exist.
     {
         llvm::LLVMContext& llvm_ctx = **_context;
         llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
-        // Build RTTI struct type: { ptr, ptr, ptr }
+        // ── Build the RTTI struct type: { ptr, ptr, ptr }  (matches ::k::Class layout) ──
         std::string rtti_struct_name = "__rtti_" + klass.get_short_name() + "__";
         llvm::StructType* rtti_llvm_type = llvm::StructType::create(
             llvm_ctx,
@@ -689,33 +700,42 @@ void declaration_generator::visit_klass(klass& klass) {
 
         std::string rtti_name = mangler::mangle_rtti(klass.get_name());
 
-        // Emit the mangled name as a global null-terminated string constant.
-        llvm::Constant* name_str_data = llvm::ConstantDataArray::getString(llvm_ctx, rtti_name, /*AddNull=*/true);
+        // Emit the SHORT (unqualified) class name as a K sized-array constant.
+        // K's array layout is { i32 size, [N x i8] data } where 'size' includes
+        // the null terminator.  The Class.name field (const char[]?) is a view
+        // pointing to this struct, so code like name.size reads the i32 correctly.
+        const std::string& short_name = klass.get_short_name();
+        uint32_t name_len = static_cast<uint32_t>(short_name.size() + 1); // includes '\0'
+        llvm::Constant* name_str_data = llvm::ConstantDataArray::getString(llvm_ctx, short_name, /*AddNull=*/true);
+        llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+        llvm::StructType* name_struct_ty = llvm::StructType::get(
+            llvm_ctx, {i32_ty, name_str_data->getType()}, /*isPacked=*/false);
+        llvm::Constant* name_struct_init = llvm::ConstantStruct::get(
+            name_struct_ty,
+            {llvm::ConstantInt::get(i32_ty, name_len), name_str_data});
         auto name_gv = new llvm::GlobalVariable(
-            _context->module(), name_str_data->getType(),
+            _context->module(), name_struct_ty,
             true, llvm::GlobalValue::PrivateLinkage,
-            name_str_data, rtti_name + "_name");
+            name_struct_init, rtti_name + "_name");
         name_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-        // name_gv is already a ptr (GlobalVariable is a pointer constant); use it directly.
         llvm::Constant* name_cstr = name_gv;
 
-        // Create the RTTI global with a null initializer first (self-ptr will be patched below)
-        // We use ExternalLinkage so the linker merges the symbol across DSOs.
+        // ── Build the RTTI global as a ::k::Class instance ─────────────────────
+        // Fields 0 and 1 (Class vtable pointers) are null for now.
+        // They will be patched in implementation_generator::visit_klass.
+        llvm::Constant* null_ptr = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
         std::vector<llvm::Constant*> rtti_init = {
-            llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)), // self_rtti_ptr (patched below)
-            name_cstr,                                                              // name_cstr
-            llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty))  // null_introspection (reserved)
+            null_ptr,   // field 0: __vptr__           → patched later
+            null_ptr,   // field 1: __vptr_TypeInfo__  → patched later
+            name_cstr   // field 2: name               → short class name (char[]?)
         };
         llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
         auto rtti_gv = new llvm::GlobalVariable(
             _context->module(), rtti_llvm_type,
-            true, llvm::GlobalValue::ExternalLinkage,
+            /*isConstant=*/false,  // mutable during compilation for patching, made constant after
+            llvm::GlobalValue::ExternalLinkage,
             rtti_const, rtti_name);
 
-        // Now patch slot 0 (self_rtti_ptr) to point to rtti_gv itself.
-        // We re-create the initializer with the correct self-pointer.
-        rtti_init[0] = rtti_gv; // self-pointer
-        rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_llvm_type, rtti_init));
 
         // Store on vtable_layout so implementation_generator can use it for vtable slot 0
         klass.get_vtable()->llvm_rtti_global = rtti_gv;
@@ -773,6 +793,44 @@ void implementation_generator::visit_klass(klass& klass) {
     visit_aggregate(klass);
 
     if (!klass.has_vtable()) return;
+
+    // ── 0. Patch RTTI global with real ::k::Class vtable pointers ──────────────
+    // The declaration pass created the RTTI global with null placeholders for the
+    // Class vtable pointers (fields 0 and 1).  Now that all classes in the module
+    // have been declared, the ::k::Class vtables may exist (either defined in this
+    // module or resolvable from libk at link time).
+    //
+    // When the Class vtable symbols are not available (e.g. standalone compilation
+    // without libk), the RTTI global keeps null vptrs.  typeid comparison (pointer
+    // equality) still works; only getName() via virtual dispatch would fail.
+    if (auto* rtti_gv = klass.get_vtable()->llvm_rtti_global) {
+        llvm::LLVMContext& llvm_ctx = **_context;
+        llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+        const std::string class_vtable_name = "_KTVN1k5ClassE";
+        const std::string class_typeinfo_vtable_name = "_KTVN1k5ClassE_for_TypeInfo";
+
+        // Look for existing Class vtable globals in this module.
+        // We do NOT create extern declarations here — that would cause unresolved
+        // symbol errors in standalone compilations that don't link libk.
+        llvm::Constant* class_vt = _context->module().getNamedGlobal(class_vtable_name);
+        llvm::Constant* class_ti_vt = _context->module().getNamedGlobal(class_typeinfo_vtable_name);
+
+        if (class_vt && class_ti_vt) {
+            // Both Class vtable globals are available — patch the RTTI initializer.
+            auto* rtti_type = rtti_gv->getValueType();
+            auto* old_init = rtti_gv->getInitializer();
+            auto* old_struct = llvm::cast<llvm::ConstantStruct>(old_init);
+            std::vector<llvm::Constant*> new_rtti_init = {
+                class_vt,                         // field 0: __vptr__
+                class_ti_vt,                      // field 1: __vptr_TypeInfo__
+                old_struct->getOperand(2)         // field 2: name (keep as-is)
+            };
+            rtti_gv->setInitializer(llvm::ConstantStruct::get(
+                llvm::cast<llvm::StructType>(rtti_type), new_rtti_init));
+        }
+        rtti_gv->setConstant(true);  // Fully initialized; mark as constant.
+    }
 
     // Abstract classes have no vtable global to fill (not emitted in declaration pass).
     if (klass.is_abstract()) return;
