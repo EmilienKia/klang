@@ -915,3 +915,410 @@ TEST_CASE("RTTI: getFullName() on nested class", "[libk][rtti]") {
 }
 
 
+// =========================================================================
+// 29. RTTI: getAnnotations() is null on a class with no annotations
+// =========================================================================
+
+TEST_CASE("RTTI: getAnnotations() null on unannotated class", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_null__;
+        import k;
+
+        class Plain {
+            public Plain() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            p : Plain;
+            if (p.getClass().getAnnotations() == null) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 30. RTTI: getAnnotations() is non-null on an annotated class
+// =========================================================================
+
+TEST_CASE("RTTI: getAnnotations() non-null on annotated class", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_nonnull__;
+        import k;
+
+        annotation Marker {}
+
+        @Marker
+        class Tagged {
+            public Tagged() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            t : Tagged;
+            if (t.getClass().getAnnotations() == null) return 0;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 31. RTTI: getAnnotations() on annotated class returns array of size 1
+// =========================================================================
+
+TEST_CASE("RTTI: getAnnotations() size is 1 on single-annotated class", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_size1__;
+        import k;
+
+        annotation Deprecated {}
+
+        @Deprecated
+        class OldClass {
+            public OldClass() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            o : OldClass;
+            anns : const k::Annotation?[]? = o.getClass().getAnnotations();
+            if (anns == null) return 0;
+            return anns->size;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 1);
+}
+
+
+// =========================================================================
+// 32. RTTI: getAnnotations() size is 2 on double-annotated class
+// =========================================================================
+
+TEST_CASE("RTTI: getAnnotations() size is 2 on double-annotated class", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_size2__;
+        import k;
+
+        annotation Alpha {}
+        annotation Beta {}
+
+        @Alpha @Beta
+        class MultiAnn {
+            public MultiAnn() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            m : MultiAnn;
+            anns : const k::Annotation?[]? = m.getClass().getAnnotations();
+            if (anns == null) return 0;
+            return anns->size;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 2);
+}
+
+
+// =========================================================================
+// 33. RTTI: annotation instance is non-null in annotations array
+// =========================================================================
+
+TEST_CASE("RTTI: annotation instance in array is non-null", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_elem_nn__;
+        import k;
+
+        annotation Tag {}
+
+        @Tag
+        class Elem {
+            public Elem() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            e : Elem;
+            anns : const k::Annotation?[]? = e.getClass().getAnnotations();
+            if (anns == null) return 0;
+            if (anns[0] == null) return 1;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 34. RTTI: getAnnotationType().getName() returns annotation type name
+// =========================================================================
+
+TEST_CASE("RTTI: getAnnotationType().getName() returns annotation name", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_typename__;
+        import k;
+
+        annotation Info {}
+
+        @Info
+        class Target {
+            public Target() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            t : Target;
+            anns : const k::Annotation?[]? = t.getClass().getAnnotations();
+            if (anns == null) return 0;
+            ann : const k::Annotation? = anns[0];
+            if (ann == null) return 1;
+            atype : const k::AnnotationType& = ann->getAnnotationType();
+            name : k::String(atype.getName());
+            expected : k::String("Info");
+            if (name == expected) return 42;
+            return 2;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 35. RTTI: getAnnotationType().getFullName() returns FQ annotation name
+// =========================================================================
+
+TEST_CASE("RTTI: getAnnotationType().getFullName() returns FQ name", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_fqname__;
+        import k;
+
+        annotation Marker {}
+
+        @Marker
+        class Target {
+            public Target() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            t : Target;
+            anns : const k::Annotation?[]? = t.getClass().getAnnotations();
+            if (anns == null) return 0;
+            ann : const k::Annotation? = anns[0];
+            if (ann == null) return 1;
+            fqn : k::String(ann->getAnnotationType().getFullName());
+            expected : k::String("::__rtti_ann_fqname__::Marker");
+            if (fqn == expected) return 42;
+            return 2;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 36. RTTI: multiple annotation instances have distinct types
+// =========================================================================
+
+TEST_CASE("RTTI: multiple annotations have distinct type names", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_multi_types__;
+        import k;
+
+        annotation First {}
+        annotation Second {}
+
+        @First @Second
+        class MultiTarget {
+            public MultiTarget() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            m : MultiTarget;
+            anns : const k::Annotation?[]? = m.getClass().getAnnotations();
+            if (anns == null) return 0;
+            if (anns->size != 2) return 1;
+
+            a0 : const k::Annotation? = anns[0];
+            a1 : const k::Annotation? = anns[1];
+            if (a0 == null) return 2;
+            if (a1 == null) return 3;
+
+            n0 : k::String(a0->getAnnotationType().getName());
+            n1 : k::String(a1->getAnnotationType().getName());
+            e0 : k::String("First");
+            e1 : k::String("Second");
+            if (n0 != e0) return 4;
+            if (n1 != e1) return 5;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 37. RTTI: getAnnotations() on interface — non-null when annotated
+// =========================================================================
+
+TEST_CASE("RTTI: annotated interface appears in class bases with correct name", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_iface__;
+        import k;
+
+        annotation Documented {}
+
+        @Documented
+        interface Describable {
+            const describe() : int;
+        }
+
+        class Impl : public k::Object, public Describable {
+            public Impl() {}
+            const describe() : int { return 7; }
+        }
+
+        test_iface_has_annotations() : int {
+            // Get the Describable interface RTTI via the Impl's bases
+            i : Impl;
+            bases : const k::TypeInfo?[]? = i.getClass().getBases();
+            if (bases == null) return 0;
+            // Check each base until we find "Describable"
+            idx : int = 0;
+            while (idx < bases->size) {
+                b : const k::TypeInfo? = bases[idx];
+                if (b != null) {
+                    name : k::String(b->getName());
+                    expected : k::String("Describable");
+                    if (name == expected) return 42;
+                }
+                idx = idx + 1;
+            }
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test_iface_has_annotations");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 38. RTTI: getAnnotations() null on unannotated interface
+// =========================================================================
+
+TEST_CASE("RTTI: unannotated interface appears in class bases", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_iface_null__;
+        import k;
+
+        interface Bare {
+            const value() : int;
+        }
+
+        class Impl : public k::Object, public Bare {
+            public Impl() {}
+            const value() : int { return 0; }
+        }
+
+        test() : int {
+            // Inspect the Bare interface RTTI via Impl's bases
+            i : Impl;
+            bases : const k::TypeInfo?[]? = i.getClass().getBases();
+            if (bases == null) return 0;
+            // Find "Bare" among bases
+            idx : int = 0;
+            while (idx < bases->size) {
+                b : const k::TypeInfo? = bases[idx];
+                if (b != null) {
+                    name : k::String(b->getName());
+                    expected : k::String("Bare");
+                    if (name == expected) {
+                        return 42;
+                    }
+                }
+                idx = idx + 1;
+            }
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 39. RTTI: AnnotationType inherits from AggregateType — getVisibility()
+// =========================================================================
+
+TEST_CASE("RTTI: AnnotationType getVisibility() returns PUBLIC", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_vis__;
+        import k;
+
+        annotation Vis {}
+
+        @Vis
+        class Target {
+            public Target() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            t : Target;
+            anns : const k::Annotation?[]? = t.getClass().getAnnotations();
+            if (anns == null) return 0;
+            ann : const k::Annotation? = anns[0];
+            if (ann == null) return 1;
+            v : k::Visibility = ann->getAnnotationType().getVisibility();
+            if (v == k::Visibility::PUBLIC) return 42;
+            return 2;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}

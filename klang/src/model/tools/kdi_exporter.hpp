@@ -85,6 +85,7 @@ public:
     void visit_structure(structure& s)                               override;
     void visit_klass(klass& k)                                       override;
     void visit_interface(interface& i)                               override;
+    void visit_annotation_type(annotation_type& a)                   override;
     void visit_function(function& fn)                                override;
     void visit_constructor(constructor& ctor)                        override;
     void visit_destructor(destructor& dtor)                          override;

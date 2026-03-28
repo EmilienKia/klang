@@ -11,6 +11,8 @@ They may **not** be used as ordinary identifiers.
 
 | Keyword     | Description |
 |-------------|-------------|
+| `abstract`  | Abstract modifier: prevents instantiation / requires override |
+| `annotation`| Annotation type declaration |
 | `bool`      | Boolean primitive type |
 | `byte`      | 8-bit signed integer type |
 | `char`      | 8-bit signed character type (alias of `byte`) |
@@ -32,7 +34,6 @@ They may **not** be used as ordinary identifiers.
 | `public`    | Public visibility modifier |
 | `protected` | Protected visibility modifier |
 | `private`   | Private visibility modifier |
-| `abstract`  | Abstract modifier: prevents instantiation / requires override |
 | `final`     | Final modifier: prevents further inheritance or overriding |
 | `this`      | Reference to the current object inside a member function |
 | `return`    | Return statement |
@@ -50,7 +51,7 @@ They may **not** be used as ordinary identifiers.
 Keyword: (one of)
     bool     byte     char     short    int      long
     float    double   unsigned
-    struct   class    interface   namespace   module   import   using
+    struct   class    interface   annotation   namespace   module   import   using
     static   const    abstract   final
     public   protected   private
     this     return
@@ -65,6 +66,7 @@ Keyword: (one of)
 
     new      delete
 - `abstract` is valid on a `class` or its methods to mark them as requiring overriding. On an `interface` or its methods it is accepted but redundant (warning).
+- `annotation` declares an annotation type. See [Annotations](../annotations/annotations.md).
 - `final` prevents further inheritance or overriding. See the relevant sections in [Classes and Virtuality](../structs/classes.md).
 - `const` marks a variable or parameter as immutable. See [Const-ness](types.md#14-const-ness) for the full specification.
 - `public`, `protected`, and `private` are parsed as visibility declarations inside namespace and struct bodies; they end with a colon (e.g., `public:`).

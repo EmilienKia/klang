@@ -760,7 +760,7 @@ TEST_CASE("Parse cast of function invocation", "[parser][expression][postfix_exp
 }
 
 //
-// Parse PM expression
+// PM expression
 //
 
 TEST_CASE("Parse no PM expression", "[parser][expression][pm_expr]") {
@@ -1843,5 +1843,364 @@ TEST_CASE("Parse right-associative assignment: a = b = c", "[parser][expression]
     auto c = std::dynamic_pointer_cast<ast::identifier_expr>(assign2->rexpr());
     REQUIRE( c );
     REQUIRE( is_same(*c, k::name(false, "c")) );
+}
+
+
+//
+// =========================================================================
+// Annotation parsing tests
+// =========================================================================
+//
+
+//
+// Single annotation definition parsing (parse_annotation_def)
+//
+
+TEST_CASE("Parse annotation def — bare @Name", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"@Deprecated"};
+    k::parse::parser parser(log, src);
+    auto ann = parser.parse_annotation_def();
+
+    REQUIRE( ann );
+    REQUIRE( ann->at_sign.type == k::lex::punctuator::AT_SIGN );
+    REQUIRE( ann->name );
+    REQUIRE( ann->name->names.size() == 1 );
+    REQUIRE( ann->name->names[0].content == "Deprecated" );
+    REQUIRE( !ann->has_parens );
+    REQUIRE( ann->args.empty() );
+    REQUIRE( !ann->brace_init );
+}
+
+TEST_CASE("Parse annotation def — qualified @ns::Name", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"@my::ns::Marker"};
+    k::parse::parser parser(log, src);
+    auto ann = parser.parse_annotation_def();
+
+    REQUIRE( ann );
+    REQUIRE( ann->name );
+    REQUIRE( ann->name->names.size() == 3 );
+    REQUIRE( ann->name->names[0].content == "my" );
+    REQUIRE( ann->name->names[1].content == "ns" );
+    REQUIRE( ann->name->names[2].content == "Marker" );
+    REQUIRE( !ann->has_parens );
+    REQUIRE( !ann->brace_init );
+}
+
+TEST_CASE("Parse annotation def — root-qualified @::ns::Name", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"@::root::Marker"};
+    k::parse::parser parser(log, src);
+    auto ann = parser.parse_annotation_def();
+
+    REQUIRE( ann );
+    REQUIRE( ann->name );
+    REQUIRE( ann->name->has_root_prefix() == true );
+    REQUIRE( ann->name->names.size() == 2 );
+    REQUIRE( ann->name->names[0].content == "root" );
+    REQUIRE( ann->name->names[1].content == "Marker" );
+}
+
+TEST_CASE("Parse annotation def — with empty parens @Name()", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"@Deprecated()"};
+    k::parse::parser parser(log, src);
+    auto ann = parser.parse_annotation_def();
+
+    REQUIRE( ann );
+    REQUIRE( ann->name->names.size() == 1 );
+    REQUIRE( ann->name->names[0].content == "Deprecated" );
+    REQUIRE( ann->has_parens );
+    REQUIRE( ann->args.empty() );
+    REQUIRE( !ann->brace_init );
+}
+
+TEST_CASE("Parse annotation def — with single arg @Name(expr)", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"@Version(1)"};
+    k::parse::parser parser(log, src);
+    auto ann = parser.parse_annotation_def();
+
+    REQUIRE( ann );
+    REQUIRE( ann->has_parens );
+    REQUIRE( ann->args.size() == 1 );
+    REQUIRE( !ann->brace_init );
+}
+
+TEST_CASE("Parse annotation def — with multiple args @Name(expr, expr)", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"@Version(1, 2)"};
+    k::parse::parser parser(log, src);
+    auto ann = parser.parse_annotation_def();
+
+    REQUIRE( ann );
+    REQUIRE( ann->has_parens );
+    // With comma expressions, we may get an expr_list_expr or flattened args
+    REQUIRE( ann->args.size() == 2 );
+    REQUIRE( !ann->brace_init );
+}
+
+TEST_CASE("Parse annotation def — with designated brace init", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"@Config{.key = 42, .flag = true}"};
+    k::parse::parser parser(log, src);
+    auto ann = parser.parse_annotation_def();
+
+    REQUIRE( ann );
+    REQUIRE( ann->name->names[0].content == "Config" );
+    REQUIRE( !ann->has_parens );
+    REQUIRE( ann->args.empty() );
+    REQUIRE( ann->brace_init );
+    REQUIRE( ann->brace_init->is_designated == true );
+    REQUIRE( ann->brace_init->elements.size() == 2 );
+}
+
+TEST_CASE("Parse annotation def — with empty brace init", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"@Empty{}"};
+    k::parse::parser parser(log, src);
+    auto ann = parser.parse_annotation_def();
+
+    REQUIRE( ann );
+    REQUIRE( ann->name->names[0].content == "Empty" );
+    REQUIRE( ann->brace_init );
+    REQUIRE( ann->brace_init->elements.empty() );
+}
+
+TEST_CASE("Parse annotation def — with positional brace init", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"@Pair{1, 2}"};
+    k::parse::parser parser(log, src);
+    auto ann = parser.parse_annotation_def();
+
+    REQUIRE( ann );
+    REQUIRE( ann->brace_init );
+    REQUIRE( ann->brace_init->is_designated == false );
+    REQUIRE( ann->brace_init->elements.size() == 2 );
+}
+
+TEST_CASE("Parse annotation def — returns null on non-@", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"struct Foo {}"};
+    k::parse::parser parser(log, src);
+    auto ann = parser.parse_annotation_def();
+
+    REQUIRE( !ann );
+}
+
+//
+// Multiple annotation definitions (parse_annotation_defs)
+//
+
+TEST_CASE("Parse multiple annotation defs", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"@A @B(1) @C{.x=2} struct Foo {}"};
+    k::parse::parser parser(log, src);
+    auto annotations = parser.parse_annotation_defs();
+
+    REQUIRE( annotations.size() == 3 );
+    REQUIRE( annotations[0]->name->names[0].content == "A" );
+    REQUIRE( !annotations[0]->has_parens );
+    REQUIRE( !annotations[0]->brace_init );
+
+    REQUIRE( annotations[1]->name->names[0].content == "B" );
+    REQUIRE( annotations[1]->has_parens );
+    REQUIRE( annotations[1]->args.size() == 1 );
+
+    REQUIRE( annotations[2]->name->names[0].content == "C" );
+    REQUIRE( annotations[2]->brace_init );
+    REQUIRE( annotations[2]->brace_init->is_designated );
+}
+
+TEST_CASE("Parse empty annotation defs", "[parser][annotation]") {
+    test_logger log;
+    k::source src{"struct Foo {}"};
+    k::parse::parser parser(log, src);
+    auto annotations = parser.parse_annotation_defs();
+
+    REQUIRE( annotations.empty() );
+}
+
+//
+// Annotated aggregate declarations
+//
+
+TEST_CASE("Parse annotated struct", "[parser][annotation][aggregate]") {
+    test_logger log;
+    k::source src{"@Deprecated struct Foo {}"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_aggregate_decl();
+
+    REQUIRE( decl );
+    REQUIRE( decl->is_struct() );
+    REQUIRE( std::string{decl->name.content} == "Foo" );
+    REQUIRE( decl->annotations.size() == 1 );
+    REQUIRE( decl->annotations[0]->name->names[0].content == "Deprecated" );
+}
+
+TEST_CASE("Parse multiple annotations on class", "[parser][annotation][aggregate]") {
+    test_logger log;
+    k::source src{"@A @B(1) class Bar {}"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_aggregate_decl();
+
+    REQUIRE( decl );
+    REQUIRE( decl->is_class() );
+    REQUIRE( std::string{decl->name.content} == "Bar" );
+    REQUIRE( decl->annotations.size() == 2 );
+    REQUIRE( decl->annotations[0]->name->names[0].content == "A" );
+    REQUIRE( decl->annotations[1]->name->names[0].content == "B" );
+    REQUIRE( decl->annotations[1]->has_parens );
+}
+
+TEST_CASE("Parse annotated interface", "[parser][annotation][aggregate]") {
+    test_logger log;
+    k::source src{"@Marker interface IFoo {}"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_aggregate_decl();
+
+    REQUIRE( decl );
+    REQUIRE( decl->is_interface() );
+    REQUIRE( std::string{decl->name.content} == "IFoo" );
+    REQUIRE( decl->annotations.size() == 1 );
+}
+
+TEST_CASE("Parse annotation with specifiers", "[parser][annotation][aggregate]") {
+    test_logger log;
+    k::source src{"@Deprecated public final struct Foo {}"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_aggregate_decl();
+
+    REQUIRE( decl );
+    REQUIRE( decl->is_struct() );
+    REQUIRE( decl->annotations.size() == 1 );
+    REQUIRE( decl->specifiers.size() == 2 );
+    REQUIRE( decl->specifiers[0].type == k::lex::keyword::PUBLIC );
+    REQUIRE( decl->specifiers[1].type == k::lex::keyword::FINAL );
+}
+
+TEST_CASE("Parse struct without annotations still works", "[parser][annotation][aggregate]") {
+    test_logger log;
+    k::source src{"struct Plain {}"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_aggregate_decl();
+
+    REQUIRE( decl );
+    REQUIRE( decl->is_struct() );
+    REQUIRE( std::string{decl->name.content} == "Plain" );
+    REQUIRE( decl->annotations.empty() );
+}
+
+//
+// Annotation type declarations
+//
+
+TEST_CASE("Parse annotation type declaration", "[parser][annotation][aggregate]") {
+    test_logger log;
+    k::source src{"annotation MyAnnotation { name : int; }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_aggregate_decl();
+
+    REQUIRE( decl );
+    REQUIRE( decl->is_annotation() );
+    REQUIRE( std::string{decl->name.content} == "MyAnnotation" );
+    REQUIRE( decl->declarations.size() == 1 );
+}
+
+TEST_CASE("Parse empty annotation type", "[parser][annotation][aggregate]") {
+    test_logger log;
+    k::source src{"annotation Empty {}"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_aggregate_decl();
+
+    REQUIRE( decl );
+    REQUIRE( decl->is_annotation() );
+    REQUIRE( std::string{decl->name.content} == "Empty" );
+    REQUIRE( decl->declarations.empty() );
+}
+
+TEST_CASE("Parse annotated annotation type", "[parser][annotation][aggregate]") {
+    test_logger log;
+    k::source src{"@Meta annotation Versioned { major : int; minor : int; }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_aggregate_decl();
+
+    REQUIRE( decl );
+    REQUIRE( decl->is_annotation() );
+    REQUIRE( std::string{decl->name.content} == "Versioned" );
+    REQUIRE( decl->annotations.size() == 1 );
+    REQUIRE( decl->annotations[0]->name->names[0].content == "Meta" );
+    REQUIRE( decl->declarations.size() == 2 );
+}
+
+TEST_CASE("Parse annotation type with specifiers", "[parser][annotation][aggregate]") {
+    test_logger log;
+    k::source src{"public annotation Public {}"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_aggregate_decl();
+
+    REQUIRE( decl );
+    REQUIRE( decl->is_annotation() );
+    REQUIRE( decl->specifiers.size() == 1 );
+    REQUIRE( decl->specifiers[0].type == k::lex::keyword::PUBLIC );
+}
+
+//
+// Annotation parsing via parse_declaration (integration)
+//
+
+TEST_CASE("Parse annotation type via parse_declaration", "[parser][annotation][declaration]") {
+    test_logger log;
+    k::source src{"annotation Info { value : int; }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_declaration();
+
+    REQUIRE( decl );
+    auto agg = std::dynamic_pointer_cast<ast::aggregate_decl>(decl);
+    REQUIRE( agg );
+    REQUIRE( agg->is_annotation() );
+    REQUIRE( std::string{agg->name.content} == "Info" );
+}
+
+TEST_CASE("Parse annotated struct via parse_declaration", "[parser][annotation][declaration]") {
+    test_logger log;
+    k::source src{"@Info(42) struct Data { x : int; }"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_declaration();
+
+    REQUIRE( decl );
+    auto agg = std::dynamic_pointer_cast<ast::aggregate_decl>(decl);
+    REQUIRE( agg );
+    REQUIRE( agg->is_struct() );
+    REQUIRE( agg->annotations.size() == 1 );
+    REQUIRE( agg->annotations[0]->name->names[0].content == "Info" );
+    REQUIRE( agg->annotations[0]->has_parens );
+}
+
+//
+// Annotation parsing error cases
+//
+
+TEST_CASE("Parse annotation def — @ without identifier yields error", "[parser][annotation][error]") {
+    test_logger log;
+    // '@' followed by a non-identifier keyword should throw
+    k::source src{"@ ;"};
+    k::parse::parser parser(log, src);
+    REQUIRE_THROWS( parser.parse_annotation_def() );
+}
+
+TEST_CASE("Parse annotation def — @ followed by nothing yields error", "[parser][annotation][error]") {
+    test_logger log;
+    k::source src{"@"};
+    k::parse::parser parser(log, src);
+    REQUIRE_THROWS( parser.parse_annotation_def() );
+}
+
+TEST_CASE("Parse annotation def — unclosed parens yields error", "[parser][annotation][error]") {
+    test_logger log;
+    k::source src{"@Foo(1, 2"};
+    k::parse::parser parser(log, src);
+    REQUIRE_THROWS( parser.parse_annotation_def() );
 }
 

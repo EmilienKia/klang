@@ -711,15 +711,16 @@ void declaration_generator::visit_klass(klass& klass) {
         // Both interfaces and classes:
         //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
         //     ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
-        //     i32 flags }
-        //   (8 ptr fields + 1 i32 field = 9 fields)
+        //     i32 flags, ptr annotations }
+        //   (9 ptr fields + 1 i32 field = 10 fields)
         std::string rtti_struct_name = "__rtti_" + klass.get_short_name() + "__";
         llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
         std::vector<llvm::Type*> rtti_fields = {
             ptr_ty, ptr_ty, ptr_ty,     // __vptr__, __vptr_AggregateType__, __vptr_TypeInfo__
             ptr_ty, ptr_ty,             // name, fullName
             ptr_ty, ptr_ty, ptr_ty,     // bases, nested, enclosing
-            i32_ty                       // flags
+            i32_ty,                      // flags
+            ptr_ty                       // annotations
         };
         llvm::StructType* rtti_llvm_type = llvm::StructType::create(
             llvm_ctx, rtti_fields, rtti_struct_name);
@@ -765,7 +766,8 @@ void declaration_generator::visit_klass(klass& klass) {
             null_ptr,       // field 5: bases                   → patched later
             null_ptr,       // field 6: nested                  → patched later
             null_ptr,       // field 7: enclosing               → patched later
-            llvm::ConstantInt::get(i32_ty, 0)  // field 8: flags → patched later
+            llvm::ConstantInt::get(i32_ty, 0),  // field 8: flags → patched later
+            null_ptr        // field 9: annotations             → patched later
         };
         llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
         auto rtti_gv = new llvm::GlobalVariable(
@@ -840,10 +842,10 @@ void implementation_generator::visit_klass(klass& klass) {
     //   c) Set the enclosing field to the RTTI of the enclosing aggregate (if any).
     //   d) Set the flags field (visibility + is_static).
     //
-    // Both interfaces and classes share the same layout (9 fields):
+    // Both interfaces and classes share the same layout (10 fields):
     //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
     //     ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
-    //     i32 flags }
+    //     i32 flags, ptr annotations }
     //
     // When the vtable symbols are not available (e.g. standalone compilation
     // without libk), the RTTI global keeps null vptrs.  typeid comparison
@@ -1010,6 +1012,61 @@ void implementation_generator::visit_klass(klass& klass) {
             flags_val |= 4;
         }
 
+        // ── e) Synthesize annotation instance globals ────────────────────────────
+        // For each annotation_instance on this class/interface, emit a constant
+        // global of the annotation's struct type (zero-initialized members for now).
+        // Then collect them into a K-array for the RTTI 'annotations' field.
+        llvm::Constant* annotations_gv = null_ptr;
+        {
+            std::vector<llvm::Constant*> ann_ptrs;
+            for (auto& ann_inst : klass.get_annotations()) {
+                if (!ann_inst.resolved_type) continue;
+                auto& ann_type = *ann_inst.resolved_type;
+                if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) continue;
+
+                // Build a constant struct for this annotation instance:
+                // { ptr __vptr__, [member fields zero-initialized...] }
+                auto ann_st_type = ann_type.get_struct_type();
+                if (!ann_st_type) continue;
+
+                auto* llvm_st_type = _context->get_llvm_type(ann_st_type);
+                if (!llvm_st_type) continue;
+
+                // Build all-zero initializer, then replace field 0 with vptr
+                llvm::Constant* ann_init = llvm::ConstantAggregateZero::get(llvm_st_type);
+                // Set field 0 (__vptr__) to the annotation type's vtable global
+                llvm::Constant* vt_ptr = ann_type.get_vtable()->llvm_global;
+                ann_init = llvm::ConstantFoldInsertValueInstruction(ann_init, vt_ptr, {0});
+                if (!ann_init) {
+                    // Fallback: build manually
+                    auto* sty = llvm::cast<llvm::StructType>(llvm_st_type);
+                    std::vector<llvm::Constant*> fields;
+                    for (unsigned i = 0; i < sty->getNumElements(); ++i) {
+                        if (i == 0) {
+                            fields.push_back(vt_ptr);
+                        } else {
+                            fields.push_back(llvm::Constant::getNullValue(sty->getElementType(i)));
+                        }
+                    }
+                    ann_init = llvm::ConstantStruct::get(sty, fields);
+                }
+
+                std::string ann_global_name = mangler::mangle_rtti(klass.get_name())
+                    + "_ann_" + ann_inst.raw_name;
+                auto* ann_gv = new llvm::GlobalVariable(
+                    _context->module(), llvm_st_type,
+                    /*isConstant=*/true,
+                    llvm::GlobalValue::PrivateLinkage,
+                    ann_init, ann_global_name);
+                ann_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+                ann_ptrs.push_back(ann_gv);
+            }
+
+            if (!ann_ptrs.empty()) {
+                annotations_gv = make_base_array(ann_ptrs, "_annotations");
+            }
+        }
+
         std::vector<llvm::Constant*> new_rtti_init = {
             vptr_field,                        // field 0: __vptr__
             at_vptr_field,                     // field 1: __vptr_AggregateType__
@@ -1019,7 +1076,8 @@ void implementation_generator::visit_klass(klass& klass) {
             bases_gv ? bases_gv : null_ptr,    // field 5: bases
             nested_gv ? nested_gv : null_ptr,  // field 6: nested
             enclosing_rtti,                    // field 7: enclosing
-            llvm::ConstantInt::get(i32_ty, flags_val)  // field 8: flags
+            llvm::ConstantInt::get(i32_ty, flags_val),  // field 8: flags
+            annotations_gv                     // field 9: annotations
         };
 
         rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_rtti_init));
@@ -1451,6 +1509,259 @@ void declaration_generator::visit_interface(interface& iface) {
 
 void implementation_generator::visit_interface(interface& iface) {
     visit_klass(iface);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// annotation_type visitors
+// ═══════════════════════════════════════════════════════════════════════════
+
+// symbol_resolver::visit_annotation_type
+// ────────────────────────────────────────
+// Resolves annotation type: visit aggregate (bases, members, constructors),
+// then build a minimal vtable with only the RTTI slot (no user virtual functions).
+// Annotation member functions are never virtual.
+void symbol_resolver::visit_annotation_type(annotation_type& ann) {
+    visit_aggregate(ann);
+
+    // Build a vtable layout with zero user slots — only the RTTI slot (slot 0).
+    // This is needed for type resolution via vptr → vtable[0] → RTTI global.
+    auto vt = std::make_shared<vtable_layout>();
+    // No entries — annotations have no virtual functions.
+    ann.set_vtable(vt);
+
+    // Inject __vptr__ as first synthetic member
+    ann.inject_vptr_field("__vptr__");
+}
+
+// aggregate_type_resolver::visit_annotation_type
+// ────────────────────────────────────────────────
+// Build the LLVM vtable struct type for annotation types (RTTI slot only).
+void aggregate_type_resolver::visit_annotation_type(annotation_type& ann) {
+    visit_aggregate(ann);
+
+    if (!ann.has_vtable()) return;
+
+    auto vt = ann.get_vtable();
+    llvm::LLVMContext& llvm_ctx = **_context;
+    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    // Vtable: { ptr RTTI } — single slot
+    std::vector<llvm::Type*> vtable_fields;
+    vtable_fields.push_back(ptr_ty); // RTTI placeholder
+    std::string vtable_struct_name = "__vtable_" + ann.get_short_name() + "__";
+    auto* existing = llvm::StructType::getTypeByName(llvm_ctx, vtable_struct_name);
+    if (!existing) {
+        existing = llvm::StructType::create(llvm_ctx, vtable_fields, vtable_struct_name);
+    }
+    vt->llvm_type = existing;
+}
+
+// model_materializer::visit_annotation_type
+// ──────────────────────────────────────────
+// No additional vtable validation needed for annotation types (no user virtual functions).
+void model_materializer::visit_annotation_type(annotation_type& ann) {
+    // Just visit nested children via the aggregate visitor
+    visit_aggregate(ann);
+}
+
+// type_reference_resolver::visit_annotation_type
+// ───────────────────────────────────────────────
+// Resolve type references in annotation body. Build LLVM vtable struct type
+// if not already done by aggregate_type_resolver.
+void type_reference_resolver::visit_annotation_type(annotation_type& ann) {
+    visit_aggregate(ann);
+
+    if (!ann.has_vtable()) return;
+
+    auto vt = ann.get_vtable();
+    if (vt->llvm_type) return; // already built
+
+    llvm::LLVMContext& llvm_ctx = **_context;
+    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    std::vector<llvm::Type*> vtable_fields;
+    vtable_fields.push_back(ptr_ty); // RTTI slot only
+    std::string vtable_struct_name = "__vtable_" + ann.get_short_name() + "__";
+    llvm::StructType* vtable_llvm_type = llvm::StructType::create(llvm_ctx, vtable_fields, vtable_struct_name);
+    vt->llvm_type = vtable_llvm_type;
+}
+
+// declaration_generator::visit_annotation_type
+// ─────────────────────────────────────────────
+// Emit the RTTI global (AnnotationType instance) and vtable stub for an annotation type.
+void declaration_generator::visit_annotation_type(annotation_type& ann) {
+    visit_aggregate(ann);
+
+    if (!ann.has_vtable()) return;
+
+    llvm::LLVMContext& llvm_ctx = **_context;
+    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+    // ── RTTI global (AnnotationType instance) ────────────────────────────────
+    // Layout: { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
+    //           ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
+    //           i32 flags }
+    std::string rtti_struct_name = "__rtti_" + ann.get_short_name() + "__";
+    std::vector<llvm::Type*> rtti_fields = {
+        ptr_ty, ptr_ty, ptr_ty,     // __vptr__, __vptr_AggregateType__, __vptr_TypeInfo__
+        ptr_ty, ptr_ty,             // name, fullName
+        ptr_ty, ptr_ty, ptr_ty,     // bases, nested, enclosing
+        i32_ty                       // flags
+    };
+    llvm::StructType* rtti_llvm_type = llvm::StructType::create(
+        llvm_ctx, rtti_fields, rtti_struct_name);
+
+    std::string rtti_name = mangler::mangle_rtti(ann.get_name());
+
+    // Emit name strings
+    auto make_name_gv = [&](const std::string& str, const std::string& suffix) -> llvm::Constant* {
+        uint32_t len = static_cast<uint32_t>(str.size() + 1);
+        llvm::Constant* str_data = llvm::ConstantDataArray::getString(llvm_ctx, str, /*AddNull=*/true);
+        llvm::StructType* str_struct_ty = llvm::StructType::get(
+            llvm_ctx, {i32_ty, str_data->getType()}, /*isPacked=*/false);
+        llvm::Constant* str_struct_init = llvm::ConstantStruct::get(
+            str_struct_ty,
+            {llvm::ConstantInt::get(i32_ty, len), str_data});
+        auto* gv = new llvm::GlobalVariable(
+            _context->module(), str_struct_ty,
+            true, llvm::GlobalValue::PrivateLinkage,
+            str_struct_init, rtti_name + suffix);
+        gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+        return gv;
+    };
+
+    llvm::Constant* name_cstr = make_name_gv(ann.get_short_name(), "_name");
+    llvm::Constant* fullname_cstr = make_name_gv(ann.get_fq_name(), "_fullname");
+
+    llvm::Constant* null_ptr = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+    std::vector<llvm::Constant*> rtti_init = {
+        null_ptr,       // field 0: __vptr__                → patched later
+        null_ptr,       // field 1: __vptr_AggregateType__  → patched later
+        null_ptr,       // field 2: __vptr_TypeInfo__       → patched later
+        name_cstr,      // field 3: name
+        fullname_cstr,  // field 4: fullName
+        null_ptr,       // field 5: bases                   → patched later
+        null_ptr,       // field 6: nested                  → patched later
+        null_ptr,       // field 7: enclosing               → patched later
+        llvm::ConstantInt::get(i32_ty, 0)  // field 8: flags → patched later
+    };
+    llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
+    auto rtti_gv = new llvm::GlobalVariable(
+        _context->module(), rtti_llvm_type,
+        /*isConstant=*/false,
+        llvm::GlobalValue::ExternalLinkage,
+        rtti_const, rtti_name);
+
+    ann.get_vtable()->llvm_rtti_global = rtti_gv;
+
+    // ── Vtable global (single RTTI slot) ─────────────────────────────────────
+    auto vt = ann.get_vtable();
+    if (!vt->llvm_type) return;
+
+    std::string vtable_name = mangler::mangle_vtable(ann.get_name());
+    llvm::Constant* rtti_slot = vt->llvm_rtti_global
+        ? llvm::cast<llvm::Constant>(vt->llvm_rtti_global)
+        : llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+
+    std::vector<llvm::Constant*> vtable_init;
+    vtable_init.push_back(rtti_slot);  // single RTTI slot
+    llvm::Constant* vtable_const = llvm::ConstantStruct::get(vt->llvm_type, vtable_init);
+    auto vtable_gv = new llvm::GlobalVariable(
+        _context->module(), vt->llvm_type,
+        true, llvm::GlobalValue::ExternalLinkage,
+        vtable_const, vtable_name);
+    vt->llvm_global = vtable_gv;
+}
+
+// implementation_generator::visit_annotation_type
+// ────────────────────────────────────────────────
+// Patch the RTTI global with real vtable pointers, bases, nested, enclosing, and flags.
+// Then synthesize annotation instances for classes/interfaces that use this annotation.
+void implementation_generator::visit_annotation_type(annotation_type& ann) {
+    visit_aggregate(ann);
+
+    if (!ann.has_vtable()) return;
+
+    auto* rtti_gv = ann.get_vtable()->llvm_rtti_global;
+    if (!rtti_gv) return;
+
+    llvm::LLVMContext& llvm_ctx = **_context;
+    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+    // ── Look up AnnotationType vtable symbols ────────────────────────────────
+    std::string desc_vtable_name    = "_KTVN1k14AnnotationTypeE";
+    std::string desc_at_vtable_name = "_KTVN1k14AnnotationTypeE_for_AggregateType";
+    std::string desc_ti_vtable_name = "_KTVN1k14AnnotationTypeE_for_TypeInfo";
+
+    llvm::Constant* desc_vt    = _context->module().getNamedGlobal(desc_vtable_name);
+    llvm::Constant* desc_at_vt = _context->module().getNamedGlobal(desc_at_vtable_name);
+    llvm::Constant* desc_ti_vt = _context->module().getNamedGlobal(desc_ti_vtable_name);
+
+    // Try external declaration if not in this module
+    if (!desc_vt) {
+        bool has_libk = _unit.find_import(k::name("k")) != nullptr;
+        if (!has_libk) {
+            for (const auto& tdep : _unit.get_transitive_kdis()) {
+                if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
+            }
+        }
+        if (has_libk) {
+            desc_vt = new llvm::GlobalVariable(
+                _context->module(), ptr_ty,
+                true, llvm::GlobalValue::ExternalLinkage,
+                nullptr, desc_vtable_name);
+        }
+    }
+
+    // ── Compute flags ────────────────────────────────────────────────────────
+    uint32_t flags_val = 0;
+    switch (ann.get_visibility()) {
+        case PUBLIC:  default:   flags_val = 0; break;
+        case PROTECTED:          flags_val = 1; break;
+        case PRIVATE:            flags_val = 2; break;
+    }
+    if (ann.is_static_nested()) {
+        flags_val |= 4;
+    }
+
+    // ── Patch RTTI initializer ───────────────────────────────────────────────
+    auto* rtti_type = llvm::cast<llvm::StructType>(rtti_gv->getValueType());
+    auto* old_init = rtti_gv->getInitializer();
+    auto* old_struct = llvm::cast<llvm::ConstantStruct>(old_init);
+
+    llvm::Constant* null_ptr = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+    llvm::Constant* vptr_field    = desc_vt    ? desc_vt    : old_struct->getOperand(0);
+    llvm::Constant* at_vptr_field = desc_at_vt ? desc_at_vt : old_struct->getOperand(1);
+    llvm::Constant* ti_vptr_field = desc_ti_vt ? desc_ti_vt : old_struct->getOperand(2);
+
+    std::vector<llvm::Constant*> new_rtti_init = {
+        vptr_field,                        // field 0: __vptr__
+        at_vptr_field,                     // field 1: __vptr_AggregateType__
+        ti_vptr_field,                     // field 2: __vptr_TypeInfo__
+        old_struct->getOperand(3),         // field 3: name (keep as-is)
+        old_struct->getOperand(4),         // field 4: fullName (keep as-is)
+        null_ptr,                          // field 5: bases (TODO: populate later)
+        null_ptr,                          // field 6: nested
+        null_ptr,                          // field 7: enclosing
+        llvm::ConstantInt::get(i32_ty, flags_val)  // field 8: flags
+    };
+
+    rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_rtti_init));
+    rtti_gv->setConstant(true);
+
+    // ── Patch vtable with RTTI pointer ───────────────────────────────────────
+    auto vt = ann.get_vtable();
+    if (vt->llvm_global && vt->llvm_type) {
+        llvm::Constant* rtti_slot = vt->llvm_rtti_global
+            ? llvm::cast<llvm::Constant>(vt->llvm_rtti_global)
+            : null_ptr;
+        std::vector<llvm::Constant*> vtable_init;
+        vtable_init.push_back(rtti_slot);
+        vt->llvm_global->setInitializer(llvm::ConstantStruct::get(vt->llvm_type, vtable_init));
+    }
 }
 
 

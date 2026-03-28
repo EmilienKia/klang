@@ -57,6 +57,10 @@ namespace k::parse {
         // Forward declaration (full definition follows)
         struct qualified_identifier;
         struct brace_init_list;
+        struct annotation_def;
+
+        /** List of annotation definitions attached to a declaration. */
+        using annotation_def_list = std::vector<std::shared_ptr<annotation_def>>;
 
         struct import : public ast_node {
             lex::keyword import_kw;
@@ -746,7 +750,38 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * Annotation definition attached to a declaration.
+         * Syntax: '@' qualified-identifier [ '(' [ExpressionList] ')' | DesignatedBraceInitList ]
+         *
+         * Without parentheses or braces, default initialization is implicit.
+         */
+        struct annotation_def : public ast_node {
+            lex::punctuator at_sign;                          ///< The '@' token
+            std::shared_ptr<qualified_identifier> name;       ///< Annotation type name (possibly qualified)
+            std::shared_ptr<brace_init_list> brace_init;      ///< Optional designated/positional brace init (mutually exclusive with args)
+            std::vector<expr_ptr> args;                       ///< Optional parenthesized argument list
+            bool has_parens = false;                          ///< True when (...) was explicitly provided (distinguishes @Foo from @Foo())
+
+            annotation_def(const lex::punctuator& at_sign,
+                           std::shared_ptr<qualified_identifier> name)
+                : at_sign(at_sign), name(std::move(name)) {}
+
+            annotation_def(const lex::punctuator& at_sign,
+                           std::shared_ptr<qualified_identifier> name,
+                           const std::vector<expr_ptr>& args)
+                : at_sign(at_sign), name(std::move(name)), args(args), has_parens(true) {}
+
+            annotation_def(const lex::punctuator& at_sign,
+                           std::shared_ptr<qualified_identifier> name,
+                           std::shared_ptr<brace_init_list> brace_init)
+                : at_sign(at_sign), name(std::move(name)), brace_init(std::move(brace_init)) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct aggregate_decl : public declaration {
+            annotation_def_list annotations;
             std::vector <lex::keyword> specifiers;
             lex::keyword kw_aggregate_type;
             lex::punctuator open_brace, close_brace;
@@ -769,14 +804,16 @@ namespace k::parse {
             bool is_class() const { return kw_aggregate_type.type == lex::keyword::CLASS; }
             bool is_struct() const { return kw_aggregate_type.type == lex::keyword::STRUCT; }
             bool is_interface() const { return kw_aggregate_type.type == lex::keyword::INTERFACE; }
+            bool is_annotation() const { return kw_aggregate_type.type == lex::keyword::ANNOTATION; }
 
             aggregate_decl(const std::vector <lex::keyword>& specifiers,
                             const lex::keyword& kw_aggregate_type,
                             const lex::punctuator& open_brace,
                             const lex::punctuator& close_brace,
                             const lex::identifier& name,
-                            const std::vector <decl_ptr> &declarations) :
-                    specifiers(specifiers), kw_aggregate_type(kw_aggregate_type), open_brace(open_brace), close_brace(close_brace), name(name), declarations(declarations) {}
+                            const std::vector <decl_ptr> &declarations,
+                            const annotation_def_list& annotations = {}) :
+                    annotations(annotations), specifiers(specifiers), kw_aggregate_type(kw_aggregate_type), open_brace(open_brace), close_brace(close_brace), name(name), declarations(declarations) {}
 
             aggregate_decl(const std::vector <lex::keyword>& specifiers,
                             const lex::keyword& kw_aggregate_type,
@@ -784,16 +821,18 @@ namespace k::parse {
                             const lex::punctuator& close_brace,
                             const lex::identifier& name,
                             const std::vector<base_clause_entry>& bases,
-                            const std::vector <decl_ptr> &declarations) :
-                    specifiers(specifiers), kw_aggregate_type(kw_aggregate_type), open_brace(open_brace), close_brace(close_brace), name(name), bases(bases), declarations(declarations) {}
+                            const std::vector <decl_ptr> &declarations,
+                            const annotation_def_list& annotations = {}) :
+                    annotations(annotations), specifiers(specifiers), kw_aggregate_type(kw_aggregate_type), open_brace(open_brace), close_brace(close_brace), name(name), bases(bases), declarations(declarations) {}
 
             aggregate_decl(std::vector <lex::keyword>&& specifiers,
                             lex::keyword&& kw_aggregate_type,
                             lex::punctuator&& open_brace,
                             lex::punctuator&& close_brace,
                             lex::identifier &&name,
-                            std::vector <decl_ptr> &&declarations) :
-                    specifiers(specifiers), kw_aggregate_type(kw_aggregate_type), open_brace(open_brace), close_brace(close_brace), name(name), declarations(declarations) {}
+                            std::vector <decl_ptr> &&declarations,
+                            annotation_def_list&& annotations = {}) :
+                    annotations(std::move(annotations)), specifiers(specifiers), kw_aggregate_type(kw_aggregate_type), open_brace(open_brace), close_brace(close_brace), name(name), declarations(declarations) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -1134,6 +1173,8 @@ namespace k::parse {
         virtual void visit_brace_init_list(ast::brace_init_list &) = 0;
         virtual void visit_designated_init_element(ast::designated_init_element &) = 0;
 
+        virtual void visit_annotation_def(ast::annotation_def &) = 0;
+
         virtual void visit_comma_expr(ast::expr_list_expr &) = 0;
 
     };
@@ -1191,6 +1232,8 @@ namespace k::parse {
 
         void visit_brace_init_list(ast::brace_init_list &) override;
         void visit_designated_init_element(ast::designated_init_element &) override;
+
+        void visit_annotation_def(ast::annotation_def &) override;
 
         void visit_comma_expr(ast::expr_list_expr &) override;
     };

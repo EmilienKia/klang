@@ -74,6 +74,12 @@ Examples are included where they clarify the normative text.
 | [Destructors](structs/destructors.md) | Instance and static destructors; by-value parameter destruction; expression temporaries lifetime |
 | [Nested Structures](structs/nested.md) | Static nested and non-static inner structures |
 
+### Annotations
+
+| Page | Description |
+|------|-------------|
+| [Annotations](annotations/annotations.md) | The `annotation` keyword, declaring annotation types, applying `@Annotation` to aggregates, reading annotations at runtime via RTTI |
+
 ### Dynamic Memory
 
 | Page | Description |
@@ -88,6 +94,7 @@ Examples are included where they clarify the normative text.
 | [Standard Library Overview](../stdlib/index.md) | Base library (module `k`), optional libraries, conventions |
 | [Object](../stdlib/object.md) | Root base class for all K classes |
 | [String Types](../stdlib/string.md) | `CharHelpers`, `String`, `StringBuilder` |
+| [RTTI Types](../stdlib/rtti.md) | `Visibility`, `TypeInfo`, `AggregateType`, `Class`, `Interface`, `AnnotationType`, `Annotation` |
 | [Math](../stdlib/math.md) | Optional `k::math` module — `abs`, `min`, `max`, `clamp` |
 
 ### Grammar Reference

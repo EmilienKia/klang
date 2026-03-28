@@ -89,6 +89,7 @@ final const class Interface : public AggregateType {
     nested : const TypeInfo?[]?;
     enclosing : const TypeInfo?;
     flags : unsigned int;
+    annotations : const Annotation?[]?;
 
     /**
      * Internal bit-flag layout for the 'flags' field.
@@ -100,9 +101,9 @@ final const class Interface : public AggregateType {
     private Interface(name : const char[]?, fullName : const char[]?,
                       bases : const TypeInfo?[]?,
                       nested : const TypeInfo?[]?, enclosing : const TypeInfo?,
-                      flags : unsigned int)
+                      flags : unsigned int, annotations : const Annotation?[]?)
         : name(name), fullName(fullName), bases(bases), nested(nested),
-          enclosing(enclosing), flags(flags) {}
+          enclosing(enclosing), flags(flags), annotations(annotations) {}
 
     /**
      * Return the name of the interface.
@@ -155,6 +156,14 @@ final const class Interface : public AggregateType {
     const isStatic() : bool {
         return (flags & 4u) != 0u;
     }
+
+    /**
+     * Return the annotations attached to this interface, if any.
+     * Each element is an Annotation instance.
+     */
+    const getAnnotations() : const Annotation?[]? {
+        return annotations;
+    }
 }
 
 /**
@@ -168,6 +177,7 @@ final const class Class : public AggregateType {
     nested : const TypeInfo?[]?;
     enclosing : const TypeInfo?;
     flags : unsigned int;
+    annotations : const Annotation?[]?;
 
     /**
      * Internal bit-flag layout for the 'flags' field.
@@ -179,9 +189,9 @@ final const class Class : public AggregateType {
     private Class(name : const char[]?, fullName : const char[]?,
                   bases : const TypeInfo?[]?,
                   nested : const TypeInfo?[]?, enclosing : const TypeInfo?,
-                  flags : unsigned int)
+                  flags : unsigned int, annotations : const Annotation?[]?)
         : name(name), fullName(fullName), bases(bases), nested(nested),
-          enclosing(enclosing), flags(flags) {}
+          enclosing(enclosing), flags(flags), annotations(annotations) {}
 
     /**
      * Return the name of the class.
@@ -235,4 +245,117 @@ final const class Class : public AggregateType {
         return (flags & 4u) != 0u;
     }
 
+    /**
+     * Return the annotations attached to this class, if any.
+     * Each element is an Annotation instance.
+     */
+    const getAnnotations() : const Annotation?[]? {
+        return annotations;
+    }
+
+}
+
+/**
+ * RTTI annotation type descriptor.
+ * This class is used to describe annotation types at runtime.
+ */
+final const class AnnotationType : public AggregateType {
+    name : const char[]?;
+    fullName : const char[]?;
+    bases : const TypeInfo?[]?;
+    nested : const TypeInfo?[]?;
+    enclosing : const TypeInfo?;
+    flags : unsigned int;
+
+    /**
+     * Internal bit-flag layout for the 'flags' field.
+     * Bits 0-1: visibility (matches Visibility enum values: 0=PUBLIC, 1=PROTECTED, 2=PRIVATE).
+     * Bit 2: is_static (1 if the type is a static nested type).
+     * Remaining bits are reserved for future use.
+     */
+
+    private AnnotationType(name : const char[]?, fullName : const char[]?,
+                           bases : const TypeInfo?[]?,
+                           nested : const TypeInfo?[]?, enclosing : const TypeInfo?,
+                           flags : unsigned int)
+        : name(name), fullName(fullName), bases(bases), nested(nested),
+          enclosing(enclosing), flags(flags) {}
+
+    /**
+     * Return the name of the annotation type.
+     */
+    const getName() : const char[]? {
+        return name;
+    }
+
+    /**
+     * Return the fully qualified name of the annotation type.
+     */
+    const getFullName() : const char[]? {
+        return fullName;
+    }
+
+    /**
+     * Return the bases of the annotation type, if any.
+     * Each element is a TypeInfo descriptor.
+     */
+    const getBases() : const TypeInfo?[]? {
+        return bases;
+    }
+
+    /**
+     * Return the nested types declared inside this annotation type, if any.
+     * Each element is a TypeInfo descriptor.
+     */
+    const getNested() : const TypeInfo?[]? {
+        return nested;
+    }
+
+    /**
+     * Return the enclosing type that this annotation type is nested in, if any.
+     * Returns null if this annotation type is a top-level (non-nested) type.
+     */
+    const getEnclosing() : const TypeInfo? {
+        return enclosing;
+    }
+
+    /**
+     * Return the declared visibility of this annotation type.
+     */
+    const getVisibility() : Visibility {
+        return (Visibility) (flags & 3u);
+    }
+
+    /**
+     * Return true if this annotation type is declared as a static nested type.
+     */
+    const isStatic() : bool {
+        return (flags & 4u) != 0u;
+    }
+}
+
+/**
+ * C runtime helper: extract the RTTI AnnotationType pointer from an annotation's vtable.
+ * Implemented in rtti.c. Takes the annotation pointer (void*) and returns
+ * the AnnotationType pointer from vtable slot 0.
+ */
+extern __k_annotation_get_type(ann : const Annotation&) : const AnnotationType&;
+
+/**
+ * Annotation — root base class for all K annotation instances.
+ *
+ * Every annotation type in K implicitly inherits from Annotation.
+ * Provides a minimal interface for runtime annotation type identification.
+ * Annotation member functions are never virtual — only the vptr/RTTI slot
+ * is used for type resolution.
+ */
+const class Annotation {
+public:
+    /**
+     * Return the ::k::AnnotationType object describing the concrete annotation type.
+     * Delegates to the C runtime helper __k_annotation_get_type.
+     */
+    final const getAnnotationType() : const AnnotationType& {
+        return __k_annotation_get_type(this);
+    }
 }

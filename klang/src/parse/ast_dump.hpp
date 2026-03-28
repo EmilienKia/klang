@@ -219,11 +219,35 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_aggregate_decl(ast::aggregate_decl& decl) override {
+            for (auto& ann : decl.annotations) {
+                ann->visit(*this);
+            }
             prefix() << decl.kw_aggregate_type.content << " " << decl.name.content << std::endl;
             auto pf = prefix_inc();
             for(auto d : decl.declarations) {
                 d->visit(*this);
             }
+        }
+
+        void visit_annotation_def(ast::annotation_def& ann) override {
+            prefix() << "@";
+            if (ann.name) {
+                for (size_t i = 0; i < ann.name->names.size(); ++i) {
+                    if (i > 0) _stm << "::";
+                    _stm << ann.name->names[i].content;
+                }
+            }
+            if (ann.brace_init) {
+                ann.brace_init->visit(*this);
+            } else if (ann.has_parens) {
+                _stm << "(";
+                for (size_t i = 0; i < ann.args.size(); ++i) {
+                    if (i > 0) _stm << ", ";
+                    if (ann.args[i]) ann.args[i]->visit(*this);
+                }
+                _stm << ")";
+            }
+            _stm << std::endl;
         }
 
         void visit_enum_decl(ast::enum_decl& decl) override {

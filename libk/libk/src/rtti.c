@@ -36,4 +36,21 @@ void* __k_object_get_class(void* obj) {
     return vptr[0];
 }
 
+/**
+ * __k_annotation_get_type — Extract the RTTI AnnotationType reference from an annotation.
+ *
+ * In K, every annotation instance starts with a vptr (field 0) that points to
+ * its vtable.  The vtable's slot 0 contains a pointer to the RTTI global, which
+ * is a genuine ::k::AnnotationType instance.
+ *
+ * @param ann  Pointer to the K annotation instance (the 'this' reference, passed as void*).
+ * @return     Pointer to the ::k::AnnotationType instance (RTTI global).
+ */
+void* __k_annotation_get_type(void* ann) {
+    /* ann -> field 0 = vptr (pointer to vtable) */
+    void** vptr = *(void***)ann;
+    /* vtable slot 0 = pointer to RTTI global (::k::AnnotationType instance) */
+    return vptr[0];
+}
+
 

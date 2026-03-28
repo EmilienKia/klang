@@ -182,15 +182,18 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             // Cross-type inheritance (struct/class mix) is forbidden.
             // Interfaces count as class-like for this check (a class may implement an interface,
             // and an interface may extend another interface).
-            bool st_is_class_like   = st.is_class()       || std::dynamic_pointer_cast<const model::interface>(st.shared_as<const element>()) != nullptr;
-            bool base_is_class_like = base_st->is_class() || std::dynamic_pointer_cast<model::interface>(base_st) != nullptr;
-            if (st_is_class_like != base_is_class_like) {
-                std::string kind_st   = st.is_class()       ? "class" : "struct";
-                std::string kind_base = base_st->is_class() ? "class" : "struct";
-                throw_error(0x0035, st_lexeme,
-                    "{} '{}' cannot inherit from {} '{}': "
-                    "cross-inheritance between class and struct is not allowed",
-                    {kind_st, st.get_short_name(), kind_base, bs.raw_name});
+            // Annotation types are excluded: they inherit from ::k::Annotation (a class).
+            if (!st.is_annotation() && !base_st->is_annotation()) {
+                bool st_is_class_like   = st.is_class()       || std::dynamic_pointer_cast<const model::interface>(st.shared_as<const element>()) != nullptr;
+                bool base_is_class_like = base_st->is_class() || std::dynamic_pointer_cast<model::interface>(base_st) != nullptr;
+                if (st_is_class_like != base_is_class_like) {
+                    std::string kind_st   = st.is_class()       ? "class" : "struct";
+                    std::string kind_base = base_st->is_class() ? "class" : "struct";
+                    throw_error(0x0035, st_lexeme,
+                        "{} '{}' cannot inherit from {} '{}': "
+                        "cross-inheritance between class and struct is not allowed",
+                        {kind_st, st.get_short_name(), kind_base, bs.raw_name});
+                }
             }
 
             bs.base = base_st;
@@ -432,6 +435,45 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
         }
     }
     // Note: class-specific processing (vtable) is done in visit_klass
+
+    // ── Resolve annotation instances ─────────────────────────────────────────
+    // For each annotation_instance on this aggregate, resolve the raw_name to
+    // a concrete annotation_type.
+    for (auto& ann_inst : st.get_annotations_mutable()) {
+        if (ann_inst.resolved_type) continue; // already resolved
+        // Look up the annotation type by name
+        auto ann_agg = scope_lookup::lookup_structure(st.shared_as<element>(), ann_inst.raw_name);
+        if (!ann_agg) {
+            // Try imported modules
+            std::vector<std::string> parts;
+            std::size_t start = 0;
+            while (true) {
+                auto pos = ann_inst.raw_name.find("::", start);
+                if (pos == std::string::npos) {
+                    parts.push_back(ann_inst.raw_name.substr(start));
+                    break;
+                }
+                parts.push_back(ann_inst.raw_name.substr(start, pos - start));
+                start = pos + 2;
+            }
+            k::name qname{false, parts};
+            if (auto imp_agg = _unit.get_or_create_imported_aggregate(qname, _context)) {
+                ann_agg = std::dynamic_pointer_cast<aggregate>(imp_agg);
+            }
+        }
+        if (!ann_agg) {
+            throw_error(0x003A, st_lexeme,
+                "Annotation type '{}' not found on '{}'",
+                {ann_inst.raw_name, st.get_short_name()});
+        }
+        auto ann_type = std::dynamic_pointer_cast<annotation_type>(ann_agg);
+        if (!ann_type) {
+            throw_error(0x003B, st_lexeme,
+                "'{}' is not an annotation type; only annotation types can be used as annotations",
+                {ann_inst.raw_name});
+        }
+        ann_inst.resolved_type = ann_type;
+    }
 }
 
 // signature_resolver::visit_aggregate

@@ -102,6 +102,7 @@ add_executable(klang-tests
         tests/test-gen-class-abstract.cpp
         tests/test-gen-interface.cpp
         tests/test-model-materializer.cpp
+        tests/test-model-annotation.cpp
         tests/test-phase3-dispatch.cpp
         tests/test-phase4-gen.cpp
         tests/test-gen-virtuality-coverage.cpp

@@ -41,7 +41,7 @@ Grammar notation used here:
     `this` `return`
     `if` `else` `while` `for`
     `new` `delete` `default` `enum`
-    `operator`
+    `operator` `annotation`
 ### Literals
 *Full description:* [Literals](expressions/literals.md)
 <a id="literal"></a>**Literal:**
@@ -116,11 +116,23 @@ Grammar notation used here:
 <a id="usingfilter"></a>**UsingFilter:**
     `(` `'namespace'` | `'struct'` | `'interface'` | `'class'` `)`
 <a id="aggregatedecl"></a>**AggregateDecl:**
-    {{ [Specifier](#specifier) }} `(` `'struct'` | `'class'` | `'interface'` `)` [Identifier](#identifier) `[` `':'` [BaseClause](#baseclause) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
+    {{ [AnnotationDef](#annotationdef) }} {{ [Specifier](#specifier) }} `(` `'struct'` | `'class'` | `'interface'` | `'annotation'` `)` [Identifier](#identifier) `[` `':'` [BaseClause](#baseclause) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
 
     *Notes:*
     - *`'abstract'` in [Specifier](#specifier) is only valid with `'class'`, not `'struct'`. For `'interface'` it is accepted but redundant (warning `0x2002A`).*
     - *`'interface'` bodies may not contain fields, constructors, or destructors. Method bodies are forbidden (implicit abstract, warning `0x2002B` if `abstract` is written explicitly).*
+    - *`'annotation'` declares an annotation type. The body must be empty in the current version. See [Annotations](annotations/annotations.md).*
+    - *[AnnotationDef](#annotationdef) elements appear before the specifiers and aggregate keyword.*
+
+*Full description:* [Annotations](annotations/annotations.md)
+
+<a id="annotationdef"></a>**AnnotationDef:**
+    `'@'` [QualifiedIdentifier](#qualifiedidentifier)
+    | `'@'` [QualifiedIdentifier](#qualifiedidentifier) `'('` `[` [ExpressionList](#expressionlist) `]` `')'`
+    | `'@'` [QualifiedIdentifier](#qualifiedidentifier) [BraceInitList](#braceinitlist)
+
+<a id="annotationdeflist"></a>**AnnotationDefList:**
+    {{ [AnnotationDef](#annotationdef) }}
 <a id="baseclause"></a>**BaseClause:**
     [BaseSpec](#basespec) {{ `','` [BaseSpec](#basespec) }}
 <a id="basespec"></a>**BaseSpec:**

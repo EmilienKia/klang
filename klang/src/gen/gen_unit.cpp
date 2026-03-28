@@ -63,15 +63,36 @@ static bool is_k_object(const aggregate& agg) {
     if (agg.get_short_name() != "Object") return false;
     auto parent_ns = agg.parent<ns>();
     if (!parent_ns) return false;
-    // When compiling module k, the root_ns itself is named "k" (its parent is the unit).
-    // When Object would be in a sub-namespace k of another module, parent_ns would be
-    // a child of the root. Both cases: parent_ns short name must be "k".
     if (parent_ns->get_short_name() != "k") return false;
     return true;
 }
 
+/// Return true if the given aggregate is ::k::Annotation (the root annotation base).
+static bool is_k_annotation(const aggregate& agg) {
+    if (agg.get_short_name() != "Annotation") return false;
+    auto parent_ns = agg.parent<ns>();
+    if (!parent_ns) return false;
+    if (parent_ns->get_short_name() != "k") return false;
+    return true;
+}
+
+/// Check if a type name is available locally or via imports.
+static bool is_type_available(unit& unit, const std::string& type_name) {
+    auto root_ns = unit.get_root_namespace();
+    if (root_ns->get_short_name() == "k") {
+        if (root_ns->get_aggregate(type_name)) return true;
+    } else if (auto k_ns = root_ns->get_child_namespace("k")) {
+        if (k_ns->get_aggregate(type_name)) return true;
+    }
+    k::name qname{false, {"k", type_name}};
+    if (unit.find_imported_type(qname)) return true;
+    return false;
+}
+
 void symbol_resolver::visit_unit(unit& unit)
 {
+    auto root_ns = _unit.get_root_namespace();
+
     // ── Pre-pass 0: implicit Object inheritance ─────────────────────────────────
     // Every class that has no declared base classes (and is not ::k::Object itself)
     // implicitly inherits from ::k::Object.  We inject that base before any
@@ -82,29 +103,7 @@ void symbol_resolver::visit_unit(unit& unit)
     //   - it is available through an imported module (import k;).
     // In standalone test compilations that do not import k, the injection is skipped.
     {
-        // Check if k::Object is locally defined.
-        // When compiling module k, the root namespace itself IS the "k" namespace
-        // (root_ns->get_short_name() == "k"), so Object is a direct child.
-        // In other modules, Object might be in a child namespace named "k".
-        bool object_available = false;
-        auto root_ns = _unit.get_root_namespace();
-        if (root_ns->get_short_name() == "k") {
-            // We ARE module k — Object is a direct aggregate in root_ns
-            if (root_ns->get_aggregate("Object")) {
-                object_available = true;
-            }
-        } else if (auto k_ns = root_ns->get_child_namespace("k")) {
-            if (k_ns->get_aggregate("Object")) {
-                object_available = true;
-            }
-        }
-        // Check if k::Object is available via imports
-        if (!object_available) {
-            k::name obj_name{false, {"k", "Object"}};
-            if (_unit.find_imported_type(obj_name)) {
-                object_available = true;
-            }
-        }
+        bool object_available = is_type_available(_unit, "Object");
 
         if (object_available) {
             std::function<void(const std::vector<std::shared_ptr<element>>&)> inject_implicit_object;
@@ -125,6 +124,32 @@ void symbol_resolver::visit_unit(unit& unit)
                 }
             };
             inject_implicit_object(root_ns->get_children());
+        }
+    }
+
+    // ── Pre-pass 0b: implicit Annotation inheritance ─────────────────────────────
+    // Every annotation_type that has no declared base classes (and is not
+    // ::k::Annotation itself) implicitly inherits from ::k::Annotation.
+    {
+        bool annotation_available = is_type_available(_unit, "Annotation");
+
+        if (annotation_available) {
+            std::function<void(const std::vector<std::shared_ptr<element>>&)> inject_implicit_annotation;
+            inject_implicit_annotation = [&](const std::vector<std::shared_ptr<element>>& children) {
+                for (auto& child : children) {
+                    if (auto ann = std::dynamic_pointer_cast<annotation_type>(child)) {
+                        if (!ann->has_bases() && !is_k_annotation(*ann)) {
+                            ann->add_base("Annotation", PUBLIC);
+                        }
+                        inject_implicit_annotation(ann->get_children());
+                    } else if (auto st = std::dynamic_pointer_cast<aggregate>(child)) {
+                        inject_implicit_annotation(st->get_children());
+                    } else if (auto nspace = std::dynamic_pointer_cast<ns>(child)) {
+                        inject_implicit_annotation(nspace->get_children());
+                    }
+                }
+            };
+            inject_implicit_annotation(root_ns->get_children());
         }
     }
 

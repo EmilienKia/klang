@@ -174,6 +174,13 @@ std::shared_ptr<interface> aggregate_holder::define_interface(const std::string 
     return iface;
 }
 
+std::shared_ptr<annotation_type> aggregate_holder::define_annotation(const std::string &name) {
+    std::shared_ptr<annotation_type> ann = do_create_annotation(name);
+    _structs.insert({name, ann});
+    on_aggregate_defined(ann);
+    return ann;
+}
+
 std::shared_ptr<aggregate> aggregate_holder::get_aggregate(const std::string &name) const {
     auto it = _structs.find(name);
     if (it != _structs.end()) {
@@ -689,6 +696,20 @@ void structure::accept(model_visitor& visitor) {
 }
 
 //
+// Annotation type
+//
+
+std::shared_ptr<annotation_type> annotation_type::make_shared(std::shared_ptr<element> parent, const std::string &name) {
+    auto ann = std::shared_ptr<annotation_type>(new annotation_type(std::move(parent)));
+    ann->assign_name(name);
+    return ann;
+}
+
+void annotation_type::accept(model_visitor& visitor) {
+    visitor.visit_annotation_type(*this);
+}
+
+//
 // Klass
 //
 
@@ -803,6 +824,10 @@ std::shared_ptr<klass> aggregate::do_create_class(const std::string &name) {
 
 std::shared_ptr<interface> aggregate::do_create_interface(const std::string &name) {
     return interface::make_shared(shared_as<aggregate>(), name);
+}
+
+std::shared_ptr<annotation_type> aggregate::do_create_annotation(const std::string &name) {
+    return annotation_type::make_shared(shared_as<aggregate>(), name);
 }
 
 void aggregate::on_aggregate_defined(std::shared_ptr<aggregate> agg) {
@@ -1044,6 +1069,10 @@ std::shared_ptr<klass> ns::do_create_class(const std::string &name) {
 
 std::shared_ptr<interface> ns::do_create_interface(const std::string &name) {
     return std::shared_ptr<interface>(interface::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name));
+}
+
+std::shared_ptr<annotation_type> ns::do_create_annotation(const std::string &name) {
+    return std::shared_ptr<annotation_type>(annotation_type::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name));
 }
 
 void ns::on_aggregate_defined(std::shared_ptr<aggregate> agg) {

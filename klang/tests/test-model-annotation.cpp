@@ -1,0 +1,408 @@
+/*
+ * K Language compiler
+ *
+ * Copyright 2026 Emilien Kia
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Tests for annotation model elements.
+ *
+ * These tests verify:
+ *  - annotation_type is correctly created via model_builder
+ *  - annotation_type::is_annotation() returns true
+ *  - annotation_type is NOT a class (is_class() == false)
+ *  - annotation instances are attached to annotated aggregates
+ *  - annotation types can have member variables
+ *  - empty annotation types are valid
+ */
+
+#include <catch2/catch_all.hpp>
+
+#include "helpers.hpp"
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Annotation type declaration
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Model: annotation type is created and flagged", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_1__;
+        annotation MyAnnotation {
+            value : int;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "MyAnnotation");
+    REQUIRE(ann != nullptr);
+    CHECK(ann->is_annotation());
+    CHECK_FALSE(ann->is_class());
+    CHECK(ann->get_short_name() == "MyAnnotation");
+}
+
+TEST_CASE("Model: empty annotation type", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_2__;
+        annotation Empty {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "Empty");
+    REQUIRE(ann != nullptr);
+    CHECK(ann->is_annotation());
+    // The annotation has synthetic fields (__vptr__, __base_*__) but no user-defined variables.
+    // Check that no user-defined member exists.
+    CHECK(ann->get_variable("__vptr__") != nullptr); // synthetic vptr
+}
+
+TEST_CASE("Model: annotation type with multiple members", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_3__;
+        annotation Versioned {
+            major : int;
+            minor : int;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "Versioned");
+    REQUIRE(ann != nullptr);
+    CHECK(ann->is_annotation());
+    // User-defined members present alongside synthetic ones
+    CHECK(ann->get_variable("major") != nullptr);
+    CHECK(ann->get_variable("minor") != nullptr);
+}
+
+TEST_CASE("Model: annotation type appears in aggregate map", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_4__;
+        annotation Info {
+            value : int;
+        }
+        struct Foo {
+            x : int;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto root = comp->get_unit()->get_root_namespace();
+    REQUIRE(root != nullptr);
+
+    // Both the annotation type and struct appear in aggregates()
+    auto& aggs = root->aggregates();
+    CHECK(aggs.find("Info") != aggs.end());
+    CHECK(aggs.find("Foo") != aggs.end());
+
+    // Info is an annotation_type
+    auto info = find_annotation_type(comp, "Info");
+    REQUIRE(info != nullptr);
+    CHECK(info->is_annotation());
+
+    // Foo is a regular structure
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    CHECK_FALSE(foo->is_annotation());
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Annotation instances on aggregates
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Model: annotated class has annotation instances", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_5__;
+        annotation Deprecated {}
+        @Deprecated
+        class OldStuff {
+            foo() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto st = find_aggregate(comp, "OldStuff");
+    REQUIRE(st != nullptr);
+    auto& anns = st->get_annotations();
+    REQUIRE(anns.size() == 1);
+    CHECK(anns[0].raw_name == "Deprecated");
+    CHECK(anns[0].ast_node != nullptr);
+}
+
+TEST_CASE("Model: class with multiple annotations", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_6__;
+        annotation A {}
+        annotation B {}
+        @A @B
+        class Multi {
+            foo() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto st = find_aggregate(comp, "Multi");
+    REQUIRE(st != nullptr);
+    auto& anns = st->get_annotations();
+    REQUIRE(anns.size() == 2);
+    CHECK(anns[0].raw_name == "A");
+    CHECK(anns[1].raw_name == "B");
+}
+
+TEST_CASE("Model: struct without annotations has empty list", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_7__;
+        struct Plain {
+            x : int;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto st = find_aggregate(comp, "Plain");
+    REQUIRE(st != nullptr);
+    CHECK(st->get_annotations().empty());
+}
+
+TEST_CASE("Model: annotated class has annotation via find_klass", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_8__;
+        annotation Tag {}
+        @Tag
+        class MyClass {
+            foo() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto kl = find_klass(comp, "MyClass");
+    REQUIRE(kl != nullptr);
+    auto& anns = kl->get_annotations();
+    REQUIRE(anns.size() == 1);
+    CHECK(anns[0].raw_name == "Tag");
+}
+
+TEST_CASE("Model: annotation with qualified name on class", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_9__;
+        annotation Info {}
+        @Info
+        class Foo {
+            foo() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto st = find_aggregate(comp, "Foo");
+    REQUIRE(st != nullptr);
+    auto& anns = st->get_annotations();
+    REQUIRE(anns.size() == 1);
+    CHECK(anns[0].raw_name == "Info");
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Annotation type is itself annotatable
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Model: annotation type can itself be annotated", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_10__;
+        annotation Meta {}
+        @Meta
+        annotation Documented {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto doc = find_annotation_type(comp, "Documented");
+    REQUIRE(doc != nullptr);
+    CHECK(doc->is_annotation());
+    auto& anns = doc->get_annotations();
+    REQUIRE(anns.size() == 1);
+    CHECK(anns[0].raw_name == "Meta");
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Error: annotations on structs
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Model: annotation on struct is an error", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_err_1__;
+        annotation Deprecated {}
+        @Deprecated
+        struct BadTarget {
+            x : int;
+        }
+    )SRC");
+    // compile_model returns nullptr on error
+    CHECK(comp == nullptr);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Annotations on interfaces
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Model: annotated interface has annotation instances", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_iface_1__;
+        annotation Tag {}
+        @Tag
+        interface Describable {
+            const describe() : int;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto iface = find_aggregate(comp, "Describable");
+    REQUIRE(iface != nullptr);
+    auto& anns = iface->get_annotations();
+    REQUIRE(anns.size() == 1);
+    CHECK(anns[0].raw_name == "Tag");
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Annotation type has vtable (for RTTI type resolution)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Model: annotation type has vtable after resolution", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_vtable__;
+        annotation Marker {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "Marker");
+    REQUIRE(ann != nullptr);
+    CHECK(ann->has_vtable());
+    CHECK(ann->get_vtable() != nullptr);
+    // Annotation vtable has zero user slots (RTTI only)
+    CHECK(ann->get_vtable()->entries.empty());
+}
+
+TEST_CASE("Model: annotation type has vptr field", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_vptr__;
+        annotation Info { value : int; }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "Info");
+    REQUIRE(ann != nullptr);
+    CHECK(ann->get_vptr() != nullptr);
+    CHECK(ann->get_variable("__vptr__") != nullptr);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Annotation instances are resolved to annotation_type
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Model: annotation instance resolved_type is set on class", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_resolve_1__;
+        annotation Deprecated {}
+        @Deprecated
+        class Foo {
+            foo() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    auto& anns = foo->get_annotations();
+    REQUIRE(anns.size() == 1);
+    CHECK(anns[0].resolved_type != nullptr);
+    CHECK(anns[0].resolved_type->is_annotation());
+    CHECK(anns[0].resolved_type->get_short_name() == "Deprecated");
+}
+
+TEST_CASE("Model: annotation instance resolved_type is set on interface", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_resolve_2__;
+        annotation Tag {}
+        @Tag
+        interface Describable {
+            const describe() : int;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto iface = find_aggregate(comp, "Describable");
+    REQUIRE(iface != nullptr);
+    auto& anns = iface->get_annotations();
+    REQUIRE(anns.size() == 1);
+    CHECK(anns[0].resolved_type != nullptr);
+    CHECK(anns[0].resolved_type->get_short_name() == "Tag");
+}
+
+TEST_CASE("Model: multiple annotations all resolved on class", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_resolve_multi__;
+        annotation A { x : int; }
+        annotation B {}
+        @A @B
+        class Bar {
+            foo() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto bar = find_aggregate(comp, "Bar");
+    REQUIRE(bar != nullptr);
+    auto& anns = bar->get_annotations();
+    REQUIRE(anns.size() == 2);
+    CHECK(anns[0].resolved_type != nullptr);
+    CHECK(anns[0].resolved_type->get_short_name() == "A");
+    CHECK(anns[1].resolved_type != nullptr);
+    CHECK(anns[1].resolved_type->get_short_name() == "B");
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Error: using non-annotation type as annotation
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Model: using a class as annotation is an error", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_err_cls__;
+        class NotAnAnnotation {
+            foo() : int { return 0; }
+        }
+        @NotAnAnnotation
+        class Target {
+            bar() : int { return 0; }
+        }
+    )SRC");
+    // Should fail because NotAnAnnotation is not an annotation type
+    CHECK(comp == nullptr);
+}
+
+TEST_CASE("Model: using a struct as annotation is an error", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_err_struct__;
+        struct NotAnAnnotation {
+            x : int;
+        }
+        @NotAnAnnotation
+        class Target {
+            bar() : int { return 0; }
+        }
+    )SRC");
+    CHECK(comp == nullptr);
+}

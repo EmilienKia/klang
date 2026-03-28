@@ -510,14 +510,16 @@ static kdi_layout_field from_json_layout_field(const json& j) {
 
 static std::string agg_kind_to_str(kdi_aggregate_kind k) {
     switch (k) {
-        case kdi_aggregate_kind::class_:     return "class";
-        case kdi_aggregate_kind::interface_: return "interface";
-        default:                             return "struct";
+        case kdi_aggregate_kind::class_:      return "class";
+        case kdi_aggregate_kind::interface_:  return "interface";
+        case kdi_aggregate_kind::annotation_: return "annotation";
+        default:                              return "struct";
     }
 }
 static kdi_aggregate_kind agg_kind_from_str(const std::string& s) {
-    if (s == "class")     return kdi_aggregate_kind::class_;
-    if (s == "interface") return kdi_aggregate_kind::interface_;
+    if (s == "class")      return kdi_aggregate_kind::class_;
+    if (s == "interface")  return kdi_aggregate_kind::interface_;
+    if (s == "annotation") return kdi_aggregate_kind::annotation_;
     return kdi_aggregate_kind::struct_;
 }
 

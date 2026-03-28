@@ -382,10 +382,13 @@ std::vector<kdi::kdi_layout_field> kdi_builder::build_layout(const aggregate& ag
 std::optional<kdi::kdi_vtable> kdi_builder::build_vtable(const aggregate& agg) const {
     if (!agg.has_vtable()) return std::nullopt;
 
-    // get_vtable() only exists on klass
-    const auto* kl = dynamic_cast<const klass*>(&agg);
-    if (!kl) return std::nullopt;
-    auto vt = kl->get_vtable();
+    // get_vtable() exists on klass and annotation_type
+    std::shared_ptr<vtable_layout> vt;
+    if (const auto* kl = dynamic_cast<const klass*>(&agg)) {
+        vt = kl->get_vtable();
+    } else if (const auto* ann = dynamic_cast<const annotation_type*>(&agg)) {
+        vt = ann->get_vtable();
+    }
     if (!vt) return std::nullopt;
 
     kdi::kdi_vtable kvt;
@@ -436,6 +439,8 @@ kdi::kdi_aggregate kdi_builder::begin_aggregate(const aggregate& agg) {
 
     if (dynamic_cast<const model::interface*>(&agg))
         kagg.kind = kdi::kdi_aggregate_kind::interface_;
+    else if (agg.is_annotation())
+        kagg.kind = kdi::kdi_aggregate_kind::annotation_;
     else if (agg.is_class())
         kagg.kind = kdi::kdi_aggregate_kind::class_;
     else
@@ -598,6 +603,18 @@ void kdi_builder::visit_interface(interface& i) {
 
     kdi::kdi_aggregate kagg = begin_aggregate(i);
     visit_aggregate_body(i, kagg);
+
+    if (!_agg_stack.empty())
+        _agg_stack.back()->nested.push_back(std::move(kagg));
+    else if (!_ns_stack.empty())
+        _ns_stack.back()->aggregates.push_back(std::move(kagg));
+}
+
+void kdi_builder::visit_annotation_type(annotation_type& a) {
+    if (!is_exported(a.get_visibility())) return;
+
+    kdi::kdi_aggregate kagg = begin_aggregate(a);
+    visit_aggregate_body(a, kagg);
 
     if (!_agg_stack.empty())
         _agg_stack.back()->nested.push_back(std::move(kagg));

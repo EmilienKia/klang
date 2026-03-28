@@ -238,15 +238,19 @@ namespace k::model {
             throw_error(0x0003, st.kw_aggregate_type, "Structure '{}' cannot be declared here; structures are only allowed at namespace or structure scope", {std::string{st.name.content}});
         }
 
-        // Determine if this is a class (keyword 'class'), interface (keyword 'interface'), or a struct (keyword 'struct')
+        // Determine if this is a class (keyword 'class'), interface (keyword 'interface'),
+        // annotation (keyword 'annotation'), or a struct (keyword 'struct')
         bool is_class = (st.kw_aggregate_type.type == lex::keyword::CLASS);
         bool is_interface = (st.kw_aggregate_type.type == lex::keyword::INTERFACE);
+        bool is_annotation = (st.kw_aggregate_type.type == lex::keyword::ANNOTATION);
 
         std::shared_ptr<model::aggregate> agg;
         if (is_class) {
             agg = parent_scope->define_class(std::string{st.name.content});
         } else if (is_interface) {
             agg = parent_scope->define_interface(std::string{st.name.content});
+        } else if (is_annotation) {
+            agg = parent_scope->define_annotation(std::string{st.name.content});
         } else {
             agg = parent_scope->define_structure(std::string{st.name.content});
         }
@@ -322,6 +326,25 @@ namespace k::model {
                 }
             }
             agg->add_base(base_entry.qualified_name, base_vis);
+        }
+
+        // Populate annotation instances from the AST annotation list
+        // Annotations are currently only supported on classes, interfaces, and annotation types.
+        if (!st.annotations.empty() && !is_class && !is_interface && !is_annotation) {
+            throw_error(0x0024, st.kw_aggregate_type,
+                "Annotations are only supported on classes and interfaces; '{}' is not a class or interface",
+                {std::string{st.name.content}});
+        }
+        for (auto& ast_ann : st.annotations) {
+            if (ast_ann && ast_ann->name) {
+                // Build the raw qualified name string (e.g. "my::Deprecated")
+                std::string raw_name;
+                for (size_t i = 0; i < ast_ann->name->names.size(); ++i) {
+                    if (i > 0) raw_name += "::";
+                    raw_name += std::string{ast_ann->name->names[i].content};
+                }
+                agg->add_annotation(model::annotation_instance{std::move(raw_name), ast_ann});
+            }
         }
 
         // Push aggregate context

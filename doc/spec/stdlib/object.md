@@ -11,9 +11,10 @@ import.
 ---
 ## Declaration
 ```k
-class Object {
+const class Object {
 public:
-    hash() : int { return 0; }
+    const hash() : int { return 0; }
+    final const getClass() : const Class&;
 }
 ```
 ---
@@ -23,9 +24,39 @@ Return a hash code for this object.
 The default implementation returns `0`.  Subclasses should override this
 method to provide a meaningful hash based on the object's identity or content.
 **Returns:** An integer hash code.
+
+### `getClass() : const Class&`
+Return the [`Class`](rtti.md#5-class) RTTI descriptor for the concrete
+(most-derived) class of this object.
+
+This method is declared `final` — it cannot be overridden. It reads the
+object's vtable slot 0 (the RTTI pointer) to identify the concrete type
+at runtime. The returned `Class` reference provides access to the type's
+name, fully qualified name, base types, nested types, visibility, and
+annotations.
+
+**Returns:** A reference to the `k::Class` descriptor for the concrete type.
+
+**Example:**
+```k
+import k;
+
+test() : int {
+    s : k::String("hello");
+    name : k::String(s.getClass().getName());
+    expected : k::String("String");
+    if (name == expected) return 42;
+    return 0;
+}
+```
 ---
 ## Design Notes
 - `Object` is intentionally minimal.  Future versions may add methods such as
-  `equals()`, `toString()`, or `typeName()`.
+  `equals()` or `toString()`.
 - Because `Object` is a **class** (not a struct), it carries a vtable pointer,
-  enabling virtual dispatch on `hash()` and future virtual methods.
+  enabling virtual dispatch on `hash()` and RTTI via `getClass()`.
+- `Object` is declared `const` — all its methods are implicitly `const`.
+
+---
+
+*See also:* [RTTI Types](rtti.md) · [Annotations](../language/annotations/annotations.md) · [Classes — RTTI](../language/structs/classes.md#14-rtti-and-dynamic-downcast)

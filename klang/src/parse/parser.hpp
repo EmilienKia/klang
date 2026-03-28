@@ -139,7 +139,19 @@ public:
     std::shared_ptr<ast::friend_decl> parse_friend_decl();
 
     /**
-     * AGGREGATE_DECLARATION := SPECIFIERS ['struct'|'class', 'interface'] identifier '{' DECLARATIONS '}'
+     * ANNOTATION_DEF := '@' QUALIFIED_IDENTIFIER [ '(' [ EXPRESSION_LIST ] ')' | BRACE_INIT_LIST ]
+     * @return A single annotation definition, or null if '@' is not found.
+     */
+    std::shared_ptr<ast::annotation_def> parse_annotation_def();
+
+    /**
+     * ANNOTATION_DEFS := ANNOTATION_DEF*
+     * @return Zero or more annotation definitions.
+     */
+    ast::annotation_def_list parse_annotation_defs();
+
+    /**
+     * AGGREGATE_DECLARATION := ANNOTATION_DEFS SPECIFIERS ['struct'|'class'|'interface'|'annotation'] identifier '{' DECLARATIONS '}'
      */
     std::shared_ptr<ast::aggregate_decl> parse_aggregate_decl();
 

@@ -51,6 +51,10 @@ void default_model_visitor::visit_interface(interface &iface) {
     visit_klass(iface);
 }
 
+void default_model_visitor::visit_annotation_type(annotation_type &ann) {
+    visit_aggregate(ann);
+}
+
 void default_model_visitor::visit_enumeration(enumeration &en) {
     visit_element(en);
 }

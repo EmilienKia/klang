@@ -148,8 +148,9 @@ void dump_vtable(const kdi_vtable& vt, std::ostream& out, int depth) {
 void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
     // kind + name
     const char* kw = "struct";
-    if (agg.kind == kdi_aggregate_kind::class_)     kw = "class";
-    if (agg.kind == kdi_aggregate_kind::interface_) kw = "interface";
+    if (agg.kind == kdi_aggregate_kind::class_)      kw = "class";
+    if (agg.kind == kdi_aggregate_kind::interface_)  kw = "interface";
+    if (agg.kind == kdi_aggregate_kind::annotation_) kw = "annotation";
 
     out << indent(depth) << vis_str(agg.visibility) << " " << kw << " " << agg.name;
     if (agg.is_abstract)    out << " abstract";

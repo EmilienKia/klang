@@ -591,6 +591,10 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         case kdi::kdi_aggregate_kind::interface_:
             agg = imported_interface::make_shared(root, kdi_agg);
             break;
+        case kdi::kdi_aggregate_kind::annotation_:
+            // Annotation types are imported as classes (they have vtables)
+            agg = imported_klass::make_shared(root, kdi_agg);
+            break;
     }
     if (!agg) return nullptr;
 

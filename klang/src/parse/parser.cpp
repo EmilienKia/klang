@@ -349,17 +349,94 @@ std::shared_ptr<ast::friend_decl> parser::parse_friend_decl()
             std::move(qname));
 }
 
+std::shared_ptr<ast::annotation_def> parser::parse_annotation_def()
+{
+    lex::lex_holder holder(_lexer);
+
+    // Expect '@' punctuator
+    auto lat = _lexer.get();
+    if (lat != lex::punctuator::AT_SIGN) {
+        holder.rollback();
+        return {};
+    }
+    auto at_sign = lex::as<lex::punctuator>(lat);
+
+    // Expect a qualified identifier (annotation type name)
+    auto qname = parse_qualified_identifier();
+    if (!qname || qname->names.empty()) {
+        throw_error(0x0080, _lexer.pick_current(), "Expected annotation type name after '@'");
+    }
+
+    // Optional initialization: '(' expr_list ')' or brace_init_list
+    auto peek = _lexer.get();
+
+    if (peek == lex::punctuator::PARENTHESIS_OPEN) {
+        // Constructor-style initialization: @Name( [args] )
+        std::vector<ast::expr_ptr> args;
+
+        // Check for immediate closing paren (empty args)
+        auto peek_close = _lexer.get();
+        if (peek_close == lex::punctuator::PARENTHESIS_CLOSE) {
+            // @Name() — empty args
+            return std::make_shared<ast::annotation_def>(at_sign, std::move(qname), args);
+        }
+        _lexer.unget();
+
+        // Parse expression list
+        auto expr = parse_expression_list();
+        if (expr) {
+            // If it's a comma expr_list, flatten into args
+            if (auto expr_list = std::dynamic_pointer_cast<ast::expr_list_expr>(expr)) {
+                for (size_t i = 0; i < expr_list->size(); ++i) {
+                    args.push_back((*expr_list)[i]);
+                }
+            } else {
+                args.push_back(expr);
+            }
+        }
+
+        // Expect closing parenthesis
+        if (auto lclose = _lexer.get(); lclose != lex::punctuator::PARENTHESIS_CLOSE) {
+            throw_error(0x0081, _lexer.pick_current(), "Expected ')' after annotation arguments");
+        }
+        return std::make_shared<ast::annotation_def>(at_sign, std::move(qname), args);
+
+    } else if (peek == lex::punctuator::BRACE_OPEN) {
+        // Brace initialization: @Name{ ... }
+        auto open_brace = lex::as<lex::punctuator>(peek);
+        auto brace_init = parse_brace_init_list(open_brace);
+        return std::make_shared<ast::annotation_def>(at_sign, std::move(qname), std::move(brace_init));
+
+    } else {
+        // No initializer — default initialization
+        _lexer.unget();
+        return std::make_shared<ast::annotation_def>(at_sign, std::move(qname));
+    }
+}
+
+ast::annotation_def_list parser::parse_annotation_defs()
+{
+    ast::annotation_def_list annotations;
+    while (auto ann = parse_annotation_def()) {
+        annotations.push_back(std::move(ann));
+    }
+    return annotations;
+}
+
 std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
 {
     lex::lex_holder holder(_lexer);
+
+    // Parse leading annotation definitions
+    ast::annotation_def_list annotations = parse_annotation_defs();
 
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
     std::optional<lex::keyword> st;
     std::optional<lex::punctuator> open_brace, close_brace;
 
-    // Accept "struct", "class" or "interface" keyword
-    if(lex::opt_ref_any_lexeme lstruct = _lexer.get(); lstruct==lex::keyword::STRUCT || lstruct==lex::keyword::CLASS || lstruct==lex::keyword::INTERFACE) {
+    // Accept "struct", "class", "interface" or "annotation" keyword
+    if(lex::opt_ref_any_lexeme lstruct = _lexer.get(); lstruct==lex::keyword::STRUCT || lstruct==lex::keyword::CLASS || lstruct==lex::keyword::INTERFACE || lstruct==lex::keyword::ANNOTATION) {
         st = lex::as<lex::keyword>(lstruct);
     } else {
         holder.rollback();
@@ -376,6 +453,7 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
     // Optional base-class clause: ':' [vis] Name [',' [vis] Name]*
     std::vector<ast::aggregate_decl::base_clause_entry> bases;
     {
+        // ...existing code...
         lex::lex_holder base_holder(_lexer);
         auto maybe_colon = _lexer.get();
         if (maybe_colon == lex::operator_::COLON) {
@@ -447,7 +525,7 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
         throw_error(0x003C, _lexer.pick_current(), "Struct closing brace is expected");
     }
 
-    return std::make_shared<ast::aggregate_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations);
+    return std::make_shared<ast::aggregate_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations, annotations);
 }
 
 std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()

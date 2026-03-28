@@ -272,6 +272,12 @@ find_aggregate(const std::shared_ptr<k::compiler>& comp, const std::string& name
 std::shared_ptr<k::model::klass>
 find_klass(const std::shared_ptr<k::compiler>& comp, const std::string& name);
 
+/**
+ * Navigate to an annotation_type by its short name within the root namespace.
+ */
+std::shared_ptr<k::model::annotation_type>
+find_annotation_type(const std::shared_ptr<k::compiler>& comp, const std::string& name);
+
 // ═══════════════════════════════════════════════════════════════════════════
 // AST traversal helpers
 // ═══════════════════════════════════════════════════════════════════════════

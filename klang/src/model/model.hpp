@@ -40,6 +40,7 @@ struct function_decl;
 struct parameter_spec;
 struct aggregate_decl;
 struct enum_decl;
+struct annotation_def;
 }
 
 namespace k::model {
@@ -64,6 +65,7 @@ class structure;
 class enumeration;
 class klass;
 class interface;
+class annotation_type;
 class ns;
 class unit;
 
@@ -516,6 +518,7 @@ public:
     virtual std::shared_ptr<structure> define_structure(const std::string& name);
     virtual std::shared_ptr<klass> define_class(const std::string& name);
     virtual std::shared_ptr<interface> define_interface(const std::string& name);
+    virtual std::shared_ptr<annotation_type> define_annotation(const std::string& name);
     virtual std::shared_ptr<aggregate> get_aggregate(const std::string& name) const;
     /** Legacy: get by name as structure pointer (returns nullptr if not an aggregate or not found). */
     virtual std::shared_ptr<structure> get_structure(const std::string& name) const;
@@ -527,6 +530,7 @@ protected:
     virtual std::shared_ptr<structure> do_create_structure(const std::string &name) =0;
     virtual std::shared_ptr<klass> do_create_class(const std::string &name) =0;
     virtual std::shared_ptr<interface> do_create_interface(const std::string &name) =0;
+    virtual std::shared_ptr<annotation_type> do_create_annotation(const std::string &name) =0;
     virtual void on_aggregate_defined(std::shared_ptr<aggregate>) =0;
 
 public:
@@ -657,6 +661,56 @@ public:
 
 protected:
     std::vector<friend_directive> _friend_directives;
+};
+
+
+/**
+ * Describes a single annotation instance attached to a model element.
+ *
+ * At model-building time the annotation type is unresolved: only the raw
+ * qualified name (from the AST) is stored. Resolution to a concrete
+ * annotation_type will happen in a later compiler phase.
+ */
+struct annotation_instance {
+    /// Raw qualified name of the annotation type (e.g. "my::Deprecated").
+    std::string raw_name;
+
+    /// The AST annotation_def node for later resolution and initializer access.
+    std::shared_ptr<k::parse::ast::annotation_def> ast_node;
+
+    /// Resolved annotation type (set during symbol resolution phase).
+    std::shared_ptr<annotation_type> resolved_type;
+
+    annotation_instance() = default;
+    annotation_instance(std::string raw_name,
+                        std::shared_ptr<k::parse::ast::annotation_def> ast_node)
+        : raw_name(std::move(raw_name)), ast_node(std::move(ast_node)) {}
+};
+
+
+/**
+ * Interface for model elements that can carry annotation instances.
+ *
+ * Mixed into aggregate — annotations are initially only on aggregate
+ * declarations. Other element types can gain this mixin later.
+ */
+class annotation_holder
+{
+public:
+    void add_annotation(annotation_instance ann) {
+        _annotations.push_back(std::move(ann));
+    }
+
+    const std::vector<annotation_instance>& get_annotations() const {
+        return _annotations;
+    }
+
+    std::vector<annotation_instance>& get_annotations_mutable() {
+        return _annotations;
+    }
+
+protected:
+    std::vector<annotation_instance> _annotations;
 };
 
 
@@ -793,6 +847,7 @@ protected:
     friend class aggregate;
     friend class structure;
     friend class klass;
+    friend class annotation_type;
     friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
     friend class gen::declaration_generator;
@@ -853,7 +908,7 @@ struct base_spec {
  * Holds all common member data: member variables, functions, constructors,
  * destructor, static ctor/dtor, nested aggregates, bases, vtable, vptrs, etc.
  */
-class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public using_holder, public friend_holder {
+class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public using_holder, public friend_holder, public annotation_holder {
 protected:
     friend class ns;
     friend class gen::implementation_generator;
@@ -914,6 +969,7 @@ protected:
     std::shared_ptr<structure> do_create_structure(const std::string &name) override;
     std::shared_ptr<klass> do_create_class(const std::string &name) override;
     std::shared_ptr<interface> do_create_interface(const std::string &name) override;
+    std::shared_ptr<annotation_type> do_create_annotation(const std::string &name) override;
     void on_aggregate_defined(std::shared_ptr<aggregate>) override;
 
     std::shared_ptr<enumeration> do_create_enum(const std::string &name) override;
@@ -977,6 +1033,9 @@ public:
 
     /** True if this is a class (keyword 'class'), false if it is a struct (keyword 'struct'). */
     virtual bool is_class() const { return false; }
+
+    /** True if this is an annotation type (keyword 'annotation'). */
+    virtual bool is_annotation() const { return false; }
 
     /**
      * True if this aggregate has at least one virtual function (needs a vtable).
@@ -1087,6 +1146,61 @@ public:
     std::shared_ptr<structure> get_enclosing_structure() const {
         return std::dynamic_pointer_cast<structure>(get_enclosing_aggregate());
     }
+};
+
+/**
+ * Annotation type: concrete aggregate declared with the 'annotation' keyword.
+ *
+ * Annotations inherit directly from aggregate (not from klass or structure).
+ * They have their own vtable/vptr infrastructure for RTTI type resolution
+ * (like classes), but their member functions are never virtual.
+ * Members are public by default (like structs), inheritance is by aggregation
+ * (non-virtual). Instances are synthesised at compilation time and attached
+ * to model elements (classes and interfaces only).
+ */
+class annotation_type : public aggregate {
+protected:
+    friend class ns;
+    friend class aggregate;
+    friend class gen::implementation_generator;
+    friend class gen::symbol_resolver;
+    friend class gen::type_reference_resolver;
+    friend class gen::declaration_generator;
+
+    /**
+     * Primary vtable layout for this annotation type.
+     * Contains only the RTTI slot (slot 0) — no user-level virtual functions.
+     */
+    std::shared_ptr<vtable_layout> _vtable;
+
+    /**
+     * Synthetic vptr member variable (__vptr__).
+     */
+    std::shared_ptr<member_variable_definition> _vptr;
+
+    annotation_type(std::shared_ptr<element> parent) :
+        aggregate(parent) {}
+
+    static std::shared_ptr<annotation_type> make_shared(std::shared_ptr<element> parent, const std::string &name);
+
+public:
+    bool is_annotation() const override { return true; }
+    bool has_vtable() const override { return _vtable != nullptr; }
+
+    std::shared_ptr<vtable_layout> get_vtable() const { return _vtable; }
+    void set_vtable(std::shared_ptr<vtable_layout> vt) { _vtable = std::move(vt); }
+
+    std::shared_ptr<member_variable_definition> get_vptr() const { return _vptr; }
+
+    std::shared_ptr<member_variable_definition> inject_vptr_field(const std::string& field_name) {
+        auto vptr_field = member_variable_definition::make_shared(shared_as<aggregate>(), field_name);
+        _vptr = vptr_field;
+        _vars.insert({field_name, vptr_field});
+        _children.insert(_children.begin(), vptr_field);
+        return vptr_field;
+    }
+
+    void accept(model_visitor& visitor) override;
 };
 
 /**
@@ -1829,6 +1943,7 @@ protected:
     std::shared_ptr<structure> do_create_structure(const std::string &name) override;
     std::shared_ptr<klass> do_create_class(const std::string &name) override;
     std::shared_ptr<interface> do_create_interface(const std::string &name) override;
+    std::shared_ptr<annotation_type> do_create_annotation(const std::string &name) override;
     void on_aggregate_defined(std::shared_ptr<aggregate>) override;
 
     std::shared_ptr<enumeration> do_create_enum(const std::string &name) override;

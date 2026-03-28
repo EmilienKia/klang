@@ -204,6 +204,10 @@ void ast::designated_init_element::visit(ast_visitor &visitor) {
     visitor.visit_designated_init_element(*this);
 }
 
+void ast::annotation_def::visit(ast_visitor &visitor) {
+    visitor.visit_annotation_def(*this);
+}
+
 //
 // Default AST visitor
 //
@@ -387,6 +391,10 @@ void default_ast_visitor::visit_brace_init_list(ast::brace_init_list &) {
 }
 
 void default_ast_visitor::visit_designated_init_element(ast::designated_init_element &) {
+
+}
+
+void default_ast_visitor::visit_annotation_def(ast::annotation_def &) {
 
 }
 

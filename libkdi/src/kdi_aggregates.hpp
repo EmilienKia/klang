@@ -260,6 +260,7 @@ enum class kdi_aggregate_kind : uint8_t {
     struct_,
     class_,
     interface_,
+    annotation_,
 };
 
 struct kdi_aggregate; // forward for nested aggregates

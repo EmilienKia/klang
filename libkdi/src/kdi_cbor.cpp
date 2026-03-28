@@ -827,6 +827,7 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     const char* kind_str = "struct";
     if (agg.kind == kdi_aggregate_kind::class_)     kind_str = "class";
     if (agg.kind == kdi_aggregate_kind::interface_) kind_str = "interface";
+    if (agg.kind == kdi_aggregate_kind::annotation_) kind_str = "annotation";
     map_push(m, "kind",         cbor_str(kind_str));
     map_push(m, "name",         cbor_str(agg.name));
     map_push(m, "fq_name",      cbor_str(agg.fq_name));
@@ -890,6 +891,7 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
     std::string kind_str = opt_string(item, "kind");
     if (kind_str == "class")     agg.kind = kdi_aggregate_kind::class_;
     else if (kind_str == "interface") agg.kind = kdi_aggregate_kind::interface_;
+    else if (kind_str == "annotation") agg.kind = kdi_aggregate_kind::annotation_;
     else                         agg.kind = kdi_aggregate_kind::struct_;
 
     agg.name         = req_string(item, "name", path);

@@ -939,6 +939,11 @@ find_klass(const std::shared_ptr<k::compiler>& comp, const std::string& name) {
     return std::dynamic_pointer_cast<k::model::klass>(find_aggregate(comp, name));
 }
 
+std::shared_ptr<k::model::annotation_type>
+find_annotation_type(const std::shared_ptr<k::compiler>& comp, const std::string& name) {
+    return std::dynamic_pointer_cast<k::model::annotation_type>(find_aggregate(comp, name));
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // AST traversal helpers
 // ═══════════════════════════════════════════════════════════════════════════
