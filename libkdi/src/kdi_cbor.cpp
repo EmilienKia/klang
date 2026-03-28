@@ -835,6 +835,9 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     if (agg.is_abstract)    map_push(m, "is_abstract",     cbor_bool(true));
     if (agg.is_final)       map_push(m, "is_final",        cbor_bool(true));
     if (agg.is_const_struct)map_push(m, "is_const_struct", cbor_bool(true));
+    if (agg.is_static_nested) map_push(m, "is_static_nested", cbor_bool(true));
+    if (!agg.enclosing_fq_name.empty())
+        map_push(m, "enclosing_fq_name", cbor_str(agg.enclosing_fq_name));
 
     // bases
     cbor_item_t* bases = cbor_new_indefinite_array();
@@ -896,6 +899,8 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
     agg.is_abstract  = opt_bool(item, "is_abstract");
     agg.is_final     = opt_bool(item, "is_final");
     agg.is_const_struct = opt_bool(item, "is_const_struct");
+    agg.is_static_nested = opt_bool(item, "is_static_nested");
+    agg.enclosing_fq_name = opt_string(item, "enclosing_fq_name");
 
     auto* ba = map_get(item, "bases");
     if (ba && cbor_isa_array(ba)) {

@@ -180,6 +180,53 @@ TEST_CASE("CBOR: opaque_block round-trips", "[cbor]") {
     REQUIRE(rob.size_bits   == 64u);
 }
 
+TEST_CASE("CBOR: nested aggregate with enclosing info round-trips", "[cbor][aggregate][nested]") {
+    kdi_file f;
+    f.header.module_name = "nest::mod";
+    f.unit.name          = "nest::mod";
+
+    // Outer aggregate
+    kdi_aggregate outer;
+    outer.kind         = kdi_aggregate_kind::class_;
+    outer.name         = "Outer";
+    outer.fq_name      = "nest::Outer";
+    outer.mangled_name = "_KN4nest5OuterE";
+    outer.llvm_def     = "%struct.nest.Outer = type { ptr }";
+
+    // Inner aggregate (static nested, with enclosing reference)
+    kdi_aggregate inner;
+    inner.kind              = kdi_aggregate_kind::class_;
+    inner.name              = "Inner";
+    inner.fq_name           = "nest::Outer::Inner";
+    inner.mangled_name      = "_KN4nest5Outer5InnerE";
+    inner.is_static_nested  = true;
+    inner.enclosing_fq_name = "nest::Outer";
+    inner.llvm_def          = "%struct.nest.Outer.Inner = type { i32 }";
+
+    outer.nested.push_back(inner);
+    f.unit.root_ns.aggregates.push_back(outer);
+
+    std::ostringstream oss(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(f, oss));
+
+    std::istringstream iss(oss.str(), std::ios::binary);
+    kdi_file restored;
+    REQUIRE_NOTHROW(restored = kdi_read_cbor(iss));
+
+    REQUIRE(restored.unit.root_ns.aggregates.size() == 1u);
+    auto& o2 = restored.unit.root_ns.aggregates[0];
+    REQUIRE(o2.name == "Outer");
+    REQUIRE(o2.is_static_nested == false);
+    REQUIRE(o2.enclosing_fq_name.empty());
+
+    REQUIRE(o2.nested.size() == 1u);
+    auto& i2 = o2.nested[0];
+    REQUIRE(i2.name == "Inner");
+    REQUIRE(i2.fq_name == "nest::Outer::Inner");
+    REQUIRE(i2.is_static_nested == true);
+    REQUIRE(i2.enclosing_fq_name == "nest::Outer");
+}
+
 TEST_CASE("CBOR: vtable round-trips", "[cbor]") {
     kdi_file f;
     f.header.module_name = "virt::mod";

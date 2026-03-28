@@ -601,6 +601,9 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         agg->assign_name(fq_to_abs_kname(kdi_agg->fq_name.empty() ? kdi_agg->name : kdi_agg->fq_name));
     }
 
+    // ── Set nesting modifiers from KDI ──────────────────────────────────────
+    agg->set_static_nested(kdi_agg->is_static_nested);
+
     // ── Register struct_type in context (before recursing to break cycles) ─
     const std::string struct_key = [&]() -> std::string {
         const auto& f = kdi_agg->fq_name;

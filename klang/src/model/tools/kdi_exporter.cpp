@@ -448,6 +448,13 @@ kdi::kdi_aggregate kdi_builder::begin_aggregate(const aggregate& agg) {
     kagg.is_abstract     = agg.is_abstract();
     kagg.is_final        = agg.is_final();
     kagg.is_const_struct = agg.is_const_struct();
+    kagg.is_static_nested = agg.is_static_nested();
+
+    // Enclosing aggregate fq_name (empty if top-level)
+    if (agg.is_nested()) {
+        if (auto enc = agg.get_enclosing_aggregate())
+            kagg.enclosing_fq_name = enc->get_fq_name();
+    }
 
     // ── LLVM struct type definition ───────────────────────────────────────
     if (agg.get_struct_type()) {

@@ -343,3 +343,253 @@ TEST_CASE("RTTI: Object has no bases", "[libk][rtti]") {
     CHECK(test() == 42);
 }
 
+
+// =========================================================================
+// 12. RTTI: getNested() is null on String (no nested types)
+// =========================================================================
+
+TEST_CASE("RTTI: getNested() null on String", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_nested_null__;
+        import k;
+
+        test() : int {
+            s : k::String("hello");
+            // String has no nested types
+            if (s.getClass().getNested() == null) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 13. RTTI: getEnclosing() is null on String (top-level type)
+// =========================================================================
+
+TEST_CASE("RTTI: getEnclosing() null on String", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_enclosing_null__;
+        import k;
+
+        test() : int {
+            s : k::String("hello");
+            // String is a top-level class
+            if (s.getClass().getEnclosing() == null) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 14. RTTI: getNested() on a class with a nested class
+// =========================================================================
+
+TEST_CASE("RTTI: getNested() on class with nested class", "[libk][rtti]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __rtti_nested_cls__;
+        import k;
+
+        class Outer {
+            public Outer() {}
+            public dummy() : int { return 0; }
+            class Inner {
+                public Inner() {}
+                public value() : int { return 7; }
+            }
+        }
+
+        test_name() : int {
+            o : Outer;
+            cls : const k::Class& = o.getClass();
+            name : k::String(cls.getName());
+            expected : k::String("Outer");
+            if (name == expected) return 42;
+            return 0;
+        }
+
+        test_nested_null() : int {
+            o : Outer;
+            if (o.getClass().getNested() == null) return 0;
+            return 42;
+        }
+
+        test_nested_size() : int {
+            o : Outer;
+            nested : const k::TypeInfo?[]? = o.getClass().getNested();
+            if (nested == null) return 0;
+            if (nested->size != 1) return 1;
+            return 42;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR, /*dump=*/false, /*optimize=*/false);
+    REQUIRE(jit);
+
+    auto test_name = jit->lookup_symbol<int(*)()>("test_name");
+    REQUIRE(test_name);
+    CHECK(test_name() == 42);
+
+    auto test_nested_null = jit->lookup_symbol<int(*)()>("test_nested_null");
+    REQUIRE(test_nested_null);
+    CHECK(test_nested_null() == 42);
+
+    auto test_nested_size = jit->lookup_symbol<int(*)()>("test_nested_size");
+    REQUIRE(test_nested_size);
+    CHECK(test_nested_size() == 42);
+}
+
+
+// =========================================================================
+// 15. RTTI: getNested() — nested type name is "Inner"
+// =========================================================================
+
+TEST_CASE("RTTI: getNested() name of nested class", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_nested_name__;
+        import k;
+
+        class Outer {
+            public Outer() {}
+            public dummy() : int { return 0; }
+            class Inner {
+                public Inner() {}
+                public value() : int { return 7; }
+            }
+        }
+
+        test() : int {
+            o : Outer;
+            nested : const k::TypeInfo?[]? = o.getClass().getNested();
+            if (nested == null) return 0;
+            // Get the first nested type's name
+            innerInfo : const k::TypeInfo? = nested[0];
+            if (innerInfo == null) return 1;
+            name : k::String(innerInfo->getName());
+            expected : k::String("Inner");
+            if (name == expected) return 42;
+            return 2;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 16. RTTI: getEnclosing() — nested class reports its enclosing type
+// =========================================================================
+
+TEST_CASE("RTTI: getEnclosing() on nested class returns outer", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_enclosing_cls__;
+        import k;
+
+        class Outer {
+            public Outer() {}
+            public dummy() : int { return 0; }
+            class Inner {
+                public Inner() {}
+                public value() : int { return 7; }
+            }
+            public test_enclosing() : int {
+                i : Inner;
+                enc : const k::TypeInfo? = i.getClass().getEnclosing();
+                if (enc == null) return 0;
+                name : k::String(enc->getName());
+                expected : k::String("Outer");
+                if (name == expected) return 42;
+                return 1;
+            }
+        }
+
+        test() : int {
+            o : Outer;
+            return o.test_enclosing();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 17. RTTI: getEnclosing() is null on a top-level user class
+// =========================================================================
+
+TEST_CASE("RTTI: getEnclosing() null on top-level class", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_enclosing_top__;
+        import k;
+
+        class TopLevel {
+            public TopLevel() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            t : TopLevel;
+            if (t.getClass().getEnclosing() == null) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 18. RTTI: getNested() with multiple nested types
+// =========================================================================
+
+TEST_CASE("RTTI: getNested() with multiple nested types", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_nested_multi__;
+        import k;
+
+        class Container {
+            public Container() {}
+            public dummy() : int { return 0; }
+            class Alpha {
+                public Alpha() {}
+                public val() : int { return 1; }
+            }
+            class Beta {
+                public Beta() {}
+                public val() : int { return 2; }
+            }
+        }
+
+        test() : int {
+            c : Container;
+            nested : const k::TypeInfo?[]? = c.getClass().getNested();
+            if (nested == null) return 0;
+            // Should have exactly 2 nested types
+            return nested->size;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 2);
+}
+

@@ -671,8 +671,9 @@ void declaration_generator::visit_klass(klass& klass) {
     //
     // Each RTTI global is a genuine ::k::Class or ::k::Interface instance.
     //
-    // Both classes and interfaces share the same layout (4 fields):
-    //   { ptr __vptr__, ptr __vptr_TypeInfo__, ptr name, ptr bases }
+    // Both classes and interfaces share the same layout (6 fields):
+    //   { ptr __vptr__, ptr __vptr_TypeInfo__, ptr name, ptr bases,
+    //     ptr nested, ptr enclosing }
     //
     // The __vptr__ and __vptr_TypeInfo__ point to the Class/Interface vtable and
     // its secondary vtable for the TypeInfo interface.  These vtables are defined
@@ -683,7 +684,15 @@ void declaration_generator::visit_klass(klass& klass) {
     //
     // The 'bases' field is a view (TypeInfo?[]?) pointing to a K-array of RTTI
     // pointers for the direct public bases (both interfaces and classes, merged).
-    // It is null-initialised here and patched in implementation_generator::visit_klass.
+    //
+    // The 'nested' field is a view (TypeInfo?[]?) pointing to a K-array of RTTI
+    // pointers for the nested types (classes/interfaces) declared inside this type.
+    //
+    // The 'enclosing' field is a view (TypeInfo?) pointing to the RTTI global of
+    // the enclosing aggregate, or null if this type is not nested.
+    //
+    // All fields except 'name' are null-initialised here and patched in
+    // implementation_generator::visit_klass.
     //
     // The mangled RTTI symbol name (_KTRI...) is used as the GlobalVariable name
     // so that the linker can merge duplicates across DSOs (ODR rule).
@@ -691,16 +700,17 @@ void declaration_generator::visit_klass(klass& klass) {
     // The unique 'typeid' of a class/interface is the address of its RTTI global.
     //
     // During the declaration pass we use null placeholders for the vtable pointers
-    // (fields 0 and 1) and the bases field.  The implementation pass patches
-    // them once the vtable globals and base RTTI globals are available.
+    // (fields 0 and 1), the bases, nested and enclosing fields.  The
+    // implementation pass patches them once the vtable globals and RTTI globals
+    // are available.
     {
         llvm::LLVMContext& llvm_ctx = **_context;
         llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
         // ── Build the RTTI struct type ──────────────────────────────────────────
-        // Both interfaces and classes: { ptr, ptr, ptr, ptr }   (4 fields)
+        // Both interfaces and classes: { ptr, ptr, ptr, ptr, ptr, ptr }   (6 fields)
         std::string rtti_struct_name = "__rtti_" + klass.get_short_name() + "__";
-        std::vector<llvm::Type*> rtti_fields(4, ptr_ty);
+        std::vector<llvm::Type*> rtti_fields(6, ptr_ty);
         llvm::StructType* rtti_llvm_type = llvm::StructType::create(
             llvm_ctx, rtti_fields, rtti_struct_name);
 
@@ -733,7 +743,9 @@ void declaration_generator::visit_klass(klass& klass) {
             null_ptr,   // field 0: __vptr__           → patched later
             null_ptr,   // field 1: __vptr_TypeInfo__  → patched later
             name_cstr,  // field 2: name               → short name (char[]?)
-            null_ptr    // field 3: bases              → patched later
+            null_ptr,   // field 3: bases              → patched later
+            null_ptr,   // field 4: nested             → patched later
+            null_ptr    // field 5: enclosing          → patched later
         };
         llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
         auto rtti_gv = new llvm::GlobalVariable(
@@ -800,14 +812,16 @@ void implementation_generator::visit_klass(klass& klass) {
 
     if (!klass.has_vtable()) return;
 
-    // ── 0. Patch RTTI global with real vtable pointers and base lists ──────────
+    // ── 0. Patch RTTI global with real vtable pointers and base/nested/enclosing lists ─
     // The declaration pass created the RTTI global with null placeholders.
     // Now that all classes in the module have been declared, we can:
     //   a) Fill in the Class/Interface vtable pointers (fields 0 and 1).
-    //   b) Generate K-array globals for the bases field and patch it in.
+    //   b) Generate K-array globals for the bases and nested fields.
+    //   c) Set the enclosing field to the RTTI of the enclosing aggregate (if any).
     //
-    // Both interfaces and classes share the same layout (4 fields):
-    //   { ptr __vptr__, ptr __vptr_TypeInfo__, ptr name, ptr bases }
+    // Both interfaces and classes share the same layout (6 fields):
+    //   { ptr __vptr__, ptr __vptr_TypeInfo__, ptr name, ptr bases,
+    //     ptr nested, ptr enclosing }
     //
     // When the vtable symbols are not available (e.g. standalone compilation
     // without libk), the RTTI global keeps null vptrs.  typeid comparison
@@ -831,6 +845,32 @@ void implementation_generator::visit_klass(klass& klass) {
         }
         llvm::Constant* desc_vt    = _context->module().getNamedGlobal(desc_vtable_name);
         llvm::Constant* desc_ti_vt = _context->module().getNamedGlobal(desc_ti_vtable_name);
+
+        // If the primary vtable symbol is not in this module, declare it as
+        // external so that user-defined classes in modules importing libk get
+        // valid RTTI with working virtual dispatch on Class/Interface methods.
+        // Only create the external declaration if this module (directly or
+        // transitively) depends on libk — standalone modules without libk
+        // keep null vptrs to avoid unresolvable link-time symbol references.
+        // The secondary TypeInfo vtable has internal linkage in libk and cannot
+        // be resolved externally — keep it null when unavailable.  TypeInfo
+        // virtual dispatch through a TypeInfo? view will not work for user types
+        // in that case, but direct Class/Interface method calls will.
+        if (!desc_vt) {
+            // Check if this module imports k (directly or transitively)
+            bool has_libk = _unit.find_import(k::name("k")) != nullptr;
+            if (!has_libk) {
+                for (const auto& tdep : _unit.get_transitive_kdis()) {
+                    if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
+                }
+            }
+            if (has_libk) {
+                desc_vt = new llvm::GlobalVariable(
+                    _context->module(), ptr_ty,
+                    true, llvm::GlobalValue::ExternalLinkage,
+                    nullptr, desc_vtable_name);
+            }
+        }
 
         // ── b) Generate K-array globals for base lists ─────────────────────────
         // A K-array is { i32 count, [N x ptr] data }.
@@ -896,19 +936,48 @@ void implementation_generator::visit_klass(klass& klass) {
         llvm::Constant* null_ptr = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
         llvm::Constant* bases_gv = make_base_array(base_rttis, "_bases");
 
+        // ── b2) Collect nested aggregate RTTI pointers ──────────────────────────
+        // Nested aggregates are classes/interfaces defined inside this type.
+        // Only classes and interfaces with vtables (and thus RTTI) are included.
+        std::vector<llvm::Constant*> nested_rttis;
+        for (auto& [name, nested_agg] : klass.aggregates()) {
+            if (!nested_agg) continue;
+            auto nested_kl = std::dynamic_pointer_cast<k::model::klass>(nested_agg);
+            if (!nested_kl || !nested_kl->has_vtable()) continue;
+            if (nested_kl->get_vtable()->llvm_rtti_global) {
+                nested_rttis.push_back(nested_kl->get_vtable()->llvm_rtti_global);
+            }
+        }
+        llvm::Constant* nested_gv = make_base_array(nested_rttis, "_nested");
+
+        // ── b3) Resolve enclosing aggregate RTTI ────────────────────────────────
+        // If this type is nested inside another class/interface, point to its RTTI.
+        llvm::Constant* enclosing_rtti = null_ptr;
+        if (klass.is_nested()) {
+            auto enclosing = klass.get_enclosing_aggregate();
+            if (enclosing) {
+                llvm::Constant* enc_rtti = get_base_rtti(enclosing);
+                if (enc_rtti) {
+                    enclosing_rtti = enc_rtti;
+                }
+            }
+        }
+
         // ── c) Patch the RTTI initializer ──────────────────────────────────────
         auto* rtti_type = llvm::cast<llvm::StructType>(rtti_gv->getValueType());
         auto* old_init = rtti_gv->getInitializer();
         auto* old_struct = llvm::cast<llvm::ConstantStruct>(old_init);
 
-        llvm::Constant* vptr_field    = (desc_vt && desc_ti_vt) ? desc_vt : old_struct->getOperand(0);
-        llvm::Constant* ti_vptr_field = (desc_vt && desc_ti_vt) ? desc_ti_vt : old_struct->getOperand(1);
+        llvm::Constant* vptr_field    = desc_vt    ? desc_vt    : old_struct->getOperand(0);
+        llvm::Constant* ti_vptr_field = desc_ti_vt ? desc_ti_vt : old_struct->getOperand(1);
 
         std::vector<llvm::Constant*> new_rtti_init = {
             vptr_field,                       // field 0: __vptr__
             ti_vptr_field,                    // field 1: __vptr_TypeInfo__
             old_struct->getOperand(2),        // field 2: name (keep as-is)
-            bases_gv ? bases_gv : null_ptr    // field 3: bases
+            bases_gv ? bases_gv : null_ptr,   // field 3: bases
+            nested_gv ? nested_gv : null_ptr, // field 4: nested
+            enclosing_rtti                    // field 5: enclosing
         };
 
         rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_rtti_init));

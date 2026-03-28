@@ -2285,16 +2285,30 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 return _context->resolve_type(inner);
             };
 
+            // Helper: strip the spurious reference(array(T)) → array(T) that
+            // resolve_type adds for unsized arrays.  Indirection wrappers (pointer,
+            // link, view) should NOT contain the reference layer.
+            auto strip_ref_array = [](std::shared_ptr<k::model::type> t) -> std::shared_ptr<k::model::type> {
+                if (auto ref = std::dynamic_pointer_cast<reference_type>(t)) {
+                    if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                        if (!arr->is_sized()) {
+                            return arr;
+                        }
+                    }
+                }
+                return t;
+            };
+
             std::shared_ptr<type> resolved;
             if (type::is_pointer(var.get_type())) {
                 auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
-                if (inner && type::is_resolved(inner)) resolved = inner->get_pointer();
+                if (inner && type::is_resolved(inner)) resolved = strip_ref_array(inner)->get_pointer();
             } else if (type::is_link(var.get_type())) {
                 auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
-                if (inner && type::is_resolved(inner)) resolved = inner->get_link();
+                if (inner && type::is_resolved(inner)) resolved = strip_ref_array(inner)->get_link();
             } else if (type::is_view(var.get_type())) {
                 auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
-                if (inner && type::is_resolved(inner)) resolved = inner->get_view();
+                if (inner && type::is_resolved(inner)) resolved = strip_ref_array(inner)->get_view();
             } else if (type::is_reference(var.get_type())) {
                 auto inner = try_resolve_wrapped(var.get_type()->get_subtype());
                 if (inner && type::is_resolved(inner)) resolved = inner->get_reference();

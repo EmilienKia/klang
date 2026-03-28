@@ -155,6 +155,9 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
     if (agg.is_abstract)    out << " abstract";
     if (agg.is_final)       out << " final";
     if (agg.is_const_struct)out << " const";
+    if (agg.is_static_nested) out << " static";
+    if (!agg.enclosing_fq_name.empty())
+        out << " [enclosing=" << agg.enclosing_fq_name << "]";
 
     // bases
     if (!agg.bases.empty()) {

@@ -352,6 +352,9 @@ Aggregate = {
   ?"is_abstract"   : bool,
   ?"is_final"      : bool,
   ?"is_const_struct": bool,
+  ?"is_static_nested": bool,
+  ?"enclosing_fq_name": text,        -- fq_name of enclosing aggregate; omitted
+                                     -- when not nested
   "bases"          : array[Base],
   "layout"         : array[LayoutField],
   "constructors"   : array[Constructor],

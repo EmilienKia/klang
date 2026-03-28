@@ -138,6 +138,11 @@ KdiAggregate {
   is_abstract  : bool
   is_final     : bool
   is_const_struct : bool
+  is_static_nested : bool           -- true if this is a static nested aggregate
+
+  -- Nesting
+  enclosing_fq_name : string        -- fq_name of the enclosing aggregate; empty
+                                    -- if this aggregate is not nested
 
   -- Inheritance
   bases        : [KdiBase]

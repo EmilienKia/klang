@@ -552,6 +552,7 @@ static json to_json(const kdi_aggregate& a) {
         {"is_abstract",   a.is_abstract},
         {"is_final",      a.is_final},
         {"is_const_struct",a.is_const_struct},
+        {"is_static_nested",a.is_static_nested},
         {"bases",         bases},
         {"layout",        layout},
         {"constructors",  ctors},
@@ -562,6 +563,8 @@ static json to_json(const kdi_aggregate& a) {
     };
     if (!a.default_constructor_mangled_name.empty())
         obj["default_constructor_mangled_name"] = a.default_constructor_mangled_name;
+    if (!a.enclosing_fq_name.empty())
+        obj["enclosing_fq_name"] = a.enclosing_fq_name;
     if (a.destructor) obj["destructor"] = to_json(*a.destructor);
     if (a.vtable)     obj["vtable"]     = to_json(*a.vtable);
     return obj;
@@ -577,6 +580,8 @@ static kdi_aggregate from_json_aggregate(const json& j) {
     a.is_abstract   = j.value("is_abstract", false);
     a.is_final      = j.value("is_final", false);
     a.is_const_struct = j.value("is_const_struct", false);
+    a.is_static_nested = j.value("is_static_nested", false);
+    a.enclosing_fq_name = j.value("enclosing_fq_name", "");
 
     for (auto& b : j.value("bases", json::array())) {
         kdi_base kb;

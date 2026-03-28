@@ -37,8 +37,12 @@ const interface TypeInfo {
 final const class Interface : TypeInfo {
     name : const char[]?;
     bases : const TypeInfo?[]?;
+    nested : const TypeInfo?[]?;
+    enclosing : const TypeInfo?;
 
-    private Interface(name : const char[]?, bases : const TypeInfo?[]?) : name(name), bases(bases) {}
+    private Interface(name : const char[]?, bases : const TypeInfo?[]?,
+                      nested : const TypeInfo?[]?, enclosing : const TypeInfo?)
+        : name(name), bases(bases), nested(nested), enclosing(enclosing) {}
 
     /**
      * Return the name of the interface.
@@ -54,6 +58,22 @@ final const class Interface : TypeInfo {
     const getBases() : const TypeInfo?[]? {
         return bases;
     }
+
+    /**
+     * Return the nested types (classes and interfaces) declared inside this interface, if any.
+     * Each element is a TypeInfo descriptor.
+     */
+    const getNested() : const TypeInfo?[]? {
+        return nested;
+    }
+
+    /**
+     * Return the enclosing type that this interface is nested in, if any.
+     * Returns null if this interface is a top-level (non-nested) type.
+     */
+    const getEnclosing() : const TypeInfo? {
+        return enclosing;
+    }
 }
 
 /**
@@ -63,8 +83,12 @@ final const class Interface : TypeInfo {
 final const class Class : TypeInfo {
     name : const char[]?;
     bases : const TypeInfo?[]?;
+    nested : const TypeInfo?[]?;
+    enclosing : const TypeInfo?;
 
-    private Class(name : const char[]?, bases : const TypeInfo?[]?) : name(name), bases(bases) {}
+    private Class(name : const char[]?, bases : const TypeInfo?[]?,
+                  nested : const TypeInfo?[]?, enclosing : const TypeInfo?)
+        : name(name), bases(bases), nested(nested), enclosing(enclosing) {}
 
     /**
      * Return the name of the class.
@@ -79,6 +103,22 @@ final const class Class : TypeInfo {
      */
     const getBases() : const TypeInfo?[]? {
         return bases;
+    }
+
+    /**
+     * Return the nested types (classes and interfaces) declared inside this class, if any.
+     * Each element is a TypeInfo descriptor.
+     */
+    const getNested() : const TypeInfo?[]? {
+        return nested;
+    }
+
+    /**
+     * Return the enclosing type that this class is nested in, if any.
+     * Returns null if this class is a top-level (non-nested) type.
+     */
+    const getEnclosing() : const TypeInfo? {
+        return enclosing;
     }
 
 }

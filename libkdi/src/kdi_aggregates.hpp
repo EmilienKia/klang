@@ -276,6 +276,10 @@ struct kdi_aggregate {
     bool                 is_abstract  = false;
     bool                 is_final     = false;
     bool                 is_const_struct = false;
+    bool                 is_static_nested = false;
+
+    /// Fully-qualified name of the enclosing aggregate, or empty if top-level.
+    std::string          enclosing_fq_name;
 
     // Inheritance
     std::vector<kdi_base> bases;

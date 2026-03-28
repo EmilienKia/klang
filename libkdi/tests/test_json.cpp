@@ -239,6 +239,50 @@ TEST_CASE("JSON: aggregate with method and layout round-trips", "[json][aggregat
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Aggregate nesting: is_static_nested, enclosing_fq_name, nested children
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("JSON: nested aggregate with enclosing info round-trips", "[json][aggregate][nested]") {
+    kdi_file f = make_minimal_file();
+
+    // Outer aggregate
+    kdi_aggregate outer;
+    outer.kind         = kdi_aggregate_kind::class_;
+    outer.name         = "Outer";
+    outer.fq_name      = "::ns::Outer";
+    outer.mangled_name = "_KN2ns5OuterE";
+    outer.llvm_def     = "%struct.ns.Outer = type { ptr }";
+
+    // Inner aggregate (static nested, with enclosing reference)
+    kdi_aggregate inner;
+    inner.kind              = kdi_aggregate_kind::class_;
+    inner.name              = "Inner";
+    inner.fq_name           = "::ns::Outer::Inner";
+    inner.mangled_name      = "_KN2ns5Outer5InnerE";
+    inner.is_static_nested  = true;
+    inner.enclosing_fq_name = "::ns::Outer";
+    inner.llvm_def          = "%struct.ns.Outer.Inner = type { i32 }";
+
+    outer.nested.push_back(inner);
+    f.unit.root_ns.aggregates.push_back(outer);
+
+    auto f2 = json_round_trip(f);
+
+    REQUIRE( f2.unit.root_ns.aggregates.size() == 1 );
+    auto& o2 = f2.unit.root_ns.aggregates[0];
+    REQUIRE( o2.name == "Outer" );
+    REQUIRE( o2.is_static_nested == false );
+    REQUIRE( o2.enclosing_fq_name.empty() );
+
+    REQUIRE( o2.nested.size() == 1 );
+    auto& i2 = o2.nested[0];
+    REQUIRE( i2.name == "Inner" );
+    REQUIRE( i2.fq_name == "::ns::Outer::Inner" );
+    REQUIRE( i2.is_static_nested == true );
+    REQUIRE( i2.enclosing_fq_name == "::ns::Outer" );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Layout field variants
 // ─────────────────────────────────────────────────────────────────────────────
 
