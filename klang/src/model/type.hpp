@@ -913,6 +913,36 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
         return are_equal(a1->get_subtype(), a2->get_subtype());
     }
 
+    // Structural equality for view types (?): compare viewed types recursively
+    if (auto v1 = std::dynamic_pointer_cast<view_type>(type1)) {
+        auto v2 = std::dynamic_pointer_cast<view_type>(type2);
+        return v2 && are_equal(v1->get_subtype(), v2->get_subtype());
+    }
+
+    // Structural equality for pointer types (*): compare pointed types recursively
+    if (auto p1 = std::dynamic_pointer_cast<pointer_type>(type1)) {
+        auto p2 = std::dynamic_pointer_cast<pointer_type>(type2);
+        return p2 && are_equal(p1->get_subtype(), p2->get_subtype());
+    }
+
+    // Structural equality for link types (+): compare linked types recursively
+    if (auto l1 = std::dynamic_pointer_cast<link_type>(type1)) {
+        auto l2 = std::dynamic_pointer_cast<link_type>(type2);
+        return l2 && are_equal(l1->get_subtype(), l2->get_subtype());
+    }
+
+    // Structural equality for drain types: compare drained types recursively
+    if (auto d1 = std::dynamic_pointer_cast<drain_type>(type1)) {
+        auto d2 = std::dynamic_pointer_cast<drain_type>(type2);
+        return d2 && are_equal(d1->get_subtype(), d2->get_subtype());
+    }
+
+    // Structural equality for const types: compare inner types recursively
+    if (auto c1 = std::dynamic_pointer_cast<const_type>(type1)) {
+        auto c2 = std::dynamic_pointer_cast<const_type>(type2);
+        return c2 && are_equal(c1->get_inner_type(), c2->get_inner_type());
+    }
+
     // Structural equality for owner types: compare owned types recursively
     if (auto o1 = std::dynamic_pointer_cast<owner_type>(type1)) {
         auto o2 = std::dynamic_pointer_cast<owner_type>(type2);
@@ -923,6 +953,12 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
     if (auto r1 = std::dynamic_pointer_cast<reference_type>(type1)) {
         auto r2 = std::dynamic_pointer_cast<reference_type>(type2);
         return r2 && are_equal(r1->get_subtype(), r2->get_subtype());
+    }
+
+    // Nominal equality for struct/aggregate types: same underlying aggregate
+    if (auto s1 = std::dynamic_pointer_cast<struct_type>(type1)) {
+        auto s2 = std::dynamic_pointer_cast<struct_type>(type2);
+        return s2 && s1->get_struct() == s2->get_struct();
     }
 
     // Structural equality for function reference types

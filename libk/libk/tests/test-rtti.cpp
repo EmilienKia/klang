@@ -593,3 +593,206 @@ TEST_CASE("RTTI: getNested() with multiple nested types", "[libk][rtti]") {
     CHECK(test() == 2);
 }
 
+
+// =========================================================================
+// 19. RTTI: getVisibility() on a public top-level class returns PUBLIC (0)
+// =========================================================================
+
+TEST_CASE("RTTI: getVisibility() returns PUBLIC on top-level class", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_vis_public__;
+        import k;
+
+        class Foo {
+            public Foo() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            f : Foo;
+            vis : k::Visibility = f.getClass().getVisibility();
+            if (vis == k::Visibility::PUBLIC) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 20. RTTI: isStatic() returns false on a top-level class
+// =========================================================================
+
+TEST_CASE("RTTI: isStatic() returns false on top-level class", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_static_top__;
+        import k;
+
+        class Foo {
+            public Foo() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            f : Foo;
+            if (f.getClass().isStatic()) return 0;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 21. RTTI: isStatic() on a static nested class returns true
+// =========================================================================
+
+TEST_CASE("RTTI: isStatic() on static nested class", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_static_nested__;
+        import k;
+
+        class Outer {
+            public Outer() {}
+            public dummy() : int { return 0; }
+            static class Inner {
+                public Inner() {}
+                public value() : int { return 7; }
+            }
+            public test_static() : int {
+                i : Inner;
+                if (i.getClass().isStatic()) return 42;
+                return 0;
+            }
+        }
+
+        test() : int {
+            o : Outer;
+            return o.test_static();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 22. RTTI: isStatic() on a non-static nested class returns false
+// =========================================================================
+
+TEST_CASE("RTTI: isStatic() on non-static nested class", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_nonstatic_nested__;
+        import k;
+
+        class Outer {
+            public Outer() {}
+            public dummy() : int { return 0; }
+            class Inner {
+                public Inner() {}
+                public value() : int { return 7; }
+            }
+            public test_static() : int {
+                i : Inner;
+                if (i.getClass().isStatic()) return 0;
+                return 42;
+            }
+        }
+
+        test() : int {
+            o : Outer;
+            return o.test_static();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 23. RTTI: getVisibility() on a private nested class returns PRIVATE (2)
+// =========================================================================
+
+TEST_CASE("RTTI: getVisibility() returns PRIVATE on private nested class", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_vis_private__;
+        import k;
+
+        class Outer {
+            public Outer() {}
+            public dummy() : int { return 0; }
+            private class Inner {
+                public Inner() {}
+                public value() : int { return 7; }
+            }
+            public test_vis() : int {
+                i : Inner;
+                vis : k::Visibility = i.getClass().getVisibility();
+                if (vis == k::Visibility::PRIVATE) return 42;
+                return 0;
+            }
+        }
+
+        test() : int {
+            o : Outer;
+            return o.test_vis();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 24. RTTI: getVisibility() on a protected nested class returns PROTECTED (1)
+// =========================================================================
+
+TEST_CASE("RTTI: getVisibility() returns PROTECTED on protected nested class", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_vis_protected__;
+        import k;
+
+        class Outer {
+            public Outer() {}
+            public dummy() : int { return 0; }
+            protected class Inner {
+                public Inner() {}
+                public value() : int { return 7; }
+            }
+            public test_vis() : int {
+                i : Inner;
+                vis : k::Visibility = i.getClass().getVisibility();
+                if (vis == k::Visibility::PROTECTED) return 42;
+                return 0;
+            }
+        }
+
+        test() : int {
+            o : Outer;
+            return o.test_vis();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
