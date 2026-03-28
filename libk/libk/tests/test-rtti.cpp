@@ -796,3 +796,122 @@ TEST_CASE("RTTI: getVisibility() returns PROTECTED on protected nested class", "
     CHECK(test() == 42);
 }
 
+
+// =========================================================================
+// 25. RTTI: getFullName() on a top-level user class
+// =========================================================================
+
+TEST_CASE("RTTI: getFullName() on top-level user class", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_fqn_top__;
+        import k;
+
+        class Foo {
+            public Foo() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            f : Foo;
+            fqn : k::String(f.getClass().getFullName());
+            expected : k::String("::__rtti_fqn_top__::Foo");
+            if (fqn == expected) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 26. RTTI: getFullName() on String returns "::k::String"
+// =========================================================================
+
+TEST_CASE("RTTI: getFullName() on String", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_fqn_string__;
+        import k;
+
+        test() : int {
+            s : k::String("hello");
+            fqn : k::String(s.getClass().getFullName());
+            expected : k::String("::k::String");
+            if (fqn == expected) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 27. RTTI: getFullName() on Object returns "::k::Object"
+// =========================================================================
+
+TEST_CASE("RTTI: getFullName() on Object", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_fqn_object__;
+        import k;
+
+        test() : int {
+            o : k::Object;
+            fqn : k::String(o.getClass().getFullName());
+            expected : k::String("::k::Object");
+            if (fqn == expected) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 28. RTTI: getFullName() on a nested class includes enclosing name
+// =========================================================================
+
+TEST_CASE("RTTI: getFullName() on nested class", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_fqn_nested__;
+        import k;
+
+        class Outer {
+            public Outer() {}
+            public dummy() : int { return 0; }
+            class Inner {
+                public Inner() {}
+                public value() : int { return 7; }
+            }
+            public test_fqn() : int {
+                i : Inner;
+                fqn : k::String(i.getClass().getFullName());
+                expected : k::String("::__rtti_fqn_nested__::Outer::Inner");
+                if (fqn == expected) return 42;
+                return 0;
+            }
+        }
+
+        test() : int {
+            o : Outer;
+            return o.test_fqn();
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+

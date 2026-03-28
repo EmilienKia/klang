@@ -44,6 +44,12 @@ const interface TypeInfo {
  */
 const interface AggregateType : public TypeInfo {
     /**
+     * Return the fully qualified name of the type (including module and namespaces).
+     * For example, "::mymodule::MyClass" or "::k::String".
+     */
+    const getFullName() : const char[]?;
+
+    /**
      * Return the base interfaces and classes of the type, if any.
      * Each element is a TypeInfo descriptor.
      */
@@ -78,6 +84,7 @@ const interface AggregateType : public TypeInfo {
  */
 final const class Interface : public AggregateType {
     name : const char[]?;
+    fullName : const char[]?;
     bases : const TypeInfo?[]?;
     nested : const TypeInfo?[]?;
     enclosing : const TypeInfo?;
@@ -90,16 +97,25 @@ final const class Interface : public AggregateType {
      * Remaining bits are reserved for future use.
      */
 
-    private Interface(name : const char[]?, bases : const TypeInfo?[]?,
+    private Interface(name : const char[]?, fullName : const char[]?,
+                      bases : const TypeInfo?[]?,
                       nested : const TypeInfo?[]?, enclosing : const TypeInfo?,
                       flags : unsigned int)
-        : name(name), bases(bases), nested(nested), enclosing(enclosing), flags(flags) {}
+        : name(name), fullName(fullName), bases(bases), nested(nested),
+          enclosing(enclosing), flags(flags) {}
 
     /**
      * Return the name of the interface.
      */
     const getName() : const char[]? {
         return name;
+    }
+
+    /**
+     * Return the fully qualified name of the interface.
+     */
+    const getFullName() : const char[]? {
+        return fullName;
     }
 
     /**
@@ -147,6 +163,7 @@ final const class Interface : public AggregateType {
  */
 final const class Class : public AggregateType {
     name : const char[]?;
+    fullName : const char[]?;
     bases : const TypeInfo?[]?;
     nested : const TypeInfo?[]?;
     enclosing : const TypeInfo?;
@@ -159,16 +176,25 @@ final const class Class : public AggregateType {
      * Remaining bits are reserved for future use.
      */
 
-    private Class(name : const char[]?, bases : const TypeInfo?[]?,
+    private Class(name : const char[]?, fullName : const char[]?,
+                  bases : const TypeInfo?[]?,
                   nested : const TypeInfo?[]?, enclosing : const TypeInfo?,
                   flags : unsigned int)
-        : name(name), bases(bases), nested(nested), enclosing(enclosing), flags(flags) {}
+        : name(name), fullName(fullName), bases(bases), nested(nested),
+          enclosing(enclosing), flags(flags) {}
 
     /**
      * Return the name of the class.
      */
     const getName() : const char[]? {
         return name;
+    }
+
+    /**
+     * Return the fully qualified name of the class.
+     */
+    const getFullName() : const char[]? {
+        return fullName;
     }
 
     /**

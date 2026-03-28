@@ -710,13 +710,14 @@ void declaration_generator::visit_klass(klass& klass) {
         // ── Build the RTTI struct type ──────────────────────────────────────────
         // Both interfaces and classes:
         //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
-        //     ptr name, ptr bases, ptr nested, ptr enclosing, i32 flags }
-        //   (7 ptr fields + 1 i32 field = 8 fields)
+        //     ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
+        //     i32 flags }
+        //   (8 ptr fields + 1 i32 field = 9 fields)
         std::string rtti_struct_name = "__rtti_" + klass.get_short_name() + "__";
         llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
         std::vector<llvm::Type*> rtti_fields = {
             ptr_ty, ptr_ty, ptr_ty,     // __vptr__, __vptr_AggregateType__, __vptr_TypeInfo__
-            ptr_ty,                      // name
+            ptr_ty, ptr_ty,             // name, fullName
             ptr_ty, ptr_ty, ptr_ty,     // bases, nested, enclosing
             i32_ty                       // flags
         };
@@ -725,37 +726,46 @@ void declaration_generator::visit_klass(klass& klass) {
 
         std::string rtti_name = mangler::mangle_rtti(klass.get_name());
 
-        // Emit the SHORT (unqualified) class name as a K sized-array constant.
+        // Helper: emit a K-sized-array string constant { i32 size, [N x i8] data }.
         // K's array layout is { i32 size, [N x i8] data } where 'size' includes
-        // the null terminator.  The Class.name field (const char[]?) is a view
+        // the null terminator.  The name field (const char[]?) is a view
         // pointing to this struct, so code like name.size reads the i32 correctly.
-        const std::string& short_name = klass.get_short_name();
-        uint32_t name_len = static_cast<uint32_t>(short_name.size() + 1); // includes '\0'
-        llvm::Constant* name_str_data = llvm::ConstantDataArray::getString(llvm_ctx, short_name, /*AddNull=*/true);
-        llvm::StructType* name_struct_ty = llvm::StructType::get(
-            llvm_ctx, {i32_ty, name_str_data->getType()}, /*isPacked=*/false);
-        llvm::Constant* name_struct_init = llvm::ConstantStruct::get(
-            name_struct_ty,
-            {llvm::ConstantInt::get(i32_ty, name_len), name_str_data});
-        auto name_gv = new llvm::GlobalVariable(
-            _context->module(), name_struct_ty,
-            true, llvm::GlobalValue::PrivateLinkage,
-            name_struct_init, rtti_name + "_name");
-        name_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-        llvm::Constant* name_cstr = name_gv;
+        auto make_name_gv = [&](const std::string& str, const std::string& suffix) -> llvm::Constant* {
+            uint32_t len = static_cast<uint32_t>(str.size() + 1); // includes '\0'
+            llvm::Constant* str_data = llvm::ConstantDataArray::getString(llvm_ctx, str, /*AddNull=*/true);
+            llvm::StructType* str_struct_ty = llvm::StructType::get(
+                llvm_ctx, {i32_ty, str_data->getType()}, /*isPacked=*/false);
+            llvm::Constant* str_struct_init = llvm::ConstantStruct::get(
+                str_struct_ty,
+                {llvm::ConstantInt::get(i32_ty, len), str_data});
+            auto* gv = new llvm::GlobalVariable(
+                _context->module(), str_struct_ty,
+                true, llvm::GlobalValue::PrivateLinkage,
+                str_struct_init, rtti_name + suffix);
+            gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+            return gv;
+        };
+
+        // Emit the SHORT (unqualified) class name
+        llvm::Constant* name_cstr = make_name_gv(klass.get_short_name(), "_name");
+
+        // Emit the FULLY QUALIFIED class name (including module and namespaces)
+        llvm::Constant* fullname_cstr = make_name_gv(klass.get_fq_name(), "_fullname");
 
         // ── Build the RTTI global ──────────────────────────────────────────────
-        // All fields except 'name' are null/zero for now; patched in implementation pass.
+        // All fields except 'name' and 'fullName' are null/zero for now; patched
+        // in implementation pass.
         llvm::Constant* null_ptr = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
         std::vector<llvm::Constant*> rtti_init = {
-            null_ptr,   // field 0: __vptr__                → patched later
-            null_ptr,   // field 1: __vptr_AggregateType__  → patched later
-            null_ptr,   // field 2: __vptr_TypeInfo__       → patched later
-            name_cstr,  // field 3: name                    → short name (char[]?)
-            null_ptr,   // field 4: bases                   → patched later
-            null_ptr,   // field 5: nested                  → patched later
-            null_ptr,   // field 6: enclosing               → patched later
-            llvm::ConstantInt::get(i32_ty, 0)  // field 7: flags → patched later
+            null_ptr,       // field 0: __vptr__                → patched later
+            null_ptr,       // field 1: __vptr_AggregateType__  → patched later
+            null_ptr,       // field 2: __vptr_TypeInfo__       → patched later
+            name_cstr,      // field 3: name                    → short name (char[]?)
+            fullname_cstr,  // field 4: fullName                → fully qualified name (char[]?)
+            null_ptr,       // field 5: bases                   → patched later
+            null_ptr,       // field 6: nested                  → patched later
+            null_ptr,       // field 7: enclosing               → patched later
+            llvm::ConstantInt::get(i32_ty, 0)  // field 8: flags → patched later
         };
         llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
         auto rtti_gv = new llvm::GlobalVariable(
@@ -830,9 +840,10 @@ void implementation_generator::visit_klass(klass& klass) {
     //   c) Set the enclosing field to the RTTI of the enclosing aggregate (if any).
     //   d) Set the flags field (visibility + is_static).
     //
-    // Both interfaces and classes share the same layout (8 fields):
+    // Both interfaces and classes share the same layout (9 fields):
     //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
-    //     ptr name, ptr bases, ptr nested, ptr enclosing, i32 flags }
+    //     ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
+    //     i32 flags }
     //
     // When the vtable symbols are not available (e.g. standalone compilation
     // without libk), the RTTI global keeps null vptrs.  typeid comparison
@@ -1004,10 +1015,11 @@ void implementation_generator::visit_klass(klass& klass) {
             at_vptr_field,                     // field 1: __vptr_AggregateType__
             ti_vptr_field,                     // field 2: __vptr_TypeInfo__
             old_struct->getOperand(3),         // field 3: name (keep as-is)
-            bases_gv ? bases_gv : null_ptr,    // field 4: bases
-            nested_gv ? nested_gv : null_ptr,  // field 5: nested
-            enclosing_rtti,                    // field 6: enclosing
-            llvm::ConstantInt::get(i32_ty, flags_val)  // field 7: flags
+            old_struct->getOperand(4),         // field 4: fullName (keep as-is)
+            bases_gv ? bases_gv : null_ptr,    // field 5: bases
+            nested_gv ? nested_gv : null_ptr,  // field 6: nested
+            enclosing_rtti,                    // field 7: enclosing
+            llvm::ConstantInt::get(i32_ty, flags_val)  // field 8: flags
         };
 
         rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_rtti_init));
