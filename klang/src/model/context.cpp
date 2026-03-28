@@ -736,6 +736,16 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
             std::cerr << "Error: cannot resolve pointer subtype." << std::endl;
             return nullptr;
         } else {
+            // Unsized arrays are canonicalised to ref<array<T>> by the array branch
+            // of resolve_type, but inside a pointer we want pointer(array(T)), not
+            // pointer(ref<array<T>>).  Unwrap the spurious reference layer.
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(res)) {
+                if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                    if (!arr->is_sized()) {
+                        res = arr;
+                    }
+                }
+            }
             return res->get_pointer();
         }
     } else if (type::is_reference(type)) {
@@ -752,6 +762,16 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
             std::cerr << "Error: cannot resolve link subtype." << std::endl;
             return nullptr;
         } else {
+            // Unsized arrays are canonicalised to ref<array<T>> by the array branch
+            // of resolve_type, but inside a link we want link(array(T)), not
+            // link(ref<array<T>>).  Unwrap the spurious reference layer.
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(res)) {
+                if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                    if (!arr->is_sized()) {
+                        res = arr;
+                    }
+                }
+            }
             return res->get_link();
         }
     } else if (type::is_view(type)) {
@@ -760,6 +780,16 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
             std::cerr << "Error: cannot resolve view subtype." << std::endl;
             return nullptr;
         } else {
+            // Unsized arrays are canonicalised to ref<array<T>> by the array branch
+            // of resolve_type, but inside a view we want view(array(T)), not
+            // view(ref<array<T>>).  Unwrap the spurious reference layer.
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(res)) {
+                if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                    if (!arr->is_sized()) {
+                        res = arr;
+                    }
+                }
+            }
             return res->get_view();
         }
     } else if (type::is_owner(type)) {

@@ -147,11 +147,10 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
             return inner->get_pointer();
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_view_type>) {
-            // view (?T) — represented as pointer in K model for now
             if (!v.inner) return nullptr;
             auto inner = convert(*v.inner, owner, ctx);
             if (!inner) return nullptr;
-            return inner->get_pointer();
+            return inner->get_view();
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_drain_type>) {
             if (!v.inner) return nullptr;

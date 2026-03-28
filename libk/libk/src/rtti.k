@@ -27,6 +27,33 @@ const interface TypeInfo {
      * This name is the same as the name of the type in the source code without any context qualification.
      */
     const getName() : const char[]?;
+
+}
+
+/**
+ * RTTI interface descriptor.
+ * This class is used to describe interfaces at runtime.
+ */
+final const class Interface : TypeInfo {
+    name : const char[]?;
+    bases : const TypeInfo?[]?;
+
+    private Interface(name : const char[]?, bases : const TypeInfo?[]?) : name(name), bases(bases) {}
+
+    /**
+     * Return the name of the interface.
+     */
+    const getName() : const char[]? {
+        return name;
+    }
+
+    /**
+     * Return the bases of the interface, if any.
+     * Each element is a TypeInfo descriptor (always an Interface at runtime).
+     */
+    const getBases() : const TypeInfo?[]? {
+        return bases;
+    }
 }
 
 /**
@@ -35,8 +62,9 @@ const interface TypeInfo {
  */
 final const class Class : TypeInfo {
     name : const char[]?;
+    bases : const TypeInfo?[]?;
 
-    private Class(name : const char[]?) : name(name) {}
+    private Class(name : const char[]?, bases : const TypeInfo?[]?) : name(name), bases(bases) {}
 
     /**
      * Return the name of the class.
@@ -44,5 +72,14 @@ final const class Class : TypeInfo {
     const getName() : const char[]? {
         return name;
     }
+
+    /**
+     * Return the base interfaces and classes of the class, if any.
+     * Each element is a TypeInfo descriptor (always an Interface or a Class at runtime).
+     */
+    const getBases() : const TypeInfo?[]? {
+        return bases;
+    }
+
 }
 

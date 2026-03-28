@@ -224,7 +224,122 @@ TEST_CASE("RTTI: polymorphic getClass() distinguishes types", "[libk][rtti]") {
 }
 
 
+// =========================================================================
+// 7. RTTI: String's Class descriptor has correct name via getName()
+// =========================================================================
+
+TEST_CASE("RTTI: String Class descriptor name", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_class_desc__;
+        import k;
+
+        test() : int {
+            s : k::String("hello");
+            cls : const k::Class& = s.getClass();
+            name : k::String(cls.getName());
+            expected : k::String("String");
+            if (name == expected) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
 
 
+// =========================================================================
+// 8. Class RTTI: getBases() is non-null on String
+// =========================================================================
 
+TEST_CASE("RTTI: getBases() non-null on String", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_bases_nn__;
+        import k;
+
+        test() : int {
+            s : k::String("hello");
+            if (s.getClass().getBases() == null) return 0;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 9. Class RTTI: getBases() on String has 1 element
+// =========================================================================
+
+TEST_CASE("RTTI: getBases() size on String is 1", "[libk][rtti]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __rtti_bases_sz__;
+        import k;
+
+        test() : int {
+            s : k::String("hello");
+            // String inherits from Object, so 1 base
+            return s.getClass().getBases()->size;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR, /*dump=*/true, /*optimize=*/false);
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 1);
+}
+
+
+// =========================================================================
+// 10. Class RTTI: getBases() is null on Object (no direct bases)
+// =========================================================================
+
+TEST_CASE("RTTI: getBases() null on Object", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_bases_null__;
+        import k;
+
+        test() : int {
+            o : k::Object;
+            // Object is the root class — getBases() should be null
+            if (o.getClass().getBases() == null) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 11. Class RTTI: Object has no bases (null)
+// =========================================================================
+
+TEST_CASE("RTTI: Object has no bases", "[libk][rtti]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_no_bases__;
+        import k;
+
+        test() : int {
+            o : k::Object;
+            // Object is the root class — getBases() should be null
+            if (o.getClass().getBases() == null) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
 
