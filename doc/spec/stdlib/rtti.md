@@ -24,6 +24,7 @@ allowing programs to inspect type metadata at runtime.
 8. [Annotation](#8-annotation)
 9. [Type hierarchy](#9-type-hierarchy)
 10. [Usage examples](#10-usage-examples)
+11. [Meta-annotation types](#11-meta-annotation-types)
 
 ---
 
@@ -191,11 +192,15 @@ compiler.
 | `nested` | `const TypeInfo?[]?` | Nested type descriptors (if any). |
 | `enclosing` | `const TypeInfo?` | Enclosing type descriptor (or `null`). |
 | `flags` | `unsigned int` | Packed bit-flags (visibility + is_static). |
+| `annotations` | `const Annotation?[]?` | Meta-annotation instances attached to this annotation type. |
 
 ### Methods
 
-All methods from `AggregateType` (no `getAnnotations()` on annotation types
-themselves).
+All methods from `AggregateType`, plus:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getAnnotations()` | `const Annotation?[]?` | Array of meta-annotation instances attached to this annotation type, or `null` if unannotated. Used to inspect meta-annotations (`@Retention`, `@Inherited`, `@Target`) at runtime. |
 
 ---
 
@@ -363,5 +368,99 @@ test() : int {
 
 ---
 
-*See also:* [Object](object.md) · [Annotations](../language/annotations/annotations.md) · [Classes — RTTI](../language/structs/classes.md#14-rtti-and-dynamic-downcast)
+## 11. Meta-annotation types
+
+**Namespace:** `k::annotations`  
+**Source:** `libk/libk/src/annotations.k`
+
+The K standard library provides three meta-annotation types that control
+how the compiler processes annotation instances. They are declared in the
+`k::annotations` namespace and are automatically available in every K
+module (via the implicit `import k;`).
+
+All three meta-annotations are themselves annotated with
+`@Retention(Policy::RUNTIME)` and `@Target({ElementType::ANNOTATION})`,
+making them available for runtime inspection and restricted to annotation
+type declarations.
+
+### 11.1. Retention
+
+```k
+@Retention(Policy::RUNTIME)
+@Target({ElementType::ANNOTATION})
+annotation Retention {
+    enum Policy { SOURCE; RUNTIME; };
+    policy : Policy = Policy::RUNTIME;
+}
+```
+
+Controls whether instances of the annotated annotation type are emitted into
+the binary as RTTI metadata.
+
+#### Inner enum `Retention.Policy`
+
+| Entry | Value | Description |
+|-------|-------|-------------|
+| `SOURCE` | 0 | Annotation kept in compiler model only — not emitted to binary. |
+| `RUNTIME` | 1 | Annotation emitted as an LLVM global constant in the RTTI. Default. |
+
+#### Field
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `policy` | `Policy` | `Policy::RUNTIME` | The retention policy. |
+
+### 11.2. Inherited
+
+```k
+@Retention(Policy::RUNTIME)
+@Target({ElementType::ANNOTATION})
+annotation Inherited {}
+```
+
+Marker meta-annotation. When applied to an annotation type, instances of that
+annotation are automatically propagated from a base class to its derived
+classes (via class inheritance only — not interface implementation).
+
+If the derived class explicitly provides its own instance of the same
+annotation type, the explicit instance replaces the inherited one.
+
+No fields.
+
+### 11.3. Target
+
+```k
+@Retention(Policy::RUNTIME)
+@Target({ElementType::ANNOTATION})
+annotation Target {
+    enum ElementType { CLASS; INTERFACE; ANNOTATION; };
+    value : ElementType[];
+}
+```
+
+Restricts the kinds of program elements to which the annotated annotation
+type may be applied. The compiler checks this at compile time and emits
+error `0x003C` on violations.
+
+#### Inner enum `Target.ElementType`
+
+| Entry | Value | Description |
+|-------|-------|-------------|
+| `CLASS` | 0 | `class` declarations. |
+| `INTERFACE` | 1 | `interface` declarations. |
+| `ANNOTATION` | 2 | `annotation` type declarations. |
+
+#### Field
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `value` | `ElementType[]` | Set of allowed element types. |
+
+If `@Target` is absent from an annotation type, the annotation can be applied
+to any supported element type. If present with an empty array, the annotation
+cannot be applied anywhere.
+
+---
+
+*See also:* [Object](object.md) · [Annotations](../language/annotations/annotations.md) · [Meta-annotation reference](../language/annotations/annotations.md#15-meta-annotation-reference) · [Classes — RTTI](../language/structs/classes.md#14-rtti-and-dynamic-downcast)
 

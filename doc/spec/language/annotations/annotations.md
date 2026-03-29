@@ -27,10 +27,13 @@ content is immutable after construction.
 10. [Reading annotations at runtime](#10-reading-annotations-at-runtime)
 11. [Annotation visibility and scope](#11-annotation-visibility-and-scope)
 12. [Allowed member types](#12-allowed-member-types)
-13. [Library export](#13-library-export)
-14. [Examples](#14-examples)
-15. [Grammar](#15-grammar)
-16. [Error reference](#16-error-reference)
+13. [Inner enums](#13-inner-enums)
+14. [Meta-annotations](#14-meta-annotations)
+15. [Meta-annotation reference](#15-meta-annotation-reference)
+16. [Library export](#16-library-export)
+17. [Examples](#17-examples)
+18. [Grammar](#18-grammar)
+19. [Error reference](#19-error-reference)
 
 ---
 
@@ -80,11 +83,13 @@ Member variables of annotation types must have one of the following types:
 
 | Type category | Examples | Notes |
 |---------------|----------|-------|
-| Primitive types | `int`, `bool`, `char`, `byte`, `short`, `long`, `float`, `double`, `unsigned int`, etc. | All primitive types are allowed. |
+| Primitive types | `int`, `bool`, `char`, `byte`, `short`, `long`, `float`, `double`, `unsigned int`, etc. | All primitive types. |
+| Inner enum types | `Level`, `Policy` | Enums declared inside the annotation body (see [§13](#13-inner-enums)). |
 | Sized arrays of primitives | `int[3]`, `bool[4]`, `char[10]` | Fixed-size arrays. |
 | `const char[]` | `const char[]` | Unsized char array — compatible with string literals. |
 | Other annotation types | `Inner` (where `annotation Inner {}`) | By value — the inner annotation is embedded. |
 | Arrays of annotation views | `const Base?[]` | Nullable views to allow polymorphic (derived) annotations. |
+| Arrays of inner enum types | `ElementType[]` | Unsized arrays of an inner enum (see `@Target`). |
 
 Types that are **not** allowed as annotation member variables:
 
@@ -428,7 +433,320 @@ Member variables default to `public` (like structs).
 
 ---
 
-## 13. Library export
+## 13. Inner enums
+
+Annotation types can declare **inner enumeration types** in their body.
+Inner enums provide a type-safe way to define a fixed set of named constants
+for use as annotation field values.
+
+### Declaring an inner enum
+
+An inner enum is declared with the `enum` keyword inside the annotation body,
+using the same syntax as top-level enums:
+
+```k
+annotation Severity {
+    enum Level { LOW; MEDIUM; HIGH; };
+    level : Level;
+}
+```
+
+### Rules
+
+| Rule | Description |
+|------|-------------|
+| **Syntax** | Standard enum syntax: `enum Name { ENTRY1; ENTRY2; ... };` |
+| **Values** | Auto-incrementing from 0 unless explicitly assigned (`ENTRY = N;`). |
+| **Scope** | The enum type is scoped to the annotation body. Fields within the same annotation can reference it by its short name (`Level`). |
+| **Qualified access** | Enum entries are accessed with the qualified syntax: `Level::HIGH`. When applying the annotation, the enum name must be qualified: `@Severity(Level::HIGH)`. |
+| **Multiple enums** | An annotation may declare more than one inner enum. |
+| **As field type** | Inner enums can be used as member variable types, including array types (`ElementType[]`). |
+| **Default values** | Fields with inner enum types can have defaults: `level : Level = Level::MEDIUM;`. |
+
+### Examples
+
+```k
+annotation Config {
+    enum Mode { FAST; SAFE; };
+    enum Level { LOW; MEDIUM; HIGH; };
+    mode : Mode;
+    level : Level = Level::MEDIUM;
+}
+
+@Config(Mode::FAST, Level::HIGH)  // positional init
+class HighPerf { /* ... */ }
+
+@Config(Mode::SAFE)               // level defaults to MEDIUM
+class SafeMode { /* ... */ }
+```
+
+Inner enums with array fields:
+
+```k
+annotation Target {
+    enum ElementType { CLASS; INTERFACE; ANNOTATION; };
+    value : ElementType[];
+}
+
+@Target({ElementType::CLASS, ElementType::INTERFACE})
+annotation FlexMarker {}
+```
+
+---
+
+## 14. Meta-annotations
+
+**Meta-annotations** are annotations that can be applied to other annotation
+type declarations to control their semantics. They configure how the compiler
+processes, propagates, and emits annotation instances.
+
+### Overview
+
+Meta-annotations are themselves annotation types. They live in the K standard
+library, in namespace `k::annotations` (module `k`, source file
+`src/annotations.k`). Because every K module implicitly imports `k`, these
+meta-annotations are always available.
+
+The K standard library defines three meta-annotations:
+
+| Meta-annotation | Purpose |
+|-----------------|---------|
+| [`@Retention`](#151-retentionpolicy) | Controls whether annotation instances are emitted into binary RTTI or kept only in the compiler model. |
+| [`@Inherited`](#152-inherited) | Marks that an annotation propagates from base classes to derived classes. |
+| [`@Target`](#153-targetelementtype) | Restricts which kinds of program elements an annotation can be applied to. |
+
+### Self-referential and cross-referential annotations
+
+Annotations can reference other annotations in the same module — including
+themselves. The compiler creates all annotation type objects before any
+resolver runs, which makes forward references and self-references possible:
+
+```k
+// Self-referential: @Retention applied to Retention itself
+@Retention(Policy::RUNTIME)
+@Target({ElementType::ANNOTATION})
+annotation Retention {
+    enum Policy { SOURCE; RUNTIME; };
+    policy : Policy = Policy::RUNTIME;
+}
+```
+
+This is exactly how the standard library's meta-annotations are defined.
+
+---
+
+## 15. Meta-annotation reference
+
+### 15.1. `@Retention(Policy)`
+
+Controls whether annotation instances are retained only in the compiler's
+internal model or are also synthesized into the compiled binary as RTTI
+metadata.
+
+**Declared in:** `k::annotations::Retention`
+
+```k
+@Retention(Policy::RUNTIME)
+@Target({ElementType::ANNOTATION})
+annotation Retention {
+    enum Policy { SOURCE; RUNTIME; };
+    policy : Policy = Policy::RUNTIME;
+}
+```
+
+#### `Retention.Policy`
+
+| Entry | Value | Description |
+|-------|-------|-------------|
+| `SOURCE` | 0 | The annotation is kept in the compiler model only. It is **not** emitted into the generated binary — no RTTI constant is created. Useful for compile-time-only metadata (e.g. `@Target` itself). |
+| `RUNTIME` | 1 | The annotation is retained in the binary as an RTTI constant global, accessible via reflection at runtime through `getAnnotations()`. This is the **default** when `@Retention` is absent. |
+
+#### Rules
+
+| Rule | Description |
+|------|-------------|
+| **Default** | If `@Retention` is not present on an annotation type, the policy is `RUNTIME`. |
+| **Applicability** | `@Retention` can only be applied to annotation types (`@Target({ElementType::ANNOTATION})`). |
+| **Model visibility** | Regardless of the retention policy, annotation instances are **always** present in the compiler model. `SOURCE` retention only suppresses binary emission. |
+| **Effect on RTTI** | With `RUNTIME` retention, the compiler generates an LLVM global constant for each annotation instance and includes it in the `annotations` field of the `Class`, `Interface`, or `AnnotationType` RTTI descriptor. With `SOURCE` retention, no global is generated and `getAnnotations()` will not return the annotation. |
+
+#### Examples
+
+```k
+// Annotation with default RUNTIME retention — visible at runtime
+annotation Marker {}
+
+@Marker
+class Foo { /* ... */ }
+// Foo's RTTI includes @Marker in getAnnotations()
+```
+
+```k
+import k;
+
+// Annotation with SOURCE retention — compile-time only
+@k::annotations::Retention(Policy::SOURCE)
+annotation CompileOnly {}
+
+@CompileOnly
+class Bar { /* ... */ }
+// Bar's RTTI does NOT include @CompileOnly
+```
+
+---
+
+### 15.2. `@Inherited`
+
+Marks that an annotation type is automatically inherited by subclasses.
+
+**Declared in:** `k::annotations::Inherited`
+
+```k
+@Retention(Policy::RUNTIME)
+@Target({ElementType::ANNOTATION})
+annotation Inherited {}
+```
+
+#### Rules
+
+| Rule | Description |
+|------|-------------|
+| **Propagation** | When a class carries an `@Inherited` annotation, every **direct or indirect subclass** implicitly receives the same annotation instance — including its field values. |
+| **Override** | If a derived class explicitly applies the same annotation type, the explicit instance **replaces** the inherited one. |
+| **Interface exclusion** | `@Inherited` has **no effect** on interface implementation. Annotations on interfaces are never propagated to implementing classes. |
+| **Annotation-only** | `@Inherited` can only be applied to annotation types (`@Target({ElementType::ANNOTATION})`). |
+| **Marker** | `@Inherited` is a marker annotation — it has no fields. |
+| **Retention interaction** | Inheritance propagation happens at the model level, before RTTI emission. A `@Retention(Policy::SOURCE)` annotation that is also `@Inherited` will propagate in the model but will not appear in the binary RTTI of either base or derived class. |
+
+#### Examples
+
+```k
+import k;
+
+@k::annotations::Inherited
+annotation Version { value : int; }
+
+@Version(3)
+class Base { /* ... */ }
+
+class Derived : Base { /* ... */ }
+// Derived automatically has @Version(3)
+
+@Version(5)
+class Override : Base { /* ... */ }
+// Override has @Version(5), not @Version(3)
+```
+
+Multi-level propagation:
+
+```k
+import k;
+
+@k::annotations::Inherited
+annotation Tag { value : int; }
+
+@Tag(10)
+class A { /* ... */ }
+class B : A { /* ... */ }   // inherits @Tag(10)
+class C : B { /* ... */ }   // inherits @Tag(10) from B
+
+@Tag(99)
+class D : B { /* ... */ }   // overrides with @Tag(99)
+class E : D { /* ... */ }   // inherits @Tag(99) from D
+```
+
+---
+
+### 15.3. `@Target({ElementType::…})`
+
+Restricts the kinds of program elements to which an annotation type may be
+applied. The compiler enforces this constraint at compile time.
+
+**Declared in:** `k::annotations::Target`
+
+```k
+@Retention(Policy::RUNTIME)
+@Target({ElementType::ANNOTATION})
+annotation Target {
+    enum ElementType { CLASS; INTERFACE; ANNOTATION; };
+    value : ElementType[];
+}
+```
+
+#### `Target.ElementType`
+
+| Entry | Value | Description |
+|-------|-------|-------------|
+| `CLASS` | 0 | A `class` declaration. |
+| `INTERFACE` | 1 | An `interface` declaration. |
+| `ANNOTATION` | 2 | An `annotation` type declaration. |
+
+#### Rules
+
+| Rule | Description |
+|------|-------------|
+| **Absent `@Target`** | If `@Target` is not present on an annotation type, the annotation can be applied to **any** supported element type (class, interface, or annotation). |
+| **Enforcement** | When `@Target` is present, applying the annotation to an element type not in the `value` array causes a compile-time error (`0x003C`). |
+| **Multiple targets** | The `value` array can contain any combination of `ElementType` entries: `@Target({ElementType::CLASS, ElementType::INTERFACE})`. |
+| **Self-applicable** | `@Target` is itself restricted to `ANNOTATION` targets (it can only be applied to annotation types). |
+
+#### Examples
+
+```k
+import k;
+
+// Only applicable to classes
+@k::annotations::Target({ElementType::CLASS})
+annotation ClassOnly {}
+
+@ClassOnly
+class Good { /* ... */ }       // OK
+
+// @ClassOnly
+// interface Bad { /* ... */ }  // ERROR 0x003C: @Target restricts to [CLASS]
+```
+
+```k
+import k;
+
+// Applicable to classes and interfaces, but not annotations
+@k::annotations::Target({ElementType::CLASS, ElementType::INTERFACE})
+annotation Documented {}
+
+@Documented
+class MyClass { /* ... */ }    // OK
+
+@Documented
+interface MyIface { /* ... */ } // OK
+
+// @Documented
+// annotation MyAnn {}          // ERROR 0x003C: @Target restricts to [CLASS, INTERFACE]
+```
+
+### Combining meta-annotations
+
+Meta-annotations can be combined on a single annotation type to define
+precise semantics:
+
+```k
+import k;
+
+// Class-only, inherited, emitted at runtime
+@k::annotations::Target({ElementType::CLASS})
+@k::annotations::Inherited
+@k::annotations::Retention(Policy::RUNTIME)
+annotation Versioned { version : int; }
+
+@Versioned(3)
+class Base { /* ... */ }
+
+class Derived : Base { /* ... */ }
+// Derived inherits @Versioned(3) and it appears in runtime RTTI
+```
+
+---
+
+## 16. Library export
 
 Annotation types are **exported through `.kdi` files** like any other
 aggregate type:
@@ -451,7 +769,7 @@ This means:
 
 ---
 
-## 14. Examples
+## 17. Examples
 
 ### Simple marker annotation
 
@@ -615,19 +933,24 @@ class ApiV2 {
 
 ---
 
-## 15. Grammar
+## 18. Grammar
 
 ### Annotation type declaration
 
 ```
 AnnotationDecl:
-    { Specifier } 'annotation' Identifier [ ':' BaseClause ] '{' { Declaration } '}'
+    { AnnotationDef } { Specifier } 'annotation' Identifier [ ':' BaseClause ] '{' { Declaration } '}'
 ```
 
 Annotation types are parsed as a special case of `AggregateDecl` where the
 aggregate keyword is `annotation`. They share the same specifier, base
 clause, and body grammar as structs and classes. The body may contain
-variable declarations and method declarations.
+variable declarations, method declarations, and enum declarations.
+
+```
+AnnotationBody:
+    { EnumDecl | VariableDecl | FunctionDecl }
+```
 
 ### Annotation application
 
@@ -653,13 +976,14 @@ AggregateDecl:
 
 ---
 
-## 16. Error reference
+## 19. Error reference
 
 | Code | Phase | Condition |
 |------|-------|-----------|
 | `0x0024` | Model builder | Annotations applied to a struct (only classes, interfaces, and annotations are supported). |
 | `0x003A` | Symbol resolver | Annotation type not found. |
 | `0x003B` | Symbol resolver | Target is not an annotation type. |
+| `0x003C` | Symbol resolver | `@Target` violation: annotation applied to an element type not in the allowed list. Error message includes the annotation name, the disallowed element kind, and the allowed set. |
 | `0x0080` | Parser | Missing annotation type name after `@`. |
 | `0x0081` | Parser | Missing `)` after annotation arguments. |
 
