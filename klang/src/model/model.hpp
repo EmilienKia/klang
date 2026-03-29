@@ -256,6 +256,18 @@ struct vtable_layout {
      */
     llvm::GlobalVariable* llvm_rtti_global = nullptr;
 
+    /**
+     * Mangled symbol name for the vtable global (set for imported types from KDI).
+     * Used to lazily create an external declaration when llvm_global is first needed.
+     */
+    std::string vtable_symbol;
+
+    /**
+     * Mangled symbol name for the RTTI global (set for imported types from KDI).
+     * Used to lazily create an external declaration when llvm_rtti_global is first needed.
+     */
+    std::string rtti_symbol;
+
     /** Total number of slots (entries.size()). */
     size_t slot_count() const { return entries.size(); }
 };
@@ -679,7 +691,10 @@ struct annotation_instance {
     std::shared_ptr<k::parse::ast::annotation_def> ast_node;
 
     /// Resolved annotation type (set during symbol resolution phase).
-    std::shared_ptr<annotation_type> resolved_type;
+    /// Points to any aggregate with is_annotation() == true (can be
+    /// annotation_type for local definitions or imported_annotation_type
+    /// for types imported from KDI).
+    std::shared_ptr<aggregate> resolved_type;
 
     /**
      * Resolved compile-time constant values for each member field.
@@ -1047,6 +1062,14 @@ public:
     virtual bool is_annotation() const { return false; }
 
     /**
+     * Check whether this annotation type has @Retention(Policy::SOURCE).
+     * Returns true if the type explicitly specifies SOURCE retention.
+     * Returns false (RUNTIME) if @Retention is absent or set to RUNTIME.
+     * For non-annotation aggregates, always returns false.
+     */
+    virtual bool is_source_retention() const { return false; }
+
+    /**
      * True if this aggregate has at least one virtual function (needs a vtable).
      * Kept virtual on aggregate for generic call sites (e.g. virtual dispatch check
      * in gen_expressions.cpp) that hold a shared_ptr<aggregate> without knowing
@@ -1217,7 +1240,7 @@ public:
      * Returns true if the type explicitly specifies SOURCE retention.
      * Returns false (RUNTIME) if @Retention is absent or set to RUNTIME.
      */
-    bool is_source_retention() const;
+    bool is_source_retention() const override;
 
     void set_vtable(std::shared_ptr<vtable_layout> vt) { _vtable = std::move(vt); }
 

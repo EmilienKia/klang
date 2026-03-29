@@ -186,6 +186,8 @@ class imported_klass : public imported_aggregate {
 protected:
     friend class unit;
     bool _has_vtable = false;
+    /** Vtable layout with external declarations for vtable/RTTI globals (set during import). */
+    std::shared_ptr<vtable_layout> _vtable;
     imported_klass(std::shared_ptr<element> parent, const kdi::kdi_aggregate* kdi_agg);
 public:
     static std::shared_ptr<imported_klass>
@@ -194,11 +196,14 @@ public:
     bool is_class() const override { return true; }
     bool has_vtable() const override { return _has_vtable; }
     bool has_rtti() const override { return _has_vtable; }
+    std::shared_ptr<vtable_layout> get_vtable() const override { return _vtable; }
 };
 
 class imported_interface : public imported_aggregate {
 protected:
     friend class unit;
+    /** Vtable layout with external declarations for vtable/RTTI globals (set during import). */
+    std::shared_ptr<vtable_layout> _vtable;
     imported_interface(std::shared_ptr<element> parent, const kdi::kdi_aggregate* kdi_agg);
 public:
     static std::shared_ptr<imported_interface>
@@ -206,6 +211,23 @@ public:
     void accept(model_visitor& visitor) override;
     bool is_class() const override { return true; }
     bool has_vtable() const override { return true; }
+    std::shared_ptr<vtable_layout> get_vtable() const override { return _vtable; }
+};
+
+/**
+ * Imported annotation type.  Like imported_klass but overrides is_annotation()
+ * so that the compiler recognizes it as a valid annotation type during annotation
+ * resolution (e.g. @k::annotations::Target used from user code).
+ */
+class imported_annotation_type : public imported_klass {
+protected:
+    friend class unit;
+    imported_annotation_type(std::shared_ptr<element> parent, const kdi::kdi_aggregate* kdi_agg);
+public:
+    static std::shared_ptr<imported_annotation_type>
+    make_shared(std::shared_ptr<element> parent, const kdi::kdi_aggregate* kdi_agg);
+    void accept(model_visitor& visitor) override;
+    bool is_annotation() const override { return true; }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

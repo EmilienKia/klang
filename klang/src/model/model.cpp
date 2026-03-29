@@ -714,7 +714,9 @@ bool annotation_type::is_source_retention() const {
     for (auto& meta : get_annotations()) {
         if (!meta.resolved_type) continue;
         std::string meta_fqn = meta.resolved_type->get_fq_name();
-        if (meta_fqn != "k::annotations::Retention" && meta.raw_name != "Retention") continue;
+        if (meta_fqn != "k::annotations::Retention"
+            && meta_fqn != "::k::annotations::Retention"
+            && meta.raw_name != "Retention") continue;
 
         // Examine the AST to find the Policy value
         if (!meta.ast_node) continue;

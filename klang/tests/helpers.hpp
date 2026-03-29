@@ -261,6 +261,14 @@ bool compile_collect_diagnostics(
 std::shared_ptr<k::compiler> compile_model(std::string_view src);
 
 /**
+ * Like compile_model() but configures a file resolver so the K standard
+ * library (module "k") is importable, and loads libk.so into the current
+ * process so imported symbols can resolve.  Use this when the K source
+ * contains `import k;`.
+ */
+std::shared_ptr<k::compiler> compile_model_with_stdlib(std::string_view src);
+
+/**
  * Navigate to an aggregate by its short name within the root namespace.
  */
 std::shared_ptr<k::model::aggregate>

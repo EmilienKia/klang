@@ -1661,3 +1661,396 @@ TEST_CASE("Constructor annotation: RUNTIME annotation on public constructor — 
     }
     CHECK_FALSE(has_003D);
 }
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// 15. Real stdlib meta-annotations — import k; uses ::k::annotations::*
+// ════════════════════════════════════════════════════════════════════════════
+// These tests import the actual K standard library so that the meta-annotations
+// @Retention, @Inherited, and @Target resolve to the real types from
+// ::k::annotations rather than local stand-ins.  This exercises the FQN
+// matching path in the compiler (get_fq_name() == "::k::annotations::*"),
+// not just the raw_name fallback.
+//
+// Note: because the stdlib types live in the k::annotations namespace,
+// we must use the fully-qualified form: @k::annotations::Target({...}).
+// Enum values inside the annotation type (e.g. ElementType::CLASS, Policy::SOURCE)
+// are resolved relative to the annotation type's scope and do not need
+// further qualification.
+
+TEST_CASE("Stdlib @Target: annotation restricted to CLASS can be applied to class", "[annotation][stdlib][target]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module __test_stdlib_target_cls_ok__;
+        import k;
+        @k::annotations::Target({ElementType::CLASS})
+        annotation MyMarker {}
+        @MyMarker
+        class Foo {
+            foo() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    REQUIRE(foo->get_annotations().size() == 1);
+    CHECK(foo->get_annotations()[0].resolved_type->get_short_name() == "MyMarker");
+
+    // Verify the @Target meta-annotation on MyMarker resolved to the real stdlib type
+    auto my_marker = find_annotation_type(comp, "MyMarker");
+    REQUIRE(my_marker != nullptr);
+    bool found_real_target = false;
+    for (auto& meta : my_marker->get_annotations()) {
+        if (meta.resolved_type && meta.resolved_type->get_fq_name() == "::k::annotations::Target") {
+            found_real_target = true;
+            break;
+        }
+    }
+    CHECK(found_real_target);
+}
+
+TEST_CASE("Stdlib @Target: annotation restricted to CLASS rejected on interface", "[annotation][stdlib][target]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module __test_stdlib_target_cls_iface_fail__;
+        import k;
+        @k::annotations::Target({ElementType::CLASS})
+        annotation MyMarker {}
+        @MyMarker
+        interface BadIface {
+            abstract foo() : int;
+        }
+    )SRC");
+    // @Target restricts MyMarker to CLASS, so applying it to an interface should fail
+    CHECK(comp == nullptr);
+}
+
+TEST_CASE("Stdlib @Target: FUNCTION-only annotation allowed on function", "[annotation][stdlib][target]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module __test_stdlib_target_func_ok__;
+        import k;
+        @k::annotations::Target({ElementType::FUNCTION})
+        annotation FuncOnly {}
+        class Foo {
+            @FuncOnly
+            bar() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    auto fn = foo->get_function("bar");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn->get_annotations().size() == 1);
+    CHECK(fn->get_annotations()[0].resolved_type->get_short_name() == "FuncOnly");
+}
+
+TEST_CASE("Stdlib @Target: CONSTRUCTOR-only annotation allowed on constructor", "[annotation][stdlib][target]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module __test_stdlib_target_ctor_ok__;
+        import k;
+        @k::annotations::Target({ElementType::CONSTRUCTOR})
+        annotation CtorOnly {}
+        class Foo {
+            @CtorOnly
+            public Foo() {}
+            bar() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    REQUIRE(!foo->constructors().empty());
+    auto& ctor = foo->constructors().front();
+    REQUIRE(ctor->get_annotations().size() == 1);
+    CHECK(ctor->get_annotations()[0].resolved_type->get_short_name() == "CtorOnly");
+}
+
+TEST_CASE("Stdlib @Inherited: annotation propagates from base to derived", "[annotation][stdlib][inherited]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module __test_stdlib_inherited__;
+        import k;
+        @k::annotations::Inherited
+        annotation Tag { value : int; }
+        @Tag(42)
+        class Base {
+            foo() : int { return 0; }
+        }
+        class Derived : Base {
+            bar() : int { return 1; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto base = find_aggregate(comp, "Base");
+    auto derived = find_aggregate(comp, "Derived");
+    REQUIRE(base != nullptr);
+    REQUIRE(derived != nullptr);
+
+    // Base has @Tag
+    REQUIRE(base->get_annotations().size() == 1);
+    CHECK(base->get_annotations()[0].resolved_type->get_short_name() == "Tag");
+
+    // Derived inherits @Tag via real stdlib @Inherited
+    REQUIRE(derived->get_annotations().size() == 1);
+    CHECK(derived->get_annotations()[0].resolved_type->get_short_name() == "Tag");
+
+    // Verify @Inherited on Tag is the real stdlib type
+    auto tag = find_annotation_type(comp, "Tag");
+    REQUIRE(tag != nullptr);
+    bool found_real_inherited = false;
+    for (auto& meta : tag->get_annotations()) {
+        if (meta.resolved_type && meta.resolved_type->get_fq_name() == "::k::annotations::Inherited") {
+            found_real_inherited = true;
+            break;
+        }
+    }
+    CHECK(found_real_inherited);
+}
+
+TEST_CASE("Stdlib @Inherited: non-inherited annotation does NOT propagate", "[annotation][stdlib][inherited]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module __test_stdlib_no_inherit__;
+        import k;
+        annotation NoInherit { value : int; }
+        @NoInherit(42)
+        class Base {
+            foo() : int { return 0; }
+        }
+        class Derived : Base {
+            bar() : int { return 1; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto base = find_aggregate(comp, "Base");
+    auto derived = find_aggregate(comp, "Derived");
+    REQUIRE(base != nullptr);
+    REQUIRE(derived != nullptr);
+
+    CHECK(base->get_annotations().size() == 1);
+    CHECK(derived->get_annotations().empty());
+}
+
+TEST_CASE("Stdlib @Retention(SOURCE): is_source_retention() with real stdlib Retention", "[annotation][stdlib][retention]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module __test_stdlib_retention_src__;
+        import k;
+        @k::annotations::Retention(Policy::SOURCE)
+        annotation CompileOnly {}
+        @CompileOnly
+        class Bar {
+            foo() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "CompileOnly");
+    REQUIRE(ann != nullptr);
+    CHECK(ann->is_source_retention());
+
+    // Verify @Retention on CompileOnly is the real stdlib type
+    bool found_real_retention = false;
+    for (auto& meta : ann->get_annotations()) {
+        if (meta.resolved_type && meta.resolved_type->get_fq_name() == "::k::annotations::Retention") {
+            found_real_retention = true;
+            break;
+        }
+    }
+    CHECK(found_real_retention);
+}
+
+TEST_CASE("Stdlib @Retention: default (no @Retention) is RUNTIME", "[annotation][stdlib][retention]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module __test_stdlib_retention_default__;
+        import k;
+        annotation RuntimeDefault {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "RuntimeDefault");
+    REQUIRE(ann != nullptr);
+    CHECK_FALSE(ann->is_source_retention());
+}
+
+TEST_CASE("Stdlib @Retention(SOURCE): annotation NOT emitted in IR", "[annotation][stdlib][retention]") {
+    // Compile with compile_model_with_stdlib and dump IR
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module __test_stdlib_ret_src_ir__;
+        import k;
+        @k::annotations::Retention(Policy::SOURCE)
+        annotation CompileOnly {}
+        @CompileOnly
+        class Baz {
+            foo() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    // Annotation present in model
+    auto baz = find_aggregate(comp, "Baz");
+    REQUIRE(baz != nullptr);
+    REQUIRE(baz->get_annotations().size() == 1);
+    CHECK(baz->get_annotations()[0].resolved_type->get_short_name() == "CompileOnly");
+
+    // But NOT in IR
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    CHECK(ir.find("_ann_CompileOnly") == std::string::npos);
+}
+
+TEST_CASE("Stdlib combined: @Target(CLASS) + @Inherited + @Retention(RUNTIME)", "[annotation][stdlib][meta]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module __test_stdlib_combined__;
+        import k;
+        @k::annotations::Target({ElementType::CLASS})
+        @k::annotations::Inherited
+        @k::annotations::Retention(Policy::RUNTIME)
+        annotation Important { reason : int; }
+        @Important(7)
+        class Base {
+            foo() : int { return 0; }
+        }
+        class Derived : Base {
+            bar() : int { return 1; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto base = find_aggregate(comp, "Base");
+    auto derived = find_aggregate(comp, "Derived");
+    REQUIRE(base != nullptr);
+    REQUIRE(derived != nullptr);
+
+    // Both have @Important in model (inherited)
+    REQUIRE(base->get_annotations().size() == 1);
+    CHECK(base->get_annotations()[0].resolved_type->get_short_name() == "Important");
+    REQUIRE(derived->get_annotations().size() == 1);
+    CHECK(derived->get_annotations()[0].resolved_type->get_short_name() == "Important");
+
+    // RUNTIME retention: annotation emitted in IR
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    CHECK(ir.find("_ann_Important") != std::string::npos);
+
+    // Verify all three meta-annotations on Important resolve to real stdlib FQNs
+    auto imp = find_annotation_type(comp, "Important");
+    REQUIRE(imp != nullptr);
+    bool found_target = false, found_inherited = false, found_retention = false;
+    for (auto& meta : imp->get_annotations()) {
+        if (!meta.resolved_type) continue;
+        std::string fqn = meta.resolved_type->get_fq_name();
+        if (fqn == "::k::annotations::Target")    found_target    = true;
+        if (fqn == "::k::annotations::Inherited")  found_inherited = true;
+        if (fqn == "::k::annotations::Retention")  found_retention = true;
+    }
+    CHECK(found_target);
+    CHECK(found_inherited);
+    CHECK(found_retention);
+}
+
+TEST_CASE("Stdlib @Target(CLASS) + @Inherited: rejects when applied to interface", "[annotation][stdlib][meta]") {
+    auto comp = compile_model_with_stdlib(R"SRC(
+        module __test_stdlib_target_inh_fail__;
+        import k;
+        @k::annotations::Target({ElementType::CLASS})
+        @k::annotations::Inherited
+        annotation ClassInherited {}
+        @ClassInherited
+        interface BadIface {
+            abstract foo() : int;
+        }
+    )SRC");
+    CHECK(comp == nullptr);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// 16. Namespace collision regression — user-defined "Retention" / "Inherited"
+// ════════════════════════════════════════════════════════════════════════════
+// Document the current behavior: the compiler's raw_name fallback means
+// ANY annotation named "Retention", "Inherited", or "Target" is treated
+// as a meta-annotation, even if it's defined in a user namespace.
+// These tests document that behavior so a future tightening of the
+// fallback will cause them to flip, signaling the change.
+
+TEST_CASE("Namespace collision: user-defined 'Retention' in local module triggers source retention", "[annotation][meta][namespace]") {
+    // A user-defined annotation named "Retention" with a "Policy::SOURCE"
+    // value is currently recognized as a meta-annotation due to the raw_name
+    // fallback.  This test documents that behavior.
+    auto comp = compile_model(R"SRC(
+        module __test_ns_collision_ret__;
+        annotation RetDef {
+            enum Policy { SOURCE; RUNTIME; };
+        }
+        @RetDef
+        annotation Retention {
+            policy : Policy;
+        }
+        @Retention(Policy::SOURCE)
+        annotation UserAnn {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "UserAnn");
+    REQUIRE(ann != nullptr);
+    // Due to the raw_name fallback, the compiler treats this as @Retention(SOURCE)
+    // even though this is NOT ::k::annotations::Retention.
+    // This CHECK documents the current behavior.
+    CHECK(ann->is_source_retention());
+}
+
+TEST_CASE("Namespace collision: user-defined 'Inherited' in local module triggers inheritance", "[annotation][meta][namespace]") {
+    // A user-defined annotation named "Inherited" is currently recognized
+    // as a meta-annotation due to the raw_name fallback.
+    auto comp = compile_model(R"SRC(
+        module __test_ns_collision_inh__;
+        annotation InhDef {}
+        @InhDef
+        annotation Inherited {}
+        @Inherited
+        annotation Marker { value : int; }
+        @Marker(42)
+        class Base {
+            foo() : int { return 0; }
+        }
+        class Derived : Base {
+            bar() : int { return 1; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto derived = find_aggregate(comp, "Derived");
+    REQUIRE(derived != nullptr);
+    // Due to the raw_name fallback, the compiler treats the local "Inherited"
+    // as the @Inherited meta-annotation.
+    REQUIRE(derived->get_annotations().size() == 1);
+    CHECK(derived->get_annotations()[0].resolved_type->get_short_name() == "Marker");
+}
+
+TEST_CASE("Namespace collision: user-defined 'Target' in local module triggers target restriction", "[annotation][meta][namespace]") {
+    // A user-defined annotation named "Target" is currently recognized
+    // as a meta-annotation due to the raw_name fallback.
+    auto comp = compile_model(R"SRC(
+        module __test_ns_collision_target__;
+        annotation TargetDef {
+            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
+        }
+        @TargetDef
+        annotation Target {
+            value : ElementType[];
+        }
+        @Target({ElementType::CLASS})
+        annotation MyMarker {}
+        @MyMarker
+        interface BadIface {
+            abstract foo() : int;
+        }
+    )SRC");
+    // Due to the raw_name fallback, the compiler treats the local "Target"
+    // as the @Target meta-annotation and rejects the annotation on an interface.
+    CHECK(comp == nullptr);
+}
+
+
+

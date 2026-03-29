@@ -926,6 +926,23 @@ std::shared_ptr<k::compiler> compile_model(std::string_view src) {
     }
 }
 
+std::shared_ptr<k::compiler> compile_model_with_stdlib(std::string_view src) {
+    if (!ensure_libk_loaded()) return nullptr;
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    try {
+        comp->parse_source("", src, /*optimize=*/false, /*dump=*/false);
+        return comp;
+    } catch (const k::log::compiler_error&) {
+        return nullptr;
+    } catch (const std::exception& ex) {
+        std::cerr << "Unexpected error (compile_model_with_stdlib): " << ex.what() << std::endl;
+        return nullptr;
+    }
+}
+
 std::shared_ptr<k::model::aggregate>
 find_aggregate(const std::shared_ptr<k::compiler>& comp, const std::string& name) {
     if (!comp || !comp->get_unit()) return nullptr;

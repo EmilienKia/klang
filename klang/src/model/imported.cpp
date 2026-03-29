@@ -190,6 +190,16 @@ imported_interface::make_shared(std::shared_ptr<element> parent, const kdi::kdi_
     return std::shared_ptr<imported_interface>(new imported_interface(std::move(parent), kdi_agg));
 }
 
+// imported_annotation_type
+imported_annotation_type::imported_annotation_type(std::shared_ptr<element> parent,
+                                                    const kdi::kdi_aggregate* kdi_agg)
+    : imported_klass(std::move(parent), kdi_agg)
+{}
+std::shared_ptr<imported_annotation_type>
+imported_annotation_type::make_shared(std::shared_ptr<element> parent, const kdi::kdi_aggregate* kdi_agg) {
+    return std::shared_ptr<imported_annotation_type>(new imported_annotation_type(std::move(parent), kdi_agg));
+}
+
 // imported_variable
 imported_variable::imported_variable(std::shared_ptr<variable_holder> parent,
                                      const kdi::kdi_variable* kdi_var)
@@ -220,6 +230,7 @@ void imported_aggregate::accept(model_visitor& v)   { v.visit_aggregate(*this); 
 void imported_structure::accept(model_visitor& v)   { v.visit_aggregate(*this); }
 void imported_klass::accept(model_visitor& v)       { v.visit_aggregate(*this); }
 void imported_interface::accept(model_visitor& v)   { v.visit_aggregate(*this); }
+void imported_annotation_type::accept(model_visitor& v) { v.visit_aggregate(*this); }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cross-module symbol lookup helpers (anonymous namespace)
@@ -609,8 +620,8 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
             agg = imported_interface::make_shared(root, kdi_agg);
             break;
         case kdi::kdi_aggregate_kind::annotation_:
-            // Annotation types are imported as classes (they have vtables)
-            agg = imported_klass::make_shared(root, kdi_agg);
+            // Annotation types are imported with is_annotation() = true
+            agg = imported_annotation_type::make_shared(root, kdi_agg);
             break;
     }
     if (!agg) return nullptr;
@@ -836,6 +847,32 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         im->create_this_parameter();
         agg->_children.push_back(im);
         agg->_functions.push_back(im);
+    }
+
+    // ── Set up vtable_layout for imported types with vtables ────────────────
+    // Store vtable/RTTI symbol names and slot count. The LLVM global declarations
+    // are created lazily later (when the LLVM module exists) by the codegen passes
+    // that need them.
+    if (kdi_agg->vtable.has_value()) {
+        const auto& kdi_vt = kdi_agg->vtable.value();
+
+        auto vt_layout = std::make_shared<vtable_layout>();
+        vt_layout->vtable_symbol = kdi_vt.vtable_symbol;
+        vt_layout->rtti_symbol = kdi_vt.rtti_symbol;
+
+        // Populate entries so slot_count() returns the right value
+        for (std::size_t i = 0; i < kdi_vt.slots.size(); ++i) {
+            vtable_entry ve;
+            ve.slot_index = kdi_vt.slots[i].slot_index;
+            vt_layout->entries.push_back(ve);
+        }
+
+        // Wire the vtable layout to the imported aggregate
+        if (auto ik = std::dynamic_pointer_cast<imported_klass>(agg)) {
+            ik->_vtable = vt_layout;
+        } else if (auto ii = std::dynamic_pointer_cast<imported_interface>(agg)) {
+            ii->_vtable = vt_layout;
+        }
     }
 
     return agg;

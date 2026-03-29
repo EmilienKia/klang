@@ -328,6 +328,63 @@ build_vtable_layout(aggregate& st,
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Ensure that a vtable_layout's llvm_global is populated.
+ * For imported types, the vtable_layout may have symbol names from KDI but no
+ * LLVM globals yet (because the LLVM module didn't exist at import time).
+ * This helper creates external declarations on demand.
+ * Returns true if llvm_global is (now) non-null.
+ */
+static bool ensure_vtable_llvm_global(const std::shared_ptr<vtable_layout>& vt,
+                                       const std::shared_ptr<context>& ctx)
+{
+    if (!vt) return false;
+    if (vt->llvm_global) return true;  // Already set
+
+    if (vt->vtable_symbol.empty()) return false;  // No symbol info
+
+    llvm::LLVMContext& llvm_ctx = ctx->module().getContext();
+    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+    // Build the vtable LLVM struct type if not yet set
+    if (!vt->llvm_type) {
+        std::size_t n_slots = vt->entries.size();
+        std::vector<llvm::Type*> vt_fields;
+        vt_fields.push_back(ptr_ty);  // RTTI slot
+        for (std::size_t i = 0; i < n_slots; ++i)
+            vt_fields.push_back(ptr_ty);
+        vt->llvm_type = llvm::StructType::get(llvm_ctx, vt_fields);
+    }
+
+    // Create external declaration for the vtable global
+    auto* existing_gv = ctx->module().getNamedGlobal(vt->vtable_symbol);
+    if (!existing_gv) {
+        existing_gv = new llvm::GlobalVariable(
+            ctx->module(), vt->llvm_type,
+            /*isConstant=*/true,
+            llvm::GlobalValue::ExternalLinkage,
+            /*Initializer=*/nullptr,
+            vt->vtable_symbol);
+    }
+    vt->llvm_global = existing_gv;
+
+    // Also create external declaration for the RTTI global if needed
+    if (!vt->llvm_rtti_global && !vt->rtti_symbol.empty()) {
+        auto* existing_rtti = ctx->module().getNamedGlobal(vt->rtti_symbol);
+        if (!existing_rtti) {
+            existing_rtti = new llvm::GlobalVariable(
+                ctx->module(), ptr_ty,
+                /*isConstant=*/true,
+                llvm::GlobalValue::ExternalLinkage,
+                /*Initializer=*/nullptr,
+                vt->rtti_symbol);
+        }
+        vt->llvm_rtti_global = existing_rtti;
+    }
+
+    return true;
+}
+
+/**
  * Try to evaluate a single AST expression to an LLVM compile-time constant.
  *
  * Currently supports:
@@ -342,7 +399,7 @@ build_vtable_layout(aggregate& st,
 // Forward declarations within the anonymous namespace
 llvm::Constant* build_annotation_instance_constant(
     annotation_instance& ann_inst,
-    annotation_type& ann_type,
+    aggregate& ann_type,
     const std::shared_ptr<context>& ctx,
     unit* unit_ptr = nullptr,
     aggregate* parent_agg = nullptr);
@@ -399,10 +456,10 @@ llvm::Constant* evaluate_ast_expr_to_constant(
         }
 
         // Resolve the annotation type by name
-        std::shared_ptr<annotation_type> ann_type;
+        std::shared_ptr<aggregate> ann_type;
         if (parent_agg) {
             auto agg = scope_lookup::lookup_structure(parent_agg->shared_as<element>(), raw_name);
-            ann_type = std::dynamic_pointer_cast<annotation_type>(agg);
+            if (agg && agg->is_annotation()) ann_type = agg;
         }
         if (!ann_type && unit_ptr) {
             // Try via imported modules
@@ -419,7 +476,7 @@ llvm::Constant* evaluate_ast_expr_to_constant(
             }
             k::name qname{false, parts};
             if (auto imp_agg = unit_ptr->get_or_create_imported_aggregate(qname, ctx)) {
-                ann_type = std::dynamic_pointer_cast<annotation_type>(imp_agg);
+                if (imp_agg->is_annotation()) ann_type = imp_agg;
             }
         }
         if (!ann_type) return nullptr;
@@ -638,7 +695,7 @@ llvm::Constant* evaluate_ast_expr_to_constant(
  * excluding the synthetic __vptr__ field.
  */
 std::vector<std::shared_ptr<member_variable_definition>>
-get_annotation_user_fields(const annotation_type& ann_type) {
+get_annotation_user_fields(const aggregate& ann_type) {
     std::vector<std::shared_ptr<member_variable_definition>> user_fields;
     for (auto& child : ann_type.get_children()) {
         auto mv = std::dynamic_pointer_cast<member_variable_definition>(child);
@@ -699,7 +756,7 @@ static bool field_needs_annotation_base_gep(const std::shared_ptr<member_variabl
  */
 llvm::Constant* build_annotation_instance_constant(
     annotation_instance& ann_inst,
-    annotation_type& ann_type,
+    aggregate& ann_type,
     const std::shared_ptr<context>& ctx,
     unit* unit_ptr,
     aggregate* parent_agg)
@@ -713,8 +770,9 @@ llvm::Constant* build_annotation_instance_constant(
     auto* sty = llvm::dyn_cast<llvm::StructType>(llvm_st_type);
     if (!sty) return nullptr;
 
-    if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) return nullptr;
-    llvm::Constant* vt_ptr = ann_type.get_vtable()->llvm_global;
+    auto ann_vt = ann_type.get_vtable();
+    if (!ensure_vtable_llvm_global(ann_vt, ctx)) return nullptr;
+    llvm::Constant* vt_ptr = ann_vt->llvm_global;
 
     auto user_fields = get_annotation_user_fields(ann_type);
 
@@ -1651,7 +1709,8 @@ void implementation_generator::visit_klass(klass& klass) {
                 // @Retention(Policy::SOURCE) — skip, not emitted into binary
                 if (ann_type.is_source_retention()) continue;
 
-                if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) continue;
+                auto ann_vt = ann_type.get_vtable();
+                if (!ensure_vtable_llvm_global(ann_vt, _context)) continue;
 
                 auto ann_st_type = ann_type.get_struct_type();
                 if (!ann_st_type) continue;
@@ -1858,7 +1917,8 @@ void implementation_generator::visit_klass(klass& klass) {
                         if (!ann_inst.resolved_type) continue;
                         auto& ann_type = *ann_inst.resolved_type;
                         if (ann_type.is_source_retention()) continue;
-                        if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) continue;
+                        auto ann_vt = ann_type.get_vtable();
+                        if (!ensure_vtable_llvm_global(ann_vt, _context)) continue;
                         auto ann_st_type = ann_type.get_struct_type();
                         if (!ann_st_type) continue;
                         auto* llvm_st_type = _context->get_llvm_type(ann_st_type);
@@ -2639,7 +2699,8 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
             // @Retention(Policy::SOURCE) — skip, not emitted into binary
             if (ann_type.is_source_retention()) continue;
 
-            if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) continue;
+            auto ann_vt = ann_type.get_vtable();
+            if (!ensure_vtable_llvm_global(ann_vt, _context)) continue;
 
             auto ann_st_type = ann_type.get_struct_type();
             if (!ann_st_type) continue;

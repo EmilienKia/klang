@@ -76,13 +76,12 @@ void symbol_resolver::resolve_and_validate_annotations(
                 "Annotation type '{}' not found on '{}'",
                 std::vector<std::string>{ann_inst.raw_name, element_name});
         }
-        auto ann_type = std::dynamic_pointer_cast<annotation_type>(ann_agg);
-        if (!ann_type) {
+        if (!ann_agg->is_annotation()) {
             throw_error(0x003B, err_lexeme,
                 "'{}' is not an annotation type; only annotation types can be used as annotations",
                 std::vector<std::string>{ann_inst.raw_name});
         }
-        ann_inst.resolved_type = ann_type;
+        ann_inst.resolved_type = ann_agg;
     }
 
     // ── Phase 2: validate @Target constraints on resolved annotations
@@ -93,7 +92,9 @@ void symbol_resolver::resolve_and_validate_annotations(
         for (auto& meta : ann_type_anns) {
             if (!meta.resolved_type) continue;
             std::string meta_fqn = meta.resolved_type->get_fq_name();
-            if (meta_fqn != "k::annotations::Target" && meta.raw_name != "Target") continue;
+            if (meta_fqn != "k::annotations::Target"
+                && meta_fqn != "::k::annotations::Target"
+                && meta.raw_name != "Target") continue;
 
             if (!meta.ast_node) continue;
             auto* ast = meta.ast_node.get();
@@ -588,7 +589,9 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                 for (auto& meta : base_ann.resolved_type->get_annotations()) {
                     if (!meta.resolved_type) continue;
                     std::string meta_fqn = meta.resolved_type->get_fq_name();
-                    if (meta_fqn == "k::annotations::Inherited" || meta.raw_name == "Inherited") {
+                    if (meta_fqn == "k::annotations::Inherited"
+                        || meta_fqn == "::k::annotations::Inherited"
+                        || meta.raw_name == "Inherited") {
                         is_inherited = true;
                         break;
                     }

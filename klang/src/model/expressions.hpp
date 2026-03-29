@@ -204,7 +204,7 @@ public:
 
     /** Resolved target for annotation type RTTI descriptors (e.g. MyAnnotation::annotation). */
     struct annotation_type_rtti_target {
-        std::shared_ptr<annotation_type> ann_type;
+        std::shared_ptr<aggregate> ann_type;
     };
 
 protected:

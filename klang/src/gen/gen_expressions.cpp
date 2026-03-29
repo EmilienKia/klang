@@ -129,18 +129,18 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
                 std::vector<std::string> ann_parts(sym_name.parts().begin(),
                                                      sym_name.parts().end() - 1);
                 k::name ann_name{false, std::move(ann_parts)};
-                std::shared_ptr<annotation_type> found_ann;
+                std::shared_ptr<aggregate> found_ann;
 
                 // Try local scope first (single-part name)
                 if (ann_name.size() == 1) {
                     auto agg = scope_lookup::lookup_structure(
                         symbol.shared_as<element>(), ann_name.front());
-                    found_ann = std::dynamic_pointer_cast<annotation_type>(agg);
+                    if (agg && agg->is_annotation()) found_ann = agg;
                 }
                 // Try imported aggregates
                 if (!found_ann) {
                     if (auto imp_agg = _unit.get_or_create_imported_aggregate(ann_name, _context)) {
-                        found_ann = std::dynamic_pointer_cast<annotation_type>(imp_agg);
+                        if (imp_agg->is_annotation()) found_ann = imp_agg;
                     }
                 }
 
