@@ -2131,3 +2131,93 @@ TEST_CASE("RTTI: annotation array of typed nested annotations", "[libk][rtti][an
     CHECK(test_tag_0() == 100);
     CHECK(test_tag_2() == 300);
 }
+
+
+// =========================================================================
+// AnnotationName::annotation — direct RTTI descriptor access
+// =========================================================================
+
+TEST_CASE("RTTI: AnnotationName::annotation yields AnnotationType descriptor", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_descriptor__;
+        import k;
+
+        annotation Info {}
+
+        test() : int {
+            desc : const k::AnnotationType& = Info::annotation;
+            name : k::String(desc.getName());
+            expected : k::String("Info");
+            if (name == expected) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+TEST_CASE("RTTI: AnnotationName::annotation getFullName()", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_desc_fqn__;
+        import k;
+
+        annotation Marker {}
+
+        test() : int {
+            desc : const k::AnnotationType& = Marker::annotation;
+            fqn : k::String(desc.getFullName());
+            expected : k::String("::__rtti_ann_desc_fqn__::Marker");
+            if (fqn == expected) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+TEST_CASE("RTTI: AnnotationName::annotation identity matches getAnnotationType()", "[libk][rtti][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_desc_identity__;
+        import k;
+
+        annotation Tag {
+            value : int;
+        }
+
+        @Tag(99)
+        class Widget {
+            public Widget() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            // Get AnnotationType via the descriptor expression
+            desc_name : k::String(Tag::annotation.getName());
+
+            // Get AnnotationType via an annotation instance on a class
+            w : Widget;
+            anns : const k::Annotation?[]? = w.getClass().getAnnotations();
+            if (anns == null) return 1;
+            ann : const k::Annotation? = anns[0];
+            if (ann == null) return 2;
+            inst_name : k::String(ann->getAnnotationType().getName());
+
+            // Both should return the same name
+            if (desc_name == inst_name) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+

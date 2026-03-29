@@ -116,54 +116,85 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
         symbol.set_target(func);
     } else {
         // Symbol not found as variable/function.
-        // Try enum entry resolution: EnumName::entryName or module::EnumName::entryName
-        bool resolved_as_enum = false;
+        // Try special trailing-keyword resolution: EnumName::entryName,
+        // AnnotationName::annotation, etc.
+        bool resolved_as_special = false;
         const auto& sym_name = symbol.get_name();
-        if (sym_name.size() >= 2 && !sym_name.has_root_prefix()) {
-            // The entry name is the last component; the enum name is everything before it
-            const std::string& entry_name = sym_name.back();
-            std::shared_ptr<enumeration> found_enum;
 
-            if (sym_name.size() == 2) {
-                // Simple: EnumName::entryName — walk up the scope chain
-                for (auto current = symbol.shared_as<element>(); current; current = current->parent<element>()) {
-                    if (auto eh = std::dynamic_pointer_cast<enum_holder>(current)) {
-                        if (auto en = eh->get_enum(sym_name.front())) {
-                            found_enum = en;
-                            break;
-                        }
+        if (sym_name.size() >= 2 && !sym_name.has_root_prefix()) {
+            const std::string& last_part = sym_name.back();
+
+            // ── AnnotationName::annotation → RTTI descriptor ────────────
+            if (last_part == "annotation") {
+                std::vector<std::string> ann_parts(sym_name.parts().begin(),
+                                                     sym_name.parts().end() - 1);
+                k::name ann_name{false, std::move(ann_parts)};
+                std::shared_ptr<annotation_type> found_ann;
+
+                // Try local scope first (single-part name)
+                if (ann_name.size() == 1) {
+                    auto agg = scope_lookup::lookup_structure(
+                        symbol.shared_as<element>(), ann_name.front());
+                    found_ann = std::dynamic_pointer_cast<annotation_type>(agg);
+                }
+                // Try imported aggregates
+                if (!found_ann) {
+                    if (auto imp_agg = _unit.get_or_create_imported_aggregate(ann_name, _context)) {
+                        found_ann = std::dynamic_pointer_cast<annotation_type>(imp_agg);
                     }
+                }
+
+                if (found_ann) {
+                    symbol.set_target(symbol_expression::annotation_type_rtti_target{found_ann});
+                    resolved_as_special = true;
                 }
             }
 
-            // If not found locally, try imported enums (works for both 2-part and N-part names)
-            if (!found_enum) {
-                // Build a k::name from all parts except the last (the entry name)
-                std::vector<std::string> enum_parts(sym_name.parts().begin(),
-                                                     sym_name.parts().end() - 1);
-                k::name enum_name{false, std::move(enum_parts)};
-                found_enum = _unit.get_or_create_imported_enum(enum_name, _context);
-            }
+            // ── EnumName::entryName → enum entry ────────────────────────
+            if (!resolved_as_special) {
+                const std::string& entry_name = last_part;
+                std::shared_ptr<enumeration> found_enum;
 
-            if (found_enum) {
-                auto entry = found_enum->get_entry_by_name(entry_name);
-                if (entry.has_value()) {
-                    size_t idx = 0;
-                    for (auto& e : found_enum->entries()) {
-                        if (e.name == entry_name) break;
-                        idx++;
+                if (sym_name.size() == 2) {
+                    // Simple: EnumName::entryName — walk up the scope chain
+                    for (auto current = symbol.shared_as<element>(); current; current = current->parent<element>()) {
+                        if (auto eh = std::dynamic_pointer_cast<enum_holder>(current)) {
+                            if (auto en = eh->get_enum(sym_name.front())) {
+                                found_enum = en;
+                                break;
+                            }
+                        }
                     }
-                    symbol.set_target(symbol_expression::enum_entry_target{found_enum, idx});
-                    resolved_as_enum = true;
-                } else {
-                    throw_error(0x0080, symbol.first_lexeme(),
-                        "Enum '{}' has no entry named '{}'",
-                        {found_enum->get_short_name(), entry_name});
+                }
+
+                // If not found locally, try imported enums (works for both 2-part and N-part names)
+                if (!found_enum) {
+                    std::vector<std::string> enum_parts(sym_name.parts().begin(),
+                                                         sym_name.parts().end() - 1);
+                    k::name enum_name{false, std::move(enum_parts)};
+                    found_enum = _unit.get_or_create_imported_enum(enum_name, _context);
+                }
+
+                if (found_enum) {
+                    auto entry = found_enum->get_entry_by_name(entry_name);
+                    if (entry.has_value()) {
+                        size_t idx = 0;
+                        for (auto& e : found_enum->entries()) {
+                            if (e.name == entry_name) break;
+                            idx++;
+                        }
+                        symbol.set_target(symbol_expression::enum_entry_target{found_enum, idx});
+                        resolved_as_special = true;
+                    } else {
+                        throw_error(0x0080, symbol.first_lexeme(),
+                            "Enum '{}' has no entry named '{}'",
+                            {found_enum->get_short_name(), entry_name});
+                    }
                 }
             }
         }
 
-        if (!resolved_as_enum) {
+        if (!resolved_as_special) {
             // If this symbol is the callee of a function invocation, defer resolution to
             // type_reference_resolver which handles unified call syntax and member lookups.
             // Also defer if the symbol is an argument of a constructor_invocation_expression:
@@ -278,6 +309,20 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
         auto en = target.enum_def;
         if (en && en->get_enum_type()) {
             symbol.set_type(en->get_enum_type());
+        }
+    } else if (symbol.is_annotation_type_rtti()) {
+        // AnnotationName::annotation → const k::AnnotationType&
+        // Look up the ::k::AnnotationType class from libk and produce a const reference to it.
+        k::name ann_type_name{false, {"k", "AnnotationType"}};
+        auto ann_type_agg = _unit.get_or_create_imported_aggregate(ann_type_name, _context);
+        if (ann_type_agg && ann_type_agg->get_struct_type()) {
+            auto st = ann_type_agg->get_struct_type()->get_const()->get_reference();
+            symbol.set_type(st);
+        } else {
+            throw_error(0x0082, symbol.first_lexeme(),
+                "Cannot resolve '::annotation' descriptor: the 'k' standard library must be imported "
+                "to use annotation type RTTI (requires ::k::AnnotationType)",
+                {});
         }
     }
     // (symbol type resolution complete)
@@ -449,6 +494,26 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
         auto et = en->get_enum_type();
         llvm::Type* llvm_ty = et->get_llvm_type();
         _value = llvm::ConstantInt::get(llvm_ty, static_cast<uint64_t>(entry.value), /*isSigned=*/entry.value < 0);
+    } else if (symbol.is_annotation_type_rtti()) {
+        // AnnotationName::annotation → pointer to the RTTI global (AnnotationType instance).
+        auto& target = symbol.get_annotation_type_rtti();
+        auto ann = target.ann_type;
+        std::string rtti_name = mangler::mangle_rtti(ann->get_name());
+
+        // Try to find the RTTI global in the current module (defined locally or already declared).
+        llvm::GlobalVariable* rtti_gv = _context->module().getNamedGlobal(rtti_name);
+
+        // If not present, declare it as an external global (the annotation was imported).
+        if (!rtti_gv) {
+            llvm::Type* ptr_ty = llvm::PointerType::get(**_context, 0);
+            rtti_gv = new llvm::GlobalVariable(
+                _context->module(), ptr_ty,
+                /*isConstant=*/true,
+                llvm::GlobalValue::ExternalLinkage,
+                nullptr, rtti_name);
+        }
+        // The expression value is the address of the RTTI global (used as a const reference).
+        _value = rtti_gv;
     }
     // TODO Support other types of symbols, not only variables and functions
 }

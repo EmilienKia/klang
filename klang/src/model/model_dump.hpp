@@ -455,6 +455,13 @@ public:
             auto func = expr.get_function();
             _stm << "func:" << func->get_fq_name()
                  << "/" << func->get_mangled_name();
+        } else if(expr.is_enum_entry()) {
+            auto& target = expr.get_enum_entry();
+            _stm << "enum:" << target.enum_def->get_fq_name()
+                 << "::" << target.enum_def->entries()[target.entry_index].name;
+        } else if(expr.is_annotation_type_rtti()) {
+            auto& target = expr.get_annotation_type_rtti();
+            _stm << "annotation_rtti:" << target.ann_type->get_fq_name();
         } else {
             // Not yet resolved: show the raw name
             _stm << "<<unresolved-symbol:" << expr.get_name().to_string() << ">>";

@@ -202,6 +202,11 @@ public:
         size_t entry_index; // index into enumeration->entries()
     };
 
+    /** Resolved target for annotation type RTTI descriptors (e.g. MyAnnotation::annotation). */
+    struct annotation_type_rtti_target {
+        std::shared_ptr<annotation_type> ann_type;
+    };
+
 protected:
     // Name of the symbol when not resolved.
     name _name;
@@ -210,7 +215,8 @@ protected:
             std::monostate, // Not resolved
             std::shared_ptr<variable_definition>,
             std::shared_ptr<function>,
-            enum_entry_target
+            enum_entry_target,
+            annotation_type_rtti_target
     > _target;
 
     symbol_expression(const name &name);
@@ -269,6 +275,14 @@ public:
         return std::get<enum_entry_target>(_target);
     }
 
+    bool is_annotation_type_rtti() const {
+        return std::holds_alternative<annotation_type_rtti_target>(_target);
+    }
+
+    const annotation_type_rtti_target& get_annotation_type_rtti() const {
+        return std::get<annotation_type_rtti_target>(_target);
+    }
+
     bool is_resolved() const {
         return _target.index() != 0;
     }
@@ -278,6 +292,8 @@ public:
     void set_target(std::shared_ptr<function> func);
 
     void set_target(enum_entry_target target) { _target = std::move(target); }
+
+    void set_target(annotation_type_rtti_target target) { _target = std::move(target); }
 
     std::shared_ptr<expression> clone() const override {
         return std::shared_ptr<symbol_expression>(new symbol_expression(*this));

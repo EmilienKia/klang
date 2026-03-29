@@ -731,6 +731,22 @@ std::shared_ptr<ast::qualified_identifier> parser::parse_qualified_identifier()
         if(auto lname= _lexer.get(); lex::is<lex::identifier>(lname)) {
             names.push_back(lex::as<lex::identifier>(lname));
             holder.sync();
+        } else if (lex::is<lex::keyword>(lname)) {
+            auto kw = lex::as<lex::keyword>(lname);
+            // Certain keywords are valid as trailing components in qualified
+            // identifiers (e.g. Foo::annotation, Foo::class, Foo::interface).
+            // They act as regular names; semantic meaning is resolved later.
+            if (kw.type == lex::keyword::ANNOTATION
+                || kw.type == lex::keyword::CLASS
+                || kw.type == lex::keyword::INTERFACE
+                || kw.type == lex::keyword::STRUCT) {
+                names.push_back(lex::identifier{kw.content});
+                holder.sync();
+            } else {
+                // Other keywords after :: are not valid — roll back.
+                holder.rollback();
+                break;
+            }
         } else {
             throw_error(0x0008, _lexer.pick_current(), "Qualified identifier expect an identifier after intermediate \"::\"");
         }
