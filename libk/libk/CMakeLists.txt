@@ -14,6 +14,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/object.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/string.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/annotations.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)

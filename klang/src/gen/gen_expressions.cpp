@@ -4770,8 +4770,10 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             // Check if the argument is an unresolved symbol (enum entry name)
             auto sym = std::dynamic_pointer_cast<symbol_expression>(arg);
             if (sym && !sym->is_resolved()) {
-                // Try to resolve as an enum entry name
-                auto entry_name = sym->get_name().to_string();
+                // Try to resolve as an enum entry name.
+                // The symbol may be a qualified name like Policy::RUNTIME — use only the
+                // last component as the entry name.
+                auto entry_name = sym->get_name().back();
                 auto entry = en->get_entry_by_name(entry_name);
                 if (entry.has_value()) {
                     auto val = value_expression::from_value(static_cast<long long>(entry->value));

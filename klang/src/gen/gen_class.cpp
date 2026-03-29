@@ -117,6 +117,66 @@ namespace k::model::gen {
 
 namespace {
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Meta-annotation semantic helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Check whether an annotation type has @Retention(Policy::SOURCE) — meaning its
+ * instances should NOT be emitted into the binary RTTI.
+ *
+ * Returns true if the annotation type explicitly specifies SOURCE retention.
+ * Returns false (RUNTIME) if @Retention is absent or set to RUNTIME.
+ */
+static bool is_source_retention(const annotation_type& ann_type) {
+    for (auto& meta : ann_type.get_annotations()) {
+        if (!meta.resolved_type) continue;
+        std::string meta_fqn = meta.resolved_type->get_fq_name();
+        if (meta_fqn != "k::annotations::Retention" && meta.raw_name != "Retention") continue;
+
+        // Examine the AST to find the Policy value
+        if (!meta.ast_node) continue;
+        auto* ast = meta.ast_node.get();
+
+        // Helper: check if an expression is Policy::SOURCE
+        auto is_source_expr = [](const k::parse::ast::expr_ptr& expr) -> bool {
+            if (auto ident = std::dynamic_pointer_cast<k::parse::ast::identifier_expr>(expr)) {
+                if (!ident->qident.names.empty()) {
+                    std::string last{ident->qident.names.back().content};
+                    return last == "SOURCE";
+                }
+            }
+            return false;
+        };
+
+        // @Retention(Policy::SOURCE) — positional arg
+        if (ast->has_parens && !ast->args.empty()) {
+            if (is_source_expr(ast->args[0])) return true;
+        }
+        // @Retention{.policy = Policy::SOURCE} or @Retention{.policy(Policy::SOURCE)}
+        else if (ast->brace_init && ast->brace_init->is_designated) {
+            for (auto& elem : ast->brace_init->elements) {
+                auto desig = std::dynamic_pointer_cast<k::parse::ast::designated_init_element>(elem);
+                if (!desig) continue;
+                std::string name{desig->member_name.content};
+                if (name != "policy") continue;
+                if (desig->is_call_form && !desig->args.empty()) {
+                    if (is_source_expr(desig->args[0])) return true;
+                } else if (desig->value) {
+                    if (is_source_expr(desig->value)) return true;
+                }
+            }
+        }
+        // @Retention{Policy::SOURCE} — positional brace-init
+        else if (ast->brace_init && !ast->brace_init->is_designated) {
+            if (!ast->brace_init->elements.empty()) {
+                if (is_source_expr(ast->brace_init->elements[0])) return true;
+            }
+        }
+    }
+    return false;
+}
+
 /**
  * True if two non-static member functions have the same virtual signature.
  * The const-qualification of 'this' is part of the signature: a mutable
@@ -511,9 +571,124 @@ llvm::Constant* evaluate_ast_expr_to_constant(
             gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
             return gv;
         }
+
+        // ── Brace-init list of non-annotation constant expressions ──
+        // Handles e.g. {ElementType::CLASS, ElementType::INTERFACE} — array of enum constants.
+        // Builds a K-array constant { i32 count, [N x <elem_type>] data }.
+        {
+            std::vector<llvm::Constant*> elem_constants;
+            for (auto& elem : brace->elements) {
+                auto* c = evaluate_ast_expr_to_constant(elem, ctx, unit_ptr, parent_agg, false);
+                if (!c) return nullptr; // bail out if any element is not a constant
+                elem_constants.push_back(c);
+            }
+            if (!elem_constants.empty()) {
+                // All elements must have the same type
+                llvm::Type* elem_ty = elem_constants[0]->getType();
+                for (auto* c : elem_constants) {
+                    if (c->getType() != elem_ty) {
+                        // Try integer truncation/extension to unify
+                        if (c->getType()->isIntegerTy() && elem_ty->isIntegerTy()) {
+                            unsigned max_bits = std::max(c->getType()->getIntegerBitWidth(),
+                                                        elem_ty->getIntegerBitWidth());
+                            elem_ty = llvm::IntegerType::get(ctx->module().getContext(), max_bits);
+                        } else {
+                            return nullptr; // heterogeneous types not supported
+                        }
+                    }
+                }
+                // Normalize all elements to elem_ty
+                for (auto& c : elem_constants) {
+                    if (c->getType() != elem_ty && c->getType()->isIntegerTy() && elem_ty->isIntegerTy()) {
+                        c = llvm::ConstantInt::get(elem_ty,
+                            llvm::cast<llvm::ConstantInt>(c)->getValue().sextOrTrunc(
+                                elem_ty->getIntegerBitWidth()));
+                    }
+                }
+                auto& llvm_ctx = ctx->module().getContext();
+                auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+                uint32_t count = static_cast<uint32_t>(elem_constants.size());
+                auto* arr_ty = llvm::ArrayType::get(elem_ty, count);
+                auto* karr_ty = llvm::StructType::get(llvm_ctx, {i32_ty, arr_ty}, /*isPacked=*/false);
+                auto* arr_data = llvm::ConstantArray::get(arr_ty, elem_constants);
+                auto* karr_init = llvm::ConstantStruct::get(karr_ty, {
+                    llvm::ConstantInt::get(i32_ty, count), arr_data
+                });
+                std::string gv_name = ".nested_const_array_" + std::to_string(s_nested_ann_counter++);
+                auto* gv = new llvm::GlobalVariable(
+                    ctx->module(), karr_ty,
+                    /*isConstant=*/true,
+                    llvm::GlobalValue::PrivateLinkage,
+                    karr_init, gv_name);
+                gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+                return gv;
+            }
+        }
     }
 
-    // TODO: support more constant expressions (enum values, etc.)
+    // ── Enum constant expression: EnumName::ENTRY_NAME ──────────────────
+    // Handles identifier_expr with a qualified name like Policy::RUNTIME.
+    if (auto ident = std::dynamic_pointer_cast<k::parse::ast::identifier_expr>(expr)) {
+        auto& qident = ident->qident;
+        if (qident.names.size() >= 2) {
+            // The last part is the entry name, the rest is the enum name
+            std::string entry_name{qident.names.back().content};
+            std::string enum_name;
+            for (size_t i = 0; i + 1 < qident.names.size(); ++i) {
+                if (i > 0) enum_name += "::";
+                enum_name += std::string{qident.names[i].content};
+            }
+
+            // Look up the enum in the parent aggregate scope
+            std::shared_ptr<enumeration> found_enum;
+            if (parent_agg) {
+                // Check inner enums of the parent aggregate first
+                found_enum = parent_agg->get_enum(enum_name);
+                if (!found_enum) {
+                    // Walk up the scope chain
+                    found_enum = scope_lookup::lookup_enumeration(
+                        parent_agg->shared_as<element>(), enum_name);
+                }
+            }
+            // Try imported enums
+            if (!found_enum && unit_ptr) {
+                std::vector<std::string> parts;
+                std::size_t start = 0;
+                while (true) {
+                    auto pos = enum_name.find("::", start);
+                    if (pos == std::string::npos) {
+                        parts.push_back(enum_name.substr(start));
+                        break;
+                    }
+                    parts.push_back(enum_name.substr(start, pos - start));
+                    start = pos + 2;
+                }
+                k::name qname{false, parts};
+                found_enum = unit_ptr->get_or_create_imported_enum(qname, ctx);
+            }
+
+            if (found_enum) {
+                auto entry = found_enum->get_entry_by_name(entry_name);
+                if (entry.has_value()) {
+                    auto et = found_enum->get_enum_type();
+                    if (et) {
+                        llvm::Type* llvm_ty = et->get_llvm_type();
+                        if (llvm_ty) {
+                            return llvm::ConstantInt::get(llvm_ty,
+                                static_cast<uint64_t>(entry->value),
+                                /*isSigned=*/entry->value < 0);
+                        }
+                    }
+                    // Fallback: use i32
+                    return llvm::ConstantInt::get(
+                        llvm::Type::getInt32Ty(ctx->module().getContext()),
+                        static_cast<uint64_t>(entry->value),
+                        /*isSigned=*/entry->value < 0);
+                }
+            }
+        }
+    }
+
     return nullptr;
 }
 
@@ -606,6 +781,11 @@ llvm::Constant* build_annotation_instance_constant(
     // Allocate per-field constants (indexed by user field order, not LLVM field index)
     std::vector<llvm::Constant*> field_constants(user_fields.size(), nullptr);
 
+    // When evaluating annotation field expressions (e.g. Level::HIGH in @Severity(Level::HIGH)),
+    // names should be resolved relative to the annotation type itself (where inner enums like
+    // Level are declared), not relative to the class that carries the annotation.
+    aggregate* eval_scope = &ann_type;
+
     auto* ast = ann_inst.ast_node.get();
 
     // ── Positional arguments: @Ann(val1, val2, ...) ──
@@ -613,7 +793,7 @@ llvm::Constant* build_annotation_instance_constant(
         size_t count = std::min(ast->args.size(), user_fields.size());
         for (size_t i = 0; i < count; ++i) {
             bool gep = field_needs_annotation_base_gep(user_fields[i]);
-            field_constants[i] = evaluate_ast_expr_to_constant(ast->args[i], ctx, unit_ptr, parent_agg, gep);
+            field_constants[i] = evaluate_ast_expr_to_constant(ast->args[i], ctx, unit_ptr, eval_scope, gep);
         }
     }
     // ── Designated brace init: @Ann{.field = val, ...} ──
@@ -629,11 +809,11 @@ llvm::Constant* build_annotation_instance_constant(
                     if (desig->is_call_form) {
                         // .field(val) — use first arg as the value
                         if (!desig->args.empty()) {
-                            field_constants[i] = evaluate_ast_expr_to_constant(desig->args[0], ctx, unit_ptr, parent_agg, gep);
+                            field_constants[i] = evaluate_ast_expr_to_constant(desig->args[0], ctx, unit_ptr, eval_scope, gep);
                         }
                     } else {
                         // .field = val
-                        field_constants[i] = evaluate_ast_expr_to_constant(desig->value, ctx, unit_ptr, parent_agg, gep);
+                        field_constants[i] = evaluate_ast_expr_to_constant(desig->value, ctx, unit_ptr, eval_scope, gep);
                     }
                     break;
                 }
@@ -646,7 +826,7 @@ llvm::Constant* build_annotation_instance_constant(
         for (size_t i = 0; i < count; ++i) {
             if (ast->brace_init->elements[i]) {
                 bool gep = field_needs_annotation_base_gep(user_fields[i]);
-                field_constants[i] = evaluate_ast_expr_to_constant(ast->brace_init->elements[i], ctx, unit_ptr, parent_agg, gep);
+                field_constants[i] = evaluate_ast_expr_to_constant(ast->brace_init->elements[i], ctx, unit_ptr, eval_scope, gep);
             }
         }
     }
@@ -665,10 +845,43 @@ llvm::Constant* build_annotation_instance_constant(
             }
             // constructor_invocation_expression wrapping a value_expression
             // (e.g. `level : int = 5;` ⟶ ctor_inv(value_expression(5)))
+            // or wrapping a symbol_expression for enum entries
+            // (e.g. `level : Level = Level::MEDIUM;` ⟶ ctor_inv(symbol_expression(MEDIUM)))
             else if (auto ctor_expr = std::dynamic_pointer_cast<constructor_invocation_expression>(init_expr)) {
                 if (ctor_expr->size() == 1) {
                     if (auto arg_val = std::dynamic_pointer_cast<value_expression>(ctor_expr->argument(0))) {
                         field_constants[i] = ctx->get_llvm_constant_from_value_expression(*arg_val);
+                    }
+                    else if (auto arg_sym = std::dynamic_pointer_cast<symbol_expression>(ctor_expr->argument(0))) {
+                        if (arg_sym->is_enum_entry()) {
+                            // Already resolved enum entry
+                            auto& target = arg_sym->get_enum_entry();
+                            auto& entry = target.enum_def->entries()[target.entry_index];
+                            auto et = target.enum_def->get_enum_type();
+                            llvm::Type* llvm_ty = et->get_llvm_type();
+                            field_constants[i] = llvm::ConstantInt::get(
+                                llvm_ty, static_cast<uint64_t>(entry.value),
+                                /*isSigned=*/entry.value < 0);
+                        }
+                        else if (!arg_sym->is_resolved()) {
+                            // Unresolved symbol — try to resolve as EnumName::EntryName
+                            // within the annotation type's scope.  This happens because
+                            // visit_member_variable_definition does not resolve init expressions.
+                            auto& sym_name = arg_sym->get_name();
+                            if (sym_name.size() == 2) {
+                                auto en = ann_type.get_enum(sym_name.front());
+                                if (en) {
+                                    auto entry = en->get_entry_by_name(sym_name.back());
+                                    if (entry.has_value()) {
+                                        auto et = en->get_enum_type();
+                                        llvm::Type* llvm_ty = et->get_llvm_type();
+                                        field_constants[i] = llvm::ConstantInt::get(
+                                            llvm_ty, static_cast<uint64_t>(entry->value),
+                                            /*isSigned=*/entry->value < 0);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1459,6 +1672,10 @@ void implementation_generator::visit_klass(klass& klass) {
             for (auto& ann_inst : klass.get_annotations_mutable()) {
                 if (!ann_inst.resolved_type) continue;
                 auto& ann_type = *ann_inst.resolved_type;
+
+                // @Retention(Policy::SOURCE) — skip, not emitted into binary
+                if (is_source_retention(ann_type)) continue;
+
                 if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) continue;
 
                 auto ann_st_type = ann_type.get_struct_type();
@@ -2214,6 +2431,10 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
         for (auto& ann_inst : ann.get_annotations_mutable()) {
             if (!ann_inst.resolved_type) continue;
             auto& ann_type = *ann_inst.resolved_type;
+
+            // @Retention(Policy::SOURCE) — skip, not emitted into binary
+            if (is_source_retention(ann_type)) continue;
+
             if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) continue;
 
             auto ann_st_type = ann_type.get_struct_type();
