@@ -266,6 +266,7 @@ final const class AnnotationType : public AggregateType {
     nested : const TypeInfo?[]?;
     enclosing : const TypeInfo?;
     flags : unsigned int;
+    annotations : const Annotation?[]?;
 
     /**
      * Internal bit-flag layout for the 'flags' field.
@@ -277,9 +278,9 @@ final const class AnnotationType : public AggregateType {
     private AnnotationType(name : const char[]?, fullName : const char[]?,
                            bases : const TypeInfo?[]?,
                            nested : const TypeInfo?[]?, enclosing : const TypeInfo?,
-                           flags : unsigned int)
+                           flags : unsigned int, annotations : const Annotation?[]?)
         : name(name), fullName(fullName), bases(bases), nested(nested),
-          enclosing(enclosing), flags(flags) {}
+          enclosing(enclosing), flags(flags), annotations(annotations) {}
 
     /**
      * Return the name of the annotation type.
@@ -331,6 +332,14 @@ final const class AnnotationType : public AggregateType {
      */
     const isStatic() : bool {
         return (flags & 4u) != 0u;
+    }
+
+    /**
+     * Return the annotations (meta-annotations) attached to this annotation type, if any.
+     * Each element is an Annotation instance.
+     */
+    const getAnnotations() : const Annotation?[]? {
+        return annotations;
     }
 }
 

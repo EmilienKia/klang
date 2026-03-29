@@ -406,3 +406,66 @@ TEST_CASE("Model: using a struct as annotation is an error", "[model][annotation
     )SRC");
     CHECK(comp == nullptr);
 }
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Meta-annotation: resolved_type on annotation type
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Model: annotation instance resolved_type is set on annotation type", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_resolve_meta_1__;
+        annotation Meta {}
+        @Meta
+        annotation Documented {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto doc = find_annotation_type(comp, "Documented");
+    REQUIRE(doc != nullptr);
+    auto& anns = doc->get_annotations();
+    REQUIRE(anns.size() == 1);
+    CHECK(anns[0].resolved_type != nullptr);
+    CHECK(anns[0].resolved_type->is_annotation());
+    CHECK(anns[0].resolved_type->get_short_name() == "Meta");
+}
+
+TEST_CASE("Model: multiple meta-annotations all resolved on annotation type", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_resolve_meta_multi__;
+        annotation Alpha {}
+        annotation Beta {}
+        @Alpha @Beta
+        annotation Combined {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto combined = find_annotation_type(comp, "Combined");
+    REQUIRE(combined != nullptr);
+    auto& anns = combined->get_annotations();
+    REQUIRE(anns.size() == 2);
+    CHECK(anns[0].resolved_type != nullptr);
+    CHECK(anns[0].resolved_type->get_short_name() == "Alpha");
+    CHECK(anns[1].resolved_type != nullptr);
+    CHECK(anns[1].resolved_type->get_short_name() == "Beta");
+}
+
+TEST_CASE("Model: meta-annotation with members has resolved_field_constants", "[model][annotation]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_resolve_meta_fields__;
+        annotation Version { major : int; minor : int; }
+        @Version(2, 5)
+        annotation Documented {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto doc = find_annotation_type(comp, "Documented");
+    REQUIRE(doc != nullptr);
+    auto& anns = doc->get_annotations();
+    REQUIRE(anns.size() == 1);
+    CHECK(anns[0].resolved_type != nullptr);
+    CHECK(anns[0].resolved_type->get_short_name() == "Version");
+    // resolved_field_constants should have 2 entries (major, minor)
+    CHECK(anns[0].resolved_field_constants.size() == 2);
+}
+

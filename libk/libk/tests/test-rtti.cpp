@@ -2221,3 +2221,329 @@ TEST_CASE("RTTI: AnnotationName::annotation identity matches getAnnotationType()
 }
 
 
+// =========================================================================
+// Meta-annotations: getAnnotations() on AnnotationType
+// =========================================================================
+
+TEST_CASE("RTTI: AnnotationType getAnnotations() null on unannotated annotation type", "[libk][rtti][annotation][meta]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_meta_ann_null__;
+        import k;
+
+        annotation Plain {}
+
+        test() : int {
+            desc : const k::AnnotationType& = Plain::annotation;
+            if (desc.getAnnotations() == null) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+TEST_CASE("RTTI: AnnotationType getAnnotations() non-null on meta-annotated annotation type", "[libk][rtti][annotation][meta]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_meta_ann_nonnull__;
+        import k;
+
+        annotation Meta {}
+
+        @Meta
+        annotation Documented {}
+
+        test() : int {
+            desc : const k::AnnotationType& = Documented::annotation;
+            if (desc.getAnnotations() != null) return 42;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+TEST_CASE("RTTI: AnnotationType getAnnotations() size is 1 on single meta-annotated annotation type", "[libk][rtti][annotation][meta]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_meta_ann_size1__;
+        import k;
+
+        annotation Meta {}
+
+        @Meta
+        annotation Documented {}
+
+        test() : int {
+            desc : const k::AnnotationType& = Documented::annotation;
+            anns : const k::Annotation?[]? = desc.getAnnotations();
+            if (anns == null) return 0;
+            return anns->size;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 1);
+}
+
+TEST_CASE("RTTI: AnnotationType getAnnotations() size is 2 on double meta-annotated annotation type", "[libk][rtti][annotation][meta]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_meta_ann_size2__;
+        import k;
+
+        annotation Alpha {}
+        annotation Beta {}
+
+        @Alpha @Beta
+        annotation Combined {}
+
+        test() : int {
+            desc : const k::AnnotationType& = Combined::annotation;
+            anns : const k::Annotation?[]? = desc.getAnnotations();
+            if (anns == null) return 0;
+            return anns->size;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 2);
+}
+
+TEST_CASE("RTTI: meta-annotation instance type name via getAnnotationType()", "[libk][rtti][annotation][meta]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_meta_ann_typename__;
+        import k;
+
+        annotation Meta {}
+
+        @Meta
+        annotation Documented {}
+
+        test() : int {
+            desc : const k::AnnotationType& = Documented::annotation;
+            anns : const k::Annotation?[]? = desc.getAnnotations();
+            if (anns == null) return 0;
+            ann : const k::Annotation? = anns[0];
+            if (ann == null) return 1;
+            name : k::String(ann->getAnnotationType().getName());
+            expected : k::String("Meta");
+            if (name == expected) return 42;
+            return 2;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+TEST_CASE("RTTI: meta-annotation with member fields — positional init", "[libk][rtti][annotation][meta]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_meta_ann_fields__;
+        import k;
+
+        annotation Version {
+            major : int;
+            minor : int;
+        }
+
+        @Version(3, 7)
+        annotation Documented {}
+
+        test_major() : int {
+            desc : const k::AnnotationType& = Documented::annotation;
+            anns : const k::Annotation?[]? = desc.getAnnotations();
+            if (anns == null) return -1;
+            v : const Version? = anns[0];
+            if (v == null) return -2;
+            return v->major;
+        }
+
+        test_minor() : int {
+            desc : const k::AnnotationType& = Documented::annotation;
+            anns : const k::Annotation?[]? = desc.getAnnotations();
+            if (anns == null) return -1;
+            v : const Version? = anns[0];
+            if (v == null) return -2;
+            return v->minor;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_major = jit->lookup_symbol<int(*)()>("test_major");
+    auto test_minor = jit->lookup_symbol<int(*)()>("test_minor");
+    REQUIRE(test_major);
+    REQUIRE(test_minor);
+    CHECK(test_major() == 3);
+    CHECK(test_minor() == 7);
+}
+
+TEST_CASE("RTTI: meta-annotation with designated init", "[libk][rtti][annotation][meta]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_meta_ann_desig__;
+        import k;
+
+        annotation Info {
+            priority : int;
+            enabled : bool;
+        }
+
+        @Info{.enabled = true, .priority = 42}
+        annotation Tagged {}
+
+        test_priority() : int {
+            desc : const k::AnnotationType& = Tagged::annotation;
+            anns : const k::Annotation?[]? = desc.getAnnotations();
+            if (anns == null) return -1;
+            info : const Info? = anns[0];
+            if (info == null) return -2;
+            return info->priority;
+        }
+
+        test_enabled() : int {
+            desc : const k::AnnotationType& = Tagged::annotation;
+            anns : const k::Annotation?[]? = desc.getAnnotations();
+            if (anns == null) return -1;
+            info : const Info? = anns[0];
+            if (info == null) return -2;
+            if (info->enabled) return 1;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_priority = jit->lookup_symbol<int(*)()>("test_priority");
+    auto test_enabled = jit->lookup_symbol<int(*)()>("test_enabled");
+    REQUIRE(test_priority);
+    REQUIRE(test_enabled);
+    CHECK(test_priority() == 42);
+    CHECK(test_enabled() == 1);
+}
+
+TEST_CASE("RTTI: retrieve meta-annotations from annotation declaration — full scenario", "[libk][rtti][annotation][meta]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_meta_ann_full__;
+        import k;
+
+        // Meta-annotations: annotations that annotate other annotation types.
+        annotation Retention {
+            policy : int;
+        }
+        annotation Documented {}
+
+        // Apply two meta-annotations on a user annotation type.
+        @Retention(1)
+        @Documented
+        annotation ApiVersion {
+            major : int;
+            minor : int;
+        }
+
+        // Also annotate a class with ApiVersion to demonstrate the
+        // annotation is usable as a normal annotation too.
+        @ApiVersion(2, 5)
+        class Service {
+            public Service() {}
+            public dummy() : int { return 0; }
+        }
+
+        // ── Test: meta-annotation count on ApiVersion ──────────────────
+        test_meta_ann_count() : int {
+            desc : const k::AnnotationType& = ApiVersion::annotation;
+            anns : const k::Annotation?[]? = desc.getAnnotations();
+            if (anns == null) return -1;
+            return anns->size;
+        }
+
+        // ── Test: first meta-annotation is Retention with policy == 1 ──
+        test_meta_ann_retention_name() : int {
+            desc : const k::AnnotationType& = ApiVersion::annotation;
+            anns : const k::Annotation?[]? = desc.getAnnotations();
+            if (anns == null) return -1;
+            ann : const k::Annotation? = anns[0];
+            if (ann == null) return -2;
+            name : k::String(ann->getAnnotationType().getName());
+            expected : k::String("Retention");
+            if (name == expected) return 1;
+            return 0;
+        }
+
+        test_meta_ann_retention_value() : int {
+            desc : const k::AnnotationType& = ApiVersion::annotation;
+            anns : const k::Annotation?[]? = desc.getAnnotations();
+            if (anns == null) return -1;
+            r : const Retention? = anns[0];
+            if (r == null) return -2;
+            return r->policy;
+        }
+
+        // ── Test: second meta-annotation is Documented (empty) ─────────
+        test_meta_ann_documented_name() : int {
+            desc : const k::AnnotationType& = ApiVersion::annotation;
+            anns : const k::Annotation?[]? = desc.getAnnotations();
+            if (anns == null) return -1;
+            if (anns->size < 2) return -3;
+            ann : const k::Annotation? = anns[1];
+            if (ann == null) return -2;
+            name : k::String(ann->getAnnotationType().getName());
+            expected : k::String("Documented");
+            if (name == expected) return 1;
+            return 0;
+        }
+
+        // ── Test: ApiVersion used on a class still works normally ───────
+        test_class_ann_value() : int {
+            s : Service;
+            anns : const k::Annotation?[]? = s.getClass().getAnnotations();
+            if (anns == null) return -1;
+            v : const ApiVersion? = anns[0];
+            if (v == null) return -2;
+            return v->major * 100 + v->minor;
+        }
+
+        // ── Test: unannotated Retention has no meta-annotations ────────
+        test_no_meta_on_retention() : int {
+            desc : const k::AnnotationType& = Retention::annotation;
+            if (desc.getAnnotations() == null) return 1;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_meta_ann_count = jit->lookup_symbol<int(*)()>("test_meta_ann_count");
+    auto test_meta_ann_retention_name = jit->lookup_symbol<int(*)()>("test_meta_ann_retention_name");
+    auto test_meta_ann_retention_value = jit->lookup_symbol<int(*)()>("test_meta_ann_retention_value");
+    auto test_meta_ann_documented_name = jit->lookup_symbol<int(*)()>("test_meta_ann_documented_name");
+    auto test_class_ann_value = jit->lookup_symbol<int(*)()>("test_class_ann_value");
+    auto test_no_meta_on_retention = jit->lookup_symbol<int(*)()>("test_no_meta_on_retention");
+    REQUIRE(test_meta_ann_count);
+    REQUIRE(test_meta_ann_retention_name);
+    REQUIRE(test_meta_ann_retention_value);
+    REQUIRE(test_meta_ann_documented_name);
+    REQUIRE(test_class_ann_value);
+    REQUIRE(test_no_meta_on_retention);
+
+    // ApiVersion has 2 meta-annotations: @Retention(1) and @Documented
+    CHECK(test_meta_ann_count() == 2);
+    // First meta-annotation is Retention
+    CHECK(test_meta_ann_retention_name() == 1);
+    // Retention.policy == 1
+    CHECK(test_meta_ann_retention_value() == 1);
+    // Second meta-annotation is Documented
+    CHECK(test_meta_ann_documented_name() == 1);
+    // ApiVersion used on Service class: major=2, minor=5 → 205
+    CHECK(test_class_ann_value() == 205);
+    // Retention itself has no meta-annotations
+    CHECK(test_no_meta_on_retention() == 1);
+}
+
+

@@ -2044,13 +2044,14 @@ void declaration_generator::visit_annotation_type(annotation_type& ann) {
     // ── RTTI global (AnnotationType instance) ────────────────────────────────
     // Layout: { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
     //           ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
-    //           i32 flags }
+    //           i32 flags, ptr annotations }
     std::string rtti_struct_name = "__rtti_" + ann.get_short_name() + "__";
     std::vector<llvm::Type*> rtti_fields = {
         ptr_ty, ptr_ty, ptr_ty,     // __vptr__, __vptr_AggregateType__, __vptr_TypeInfo__
         ptr_ty, ptr_ty,             // name, fullName
         ptr_ty, ptr_ty, ptr_ty,     // bases, nested, enclosing
-        i32_ty                       // flags
+        i32_ty,                      // flags
+        ptr_ty                       // annotations
     };
     llvm::StructType* rtti_llvm_type = llvm::StructType::create(
         llvm_ctx, rtti_fields, rtti_struct_name);
@@ -2087,7 +2088,8 @@ void declaration_generator::visit_annotation_type(annotation_type& ann) {
         null_ptr,       // field 5: bases                   → patched later
         null_ptr,       // field 6: nested                  → patched later
         null_ptr,       // field 7: enclosing               → patched later
-        llvm::ConstantInt::get(i32_ty, 0)  // field 8: flags → patched later
+        llvm::ConstantInt::get(i32_ty, 0),  // field 8: flags → patched later
+        null_ptr        // field 9: annotations             → patched later
     };
     llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
     auto rtti_gv = new llvm::GlobalVariable(
@@ -2179,6 +2181,83 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
     llvm::Constant* at_vptr_field = desc_at_vt ? desc_at_vt : old_struct->getOperand(1);
     llvm::Constant* ti_vptr_field = desc_ti_vt ? desc_ti_vt : old_struct->getOperand(2);
 
+    // ── Synthesize annotation instance globals (meta-annotations) ─────────
+    // For each annotation_instance on this annotation type, emit a constant
+    // global of the annotation's struct type, with field values materialized
+    // from the AST annotation arguments (positional, designated, or defaults).
+    // Then collect them into a K-array for the RTTI 'annotations' field.
+    llvm::Constant* annotations_gv = null_ptr;
+    {
+        // Helper: build a K-array global from a vector of pointers.
+        auto make_ann_array = [&](const std::vector<llvm::Constant*>& ptrs,
+                                  const std::string& suffix) -> llvm::Constant* {
+            if (ptrs.empty()) {
+                return llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
+            }
+            uint32_t count = static_cast<uint32_t>(ptrs.size());
+            llvm::ArrayType* arr_ty = llvm::ArrayType::get(ptr_ty, count);
+            llvm::StructType* karr_ty = llvm::StructType::get(llvm_ctx, {i32_ty, arr_ty}, /*isPacked=*/false);
+            llvm::Constant* arr_data = llvm::ConstantArray::get(arr_ty, ptrs);
+            llvm::Constant* karr_init = llvm::ConstantStruct::get(karr_ty, {
+                llvm::ConstantInt::get(i32_ty, count), arr_data
+            });
+            std::string rtti_name = mangler::mangle_rtti(ann.get_name());
+            auto* gv = new llvm::GlobalVariable(
+                _context->module(), karr_ty,
+                true, llvm::GlobalValue::PrivateLinkage,
+                karr_init, rtti_name + suffix);
+            gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+            return gv;
+        };
+
+        std::vector<llvm::Constant*> ann_ptrs;
+        for (auto& ann_inst : ann.get_annotations_mutable()) {
+            if (!ann_inst.resolved_type) continue;
+            auto& ann_type = *ann_inst.resolved_type;
+            if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) continue;
+
+            auto ann_st_type = ann_type.get_struct_type();
+            if (!ann_st_type) continue;
+
+            auto* llvm_st_type = _context->get_llvm_type(ann_st_type);
+            if (!llvm_st_type) continue;
+
+            // Build the constant struct with actual field values
+            llvm::Constant* ann_init = build_annotation_instance_constant(
+                ann_inst, ann_type, _context, &_unit, &ann);
+            if (!ann_init) continue;
+
+            std::string ann_global_name = mangler::mangle_rtti(ann.get_name())
+                + "_ann_" + ann_inst.raw_name;
+            auto* ann_gv_inst = new llvm::GlobalVariable(
+                _context->module(), llvm_st_type,
+                /*isConstant=*/true,
+                llvm::GlobalValue::PrivateLinkage,
+                ann_init, ann_global_name);
+            ann_gv_inst->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+            // The annotation array stores Annotation? pointers. GEP to the
+            // __base_Annotation__ sub-object for correct pointer adjustment.
+            auto base_field = ann_st_type->get_member("__base_Annotation__");
+            if (base_field.has_value()) {
+                llvm::Constant* zero = llvm::ConstantInt::get(
+                    llvm::Type::getInt32Ty(llvm_ctx), 0);
+                llvm::Constant* base_idx = llvm::ConstantInt::get(
+                    llvm::Type::getInt32Ty(llvm_ctx), base_field->index);
+                llvm::Constant* gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                    llvm_st_type, ann_gv_inst,
+                    llvm::ArrayRef<llvm::Constant*>{zero, base_idx});
+                ann_ptrs.push_back(gep);
+            } else {
+                ann_ptrs.push_back(ann_gv_inst);
+            }
+        }
+
+        if (!ann_ptrs.empty()) {
+            annotations_gv = make_ann_array(ann_ptrs, "_annotations");
+        }
+    }
+
     std::vector<llvm::Constant*> new_rtti_init = {
         vptr_field,                        // field 0: __vptr__
         at_vptr_field,                     // field 1: __vptr_AggregateType__
@@ -2188,7 +2267,8 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
         null_ptr,                          // field 5: bases (TODO: populate later)
         null_ptr,                          // field 6: nested
         null_ptr,                          // field 7: enclosing
-        llvm::ConstantInt::get(i32_ty, flags_val)  // field 8: flags
+        llvm::ConstantInt::get(i32_ty, flags_val),  // field 8: flags
+        annotations_gv                     // field 9: annotations
     };
 
     rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_rtti_init));
