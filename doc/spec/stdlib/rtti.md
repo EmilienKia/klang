@@ -22,9 +22,11 @@ allowing programs to inspect type metadata at runtime.
 6. [Interface](#6-interface)
 7. [AnnotationType](#7-annotationtype)
 8. [Annotation](#8-annotation)
-9. [Type hierarchy](#9-type-hierarchy)
-10. [Usage examples](#10-usage-examples)
-11. [Meta-annotation types](#11-meta-annotation-types)
+9. [Function](#9-function)
+10. [Unit](#10-unit)
+11. [Type hierarchy](#11-type-hierarchy)
+12. [Usage examples](#12-usage-examples)
+13. [Meta-annotation types](#13-meta-annotation-types)
 
 ---
 
@@ -43,6 +45,8 @@ The RTTI system supports:
 - **Enclosing type introspection** — find the enclosing type (for nested types).
 - **Visibility and modifiers** — query visibility, static-ness.
 - **Annotation introspection** — enumerate annotations attached to a type.
+- **Function introspection** — enumerate public member functions of a class or interface.
+- **Unit introspection** — enumerate public free functions of a compilation unit.
 
 ---
 
@@ -56,7 +60,7 @@ enum Visibility {
 };
 ```
 
-Enumerates the visibility levels of type declarations.
+Enumerates the visibility levels of type and function declarations.
 
 | Entry | Value | Description |
 |-------|-------|-------------|
@@ -142,6 +146,7 @@ All methods from `AggregateType`, plus:
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `getAnnotations()` | `const Annotation?[]?` | Array of annotation instances, or `null` if unannotated. |
+| `getFunctions()` | `const Function?[]?` | Array of public member function descriptors, or `null` if the class has no public member functions. Constructors and destructors are excluded. |
 
 ### Flags layout
 
@@ -150,6 +155,12 @@ All methods from `AggregateType`, plus:
 | 0–1 | Visibility (matches `Visibility` enum: 0=PUBLIC, 1=PROTECTED, 2=PRIVATE). |
 | 2 | `is_static` — `1` if the class is a `static` nested type. |
 | 3+ | Reserved for future use. |
+
+> **Implementation note:** The `functions` array is stored in the RTTI struct
+> at a fixed byte offset past the K-level fields. It is read by a C runtime
+> helper (`__k_class_get_functions`) to avoid a circular struct dependency
+> between `Function` (which references `AggregateType`) and `Class` (which
+> would reference `Function`).
 
 ---
 
@@ -168,7 +179,7 @@ Same as `Class`.
 
 ### Methods
 
-Same as `Class`, including `getAnnotations()`.
+Same as `Class`, including `getAnnotations()` and `getFunctions()`.
 
 ---
 
@@ -228,7 +239,120 @@ pointer from the annotation instance's vtable.
 
 ---
 
-## 9. Type hierarchy
+## 9. Function
+
+```k
+final const class Function {
+    name     : const char[]?;
+    fullName : const char[]?;
+    owner    : const AggregateType?;
+    flags    : unsigned int;
+
+    const getName()       : const char[]?;
+    const getFullName()   : const char[]?;
+    const getOwner()      : const AggregateType?;
+    const getVisibility() : Visibility;
+    const isStatic()      : bool;
+    const isMember()      : bool;
+}
+```
+
+RTTI descriptor for a function (member or free). Each public function in a
+class, interface, or compilation unit has a `Function` instance synthesized
+by the compiler.
+
+The `Function` class does **not** implement `TypeInfo` — it describes a
+function, not a type.
+
+### Scope
+
+- **Member functions** — public methods of a class or interface (both static
+  and non-static). Constructors and destructors are excluded.
+- **Free functions** — public non-member functions defined at namespace or
+  module level. Accessible via `Unit::getFunctions()`.
+
+### Fields (private)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `const char[]?` | Short (unqualified) function name. |
+| `fullName` | `const char[]?` | Fully qualified name (e.g. `"::mymod::Foo::bar"`). |
+| `owner` | `const AggregateType?` | Enclosing class or interface, or `null` for free functions. |
+| `flags` | `unsigned int` | Packed bit-flags (see below). |
+
+### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getName()` | `const char[]?` | Short name (e.g. `"bar"`). |
+| `getFullName()` | `const char[]?` | Fully qualified name (e.g. `"::mymod::Foo::bar"`). |
+| `getOwner()` | `const AggregateType?` | Owning aggregate, or `null` for free functions. |
+| `getVisibility()` | `Visibility` | Declared visibility (currently always `PUBLIC`). |
+| `isStatic()` | `bool` | `true` if the function is declared `static`. |
+| `isMember()` | `bool` | `true` if the function is a member of a class or interface. |
+
+### Flags layout
+
+| Bits | Meaning |
+|------|---------|
+| 0–1 | Visibility (matches `Visibility` enum: 0=PUBLIC, 1=PROTECTED, 2=PRIVATE). |
+| 2 | `is_static` — `1` if the function is declared `static`. |
+| 3 | `is_member` — `1` if the function belongs to a class or interface. |
+| 4+ | Reserved for future use. |
+
+### Compiler synthesis
+
+The compiler emits one `Function` RTTI global for each qualifying function.
+The mangled symbol name follows the pattern `_KTRFN<fq_name>E`.
+
+Only **public** functions are exposed. Private and protected methods are
+excluded from the RTTI to limit binary size and avoid exposing implementation
+details.
+
+---
+
+## 10. Unit
+
+```k
+final const class Unit {
+    name      : const char[]?;
+    fullName  : const char[]?;
+    functions : const Function?[]?;
+
+    const getName()       : const char[]?;
+    const getFullName()   : const char[]?;
+    const getFunctions()  : const Function?[]?;
+}
+```
+
+RTTI descriptor for a compilation unit (module). The compiler synthesizes
+one `Unit` instance per module (when the module imports `k`). It collects
+the public free (non-member) functions defined in that module.
+
+### Fields (private)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `const char[]?` | Short module name (e.g. `"mymod"`). |
+| `fullName` | `const char[]?` | Fully qualified module name (e.g. `"::mymod"`). |
+| `functions` | `const Function?[]?` | Array of public free function descriptors, or `null`. |
+
+### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getName()` | `const char[]?` | Short module name. |
+| `getFullName()` | `const char[]?` | Fully qualified module name. |
+| `getFunctions()` | `const Function?[]?` | Array of public non-member function descriptors, or `null` if none. |
+
+### Compiler synthesis
+
+The compiler emits one `Unit` RTTI global per module. The mangled symbol
+name follows the pattern `_KTRUN<module_name>E`.
+
+---
+
+## 11. Type hierarchy
 
 ```
 TypeInfo (interface)
@@ -239,6 +363,10 @@ TypeInfo (interface)
 
 Annotation (const class)
   └── <user annotation types>
+
+Function (final const class)
+
+Unit (final const class)
 ```
 
 All three concrete descriptor types (`Class`, `Interface`, `AnnotationType`)
@@ -247,9 +375,13 @@ implement `AggregateType` and therefore `TypeInfo`.
 `Annotation` is a separate hierarchy: it is the base for user-defined
 annotation instances (not for type descriptors).
 
+`Function` and `Unit` are standalone classes — they do not implement
+`TypeInfo` and are not part of the type descriptor hierarchy. They describe
+functions and compilation units, respectively.
+
 ---
 
-## 10. Usage examples
+## 12. Usage examples
 
 ### Get the class name of an object
 
@@ -366,9 +498,95 @@ test() : int {
 }
 ```
 
+### Enumerate public member functions
+
+```k
+import k;
+
+class Calculator {
+    public Calculator() {}
+    public add() : int { return 0; }
+    public sub() : int { return 0; }
+    public mul() : int { return 0; }
+}
+
+test_count() : int {
+    c : Calculator;
+    fns : const k::Function?[]? = c.getClass().getFunctions();
+    if (fns == null) return 0;
+    return fns->size;   // → 3
+}
+
+test_name() : int {
+    c : Calculator;
+    fns : const k::Function?[]? = c.getClass().getFunctions();
+    if (fns == null) return 0;
+    fn : const k::Function? = fns[0];
+    if (fn == null) return 1;
+    name : k::String(fn->getName());
+    expected : k::String("add");
+    if (name == expected) return 42;
+    return 2;
+}
+```
+
+### Inspect function properties
+
+```k
+import k;
+
+class Service {
+    public Service() {}
+    public static create() : int { return 1; }
+    public process() : int { return 2; }
+}
+
+test() : int {
+    s : Service;
+    fns : const k::Function?[]? = s.getClass().getFunctions();
+    if (fns == null) return 0;
+    // Count static methods
+    count : int = 0;
+    idx : int = 0;
+    while (idx < fns->size) {
+        fn : const k::Function? = fns[idx];
+        if (fn != null) {
+            if (fn->isStatic()) count = count + 1;
+        }
+        idx = idx + 1;
+    }
+    return count;   // → 1 (only "create" is static)
+}
+```
+
+### Get the owner of a function
+
+```k
+import k;
+
+class Widget {
+    public Widget() {}
+    public doStuff() : int { return 0; }
+}
+
+test() : int {
+    w : Widget;
+    fns : const k::Function?[]? = w.getClass().getFunctions();
+    if (fns == null) return 0;
+    fn : const k::Function? = fns[0];
+    if (fn == null) return 1;
+    owner : const k::AggregateType? = fn->getOwner();
+    if (owner == null) return 2;
+    name : k::String(owner->getName());
+    expected : k::String("Widget");
+    if (name == expected) return 42;
+    return 3;
+}
+```
+
 ---
 
-## 11. Meta-annotation types
+## 13. Meta-annotation types
 
 **Namespace:** `k::annotations`  
 **Source:** `libk/libk/src/annotations.k`
@@ -383,7 +601,7 @@ All three meta-annotations are themselves annotated with
 making them available for runtime inspection and restricted to annotation
 type declarations.
 
-### 11.1. Retention
+### 13.1. Retention
 
 ```k
 @Retention(Policy::RUNTIME)
@@ -410,7 +628,7 @@ the binary as RTTI metadata.
 |-------|------|---------|-------------|
 | `policy` | `Policy` | `Policy::RUNTIME` | The retention policy. |
 
-### 11.2. Inherited
+### 13.2. Inherited
 
 ```k
 @Retention(Policy::RUNTIME)
@@ -427,7 +645,7 @@ annotation type, the explicit instance replaces the inherited one.
 
 No fields.
 
-### 11.3. Target
+### 13.3. Target
 
 ```k
 @Retention(Policy::RUNTIME)
@@ -463,4 +681,3 @@ cannot be applied anywhere.
 ---
 
 *See also:* [Object](object.md) · [Annotations](../language/annotations/annotations.md) · [Meta-annotation reference](../language/annotations/annotations.md#15-meta-annotation-reference) · [Classes — RTTI](../language/structs/classes.md#14-rtti-and-dynamic-downcast)
-

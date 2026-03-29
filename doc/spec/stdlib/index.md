@@ -30,7 +30,7 @@ Contents:
 | [`CharHelpers`](string.md#charhelpers) | Static utility methods for `char[]` buffer operations. | `src/string.k` |
 | [`String`](string.md#string) | Immutable, final string class wrapping a null-terminated `char[]!` buffer. | `src/string.k` |
 | [`StringBuilder`](string.md#stringbuilder) | Mutable, growable string builder backed by a single contiguous buffer. | `src/string.k` |
-| [`RTTI Types`](rtti.md) | Runtime type information: `Visibility`, `TypeInfo`, `AggregateType`, `Class`, `Interface`, `AnnotationType`, `Annotation`. | `src/rtti.k` |
+| [`RTTI Types`](rtti.md) | Runtime type information: `Visibility`, `TypeInfo`, `AggregateType`, `Class`, `Interface`, `AnnotationType`, `Annotation`, `Function`, `Unit`. | `src/rtti.k` |
 | [`Meta-Annotations`](rtti.md#11-meta-annotation-types) | Meta-annotation types: `Retention` (with `Policy` enum), `Inherited`, `Target` (with `ElementType` enum). Control annotation retention, inheritance, and applicability. | `src/annotations.k` |
 
 ### Optional standard libraries

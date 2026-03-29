@@ -136,6 +136,18 @@ public:
     static std::string mangle_rtti(const name& class_name);
 
     /**
+     * Mangle the RTTI global variable name for a function descriptor.
+     * Convention: _KTRFN<function_fq_name>E
+     */
+    static std::string mangle_rtti_function(const name& func_name);
+
+    /**
+     * Mangle the RTTI global variable name for a unit (module) descriptor.
+     * Convention: _KTRUN<module_name>E
+     */
+    static std::string mangle_rtti_unit(const name& unit_name);
+
+    /**
      * Mangle the name of the virtual dispatch thunk (wrapper that loads the vptr and calls through the vtable).
      * Convention: _KFMvN<class><funcname>E<params>
      * The 'v' after 'M' denotes "virtual dispatch".

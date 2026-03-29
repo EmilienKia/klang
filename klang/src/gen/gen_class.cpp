@@ -1260,7 +1260,7 @@ void declaration_generator::visit_klass(klass& klass) {
                         llvm::ConstantStruct::get(base_vtable_llvm_type, null_init);
                     auto sec_gv = new llvm::GlobalVariable(
                         _context->module(), base_vtable_llvm_type,
-                        true, llvm::GlobalValue::InternalLinkage,
+                        true, llvm::GlobalValue::ExternalLinkage,
                         null_struct, sec_vtable_name);
 
                     auto sec_vt_layout = std::make_shared<vtable_layout>();
@@ -1302,7 +1302,7 @@ void declaration_generator::visit_klass(klass& klass) {
                 llvm::ConstantStruct::get(base_vt->llvm_type, null_init);
             auto sec_gv = new llvm::GlobalVariable(
                 _context->module(), base_vt->llvm_type,
-                true, llvm::GlobalValue::InternalLinkage,
+                true, llvm::GlobalValue::ExternalLinkage,
                 null_struct, sec_vtable_name);
 
             auto sec_vt_layout = std::make_shared<vtable_layout>();
@@ -1360,8 +1360,8 @@ void declaration_generator::visit_klass(klass& klass) {
         // Both interfaces and classes:
         //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
         //     ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
-        //     i32 flags, ptr annotations }
-        //   (9 ptr fields + 1 i32 field = 10 fields)
+        //     i32 flags, ptr annotations, ptr functions }
+        //   (10 ptr fields + 1 i32 field = 11 fields)
         std::string rtti_struct_name = "__rtti_" + klass.get_short_name() + "__";
         llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
         std::vector<llvm::Type*> rtti_fields = {
@@ -1369,7 +1369,8 @@ void declaration_generator::visit_klass(klass& klass) {
             ptr_ty, ptr_ty,             // name, fullName
             ptr_ty, ptr_ty, ptr_ty,     // bases, nested, enclosing
             i32_ty,                      // flags
-            ptr_ty                       // annotations
+            ptr_ty,                      // annotations
+            ptr_ty                       // functions
         };
         llvm::StructType* rtti_llvm_type = llvm::StructType::create(
             llvm_ctx, rtti_fields, rtti_struct_name);
@@ -1416,7 +1417,8 @@ void declaration_generator::visit_klass(klass& klass) {
             null_ptr,       // field 6: nested                  → patched later
             null_ptr,       // field 7: enclosing               → patched later
             llvm::ConstantInt::get(i32_ty, 0),  // field 8: flags → patched later
-            null_ptr        // field 9: annotations             → patched later
+            null_ptr,       // field 9: annotations             → patched later
+            null_ptr        // field 10: functions              → patched later
         };
         llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
         auto rtti_gv = new llvm::GlobalVariable(
@@ -1483,18 +1485,21 @@ void implementation_generator::visit_klass(klass& klass) {
 
     if (!klass.has_vtable()) return;
 
-    // ── 0. Patch RTTI global with real vtable pointers, base/nested/enclosing lists, and flags ─
+    // ── 0. Patch RTTI global with real vtable pointers, base/nested/enclosing lists, flags,
+    //       annotations, and function descriptors ───────────────────────────────────────
     // The declaration pass created the RTTI global with null/zero placeholders.
     // Now that all classes in the module have been declared, we can:
     //   a) Fill in the Class/Interface vtable pointers (fields 0, 1, 2).
     //   b) Generate K-array globals for the bases and nested fields.
     //   c) Set the enclosing field to the RTTI of the enclosing aggregate (if any).
     //   d) Set the flags field (visibility + is_static).
+    //   e) Synthesize annotation instance globals.
+    //   f) Synthesize Function RTTI globals for public member functions.
     //
-    // Both interfaces and classes share the same layout (10 fields):
+    // Both interfaces and classes share the same layout (11 fields):
     //   { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
     //     ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
-    //     i32 flags, ptr annotations }
+    //     i32 flags, ptr annotations, ptr functions }
     //
     // When the vtable symbols are not available (e.g. standalone compilation
     // without libk), the RTTI global keeps null vptrs.  typeid comparison
@@ -1529,9 +1534,8 @@ void implementation_generator::visit_klass(klass& klass) {
         // Only create the external declaration if this module (directly or
         // transitively) depends on libk — standalone modules without libk
         // keep null vptrs to avoid unresolvable link-time symbol references.
-        // The secondary AggregateType and TypeInfo vtables have internal linkage
-        // in libk and cannot be resolved externally — keep them null when
-        // unavailable.
+        // Secondary AggregateType and TypeInfo vtables now have external linkage
+        // and can be resolved from libk — declare them as external when unavailable.
         if (!desc_vt) {
             // Check if this module imports k (directly or transitively)
             bool has_libk = _unit.find_import(k::name("k")) != nullptr;
@@ -1545,6 +1549,34 @@ void implementation_generator::visit_klass(klass& klass) {
                     _context->module(), ptr_ty,
                     true, llvm::GlobalValue::ExternalLinkage,
                     nullptr, desc_vtable_name);
+            }
+        }
+        if (!desc_at_vt) {
+            bool has_libk = _unit.find_import(k::name("k")) != nullptr;
+            if (!has_libk) {
+                for (const auto& tdep : _unit.get_transitive_kdis()) {
+                    if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
+                }
+            }
+            if (has_libk) {
+                desc_at_vt = new llvm::GlobalVariable(
+                    _context->module(), ptr_ty,
+                    true, llvm::GlobalValue::ExternalLinkage,
+                    nullptr, desc_at_vtable_name);
+            }
+        }
+        if (!desc_ti_vt) {
+            bool has_libk = _unit.find_import(k::name("k")) != nullptr;
+            if (!has_libk) {
+                for (const auto& tdep : _unit.get_transitive_kdis()) {
+                    if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
+                }
+            }
+            if (has_libk) {
+                desc_ti_vt = new llvm::GlobalVariable(
+                    _context->module(), ptr_ty,
+                    true, llvm::GlobalValue::ExternalLinkage,
+                    nullptr, desc_ti_vtable_name);
             }
         }
 
@@ -1726,6 +1758,116 @@ void implementation_generator::visit_klass(klass& klass) {
             }
         }
 
+        // ── f) Synthesize Function RTTI globals for public member functions ────
+        // For each public member function (non-constructor, non-destructor), emit
+        // a ::k::Function RTTI global constant.
+        // Function layout: { ptr __vptr__, ptr name, ptr fullName, ptr owner,
+        //                     ptr unit, i32 flags }
+        llvm::Constant* functions_gv = null_ptr;
+        {
+            // Look up ::k::Function vtable symbol
+            std::string func_vtable_name = "_KTVN1k8FunctionE";
+            llvm::Constant* func_vt = _context->module().getNamedGlobal(func_vtable_name);
+            if (!func_vt) {
+                bool has_libk = _unit.find_import(k::name("k")) != nullptr;
+                if (!has_libk) {
+                    for (const auto& tdep : _unit.get_transitive_kdis()) {
+                        if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
+                    }
+                }
+                if (has_libk) {
+                    func_vt = new llvm::GlobalVariable(
+                        _context->module(), ptr_ty,
+                        true, llvm::GlobalValue::ExternalLinkage,
+                        nullptr, func_vtable_name);
+                }
+            }
+
+            llvm::Constant* func_vt_or_null = func_vt ? func_vt : null_ptr;
+
+            // Helper: emit a Function RTTI global for a given function
+            auto make_func_rtti = [&](const std::shared_ptr<k::model::function>& fn) -> llvm::Constant* {
+                // Build name strings
+                std::string fn_rtti_name = mangler::mangle_rtti_function(fn->get_name());
+
+                auto make_name_gv_fn = [&](const std::string& str, const std::string& suffix) -> llvm::Constant* {
+                    uint32_t len = static_cast<uint32_t>(str.size() + 1);
+                    llvm::Constant* str_data = llvm::ConstantDataArray::getString(llvm_ctx, str, /*AddNull=*/true);
+                    llvm::StructType* str_struct_ty = llvm::StructType::get(
+                        llvm_ctx, {i32_ty, str_data->getType()}, /*isPacked=*/false);
+                    llvm::Constant* str_struct_init = llvm::ConstantStruct::get(
+                        str_struct_ty,
+                        {llvm::ConstantInt::get(i32_ty, len), str_data});
+                    auto* gv = new llvm::GlobalVariable(
+                        _context->module(), str_struct_ty,
+                        true, llvm::GlobalValue::PrivateLinkage,
+                        str_struct_init, fn_rtti_name + suffix);
+                    gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+                    return gv;
+                };
+
+                llvm::Constant* fn_name_gv     = make_name_gv_fn(fn->get_short_name(), "_name");
+                llvm::Constant* fn_fullname_gv  = make_name_gv_fn(fn->get_fq_name(), "_fullname");
+
+                // Owner = pointer to the AggregateType sub-object within the
+                // enclosing class/interface RTTI global.  Function.owner is typed
+                // as `const AggregateType?` in K, so it must point to the
+                // AggregateType base sub-object (at field 1 of the RTTI struct,
+                // offset 8), not the start of the full RTTI global.
+                auto* owner_rtti_struct_type = llvm::cast<llvm::StructType>(rtti_gv->getValueType());
+                llvm::Constant* gep_zero = llvm::ConstantInt::get(i32_ty, 0);
+                llvm::Constant* gep_one  = llvm::ConstantInt::get(i32_ty, 1);
+                llvm::Constant* owner_rtti = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                    owner_rtti_struct_type, rtti_gv,
+                    llvm::ArrayRef<llvm::Constant*>{gep_zero, gep_one});
+
+                // Flags: bits 0-1 = visibility, bit 2 = is_static, bit 3 = is_member
+                uint32_t fn_flags = 0;  // PUBLIC
+                if (fn->is_static()) fn_flags |= 4;
+                fn_flags |= 8;  // is_member = true for all functions in a class
+
+                // Build the Function struct: { ptr vptr, ptr vptr_Object, ptr name, ptr fullName, ptr owner, i32 flags }
+                // K implicitly adds Object as a base class for all classes, so Function
+                // has an Object sub-object at field 1 (containing the Object vptr).
+                llvm::StructType* fn_rtti_type = llvm::StructType::get(
+                    llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, /*isPacked=*/false);
+                std::vector<llvm::Constant*> fn_init = {
+                    func_vt_or_null,                       // __vptr__ (Function primary vtable)
+                    null_ptr,                              // __vptr_Object__ (Object sub-object; null — no Object dispatch needed)
+                    fn_name_gv,                            // name
+                    fn_fullname_gv,                        // fullName
+                    owner_rtti,                            // owner
+                    llvm::ConstantInt::get(i32_ty, fn_flags)  // flags
+                };
+                llvm::Constant* fn_const = llvm::ConstantStruct::get(fn_rtti_type, fn_init);
+                auto* fn_gv = new llvm::GlobalVariable(
+                    _context->module(), fn_rtti_type,
+                    /*isConstant=*/true,
+                    llvm::GlobalValue::ExternalLinkage,
+                    fn_const, fn_rtti_name);
+                return fn_gv;
+            };
+
+            // Collect public member functions (exclude constructors, destructors)
+            std::vector<llvm::Constant*> fn_ptrs;
+            for (auto& fn : klass.functions()) {
+                if (!fn) continue;
+                if (fn->get_visibility() != PUBLIC) continue;
+                if (fn->is_compiler_generated()) continue;
+                if (std::dynamic_pointer_cast<k::model::constructor>(fn)) continue;
+                if (std::dynamic_pointer_cast<k::model::destructor>(fn)) continue;
+                if (std::dynamic_pointer_cast<k::model::static_constructor>(fn)) continue;
+                if (std::dynamic_pointer_cast<k::model::static_destructor>(fn)) continue;
+
+                llvm::Constant* fn_gv = make_func_rtti(fn);
+                if (fn_gv) fn_ptrs.push_back(fn_gv);
+            }
+
+            if (!fn_ptrs.empty()) {
+                functions_gv = make_base_array(fn_ptrs, "_functions");
+            }
+        }
+
         std::vector<llvm::Constant*> new_rtti_init = {
             vptr_field,                        // field 0: __vptr__
             at_vptr_field,                     // field 1: __vptr_AggregateType__
@@ -1736,7 +1878,8 @@ void implementation_generator::visit_klass(klass& klass) {
             nested_gv ? nested_gv : null_ptr,  // field 6: nested
             enclosing_rtti,                    // field 7: enclosing
             llvm::ConstantInt::get(i32_ty, flags_val),  // field 8: flags
-            annotations_gv                     // field 9: annotations
+            annotations_gv,                    // field 9: annotations
+            functions_gv                       // field 10: functions
         };
 
         rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_rtti_init));
@@ -2261,14 +2404,15 @@ void declaration_generator::visit_annotation_type(annotation_type& ann) {
     // ── RTTI global (AnnotationType instance) ────────────────────────────────
     // Layout: { ptr __vptr__, ptr __vptr_AggregateType__, ptr __vptr_TypeInfo__,
     //           ptr name, ptr fullName, ptr bases, ptr nested, ptr enclosing,
-    //           i32 flags, ptr annotations }
+    //           i32 flags, ptr annotations, ptr functions }
     std::string rtti_struct_name = "__rtti_" + ann.get_short_name() + "__";
     std::vector<llvm::Type*> rtti_fields = {
         ptr_ty, ptr_ty, ptr_ty,     // __vptr__, __vptr_AggregateType__, __vptr_TypeInfo__
         ptr_ty, ptr_ty,             // name, fullName
         ptr_ty, ptr_ty, ptr_ty,     // bases, nested, enclosing
         i32_ty,                      // flags
-        ptr_ty                       // annotations
+        ptr_ty,                      // annotations
+        ptr_ty                       // functions
     };
     llvm::StructType* rtti_llvm_type = llvm::StructType::create(
         llvm_ctx, rtti_fields, rtti_struct_name);
@@ -2306,7 +2450,8 @@ void declaration_generator::visit_annotation_type(annotation_type& ann) {
         null_ptr,       // field 6: nested                  → patched later
         null_ptr,       // field 7: enclosing               → patched later
         llvm::ConstantInt::get(i32_ty, 0),  // field 8: flags → patched later
-        null_ptr        // field 9: annotations             → patched later
+        null_ptr,       // field 9: annotations             → patched later
+        null_ptr        // field 10: functions              (always null for annotations)
     };
     llvm::Constant* rtti_const = llvm::ConstantStruct::get(rtti_llvm_type, rtti_init);
     auto rtti_gv = new llvm::GlobalVariable(
@@ -2489,7 +2634,8 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
         null_ptr,                          // field 6: nested
         null_ptr,                          // field 7: enclosing
         llvm::ConstantInt::get(i32_ty, flags_val),  // field 8: flags
-        annotations_gv                     // field 9: annotations
+        annotations_gv,                    // field 9: annotations
+        null_ptr                           // field 10: functions (always null for annotations)
     };
 
     rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_rtti_init));

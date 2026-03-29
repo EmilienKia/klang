@@ -414,10 +414,30 @@ std::string mangler::mangle_vtable(const name& class_name) {
 // RTTI global variable prefix: _KTRI
 #define SYMBOL_RTTI_PREFIX "TRI"
 
+// RTTI function descriptor prefix: _KTRF
+#define SYMBOL_RTTI_FUNCTION_PREFIX "TRF"
+
+// RTTI unit descriptor prefix: _KTRU
+#define SYMBOL_RTTI_UNIT_PREFIX "TRU"
+
 std::string mangler::mangle_rtti(const name& class_name) {
     std::ostringstream mangled;
     mangled << K_LANG_SYMBOL_PREFIX << SYMBOL_RTTI_PREFIX;
     mangled << mangle_fq_name(class_name, false);
+    return mangled.str();
+}
+
+std::string mangler::mangle_rtti_function(const name& func_name) {
+    std::ostringstream mangled;
+    mangled << K_LANG_SYMBOL_PREFIX << SYMBOL_RTTI_FUNCTION_PREFIX;
+    mangled << mangle_fq_name(func_name, false);
+    return mangled.str();
+}
+
+std::string mangler::mangle_rtti_unit(const name& unit_name) {
+    std::ostringstream mangled;
+    mangled << K_LANG_SYMBOL_PREFIX << SYMBOL_RTTI_UNIT_PREFIX;
+    mangled << mangle_fq_name(unit_name, false);
     return mangled.str();
 }
 

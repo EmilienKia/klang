@@ -79,6 +79,71 @@ const interface AggregateType : public TypeInfo {
 }
 
 /**
+ * RTTI function descriptor.
+ * This class describes a function (member or non-member) at runtime.
+ * Constructors and destructors are excluded.
+ */
+final const class Function {
+    name : const char[]?;
+    fullName : const char[]?;
+    owner : const AggregateType?;
+    flags : unsigned int;
+
+    /**
+     * Internal bit-flag layout for the 'flags' field.
+     * Bits 0-1: visibility (matches Visibility enum values: 0=PUBLIC, 1=PROTECTED, 2=PRIVATE).
+     * Bit 2: is_static (1 if the function is static).
+     * Bit 3: is_member (1 if the function is a member of an aggregate type).
+     * Remaining bits are reserved for future use.
+     */
+
+    /**
+     * Return the short (unqualified) name of the function.
+     */
+    const getName() : const char[]? {
+        return name;
+    }
+
+    /**
+     * Return the fully qualified name of the function
+     * (including module, namespaces, and enclosing class if any).
+     */
+    const getFullName() : const char[]? {
+        return fullName;
+    }
+
+    /**
+     * Return the enclosing aggregate type (class or interface) that owns this function.
+     * Returns null if this is a non-member (free) function.
+     */
+    const getOwner() : const AggregateType? {
+        return owner;
+    }
+
+    /**
+     * Return the declared visibility of this function.
+     */
+    const getVisibility() : Visibility {
+        return (Visibility) (flags & 3u);
+    }
+
+    /**
+     * Return true if this function is declared as static.
+     */
+    const isStatic() : bool {
+        return (flags & 4u) != 0u;
+    }
+
+    /**
+     * Return true if this function is a member of an aggregate type (class or interface).
+     * Returns false for non-member (free) functions.
+     */
+    const isMember() : bool {
+        return (flags & 8u) != 0u;
+    }
+}
+
+/**
  * RTTI interface descriptor.
  * This class is used to describe interfaces at runtime.
  */
@@ -163,6 +228,17 @@ final const class Interface : public AggregateType {
      */
     const getAnnotations() : const Annotation?[]? {
         return annotations;
+    }
+
+    /**
+     * Return the public member functions of this interface, if any.
+     * Each element is a Function descriptor.
+     * Reads the functions field from the RTTI struct via a C runtime helper
+     * (field is synthesized by the compiler but not a K-level field to avoid
+     * circular struct resolution).
+     */
+    const getFunctions() : const Function?[]? {
+        return __k_iface_get_functions(this);
     }
 }
 
@@ -251,6 +327,15 @@ final const class Class : public AggregateType {
      */
     const getAnnotations() : const Annotation?[]? {
         return annotations;
+    }
+
+    /**
+     * Return the public member functions of this class, if any.
+     * Each element is a Function descriptor.
+     * Reads the functions field from the RTTI struct via a C runtime helper.
+     */
+    const getFunctions() : const Function?[]? {
+        return __k_class_get_functions(this);
     }
 
 }
@@ -344,11 +429,58 @@ final const class AnnotationType : public AggregateType {
 }
 
 /**
+ * RTTI unit (module) descriptor.
+ * This class describes a compilation unit (module) at runtime.
+ */
+final const class Unit {
+    name : const char[]?;
+    fullName : const char[]?;
+    functions : const Function?[]?;
+
+    /**
+     * Return the short name of the unit (module name).
+     */
+    const getName() : const char[]? {
+        return name;
+    }
+
+    /**
+     * Return the fully qualified name of the unit.
+     */
+    const getFullName() : const char[]? {
+        return fullName;
+    }
+
+    /**
+     * Return the public non-member functions declared in this unit, if any.
+     * Each element is a Function descriptor.
+     */
+    const getFunctions() : const Function?[]? {
+        return functions;
+    }
+}
+
+/**
  * C runtime helper: extract the RTTI AnnotationType pointer from an annotation's vtable.
  * Implemented in rtti.c. Takes the annotation pointer (void*) and returns
  * the AnnotationType pointer from vtable slot 0.
  */
 extern __k_annotation_get_type(ann : const Annotation&) : const AnnotationType&;
+
+/**
+ * C runtime helper: extract the functions array from a Class RTTI global.
+ * Implemented in rtti.c. Reads field index 10 of the RTTI struct.
+ * Takes a Class& directly (not AggregateType&) to avoid base-class pointer
+ * adjustment that would shift the pointer away from the struct start.
+ */
+extern __k_class_get_functions(rtti : const Class&) : const Function?[]?;
+
+/**
+ * C runtime helper: extract the functions array from an Interface RTTI global.
+ * Implemented in rtti.c. Same logic as __k_class_get_functions, but takes
+ * Interface& directly to avoid base-class pointer adjustment.
+ */
+extern __k_iface_get_functions(rtti : const Interface&) : const Function?[]?;
 
 /**
  * Annotation — root base class for all K annotation instances.

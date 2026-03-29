@@ -25,6 +25,8 @@
 #include <fstream>
 #include <sstream>
 
+#include <dlfcn.h>
+
 #include <boost/program_options.hpp>
 
 #include "compiler.hpp"
@@ -391,6 +393,18 @@ int main(int argc, const char** argv) {
                 std::cerr << "Cannot JIT-execute: no main() entry point in the compiled module." << std::endl;
                 return -1;
             }
+
+            // Pre-load imported shared libraries so the JIT can resolve their symbols.
+            for (const auto& imp : compiler->get_unit()->get_imports()) {
+                if (!imp.kdi) continue;
+                // Derive library path from the .kdi path: same directory, same base name
+                auto kdi_path = std::filesystem::path(imp.resolved_kdi_path);
+                auto lib_path = kdi_path.parent_path() / ("lib" + imp.kdi->header.lib_base + ".so");
+                if (std::filesystem::exists(lib_path)) {
+                    dlopen(lib_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+                }
+            }
+
             auto jit = compiler->to_jit();
             if (!jit) {
                 std::cerr << "JIT instantiation error." << std::endl;
