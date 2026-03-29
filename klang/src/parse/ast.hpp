@@ -780,6 +780,21 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * Annotation initializer expression — wraps an annotation_def for use
+         * inside expression contexts (brace-init lists, argument lists).
+         * Syntax: '@' QualifiedIdentifier [ '(' [ExpressionList] ')' | DesignatedBraceInitList ]
+         * Example: @Tag("hello") used as an element of an array literal.
+         */
+        struct annotation_init_expr : public expression {
+            std::shared_ptr<annotation_def> annotation;
+
+            annotation_init_expr(std::shared_ptr<annotation_def> annotation)
+                : annotation(std::move(annotation)) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct aggregate_decl : public declaration {
             annotation_def_list annotations;
             std::vector <lex::keyword> specifiers;
@@ -1174,6 +1189,7 @@ namespace k::parse {
         virtual void visit_designated_init_element(ast::designated_init_element &) = 0;
 
         virtual void visit_annotation_def(ast::annotation_def &) = 0;
+        virtual void visit_annotation_init_expr(ast::annotation_init_expr &) = 0;
 
         virtual void visit_comma_expr(ast::expr_list_expr &) = 0;
 
@@ -1234,6 +1250,7 @@ namespace k::parse {
         void visit_designated_init_element(ast::designated_init_element &) override;
 
         void visit_annotation_def(ast::annotation_def &) override;
+        void visit_annotation_init_expr(ast::annotation_init_expr &) override;
 
         void visit_comma_expr(ast::expr_list_expr &) override;
     };

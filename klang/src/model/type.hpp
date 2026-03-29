@@ -143,6 +143,8 @@ public:
     inline static bool is_enum(const std::shared_ptr<type>& type);
     /** True if the type is the null literal type. */
     inline static bool is_null(const std::shared_ptr<type>& type);
+    /** True if the type chain contains any unresolved_type nodes. */
+    static bool contains_unresolved(const std::shared_ptr<type>& type);
 
     inline static bool are_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2);
 
@@ -186,6 +188,10 @@ public:
 
     bool is_resolved()const {return !!_resolved;}
     std::shared_ptr<type> get_resolved()const {return _resolved;}
+
+    llvm::Type* get_llvm_type() const override {
+        return _resolved ? _resolved->get_llvm_type() : nullptr;
+    }
 
 };
 

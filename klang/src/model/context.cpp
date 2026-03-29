@@ -544,24 +544,39 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
         // This handles the __parent__ field (reference to outer struct).
         auto effective_type = type;
         if (type::is_pointer(type) || type::is_reference(type) || type::is_drain(type)) {
-            auto sub = type->get_subtype();
-            if (sub) {
-                if (auto dep_st = std::dynamic_pointer_cast<struct_type>(sub)) {
-                    resolve_struct_type(dep_st, in_progress);
-                } else if (!sub->is_resolved()) {
-                    // Try resolving the sub-type first
-                    auto resolved_sub = resolve_type(sub);
-                    if (resolved_sub) {
-                        if (auto dep_st = std::dynamic_pointer_cast<struct_type>(resolved_sub)) {
-                            resolve_struct_type(dep_st, in_progress);
+            if (type::contains_unresolved(type)) {
+                // The pointer/reference chain contains stale unresolved_type
+                // wrappers.  Re-resolve the entire type to get a clean chain.
+                auto res_type = resolve_type(type);
+                if (res_type) {
+                    var->set_type(res_type);
+                    effective_type = res_type;
+                    // If the resolved type's leaf is a struct_type, resolve it.
+                    if (auto dep_st = std::dynamic_pointer_cast<struct_type>(res_type)) {
+                        resolve_struct_type(dep_st, in_progress);
+                    }
+                }
+            } else {
+                auto sub = type->get_subtype();
+                if (sub) {
+                    if (auto dep_st = std::dynamic_pointer_cast<struct_type>(sub)) {
+                        resolve_struct_type(dep_st, in_progress);
+                    } else if (!sub->is_resolved()) {
+                        // Try resolving the sub-type first
+                        auto resolved_sub = resolve_type(sub);
+                        if (resolved_sub) {
+                            if (auto dep_st = std::dynamic_pointer_cast<struct_type>(resolved_sub)) {
+                                resolve_struct_type(dep_st, in_progress);
+                            }
                         }
                     }
                 }
+                // The pointer/reference type is now implicitly resolved (subtype has LLVM type).
+                effective_type = type;
             }
-            // The pointer/reference type is now implicitly resolved (subtype has LLVM type).
-            effective_type = type;
-        } else if (!type->is_resolved()) {
-            // Not resolved, try to resolve it.
+        } else if (!type->is_resolved() || type::contains_unresolved(type)) {
+            // Not resolved, or contains stale unresolved_type wrappers that need
+            // to be replaced with clean type chains.
             auto res_type = resolve_type(type);
             if (!res_type) {
                 throw std::runtime_error("Cannot resolve structure field type: " + type->to_string());
@@ -717,9 +732,15 @@ context::declare_llvm_function_from_def(const std::string& llvm_def,
 }
 
 std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
-    if (type->is_resolved()) {
+    if (type->is_resolved() && !type::contains_unresolved(type)) {
         return type;
-    } else if (type::is_const(type)) {
+    }
+    // A resolved unresolved_type: return the target directly.
+    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(type)) {
+        auto res = unres->get_resolved();
+        if (res) return res;
+    }
+    if (type::is_const(type)) {
         // const_type wrapping an unresolved inner type (e.g. const(unresolved(Point)))
         auto res = resolve_type(type->get_subtype());
         if (!res) {
@@ -754,6 +775,17 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
             std::cerr << "Error: cannot resolve reference subtype." << std::endl;
             return nullptr;
         } else {
+            // Unsized arrays are canonicalised to ref<array<T>> by the array branch
+            // of resolve_type.  When the outer type is already a reference, the
+            // canonicalisation has already provided the reference we need — return as-is
+            // to avoid a spurious double-reference.
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(res)) {
+                if (auto arr = std::dynamic_pointer_cast<array_type>(ref->get_subtype())) {
+                    if (!arr->is_sized()) {
+                        return res;
+                    }
+                }
+            }
             return res->get_reference();
         }
     } else if (type::is_link(type)) {

@@ -51,6 +51,12 @@ bool type::is_resolved() const
     return false;
 }
 
+bool type::contains_unresolved(const std::shared_ptr<type>& t) {
+    if (!t) return false;
+    if (std::dynamic_pointer_cast<unresolved_type>(t)) return true;
+    return contains_unresolved(t->get_subtype());
+}
+
 std::shared_ptr<reference_type> type::get_reference()
 {
     if(!reference) {
@@ -271,6 +277,7 @@ std::shared_ptr<reference_type> reference_type::get_reference() {
 llvm::Type* reference_type::get_llvm_type() const {
     if(_llvm_type==nullptr && is_resolved()) {
         auto llvm_subtype = subtype.lock()->get_llvm_type();
+        if (!llvm_subtype) return nullptr;
         _llvm_type = llvm::PointerType::get(llvm_subtype, 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
     }
     return _llvm_type;
@@ -327,7 +334,9 @@ bool view_type::is_resolved() const
 
 llvm::Type* view_type::get_llvm_type() const {
     if(_llvm_type==nullptr && is_resolved()) {
-        _llvm_type = llvm::PointerType::get(subtype.lock()->get_llvm_type(), 0);
+        auto* sub_llvm = subtype.lock()->get_llvm_type();
+        if (!sub_llvm) return nullptr;
+        _llvm_type = llvm::PointerType::get(sub_llvm, 0);
     }
     return _llvm_type;
 }

@@ -1996,3 +1996,138 @@ TEST_CASE("RTTI: annotation char[] field value via view downcast", "[libk][rtti]
     CHECK(test_first_char() == 'h');
 }
 
+
+// =========================================================================
+// 52. RTTI: annotation array of annotations field
+// =========================================================================
+
+TEST_CASE("RTTI: annotation array of nested annotations", "[libk][rtti][annotation][field][array]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __rtti_ann_array__;
+        import k;
+
+        annotation Tag {
+            value : int;
+        }
+
+        annotation Tagged {
+            tags : const k::Annotation?[];
+        }
+
+        @Tagged({@Tag(10), @Tag(20), @Tag(30)})
+        class Foo {
+            public Foo() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_tag_count() : int {
+            f : Foo;
+            anns : const k::Annotation?[]? = f.getClass().getAnnotations();
+            if (anns == null) return -1;
+            tagged : const Tagged? = anns[0];
+            if (tagged == null) return -2;
+            return tagged->tags.size;
+        }
+
+        test_tag_0() : int {
+            f : Foo;
+            anns : const k::Annotation?[]? = f.getClass().getAnnotations();
+            if (anns == null) return -1;
+            tagged : const Tagged? = anns[0];
+            if (tagged == null) return -2;
+            t : const Tag? = tagged->tags[0];
+            if (t == null) return -3;
+            return t->value;
+        }
+
+        test_tag_2() : int {
+            f : Foo;
+            anns : const k::Annotation?[]? = f.getClass().getAnnotations();
+            if (anns == null) return -1;
+            tagged : const Tagged? = anns[0];
+            if (tagged == null) return -2;
+            t : const Tag? = tagged->tags[2];
+            if (t == null) return -3;
+            return t->value;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR, /*dump=*/true, /*optimize=*/false);
+    REQUIRE(jit);
+
+    auto test_tag_count = jit->lookup_symbol<int(*)()>("test_tag_count");
+    auto test_tag_0 = jit->lookup_symbol<int(*)()>("test_tag_0");
+    auto test_tag_2 = jit->lookup_symbol<int(*)()>("test_tag_2");
+    REQUIRE(test_tag_count);
+    REQUIRE(test_tag_0);
+    REQUIRE(test_tag_2);
+    CHECK(test_tag_count() == 3);
+    CHECK(test_tag_0() == 10);
+    CHECK(test_tag_2() == 30);
+}
+
+
+// =========================================================================
+// 53. RTTI: annotation array of typed (non-base) annotations field
+// =========================================================================
+
+TEST_CASE("RTTI: annotation array of typed nested annotations", "[libk][rtti][annotation][field][array]") {
+    auto jit = gen_jit_with_stdlib(R"SRC(
+        module __rtti_ann_typed_array__;
+        import k;
+
+        annotation Tag {
+            value : int;
+        }
+
+        annotation TagGroup {
+            tags : const Tag?[];
+        }
+
+        @TagGroup({@Tag(100), @Tag(200), @Tag(300)})
+        class Bar {
+            public Bar() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_tag_count() : int {
+            b : Bar;
+            anns : const k::Annotation?[]? = b.getClass().getAnnotations();
+            if (anns == null) return -1;
+            grp : const TagGroup? = anns[0];
+            if (grp == null) return -2;
+            return grp->tags.size;
+        }
+
+        test_tag_0() : int {
+            b : Bar;
+            anns : const k::Annotation?[]? = b.getClass().getAnnotations();
+            if (anns == null) return -1;
+            grp : const TagGroup? = anns[0];
+            if (grp == null) return -2;
+            t : const Tag? = grp->tags[0];
+            if (t == null) return -3;
+            return t->value;
+        }
+
+        test_tag_2() : int {
+            b : Bar;
+            anns : const k::Annotation?[]? = b.getClass().getAnnotations();
+            if (anns == null) return -1;
+            grp : const TagGroup? = anns[0];
+            if (grp == null) return -2;
+            t : const Tag? = grp->tags[2];
+            if (t == null) return -3;
+            return t->value;
+        }
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR, /*dump=*/true, /*optimize=*/false);
+    REQUIRE(jit);
+
+    auto test_tag_count = jit->lookup_symbol<int(*)()>("test_tag_count");
+    auto test_tag_0 = jit->lookup_symbol<int(*)()>("test_tag_0");
+    auto test_tag_2 = jit->lookup_symbol<int(*)()>("test_tag_2");
+    REQUIRE(test_tag_count);
+    REQUIRE(test_tag_0);
+    REQUIRE(test_tag_2);
+    CHECK(test_tag_count() == 3);
+    CHECK(test_tag_0() == 100);
+    CHECK(test_tag_2() == 300);
+}

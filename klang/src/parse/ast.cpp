@@ -208,6 +208,10 @@ void ast::annotation_def::visit(ast_visitor &visitor) {
     visitor.visit_annotation_def(*this);
 }
 
+void ast::annotation_init_expr::visit(ast_visitor &visitor) {
+    visitor.visit_annotation_init_expr(*this);
+}
+
 //
 // Default AST visitor
 //
@@ -395,6 +399,10 @@ void default_ast_visitor::visit_designated_init_element(ast::designated_init_ele
 }
 
 void default_ast_visitor::visit_annotation_def(ast::annotation_def &) {
+
+}
+
+void default_ast_visitor::visit_annotation_init_expr(ast::annotation_init_expr &) {
 
 }
 

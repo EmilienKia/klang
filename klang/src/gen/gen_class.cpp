@@ -333,12 +333,34 @@ build_vtable_layout(aggregate& st,
  * Currently supports:
  *   - Integer, float, character, boolean, string, and null literals.
  *   - Unary-minus on a numeric literal (e.g. -42, -3.14).
+ *   - Annotation initializer expression (@Ann(...)) — builds a nested annotation global.
+ *   - Brace-init list of annotation initializer expressions — builds a K-array of annotation views.
  *
  * Returns nullptr if the expression cannot be reduced to a constant.
  */
+
+// Forward declarations within the anonymous namespace
+llvm::Constant* build_annotation_instance_constant(
+    annotation_instance& ann_inst,
+    annotation_type& ann_type,
+    const std::shared_ptr<context>& ctx,
+    unit* unit_ptr = nullptr,
+    aggregate* parent_agg = nullptr);
+
+static int s_nested_ann_counter = 0;
+
+/**
+ * @param gep_ann_to_base  When true, annotation_init_expr results are GEP'd
+ *                         to their __base_Annotation__ sub-object (for
+ *                         Annotation?[] arrays).  When false, the full object
+ *                         pointer is returned (for typed arrays like Tag?[]).
+ */
 llvm::Constant* evaluate_ast_expr_to_constant(
     const k::parse::ast::expr_ptr& expr,
-    const std::shared_ptr<context>& ctx)
+    const std::shared_ptr<context>& ctx,
+    unit* unit_ptr = nullptr,
+    aggregate* parent_agg = nullptr,
+    bool gep_ann_to_base = false)
 {
     if (!expr) return nullptr;
 
@@ -365,7 +387,133 @@ llvm::Constant* evaluate_ast_expr_to_constant(
         }
     }
 
-    // TODO: support more constant expressions (enum values, nested annotations, etc.)
+    // ── Annotation initializer expression: @Ann(...) used as a value ──
+    if (auto ann_expr = std::dynamic_pointer_cast<k::parse::ast::annotation_init_expr>(expr)) {
+        if (!ann_expr->annotation || !ann_expr->annotation->name) return nullptr;
+
+        // Build the raw name from the qualified identifier
+        std::string raw_name;
+        for (size_t i = 0; i < ann_expr->annotation->name->names.size(); ++i) {
+            if (i > 0) raw_name += "::";
+            raw_name += std::string{ann_expr->annotation->name->names[i].content};
+        }
+
+        // Resolve the annotation type by name
+        std::shared_ptr<annotation_type> ann_type;
+        if (parent_agg) {
+            auto agg = scope_lookup::lookup_structure(parent_agg->shared_as<element>(), raw_name);
+            ann_type = std::dynamic_pointer_cast<annotation_type>(agg);
+        }
+        if (!ann_type && unit_ptr) {
+            // Try via imported modules
+            std::vector<std::string> parts;
+            std::size_t start = 0;
+            while (true) {
+                auto pos = raw_name.find("::", start);
+                if (pos == std::string::npos) {
+                    parts.push_back(raw_name.substr(start));
+                    break;
+                }
+                parts.push_back(raw_name.substr(start, pos - start));
+                start = pos + 2;
+            }
+            k::name qname{false, parts};
+            if (auto imp_agg = unit_ptr->get_or_create_imported_aggregate(qname, ctx)) {
+                ann_type = std::dynamic_pointer_cast<annotation_type>(imp_agg);
+            }
+        }
+        if (!ann_type) return nullptr;
+
+        // Build a temporary annotation_instance from the AST
+        annotation_instance temp_inst;
+        temp_inst.raw_name = raw_name;
+        temp_inst.ast_node = ann_expr->annotation;
+        temp_inst.resolved_type = ann_type;
+
+        // Build the constant
+        auto ann_st_type = ann_type->get_struct_type();
+        if (!ann_st_type) return nullptr;
+        auto* llvm_st_type = ctx->get_llvm_type(ann_st_type);
+        if (!llvm_st_type) return nullptr;
+
+        llvm::Constant* ann_init = build_annotation_instance_constant(temp_inst, *ann_type, ctx);
+        if (!ann_init) return nullptr;
+
+        // Create a global for this nested annotation instance
+        std::string gv_name = ".nested_ann_" + raw_name + "_" + std::to_string(s_nested_ann_counter++);
+        auto* ann_gv = new llvm::GlobalVariable(
+            ctx->module(), llvm_st_type,
+            /*isConstant=*/true,
+            llvm::GlobalValue::PrivateLinkage,
+            ann_init, gv_name);
+        ann_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+        // If the caller needs an Annotation? view (e.g. for Annotation?[] arrays),
+        // GEP to the __base_Annotation__ sub-object.  Otherwise return the full
+        // object pointer (for typed arrays like Tag?[]).
+        if (gep_ann_to_base) {
+            auto base_field = ann_st_type->get_member("__base_Annotation__");
+            if (base_field.has_value()) {
+                llvm::Constant* zero = llvm::ConstantInt::get(
+                    llvm::Type::getInt32Ty(ctx->module().getContext()), 0);
+                llvm::Constant* base_idx = llvm::ConstantInt::get(
+                    llvm::Type::getInt32Ty(ctx->module().getContext()), base_field->index);
+                return llvm::ConstantExpr::getInBoundsGetElementPtr(
+                    llvm_st_type, ann_gv,
+                    llvm::ArrayRef<llvm::Constant*>{zero, base_idx});
+            }
+        }
+        return ann_gv;
+    }
+
+    // ── Brace-init list of expressions (e.g. {@Tag("a"), @Tag("b")}) ──
+    // Builds a K-array constant { i32 count, [N x ptr] data }.
+    if (auto brace = std::dynamic_pointer_cast<k::parse::ast::brace_init_list>(expr)) {
+        if (brace->is_designated || brace->elements.empty()) return nullptr;
+
+        // Check if all elements are annotation_init_expr
+        bool all_annotations = true;
+        for (auto& elem : brace->elements) {
+            if (!std::dynamic_pointer_cast<k::parse::ast::annotation_init_expr>(elem)) {
+                all_annotations = false;
+                break;
+            }
+        }
+
+        if (all_annotations) {
+            // Build each annotation element and collect pointers
+            std::vector<llvm::Constant*> ann_ptrs;
+            for (auto& elem : brace->elements) {
+                auto* ptr = evaluate_ast_expr_to_constant(elem, ctx, unit_ptr, parent_agg, gep_ann_to_base);
+                if (ptr) {
+                    ann_ptrs.push_back(ptr);
+                }
+            }
+            if (ann_ptrs.empty()) return nullptr;
+
+            // Build K-array: { i32 count, [N x ptr] data }
+            auto& llvm_ctx = ctx->module().getContext();
+            auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+            auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+            uint32_t count = static_cast<uint32_t>(ann_ptrs.size());
+            auto* arr_ty = llvm::ArrayType::get(ptr_ty, count);
+            auto* karr_ty = llvm::StructType::get(llvm_ctx, {i32_ty, arr_ty}, /*isPacked=*/false);
+            auto* arr_data = llvm::ConstantArray::get(arr_ty, ann_ptrs);
+            auto* karr_init = llvm::ConstantStruct::get(karr_ty, {
+                llvm::ConstantInt::get(i32_ty, count), arr_data
+            });
+            std::string gv_name = ".nested_ann_array_" + std::to_string(s_nested_ann_counter++);
+            auto* gv = new llvm::GlobalVariable(
+                ctx->module(), karr_ty,
+                /*isConstant=*/true,
+                llvm::GlobalValue::PrivateLinkage,
+                karr_init, gv_name);
+            gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+            return gv;
+        }
+    }
+
+    // TODO: support more constant expressions (enum values, etc.)
     return nullptr;
 }
 
@@ -393,6 +541,35 @@ get_annotation_user_fields(const annotation_type& ann_type) {
 }
 
 /**
+ * Determine whether a field's annotation array elements should be GEP'd to
+ * __base_Annotation__.  This is true when the field type's array element is
+ * the base k::Annotation type (e.g. `const k::Annotation?[]`).  For typed
+ * annotation arrays (e.g. `const Tag?[]`), no GEP is needed.
+ */
+static bool field_needs_annotation_base_gep(const std::shared_ptr<member_variable_definition>& field) {
+    auto ftype = field->get_type();
+    if (!ftype) return false;
+    // Unwrap reference
+    auto inner = ftype;
+    if (type::is_reference(inner)) inner = inner->get_subtype();
+    // Unwrap const
+    inner = type::remove_const(inner);
+    // Unwrap array
+    if (!type::is_array(inner)) return false;
+    inner = inner->get_subtype();
+    // Unwrap view
+    if (!type::is_view(inner)) return false;
+    inner = inner->get_subtype();
+    // Unwrap const
+    inner = type::remove_const(inner);
+    // Check if the remaining type is the base k::Annotation struct
+    auto st = std::dynamic_pointer_cast<struct_type>(inner);
+    if (!st) return false;
+    // The base Annotation struct is named "k::Annotation"
+    return st->name() == "k::Annotation";
+}
+
+/**
  * Build an LLVM ConstantStruct for an annotation instance, filling in
  * field values from the AST annotation arguments.
  *
@@ -408,7 +585,9 @@ get_annotation_user_fields(const annotation_type& ann_type) {
 llvm::Constant* build_annotation_instance_constant(
     annotation_instance& ann_inst,
     annotation_type& ann_type,
-    const std::shared_ptr<context>& ctx)
+    const std::shared_ptr<context>& ctx,
+    unit* unit_ptr,
+    aggregate* parent_agg)
 {
     auto ann_st_type = ann_type.get_struct_type();
     if (!ann_st_type) return nullptr;
@@ -433,7 +612,8 @@ llvm::Constant* build_annotation_instance_constant(
     if (ast && ast->has_parens && !ast->args.empty()) {
         size_t count = std::min(ast->args.size(), user_fields.size());
         for (size_t i = 0; i < count; ++i) {
-            field_constants[i] = evaluate_ast_expr_to_constant(ast->args[i], ctx);
+            bool gep = field_needs_annotation_base_gep(user_fields[i]);
+            field_constants[i] = evaluate_ast_expr_to_constant(ast->args[i], ctx, unit_ptr, parent_agg, gep);
         }
     }
     // ── Designated brace init: @Ann{.field = val, ...} ──
@@ -445,14 +625,15 @@ llvm::Constant* build_annotation_instance_constant(
             // Find the matching user field
             for (size_t i = 0; i < user_fields.size(); ++i) {
                 if (user_fields[i]->get_short_name() == mem_name) {
+                    bool gep = field_needs_annotation_base_gep(user_fields[i]);
                     if (desig->is_call_form) {
                         // .field(val) — use first arg as the value
                         if (!desig->args.empty()) {
-                            field_constants[i] = evaluate_ast_expr_to_constant(desig->args[0], ctx);
+                            field_constants[i] = evaluate_ast_expr_to_constant(desig->args[0], ctx, unit_ptr, parent_agg, gep);
                         }
                     } else {
                         // .field = val
-                        field_constants[i] = evaluate_ast_expr_to_constant(desig->value, ctx);
+                        field_constants[i] = evaluate_ast_expr_to_constant(desig->value, ctx, unit_ptr, parent_agg, gep);
                     }
                     break;
                 }
@@ -464,7 +645,8 @@ llvm::Constant* build_annotation_instance_constant(
         size_t count = std::min(ast->brace_init->elements.size(), user_fields.size());
         for (size_t i = 0; i < count; ++i) {
             if (ast->brace_init->elements[i]) {
-                field_constants[i] = evaluate_ast_expr_to_constant(ast->brace_init->elements[i], ctx);
+                bool gep = field_needs_annotation_base_gep(user_fields[i]);
+                field_constants[i] = evaluate_ast_expr_to_constant(ast->brace_init->elements[i], ctx, unit_ptr, parent_agg, gep);
             }
         }
     }
@@ -1287,7 +1469,7 @@ void implementation_generator::visit_klass(klass& klass) {
 
                 // Build the constant struct with actual field values
                 llvm::Constant* ann_init = build_annotation_instance_constant(
-                    ann_inst, ann_type, _context);
+                    ann_inst, ann_type, _context, &_unit, &klass);
                 if (!ann_init) continue;
 
                 std::string ann_global_name = mangler::mangle_rtti(klass.get_name())

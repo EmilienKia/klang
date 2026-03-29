@@ -250,6 +250,12 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             _stm << std::endl;
         }
 
+        void visit_annotation_init_expr(ast::annotation_init_expr& expr) override {
+            if (expr.annotation) {
+                expr.annotation->visit(*this);
+            }
+        }
+
         void visit_enum_decl(ast::enum_decl& decl) override {
             prefix() << "enum " << decl.name.content;
             if (decl.base_name.has_value()) {

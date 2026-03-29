@@ -2625,6 +2625,18 @@ ast::expr_ptr parser::parse_primary_expr()
             throw_error(0x002B, _lexer.pick_current(), "Parenthesis expression expects closing parenthesis ')' after sub-expression");
         }
         return expr;
+    } else if (l == lex::punctuator::AT_SIGN) {
+        // Annotation initializer expression: @Name(...) used as a value
+        holder.rollback();
+        auto ann = parse_annotation_def();
+        if (!ann) {
+            throw_error(0x0082, _lexer.pick_current(), "Expected annotation type name after '@' in expression context");
+        }
+        return std::make_shared<ast::annotation_init_expr>(std::move(ann));
+    } else if (l == lex::punctuator::BRACE_OPEN) {
+        // Brace-init list as a primary expression: {expr, expr, ...}
+        auto open_brace = lex::as<lex::punctuator>(l);
+        return parse_brace_init_list(open_brace);
     } else {
         holder.rollback();
         return parse_identifier_expr();
