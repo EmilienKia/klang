@@ -317,6 +317,39 @@ void symbol_resolver::visit_function(function& fn) {
         param->accept(*this);
     }
 
+    // ── Resolve annotation instances and validate @Target ─────────────────
+    if (!fn.get_annotations().empty()) {
+        lex::opt_any_lexeme fn_lexeme;
+        if (auto ast_fd = fn.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+
+        resolve_and_validate_annotations(fn, fn, fn.get_short_name(), fn_lexeme, "FUNCTION");
+
+        // ── Warn about RUNTIME annotations on non-public functions ────────
+        // Non-public functions have no RTTI, so RUNTIME annotations won't be
+        // accessible at runtime.
+        bool has_rtti = (fn.get_visibility() == PUBLIC)
+                        && !std::dynamic_pointer_cast<constructor>(fn.shared_as<function>())
+                        && !std::dynamic_pointer_cast<destructor>(fn.shared_as<function>())
+                        && !std::dynamic_pointer_cast<static_constructor>(fn.shared_as<function>())
+                        && !std::dynamic_pointer_cast<static_destructor>(fn.shared_as<function>());
+        if (!has_rtti) {
+            for (auto& ann_inst : fn.get_annotations()) {
+                if (!ann_inst.resolved_type) continue;
+                if (!ann_inst.resolved_type->is_source_retention()) {
+                    std::string reason;
+                    if (fn.get_visibility() != PUBLIC) {
+                        reason = "non-public functions have no RTTI";
+                    } else {
+                        reason = "constructors and destructors have no Function RTTI";
+                    }
+                    warn(0x003D, fn_lexeme,
+                        "RUNTIME annotation '@{}' on '{}' will not be accessible at runtime; {}",
+                        {ann_inst.raw_name, fn.get_short_name(), reason});
+                }
+            }
+        }
+    }
+
     // Resolve redirect target if this is a redirected function
     if (fn.is_redirected()) {
         auto target_name = fn.get_redirect_target_name();

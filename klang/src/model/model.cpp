@@ -23,6 +23,7 @@
 #include "mangler.hpp"
 #include "tools/kdi_type_converter.hpp"
 
+#include "../parse/ast.hpp"
 #include "../common/tools.hpp"
 
 #include <kdi.hpp>  // kdi::kdi_file, kdi::kdi_namespace, kdi::kdi_function, …
@@ -707,6 +708,55 @@ std::shared_ptr<annotation_type> annotation_type::make_shared(std::shared_ptr<el
 
 void annotation_type::accept(model_visitor& visitor) {
     visitor.visit_annotation_type(*this);
+}
+
+bool annotation_type::is_source_retention() const {
+    for (auto& meta : get_annotations()) {
+        if (!meta.resolved_type) continue;
+        std::string meta_fqn = meta.resolved_type->get_fq_name();
+        if (meta_fqn != "k::annotations::Retention" && meta.raw_name != "Retention") continue;
+
+        // Examine the AST to find the Policy value
+        if (!meta.ast_node) continue;
+        auto* ast = meta.ast_node.get();
+
+        // Helper: check if an expression is Policy::SOURCE
+        auto is_source_expr = [](const k::parse::ast::expr_ptr& expr) -> bool {
+            if (auto ident = std::dynamic_pointer_cast<k::parse::ast::identifier_expr>(expr)) {
+                if (!ident->qident.names.empty()) {
+                    std::string last{ident->qident.names.back().content};
+                    return last == "SOURCE";
+                }
+            }
+            return false;
+        };
+
+        // @Retention(Policy::SOURCE) — positional arg
+        if (ast->has_parens && !ast->args.empty()) {
+            if (is_source_expr(ast->args[0])) return true;
+        }
+        // @Retention{.policy = Policy::SOURCE} or @Retention{.policy(Policy::SOURCE)}
+        else if (ast->brace_init && ast->brace_init->is_designated) {
+            for (auto& elem : ast->brace_init->elements) {
+                auto desig = std::dynamic_pointer_cast<k::parse::ast::designated_init_element>(elem);
+                if (!desig) continue;
+                std::string name{desig->member_name.content};
+                if (name != "policy") continue;
+                if (desig->is_call_form && !desig->args.empty()) {
+                    if (is_source_expr(desig->args[0])) return true;
+                } else if (desig->value) {
+                    if (is_source_expr(desig->value)) return true;
+                }
+            }
+        }
+        // @Retention{Policy::SOURCE} — positional brace-init
+        else if (ast->brace_init && !ast->brace_init->is_designated) {
+            if (!ast->brace_init->elements.empty()) {
+                if (is_source_expr(ast->brace_init->elements[0])) return true;
+            }
+        }
+    }
+    return false;
 }
 
 //

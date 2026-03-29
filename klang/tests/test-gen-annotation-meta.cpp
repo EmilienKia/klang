@@ -1874,3 +1874,277 @@ TEST_CASE("Meta-annotations: multiple annotations on same annotation type", "[an
 }
 
 
+// ════════════════════════════════════════════════════════════════════════════
+//  12. Function annotations — model level
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Function annotation: RUNTIME annotation on public function in model", "[annotation][function]") {
+    auto comp = compile_model(R"SRC(
+        module __test_fn_ann_1__;
+        annotation Marker {}
+        class Foo {
+            @Marker
+            bar() : int { return 42; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    auto fn = foo->get_function("bar");
+    REQUIRE(fn != nullptr);
+    auto& anns = fn->get_annotations();
+    REQUIRE(anns.size() == 1);
+    CHECK(anns[0].resolved_type != nullptr);
+    CHECK(anns[0].resolved_type->get_short_name() == "Marker");
+}
+
+TEST_CASE("Function annotation: SOURCE retention annotation kept in model", "[annotation][function][retention]") {
+    auto comp = compile_model(R"SRC(
+        module __test_fn_ann_src_1__;
+        annotation Src {
+            enum Policy { SOURCE; RUNTIME; };
+        }
+        @Src
+        annotation Retention {
+            policy : Policy;
+        }
+        @Retention(Policy::SOURCE)
+        annotation CompileHint {}
+        class Foo {
+            @CompileHint
+            bar() : int { return 1; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    auto fn = foo->get_function("bar");
+    REQUIRE(fn != nullptr);
+    auto& anns = fn->get_annotations();
+    // SOURCE annotations are kept in the model even if not emitted in binary
+    REQUIRE(anns.size() == 1);
+    CHECK(anns[0].resolved_type != nullptr);
+    CHECK(anns[0].resolved_type->get_short_name() == "CompileHint");
+    CHECK(anns[0].resolved_type->is_source_retention());
+}
+
+TEST_CASE("Function annotation: multiple annotations on same function", "[annotation][function]") {
+    auto comp = compile_model(R"SRC(
+        module __test_fn_ann_multi__;
+        annotation Alpha {}
+        annotation Beta {}
+        class Foo {
+            @Alpha @Beta
+            work() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    auto fn = foo->get_function("work");
+    REQUIRE(fn != nullptr);
+    CHECK(fn->get_annotations().size() == 2);
+}
+
+TEST_CASE("Function annotation: annotation on free function (namespace level)", "[annotation][function]") {
+    auto comp = compile_model(R"SRC(
+        module __test_fn_ann_free__;
+        annotation Tag {}
+        @Tag
+        doStuff() : int { return 7; }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto root = comp->get_unit()->get_root_namespace();
+    REQUIRE(root != nullptr);
+    auto fn = root->get_function("doStuff");
+    REQUIRE(fn != nullptr);
+    CHECK(fn->get_annotations().size() == 1);
+    CHECK(fn->get_annotations()[0].resolved_type->get_short_name() == "Tag");
+}
+
+TEST_CASE("Function annotation: @Target(FUNCTION) allows annotation on function", "[annotation][function][target]") {
+    auto comp = compile_model(R"SRC(
+        module __test_fn_ann_target_1__;
+        annotation TargetDef {
+            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; };
+        }
+        @TargetDef
+        annotation Target {
+            value : ElementType[];
+        }
+        @Target({ElementType::FUNCTION})
+        annotation FuncOnly {}
+        class Foo {
+            @FuncOnly
+            bar() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    auto fn = foo->get_function("bar");
+    REQUIRE(fn != nullptr);
+    CHECK(fn->get_annotations().size() == 1);
+}
+
+TEST_CASE("Function annotation: @Target(CLASS) rejects annotation on function", "[annotation][function][target]") {
+    // An annotation restricted to CLASS should not be applicable to a function
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __test_fn_ann_target_2__;
+        annotation TargetDef {
+            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; };
+        }
+        @TargetDef
+        annotation Target {
+            value : ElementType[];
+        }
+        @Target({ElementType::CLASS})
+        annotation ClassOnly {}
+        class Foo {
+            @ClassOnly
+            bar() : int { return 0; }
+        }
+    )SRC"), k::model::gen::resolution_error);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  13. Function annotations — RUNTIME annotation on non-RTTI functions
+//      (compilation succeeds with warning; annotation kept in model)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Function annotation: RUNTIME annotation on private function compiles (warning)", "[annotation][function][warning]") {
+    // A RUNTIME annotation on a private function is a warning (not an error).
+    // The annotation is still in the model.
+    auto comp = compile_model(R"SRC(
+        module __test_fn_ann_warn_priv__;
+        annotation Marker {}
+        class Foo {
+            @Marker
+            private bar() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    auto fn = foo->get_function("bar");
+    REQUIRE(fn != nullptr);
+    // Annotation is kept in the model despite the warning
+    REQUIRE(fn->get_annotations().size() == 1);
+    CHECK(fn->get_annotations()[0].resolved_type->get_short_name() == "Marker");
+}
+
+TEST_CASE("Function annotation: RUNTIME annotation on protected function compiles (warning)", "[annotation][function][warning]") {
+    auto comp = compile_model(R"SRC(
+        module __test_fn_ann_warn_prot__;
+        annotation Marker {}
+        class Foo {
+            @Marker
+            protected bar() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    auto fn = foo->get_function("bar");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn->get_annotations().size() == 1);
+    CHECK(fn->get_annotations()[0].resolved_type->get_short_name() == "Marker");
+}
+
+TEST_CASE("Function annotation: RUNTIME annotation on public function — no issue", "[annotation][function]") {
+    auto comp = compile_model(R"SRC(
+        module __test_fn_ann_no_warn_pub__;
+        annotation Marker {}
+        class Foo {
+            @Marker
+            bar() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    auto fn = foo->get_function("bar");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn->get_annotations().size() == 1);
+    CHECK(fn->get_annotations()[0].resolved_type->get_short_name() == "Marker");
+    CHECK_FALSE(fn->get_annotations()[0].resolved_type->is_source_retention());
+}
+
+TEST_CASE("Function annotation: SOURCE annotation on private function — no warning", "[annotation][function][retention]") {
+    auto comp = compile_model(R"SRC(
+        module __test_fn_ann_no_warn_src__;
+        annotation Src {
+            enum Policy { SOURCE; RUNTIME; };
+        }
+        @Src
+        annotation Retention {
+            policy : Policy;
+        }
+        @Retention(Policy::SOURCE)
+        annotation CompileOnly {}
+        class Foo {
+            @CompileOnly
+            private bar() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    auto fn = foo->get_function("bar");
+    REQUIRE(fn != nullptr);
+    // SOURCE annotation is in the model
+    REQUIRE(fn->get_annotations().size() == 1);
+    CHECK(fn->get_annotations()[0].resolved_type->is_source_retention());
+}
+
+TEST_CASE("Function annotation: RUNTIME annotation on constructor compiles (warning)", "[annotation][function][warning]") {
+    auto comp = compile_model(R"SRC(
+        module __test_fn_ann_warn_ctor__;
+        annotation Marker {}
+        class Foo {
+            @Marker
+            Foo() {}
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    // Constructor's annotation is in the model
+    auto& ctors = foo->constructors();
+    REQUIRE(!ctors.empty());
+    REQUIRE(ctors[0]->get_annotations().size() == 1);
+    CHECK(ctors[0]->get_annotations()[0].resolved_type->get_short_name() == "Marker");
+}
+
+TEST_CASE("Function annotation: RUNTIME annotation on destructor compiles (warning)", "[annotation][function][warning]") {
+    auto comp = compile_model(R"SRC(
+        module __test_fn_ann_warn_dtor__;
+        annotation Marker {}
+        class Foo {
+            @Marker
+            ~Foo() {}
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    // Destructor's annotation is in the model
+    auto dtor = foo->get_destructor();
+    REQUIRE(dtor != nullptr);
+    REQUIRE(dtor->get_annotations().size() == 1);
+    CHECK(dtor->get_annotations()[0].resolved_type->get_short_name() == "Marker");
+}
+
+

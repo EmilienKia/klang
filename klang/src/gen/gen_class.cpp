@@ -117,66 +117,6 @@ namespace k::model::gen {
 
 namespace {
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Meta-annotation semantic helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Check whether an annotation type has @Retention(Policy::SOURCE) — meaning its
- * instances should NOT be emitted into the binary RTTI.
- *
- * Returns true if the annotation type explicitly specifies SOURCE retention.
- * Returns false (RUNTIME) if @Retention is absent or set to RUNTIME.
- */
-static bool is_source_retention(const annotation_type& ann_type) {
-    for (auto& meta : ann_type.get_annotations()) {
-        if (!meta.resolved_type) continue;
-        std::string meta_fqn = meta.resolved_type->get_fq_name();
-        if (meta_fqn != "k::annotations::Retention" && meta.raw_name != "Retention") continue;
-
-        // Examine the AST to find the Policy value
-        if (!meta.ast_node) continue;
-        auto* ast = meta.ast_node.get();
-
-        // Helper: check if an expression is Policy::SOURCE
-        auto is_source_expr = [](const k::parse::ast::expr_ptr& expr) -> bool {
-            if (auto ident = std::dynamic_pointer_cast<k::parse::ast::identifier_expr>(expr)) {
-                if (!ident->qident.names.empty()) {
-                    std::string last{ident->qident.names.back().content};
-                    return last == "SOURCE";
-                }
-            }
-            return false;
-        };
-
-        // @Retention(Policy::SOURCE) — positional arg
-        if (ast->has_parens && !ast->args.empty()) {
-            if (is_source_expr(ast->args[0])) return true;
-        }
-        // @Retention{.policy = Policy::SOURCE} or @Retention{.policy(Policy::SOURCE)}
-        else if (ast->brace_init && ast->brace_init->is_designated) {
-            for (auto& elem : ast->brace_init->elements) {
-                auto desig = std::dynamic_pointer_cast<k::parse::ast::designated_init_element>(elem);
-                if (!desig) continue;
-                std::string name{desig->member_name.content};
-                if (name != "policy") continue;
-                if (desig->is_call_form && !desig->args.empty()) {
-                    if (is_source_expr(desig->args[0])) return true;
-                } else if (desig->value) {
-                    if (is_source_expr(desig->value)) return true;
-                }
-            }
-        }
-        // @Retention{Policy::SOURCE} — positional brace-init
-        else if (ast->brace_init && !ast->brace_init->is_designated) {
-            if (!ast->brace_init->elements.empty()) {
-                if (is_source_expr(ast->brace_init->elements[0])) return true;
-            }
-        }
-    }
-    return false;
-}
-
 /**
  * True if two non-static member functions have the same virtual signature.
  * The const-qualification of 'this' is part of the signature: a mutable
@@ -1706,7 +1646,7 @@ void implementation_generator::visit_klass(klass& klass) {
                 auto& ann_type = *ann_inst.resolved_type;
 
                 // @Retention(Policy::SOURCE) — skip, not emitted into binary
-                if (is_source_retention(ann_type)) continue;
+                if (ann_type.is_source_retention()) continue;
 
                 if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) continue;
 
@@ -2578,7 +2518,7 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
             auto& ann_type = *ann_inst.resolved_type;
 
             // @Retention(Policy::SOURCE) — skip, not emitted into binary
-            if (is_source_retention(ann_type)) continue;
+            if (ann_type.is_source_retention()) continue;
 
             if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) continue;
 

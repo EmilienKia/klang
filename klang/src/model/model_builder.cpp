@@ -695,6 +695,18 @@ namespace k::model {
         // Wire AST function_decl to the model function
         function->set_ast_function_decl(func.shared_as<parse::ast::function_decl>());
 
+        // Populate annotation instances from the AST annotation list
+        for (auto& ast_ann : func.annotations) {
+            if (ast_ann && ast_ann->name) {
+                std::string raw_name;
+                for (size_t i = 0; i < ast_ann->name->names.size(); ++i) {
+                    if (i > 0) raw_name += "::";
+                    raw_name += std::string{ast_ann->name->names[i].content};
+                }
+                function->add_annotation(model::annotation_instance{std::move(raw_name), ast_ann});
+            }
+        }
+
         // Propagate operator flag
         if (func.is_operator) {
             function->set_operator(true);

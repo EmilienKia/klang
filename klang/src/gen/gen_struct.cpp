@@ -36,6 +36,114 @@
 
 namespace k::model::gen {
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared annotation resolution & @Target validation
+// ─────────────────────────────────────────────────────────────────────────────
+
+void symbol_resolver::resolve_and_validate_annotations(
+    annotation_holder& holder,
+    element& scope,
+    const std::string& element_name,
+    const lex::opt_any_lexeme& err_lexeme,
+    const std::string& element_kind)
+{
+    // ── Phase 1: resolve each annotation_instance to a concrete annotation_type
+    for (auto& ann_inst : holder.get_annotations_mutable()) {
+        if (ann_inst.resolved_type) continue; // already resolved
+
+        // Look up by name in local scope
+        auto ann_agg = scope_lookup::lookup_structure(scope.shared_as<element>(), ann_inst.raw_name);
+        if (!ann_agg) {
+            // Try imported modules
+            std::vector<std::string> parts;
+            std::size_t start = 0;
+            while (true) {
+                auto pos = ann_inst.raw_name.find("::", start);
+                if (pos == std::string::npos) {
+                    parts.push_back(ann_inst.raw_name.substr(start));
+                    break;
+                }
+                parts.push_back(ann_inst.raw_name.substr(start, pos - start));
+                start = pos + 2;
+            }
+            k::name qname{false, parts};
+            if (auto imp_agg = _unit.get_or_create_imported_aggregate(qname, _context)) {
+                ann_agg = std::dynamic_pointer_cast<aggregate>(imp_agg);
+            }
+        }
+        if (!ann_agg) {
+            throw_error(0x003A, err_lexeme,
+                "Annotation type '{}' not found on '{}'",
+                std::vector<std::string>{ann_inst.raw_name, element_name});
+        }
+        auto ann_type = std::dynamic_pointer_cast<annotation_type>(ann_agg);
+        if (!ann_type) {
+            throw_error(0x003B, err_lexeme,
+                "'{}' is not an annotation type; only annotation types can be used as annotations",
+                std::vector<std::string>{ann_inst.raw_name});
+        }
+        ann_inst.resolved_type = ann_type;
+    }
+
+    // ── Phase 2: validate @Target constraints on resolved annotations
+    for (auto& ann_inst : holder.get_annotations_mutable()) {
+        if (!ann_inst.resolved_type) continue;
+
+        auto& ann_type_anns = ann_inst.resolved_type->get_annotations();
+        for (auto& meta : ann_type_anns) {
+            if (!meta.resolved_type) continue;
+            std::string meta_fqn = meta.resolved_type->get_fq_name();
+            if (meta_fqn != "k::annotations::Target" && meta.raw_name != "Target") continue;
+
+            if (!meta.ast_node) continue;
+            auto* ast = meta.ast_node.get();
+
+            // Collect allowed element type names from the AST
+            std::vector<std::string> allowed_types;
+
+            auto collect_from_brace = [&](const std::shared_ptr<k::parse::ast::brace_init_list>& brace) {
+                if (!brace) return;
+                for (auto& elem : brace->elements) {
+                    if (auto ident = std::dynamic_pointer_cast<k::parse::ast::identifier_expr>(elem)) {
+                        if (!ident->qident.names.empty()) {
+                            allowed_types.push_back(std::string{ident->qident.names.back().content});
+                        }
+                    }
+                }
+            };
+
+            // @Target({...}) — positional arg with brace-init list
+            if (ast->has_parens && !ast->args.empty()) {
+                if (auto brace = std::dynamic_pointer_cast<k::parse::ast::brace_init_list>(ast->args[0])) {
+                    collect_from_brace(brace);
+                }
+            }
+            // @Target{...} — brace-init
+            else if (ast->brace_init) {
+                collect_from_brace(ast->brace_init);
+            }
+
+            if (!allowed_types.empty()) {
+                bool found = false;
+                for (auto& allowed : allowed_types) {
+                    if (allowed == element_kind) { found = true; break; }
+                }
+                if (!found) {
+                    std::string allowed_str;
+                    for (size_t i = 0; i < allowed_types.size(); ++i) {
+                        if (i > 0) allowed_str += ", ";
+                        allowed_str += allowed_types[i];
+                    }
+                    throw_error(0x003C, err_lexeme,
+                        "Annotation @{} cannot be applied to {} '{}': "
+                        "@Target restricts it to [{}]",
+                        std::vector<std::string>{ann_inst.raw_name, element_kind, element_name, allowed_str});
+                }
+            }
+        }
+    }
+}
+
 //
 // Aggregate / Structure / Klass
 //
@@ -447,131 +555,19 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
     }
     // Note: class-specific processing (vtable) is done in visit_klass
 
-    // ── Resolve annotation instances ─────────────────────────────────────────
-    // For each annotation_instance on this aggregate, resolve the raw_name to
-    // a concrete annotation_type.
-    for (auto& ann_inst : st.get_annotations_mutable()) {
-        if (ann_inst.resolved_type) continue; // already resolved
-        // Look up the annotation type by name
-        auto ann_agg = scope_lookup::lookup_structure(st.shared_as<element>(), ann_inst.raw_name);
-        if (!ann_agg) {
-            // Try imported modules
-            std::vector<std::string> parts;
-            std::size_t start = 0;
-            while (true) {
-                auto pos = ann_inst.raw_name.find("::", start);
-                if (pos == std::string::npos) {
-                    parts.push_back(ann_inst.raw_name.substr(start));
-                    break;
-                }
-                parts.push_back(ann_inst.raw_name.substr(start, pos - start));
-                start = pos + 2;
-            }
-            k::name qname{false, parts};
-            if (auto imp_agg = _unit.get_or_create_imported_aggregate(qname, _context)) {
-                ann_agg = std::dynamic_pointer_cast<aggregate>(imp_agg);
-            }
+    // ── Resolve annotation instances and validate @Target ─────────────────────
+    {
+        std::string element_kind;
+        if (st.is_annotation()) {
+            element_kind = "ANNOTATION";
+        } else if (std::dynamic_pointer_cast<model::interface>(st.shared_as<element>())) {
+            element_kind = "INTERFACE";
+        } else if (st.is_class()) {
+            element_kind = "CLASS";
+        } else {
+            element_kind = "STRUCT";
         }
-        if (!ann_agg) {
-            throw_error(0x003A, st_lexeme,
-                "Annotation type '{}' not found on '{}'",
-                {ann_inst.raw_name, st.get_short_name()});
-        }
-        auto ann_type = std::dynamic_pointer_cast<annotation_type>(ann_agg);
-        if (!ann_type) {
-            throw_error(0x003B, st_lexeme,
-                "'{}' is not an annotation type; only annotation types can be used as annotations",
-                {ann_inst.raw_name});
-        }
-        ann_inst.resolved_type = ann_type;
-    }
-
-    // ── Validate @Target constraints on resolved annotations ──────────────
-    // For each annotation on this aggregate, check whether the annotation type
-    // itself carries a @Target meta-annotation. If it does, verify that the
-    // current aggregate's kind (CLASS, INTERFACE, ANNOTATION) is in the
-    // allowed target list.
-    // Well-known meta-annotation types are identified by fully qualified name:
-    //   k::annotations::Target    → contains ElementType[] value
-    //   k::annotations::Inherited → marker, no fields
-    //   k::annotations::Retention → contains Policy policy
-    for (auto& ann_inst : st.get_annotations_mutable()) {
-        if (!ann_inst.resolved_type) continue;
-
-        // Check if the annotation type itself has @Target
-        auto& ann_type_anns = ann_inst.resolved_type->get_annotations();
-        for (auto& meta : ann_type_anns) {
-            if (!meta.resolved_type) continue;
-            std::string meta_fqn = meta.resolved_type->get_fq_name();
-            if (meta_fqn == "k::annotations::Target" || meta.raw_name == "Target") {
-                // Parse the @Target value to get allowed element types
-                // The value field is an ElementType[] (a brace init list of enum entries)
-                // Look at the AST args of the @Target instance
-                if (!meta.ast_node) continue;
-                auto* ast = meta.ast_node.get();
-
-                // Collect allowed element type names from the AST
-                std::vector<std::string> allowed_types;
-
-                auto collect_from_brace = [&](const std::shared_ptr<k::parse::ast::brace_init_list>& brace) {
-                    if (!brace) return;
-                    for (auto& elem : brace->elements) {
-                        if (auto ident = std::dynamic_pointer_cast<k::parse::ast::identifier_expr>(elem)) {
-                            if (!ident->qident.names.empty()) {
-                                allowed_types.push_back(std::string{ident->qident.names.back().content});
-                            }
-                        }
-                    }
-                };
-
-                // @Target({...}) — positional arg with brace-init list
-                if (ast->has_parens && !ast->args.empty()) {
-                    if (auto brace = std::dynamic_pointer_cast<k::parse::ast::brace_init_list>(ast->args[0])) {
-                        collect_from_brace(brace);
-                    }
-                }
-                // @Target{...} — brace-init
-                else if (ast->brace_init) {
-                    collect_from_brace(ast->brace_init);
-                }
-
-                // If @Target specified but empty → error on the annotation type definition itself
-                // (This is validated when the annotation type is defined, not here)
-
-                if (!allowed_types.empty()) {
-                    // Determine what kind the current aggregate is
-                    std::string kind;
-                    if (st.is_annotation()) {
-                        kind = "ANNOTATION";
-                    } else if (std::dynamic_pointer_cast<model::interface>(st.shared_as<element>())) {
-                        kind = "INTERFACE";
-                    } else if (st.is_class()) {
-                        kind = "CLASS";
-                    } else {
-                        kind = "STRUCT"; // structs are not in ElementType — never allowed if @Target specified
-                    }
-
-                    bool found = false;
-                    for (auto& allowed : allowed_types) {
-                        if (allowed == kind) { found = true; break; }
-                    }
-                    if (!found) {
-                        throw_error(0x003C, st_lexeme,
-                            "Annotation @{} cannot be applied to {} '{}': "
-                            "@Target restricts it to [{}]",
-                            {ann_inst.raw_name, kind, st.get_short_name(),
-                             [&]() {
-                                 std::string s;
-                                 for (size_t i = 0; i < allowed_types.size(); ++i) {
-                                     if (i > 0) s += ", ";
-                                     s += allowed_types[i];
-                                 }
-                                 return s;
-                             }()});
-                    }
-                }
-            }
-        }
+        resolve_and_validate_annotations(st, st, st.get_short_name(), st_lexeme, element_kind);
     }
 
     // ── Propagate @Inherited annotations from base classes ────────────────

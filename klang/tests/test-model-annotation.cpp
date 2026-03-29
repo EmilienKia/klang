@@ -469,3 +469,158 @@ TEST_CASE("Model: meta-annotation with members has resolved_field_constants", "[
     CHECK(anns[0].resolved_field_constants.size() == 2);
 }
 
+
+// ════════════════════════════════════════════════════════════════════════════
+//  annotation_type::is_source_retention()
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Model: is_source_retention() returns false when no @Retention", "[model][annotation][retention]") {
+    auto comp = compile_model(R"SRC(
+        module __test_src_ret_1__;
+        annotation Marker {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "Marker");
+    REQUIRE(ann != nullptr);
+    // Default retention is RUNTIME → is_source_retention() must return false
+    CHECK_FALSE(ann->is_source_retention());
+}
+
+TEST_CASE("Model: is_source_retention() returns true for @Retention(Policy::SOURCE) positional", "[model][annotation][retention]") {
+    auto comp = compile_model(R"SRC(
+        module __test_src_ret_2__;
+        annotation Src {
+            enum Policy { SOURCE; RUNTIME; };
+        }
+        @Src
+        annotation Retention {
+            policy : Policy;
+        }
+        @Retention(Policy::SOURCE)
+        annotation CompileOnly {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "CompileOnly");
+    REQUIRE(ann != nullptr);
+    CHECK(ann->is_source_retention());
+}
+
+TEST_CASE("Model: is_source_retention() returns false for @Retention(Policy::RUNTIME) positional", "[model][annotation][retention]") {
+    auto comp = compile_model(R"SRC(
+        module __test_src_ret_3__;
+        annotation Src {
+            enum Policy { SOURCE; RUNTIME; };
+        }
+        @Src
+        annotation Retention {
+            policy : Policy;
+        }
+        @Retention(Policy::RUNTIME)
+        annotation RunOnly {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "RunOnly");
+    REQUIRE(ann != nullptr);
+    CHECK_FALSE(ann->is_source_retention());
+}
+
+TEST_CASE("Model: is_source_retention() returns true for @Retention{Policy::SOURCE} brace-init", "[model][annotation][retention]") {
+    auto comp = compile_model(R"SRC(
+        module __test_src_ret_4__;
+        annotation Src {
+            enum Policy { SOURCE; RUNTIME; };
+        }
+        @Src
+        annotation Retention {
+            policy : Policy;
+        }
+        @Retention{Policy::SOURCE}
+        annotation BraceSource {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "BraceSource");
+    REQUIRE(ann != nullptr);
+    CHECK(ann->is_source_retention());
+}
+
+TEST_CASE("Model: is_source_retention() returns true for @Retention{.policy = Policy::SOURCE} designated", "[model][annotation][retention]") {
+    auto comp = compile_model(R"SRC(
+        module __test_src_ret_5__;
+        annotation Src {
+            enum Policy { SOURCE; RUNTIME; };
+        }
+        @Src
+        annotation Retention {
+            policy : Policy;
+        }
+        @Retention{.policy = Policy::SOURCE}
+        annotation DesignSource {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "DesignSource");
+    REQUIRE(ann != nullptr);
+    CHECK(ann->is_source_retention());
+}
+
+TEST_CASE("Model: is_source_retention() returns true for @Retention{.policy(Policy::SOURCE)} call form", "[model][annotation][retention]") {
+    auto comp = compile_model(R"SRC(
+        module __test_src_ret_6__;
+        annotation Src {
+            enum Policy { SOURCE; RUNTIME; };
+        }
+        @Src
+        annotation Retention {
+            policy : Policy;
+        }
+        @Retention{.policy(Policy::SOURCE)}
+        annotation CallSource {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "CallSource");
+    REQUIRE(ann != nullptr);
+    CHECK(ann->is_source_retention());
+}
+
+TEST_CASE("Model: is_source_retention() returns false for @Retention{.policy = Policy::RUNTIME}", "[model][annotation][retention]") {
+    auto comp = compile_model(R"SRC(
+        module __test_src_ret_7__;
+        annotation Src {
+            enum Policy { SOURCE; RUNTIME; };
+        }
+        @Src
+        annotation Retention {
+            policy : Policy;
+        }
+        @Retention{.policy = Policy::RUNTIME}
+        annotation DesignRuntime {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "DesignRuntime");
+    REQUIRE(ann != nullptr);
+    CHECK_FALSE(ann->is_source_retention());
+}
+
+TEST_CASE("Model: is_source_retention() on annotation with unrelated meta-annotations", "[model][annotation][retention]") {
+    auto comp = compile_model(R"SRC(
+        module __test_src_ret_8__;
+        annotation Unrelated {}
+        @Unrelated
+        annotation Foo {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto ann = find_annotation_type(comp, "Foo");
+    REQUIRE(ann != nullptr);
+    // @Unrelated is not @Retention → default RUNTIME
+    CHECK_FALSE(ann->is_source_retention());
+}
+
+
+

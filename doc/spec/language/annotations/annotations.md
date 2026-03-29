@@ -3,7 +3,8 @@
 [← Index](../index.md) · [Classes](../structs/classes.md)
 
 An **annotation** is a user-defined metadata type that can be attached to
-aggregate declarations (classes, interfaces, and other annotations).
+aggregate declarations (classes, interfaces, and other annotations) and
+function declarations.
 At runtime, the annotation instances are accessible through the RTTI system
 and can be inspected by user code.
 
@@ -167,8 +168,9 @@ Annotations can be applied to:
 | `class` | ✓ |
 | `interface` | ✓ |
 | `annotation` | ✓ |
+| Function (member or free) | ✓ (public functions with RTTI) |
+| Constructor / Destructor | ✓ (SOURCE retention only — no Function RTTI) |
 | `struct` | ✗ (error — structs have no vtable/RTTI) |
-| Function | ✗ (future) |
 | Variable | ✗ (future) |
 | Parameter | ✗ (future) |
 
@@ -484,7 +486,7 @@ Inner enums with array fields:
 
 ```k
 annotation Target {
-    enum ElementType { CLASS; INTERFACE; ANNOTATION; };
+    enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; };
     value : ElementType[];
 }
 
@@ -668,7 +670,7 @@ applied. The compiler enforces this constraint at compile time.
 @Retention(Policy::RUNTIME)
 @Target({ElementType::ANNOTATION})
 annotation Target {
-    enum ElementType { CLASS; INTERFACE; ANNOTATION; };
+    enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; };
     value : ElementType[];
 }
 ```
@@ -680,12 +682,13 @@ annotation Target {
 | `CLASS` | 0 | A `class` declaration. |
 | `INTERFACE` | 1 | An `interface` declaration. |
 | `ANNOTATION` | 2 | An `annotation` type declaration. |
+| `FUNCTION` | 3 | A function declaration (member or free). |
 
 #### Rules
 
 | Rule | Description |
 |------|-------------|
-| **Absent `@Target`** | If `@Target` is not present on an annotation type, the annotation can be applied to **any** supported element type (class, interface, or annotation). |
+| **Absent `@Target`** | If `@Target` is not present on an annotation type, the annotation can be applied to **any** supported element type (class, interface, annotation, or function). |
 | **Enforcement** | When `@Target` is present, applying the annotation to an element type not in the `value` array causes a compile-time error (`0x003C`). |
 | **Multiple targets** | The `value` array can contain any combination of `ElementType` entries: `@Target({ElementType::CLASS, ElementType::INTERFACE})`. |
 | **Self-applicable** | `@Target` is itself restricted to `ANNOTATION` targets (it can only be applied to annotation types). |

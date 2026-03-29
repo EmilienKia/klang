@@ -530,18 +530,21 @@ void implementation_generator::visit_unit(unit &unit) {
                 if (fn->is_static()) fn_flags |= 4;
                 // is_member = false for free functions (bit 3 = 0)
 
-                // Build the Function struct: { ptr vptr, ptr vptr_Object, ptr name, ptr fullName, ptr owner, i32 flags }
+                // Build the Function struct: { ptr vptr, ptr vptr_Object, ptr name, ptr fullName, ptr owner, i32 flags, ptr annotations }
                 // K implicitly adds Object as a base class for all classes, so Function
                 // has an Object sub-object at field 1 (containing the Object vptr).
+                // Note: annotation materialization for free functions will be added when
+                // build_annotation_instance_constant is refactored into a shared utility.
                 llvm::StructType* fn_rtti_type = llvm::StructType::get(
-                    llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, /*isPacked=*/false);
+                    llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty}, /*isPacked=*/false);
                 std::vector<llvm::Constant*> fn_init = {
                     func_vt_or_null,                       // __vptr__ (Function primary vtable)
                     null_ptr,                              // __vptr_Object__ (Object sub-object; null — no Object dispatch needed)
                     fn_name_gv,                            // name
                     fn_fullname_gv,                        // fullName
                     null_ptr,                              // owner (null for free functions)
-                    llvm::ConstantInt::get(i32_ty, fn_flags)  // flags
+                    llvm::ConstantInt::get(i32_ty, fn_flags),  // flags
+                    null_ptr                               // annotations (TODO: materialize for free functions)
                 };
                 llvm::Constant* fn_const = llvm::ConstantStruct::get(fn_rtti_type, fn_init);
                 auto* fn_gv = new llvm::GlobalVariable(

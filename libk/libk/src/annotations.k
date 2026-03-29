@@ -97,11 +97,13 @@ annotation Target {
      * CLASS      -- a class declaration (keyword 'class').
      * INTERFACE  -- an interface declaration (keyword 'interface').
      * ANNOTATION -- an annotation type declaration (keyword 'annotation').
+     * FUNCTION   -- a function declaration (member or free function).
      */
     enum ElementType {
         CLASS;
         INTERFACE;
         ANNOTATION;
+        FUNCTION;
     };
 
     /* The set of element types on which the annotated annotation is allowed. */

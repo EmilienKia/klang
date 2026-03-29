@@ -243,17 +243,19 @@ pointer from the annotation instance's vtable.
 
 ```k
 final const class Function {
-    name     : const char[]?;
-    fullName : const char[]?;
-    owner    : const AggregateType?;
-    flags    : unsigned int;
+    name        : const char[]?;
+    fullName    : const char[]?;
+    owner       : const AggregateType?;
+    flags       : unsigned int;
+    annotations : const Annotation?[]?;
 
-    const getName()       : const char[]?;
-    const getFullName()   : const char[]?;
-    const getOwner()      : const AggregateType?;
-    const getVisibility() : Visibility;
-    const isStatic()      : bool;
-    const isMember()      : bool;
+    const getName()        : const char[]?;
+    const getFullName()    : const char[]?;
+    const getOwner()       : const AggregateType?;
+    const getVisibility()  : Visibility;
+    const isStatic()       : bool;
+    const isMember()       : bool;
+    const getAnnotations() : const Annotation?[]?;
 }
 ```
 
@@ -279,6 +281,7 @@ function, not a type.
 | `fullName` | `const char[]?` | Fully qualified name (e.g. `"::mymod::Foo::bar"`). |
 | `owner` | `const AggregateType?` | Enclosing class or interface, or `null` for free functions. |
 | `flags` | `unsigned int` | Packed bit-flags (see below). |
+| `annotations` | `const Annotation?[]?` | Annotations applied to this function, or `null` if none. |
 
 ### Methods
 
@@ -290,6 +293,7 @@ function, not a type.
 | `getVisibility()` | `Visibility` | Declared visibility (currently always `PUBLIC`). |
 | `isStatic()` | `bool` | `true` if the function is declared `static`. |
 | `isMember()` | `bool` | `true` if the function is a member of a class or interface. |
+| `getAnnotations()` | `const Annotation?[]?` | Annotations applied to this function, or `null`. |
 
 ### Flags layout
 

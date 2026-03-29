@@ -88,6 +88,7 @@ final const class Function {
     fullName : const char[]?;
     owner : const AggregateType?;
     flags : unsigned int;
+    annotations : const Annotation?[]?;
 
     /**
      * Internal bit-flag layout for the 'flags' field.
@@ -140,6 +141,14 @@ final const class Function {
      */
     const isMember() : bool {
         return (flags & 8u) != 0u;
+    }
+
+    /**
+     * Return the annotations applied to this function.
+     * Returns null if the function has no annotations.
+     */
+    const getAnnotations() : const Annotation?[]? {
+        return annotations;
     }
 }
 

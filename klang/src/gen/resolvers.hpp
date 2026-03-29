@@ -244,6 +244,24 @@ protected:
      */
     void check_variable_visibility(const variable_definition& var, const element& access_site);
 
+    /**
+     * Resolve and validate annotation instances on any annotation_holder.
+     * - Looks up each annotation type by name (local scope + imports).
+     * - Validates that the target is an annotation_type.
+     * - Enforces @Target constraints (element_kind must be in the allowed list).
+     *
+     * @param holder       The annotation_holder carrying unresolved annotation instances.
+     * @param scope        The element used as the starting scope for type lookups.
+     * @param err_lexeme   Lexeme used for error location reporting.
+     * @param element_kind The kind string for @Target validation: "CLASS", "INTERFACE", "ANNOTATION", "FUNCTION", etc.
+     */
+    void resolve_and_validate_annotations(
+        annotation_holder& holder,
+        element& scope,
+        const std::string& element_name,
+        const lex::opt_any_lexeme& err_lexeme,
+        const std::string& element_kind);
+
     void visit_named_element(named_element&);
 
     void visit_unit(unit&) override;

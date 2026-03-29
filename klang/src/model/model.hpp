@@ -1212,6 +1212,13 @@ public:
     bool has_vtable() const override { return _vtable != nullptr; }
     std::shared_ptr<vtable_layout> get_vtable() const override { return _vtable; }
 
+    /**
+     * Check whether this annotation type has @Retention(Policy::SOURCE).
+     * Returns true if the type explicitly specifies SOURCE retention.
+     * Returns false (RUNTIME) if @Retention is absent or set to RUNTIME.
+     */
+    bool is_source_retention() const;
+
     void set_vtable(std::shared_ptr<vtable_layout> vt) { _vtable = std::move(vt); }
 
     std::shared_ptr<member_variable_definition> get_vptr() const { return _vptr; }
@@ -1388,7 +1395,7 @@ public:
     }
 };
 
-class function : public element, public named_element, public variable_holder {
+class function : public element, public named_element, public variable_holder, public annotation_holder {
 public:
     /**
      * Aliasing specifier for function declarations.

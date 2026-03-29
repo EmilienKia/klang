@@ -983,6 +983,8 @@ namespace k::parse {
             /** Specifier for function-aliasing declarations (-> default ; / -> delete ; / -> target ;). */
             enum class aliasing_spec_t { NONE, DEFAULT, DELETE, REDIRECT };
 
+            /** Annotations applied to this function (parsed before specifiers). */
+            annotation_def_list annotations;
             std::vector<lex::keyword> specifiers;
             lex::identifier name;
             std::shared_ptr<ast::type_specifier> type;

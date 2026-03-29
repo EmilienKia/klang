@@ -758,6 +758,9 @@ std::shared_ptr<ast::qualified_identifier> parser::parse_qualified_identifier()
 std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     lex::lex_holder holder(_lexer);
 
+    // Parse leading annotation definitions (before specifiers, same as aggregate_decl)
+    ast::annotation_def_list annotations = parse_annotation_defs();
+
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
     // Consume optional 'fun' keyword (lexed as identifier) — syntactic sugar for function declarations
@@ -1278,6 +1281,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 }
                 auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), params, aliasing);
                 decl->is_operator = is_operator;
+                decl->annotations = std::move(annotations);
                 return decl;
             }
 
@@ -1328,8 +1332,10 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             if(auto lsemi = _lexer.get(); lsemi != lex::punctuator::SEMICOLON) {
                 throw_error(0x004C, _lexer.pick_current(), "Function redirect declaration expects ';' after target");
             }
-            return std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params,
+            auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params,
                 redirect_target, redirect_param_types, redirect_has_param_types);
+            decl->annotations = std::move(annotations);
+            return decl;
         }
         alias_holder.rollback();
 
@@ -1343,6 +1349,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 // Return a function_decl with no body and no aliasing
                 auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, nullptr, is_destructor);
                 decl->is_operator = is_operator;
+                decl->annotations = std::move(annotations);
                 return decl;
             }
             semi_holder.rollback();
@@ -1352,6 +1359,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     }
     auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, statements, is_destructor);
     decl->is_operator = is_operator;
+    decl->annotations = std::move(annotations);
     if (has_named_return) {
         decl->has_named_return = true;
         decl->return_var_name = return_var_name;
