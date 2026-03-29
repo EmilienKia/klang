@@ -153,6 +153,22 @@ final const class Function {
 }
 
 /**
+ * RTTI constructor descriptor.
+ * This class describes a constructor at runtime.
+ * Currently only exposes the number of parameters.
+ */
+final const class Constructor {
+    paramCount : int;
+
+    /**
+     * Return the number of parameters of this constructor (excluding 'this').
+     */
+    const getParamCount() : int {
+        return paramCount;
+    }
+}
+
+/**
  * RTTI interface descriptor.
  * This class is used to describe interfaces at runtime.
  */
@@ -347,6 +363,15 @@ final const class Class : public AggregateType {
         return __k_class_get_functions(this);
     }
 
+    /**
+     * Return the public constructors of this class, if any.
+     * Each element is a Constructor descriptor.
+     * Reads the constructors field from the RTTI struct via a C runtime helper.
+     */
+    const getConstructors() : const Constructor?[]? {
+        return __k_class_get_constructors(this);
+    }
+
 }
 
 /**
@@ -490,6 +515,14 @@ extern __k_class_get_functions(rtti : const Class&) : const Function?[]?;
  * Interface& directly to avoid base-class pointer adjustment.
  */
 extern __k_iface_get_functions(rtti : const Interface&) : const Function?[]?;
+
+/**
+ * C runtime helper: extract the constructors array from a Class RTTI global.
+ * Implemented in rtti.c. Reads field index 11 of the RTTI struct.
+ * Takes a Class& directly (not AggregateType&) to avoid base-class pointer
+ * adjustment that would shift the pointer away from the struct start.
+ */
+extern __k_class_get_constructors(rtti : const Class&) : const Constructor?[]?;
 
 /**
  * Annotation — root base class for all K annotation instances.

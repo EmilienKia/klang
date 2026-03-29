@@ -97,6 +97,7 @@ set(KLANG_STDLIB_LIB_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
 # ─────────────────────────────────────────────────────────────────────────────
 add_executable(libk-tests
     tests/test-rtti.cpp
+    tests/test-rtti-constructors.cpp
     tests/test-string.cpp
     tests/test-string-literal.cpp
     tests/test-string-search.cpp

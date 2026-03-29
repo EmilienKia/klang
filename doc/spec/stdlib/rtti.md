@@ -588,6 +588,35 @@ test() : int {
 }
 ```
 
+### Enumerate constructors of a class
+
+```k
+import k;
+
+class Shape {
+    public Shape() {}
+    public Shape(sides : int) {}
+    public Shape(sides : int, color : int) {}
+    public area() : int { return 0; }
+}
+
+test_count() : int {
+    s : Shape;
+    ctors : const k::Constructor?[]? = s.getClass().getConstructors();
+    if (ctors == null) return 0;
+    return ctors->size;   // → 3
+}
+
+test_params() : int {
+    s : Shape;
+    ctors : const k::Constructor?[]? = s.getClass().getConstructors();
+    if (ctors == null) return 0;
+    c : const k::Constructor? = ctors[2];
+    if (c == null) return 1;
+    return c->getParamCount();   // → 2
+}
+```
+
 ---
 
 ## 13. Meta-annotation types

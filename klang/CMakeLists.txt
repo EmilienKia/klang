@@ -139,6 +139,7 @@ add_executable(klang-tests
         tests/test-gen-extern.cpp
         tests/test-gen-annotation-members.cpp
         tests/test-gen-annotation-meta.cpp
+        tests/test-model-constructor-rtti.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
 # Export symbols from the test executable so that the JIT's

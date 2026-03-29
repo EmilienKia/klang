@@ -97,3 +97,28 @@ void* __k_iface_get_functions(void* rtti) {
     void** fields = (void**)rtti;
     return fields[10];
 }
+
+/**
+ * __k_class_get_constructors — Extract the constructors array from a Class RTTI global.
+ *
+ * In the RTTI struct layout, the constructors array is stored at field index 11
+ * (after functions at field 10).
+ * The struct layout is:
+ *   { ptr vptr, ptr vptr_at, ptr vptr_ti, ptr name, ptr fullName,
+ *     ptr bases, ptr nested, ptr enclosing, i32 flags, ptr annotations,
+ *     ptr functions, ptr constructors }
+ *
+ * IMPORTANT: this function takes a Class& (not AggregateType&) so that the K
+ * compiler passes a pointer to the START of the RTTI struct, without any
+ * base-class pointer adjustment.
+ *
+ * @param rtti  Pointer to the Class RTTI global (start of struct).
+ * @return      Pointer to the constructors K-array (Constructor?[]?), or null.
+ */
+void* __k_class_get_constructors(void* rtti) {
+    if (!rtti) return (void*)0;
+    void** fields = (void**)rtti;
+    /* Field 11 = constructors (after functions at field 10) */
+    return fields[11];
+}
+

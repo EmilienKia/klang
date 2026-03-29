@@ -142,6 +142,12 @@ public:
     static std::string mangle_rtti_function(const name& func_name);
 
     /**
+     * Mangle the RTTI global variable name for a constructor descriptor.
+     * Convention: _KTRCN<constructor_fq_name>E
+     */
+    static std::string mangle_rtti_constructor(const name& ctor_name);
+
+    /**
      * Mangle the RTTI global variable name for a unit (module) descriptor.
      * Convention: _KTRUN<module_name>E
      */
