@@ -155,16 +155,25 @@ final const class Function {
 /**
  * RTTI constructor descriptor.
  * This class describes a constructor at runtime.
- * Currently only exposes the number of parameters.
+ * Exposes the number of parameters and annotations.
  */
 final const class Constructor {
     paramCount : int;
+    annotations : const Annotation?[]?;
 
     /**
      * Return the number of parameters of this constructor (excluding 'this').
      */
     const getParamCount() : int {
         return paramCount;
+    }
+
+    /**
+     * Return the annotations applied to this constructor.
+     * Returns null if the constructor has no annotations.
+     */
+    const getAnnotations() : const Annotation?[]? {
+        return annotations;
     }
 }
 

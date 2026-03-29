@@ -346,3 +346,105 @@ TEST_CASE("RTTI: getConstructors() param counts across multiple ctors", "[libk][
 }
 
 
+// =========================================================================
+// 10. constructor getAnnotations() is non-null on annotated ctor
+// =========================================================================
+
+TEST_CASE("RTTI: constructor getAnnotations() non-null on annotated ctor", "[libk][rtti][constructor][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ctor_ann_1__;
+        import k;
+
+        annotation Marker {}
+
+        class Foo {
+            @Marker
+            public Foo() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            f : Foo;
+            ctors : const k::Constructor?[]? = f.getClass().getConstructors();
+            if (ctors == null) return 0;
+            c : const k::Constructor? = ctors[0];
+            if (c == null) return 1;
+            if (c->getAnnotations() == null) return 2;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 11. constructor getAnnotations() returns correct count
+// =========================================================================
+
+TEST_CASE("RTTI: constructor getAnnotations() returns correct count", "[libk][rtti][constructor][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ctor_ann_2__;
+        import k;
+
+        annotation Alpha {}
+        annotation Beta {}
+
+        class Foo {
+            @Alpha @Beta
+            public Foo() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            f : Foo;
+            ctors : const k::Constructor?[]? = f.getClass().getConstructors();
+            if (ctors == null) return 0;
+            c : const k::Constructor? = ctors[0];
+            if (c == null) return 1;
+            anns : const k::Annotation?[]? = c->getAnnotations();
+            if (anns == null) return 2;
+            return anns->size;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 2);
+}
+
+
+// =========================================================================
+// 12. constructor getAnnotations() is null on unannotated ctor
+// =========================================================================
+
+TEST_CASE("RTTI: constructor getAnnotations() null on unannotated ctor", "[libk][rtti][constructor][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ctor_ann_3__;
+        import k;
+
+        class Foo {
+            public Foo() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            f : Foo;
+            ctors : const k::Constructor?[]? = f.getClass().getConstructors();
+            if (ctors == null) return 0;
+            c : const k::Constructor? = ctors[0];
+            if (c == null) return 1;
+            if (c->getAnnotations() == null) return 42;
+            return 2;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}

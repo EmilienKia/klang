@@ -486,7 +486,7 @@ Inner enums with array fields:
 
 ```k
 annotation Target {
-    enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; };
+    enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
     value : ElementType[];
 }
 
@@ -670,7 +670,7 @@ applied. The compiler enforces this constraint at compile time.
 @Retention(Policy::RUNTIME)
 @Target({ElementType::ANNOTATION})
 annotation Target {
-    enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; };
+    enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
     value : ElementType[];
 }
 ```
@@ -683,12 +683,13 @@ annotation Target {
 | `INTERFACE` | 1 | An `interface` declaration. |
 | `ANNOTATION` | 2 | An `annotation` type declaration. |
 | `FUNCTION` | 3 | A function declaration (member or free). |
+| `CONSTRUCTOR` | 4 | A constructor declaration. |
 
 #### Rules
 
 | Rule | Description |
 |------|-------------|
-| **Absent `@Target`** | If `@Target` is not present on an annotation type, the annotation can be applied to **any** supported element type (class, interface, annotation, or function). |
+| **Absent `@Target`** | If `@Target` is not present on an annotation type, the annotation can be applied to **any** supported element type (class, interface, annotation, function, or constructor). |
 | **Enforcement** | When `@Target` is present, applying the annotation to an element type not in the `value` array causes a compile-time error (`0x003C`). |
 | **Multiple targets** | The `value` array can contain any combination of `ElementType` entries: `@Target({ElementType::CLASS, ElementType::INTERFACE})`. |
 | **Self-applicable** | `@Target` is itself restricted to `ANNOTATION` targets (it can only be applied to annotation types). |

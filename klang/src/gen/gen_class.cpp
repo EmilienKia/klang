@@ -1814,7 +1814,8 @@ void implementation_generator::visit_klass(klass& klass) {
         // ── g) Synthesize Constructor RTTI globals for public constructors ──────
         // For each public, non-deleted, non-compiler-generated constructor, emit
         // a ::k::Constructor RTTI global constant.
-        // Constructor layout: { ptr __vptr__, ptr __vptr_Object__, i32 paramCount }
+        // Constructor layout: { ptr __vptr__, ptr __vptr_Object__, i32 paramCount,
+        //                       ptr annotations }
         // Interfaces have no constructors — field 11 stays null for them.
         llvm::Constant* constructors_gv = null_ptr;
         if (!is_iface) {
@@ -1849,13 +1850,61 @@ void implementation_generator::visit_klass(klass& klass) {
                 // Compute parameter count (excluding 'this')
                 uint32_t param_count = static_cast<uint32_t>(ctor->get_parameter_size());
 
-                // Build the Constructor struct: { ptr vptr, ptr vptr_Object, i32 paramCount }
+                // ── Synthesize annotations for this constructor ──────────
+                llvm::Constant* ctor_anns_gv = null_ptr;
+                {
+                    std::vector<llvm::Constant*> ctor_ann_ptrs;
+                    for (auto& ann_inst : ctor->get_annotations_mutable()) {
+                        if (!ann_inst.resolved_type) continue;
+                        auto& ann_type = *ann_inst.resolved_type;
+                        if (ann_type.is_source_retention()) continue;
+                        if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) continue;
+                        auto ann_st_type = ann_type.get_struct_type();
+                        if (!ann_st_type) continue;
+                        auto* llvm_st_type = _context->get_llvm_type(ann_st_type);
+                        if (!llvm_st_type) continue;
+
+                        llvm::Constant* ann_init = build_annotation_instance_constant(
+                            ann_inst, ann_type, _context, &_unit, &klass);
+                        if (!ann_init) continue;
+
+                        std::string ann_global_name = mangler::mangle_rtti(klass.get_name())
+                            + "_ctor" + std::to_string(ctor_index) + "_ann_" + ann_inst.raw_name;
+                        auto* ann_gv = new llvm::GlobalVariable(
+                            _context->module(), llvm_st_type,
+                            /*isConstant=*/true,
+                            llvm::GlobalValue::PrivateLinkage,
+                            ann_init, ann_global_name);
+                        ann_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+                        auto base_field = ann_st_type->get_member("__base_Annotation__");
+                        if (base_field.has_value()) {
+                            llvm::Constant* zero = llvm::ConstantInt::get(
+                                llvm::Type::getInt32Ty(llvm_ctx), 0);
+                            llvm::Constant* base_idx = llvm::ConstantInt::get(
+                                llvm::Type::getInt32Ty(llvm_ctx), base_field->index);
+                            llvm::Constant* gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                                llvm_st_type, ann_gv,
+                                llvm::ArrayRef<llvm::Constant*>{zero, base_idx});
+                            ctor_ann_ptrs.push_back(gep);
+                        } else {
+                            ctor_ann_ptrs.push_back(ann_gv);
+                        }
+                    }
+                    if (!ctor_ann_ptrs.empty()) {
+                        ctor_anns_gv = make_base_array(ctor_ann_ptrs,
+                            "_ctor" + std::to_string(ctor_index) + "_annotations");
+                    }
+                }
+
+                // Build the Constructor struct: { ptr vptr, ptr vptr_Object, i32 paramCount, ptr annotations }
                 llvm::StructType* ctor_rtti_type = llvm::StructType::get(
-                    llvm_ctx, {ptr_ty, ptr_ty, i32_ty}, /*isPacked=*/false);
+                    llvm_ctx, {ptr_ty, ptr_ty, i32_ty, ptr_ty}, /*isPacked=*/false);
                 std::vector<llvm::Constant*> ctor_init = {
                     ctor_vt_or_null,                              // __vptr__ (Constructor primary vtable)
                     null_ptr,                                      // __vptr_Object__ (null — no Object dispatch needed)
-                    llvm::ConstantInt::get(i32_ty, param_count)   // paramCount
+                    llvm::ConstantInt::get(i32_ty, param_count),  // paramCount
+                    ctor_anns_gv                                   // annotations
                 };
                 llvm::Constant* ctor_const = llvm::ConstantStruct::get(ctor_rtti_type, ctor_init);
 

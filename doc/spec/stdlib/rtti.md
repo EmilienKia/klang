@@ -315,7 +315,51 @@ details.
 
 ---
 
-## 10. Unit
+## 10. Constructor
+
+```k
+final const class Constructor {
+    paramCount  : int;
+    annotations : const Annotation?[]?;
+
+    const getParamCount()  : int;
+    const getAnnotations() : const Annotation?[]?;
+}
+```
+
+RTTI descriptor for class constructors. Each public, user-defined (non
+compiler-generated, non-deleted) constructor produces one `Constructor`
+instance in the owning class's RTTI.
+
+### Fields (private)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `paramCount` | `int` | Number of parameters (excluding the implicit `this`). |
+| `annotations` | `const Annotation?[]?` | Annotations applied to this constructor, or `null` if none. |
+
+### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getParamCount()` | `int` | Number of user-facing parameters. |
+| `getAnnotations()` | `const Annotation?[]?` | Annotations applied to this constructor, or `null`. |
+
+### Compiler synthesis
+
+The compiler emits one `Constructor` RTTI global for each qualifying
+constructor of a class. Constructors that are `-> default`
+(compiler-generated), `-> delete` (deleted), or non-public are excluded.
+
+Annotations on constructors are validated against `@Target` using the
+`CONSTRUCTOR` element type (not `FUNCTION`). Constructors are not
+considered regular functions for `@Target` purposes.
+
+Interfaces do not expose constructors.
+
+---
+
+## 11. Unit
 
 ```k
 final const class Unit {
@@ -356,7 +400,7 @@ name follows the pattern `_KTRUN<module_name>E`.
 
 ---
 
-## 11. Type hierarchy
+## 12. Type hierarchy
 
 ```
 TypeInfo (interface)
@@ -385,7 +429,7 @@ functions and compilation units, respectively.
 
 ---
 
-## 12. Usage examples
+## 13. Usage examples
 
 ### Get the class name of an object
 
@@ -619,7 +663,7 @@ test_params() : int {
 
 ---
 
-## 13. Meta-annotation types
+## 14. Meta-annotation types
 
 **Namespace:** `k::annotations`  
 **Source:** `libk/libk/src/annotations.k`
@@ -634,7 +678,7 @@ All three meta-annotations are themselves annotated with
 making them available for runtime inspection and restricted to annotation
 type declarations.
 
-### 13.1. Retention
+### 14.1. Retention
 
 ```k
 @Retention(Policy::RUNTIME)
@@ -661,7 +705,7 @@ the binary as RTTI metadata.
 |-------|------|---------|-------------|
 | `policy` | `Policy` | `Policy::RUNTIME` | The retention policy. |
 
-### 13.2. Inherited
+### 14.2. Inherited
 
 ```k
 @Retention(Policy::RUNTIME)
@@ -678,13 +722,13 @@ annotation type, the explicit instance replaces the inherited one.
 
 No fields.
 
-### 13.3. Target
+### 14.3. Target
 
 ```k
 @Retention(Policy::RUNTIME)
 @Target({ElementType::ANNOTATION})
 annotation Target {
-    enum ElementType { CLASS; INTERFACE; ANNOTATION; };
+    enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
     value : ElementType[];
 }
 ```
@@ -700,6 +744,8 @@ error `0x003C` on violations.
 | `CLASS` | 0 | `class` declarations. |
 | `INTERFACE` | 1 | `interface` declarations. |
 | `ANNOTATION` | 2 | `annotation` type declarations. |
+| `FUNCTION` | 3 | Function declarations (member or free). |
+| `CONSTRUCTOR` | 4 | Constructor declarations. |
 
 #### Field
 

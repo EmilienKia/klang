@@ -1253,629 +1253,7 @@ TEST_CASE("Meta-annotations: stdlib-like self-contained meta-annotation system",
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// 12. Enum field edge cases — additional
-// ════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("Annotation: multiple enum fields with different enums", "[annotation][enum]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_enum_multi_fields__;
-        annotation Config {
-            enum Mode { FAST; SAFE; };
-            enum Level { LOW; MEDIUM; HIGH; };
-            mode : Mode;
-            level : Level;
-        }
-        @Config(Mode::SAFE, Level::HIGH)
-        class App {
-            foo() : int { return 0; }
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto app = find_aggregate(comp, "App");
-    REQUIRE(app != nullptr);
-    auto& anns = app->get_annotations();
-    REQUIRE(anns.size() == 1);
-    CHECK(anns[0].resolved_type->get_short_name() == "Config");
-
-    REQUIRE(anns[0].resolved_field_constants.size() >= 2);
-    auto* mode_val = llvm::dyn_cast<llvm::ConstantInt>(anns[0].resolved_field_constants[0]);
-    auto* level_val = llvm::dyn_cast<llvm::ConstantInt>(anns[0].resolved_field_constants[1]);
-    REQUIRE(mode_val != nullptr);
-    REQUIRE(level_val != nullptr);
-    CHECK(mode_val->getSExtValue() == 1);  // SAFE = 1
-    CHECK(level_val->getSExtValue() == 2); // HIGH = 2
-}
-
-TEST_CASE("Annotation: enum field with first entry as default", "[annotation][enum]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_enum_first_default__;
-        annotation Status {
-            enum State { ACTIVE; INACTIVE; };
-            state : State = State::ACTIVE;
-        }
-        @Status
-        class Obj {
-            foo() : int { return 0; }
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto obj = find_aggregate(comp, "Obj");
-    REQUIRE(obj != nullptr);
-    auto& anns = obj->get_annotations();
-    REQUIRE(anns.size() == 1);
-    REQUIRE(anns[0].resolved_field_constants.size() >= 1);
-    auto* ci = llvm::dyn_cast<llvm::ConstantInt>(anns[0].resolved_field_constants[0]);
-    REQUIRE(ci != nullptr);
-    CHECK(ci->getSExtValue() == 0); // ACTIVE = 0
-}
-
-TEST_CASE("Annotation: enum field explicit overrides default", "[annotation][enum]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_enum_override_default__;
-        annotation Priority {
-            enum Level { LOW; MEDIUM; HIGH; };
-            level : Level = Level::LOW;
-        }
-        @Priority(Level::HIGH)
-        class Urgent {
-            foo() : int { return 0; }
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto urgent = find_aggregate(comp, "Urgent");
-    REQUIRE(urgent != nullptr);
-    auto& anns = urgent->get_annotations();
-    REQUIRE(anns.size() == 1);
-    REQUIRE(anns[0].resolved_field_constants.size() >= 1);
-    auto* ci = llvm::dyn_cast<llvm::ConstantInt>(anns[0].resolved_field_constants[0]);
-    REQUIRE(ci != nullptr);
-    CHECK(ci->getSExtValue() == 2); // HIGH = 2, not LOW default
-}
-
-
-// ════════════════════════════════════════════════════════════════════════════
-// 13. @Target — further edge cases
-// ════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("@Target: ANNOTATION-only cannot be applied to interface", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_target_annonly_iface__;
-        annotation AnnRestrict {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @AnnRestrict
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::ANNOTATION})
-        annotation AnnOnly {}
-        @AnnOnly
-        interface BadIface {
-            abstract foo() : int;
-        }
-    )SRC");
-    CHECK(comp == nullptr);
-}
-
-TEST_CASE("@Target: INTERFACE-only annotation applied to annotation fails", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_target_ifonly_ann__;
-        annotation IfaceRestrict {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @IfaceRestrict
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::INTERFACE})
-        annotation IfaceOnly {}
-        @IfaceOnly
-        annotation BadAnn {}
-    )SRC");
-    CHECK(comp == nullptr);
-}
-
-TEST_CASE("@Target: CLASS-only annotation applied to annotation fails", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_target_clsonly_ann__;
-        annotation ClsRestrict {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @ClsRestrict
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS})
-        annotation ClassOnly {}
-        @ClassOnly
-        annotation BadAnn {}
-    )SRC");
-    CHECK(comp == nullptr);
-}
-
-TEST_CASE("@Target: multiple annotations with different targets on same class", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_target_multi_on_cls__;
-        annotation TgtDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @TgtDef
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS})
-        annotation ClassMarker {}
-        @Target({ElementType::CLASS, ElementType::INTERFACE})
-        annotation FlexMarker {}
-        @ClassMarker @FlexMarker
-        class Foo {
-            foo() : int { return 0; }
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-    auto foo = find_aggregate(comp, "Foo");
-    REQUIRE(foo != nullptr);
-    CHECK(foo->get_annotations().size() == 2);
-}
-
-
-// ════════════════════════════════════════════════════════════════════════════
-// 14. @Inherited — value preservation and deeper chains
-// ════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("@Inherited: inherited value constant preserved through chain", "[annotation][inherited]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_inherit_val_chain__;
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Inh
-        annotation Inherited {}
-        @Inherited
-        annotation Version { value : int; }
-        @Version(42)
-        class A {
-            foo() : int { return 0; }
-        }
-        class B : A {
-            bar() : int { return 1; }
-        }
-        class C : B {
-            baz() : int { return 2; }
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto a = find_aggregate(comp, "A");
-    auto b = find_aggregate(comp, "B");
-    auto c = find_aggregate(comp, "C");
-    REQUIRE(a != nullptr);
-    REQUIRE(b != nullptr);
-    REQUIRE(c != nullptr);
-
-    // All three should have @Version with value 42
-    for (auto* agg : {a.get(), b.get(), c.get()}) {
-        REQUIRE(agg->get_annotations().size() == 1);
-        CHECK(agg->get_annotations()[0].resolved_type->get_short_name() == "Version");
-        REQUIRE(agg->get_annotations()[0].resolved_field_constants.size() >= 1);
-        auto* ci = llvm::dyn_cast<llvm::ConstantInt>(
-            agg->get_annotations()[0].resolved_field_constants[0]);
-        REQUIRE(ci != nullptr);
-        CHECK(ci->getSExtValue() == 42);
-    }
-}
-
-TEST_CASE("@Inherited: override in middle of chain, grandchild inherits override", "[annotation][inherited]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_inherit_mid_override__;
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Inh
-        annotation Inherited {}
-        @Inherited
-        annotation Tag { value : int; }
-        @Tag(1)
-        class A {
-            foo() : int { return 0; }
-        }
-        @Tag(99)
-        class B : A {
-            bar() : int { return 1; }
-        }
-        class C : B {
-            baz() : int { return 2; }
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto a = find_aggregate(comp, "A");
-    auto b = find_aggregate(comp, "B");
-    auto c = find_aggregate(comp, "C");
-    REQUIRE(a != nullptr);
-    REQUIRE(b != nullptr);
-    REQUIRE(c != nullptr);
-
-    // A has @Tag(1)
-    auto* a_val = llvm::dyn_cast<llvm::ConstantInt>(a->get_annotations()[0].resolved_field_constants[0]);
-    REQUIRE(a_val != nullptr);
-    CHECK(a_val->getSExtValue() == 1);
-
-    // B overrides with @Tag(99)
-    auto* b_val = llvm::dyn_cast<llvm::ConstantInt>(b->get_annotations()[0].resolved_field_constants[0]);
-    REQUIRE(b_val != nullptr);
-    CHECK(b_val->getSExtValue() == 99);
-
-    // C inherits B's override (99), not A's original (1)
-    auto* c_val = llvm::dyn_cast<llvm::ConstantInt>(c->get_annotations()[0].resolved_field_constants[0]);
-    REQUIRE(c_val != nullptr);
-    CHECK(c_val->getSExtValue() == 99);
-}
-
-TEST_CASE("@Inherited: inherited annotation with enum field value preserved", "[annotation][inherited]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_inherit_enum_val__;
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Inh
-        annotation Inherited {}
-        @Inherited
-        annotation Severity {
-            enum Level { LOW; MEDIUM; HIGH; };
-            level : Level;
-        }
-        @Severity(Level::HIGH)
-        class Base {
-            foo() : int { return 0; }
-        }
-        class Derived : Base {
-            bar() : int { return 1; }
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto derived = find_aggregate(comp, "Derived");
-    REQUIRE(derived != nullptr);
-    REQUIRE(derived->get_annotations().size() == 1);
-    CHECK(derived->get_annotations()[0].resolved_type->get_short_name() == "Severity");
-
-    // Enum value HIGH (=2) should be preserved through inheritance
-    REQUIRE(derived->get_annotations()[0].resolved_field_constants.size() >= 1);
-    auto* ci = llvm::dyn_cast<llvm::ConstantInt>(
-        derived->get_annotations()[0].resolved_field_constants[0]);
-    REQUIRE(ci != nullptr);
-    CHECK(ci->getSExtValue() == 2); // HIGH = 2
-}
-
-TEST_CASE("@Inherited: annotation on class with multiple bases — only class parent propagates", "[annotation][inherited]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_inherit_multi_base__;
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Inh
-        annotation Inherited {}
-        @Inherited
-        annotation Marker { value : int; }
-        @Marker(10)
-        class Base {
-            foo() : int { return 0; }
-        }
-        @Marker(20)
-        interface Iface {
-            abstract bar() : int;
-        }
-        class Child : Base, Iface {
-            bar() : int { return 1; }
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto child = find_aggregate(comp, "Child");
-    REQUIRE(child != nullptr);
-    // Should inherit @Marker from Base (class), not from Iface (interface)
-    REQUIRE(child->get_annotations().size() == 1);
-    CHECK(child->get_annotations()[0].resolved_type->get_short_name() == "Marker");
-    auto* ci = llvm::dyn_cast<llvm::ConstantInt>(
-        child->get_annotations()[0].resolved_field_constants[0]);
-    REQUIRE(ci != nullptr);
-    CHECK(ci->getSExtValue() == 10); // from Base, not Iface
-}
-
-
-// ════════════════════════════════════════════════════════════════════════════
-// 15. @Retention — additional edge cases
-// ════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("@Retention: default on annotation with int field — field value in IR", "[annotation][retention]") {
-    std::string ir = get_llvm_ir(R"SRC(
-        module __test_ann_ret_field_ir__;
-        annotation Rating { value : int; }
-        @Rating(42)
-        class Foo {
-            foo() : int { return 0; }
-        }
-    )SRC");
-    REQUIRE(!ir.empty());
-    CHECK(ir.find("_ann_Rating") != std::string::npos);
-}
-
-TEST_CASE("@Retention: annotation on multiple classes — each gets its own RTTI global", "[annotation][retention]") {
-    std::string ir = get_llvm_ir(R"SRC(
-        module __test_ann_ret_multi_class__;
-        annotation Tag {}
-        @Tag
-        class A {
-            foo() : int { return 0; }
-        }
-        @Tag
-        class B {
-            foo() : int { return 0; }
-        }
-    )SRC");
-    REQUIRE(!ir.empty());
-    // Both classes should have an annotation instance in the IR
-    // The IR should contain RTTI entries for both A and B
-    size_t count = 0;
-    std::string::size_type pos = 0;
-    while ((pos = ir.find("_ann_Tag", pos)) != std::string::npos) {
-        ++count;
-        ++pos;
-    }
-    CHECK(count >= 2); // at least one per class
-}
-
-TEST_CASE("@Retention(SOURCE): marker annotation — no RTTI at all for annotated class", "[annotation][retention]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_ret_src_marker__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention(Policy::SOURCE)
-        annotation CompileMarker {}
-        @CompileMarker
-        class Marked {
-            foo() : int { return 0; }
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    // Annotation present in model
-    auto marked = find_aggregate(comp, "Marked");
-    REQUIRE(marked != nullptr);
-    CHECK(marked->get_annotations().size() == 1);
-
-    // No annotation global in IR
-    std::string ir;
-    llvm::raw_string_ostream os(ir);
-    comp->get_context_for_test()->module().print(os, nullptr);
-    CHECK(ir.find("_ann_CompileMarker") == std::string::npos);
-}
-
-
-// ════════════════════════════════════════════════════════════════════════════
-// 16. Combined meta-annotation scenarios — additional
-// ════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("Meta-annotations: @Target(CLASS) prevents use on annotation even with @Inherited", "[annotation][meta]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_target_blocks_ann_use__;
-        annotation MetaDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        annotation InhDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @MetaDef
-        annotation Target {
-            value : ElementType[];
-        }
-        @InhDef
-        annotation Inherited {}
-        @Target({ElementType::CLASS})
-        @Inherited
-        annotation ClassOnly {}
-        @ClassOnly
-        annotation BadAnn {}
-    )SRC");
-    // @Target restricts to CLASS, applying to annotation should fail
-    CHECK(comp == nullptr);
-}
-
-TEST_CASE("Meta-annotations: @Inherited + @Retention(RUNTIME) — inherited instance emitted in IR for derived", "[annotation][meta]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_inh_rt_ir__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Inh
-        annotation Inherited {}
-        @Retention(Policy::RUNTIME)
-        @Inherited
-        annotation RuntimeInherited { value : int; }
-        @RuntimeInherited(7)
-        class Base {
-            foo() : int { return 0; }
-        }
-        class Derived : Base {
-            bar() : int { return 1; }
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    // Both should have the annotation in the model
-    auto base = find_aggregate(comp, "Base");
-    auto derived = find_aggregate(comp, "Derived");
-    REQUIRE(base != nullptr);
-    REQUIRE(derived != nullptr);
-    CHECK(base->get_annotations().size() == 1);
-    CHECK(derived->get_annotations().size() == 1);
-
-    // Both should have the annotation in the IR
-    std::string ir;
-    llvm::raw_string_ostream os(ir);
-    comp->get_context_for_test()->module().print(os, nullptr);
-    CHECK(ir.find("_ann_RuntimeInherited") != std::string::npos);
-}
-
-TEST_CASE("Meta-annotations: unrestricted annotation works on all element types with RUNTIME IR", "[annotation][meta]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_unrestricted_all__;
-        annotation Universal {}
-        @Universal
-        class C {
-            foo() : int { return 0; }
-        }
-        @Universal
-        interface I {
-            abstract bar() : int;
-        }
-        @Universal
-        annotation A {}
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    // All three have the annotation
-    CHECK(find_aggregate(comp, "C")->get_annotations().size() == 1);
-    CHECK(find_aggregate(comp, "I")->get_annotations().size() == 1);
-    CHECK(find_annotation_type(comp, "A")->get_annotations().size() == 1);
-
-    // Default RUNTIME: annotation instances appear in IR
-    std::string ir;
-    llvm::raw_string_ostream os(ir);
-    comp->get_context_for_test()->module().print(os, nullptr);
-    CHECK(ir.find("_ann_Universal") != std::string::npos);
-}
-
-TEST_CASE("Meta-annotations: annotation with int and enum fields combined", "[annotation][meta]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_mixed_fields__;
-        annotation Config {
-            enum Mode { DEBUG; RELEASE; };
-            mode : Mode;
-            version : int;
-        }
-        @Config(Mode::RELEASE, 3)
-        class App {
-            foo() : int { return 0; }
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto app = find_aggregate(comp, "App");
-    REQUIRE(app != nullptr);
-    auto& anns = app->get_annotations();
-    REQUIRE(anns.size() == 1);
-    REQUIRE(anns[0].resolved_field_constants.size() >= 2);
-
-    auto* mode_val = llvm::dyn_cast<llvm::ConstantInt>(anns[0].resolved_field_constants[0]);
-    auto* ver_val = llvm::dyn_cast<llvm::ConstantInt>(anns[0].resolved_field_constants[1]);
-    REQUIRE(mode_val != nullptr);
-    REQUIRE(ver_val != nullptr);
-    CHECK(mode_val->getSExtValue() == 1); // RELEASE = 1
-    CHECK(ver_val->getSExtValue() == 3);
-}
-
-TEST_CASE("Meta-annotations: stdlib pattern — @Retention on itself validates correctly", "[annotation][meta]") {
-    // @Retention(Policy::RUNTIME) annotation Retention { ... }
-    // The self-referential @Retention should be visible in the model
-    auto comp = compile_model(R"SRC(
-        module __test_ann_self_retention__;
-        @Retention(Policy::RUNTIME)
-        annotation Retention {
-            enum Policy { SOURCE; RUNTIME; };
-            policy : Policy = Policy::RUNTIME;
-        }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto ret = find_annotation_type(comp, "Retention");
-    REQUIRE(ret != nullptr);
-    // @Retention is applied to itself
-    REQUIRE(ret->get_annotations().size() == 1);
-    CHECK(ret->get_annotations()[0].resolved_type->get_short_name() == "Retention");
-}
-
-TEST_CASE("Meta-annotations: forward reference — annotation B used on A declared after A", "[annotation][meta]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_forward_ref__;
-        @Later
-        annotation Early {}
-        annotation Later { value : int; }
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto early = find_annotation_type(comp, "Early");
-    REQUIRE(early != nullptr);
-    REQUIRE(early->get_annotations().size() == 1);
-    CHECK(early->get_annotations()[0].resolved_type->get_short_name() == "Later");
-}
-
-TEST_CASE("Meta-annotations: three-way cross-reference", "[annotation][meta]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_3way_crossref__;
-        @C
-        annotation A {}
-        @A
-        annotation B {}
-        @B
-        annotation C {}
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto a = find_annotation_type(comp, "A");
-    auto b = find_annotation_type(comp, "B");
-    auto c = find_annotation_type(comp, "C");
-    REQUIRE(a != nullptr);
-    REQUIRE(b != nullptr);
-    REQUIRE(c != nullptr);
-    CHECK(a->get_annotations()[0].resolved_type->get_short_name() == "C");
-    CHECK(b->get_annotations()[0].resolved_type->get_short_name() == "A");
-    CHECK(c->get_annotations()[0].resolved_type->get_short_name() == "B");
-}
-
-TEST_CASE("Meta-annotations: multiple annotations on same annotation type", "[annotation][meta]") {
-    auto comp = compile_model(R"SRC(
-        module __test_ann_multi_meta__;
-        annotation Alpha {}
-        annotation Beta {}
-        annotation Gamma {}
-        @Alpha @Beta @Gamma
-        annotation Decorated {}
-    )SRC");
-    REQUIRE(comp != nullptr);
-
-    auto decorated = find_annotation_type(comp, "Decorated");
-    REQUIRE(decorated != nullptr);
-    CHECK(decorated->get_annotations().size() == 3);
-
-    std::set<std::string> names;
-    for (auto& ann : decorated->get_annotations()) {
-        names.insert(ann.resolved_type->get_short_name());
-    }
-    CHECK(names.count("Alpha") == 1);
-    CHECK(names.count("Beta") == 1);
-    CHECK(names.count("Gamma") == 1);
-}
-
-
-// ════════════════════════════════════════════════════════════════════════════
-//  12. Function annotations — model level
+// 12. Function annotations — model level
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Function annotation: RUNTIME annotation on public function in model", "[annotation][function]") {
@@ -1990,10 +1368,10 @@ TEST_CASE("Function annotation: @Target(FUNCTION) allows annotation on function"
     auto fn = foo->get_function("bar");
     REQUIRE(fn != nullptr);
     CHECK(fn->get_annotations().size() == 1);
+    CHECK(fn->get_annotations()[0].resolved_type->get_short_name() == "FuncOnly");
 }
 
 TEST_CASE("Function annotation: @Target(CLASS) rejects annotation on function", "[annotation][function][target]") {
-    // An annotation restricted to CLASS should not be applicable to a function
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __test_fn_ann_target_2__;
         annotation TargetDef {
@@ -2065,7 +1443,7 @@ TEST_CASE("Function annotation: RUNTIME annotation on public function — no iss
         annotation Marker {}
         class Foo {
             @Marker
-            bar() : int { return 0; }
+            public bar() : int { return 0; }
         }
     )SRC");
     REQUIRE(comp != nullptr);
@@ -2104,6 +1482,7 @@ TEST_CASE("Function annotation: SOURCE annotation on private function — no war
     REQUIRE(fn != nullptr);
     // SOURCE annotation is in the model
     REQUIRE(fn->get_annotations().size() == 1);
+    CHECK(fn->get_annotations()[0].resolved_type->get_short_name() == "CompileOnly");
     CHECK(fn->get_annotations()[0].resolved_type->is_source_retention());
 }
 
@@ -2148,3 +1527,137 @@ TEST_CASE("Function annotation: RUNTIME annotation on destructor compiles (warni
 }
 
 
+// ════════════════════════════════════════════════════════════════════════════
+//  14. Constructor annotations — @Target with CONSTRUCTOR element type
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Constructor annotation: @Target(CONSTRUCTOR) allows annotation on constructor", "[annotation][constructor][target]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ctor_ann_target_1__;
+        annotation TargetDef {
+            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
+        }
+        @TargetDef
+        annotation Target {
+            value : ElementType[];
+        }
+        @Target({ElementType::CONSTRUCTOR})
+        annotation CtorOnly {}
+        class Foo {
+            @CtorOnly
+            public Foo() {}
+            bar() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    REQUIRE(!foo->constructors().empty());
+    auto& ctor = foo->constructors().front();
+    CHECK(ctor->get_annotations().size() == 1);
+    CHECK(ctor->get_annotations()[0].resolved_type->get_short_name() == "CtorOnly");
+}
+
+TEST_CASE("Constructor annotation: @Target(CLASS) rejects annotation on constructor", "[annotation][constructor][target]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __test_ctor_ann_target_2__;
+        annotation TargetDef {
+            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
+        }
+        @TargetDef
+        annotation Target {
+            value : ElementType[];
+        }
+        @Target({ElementType::CLASS})
+        annotation ClassOnly {}
+        class Foo {
+            @ClassOnly
+            public Foo() {}
+            bar() : int { return 0; }
+        }
+    )SRC"), k::model::gen::resolution_error);
+}
+
+TEST_CASE("Constructor annotation: @Target(FUNCTION) rejects annotation on constructor", "[annotation][constructor][target]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __test_ctor_ann_target_3__;
+        annotation TargetDef {
+            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
+        }
+        @TargetDef
+        annotation Target {
+            value : ElementType[];
+        }
+        @Target({ElementType::FUNCTION})
+        annotation FuncOnly {}
+        class Foo {
+            @FuncOnly
+            public Foo() {}
+            bar() : int { return 0; }
+        }
+    )SRC"), k::model::gen::resolution_error);
+}
+
+TEST_CASE("Constructor annotation: @Target(CONSTRUCTOR) rejects annotation on function", "[annotation][constructor][target]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module __test_ctor_ann_target_4__;
+        annotation TargetDef {
+            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
+        }
+        @TargetDef
+        annotation Target {
+            value : ElementType[];
+        }
+        @Target({ElementType::CONSTRUCTOR})
+        annotation CtorOnly {}
+        class Foo {
+            public Foo() {}
+            @CtorOnly
+            bar() : int { return 0; }
+        }
+    )SRC"), k::model::gen::resolution_error);
+}
+
+TEST_CASE("Constructor annotation: unrestricted annotation allowed on constructor", "[annotation][constructor][target]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ctor_ann_target_5__;
+        annotation Marker {}
+        class Foo {
+            @Marker
+            public Foo() {}
+            bar() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto foo = find_aggregate(comp, "Foo");
+    REQUIRE(foo != nullptr);
+    REQUIRE(!foo->constructors().empty());
+    auto& ctor = foo->constructors().front();
+    CHECK(ctor->get_annotations().size() == 1);
+    CHECK(ctor->get_annotations()[0].resolved_type->get_short_name() == "Marker");
+}
+
+TEST_CASE("Constructor annotation: RUNTIME annotation on public constructor — no warning", "[annotation][constructor][warning]") {
+    test_logger logger;
+    bool ok = compile_collect_diagnostics(R"SRC(
+        module __test_ctor_ann_no_warn__;
+        annotation Marker {}
+        class Foo {
+            @Marker
+            public Foo() {}
+            bar() : int { return 0; }
+        }
+    )SRC", nullptr, logger);
+    CHECK(ok);
+    // No 0x003D warning should be emitted for a public constructor with annotations
+    bool has_003D = false;
+    for (auto& diag : logger.diagnostics) {
+        if (diag.code == 0x003D) {
+            has_003D = true;
+            break;
+        }
+    }
+    CHECK_FALSE(has_003D);
+}

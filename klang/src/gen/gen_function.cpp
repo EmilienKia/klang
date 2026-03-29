@@ -322,13 +322,18 @@ void symbol_resolver::visit_function(function& fn) {
         lex::opt_any_lexeme fn_lexeme;
         if (auto ast_fd = fn.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
 
-        resolve_and_validate_annotations(fn, fn, fn.get_short_name(), fn_lexeme, "FUNCTION");
+        // Constructors use "CONSTRUCTOR" element kind; all other functions use "FUNCTION".
+        std::string element_kind = "FUNCTION";
+        if (std::dynamic_pointer_cast<constructor>(fn.shared_as<function>())) {
+            element_kind = "CONSTRUCTOR";
+        }
+        resolve_and_validate_annotations(fn, fn, fn.get_short_name(), fn_lexeme, element_kind);
 
         // ── Warn about RUNTIME annotations on non-public functions ────────
         // Non-public functions have no RTTI, so RUNTIME annotations won't be
-        // accessible at runtime.
+        // accessible at runtime.  Public constructors now have Constructor RTTI,
+        // so they are included in the has_rtti check.
         bool has_rtti = (fn.get_visibility() == PUBLIC)
-                        && !std::dynamic_pointer_cast<constructor>(fn.shared_as<function>())
                         && !std::dynamic_pointer_cast<destructor>(fn.shared_as<function>())
                         && !std::dynamic_pointer_cast<static_constructor>(fn.shared_as<function>())
                         && !std::dynamic_pointer_cast<static_destructor>(fn.shared_as<function>());
@@ -340,7 +345,7 @@ void symbol_resolver::visit_function(function& fn) {
                     if (fn.get_visibility() != PUBLIC) {
                         reason = "non-public functions have no RTTI";
                     } else {
-                        reason = "constructors and destructors have no Function RTTI";
+                        reason = "destructors have no RTTI";
                     }
                     warn(0x003D, fn_lexeme,
                         "RUNTIME annotation '@{}' on '{}' will not be accessible at runtime; {}",
