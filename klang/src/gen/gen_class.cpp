@@ -94,6 +94,8 @@
 #include "../model/mangler.hpp"
 #include "../model/context.hpp"
 #include "../model/imported.hpp"
+#include "../model/expressions.hpp"
+#include "../parse/ast.hpp"
 
 #include <llvm/IR/Verifier.h>
 #include <llvm/IR/Constants.h>
@@ -319,6 +321,258 @@ build_vtable_layout(aggregate& st,
     }
 
     return vt;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Annotation field materialisation helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Try to evaluate a single AST expression to an LLVM compile-time constant.
+ *
+ * Currently supports:
+ *   - Integer, float, character, boolean, string, and null literals.
+ *   - Unary-minus on a numeric literal (e.g. -42, -3.14).
+ *
+ * Returns nullptr if the expression cannot be reduced to a constant.
+ */
+llvm::Constant* evaluate_ast_expr_to_constant(
+    const k::parse::ast::expr_ptr& expr,
+    const std::shared_ptr<context>& ctx)
+{
+    if (!expr) return nullptr;
+
+    // Direct literal
+    if (auto lit = std::dynamic_pointer_cast<k::parse::ast::literal_expr>(expr)) {
+        return ctx->get_llvm_constant_from_literal(lit->literal);
+    }
+
+    // Unary prefix '-' on a literal  (e.g. -42)
+    if (auto prefix = std::dynamic_pointer_cast<k::parse::ast::unary_prefix_expr>(expr)) {
+        if (prefix->op.type == k::lex::operator_::MINUS) {
+            if (auto inner = std::dynamic_pointer_cast<k::parse::ast::literal_expr>(prefix->expr())) {
+                auto* c = ctx->get_llvm_constant_from_literal(inner->literal);
+                if (!c) return nullptr;
+                if (auto* ci = llvm::dyn_cast<llvm::ConstantInt>(c)) {
+                    return llvm::ConstantInt::get(ci->getType(), -ci->getValue());
+                }
+                if (auto* cf = llvm::dyn_cast<llvm::ConstantFP>(c)) {
+                    llvm::APFloat neg = cf->getValueAPF();
+                    neg.changeSign();
+                    return llvm::ConstantFP::get(cf->getType(), neg);
+                }
+            }
+        }
+    }
+
+    // TODO: support more constant expressions (enum values, nested annotations, etc.)
+    return nullptr;
+}
+
+/**
+ * Build the ordered vector of user-defined member variables for an annotation type.
+ * The returned list follows the declaration order (= LLVM struct field order),
+ * excluding the synthetic __vptr__ field.
+ */
+std::vector<std::shared_ptr<member_variable_definition>>
+get_annotation_user_fields(const annotation_type& ann_type) {
+    std::vector<std::shared_ptr<member_variable_definition>> user_fields;
+    for (auto& child : ann_type.get_children()) {
+        auto mv = std::dynamic_pointer_cast<member_variable_definition>(child);
+        if (!mv) continue;
+        const auto& name = mv->get_short_name();
+        // Skip synthetic fields (names starting and ending with double underscores)
+        if (name.size() >= 4
+            && name[0] == '_' && name[1] == '_'
+            && name[name.size()-1] == '_' && name[name.size()-2] == '_') {
+            continue;
+        }
+        user_fields.push_back(mv);
+    }
+    return user_fields;
+}
+
+/**
+ * Build an LLVM ConstantStruct for an annotation instance, filling in
+ * field values from the AST annotation arguments.
+ *
+ * The resulting constant has:
+ *   - field 0: the annotation type's vtable global pointer (__vptr__)
+ *   - fields 1..N: user-defined member values (from positional/designated args,
+ *     member default values, or zero-init as fallback).
+ *
+ * Also populates ann_inst.resolved_field_constants for later use.
+ *
+ * Returns nullptr on failure.
+ */
+llvm::Constant* build_annotation_instance_constant(
+    annotation_instance& ann_inst,
+    annotation_type& ann_type,
+    const std::shared_ptr<context>& ctx)
+{
+    auto ann_st_type = ann_type.get_struct_type();
+    if (!ann_st_type) return nullptr;
+
+    auto* llvm_st_type = ctx->get_llvm_type(ann_st_type);
+    if (!llvm_st_type) return nullptr;
+
+    auto* sty = llvm::dyn_cast<llvm::StructType>(llvm_st_type);
+    if (!sty) return nullptr;
+
+    if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) return nullptr;
+    llvm::Constant* vt_ptr = ann_type.get_vtable()->llvm_global;
+
+    auto user_fields = get_annotation_user_fields(ann_type);
+
+    // Allocate per-field constants (indexed by user field order, not LLVM field index)
+    std::vector<llvm::Constant*> field_constants(user_fields.size(), nullptr);
+
+    auto* ast = ann_inst.ast_node.get();
+
+    // ── Positional arguments: @Ann(val1, val2, ...) ──
+    if (ast && ast->has_parens && !ast->args.empty()) {
+        size_t count = std::min(ast->args.size(), user_fields.size());
+        for (size_t i = 0; i < count; ++i) {
+            field_constants[i] = evaluate_ast_expr_to_constant(ast->args[i], ctx);
+        }
+    }
+    // ── Designated brace init: @Ann{.field = val, ...} ──
+    else if (ast && ast->brace_init && ast->brace_init->is_designated) {
+        for (auto& elem_expr : ast->brace_init->elements) {
+            auto desig = std::dynamic_pointer_cast<k::parse::ast::designated_init_element>(elem_expr);
+            if (!desig) continue;
+            std::string mem_name{desig->member_name.content};
+            // Find the matching user field
+            for (size_t i = 0; i < user_fields.size(); ++i) {
+                if (user_fields[i]->get_short_name() == mem_name) {
+                    if (desig->is_call_form) {
+                        // .field(val) — use first arg as the value
+                        if (!desig->args.empty()) {
+                            field_constants[i] = evaluate_ast_expr_to_constant(desig->args[0], ctx);
+                        }
+                    } else {
+                        // .field = val
+                        field_constants[i] = evaluate_ast_expr_to_constant(desig->value, ctx);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    // ── Positional brace init (non-designated): @Ann{val1, val2, ...} ──
+    else if (ast && ast->brace_init && !ast->brace_init->is_designated) {
+        size_t count = std::min(ast->brace_init->elements.size(), user_fields.size());
+        for (size_t i = 0; i < count; ++i) {
+            if (ast->brace_init->elements[i]) {
+                field_constants[i] = evaluate_ast_expr_to_constant(ast->brace_init->elements[i], ctx);
+            }
+        }
+    }
+    // else: @Ann (no args) — leave all field_constants as nullptr
+
+    // ── Fill in defaults for unresolved fields ──
+    for (size_t i = 0; i < user_fields.size(); ++i) {
+        if (field_constants[i]) continue;
+
+        // Try the member variable's default init expression
+        auto init_expr = user_fields[i]->get_init_expr();
+        if (init_expr) {
+            // Direct value_expression (literal or resolved value)
+            if (auto val_expr = std::dynamic_pointer_cast<value_expression>(init_expr)) {
+                field_constants[i] = ctx->get_llvm_constant_from_value_expression(*val_expr);
+            }
+            // constructor_invocation_expression wrapping a value_expression
+            // (e.g. `level : int = 5;` ⟶ ctor_inv(value_expression(5)))
+            else if (auto ctor_expr = std::dynamic_pointer_cast<constructor_invocation_expression>(init_expr)) {
+                if (ctor_expr->size() == 1) {
+                    if (auto arg_val = std::dynamic_pointer_cast<value_expression>(ctor_expr->argument(0))) {
+                        field_constants[i] = ctx->get_llvm_constant_from_value_expression(*arg_val);
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Build the LLVM ConstantStruct ──
+    std::vector<llvm::Constant*> struct_fields;
+    struct_fields.reserve(sty->getNumElements());
+
+    // Field 0: vptr
+    struct_fields.push_back(vt_ptr);
+
+    // Build a set of user field names for fast lookup
+    std::unordered_set<std::string> user_field_names;
+    for (auto& uf : user_fields)
+        user_field_names.insert(uf->get_short_name());
+
+    // Walk the struct_type fields (skip index 0 = __vptr__)
+    size_t user_idx = 0;
+    for (auto it = ann_st_type->fields_begin() + 1; it != ann_st_type->fields_end(); ++it) {
+        unsigned fi = static_cast<unsigned>(it - ann_st_type->fields_begin());
+        llvm::Type* elem_ty = sty->getElementType(fi);
+        bool is_user_field = user_field_names.count(it->name) > 0;
+
+        if (is_user_field && user_idx < field_constants.size() && field_constants[user_idx]) {
+            llvm::Constant* val = field_constants[user_idx];
+            // Ensure the constant type matches the field LLVM type
+            if (val->getType() != elem_ty) {
+                // Integer type mismatch: truncate or extend
+                if (val->getType()->isIntegerTy() && elem_ty->isIntegerTy()) {
+                    auto* ci = llvm::cast<llvm::ConstantInt>(val);
+                    llvm::APInt src_val = ci->getValue();
+                    unsigned dst_bits = elem_ty->getIntegerBitWidth();
+                    val = llvm::ConstantInt::get(elem_ty, src_val.sextOrTrunc(dst_bits));
+                }
+                // Float type mismatch: extend or truncate
+                else if (val->getType()->isFloatingPointTy() && elem_ty->isFloatingPointTy()) {
+                    auto* cf = llvm::cast<llvm::ConstantFP>(val);
+                    bool losesInfo = false;
+                    llvm::APFloat fp_val = cf->getValueAPF();
+                    fp_val.convert(elem_ty->getFltSemantics(),
+                                   llvm::APFloat::rmNearestTiesToEven, &losesInfo);
+                    val = llvm::ConstantFP::get(elem_ty, fp_val);
+                }
+                // Mismatched categories: fall back to zero
+                else {
+                    val = llvm::Constant::getNullValue(elem_ty);
+                }
+            }
+            struct_fields.push_back(val);
+            ++user_idx;
+        } else if (is_user_field) {
+            struct_fields.push_back(llvm::Constant::getNullValue(elem_ty));
+            ++user_idx;
+        } else {
+            // Synthetic / base sub-object field.
+            // For __base_Annotation__ (or any base sub-object whose LLVM type is
+            // a struct starting with a ptr field), initialize the vptr slot with
+            // the annotation type's own vtable pointer.  This ensures that a
+            // dynamic cast from the Annotation sub-object back to the concrete
+            // annotation type can match the RTTI via the vptr.
+            if (auto* base_sty = llvm::dyn_cast<llvm::StructType>(elem_ty)) {
+                if (base_sty->getNumElements() > 0
+                    && base_sty->getElementType(0)->isPointerTy()) {
+                    // Build a constant for the base sub-object with vptr = annotation vtable
+                    std::vector<llvm::Constant*> base_fields;
+                    base_fields.push_back(vt_ptr); // vptr → annotation type vtable
+                    for (unsigned bi = 1; bi < base_sty->getNumElements(); ++bi) {
+                        base_fields.push_back(
+                            llvm::Constant::getNullValue(base_sty->getElementType(bi)));
+                    }
+                    struct_fields.push_back(llvm::ConstantStruct::get(base_sty, base_fields));
+                } else {
+                    struct_fields.push_back(llvm::Constant::getNullValue(elem_ty));
+                }
+            } else {
+                struct_fields.push_back(llvm::Constant::getNullValue(elem_ty));
+            }
+        }
+    }
+
+    // Store resolved constants for later use (e.g. KDI export)
+    ann_inst.resolved_field_constants = std::move(field_constants);
+
+    return llvm::ConstantStruct::get(sty, struct_fields);
 }
 
 
@@ -1014,42 +1268,27 @@ void implementation_generator::visit_klass(klass& klass) {
 
         // ── e) Synthesize annotation instance globals ────────────────────────────
         // For each annotation_instance on this class/interface, emit a constant
-        // global of the annotation's struct type (zero-initialized members for now).
+        // global of the annotation's struct type, with field values materialized
+        // from the AST annotation arguments (positional, designated, or defaults).
         // Then collect them into a K-array for the RTTI 'annotations' field.
         llvm::Constant* annotations_gv = null_ptr;
         {
             std::vector<llvm::Constant*> ann_ptrs;
-            for (auto& ann_inst : klass.get_annotations()) {
+            for (auto& ann_inst : klass.get_annotations_mutable()) {
                 if (!ann_inst.resolved_type) continue;
                 auto& ann_type = *ann_inst.resolved_type;
                 if (!ann_type.has_vtable() || !ann_type.get_vtable()->llvm_global) continue;
 
-                // Build a constant struct for this annotation instance:
-                // { ptr __vptr__, [member fields zero-initialized...] }
                 auto ann_st_type = ann_type.get_struct_type();
                 if (!ann_st_type) continue;
 
                 auto* llvm_st_type = _context->get_llvm_type(ann_st_type);
                 if (!llvm_st_type) continue;
 
-                // Build all-zero initializer, then replace field 0 with vptr
-                llvm::Constant* ann_init = llvm::ConstantAggregateZero::get(llvm_st_type);
-                // Set field 0 (__vptr__) to the annotation type's vtable global
-                llvm::Constant* vt_ptr = ann_type.get_vtable()->llvm_global;
-                ann_init = llvm::ConstantFoldInsertValueInstruction(ann_init, vt_ptr, {0});
-                if (!ann_init) {
-                    // Fallback: build manually
-                    auto* sty = llvm::cast<llvm::StructType>(llvm_st_type);
-                    std::vector<llvm::Constant*> fields;
-                    for (unsigned i = 0; i < sty->getNumElements(); ++i) {
-                        if (i == 0) {
-                            fields.push_back(vt_ptr);
-                        } else {
-                            fields.push_back(llvm::Constant::getNullValue(sty->getElementType(i)));
-                        }
-                    }
-                    ann_init = llvm::ConstantStruct::get(sty, fields);
-                }
+                // Build the constant struct with actual field values
+                llvm::Constant* ann_init = build_annotation_instance_constant(
+                    ann_inst, ann_type, _context);
+                if (!ann_init) continue;
 
                 std::string ann_global_name = mangler::mangle_rtti(klass.get_name())
                     + "_ann_" + ann_inst.raw_name;
@@ -1059,7 +1298,28 @@ void implementation_generator::visit_klass(klass& klass) {
                     llvm::GlobalValue::PrivateLinkage,
                     ann_init, ann_global_name);
                 ann_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-                ann_ptrs.push_back(ann_gv);
+
+                // The annotation array stores Annotation? pointers. For the
+                // dynamic cast (Annotation → concrete annotation type) to
+                // compute the correct pointer adjustment, the stored pointer
+                // must point to the __base_Annotation__ sub-object inside the
+                // annotation instance, not to the start of the full struct.
+                // (Same as how a Base* points to the Base sub-object in a Derived.)
+                auto base_field = ann_st_type->get_member("__base_Annotation__");
+                if (base_field.has_value()) {
+                    // GEP to the __base_Annotation__ sub-object within the global
+                    llvm::Constant* zero = llvm::ConstantInt::get(
+                        llvm::Type::getInt32Ty(llvm_ctx), 0);
+                    llvm::Constant* base_idx = llvm::ConstantInt::get(
+                        llvm::Type::getInt32Ty(llvm_ctx), base_field->index);
+                    llvm::Constant* gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                        llvm_st_type, ann_gv,
+                        llvm::ArrayRef<llvm::Constant*>{zero, base_idx});
+                    ann_ptrs.push_back(gep);
+                } else {
+                    // No base sub-object — store pointer to the full struct
+                    ann_ptrs.push_back(ann_gv);
+                }
             }
 
             if (!ann_ptrs.empty()) {

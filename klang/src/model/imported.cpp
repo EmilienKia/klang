@@ -578,6 +578,23 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
     const kdi::kdi_aggregate* kdi_agg = find_imported_type(fq_name);
     if (!kdi_agg) return nullptr;
 
+    // Compute canonical key from the KDI aggregate's authoritative FQ name.
+    // This prevents duplicate imported aggregates when the same type is requested
+    // via different name forms (e.g. "Annotation" vs "k::Annotation").
+    const std::string canonical_key = [&]() -> std::string {
+        const auto& f = kdi_agg->fq_name;
+        if (f.size() >= 2 && f[0] == ':' && f[1] == ':') return f.substr(2);
+        return f.empty() ? kdi_agg->name : f;
+    }();
+    if (canonical_key != fq_str) {
+        auto it2 = _imported_aggregates.find(canonical_key);
+        if (it2 != _imported_aggregates.end()) {
+            // Re-cache under the caller's key for future lookups
+            _imported_aggregates[fq_str] = it2->second;
+            return it2->second;
+        }
+    }
+
     // Create the right concrete class based on kind
     auto root = get_root_namespace();
     std::shared_ptr<imported_aggregate> agg;
@@ -625,6 +642,9 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
 
     // Put in cache BEFORE recursing on bases (prevents infinite loops on cyclic types)
     _imported_aggregates[fq_str] = agg;
+    if (canonical_key != fq_str) {
+        _imported_aggregates[canonical_key] = agg;
+    }
 
     // ── Resolve base classes FIRST ────────────────────────────────────────
     // We MUST intern the LLVM types of base classes before interning the

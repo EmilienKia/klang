@@ -11,8 +11,8 @@
 # Every K program and library is automatically linked against libk.
 # ─────────────────────────────────────────────────────────────────────────────
 set(LIBK_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/object.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/string.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})

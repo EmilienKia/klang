@@ -121,7 +121,7 @@ Grammar notation used here:
     *Notes:*
     - *`'abstract'` in [Specifier](#specifier) is only valid with `'class'`, not `'struct'`. For `'interface'` it is accepted but redundant (warning `0x2002A`).*
     - *`'interface'` bodies may not contain fields, constructors, or destructors. Method bodies are forbidden (implicit abstract, warning `0x2002B` if `abstract` is written explicitly).*
-    - *`'annotation'` declares an annotation type. The body must be empty in the current version. See [Annotations](annotations/annotations.md).*
+    - *`'annotation'` declares an annotation type. The body may contain variable declarations and methods. Annotation types are implicitly `const`. See [Annotations](annotations/annotations.md).*
     - *[AnnotationDef](#annotationdef) elements appear before the specifiers and aggregate keyword.*
 
 *Full description:* [Annotations](annotations/annotations.md)
@@ -129,6 +129,7 @@ Grammar notation used here:
 <a id="annotationdef"></a>**AnnotationDef:**
     `'@'` [QualifiedIdentifier](#qualifiedidentifier)
     | `'@'` [QualifiedIdentifier](#qualifiedidentifier) `'('` `[` [ExpressionList](#expressionlist) `]` `')'`
+    | `'@'` [QualifiedIdentifier](#qualifiedidentifier) [DesignatedBraceInitList](#designatedbraceinitlist)
     | `'@'` [QualifiedIdentifier](#qualifiedidentifier) [BraceInitList](#braceinitlist)
 
 <a id="annotationdeflist"></a>**AnnotationDefList:**

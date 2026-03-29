@@ -1678,6 +1678,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             if (src_st->get_struct()->is_derived_from(tgt_st->get_struct())) return true;
             // Dynamic downcast: rhs points to Base, link points to Derived (klass/interface only)
             if (tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
+                tgt_st->get_struct()->has_rtti() &&
                 std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr) return true;
             return false;
         };
@@ -1780,7 +1781,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                                  src_st->get_struct()->is_derived_from(tgt_st->get_struct());
                 bool is_dynamic_downcast = !is_static_upcast && src_st && tgt_st &&
                                  src_st->get_struct() && tgt_st->get_struct() &&
-                                 tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
+                                 tgt_st->get_struct()->has_rtti();
                                  std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
                 if (!is_static_upcast && !is_dynamic_downcast) {
                     throw_error(0x000B, expr.first_lexeme(),

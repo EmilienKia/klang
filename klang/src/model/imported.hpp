@@ -193,6 +193,7 @@ public:
     void accept(model_visitor& visitor) override;
     bool is_class() const override { return true; }
     bool has_vtable() const override { return _has_vtable; }
+    bool has_rtti() const override { return _has_vtable; }
 };
 
 class imported_interface : public imported_aggregate {

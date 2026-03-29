@@ -2698,11 +2698,11 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                 upcast->set_type(var_type);
                 init_expr->assign_argument(0, upcast);
             } else {
-                // Allow implicit dynamic downcast: Base& bound to Derived& (klass/interface only)
+                // Allow implicit dynamic downcast: Base& bound to Derived& (klass/interface/annotation only)
                 bool is_dynamic_downcast = arg_st && var_st &&
                     arg_st->get_struct() && var_st->get_struct() &&
                     var_st->get_struct()->is_derived_from(arg_st->get_struct()) &&
-                    std::dynamic_pointer_cast<klass>(var_st->get_struct()) != nullptr;
+                    var_st->get_struct()->has_rtti();
                 if (is_dynamic_downcast) {
                     // ref is non-null — fatal if RTTI check fails
                     auto dc = cast_expression::make_shared(arg, var_type, /*null_is_fatal=*/true);
@@ -2774,7 +2774,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                             bool is_dynamic_downcast = src_st && tgt_st &&
                                 src_st->get_struct() && tgt_st->get_struct() &&
                                 tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
-                                std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
+                                tgt_st->get_struct()->has_rtti();
                             if (is_dynamic_downcast) {
                                 auto dc = cast_expression::make_shared(arg, var.get_type(), /*null_is_fatal=*/false);
                                 assign_single_init_arg(dc);
@@ -2890,7 +2890,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     bool is_dynamic_downcast = src_st && tgt_st &&
                         src_st->get_struct() && tgt_st->get_struct() &&
                         tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
-                        std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
+                        tgt_st->get_struct()->has_rtti();
                     if (is_dynamic_downcast) {
                         auto dc = cast_expression::make_shared(arg, var_type, /*null_is_fatal=*/true);
                         assign_single_init_arg(dc);
@@ -2973,7 +2973,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
                     bool is_dynamic_downcast = src_st && tgt_st &&
                         src_st->get_struct() && tgt_st->get_struct() &&
                         tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
-                        std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
+                        tgt_st->get_struct()->has_rtti();
                     if (is_dynamic_downcast) {
                         auto dc = cast_expression::make_shared(arg, var_type, /*null_is_fatal=*/false);
                         assign_single_init_arg(dc);

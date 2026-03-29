@@ -1322,3 +1322,677 @@ TEST_CASE("RTTI: AnnotationType getVisibility() returns PUBLIC", "[libk][rtti][a
     REQUIRE(test);
     CHECK(test() == 42);
 }
+
+
+// =========================================================================
+// 40. RTTI: annotation field value — single int field via view downcast
+// =========================================================================
+
+TEST_CASE("RTTI: annotation int field value via view downcast", "[libk][rtti][annotation][field]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_field_int__;
+        import k;
+
+        annotation Priority {
+            value : int;
+        }
+
+        @Priority(42)
+        class Task {
+            public Task() {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            t : Task;
+            anns : const k::Annotation?[]? = t.getClass().getAnnotations();
+            if (anns == null) return 0;
+            ann : const k::Annotation? = anns[0];
+            if (ann == null) return 1;
+            p : const Priority? = ann;
+            if (p == null) return 2;
+            return p->value;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 41. RTTI: annotation multiple int fields via view downcast
+// =========================================================================
+
+TEST_CASE("RTTI: annotation multiple int fields via view downcast", "[libk][rtti][annotation][field]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_field_multi__;
+        import k;
+
+        annotation Version {
+            major : int;
+            minor : int;
+            patch : int;
+        }
+
+        @Version(2, 5, 1)
+        class Api {
+            public Api() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_major() : int {
+            a : Api;
+            anns : const k::Annotation?[]? = a.getClass().getAnnotations();
+            if (anns == null) return -1;
+            v : const Version? = anns[0];
+            if (v == null) return -2;
+            return v->major;
+        }
+
+        test_minor() : int {
+            a : Api;
+            anns : const k::Annotation?[]? = a.getClass().getAnnotations();
+            if (anns == null) return -1;
+            v : const Version? = anns[0];
+            if (v == null) return -2;
+            return v->minor;
+        }
+
+        test_patch() : int {
+            a : Api;
+            anns : const k::Annotation?[]? = a.getClass().getAnnotations();
+            if (anns == null) return -1;
+            v : const Version? = anns[0];
+            if (v == null) return -2;
+            return v->patch;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_major = jit->lookup_symbol<int(*)()>("test_major");
+    auto test_minor = jit->lookup_symbol<int(*)()>("test_minor");
+    auto test_patch = jit->lookup_symbol<int(*)()>("test_patch");
+    REQUIRE(test_major);
+    REQUIRE(test_minor);
+    REQUIRE(test_patch);
+    CHECK(test_major() == 2);
+    CHECK(test_minor() == 5);
+    CHECK(test_patch() == 1);
+}
+
+
+// =========================================================================
+// 42. RTTI: annotation bool field value via view downcast
+// =========================================================================
+
+TEST_CASE("RTTI: annotation bool field value via view downcast", "[libk][rtti][annotation][field]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_field_bool__;
+        import k;
+
+        annotation Flag {
+            enabled : bool;
+        }
+
+        @Flag(true)
+        class Active {
+            public Active() {}
+            public dummy() : int { return 0; }
+        }
+
+        @Flag(false)
+        class Inactive {
+            public Inactive() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_active() : int {
+            a : Active;
+            anns : const k::Annotation?[]? = a.getClass().getAnnotations();
+            if (anns == null) return -1;
+            f : const Flag? = anns[0];
+            if (f == null) return -2;
+            if (f->enabled) return 1;
+            return 0;
+        }
+
+        test_inactive() : int {
+            i : Inactive;
+            anns : const k::Annotation?[]? = i.getClass().getAnnotations();
+            if (anns == null) return -1;
+            f : const Flag? = anns[0];
+            if (f == null) return -2;
+            if (f->enabled) return 1;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_active = jit->lookup_symbol<int(*)()>("test_active");
+    auto test_inactive = jit->lookup_symbol<int(*)()>("test_inactive");
+    REQUIRE(test_active);
+    REQUIRE(test_inactive);
+    CHECK(test_active() == 1);
+    CHECK(test_inactive() == 0);
+}
+
+
+// =========================================================================
+// 43. RTTI: annotation field with default values
+// =========================================================================
+
+TEST_CASE("RTTI: annotation default field values via view downcast", "[libk][rtti][annotation][field][default]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_field_default__;
+        import k;
+
+        annotation Config {
+            level : int = 5;
+            verbose : bool = true;
+        }
+
+        @Config
+        class DefaultService {
+            public DefaultService() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_level() : int {
+            s : DefaultService;
+            anns : const k::Annotation?[]? = s.getClass().getAnnotations();
+            if (anns == null) return -1;
+            c : const Config? = anns[0];
+            if (c == null) return -2;
+            return c->level;
+        }
+
+        test_verbose() : int {
+            s : DefaultService;
+            anns : const k::Annotation?[]? = s.getClass().getAnnotations();
+            if (anns == null) return -1;
+            c : const Config? = anns[0];
+            if (c == null) return -2;
+            if (c->verbose) return 1;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_level = jit->lookup_symbol<int(*)()>("test_level");
+    auto test_verbose = jit->lookup_symbol<int(*)()>("test_verbose");
+    REQUIRE(test_level);
+    REQUIRE(test_verbose);
+    CHECK(test_level() == 5);
+    CHECK(test_verbose() == 1);
+}
+
+
+// =========================================================================
+// 44. RTTI: annotation partial positional args use defaults for remaining
+// =========================================================================
+
+TEST_CASE("RTTI: annotation partial positional args with defaults", "[libk][rtti][annotation][field][default]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_field_partial__;
+        import k;
+
+        annotation Config {
+            level : int = 0;
+            verbose : bool = true;
+        }
+
+        @Config(7)
+        class PartialService {
+            public PartialService() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_level() : int {
+            s : PartialService;
+            anns : const k::Annotation?[]? = s.getClass().getAnnotations();
+            if (anns == null) return -1;
+            c : const Config? = anns[0];
+            if (c == null) return -2;
+            return c->level;
+        }
+
+        test_verbose() : int {
+            s : PartialService;
+            anns : const k::Annotation?[]? = s.getClass().getAnnotations();
+            if (anns == null) return -1;
+            c : const Config? = anns[0];
+            if (c == null) return -2;
+            if (c->verbose) return 1;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_level = jit->lookup_symbol<int(*)()>("test_level");
+    auto test_verbose = jit->lookup_symbol<int(*)()>("test_verbose");
+    REQUIRE(test_level);
+    REQUIRE(test_verbose);
+    CHECK(test_level() == 7);
+    CHECK(test_verbose() == 1);
+}
+
+
+// =========================================================================
+// 45. RTTI: annotation designated init — field values via view downcast
+// =========================================================================
+
+TEST_CASE("RTTI: annotation designated init field values", "[libk][rtti][annotation][field][designated]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_field_desig__;
+        import k;
+
+        annotation Range {
+            min : int;
+            max : int;
+        }
+
+        @Range{.min = 10, .max = 200}
+        class Bounded {
+            public Bounded() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_min() : int {
+            b : Bounded;
+            anns : const k::Annotation?[]? = b.getClass().getAnnotations();
+            if (anns == null) return -1;
+            r : const Range? = anns[0];
+            if (r == null) return -2;
+            return r->min;
+        }
+
+        test_max() : int {
+            b : Bounded;
+            anns : const k::Annotation?[]? = b.getClass().getAnnotations();
+            if (anns == null) return -1;
+            r : const Range? = anns[0];
+            if (r == null) return -2;
+            return r->max;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_min = jit->lookup_symbol<int(*)()>("test_min");
+    auto test_max = jit->lookup_symbol<int(*)()>("test_max");
+    REQUIRE(test_min);
+    REQUIRE(test_max);
+    CHECK(test_min() == 10);
+    CHECK(test_max() == 200);
+}
+
+
+// =========================================================================
+// 46. RTTI: annotation designated init — out-of-order fields
+// =========================================================================
+
+TEST_CASE("RTTI: annotation designated init out-of-order fields", "[libk][rtti][annotation][field][designated]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_field_ooo__;
+        import k;
+
+        annotation Pair {
+            first : int;
+            second : int;
+        }
+
+        @Pair{.second = 99, .first = 11}
+        class Holder {
+            public Holder() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_first() : int {
+            h : Holder;
+            anns : const k::Annotation?[]? = h.getClass().getAnnotations();
+            if (anns == null) return -1;
+            p : const Pair? = anns[0];
+            if (p == null) return -2;
+            return p->first;
+        }
+
+        test_second() : int {
+            h : Holder;
+            anns : const k::Annotation?[]? = h.getClass().getAnnotations();
+            if (anns == null) return -1;
+            p : const Pair? = anns[0];
+            if (p == null) return -2;
+            return p->second;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_first = jit->lookup_symbol<int(*)()>("test_first");
+    auto test_second = jit->lookup_symbol<int(*)()>("test_second");
+    REQUIRE(test_first);
+    REQUIRE(test_second);
+    CHECK(test_first() == 11);
+    CHECK(test_second() == 99);
+}
+
+
+// =========================================================================
+// 47. RTTI: same annotation type, different values on different classes
+// =========================================================================
+
+TEST_CASE("RTTI: same annotation different values on different classes", "[libk][rtti][annotation][field][multi]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_field_diff__;
+        import k;
+
+        annotation Version {
+            major : int;
+            minor : int;
+        }
+
+        @Version(1, 0)
+        class ApiV1 {
+            public ApiV1() {}
+            public dummy() : int { return 0; }
+        }
+
+        @Version(2, 3)
+        class ApiV2 {
+            public ApiV2() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_v1_major() : int {
+            a : ApiV1;
+            anns : const k::Annotation?[]? = a.getClass().getAnnotations();
+            if (anns == null) return -1;
+            v : const Version? = anns[0];
+            if (v == null) return -2;
+            return v->major;
+        }
+
+        test_v1_minor() : int {
+            a : ApiV1;
+            anns : const k::Annotation?[]? = a.getClass().getAnnotations();
+            if (anns == null) return -1;
+            v : const Version? = anns[0];
+            if (v == null) return -2;
+            return v->minor;
+        }
+
+        test_v2_major() : int {
+            a : ApiV2;
+            anns : const k::Annotation?[]? = a.getClass().getAnnotations();
+            if (anns == null) return -1;
+            v : const Version? = anns[0];
+            if (v == null) return -2;
+            return v->major;
+        }
+
+        test_v2_minor() : int {
+            a : ApiV2;
+            anns : const k::Annotation?[]? = a.getClass().getAnnotations();
+            if (anns == null) return -1;
+            v : const Version? = anns[0];
+            if (v == null) return -2;
+            return v->minor;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_v1_major = jit->lookup_symbol<int(*)()>("test_v1_major");
+    auto test_v1_minor = jit->lookup_symbol<int(*)()>("test_v1_minor");
+    auto test_v2_major = jit->lookup_symbol<int(*)()>("test_v2_major");
+    auto test_v2_minor = jit->lookup_symbol<int(*)()>("test_v2_minor");
+    REQUIRE(test_v1_major);
+    REQUIRE(test_v1_minor);
+    REQUIRE(test_v2_major);
+    REQUIRE(test_v2_minor);
+    CHECK(test_v1_major() == 1);
+    CHECK(test_v1_minor() == 0);
+    CHECK(test_v2_major() == 2);
+    CHECK(test_v2_minor() == 3);
+}
+
+
+// =========================================================================
+// 48. RTTI: multiple annotations on same class — read fields from both
+// =========================================================================
+
+TEST_CASE("RTTI: multiple annotations field values on same class", "[libk][rtti][annotation][field][multi]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_field_two__;
+        import k;
+
+        annotation Priority {
+            level : int;
+        }
+
+        annotation Version {
+            major : int;
+            minor : int;
+        }
+
+        @Priority(5) @Version(3, 7)
+        class Important {
+            public Important() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_priority() : int {
+            i : Important;
+            anns : const k::Annotation?[]? = i.getClass().getAnnotations();
+            if (anns == null) return -1;
+            p : const Priority? = anns[0];
+            if (p == null) return -2;
+            return p->level;
+        }
+
+        test_version_major() : int {
+            i : Important;
+            anns : const k::Annotation?[]? = i.getClass().getAnnotations();
+            if (anns == null) return -1;
+            v : const Version? = anns[1];
+            if (v == null) return -2;
+            return v->major;
+        }
+
+        test_version_minor() : int {
+            i : Important;
+            anns : const k::Annotation?[]? = i.getClass().getAnnotations();
+            if (anns == null) return -1;
+            v : const Version? = anns[1];
+            if (v == null) return -2;
+            return v->minor;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_priority = jit->lookup_symbol<int(*)()>("test_priority");
+    auto test_version_major = jit->lookup_symbol<int(*)()>("test_version_major");
+    auto test_version_minor = jit->lookup_symbol<int(*)()>("test_version_minor");
+    REQUIRE(test_priority);
+    REQUIRE(test_version_major);
+    REQUIRE(test_version_minor);
+    CHECK(test_priority() == 5);
+    CHECK(test_version_major() == 3);
+    CHECK(test_version_minor() == 7);
+}
+
+
+// =========================================================================
+// 49. RTTI: annotation method call at runtime (computed accessor)
+// =========================================================================
+
+TEST_CASE("RTTI: annotation method call via view downcast", "[libk][rtti][annotation][method]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_method_rt__;
+        import k;
+
+        annotation Range {
+            min : int;
+            max : int;
+            span() : int { return max - min; }
+        }
+
+        @Range{.min = 10, .max = 50}
+        class Bounded {
+            public Bounded() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_span() : int {
+            b : Bounded;
+            anns : const k::Annotation?[]? = b.getClass().getAnnotations();
+            if (anns == null) return -1;
+            r : const Range? = anns[0];
+            if (r == null) return -2;
+            return r->span();
+        }
+
+        test_min() : int {
+            b : Bounded;
+            anns : const k::Annotation?[]? = b.getClass().getAnnotations();
+            if (anns == null) return -1;
+            r : const Range? = anns[0];
+            if (r == null) return -2;
+            return r->min;
+        }
+
+        test_max() : int {
+            b : Bounded;
+            anns : const k::Annotation?[]? = b.getClass().getAnnotations();
+            if (anns == null) return -1;
+            r : const Range? = anns[0];
+            if (r == null) return -2;
+            return r->max;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_span = jit->lookup_symbol<int(*)()>("test_span");
+    auto test_min = jit->lookup_symbol<int(*)()>("test_min");
+    auto test_max = jit->lookup_symbol<int(*)()>("test_max");
+    REQUIRE(test_span);
+    REQUIRE(test_min);
+    REQUIRE(test_max);
+    CHECK(test_min() == 10);
+    CHECK(test_max() == 50);
+    CHECK(test_span() == 40);
+}
+
+
+// =========================================================================
+// 50. RTTI: annotation field zero-init when no default and no value given
+// =========================================================================
+
+TEST_CASE("RTTI: annotation field zero-init for unspecified fields", "[libk][rtti][annotation][field][zero]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_field_zero__;
+        import k;
+
+        annotation Stats {
+            count : int;
+            flag : bool;
+        }
+
+        @Stats{.count = 77}
+        class Partial {
+            public Partial() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_count() : int {
+            p : Partial;
+            anns : const k::Annotation?[]? = p.getClass().getAnnotations();
+            if (anns == null) return -1;
+            s : const Stats? = anns[0];
+            if (s == null) return -2;
+            return s->count;
+        }
+
+        test_flag() : int {
+            p : Partial;
+            anns : const k::Annotation?[]? = p.getClass().getAnnotations();
+            if (anns == null) return -1;
+            s : const Stats? = anns[0];
+            if (s == null) return -2;
+            if (s->flag) return 1;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_count = jit->lookup_symbol<int(*)()>("test_count");
+    auto test_flag = jit->lookup_symbol<int(*)()>("test_flag");
+    REQUIRE(test_count);
+    REQUIRE(test_flag);
+    CHECK(test_count() == 77);
+    CHECK(test_flag() == 0);
+}
+
+
+// =========================================================================
+// 51. RTTI: annotation const char[] field value via view downcast
+// =========================================================================
+
+TEST_CASE("RTTI: annotation char[] field value via view downcast", "[libk][rtti][annotation][field][string]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_ann_field_str__;
+        import k;
+
+        annotation Description {
+            text : const char[];
+        }
+
+        @Description("hello world")
+        class Documented {
+            public Documented() {}
+            public dummy() : int { return 0; }
+        }
+
+        test_via_string() : int {
+            d : Documented;
+            anns : const k::Annotation?[]? = d.getClass().getAnnotations();
+            if (anns == null) return 0;
+            desc : const Description? = anns[0];
+            if (desc == null) return 1;
+            actual : k::String(desc->text);
+            expected : k::String("hello world");
+            if (actual == expected) return 42;
+            return 2;
+        }
+
+        test_size() : int {
+            d : Documented;
+            anns : const k::Annotation?[]? = d.getClass().getAnnotations();
+            if (anns == null) return 0;
+            desc : const Description? = anns[0];
+            if (desc == null) return 1;
+            return desc->text.size;
+        }
+
+        test_first_char() : int {
+            d : Documented;
+            anns : const k::Annotation?[]? = d.getClass().getAnnotations();
+            if (anns == null) return 0;
+            desc : const Description? = anns[0];
+            if (desc == null) return 1;
+            return desc->text[0];
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_via_string = jit->lookup_symbol<int(*)()>("test_via_string");
+    auto test_size = jit->lookup_symbol<int(*)()>("test_size");
+    auto test_first_char = jit->lookup_symbol<int(*)()>("test_first_char");
+    REQUIRE(test_via_string);
+    REQUIRE(test_size);
+    REQUIRE(test_first_char);
+    CHECK(test_via_string() == 42);
+    CHECK(test_size() == 12);       // "hello world" + null terminator = 12
+    CHECK(test_first_char() == 'h');
+}
+

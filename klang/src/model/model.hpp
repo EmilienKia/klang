@@ -681,6 +681,15 @@ struct annotation_instance {
     /// Resolved annotation type (set during symbol resolution phase).
     std::shared_ptr<annotation_type> resolved_type;
 
+    /**
+     * Resolved compile-time constant values for each member field.
+     * Populated during the annotation materialisation phase.
+     * Each entry is an LLVM Constant* keyed by the member variable index
+     * (following the LLVM struct field order of the annotation type).
+     * Empty until materialisation runs.
+     */
+    std::vector<llvm::Constant*> resolved_field_constants;
+
     annotation_instance() = default;
     annotation_instance(std::string raw_name,
                         std::shared_ptr<k::parse::ast::annotation_def> ast_node)
@@ -1043,6 +1052,20 @@ public:
      * in gen_expressions.cpp) that hold a shared_ptr<aggregate> without knowing
      * the concrete type.
      */
+    /**
+     * True if this aggregate carries RTTI (vtable slot 0) and therefore supports
+     * dynamic downcast.  Currently classes, interfaces, and annotation types have
+     * RTTI; structs do not.
+     */
+    virtual bool has_rtti() const { return false; }
+
+    /**
+     * Return the primary vtable layout (RTTI + virtual slots).
+     * Only valid for aggregates with has_rtti() == true.
+     * Default returns nullptr.
+     */
+    virtual std::shared_ptr<vtable_layout> get_vtable() const { return nullptr; }
+
     virtual bool has_vtable() const { return false; }
 
 
@@ -1184,10 +1207,11 @@ protected:
     static std::shared_ptr<annotation_type> make_shared(std::shared_ptr<element> parent, const std::string &name);
 
 public:
+    bool has_rtti() const override { return _vtable != nullptr; }
     bool is_annotation() const override { return true; }
     bool has_vtable() const override { return _vtable != nullptr; }
+    std::shared_ptr<vtable_layout> get_vtable() const override { return _vtable; }
 
-    std::shared_ptr<vtable_layout> get_vtable() const { return _vtable; }
     void set_vtable(std::shared_ptr<vtable_layout> vt) { _vtable = std::move(vt); }
 
     std::shared_ptr<member_variable_definition> get_vptr() const { return _vptr; }
@@ -1239,14 +1263,13 @@ protected:
     static std::shared_ptr<klass> make_shared(std::shared_ptr<element> parent, const std::string &name);
 
 public:
+    bool has_rtti() const override { return _vtable != nullptr; }
     bool is_class() const override { return true; }
     bool has_vtable() const override { return _vtable != nullptr; }
 
     void accept(model_visitor& visitor) override;
 
-    // ── Virtuality accessors (concrete, klass-only — not part of aggregate interface) ──
-
-    std::shared_ptr<vtable_layout> get_vtable() const { return _vtable; }
+    std::shared_ptr<vtable_layout> get_vtable() const override { return _vtable; }
 
     void set_vtable(std::shared_ptr<vtable_layout> vt) { _vtable = std::move(vt); }
 

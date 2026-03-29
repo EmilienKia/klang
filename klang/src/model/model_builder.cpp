@@ -289,6 +289,17 @@ namespace k::model {
         bool is_const_struct = lex::keyword::has(st.specifiers, lex::keyword::CONST);
         agg->set_const_struct(is_const_struct);
 
+        // Annotation types are always const, regardless of whether the specifier was written
+        if (is_annotation) {
+            if (is_const_struct) {
+                // 'const' is redundant on an annotation: annotations are implicitly const
+                logger_relay::warn(with_flag(0x002C), lex::any_lexeme{st.kw_aggregate_type},
+                    "Specifier 'const' is redundant on annotation '{}'; annotations are implicitly const",
+                    {std::string{st.name.content}});
+            }
+            agg->set_const_struct(true);
+        }
+
         // Resolve visibility: per-element specifier takes precedence over group visibility
         model::visibility vis = model::PUBLIC; // default
         if (auto vctx = current_context<visibility_context>()) {

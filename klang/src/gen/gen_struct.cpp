@@ -171,8 +171,11 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                     {bs.raw_name, st.get_short_name(), bs.raw_name});
             }
 
-            // A const struct cannot inherit from a mutable (non-const) struct
-            if (st.is_const_struct() && !base_st->is_const_struct()) {
+            // A const struct cannot inherit from a mutable (non-const) struct.
+            // Annotation types are excluded: they implicitly inherit from
+            // ::k::Annotation (a const class) which may not carry the const flag
+            // when imported; the implicit constness is guaranteed by the compiler.
+            if (st.is_const_struct() && !base_st->is_const_struct() && !st.is_annotation()) {
                 throw_error(0x0033, st_lexeme,
                     "const struct '{}' cannot inherit from mutable struct '{}': "
                     "a const struct may only inherit from other const structs",

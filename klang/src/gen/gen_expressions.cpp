@@ -826,6 +826,17 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
     // Strip const to get the actual struct_type for member lookup
     auto bare_subtype = type::remove_const(subtype);
 
+    // ── Handle unsized-array fields: T[] is canonically ref<array<T>>, so a
+    //    const T[] field appears as const(ref(array(T))). After unwrapping the
+    //    outer ref + const, bare_subtype may be another ref<array<T>>.
+    //    Unwrap that inner reference to reach the array_type for virtual member checks.
+    if (auto inner_ref = std::dynamic_pointer_cast<reference_type>(bare_subtype)) {
+        auto inner_sub = type::remove_const(inner_ref->get_subtype());
+        if (std::dynamic_pointer_cast<array_type>(inner_sub)) {
+            bare_subtype = inner_sub;
+        }
+    }
+
     // ── Virtual member: array.size ──────────────────────────────────────────
     // Arrays (sized or unsized) expose a virtual read-only member "size"
     // that returns the element count (unsigned int, stored in LLVM struct field 0).
@@ -1209,10 +1220,27 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
     // Strip const from the subtype to get the bare struct_type for GEP/method lookup.
     auto bare_subtype = type::remove_const(type->get_subtype());
 
+    // ── Handle unsized-array fields: const T[] = const(ref(array(T))).
+    //    After stripping const, bare_subtype may be ref<array<T>>.
+    //    Unwrap the inner reference (with an extra load) to reach the array struct.
+    bool arr_needs_inner_ref_load = false;
+    if (auto inner_ref = std::dynamic_pointer_cast<reference_type>(bare_subtype)) {
+        auto inner_sub = type::remove_const(inner_ref->get_subtype());
+        if (std::dynamic_pointer_cast<array_type>(inner_sub)) {
+            bare_subtype = inner_sub;
+            arr_needs_inner_ref_load = true;
+        }
+    }
+
     // ── Virtual member: array.size ──────────────────────────────────────────
     if (auto arr_subtype = std::dynamic_pointer_cast<array_type>(bare_subtype)) {
         const std::string& name_str = expr.symbol().get_name().to_string();
         if (name_str == "size") {
+            // For unsized array fields (double-reference), load the inner pointer first.
+            if (arr_needs_inner_ref_load) {
+                _value = _builder->CreateLoad(
+                    llvm::PointerType::get(_builder->getContext(), 0), _value, "arr_inner_ref_load");
+            }
             // _value is a pointer to the array struct { i32, [N x T] }.
             // GEP into field 0 (size), then load.
             auto* struct_ty = arr_subtype->get_llvm_struct_type();
@@ -1281,6 +1309,8 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
     if (auto ref_wrap = std::dynamic_pointer_cast<reference_type>(arr_pointed)) {
         arr_pointed = ref_wrap->get_subtype();
     }
+    // Strip const for structural checks (const is enforced separately)
+    arr_pointed = type::remove_const(arr_pointed);
     if (auto arr_subtype = std::dynamic_pointer_cast<array_type>(arr_pointed)) {
         const std::string& name_str = expr.symbol().get_name().to_string();
         if (name_str == "size") {
@@ -1292,7 +1322,8 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
             {name_str});
     }
 
-    auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_type);
+    auto pointed_nc = type::remove_const(pointed_type);
+    auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_nc);
     if (!struct_subtype) {
         throw_error(0x0081, expr.first_lexeme(),
             "The '->' operator requires a pointer to a struct or array, "
@@ -1388,6 +1419,7 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
         arr_pointed = ref_wrap->get_subtype();
         arr_needs_ref_load = true;
     }
+    arr_pointed = type::remove_const(arr_pointed);
     if (auto arr_subtype = std::dynamic_pointer_cast<array_type>(arr_pointed)) {
         const std::string& name_str = expr.symbol().get_name().to_string();
         if (name_str == "size") {
@@ -1403,12 +1435,13 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
         }
     }
 
-    auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_type);
+    auto pointed_nc = type::remove_const(pointed_type);
+    auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_nc);
     if (!struct_subtype) return;
     const auto& member_name = expr.symbol();
     if (auto field = struct_subtype->get_member(member_name.get_name())) {
         _value = _builder->CreateStructGEP(
-            _context->get_llvm_type(pointed_type), _value,
+            _context->get_llvm_type(pointed_nc), _value,
             (unsigned)field->index, member_name.get_name().to_string() + "_ptr");
     }
     // For method: _value is already the struct ptr (this)
@@ -5044,6 +5077,10 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         } else if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_def)) {
             auto it = _context->_global_vars.find(global_var);
             if (it != _context->_global_vars.end()) alloca_ptr = it->second;
+        } else if (std::dynamic_pointer_cast<member_variable_definition>(var_def)) {
+            // Member variable of a struct/annotation: storage is a GEP into 'this',
+            // already computed as object_ref.
+            alloca_ptr = object_ref;
         }
 
         if (!alloca_ptr) {
@@ -5174,10 +5211,19 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 object_ref = alloca_ptr;
             }
         } else {
-            throw_internal_error(0x001C, expr.first_lexeme(),
-                "Internal error: reference variable '{}' has no initialisation argument; "
-                "the resolver should have rejected this earlier",
-                {var_def->get_fq_name()});
+            // No initialisation argument for a reference-type variable.
+            // For member variables (e.g. in annotation default constructors), store null.
+            if (std::dynamic_pointer_cast<member_variable_definition>(var_def)) {
+                auto* null_ptr = llvm::ConstantPointerNull::get(
+                    llvm::PointerType::get(_builder->getContext(), 0));
+                _builder->CreateStore(null_ptr, alloca_ptr);
+                object_ref = alloca_ptr;
+            } else {
+                throw_internal_error(0x001C, expr.first_lexeme(),
+                    "Internal error: reference variable '{}' has no initialisation argument; "
+                    "the resolver should have rejected this earlier",
+                    {var_def->get_fq_name()});
+            }
         }
 
     } else if (type::is_drain(var_type)) {
@@ -5350,8 +5396,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                         // IR handles GEP; model-level: no load_value wrapping needed.
                         // null_is_fatal not needed for static upcast.
                     } else if (tgt_agg->is_derived_from(src_agg) &&
-                               std::dynamic_pointer_cast<klass>(tgt_agg) != nullptr) {
-                        // Dynamic downcast: ptr/lnk/pin<Base> → ptr/lnk/pin<Derived> (RTTI)
+                               tgt_agg->has_rtti()) {
                         // Set null_is_fatal on the cast_expression for non-null targets.
                         expr.set_null_is_fatal(target_is_nonnull(target_type));
                     } else {
@@ -5390,7 +5435,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                     if (src_agg->is_derived_from(tgt_agg)) {
                         // Static upcast ref<Derived>→ref<Base>: handled by IR GEP.
                     } else if (tgt_agg->is_derived_from(src_agg) &&
-                               std::dynamic_pointer_cast<klass>(tgt_agg) != nullptr) {
+                               tgt_agg->has_rtti()) {
                         // Dynamic downcast ref<Base>→ref<Derived>: ref is non-null → fatal.
                         expr.set_null_is_fatal(true);
                     } else {
@@ -5654,7 +5699,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             // Only do a no-op for truly same/unrelated types.
             bool is_dynamic_downcast = src_st && tgt_st &&
                 tgt_st->is_derived_from(src_st) &&
-                std::dynamic_pointer_cast<klass>(tgt_st) != nullptr;
+                tgt_st->has_rtti();
             if (!is_dynamic_downcast) {
                 // Same type or unrelated: no-op
                 _value = nullptr;
@@ -5830,7 +5875,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 auto tgt_agg = tgt_st_type->get_struct();
                 bool is_dynamic_downcast = src_agg && tgt_agg &&
                     tgt_agg->is_derived_from(src_agg) &&
-                    std::dynamic_pointer_cast<klass>(tgt_agg) != nullptr;
+                    tgt_agg->has_rtti();
                 if (!is_dynamic_downcast) {
                     _value = nullptr;
                     expr.sub_expr()->accept(*this);
@@ -5944,7 +5989,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             auto tgt_st = tgt_st_type->get_struct();
             bool is_dynamic = src_st && tgt_st &&
                 tgt_st->is_derived_from(src_st) &&
-                std::dynamic_pointer_cast<klass>(tgt_st) != nullptr;
+                tgt_st->has_rtti();
             if (is_dynamic) {
                 emit_dynamic_cast(expr, src_st_type, tgt_st_type);
                 return;
@@ -6083,11 +6128,10 @@ void implementation_generator::emit_dynamic_cast(
 
     auto src_st = src_st_type->get_struct();
     auto tgt_st = tgt_st_type->get_struct();
-    auto tgt_klass = std::dynamic_pointer_cast<klass>(tgt_st);
 
-    if (!src_st || !tgt_st || !tgt_klass) {
+    if (!src_st || !tgt_st || !tgt_st->has_rtti()) {
         throw_internal_error(0x0026, expr.first_lexeme(),
-            "emit_dynamic_cast: source or target is not a class/interface aggregate");
+            "emit_dynamic_cast: source or target is not a class/interface/annotation aggregate");
     }
 
     // ── 1. Evaluate sub-expression → raw base pointer ────────────────────────
@@ -6106,8 +6150,8 @@ void implementation_generator::emit_dynamic_cast(
         }
     }
 
-    // ── 2. Find the RTTI global for the target class ──────────────────────────
-    std::string rtti_name = mangler::mangle_rtti(tgt_klass->get_name());
+    // ── 2. Find the RTTI global for the target class/annotation ─────────────
+    std::string rtti_name = mangler::mangle_rtti(tgt_st->get_name());
     llvm::GlobalVariable* tgt_rtti_gv = _context->module().getNamedGlobal(rtti_name);
     if (!tgt_rtti_gv) {
         throw_internal_error(0x0027, expr.first_lexeme(),
@@ -6115,16 +6159,15 @@ void implementation_generator::emit_dynamic_cast(
             {rtti_name});
     }
 
-    // ── 3. Load the vptr from the source object (field 0 of the klass) ───────
-    auto src_klass = std::dynamic_pointer_cast<klass>(src_st);
-    if (!src_klass || !src_klass->has_vtable()) {
+    // ── 3. Load the vptr from the source object (field 0 of the aggregate) ──
+    if (!src_st->has_rtti()) {
         throw_internal_error(0x0028, expr.first_lexeme(),
-            "emit_dynamic_cast: source class '{}' has no vtable/vptr",
+            "emit_dynamic_cast: source aggregate '{}' has no vtable/vptr",
             {src_st->get_short_name()});
     }
-    auto src_vt = src_klass->get_vtable();
+    auto src_vt = src_st->get_vtable();
     auto* src_llvm_type = src_st_type->get_llvm_type();
-    if (!src_llvm_type || !src_vt->llvm_type) {
+    if (!src_llvm_type) {
         throw_internal_error(0x0029, expr.first_lexeme(),
             "emit_dynamic_cast: source class LLVM type not built");
     }
@@ -6133,8 +6176,18 @@ void implementation_generator::emit_dynamic_cast(
     llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "dyncast_vptr");
 
     // ── 4. Load vtable[0] → actual RTTI pointer ──────────────────────────────
+    // For imported classes, no vtable_layout exists — synthesise a minimal
+    // vtable struct { ptr } since RTTI is always at slot 0.
+    llvm::Type* vt_llvm_type = nullptr;
+    if (src_vt && src_vt->llvm_type) {
+        vt_llvm_type = src_vt->llvm_type;
+    } else {
+        std::vector<llvm::Type*> vt_fields_vec;
+        vt_fields_vec.push_back(ptr_ty);
+        vt_llvm_type = llvm::StructType::get(llvm_ctx, vt_fields_vec);
+    }
     llvm::Value* rtti_slot_addr = _builder->CreateStructGEP(
-        src_vt->llvm_type, vptr, 0, "dyncast_rtti_slot_addr");
+        vt_llvm_type, vptr, 0, "dyncast_rtti_slot_addr");
     llvm::Value* actual_rtti = _builder->CreateLoad(ptr_ty, rtti_slot_addr, "dyncast_actual_rtti");
 
     // ── 5. Compare RTTI pointers ──────────────────────────────────────────────
