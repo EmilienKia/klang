@@ -583,8 +583,17 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
             }
             // If the resolved type is itself a struct_type not yet fully resolved,
             // recursively resolve it now (handles any declaration order).
-            if (auto dep_st_type = std::dynamic_pointer_cast<struct_type>(res_type)) {
-                resolve_struct_type(dep_st_type, in_progress);
+            // Walk through wrapper types (const, view, array, pointer, etc.)
+            // to find any inner struct_type that needs resolving.
+            {
+                auto walk = res_type;
+                while (walk) {
+                    if (auto dep_st_type = std::dynamic_pointer_cast<struct_type>(walk)) {
+                        resolve_struct_type(dep_st_type, in_progress);
+                        break;
+                    }
+                    walk = walk->get_subtype();
+                }
             }
             var->set_type(res_type);
             effective_type = res_type;

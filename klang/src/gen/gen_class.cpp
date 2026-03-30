@@ -1764,11 +1764,79 @@ void implementation_generator::visit_klass(klass& klass) {
             }
         }
 
+        // ── f-pre) Look up ::k::Parameter vtable symbol (shared by functions & constructors) ──
+        std::string param_vtable_name = "_KTVN1k9ParameterE";
+        llvm::Constant* param_vt = _context->module().getNamedGlobal(param_vtable_name);
+        if (!param_vt) {
+            bool has_libk = _unit.find_import(k::name("k")) != nullptr;
+            if (!has_libk) {
+                for (const auto& tdep : _unit.get_transitive_kdis()) {
+                    if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
+                }
+            }
+            if (has_libk) {
+                param_vt = new llvm::GlobalVariable(
+                    _context->module(), ptr_ty,
+                    true, llvm::GlobalValue::ExternalLinkage,
+                    nullptr, param_vtable_name);
+            }
+        }
+        llvm::Constant* param_vt_or_null = param_vt ? param_vt : null_ptr;
+
+        // Helper: emit a Parameter RTTI global for a single parameter
+        auto make_param_rtti = [&](const std::shared_ptr<k::model::parameter>& param,
+                                   const std::string& prefix, size_t idx) -> llvm::Constant* {
+            std::string param_name_str = param->get_short_name();
+            uint32_t len = static_cast<uint32_t>(param_name_str.size() + 1);
+            llvm::Constant* str_data = llvm::ConstantDataArray::getString(llvm_ctx, param_name_str, /*AddNull=*/true);
+            llvm::StructType* str_struct_ty = llvm::StructType::get(
+                llvm_ctx, {i32_ty, str_data->getType()}, /*isPacked=*/false);
+            llvm::Constant* str_struct_init = llvm::ConstantStruct::get(
+                str_struct_ty,
+                {llvm::ConstantInt::get(i32_ty, len), str_data});
+            auto* name_gv = new llvm::GlobalVariable(
+                _context->module(), str_struct_ty,
+                true, llvm::GlobalValue::PrivateLinkage,
+                str_struct_init, prefix + "_param" + std::to_string(idx) + "_name");
+            name_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+            // Parameter struct: { ptr vptr, ptr vptr_Object, ptr name }
+            llvm::StructType* param_rtti_type = llvm::StructType::get(
+                llvm_ctx, {ptr_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
+            std::vector<llvm::Constant*> param_init = {
+                param_vt_or_null,  // __vptr__ (Parameter primary vtable)
+                null_ptr,          // __vptr_Object__ (null)
+                name_gv            // name
+            };
+            llvm::Constant* param_const = llvm::ConstantStruct::get(param_rtti_type, param_init);
+            auto* param_gv = new llvm::GlobalVariable(
+                _context->module(), param_rtti_type,
+                /*isConstant=*/true,
+                llvm::GlobalValue::PrivateLinkage,
+                param_const, prefix + "_param" + std::to_string(idx));
+            param_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+            return param_gv;
+        };
+
+        // Helper: emit a K-array of Parameter RTTI globals for a function's parameters
+        auto make_params_array = [&](const std::shared_ptr<k::model::function>& fn,
+                                      const std::string& prefix) -> llvm::Constant* {
+            std::vector<llvm::Constant*> param_ptrs;
+            size_t idx = 0;
+            for (auto& p : fn->parameters()) {
+                if (!p) continue;
+                param_ptrs.push_back(make_param_rtti(p, prefix, idx));
+                ++idx;
+            }
+            if (param_ptrs.empty()) return null_ptr;
+            return make_base_array(param_ptrs, prefix.substr(prefix.rfind('_')) + "_parameters");
+        };
+
         // ── f) Synthesize Function RTTI globals for public member functions ────
         // For each public member function (non-constructor, non-destructor), emit
         // a ::k::Function RTTI global constant.
-        // Function layout: { ptr __vptr__, ptr name, ptr fullName, ptr owner,
-        //                     ptr unit, i32 flags }
+        // Function layout: { ptr __vptr__, ptr vptr_Object, ptr name, ptr fullName,
+        //                     ptr owner, i32 flags, ptr annotations, ptr parameters }
         llvm::Constant* functions_gv = null_ptr;
         {
             // Look up ::k::Function vtable symbol
@@ -1832,18 +1900,23 @@ void implementation_generator::visit_klass(klass& klass) {
                 if (fn->is_static()) fn_flags |= 4;
                 fn_flags |= 8;  // is_member = true for all functions in a class
 
-                // Build the Function struct: { ptr vptr, ptr vptr_Object, ptr name, ptr fullName, ptr owner, i32 flags }
+                // Build parameter RTTI array
+                llvm::Constant* params_gv = make_params_array(fn, fn_rtti_name);
+
+                // Build the Function struct: { ptr vptr, ptr vptr_Object, ptr name, ptr fullName, ptr owner, i32 flags, ptr annotations, ptr parameters }
                 // K implicitly adds Object as a base class for all classes, so Function
                 // has an Object sub-object at field 1 (containing the Object vptr).
                 llvm::StructType* fn_rtti_type = llvm::StructType::get(
-                    llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty}, /*isPacked=*/false);
+                    llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
                 std::vector<llvm::Constant*> fn_init = {
                     func_vt_or_null,                       // __vptr__ (Function primary vtable)
                     null_ptr,                              // __vptr_Object__ (Object sub-object; null — no Object dispatch needed)
                     fn_name_gv,                            // name
                     fn_fullname_gv,                        // fullName
                     owner_rtti,                            // owner
-                    llvm::ConstantInt::get(i32_ty, fn_flags)  // flags
+                    llvm::ConstantInt::get(i32_ty, fn_flags),  // flags
+                    null_ptr,                              // annotations (TODO: materialize for member functions)
+                    params_gv                              // parameters
                 };
                 llvm::Constant* fn_const = llvm::ConstantStruct::get(fn_rtti_type, fn_init);
                 auto* fn_gv = new llvm::GlobalVariable(
@@ -1961,14 +2034,19 @@ void implementation_generator::visit_klass(klass& klass) {
                     }
                 }
 
-                // Build the Constructor struct: { ptr vptr, ptr vptr_Object, i32 paramCount, ptr annotations }
+                // Build parameter RTTI array for this constructor
+                llvm::Constant* ctor_params_gv = make_params_array(ctor,
+                    mangler::mangle_rtti(klass.get_name()) + "_ctor" + std::to_string(ctor_index));
+
+                // Build the Constructor struct: { ptr vptr, ptr vptr_Object, i32 paramCount, ptr annotations, ptr parameters }
                 llvm::StructType* ctor_rtti_type = llvm::StructType::get(
-                    llvm_ctx, {ptr_ty, ptr_ty, i32_ty, ptr_ty}, /*isPacked=*/false);
+                    llvm_ctx, {ptr_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
                 std::vector<llvm::Constant*> ctor_init = {
                     ctor_vt_or_null,                              // __vptr__ (Constructor primary vtable)
                     null_ptr,                                      // __vptr_Object__ (null — no Object dispatch needed)
                     llvm::ConstantInt::get(i32_ty, param_count),  // paramCount
-                    ctor_anns_gv                                   // annotations
+                    ctor_anns_gv,                                  // annotations
+                    ctor_params_gv                                 // parameters
                 };
                 llvm::Constant* ctor_const = llvm::ConstantStruct::get(ctor_rtti_type, ctor_init);
 

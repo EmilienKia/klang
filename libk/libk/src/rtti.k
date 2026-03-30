@@ -79,6 +79,21 @@ const interface AggregateType : public TypeInfo {
 }
 
 /**
+ * RTTI parameter descriptor.
+ * This class describes a function or constructor parameter at runtime.
+ */
+final const class Parameter {
+    name : const char[]?;
+
+    /**
+     * Return the name of the parameter.
+     */
+    const getName() : const char[]? {
+        return name;
+    }
+}
+
+/**
  * RTTI function descriptor.
  * This class describes a function (member or non-member) at runtime.
  * Constructors and destructors are excluded.
@@ -89,6 +104,7 @@ final const class Function {
     owner : const AggregateType?;
     flags : unsigned int;
     annotations : const Annotation?[]?;
+    parameters : const Parameter?[]?;
 
     /**
      * Internal bit-flag layout for the 'flags' field.
@@ -150,6 +166,14 @@ final const class Function {
     const getAnnotations() : const Annotation?[]? {
         return annotations;
     }
+
+    /**
+     * Return the parameters of this function.
+     * Returns null if the function has no parameters.
+     */
+    const getParameters() : const Parameter?[]? {
+        return parameters;
+    }
 }
 
 /**
@@ -160,6 +184,7 @@ final const class Function {
 final const class Constructor {
     paramCount : int;
     annotations : const Annotation?[]?;
+    parameters : const Parameter?[]?;
 
     /**
      * Return the number of parameters of this constructor (excluding 'this').
@@ -174,6 +199,14 @@ final const class Constructor {
      */
     const getAnnotations() : const Annotation?[]? {
         return annotations;
+    }
+
+    /**
+     * Return the parameters of this constructor.
+     * Returns null if the constructor has no parameters.
+     */
+    const getParameters() : const Parameter?[]? {
+        return parameters;
     }
 }
 

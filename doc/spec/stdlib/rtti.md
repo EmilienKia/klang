@@ -429,7 +429,7 @@ functions and compilation units, respectively.
 
 ---
 
-## 13. Usage examples
+## 14. Usage examples
 
 ### Get the class name of an object
 
@@ -661,9 +661,85 @@ test_params() : int {
 }
 ```
 
+### Inspect function parameters
+
+```k
+import k;
+
+class Calc {
+    public Calc() {}
+    public add(a : int, b : int) : int { return a + b; }
+}
+
+test_count() : int {
+    c : Calc;
+    fns : const k::Function?[]? = c.getClass().getFunctions();
+    if (fns == null) return 0;
+    fn : const k::Function? = fns[0];
+    if (fn == null) return 1;
+    params : const k::Parameter?[]? = fn->getParameters();
+    if (params == null) return 2;
+    return params->size;   // → 2
+}
+
+test_name() : int {
+    c : Calc;
+    fns : const k::Function?[]? = c.getClass().getFunctions();
+    if (fns == null) return 0;
+    fn : const k::Function? = fns[0];
+    if (fn == null) return 1;
+    params : const k::Parameter?[]? = fn->getParameters();
+    if (params == null) return 2;
+    p : const k::Parameter? = params[0];
+    if (p == null) return 3;
+    name : k::String(p->getName());
+    expected : k::String("a");
+    if (name == expected) return 42;
+    return 4;
+}
+```
+
+### Inspect constructor parameters
+
+```k
+import k;
+
+class Point {
+    public Point(x : int, y : int) {}
+    public dummy() : int { return 0; }
+}
+
+test_count() : int {
+    p : Point(0, 0);
+    ctors : const k::Constructor?[]? = p.getClass().getConstructors();
+    if (ctors == null) return 0;
+    c : const k::Constructor? = ctors[0];
+    if (c == null) return 1;
+    params : const k::Parameter?[]? = c->getParameters();
+    if (params == null) return 2;
+    return params->size;   // → 2
+}
+
+test_name() : int {
+    p : Point(0, 0);
+    ctors : const k::Constructor?[]? = p.getClass().getConstructors();
+    if (ctors == null) return 0;
+    c : const k::Constructor? = ctors[0];
+    if (c == null) return 1;
+    params : const k::Parameter?[]? = c->getParameters();
+    if (params == null) return 2;
+    p0 : const k::Parameter? = params[0];
+    if (p0 == null) return 3;
+    name : k::String(p0->getName());
+    expected : k::String("x");
+    if (name == expected) return 42;
+    return 4;
+}
+```
+
 ---
 
-## 14. Meta-annotation types
+## 15. Meta-annotation types
 
 **Namespace:** `k::annotations`  
 **Source:** `libk/libk/src/annotations.k`
@@ -678,7 +754,7 @@ All three meta-annotations are themselves annotated with
 making them available for runtime inspection and restricted to annotation
 type declarations.
 
-### 14.1. Retention
+### 15.1. Retention
 
 ```k
 @Retention(Policy::RUNTIME)
@@ -705,7 +781,7 @@ the binary as RTTI metadata.
 |-------|------|---------|-------------|
 | `policy` | `Policy` | `Policy::RUNTIME` | The retention policy. |
 
-### 14.2. Inherited
+### 15.2. Inherited
 
 ```k
 @Retention(Policy::RUNTIME)
@@ -722,7 +798,7 @@ annotation type, the explicit instance replaces the inherited one.
 
 No fields.
 
-### 14.3. Target
+### 15.3. Target
 
 ```k
 @Retention(Policy::RUNTIME)
