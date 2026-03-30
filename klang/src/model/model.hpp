@@ -725,6 +725,10 @@ public:
         _annotations.push_back(std::move(ann));
     }
 
+    bool has_annotations() const {
+        return !_annotations.empty();
+    }
+
     const std::vector<annotation_instance>& get_annotations() const {
         return _annotations;
     }
@@ -1474,11 +1478,18 @@ protected:
     bool _is_abstract_func = false;
 
     /**
-     * True if this function is declared 'extern': it has no body, no K mangling,
-     * and is resolved at link time from an external (C) library.
-     * The symbol name used in the LLVM module is the function's short name (no mangling).
+     * True if this function is an FFI extern function: it has no body, no K mangling,
+     * and is resolved at link time from an external library.
+     * Set automatically by set_extern_c_symbol().
      */
     bool _is_extern = false;
+
+    /**
+     * The C symbol name to use for this extern function.
+     * When set (via @k::ffi::Extern annotation), _is_extern is also set to true.
+     * If empty, the function's short name is used.
+     */
+    std::optional<std::string> _extern_c_symbol;
 
     /**
      * Index of this function's slot in the vtable of its owning class.
@@ -1633,12 +1644,26 @@ public:
     void set_abstract_func(bool v) { _is_abstract_func = v; }
 
     /**
-     * True if this function is declared 'extern' (no body; resolved at link time
-     * from an external C library; symbol name = short name, no K mangling).
+     * True if this function is an FFI extern function (resolved at link time
+     * from an external library; no body, no K mangling).
      */
     bool is_extern() const { return _is_extern; }
-    /** Set whether this function is extern. */
-    void set_extern(bool v) { _is_extern = v; }
+
+    /**
+     * Returns the C symbol name for this extern function.
+     * If set, this is the exact symbol name to use.
+     * If not set but is_extern() is true, the short name should be used.
+     */
+    const std::optional<std::string>& get_extern_c_symbol() const { return _extern_c_symbol; }
+
+    /**
+     * Mark this function as FFI extern with the given C symbol name.
+     * Also sets _is_extern = true.
+     */
+    void set_extern_c_symbol(const std::string& sym) {
+        _extern_c_symbol = sym;
+        _is_extern = true;
+    }
 
     /**
      * True if this function is an external import (no body in this module).

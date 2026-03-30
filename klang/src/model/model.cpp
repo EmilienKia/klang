@@ -335,8 +335,8 @@ std::shared_ptr<function> function::make_shared(std::shared_ptr<element> parent,
 
 void function::update_mangled_name() {
     if (_is_extern) {
-        // Extern functions use their short name as-is (C linkage, no K mangling).
-        _mangled_name = get_short_name();
+        // Extern functions use their explicit C symbol, or the short name as fallback.
+        _mangled_name = _extern_c_symbol.value_or(get_short_name());
     } else {
         _mangled_name = mangler(get_context()).mangle_function(*this);
     }

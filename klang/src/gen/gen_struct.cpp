@@ -53,6 +53,44 @@ void symbol_resolver::resolve_and_validate_annotations(
 
         // Look up by name in local scope
         auto ann_agg = scope_lookup::lookup_structure(scope.shared_as<element>(), ann_inst.raw_name);
+
+        // If not found and the name is qualified (contains ::), try local
+        // namespace traversal: walk up to a namespace parent and descend
+        // through child namespaces to find the annotation type.
+        if (!ann_agg && ann_inst.raw_name.find("::") != std::string::npos) {
+            std::vector<std::string> parts;
+            std::size_t start = 0;
+            while (true) {
+                auto pos = ann_inst.raw_name.find("::", start);
+                if (pos == std::string::npos) {
+                    parts.push_back(ann_inst.raw_name.substr(start));
+                    break;
+                }
+                parts.push_back(ann_inst.raw_name.substr(start, pos - start));
+                start = pos + 2;
+            }
+            // Walk up the scope chain looking for a namespace that has the first part
+            for (auto current = scope.shared_as<element>(); current && !ann_agg;
+                 current = current->parent<element>()) {
+                auto ns_ptr = std::dynamic_pointer_cast<k::model::ns>(current);
+                if (!ns_ptr) continue;
+                // Try descending through namespaces
+                auto cur_ns = ns_ptr;
+                bool found = true;
+                for (size_t i = 0; i + 1 < parts.size() && found; ++i) {
+                    auto child = cur_ns->get_child_namespace(parts[i]);
+                    if (child) {
+                        cur_ns = child;
+                    } else {
+                        found = false;
+                    }
+                }
+                if (found && cur_ns) {
+                    ann_agg = cur_ns->get_aggregate(parts.back());
+                }
+            }
+        }
+
         if (!ann_agg) {
             // Try imported modules
             std::vector<std::string> parts;

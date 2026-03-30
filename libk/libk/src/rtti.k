@@ -508,7 +508,7 @@ final const class Unit {
  * Implemented in rtti.c. Takes the annotation pointer (void*) and returns
  * the AnnotationType pointer from vtable slot 0.
  */
-extern __k_annotation_get_type(ann : const Annotation&) : const AnnotationType&;
+@ffi::Extern("C") __k_annotation_get_type(ann : const Annotation&) : const AnnotationType&;
 
 /**
  * C runtime helper: extract the functions array from a Class RTTI global.
@@ -516,14 +516,14 @@ extern __k_annotation_get_type(ann : const Annotation&) : const AnnotationType&;
  * Takes a Class& directly (not AggregateType&) to avoid base-class pointer
  * adjustment that would shift the pointer away from the struct start.
  */
-extern __k_class_get_functions(rtti : const Class&) : const Function?[]?;
+@ffi::Extern("C") __k_class_get_functions(rtti : const Class&) : const Function?[]?;
 
 /**
  * C runtime helper: extract the functions array from an Interface RTTI global.
  * Implemented in rtti.c. Same logic as __k_class_get_functions, but takes
  * Interface& directly to avoid base-class pointer adjustment.
  */
-extern __k_iface_get_functions(rtti : const Interface&) : const Function?[]?;
+@ffi::Extern("C") __k_iface_get_functions(rtti : const Interface&) : const Function?[]?;
 
 /**
  * C runtime helper: extract the constructors array from a Class RTTI global.
@@ -531,7 +531,7 @@ extern __k_iface_get_functions(rtti : const Interface&) : const Function?[]?;
  * Takes a Class& directly (not AggregateType&) to avoid base-class pointer
  * adjustment that would shift the pointer away from the struct start.
  */
-extern __k_class_get_constructors(rtti : const Class&) : const Constructor?[]?;
+@ffi::Extern("C") __k_class_get_constructors(rtti : const Class&) : const Constructor?[]?;
 
 /**
  * Annotation — root base class for all K annotation instances.

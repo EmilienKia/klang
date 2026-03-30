@@ -902,6 +902,10 @@ llvm::Constant* build_annotation_instance_constant(
     size_t user_idx = 0;
     for (auto it = ann_st_type->fields_begin() + 1; it != ann_st_type->fields_end(); ++it) {
         unsigned fi = static_cast<unsigned>(it - ann_st_type->fields_begin());
+        // Safety: the model struct_type may include base sub-object fields that
+        // the LLVM struct does not have (e.g. for imported annotation types where
+        // the base is folded into the vptr).  Stop if we would go out of bounds.
+        if (fi >= sty->getNumElements()) break;
         llvm::Type* elem_ty = sty->getElementType(fi);
         bool is_user_field = user_field_names.count(it->name) > 0;
 

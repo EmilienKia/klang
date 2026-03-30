@@ -67,7 +67,6 @@ namespace k::lex {
 
         {"using", keyword::USING},
         {"friend", keyword::FRIEND},
-        {"extern", keyword::EXTERN},
         {"annotation", keyword::ANNOTATION}
     };
 

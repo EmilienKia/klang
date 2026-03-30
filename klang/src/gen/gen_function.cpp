@@ -35,6 +35,7 @@
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
 #include <algorithm>
+#include <cctype>
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
@@ -353,6 +354,105 @@ void symbol_resolver::visit_function(function& fn) {
                 }
             }
         }
+
+        // ── Process @k::ffi::Extern annotation ───────────────────────────
+        for (auto& ann_inst : fn.get_annotations()) {
+            if (!ann_inst.resolved_type) continue;
+            std::string fq = ann_inst.resolved_type->get_fq_name();
+            if (fq != "k::ffi::Extern" && fq != "::k::ffi::Extern") continue;
+
+            // Helper: extract a string literal from an AST expression.
+            // Returns empty optional if the expression is null/null literal/not a string literal.
+            auto extract_string = [](const std::shared_ptr<k::parse::ast::expression>& expr)
+                    -> std::optional<std::string> {
+                if (!expr) return std::nullopt;
+                if (auto lit = std::dynamic_pointer_cast<k::parse::ast::literal_expr>(expr)) {
+                    // null literal → nullopt
+                    if (std::holds_alternative<lex::null>(lit->literal)) return std::nullopt;
+                    if (auto* s = lit->literal.get_if<lex::string>()) {
+                        return std::get<std::string>(s->value());
+                    }
+                }
+                return std::nullopt;
+            };
+
+            // Extract parameters from the annotation AST node
+            std::optional<std::string> language;
+            std::optional<std::string> library;
+            std::optional<std::string> symbol;
+
+            if (ann_inst.ast_node->has_parens) {
+                // Positional form: @Extern("C") or @Extern("C", "lib", "sym")
+                auto& args = ann_inst.ast_node->args;
+                if (args.size() >= 1) language = extract_string(args[0]);
+                if (args.size() >= 2) library  = extract_string(args[1]);
+                if (args.size() >= 3) symbol   = extract_string(args[2]);
+            } else if (ann_inst.ast_node->brace_init && ann_inst.ast_node->brace_init->is_designated) {
+                // Designated form: @Extern{.language="C", .symbol="custom"}
+                for (auto& elem : ann_inst.ast_node->brace_init->elements) {
+                    auto des = std::dynamic_pointer_cast<k::parse::ast::designated_init_element>(elem);
+                    if (!des) continue;
+                    std::string member{des->member_name.content};
+                    if (member == "language") language = extract_string(des->value);
+                    else if (member == "library") library = extract_string(des->value);
+                    else if (member == "symbol") symbol = extract_string(des->value);
+                }
+            }
+
+            // Validate language parameter (mandatory, case-insensitive, only "C" supported)
+            if (!language.has_value() || language->empty()) {
+                throw_error(0x0080, fn_lexeme,
+                    "@ffi::Extern on '{}': 'language' parameter is required and must not be empty",
+                    {fn.get_short_name()});
+            }
+            std::string lang_lower = language.value();
+            std::transform(lang_lower.begin(), lang_lower.end(), lang_lower.begin(),
+                [](unsigned char c) { return std::tolower(c); });
+            if (lang_lower != "c") {
+                throw_error(0x0080, fn_lexeme,
+                    "@ffi::Extern on '{}': unsupported language '{}'; only \"C\" is currently supported",
+                    {fn.get_short_name(), language.value()});
+            }
+
+            // Warn if 'library' is specified (not yet used for C FFI)
+            if (library.has_value()) {
+                warn(0x0081, fn_lexeme,
+                    "@ffi::Extern on '{}': 'library' parameter is not yet used for language \"C\" and will be ignored",
+                    {fn.get_short_name()});
+            }
+
+            // Validate: non-static member methods cannot be @Extern
+            if (fn.is_member() && !fn.is_static()) {
+                throw_error(0x0082, fn_lexeme,
+                    "@ffi::Extern on '{}': only global or static functions can be declared as FFI extern; "
+                    "non-static member functions are not supported",
+                    {fn.get_short_name()});
+            }
+
+            // Validate: @Extern function must not have a body
+            if (fn.get_ast_function_decl() && fn.get_ast_function_decl()->content) {
+                throw_error(0x0080, fn_lexeme,
+                    "@ffi::Extern function '{}' must not have a body; "
+                    "remove the body or the @ffi::Extern annotation",
+                    {fn.get_short_name()});
+            }
+
+            // Validate: @Extern + abstract is not allowed
+            if (fn.is_abstract_func()) {
+                throw_error(0x0080, fn_lexeme,
+                    "Function '{}' cannot be both @ffi::Extern and abstract",
+                    {fn.get_short_name()});
+            }
+
+            // Determine the C symbol name
+            std::string c_symbol = symbol.value_or(fn.get_short_name());
+            fn.set_extern_c_symbol(c_symbol);
+            // Re-compute the mangled name now that _is_extern and _extern_c_symbol are set.
+            fn.update_mangled_name();
+
+            // Only one @Extern annotation makes sense — stop after the first one
+            break;
+        }
     }
 
     // Resolve redirect target if this is a redirected function
@@ -449,8 +549,8 @@ void declaration_generator::visit_function(function &function) {
     }
 
     // Extern functions: emit a bare LLVM declaration with C linkage (no K mangling).
-    // The symbol name is the function's short name, resolved at link time from
-    // an external (C) library.
+    // The symbol name is determined by the @k::ffi::Extern annotation, resolved
+    // at link time from an external library.
     if (function.is_extern()) {
         std::vector<llvm::Type*> param_types;
         for (const auto& param : function.parameters()) {
@@ -465,12 +565,28 @@ void declaration_generator::visit_function(function &function) {
             ret_type = llvm::Type::getVoidTy(**_context);
         }
         llvm::FunctionType* func_type = llvm::FunctionType::get(ret_type, param_types, false);
-        // Use the short name (no mangling) — this is the actual C symbol.
+        // Use the mangled name — for extern functions this is the C symbol name.
         llvm::Function* func = llvm::Function::Create(
             func_type, llvm::Function::ExternalLinkage,
-            function.get_short_name(), *_context->_module);
+            function.get_mangled_name(), *_context->_module);
         _context->_functions.insert({function.shared_as<k::model::function>(), func});
         return;
+    }
+
+    // Deferred body-check: if the function has no body and is not abstract, extern,
+    // deleted, redirected, or defaulted, it is an error. This catches functions that
+    // bypassed the model_builder body check because they carried annotations but those
+    // annotations did not mark the function as extern.
+    if (function.get_ast_function_decl() && !function.get_ast_function_decl()->content
+        && !function.is_abstract_func() && !function.is_extern()
+        && !function.is_deleted() && !function.is_redirected()
+        && !function.is_defaulted()) {
+        lex::opt_any_lexeme fn_lexeme;
+        if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+        throw_error(0x002C, fn_lexeme,
+            "Function '{}' has no body; a function body is required unless the function is abstract, "
+            "declared inside an interface, or annotated with @ffi::Extern",
+            {function.get_fq_name()});
     }
 
     // Parameter types:

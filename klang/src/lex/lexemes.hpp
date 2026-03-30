@@ -144,7 +144,6 @@ struct keyword : public lexeme {
         OPERATOR,
         USING,
         FRIEND,
-        EXTERN,
         ANNOTATION
     };
 

@@ -17,85 +17,185 @@
  */
 
 /**
- * Tests for K language 'extern' function declarations.
+ * Tests for K language FFI @k::ffi::Extern annotation.
  *
  * Tests covered:
- *  - Parser: 'extern' keyword recognized as a specifier
- *  - Bodyless extern function parses and compiles
- *  - Extern function with body is rejected
- *  - Extern + abstract combination is rejected
- *  - Runtime: extern function can call a C function resolved at link time
- *  - Extern function inside a struct (static extern method)
+ *  - 'extern' keyword no longer exists (now an identifier)
+ *  - Bodyless @Extern("C") function compiles
+ *  - @Extern("C") function with body is rejected
+ *  - @Extern on non-static member method is rejected
+ *  - Missing / empty / unsupported language parameter is rejected
+ *  - Case-insensitive language matching ("c" and "C" both work)
+ *  - 'library' parameter accepted with warning
+ *  - Explicit 'symbol' override via positional and designated forms
+ *  - @Extern + abstract combination rejected
+ *  - Static @Extern member function accepted
+ *  - Runtime: @Extern function can call a C function resolved at link time
+ *  - @Extern function used from within a struct method
  */
 
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
 
+// ── Common K source preamble: inline definition of the Extern annotation ──
+// Tests use gen_jit() (no stdlib KDI import resolution), so we define a local
+// annotation type whose FQ name matches k::ffi::Extern.  The symbol_resolver
+// matches by FQ name of the resolved annotation type.
+// We omit @Retention/@Target since the stdlib annotations namespace is not
+// available in the test context — the compiler defaults work fine.
+static const std::string FFI_PREAMBLE = R"K(
+namespace ffi {
+    annotation Extern {
+        language : const char[];
+        library : const char[]? = null;
+        symbol : const char[]? = null;
+    }
+}
+)K";
+
+// Helper: build a complete K source with module k + FFI preamble + user body.
+static std::string ffi_src(const std::string& body) {
+    return "module k;\n" + FFI_PREAMBLE + body;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
-//  Parser: 'extern' keyword recognized
+//  Lexer: 'extern' keyword no longer recognized
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Extern: keyword is lexed", "[extern][lexer]") {
+TEST_CASE("FFI: 'extern' is no longer a keyword", "[ffi][lexer]") {
     test_logger logger;
     k::lex::lexer lexer(logger);
     k::source src("extern");
     auto lexemes = lexer.parse(src);
     REQUIRE(lexemes.size() == 1);
-    REQUIRE(std::holds_alternative<k::lex::keyword>(lexemes[0]));
-    CHECK(std::get<k::lex::keyword>(lexemes[0]).type == k::lex::keyword::EXTERN);
+    // 'extern' is now lexed as a plain identifier, not a keyword
+    CHECK(std::holds_alternative<k::lex::identifier>(lexemes[0]));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Parser + Model: extern function declaration (no body) compiles
+//  Basic: bodyless @Extern("C") function compiles
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Extern: bodyless extern function compiles", "[extern][gen]") {
-    auto jit = gen_jit(R"SRC(
-        module __extern_basic__;
-        extern some_c_function(x : int) : int;
-    )SRC");
+TEST_CASE("FFI: bodyless @Extern(\"C\") function compiles", "[ffi][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") some_c_function(x : int) : int;
+    )K"));
     REQUIRE(jit);
 }
 
-TEST_CASE("Extern: extern function with no return type compiles", "[extern][gen]") {
-    auto jit = gen_jit(R"SRC(
-        module __extern_void__;
-        extern some_c_proc(x : int);
-    )SRC");
+TEST_CASE("FFI: @Extern(\"C\") function with no return type compiles", "[ffi][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") some_c_proc(x : int);
+    )K"));
     REQUIRE(jit);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Error: extern function with body is rejected
+//  Error: @Extern function with body is rejected
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Extern: extern function with body is rejected", "[extern][error]") {
-    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __extern_body__;
-        extern bad(x : int) : int { return x; }
-    )SRC"), k::log::compiler_error);
+TEST_CASE("FFI: @Extern function with body is rejected", "[ffi][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(ffi_src(R"K(
+        @ffi::Extern("C") bad(x : int) : int { return x; }
+    )K")), k::log::compiler_error);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Error: extern + abstract combination rejected
+//  Error: @Extern on non-static member method is rejected
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Extern: extern + abstract combination rejected", "[extern][error]") {
-    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
-        module __extern_abstract__;
-        abstract class Foo {
-            extern abstract bad() : int;
+TEST_CASE("FFI: @Extern on non-static member method is rejected", "[ffi][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(ffi_src(R"K(
+        struct Foo {
+            @ffi::Extern("C") bad() : int;
         }
-    )SRC"), k::log::compiler_error);
+    )K")), k::log::compiler_error);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Runtime: extern function resolves a C symbol and executes correctly
+//  Error: missing language parameter
 // ═══════════════════════════════════════════════════════════════════════════
 
-// A plain C function that will be visible to the JIT linker because it
-// lives in the test executable (loaded into the process address space).
+TEST_CASE("FFI: missing language parameter is rejected", "[ffi][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(ffi_src(R"K(
+        @ffi::Extern() bad(x : int) : int;
+    )K")), k::log::compiler_error);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Error: empty language string
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FFI: empty language string is rejected", "[ffi][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(ffi_src(R"K(
+        @ffi::Extern("") bad(x : int) : int;
+    )K")), k::log::compiler_error);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Error: unsupported language
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FFI: unsupported language is rejected", "[ffi][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(ffi_src(R"K(
+        @ffi::Extern("Java") bad(x : int) : int;
+    )K")), k::log::compiler_error);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Case-insensitive language matching
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FFI: lowercase 'c' language is accepted", "[ffi][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("c") some_c_function(x : int) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Warning: 'library' parameter is not yet used
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FFI: library parameter compiles with warning", "[ffi][gen]") {
+    // Should compile (warning only, not an error)
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C", "mylib.so") some_c_function(x : int) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Static @Extern member function is accepted
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FFI: static @Extern member function is accepted", "[ffi][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        struct Calculator {
+            @ffi::Extern("C") static helper(a : int, b : int) : int;
+        }
+    )K"));
+    REQUIRE(jit);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  @Extern + abstract combination rejected
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FFI: @Extern + abstract combination rejected", "[ffi][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(ffi_src(R"K(
+        abstract class Foo {
+            @ffi::Extern("C") abstract bad() : int;
+        }
+    )K")), k::log::compiler_error);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Runtime: @Extern function resolves a C symbol and executes correctly
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Plain C functions visible to the JIT linker (in the test executable).
 extern "C" {
     int __k_test_extern_add(int a, int b) {
         return a + b;
@@ -103,16 +203,18 @@ extern "C" {
     int __k_test_extern_mul(int a, int b) {
         return a * b;
     }
+    int __k_test_extern_custom_symbol(int x) {
+        return x * 10;
+    }
 }
 
-TEST_CASE("Extern: call to C function via extern declaration", "[extern][gen][runtime]") {
-    auto jit = gen_jit(R"SRC(
-        module __extern_call__;
-        extern __k_test_extern_add(a : int, b : int) : int;
+TEST_CASE("FFI: call to C function via @Extern declaration", "[ffi][gen][runtime]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") __k_test_extern_add(a : int, b : int) : int;
         test() : int {
             return __k_test_extern_add(20, 22);
         }
-    )SRC");
+    )K"));
     REQUIRE(jit);
 
     auto test = jit->lookup_symbol<int(*)()>("test");
@@ -120,15 +222,14 @@ TEST_CASE("Extern: call to C function via extern declaration", "[extern][gen][ru
     REQUIRE(test() == 42);
 }
 
-TEST_CASE("Extern: multiple extern calls in one expression", "[extern][gen][runtime]") {
-    auto jit = gen_jit(R"SRC(
-        module __extern_multi__;
-        extern __k_test_extern_add(a : int, b : int) : int;
-        extern __k_test_extern_mul(a : int, b : int) : int;
+TEST_CASE("FFI: multiple @Extern calls in one expression", "[ffi][gen][runtime]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") __k_test_extern_add(a : int, b : int) : int;
+        @ffi::Extern("C") __k_test_extern_mul(a : int, b : int) : int;
         test() : int {
             return __k_test_extern_add(__k_test_extern_mul(6, 7), 0);
         }
-    )SRC");
+    )K"));
     REQUIRE(jit);
 
     auto test = jit->lookup_symbol<int(*)()>("test");
@@ -136,10 +237,9 @@ TEST_CASE("Extern: multiple extern calls in one expression", "[extern][gen][runt
     REQUIRE(test() == 42);
 }
 
-TEST_CASE("Extern: extern function used from within a struct method", "[extern][gen][runtime]") {
-    auto jit = gen_jit(R"SRC(
-        module __extern_struct__;
-        extern __k_test_extern_add(a : int, b : int) : int;
+TEST_CASE("FFI: @Extern function used from within a struct method", "[ffi][gen][runtime]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") __k_test_extern_add(a : int, b : int) : int;
         struct Calculator {
             base : int;
             Calculator(b : int) : base(b) {}
@@ -151,7 +251,7 @@ TEST_CASE("Extern: extern function used from within a struct method", "[extern][
             c : Calculator(40);
             return c.add(2);
         }
-    )SRC");
+    )K"));
     REQUIRE(jit);
 
     auto test = jit->lookup_symbol<int(*)()>("test");
@@ -159,7 +259,38 @@ TEST_CASE("Extern: extern function used from within a struct method", "[extern][
     REQUIRE(test() == 42);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  Explicit symbol override via positional parameter
+// ═══════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("FFI: explicit symbol override via positional argument", "[ffi][gen][runtime]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C", null, "__k_test_extern_custom_symbol") my_func(x : int) : int;
+        test() : int {
+            return my_func(4);
+        }
+    )K"));
+    REQUIRE(jit);
 
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 40);
+}
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  Explicit symbol override via designated initializer
+// ═══════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("FFI: explicit symbol override via designated initializer", "[ffi][gen][runtime]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern{.language="C", .symbol="__k_test_extern_custom_symbol"} my_func(x : int) : int;
+        test() : int {
+            return my_func(4);
+        }
+    )K"));
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 40);
+}
