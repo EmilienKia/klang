@@ -99,6 +99,7 @@ annotation Target {
      * ANNOTATION -- an annotation type declaration (keyword 'annotation').
      * FUNCTION   -- a function declaration (member or free function).
      * CONSTRUCTOR -- a constructor declaration.
+     * PARAMETER  -- a function or constructor parameter.
      */
     enum ElementType {
         CLASS;
@@ -106,6 +107,7 @@ annotation Target {
         ANNOTATION;
         FUNCTION;
         CONSTRUCTOR;
+        PARAMETER;
     };
 
     /* The set of element types on which the annotated annotation is allowed. */

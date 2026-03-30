@@ -81,15 +81,25 @@ const interface AggregateType : public TypeInfo {
 /**
  * RTTI parameter descriptor.
  * This class describes a function or constructor parameter at runtime.
+ * Exposes the parameter name and annotations.
  */
 final const class Parameter {
     name : const char[]?;
+    annotations : const Annotation?[]?;
 
     /**
      * Return the name of the parameter.
      */
     const getName() : const char[]? {
         return name;
+    }
+
+    /**
+     * Return the annotations applied to this parameter.
+     * Returns null if the parameter has no annotations.
+     */
+    const getAnnotations() : const Annotation?[]? {
+        return annotations;
     }
 }
 

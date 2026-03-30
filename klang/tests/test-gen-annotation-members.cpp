@@ -709,3 +709,140 @@ TEST_CASE("Annotation: different materialized values on different classes", "[an
     CHECK(v2_minor->getSExtValue() == 3);
 }
 
+
+// ════════════════════════════════════════════════════════════════════════════
+//  20. Annotation on a function parameter — model level
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Annotation: on function parameter — model level", "[annotation][parameter]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_param_1__;
+        annotation Tag {
+            label : int;
+        }
+        class Svc {
+            public Svc() {}
+            public process(@Tag(42) input : int, output : int) : int {
+                return input + output;
+            }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto klass = find_klass(comp, "Svc");
+    REQUIRE(klass != nullptr);
+
+    // Find the 'process' function
+    std::shared_ptr<k::model::function> process_fn;
+    for (auto& fn : klass->functions()) {
+        if (fn && fn->get_short_name() == "process") {
+            process_fn = fn;
+            break;
+        }
+    }
+    REQUIRE(process_fn != nullptr);
+
+    auto& params = process_fn->parameters();
+    REQUIRE(params.size() == 2);
+
+    // First parameter 'input' has @Tag annotation
+    auto& p0 = params[0];
+    REQUIRE(p0 != nullptr);
+    CHECK(p0->get_short_name() == "input");
+    auto& p0_anns = p0->get_annotations();
+    REQUIRE(p0_anns.size() == 1);
+    CHECK(p0_anns[0].resolved_type->get_short_name() == "Tag");
+
+    // Second parameter 'output' has no annotations
+    auto& p1 = params[1];
+    REQUIRE(p1 != nullptr);
+    CHECK(p1->get_short_name() == "output");
+    CHECK(p1->get_annotations().empty());
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  21. Multiple annotations on a single parameter — model level
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Annotation: multiple annotations on single parameter — model level", "[annotation][parameter]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_param_2__;
+        annotation Tag {
+            label : int;
+        }
+        annotation Info {
+            code : int;
+        }
+        class Worker {
+            public Worker() {}
+            public run(@Tag(1) @Info(99) data : int) : int {
+                return data;
+            }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto klass = find_klass(comp, "Worker");
+    REQUIRE(klass != nullptr);
+
+    std::shared_ptr<k::model::function> run_fn;
+    for (auto& fn : klass->functions()) {
+        if (fn && fn->get_short_name() == "run") {
+            run_fn = fn;
+            break;
+        }
+    }
+    REQUIRE(run_fn != nullptr);
+
+    auto& params = run_fn->parameters();
+    REQUIRE(params.size() == 1);
+    auto& p0_anns = params[0]->get_annotations();
+    REQUIRE(p0_anns.size() == 2);
+    CHECK(p0_anns[0].resolved_type->get_short_name() == "Tag");
+    CHECK(p0_anns[1].resolved_type->get_short_name() == "Info");
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  22. Annotation on constructor parameter — model level
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Annotation: on constructor parameter — model level", "[annotation][parameter][constructor]") {
+    auto comp = compile_model(R"SRC(
+        module __test_ann_param_3__;
+        annotation Required {}
+        class Config {
+            public Config(@Required host : int, port : int) {}
+            public dummy() : int { return 0; }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto klass = find_klass(comp, "Config");
+    REQUIRE(klass != nullptr);
+
+    // Find the constructor
+    auto& ctors = klass->constructors();
+    REQUIRE(!ctors.empty());
+    auto& ctor = ctors[0];
+    REQUIRE(ctor != nullptr);
+
+    auto& params = ctor->parameters();
+    // Constructor parameters include 'this' as param 0
+    // Find 'host' and 'port'
+    std::shared_ptr<k::model::parameter> host_param, port_param;
+    for (auto& p : params) {
+        if (!p) continue;
+        if (p->get_short_name() == "host") host_param = p;
+        if (p->get_short_name() == "port") port_param = p;
+    }
+    REQUIRE(host_param != nullptr);
+    REQUIRE(port_param != nullptr);
+
+    auto& host_anns = host_param->get_annotations();
+    REQUIRE(host_anns.size() == 1);
+    CHECK(host_anns[0].resolved_type->get_short_name() == "Required");
+
+    CHECK(port_param->get_annotations().empty());
+}

@@ -538,13 +538,14 @@ void implementation_generator::visit_unit(unit &unit) {
                     str_struct_init, prefix + "_param" + std::to_string(idx) + "_name");
                 name_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
-                // Parameter struct: { ptr vptr, ptr vptr_Object, ptr name }
+                // Parameter struct: { ptr vptr, ptr vptr_Object, ptr name, ptr annotations }
                 llvm::StructType* param_rtti_type = llvm::StructType::get(
-                    llvm_ctx, {ptr_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
+                    llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
                 std::vector<llvm::Constant*> param_init = {
                     param_vt_or_null,  // __vptr__ (Parameter primary vtable)
                     null_ptr,          // __vptr_Object__ (null)
-                    name_gv            // name
+                    name_gv,           // name
+                    null_ptr           // annotations (TODO: materialize when build_annotation_instance_constant is a shared utility)
                 };
                 llvm::Constant* param_const = llvm::ConstantStruct::get(param_rtti_type, param_init);
                 auto* param_gv = new llvm::GlobalVariable(

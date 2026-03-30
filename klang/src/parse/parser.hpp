@@ -181,7 +181,7 @@ public:
     std::shared_ptr<ast::function_decl> parse_function_decl();
 
     /**
-     * Current support : PARAMETER := SPECIFIERS ?[identifier ':'] TYPE_SPEC ';'
+     * Current support : PARAMETER := ANNOTATION_DEFS SPECIFIERS ?[identifier ':'] TYPE_SPEC ';'
      */
     std::shared_ptr<ast::parameter_spec> parse_parameter_spec();
 

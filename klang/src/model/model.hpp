@@ -1374,7 +1374,7 @@ public:
 };
 
 
-class parameter : public element, public variable_definition {
+class parameter : public element, public variable_definition, public annotation_holder {
 protected:
 
     friend class function;

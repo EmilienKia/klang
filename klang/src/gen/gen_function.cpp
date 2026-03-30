@@ -164,6 +164,15 @@ void symbol_resolver::visit_parameter(parameter& param) {
     if(auto expr = param.get_default_expr()) {
         expr->accept(*this);
     }
+
+    // ── Resolve annotation instances and validate @Target for parameters ──
+    if (!param.get_annotations().empty()) {
+        lex::opt_any_lexeme param_lexeme;
+        if (auto ast_ps = param.get_ast_parameter_spec()) {
+            if (ast_ps->name) param_lexeme = lex::any_lexeme{*ast_ps->name};
+        }
+        resolve_and_validate_annotations(param, param, param.get_short_name(), param_lexeme, "PARAMETER");
+    }
 }
 
 void signature_resolver::visit_parameter(parameter& param) {

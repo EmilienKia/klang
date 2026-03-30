@@ -282,6 +282,13 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_parameter_specifier(ast::parameter_spec& param) override {
+            for (auto& ann : param.annotations) {
+                if (ann) {
+                    _stm << "@";
+                    ann->visit(*this);
+                    _stm << " ";
+                }
+            }
             visit_specifiers(param.specifiers);
             if(param.name) {
                 _stm << param.name.value().content << " : ";

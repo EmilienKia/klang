@@ -948,19 +948,23 @@ namespace k::parse {
         };
 
         struct parameter_spec : public ast_node {
+            /** Annotations applied to this parameter (parsed before specifiers). */
+            annotation_def_list annotations;
             std::vector <lex::keyword> specifiers;
             std::optional <lex::identifier> name;
             std::shared_ptr<ast::type_specifier> type;
             /** Optional default value expression (e.g. '= 42' or '= a + 1'). */
             expr_ptr default_expr;
 
-            parameter_spec(const std::vector <lex::keyword> &specifiers, const std::optional <lex::identifier> &name,
+            parameter_spec(annotation_def_list annotations,
+                           const std::vector <lex::keyword> &specifiers, const std::optional <lex::identifier> &name,
                            const std::shared_ptr<ast::type_specifier> &type, expr_ptr default_expr = nullptr) :
-                    specifiers(specifiers), name(name), type(type), default_expr(std::move(default_expr)) {}
+                    annotations(std::move(annotations)), specifiers(specifiers), name(name), type(type), default_expr(std::move(default_expr)) {}
 
-            parameter_spec(std::vector <lex::keyword> &&specifiers, std::optional <lex::identifier> &&name,
+            parameter_spec(annotation_def_list annotations,
+                           std::vector <lex::keyword> &&specifiers, std::optional <lex::identifier> &&name,
                            std::shared_ptr<ast::type_specifier> &&type, expr_ptr default_expr = nullptr) :
-                    specifiers(specifiers), name(name), type(type), default_expr(std::move(default_expr)) {}
+                    annotations(std::move(annotations)), specifiers(specifiers), name(name), type(type), default_expr(std::move(default_expr)) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

@@ -931,6 +931,19 @@ namespace k::model {
             std::shared_ptr<model::parameter> parameter = function->append_parameter(std::string{param->name->content}, param_type);
             parameter->set_const(param_is_const);
             parameter->set_ast_parameter_spec(param);
+
+            // Populate annotation instances from the AST annotation list
+            for (auto& ast_ann : param->annotations) {
+                if (ast_ann && ast_ann->name) {
+                    std::string raw_name;
+                    for (size_t i = 0; i < ast_ann->name->names.size(); ++i) {
+                        if (i > 0) raw_name += "::";
+                        raw_name += std::string{ast_ann->name->names[i].content};
+                    }
+                    parameter->add_annotation(model::annotation_instance{std::move(raw_name), ast_ann});
+                }
+            }
+
             // Build default expression if present
             if(param->default_expr) {
                 _expr.reset();

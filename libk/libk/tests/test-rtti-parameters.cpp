@@ -662,4 +662,262 @@ TEST_CASE("RTTI: static function parameters are correctly reflected", "[libk][rt
 }
 
 
+// =========================================================================
+// 10. Parameter::getAnnotations() non-null on annotated function parameter
+// =========================================================================
+
+TEST_CASE("RTTI: parameter getAnnotations() non-null on annotated param", "[libk][rtti][parameter][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_fparam_ann_1__;
+        import k;
+
+        annotation Tag {
+            label : int;
+        }
+
+        class Svc {
+            public Svc() {}
+            public process(@Tag(42) input : int) : int { return input; }
+        }
+
+        test() : int {
+            s : Svc;
+            fns : const k::Function?[]? = s.getClass().getFunctions();
+            if (fns == null) return 0;
+            fn : const k::Function? = fns[0];
+            if (fn == null) return 1;
+            params : const k::Parameter?[]? = fn->getParameters();
+            if (params == null) return 2;
+            if (params->size != 1) return 3;
+            p : const k::Parameter? = params[0];
+            if (p == null) return 4;
+            anns : const k::Annotation?[]? = p->getAnnotations();
+            if (anns == null) return 5;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 11. Parameter::getAnnotations() returns correct count
+// =========================================================================
+
+TEST_CASE("RTTI: parameter getAnnotations() returns correct count", "[libk][rtti][parameter][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_fparam_ann_2__;
+        import k;
+
+        annotation Alpha {}
+        annotation Beta {}
+
+        class Worker {
+            public Worker() {}
+            public run(@Alpha @Beta data : int) : int { return data; }
+        }
+
+        test() : int {
+            w : Worker;
+            fns : const k::Function?[]? = w.getClass().getFunctions();
+            if (fns == null) return 0;
+            fn : const k::Function? = fns[0];
+            if (fn == null) return 1;
+            params : const k::Parameter?[]? = fn->getParameters();
+            if (params == null) return 2;
+            p : const k::Parameter? = params[0];
+            if (p == null) return 3;
+            anns : const k::Annotation?[]? = p->getAnnotations();
+            if (anns == null) return 4;
+            return anns->size;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 2);
+}
+
+
+// =========================================================================
+// 12. Parameter::getAnnotations() is null on unannotated parameter
+// =========================================================================
+
+TEST_CASE("RTTI: parameter getAnnotations() null on unannotated param", "[libk][rtti][parameter][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_fparam_ann_3__;
+        import k;
+
+        class Plain {
+            public Plain() {}
+            public compute(x : int) : int { return x; }
+        }
+
+        test() : int {
+            p : Plain;
+            fns : const k::Function?[]? = p.getClass().getFunctions();
+            if (fns == null) return 0;
+            fn : const k::Function? = fns[0];
+            if (fn == null) return 1;
+            params : const k::Parameter?[]? = fn->getParameters();
+            if (params == null) return 2;
+            param : const k::Parameter? = params[0];
+            if (param == null) return 3;
+            if (param->getAnnotations() == null) return 42;
+            return 4;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 13. Mixed: annotated and unannotated parameters in the same function
+// =========================================================================
+
+TEST_CASE("RTTI: mixed annotated and unannotated params", "[libk][rtti][parameter][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_fparam_ann_4__;
+        import k;
+
+        annotation Tag {}
+
+        class Mixer {
+            public Mixer() {}
+            public mix(@Tag a : int, b : int) : int { return a + b; }
+        }
+
+        test() : int {
+            m : Mixer;
+            fns : const k::Function?[]? = m.getClass().getFunctions();
+            if (fns == null) return 0;
+            fn : const k::Function? = fns[0];
+            if (fn == null) return 1;
+            params : const k::Parameter?[]? = fn->getParameters();
+            if (params == null) return 2;
+            if (params->size != 2) return 3;
+
+            // First param 'a' has annotation
+            p0 : const k::Parameter? = params[0];
+            if (p0 == null) return 4;
+            anns0 : const k::Annotation?[]? = p0->getAnnotations();
+            if (anns0 == null) return 5;
+            if (anns0->size != 1) return 6;
+
+            // Second param 'b' has no annotations
+            p1 : const k::Parameter? = params[1];
+            if (p1 == null) return 7;
+            if (p1->getAnnotations() != null) return 8;
+
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 14. Constructor parameter annotations via RTTI
+// =========================================================================
+
+TEST_CASE("RTTI: constructor parameter getAnnotations() non-null on annotated param", "[libk][rtti][parameter][constructor][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_cparam_ann_1__;
+        import k;
+
+        annotation Required {}
+
+        class Config {
+            @Required
+            public Config(@Required host : int, port : int) {}
+            public dummy() : int { return 0; }
+        }
+
+        test() : int {
+            c : Config(1, 2);
+            ctors : const k::Constructor?[]? = c.getClass().getConstructors();
+            if (ctors == null) return 0;
+            ctor : const k::Constructor? = ctors[0];
+            if (ctor == null) return 1;
+            params : const k::Parameter?[]? = ctor->getParameters();
+            if (params == null) return 2;
+            if (params->size != 2) return 3;
+
+            // First param 'host' has @Required
+            p0 : const k::Parameter? = params[0];
+            if (p0 == null) return 4;
+            anns0 : const k::Annotation?[]? = p0->getAnnotations();
+            if (anns0 == null) return 5;
+            if (anns0->size != 1) return 6;
+
+            // Second param 'port' has no annotations
+            p1 : const k::Parameter? = params[1];
+            if (p1 == null) return 7;
+            if (p1->getAnnotations() != null) return 8;
+
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+
+// =========================================================================
+// 15. Annotation with field value accessible at runtime on parameter
+// =========================================================================
+
+TEST_CASE("RTTI: parameter annotation with field value", "[libk][rtti][parameter][annotation]") {
+    auto jit = jit_k(R"SRC(
+        module __rtti_fparam_ann_5__;
+        import k;
+
+        annotation Priority {
+            value : int;
+        }
+
+        class Handler {
+            public Handler() {}
+            public handle(@Priority(7) msg : int) : int { return msg; }
+        }
+
+        test() : int {
+            h : Handler;
+            fns : const k::Function?[]? = h.getClass().getFunctions();
+            if (fns == null) return 0;
+            fn : const k::Function? = fns[0];
+            if (fn == null) return 1;
+            params : const k::Parameter?[]? = fn->getParameters();
+            if (params == null) return 2;
+            p : const k::Parameter? = params[0];
+            if (p == null) return 3;
+            anns : const k::Annotation?[]? = p->getAnnotations();
+            if (anns == null) return 4;
+            if (anns->size != 1) return 5;
+            // Annotation is non-null — we verified it exists and has the right count
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
 

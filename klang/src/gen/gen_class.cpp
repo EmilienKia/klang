@@ -1800,13 +1800,61 @@ void implementation_generator::visit_klass(klass& klass) {
                 str_struct_init, prefix + "_param" + std::to_string(idx) + "_name");
             name_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
-            // Parameter struct: { ptr vptr, ptr vptr_Object, ptr name }
+            // Materialize parameter annotations
+            std::string param_prefix = prefix + "_param" + std::to_string(idx);
+            llvm::Constant* param_anns_gv = null_ptr;
+            {
+                std::vector<llvm::Constant*> param_ann_ptrs;
+                for (auto& ann_inst : param->get_annotations_mutable()) {
+                    if (!ann_inst.resolved_type) continue;
+                    auto& ann_type = *ann_inst.resolved_type;
+                    if (ann_type.is_source_retention()) continue;
+                    auto ann_vt = ann_type.get_vtable();
+                    if (!ensure_vtable_llvm_global(ann_vt, _context)) continue;
+                    auto ann_st_type = ann_type.get_struct_type();
+                    if (!ann_st_type) continue;
+                    auto* llvm_st_type = _context->get_llvm_type(ann_st_type);
+                    if (!llvm_st_type) continue;
+
+                    llvm::Constant* ann_init = build_annotation_instance_constant(
+                        ann_inst, ann_type, _context, &_unit, &klass);
+                    if (!ann_init) continue;
+
+                    std::string ann_global_name = param_prefix + "_ann_" + ann_inst.raw_name;
+                    auto* ann_gv = new llvm::GlobalVariable(
+                        _context->module(), llvm_st_type,
+                        /*isConstant=*/true,
+                        llvm::GlobalValue::PrivateLinkage,
+                        ann_init, ann_global_name);
+                    ann_gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+                    auto base_field = ann_st_type->get_member("__base_Annotation__");
+                    if (base_field.has_value()) {
+                        llvm::Constant* zero = llvm::ConstantInt::get(
+                            llvm::Type::getInt32Ty(llvm_ctx), 0);
+                        llvm::Constant* base_idx = llvm::ConstantInt::get(
+                            llvm::Type::getInt32Ty(llvm_ctx), base_field->index);
+                        llvm::Constant* gep = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                            llvm_st_type, ann_gv,
+                            llvm::ArrayRef<llvm::Constant*>{zero, base_idx});
+                        param_ann_ptrs.push_back(gep);
+                    } else {
+                        param_ann_ptrs.push_back(ann_gv);
+                    }
+                }
+                if (!param_ann_ptrs.empty()) {
+                    param_anns_gv = make_base_array(param_ann_ptrs, param_prefix + "_annotations");
+                }
+            }
+
+            // Parameter struct: { ptr vptr, ptr vptr_Object, ptr name, ptr annotations }
             llvm::StructType* param_rtti_type = llvm::StructType::get(
-                llvm_ctx, {ptr_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
+                llvm_ctx, {ptr_ty, ptr_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
             std::vector<llvm::Constant*> param_init = {
                 param_vt_or_null,  // __vptr__ (Parameter primary vtable)
                 null_ptr,          // __vptr_Object__ (null)
-                name_gv            // name
+                name_gv,           // name
+                param_anns_gv      // annotations
             };
             llvm::Constant* param_const = llvm::ConstantStruct::get(param_rtti_type, param_init);
             auto* param_gv = new llvm::GlobalVariable(
@@ -2854,6 +2902,7 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
         vt->llvm_global->setInitializer(llvm::ConstantStruct::get(vt->llvm_type, vtable_init));
     }
 }
+
 
 
 } // namespace k::model::gen

@@ -1372,6 +1372,8 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
 {
     lex::lex_holder holder(_lexer);
 
+    ast::annotation_def_list annotations = parse_annotation_defs();
+
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
     std::optional<lex::identifier> name;
@@ -1406,7 +1408,7 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
         }
     }
 
-    return std::make_shared<ast::parameter_spec>(specifiers, name, type, std::move(default_expr));
+    return std::make_shared<ast::parameter_spec>(std::move(annotations), specifiers, name, type, std::move(default_expr));
 }
 
 std::shared_ptr<ast::block_statement> parser::parse_statement_block()
