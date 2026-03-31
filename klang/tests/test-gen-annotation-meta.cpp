@@ -114,16 +114,9 @@ TEST_CASE("Annotation: enum array field with brace-init", "[annotation][enum]") 
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("@Target: annotation restricted to CLASS can be applied to class", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_1__;
-        annotation ClassOnly {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @ClassOnly
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS})
+        @annotations::Target({ElementType::CLASS})
         annotation MyMarker {}
         @MyMarker
         class Foo {
@@ -137,16 +130,9 @@ TEST_CASE("@Target: annotation restricted to CLASS can be applied to class", "[a
 }
 
 TEST_CASE("@Target: annotation restricted to CLASS cannot be applied to interface", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_2__;
-        annotation ClassOnly {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @ClassOnly
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS})
+        @annotations::Target({ElementType::CLASS})
         annotation MyMarker {}
         @MyMarker
         interface BadIface {
@@ -158,16 +144,9 @@ TEST_CASE("@Target: annotation restricted to CLASS cannot be applied to interfac
 }
 
 TEST_CASE("@Target: annotation restricted to ANNOTATION can be applied to annotation", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_3__;
-        annotation AnnOnly {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @AnnOnly
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::ANNOTATION})
+        @annotations::Target({ElementType::ANNOTATION})
         annotation MetaMarker {}
         @MetaMarker
         annotation SomeAnn {}
@@ -179,16 +158,9 @@ TEST_CASE("@Target: annotation restricted to ANNOTATION can be applied to annota
 }
 
 TEST_CASE("@Target: annotation restricted to ANNOTATION cannot be applied to class", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_4__;
-        annotation AnnOnly {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @AnnOnly
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::ANNOTATION})
+        @annotations::Target({ElementType::ANNOTATION})
         annotation MetaOnly {}
         @MetaOnly
         class BadClass {
@@ -221,16 +193,9 @@ TEST_CASE("@Target: no @Target means annotation can be applied anywhere", "[anno
 }
 
 TEST_CASE("@Target: multiple element types allowed", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_6__;
-        annotation Multi {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Multi
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS, ElementType::INTERFACE})
+        @annotations::Target({ElementType::CLASS, ElementType::INTERFACE})
         annotation ClassOrIface {}
         @ClassOrIface
         class Good1 {
@@ -252,14 +217,9 @@ TEST_CASE("@Target: multiple element types allowed", "[annotation][target]") {
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("@Inherited: annotation propagates to derived class", "[annotation][inherited]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_inherit_1__;
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Inh
-        annotation Inherited {}
-        @Inherited
+        @annotations::Inherited
         annotation Marker { value : int; }
         @Marker(42)
         class Base {
@@ -286,14 +246,9 @@ TEST_CASE("@Inherited: annotation propagates to derived class", "[annotation][in
 }
 
 TEST_CASE("@Inherited: explicit override on derived replaces inherited", "[annotation][inherited]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_inherit_2__;
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Inh
-        annotation Inherited {}
-        @Inherited
+        @annotations::Inherited
         annotation Priority { value : int; }
         @Priority(1)
         class Base {
@@ -378,16 +333,9 @@ TEST_CASE("@Retention(RUNTIME): annotation instances appear in RTTI", "[annotati
 TEST_CASE("@Retention(SOURCE): annotation kept in model but not emitted", "[annotation][retention]") {
     // SOURCE retention means the annotation is in the model but NOT in binary RTTI.
     // We verify the annotation is present in the model.
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_ret_2__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention(Policy::SOURCE)
+        @annotations::Retention(Policy::SOURCE)
         annotation CompileOnly {}
         @CompileOnly
         class Bar {
@@ -410,22 +358,10 @@ TEST_CASE("@Retention(SOURCE): annotation kept in model but not emitted", "[anno
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Meta-annotations: @Target + @Inherited + @Retention combined", "[annotation][meta]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_meta_combo_1__;
-        annotation TargetDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        annotation InheritedDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @TargetDef
-        annotation Target {
-            value : ElementType[];
-        }
-        @InheritedDef
-        annotation Inherited {}
-        @Target({ElementType::CLASS})
-        @Inherited
+        @annotations::Target({ElementType::CLASS})
+        @annotations::Inherited
         annotation Important { reason : int; }
         @Important(42)
         class Base {
@@ -450,16 +386,9 @@ TEST_CASE("Meta-annotations: @Target + @Inherited + @Retention combined", "[anno
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("@Target: INTERFACE-only annotation applied to interface succeeds", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_iface_ok__;
-        annotation IfaceRestrict {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @IfaceRestrict
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::INTERFACE})
+        @annotations::Target({ElementType::INTERFACE})
         annotation IfaceOnly {}
         @IfaceOnly
         interface MyIface {
@@ -474,16 +403,9 @@ TEST_CASE("@Target: INTERFACE-only annotation applied to interface succeeds", "[
 }
 
 TEST_CASE("@Target: INTERFACE-only annotation applied to class fails", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_iface_cls__;
-        annotation IfaceRestrict {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @IfaceRestrict
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::INTERFACE})
+        @annotations::Target({ElementType::INTERFACE})
         annotation IfaceOnly {}
         @IfaceOnly
         class BadClass {
@@ -495,16 +417,9 @@ TEST_CASE("@Target: INTERFACE-only annotation applied to class fails", "[annotat
 
 TEST_CASE("@Target: {CLASS, ANNOTATION} allows class and annotation but not interface", "[annotation][target]") {
     // Apply to class: OK
-    auto comp_cls = compile_model(R"SRC(
+    auto comp_cls = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_ca_cls__;
-        annotation MultiRestrict {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @MultiRestrict
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS, ElementType::ANNOTATION})
+        @annotations::Target({ElementType::CLASS, ElementType::ANNOTATION})
         annotation ClsOrAnn {}
         @ClsOrAnn
         class Good {
@@ -515,16 +430,9 @@ TEST_CASE("@Target: {CLASS, ANNOTATION} allows class and annotation but not inte
     CHECK(find_aggregate(comp_cls, "Good")->get_annotations().size() == 1);
 
     // Apply to annotation: OK
-    auto comp_ann = compile_model(R"SRC(
+    auto comp_ann = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_ca_ann__;
-        annotation MultiRestrict2 {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @MultiRestrict2
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS, ElementType::ANNOTATION})
+        @annotations::Target({ElementType::CLASS, ElementType::ANNOTATION})
         annotation ClsOrAnn2 {}
         @ClsOrAnn2
         annotation AlsoGood {}
@@ -533,16 +441,9 @@ TEST_CASE("@Target: {CLASS, ANNOTATION} allows class and annotation but not inte
     CHECK(find_annotation_type(comp_ann, "AlsoGood")->get_annotations().size() == 1);
 
     // Apply to interface: FAIL
-    auto comp_iface = compile_model(R"SRC(
+    auto comp_iface = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_ca_ifc__;
-        annotation MultiRestrict3 {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @MultiRestrict3
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS, ElementType::ANNOTATION})
+        @annotations::Target({ElementType::CLASS, ElementType::ANNOTATION})
         annotation ClsOrAnn3 {}
         @ClsOrAnn3
         interface BadIface {
@@ -553,15 +454,11 @@ TEST_CASE("@Target: {CLASS, ANNOTATION} allows class and annotation but not inte
 }
 
 TEST_CASE("@Target: self-referential — @Target on Target itself", "[annotation][target]") {
-    // Mimics the stdlib: @Target({ElementType::ANNOTATION}) annotation Target {...}
-    auto comp = compile_model(R"SRC(
+    // The real stdlib already has @Target({ANNOTATION}) on Target itself.
+    // Verify that using the stdlib Target to restrict another annotation works.
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_self__;
-        @Target({ElementType::ANNOTATION})
-        annotation Target {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS})
+        @annotations::Target({ElementType::CLASS})
         annotation ClassMarker {}
         @ClassMarker
         class Foo {
@@ -576,16 +473,9 @@ TEST_CASE("@Target: self-referential — @Target on Target itself", "[annotation
 }
 
 TEST_CASE("@Target: all three element types allowed", "[annotation][target]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_all3__;
-        annotation AllTarget {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @AllTarget
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS, ElementType::INTERFACE, ElementType::ANNOTATION})
+        @annotations::Target({ElementType::CLASS, ElementType::INTERFACE, ElementType::ANNOTATION})
         annotation Universal {}
         @Universal
         class C {
@@ -610,14 +500,9 @@ TEST_CASE("@Target: all three element types allowed", "[annotation][target]") {
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("@Inherited: multi-level propagation (A → B → C)", "[annotation][inherited]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_inherit_multi__;
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Inh
-        annotation Inherited {}
-        @Inherited
+        @annotations::Inherited
         annotation Tag { value : int; }
         @Tag(10)
         class A {
@@ -653,16 +538,11 @@ TEST_CASE("@Inherited: multi-level propagation (A → B → C)", "[annotation][i
 }
 
 TEST_CASE("@Inherited: multiple distinct inherited annotations from same base", "[annotation][inherited]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_inherit_multi_ann__;
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Inh
-        annotation Inherited {}
-        @Inherited
+        @annotations::Inherited
         annotation Color { value : int; }
-        @Inherited
+        @annotations::Inherited
         annotation Size  { value : int; }
         @Color(1) @Size(99)
         class Base {
@@ -693,14 +573,9 @@ TEST_CASE("@Inherited: multiple distinct inherited annotations from same base", 
 }
 
 TEST_CASE("@Inherited: does NOT propagate through interfaces", "[annotation][inherited]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_inherit_no_iface__;
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Inh
-        annotation Inherited {}
-        @Inherited
+        @annotations::Inherited
         annotation Marker {}
         @Marker
         interface Iface {
@@ -724,16 +599,11 @@ TEST_CASE("@Inherited: does NOT propagate through interfaces", "[annotation][inh
 }
 
 TEST_CASE("@Inherited: partial override — only the overridden one is replaced", "[annotation][inherited]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_inherit_partial__;
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Inh
-        annotation Inherited {}
-        @Inherited
+        @annotations::Inherited
         annotation Color { value : int; }
-        @Inherited
+        @annotations::Inherited
         annotation Size  { value : int; }
         @Color(1) @Size(10)
         class Base {
@@ -776,14 +646,9 @@ TEST_CASE("@Inherited: partial override — only the overridden one is replaced"
 }
 
 TEST_CASE("@Inherited: non-inherited annotation mixed with inherited — only inherited propagates", "[annotation][inherited]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_inherit_mixed__;
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Inh
-        annotation Inherited {}
-        @Inherited
+        @annotations::Inherited
         annotation Propagated { value : int; }
         annotation NotPropagated { value : int; }
         @Propagated(1) @NotPropagated(2)
@@ -826,6 +691,15 @@ static std::string get_llvm_ir(std::string_view src) {
     return ir;
 }
 
+static std::string get_llvm_ir_with_stdlib(std::string_view src) {
+    auto comp = compile_model_with_stdlib(src);
+    if (!comp) return {};
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    return ir;
+}
+
 TEST_CASE("@Retention: default (absent) is RUNTIME — annotation instance emitted in IR", "[annotation][retention]") {
     std::string ir = get_llvm_ir(R"SRC(
         module __test_ann_ret_default__;
@@ -845,16 +719,9 @@ TEST_CASE("@Retention: default (absent) is RUNTIME — annotation instance emitt
 }
 
 TEST_CASE("@Retention(RUNTIME): explicit RUNTIME — annotation instance emitted in IR", "[annotation][retention]") {
-    std::string ir = get_llvm_ir(R"SRC(
+    std::string ir = get_llvm_ir_with_stdlib(R"SRC(
         module __test_ann_ret_explicit_rt__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention(Policy::RUNTIME)
+        @annotations::Retention(Policy::RUNTIME)
         annotation RuntimeExplicit {}
         @RuntimeExplicit
         class Bar {
@@ -866,16 +733,9 @@ TEST_CASE("@Retention(RUNTIME): explicit RUNTIME — annotation instance emitted
 }
 
 TEST_CASE("@Retention(SOURCE): annotation NOT emitted in IR", "[annotation][retention]") {
-    std::string ir = get_llvm_ir(R"SRC(
+    std::string ir = get_llvm_ir_with_stdlib(R"SRC(
         module __test_ann_ret_source__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention(Policy::SOURCE)
+        @annotations::Retention(Policy::SOURCE)
         annotation CompileOnly {}
         @CompileOnly
         class Baz {
@@ -888,16 +748,9 @@ TEST_CASE("@Retention(SOURCE): annotation NOT emitted in IR", "[annotation][rete
 }
 
 TEST_CASE("@Retention(SOURCE): annotation present in model but skipped in IR", "[annotation][retention]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_ret_src_model__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention(Policy::SOURCE)
+        @annotations::Retention(Policy::SOURCE)
         annotation SourceAnn {}
         @SourceAnn
         class Marked {
@@ -920,16 +773,9 @@ TEST_CASE("@Retention(SOURCE): annotation present in model but skipped in IR", "
 }
 
 TEST_CASE("@Retention: mixed SOURCE and RUNTIME annotations on same class", "[annotation][retention]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_ret_mixed__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention(Policy::SOURCE)
+        @annotations::Retention(Policy::SOURCE)
         annotation SourceOnly {}
         annotation RuntimeDefault {}
         @SourceOnly @RuntimeDefault
@@ -953,16 +799,9 @@ TEST_CASE("@Retention: mixed SOURCE and RUNTIME annotations on same class", "[an
 }
 
 TEST_CASE("@Retention(SOURCE) on annotation type: meta-annotation not emitted in type RTTI", "[annotation][retention]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_ret_src_on_type__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention(Policy::SOURCE)
+        @annotations::Retention(Policy::SOURCE)
         annotation MetaSource {}
         @MetaSource
         annotation TargetAnn {}
@@ -1057,22 +896,10 @@ TEST_CASE("Annotation: cross-referential annotations in same module", "[annotati
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Meta-annotations: @Retention(SOURCE) + @Inherited — propagates in model but not in IR", "[annotation][meta]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_src_inh_combo__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        annotation Inh {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Inh
-        annotation Inherited {}
-        @Retention(Policy::SOURCE)
-        @Inherited
+        @annotations::Retention(Policy::SOURCE)
+        @annotations::Inherited
         annotation SourceInherited { value : int; }
         @SourceInherited(42)
         class Base {
@@ -1103,30 +930,11 @@ TEST_CASE("Meta-annotations: @Retention(SOURCE) + @Inherited — propagates in m
 }
 
 TEST_CASE("Meta-annotations: @Target(CLASS) + @Inherited + @Retention(RUNTIME) all together", "[annotation][meta]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_all3_combo__;
-        annotation MetaDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        annotation InhDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        annotation SrcDef {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @MetaDef
-        annotation Target {
-            value : ElementType[];
-        }
-        @InhDef
-        annotation Inherited {}
-        @SrcDef
-        annotation Retention {
-            policy : Policy;
-        }
-        @Target({ElementType::CLASS})
-        @Inherited
-        @Retention(Policy::RUNTIME)
+        @annotations::Target({ElementType::CLASS})
+        @annotations::Inherited
+        @annotations::Retention(Policy::RUNTIME)
         annotation Important { reason : int; }
         @Important(7)
         class Base {
@@ -1157,22 +965,10 @@ TEST_CASE("Meta-annotations: @Target(CLASS) + @Inherited + @Retention(RUNTIME) a
 }
 
 TEST_CASE("Meta-annotations: @Target(CLASS) + @Inherited — fails when applied to interface", "[annotation][meta]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_target_inh_fail__;
-        annotation MetaDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        annotation InhDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-        }
-        @MetaDef
-        annotation Target {
-            value : ElementType[];
-        }
-        @InhDef
-        annotation Inherited {}
-        @Target({ElementType::CLASS})
-        @Inherited
+        @annotations::Target({ElementType::CLASS})
+        @annotations::Inherited
         annotation ClassInherited {}
         @ClassInherited
         interface BadIface {
@@ -1184,33 +980,15 @@ TEST_CASE("Meta-annotations: @Target(CLASS) + @Inherited — fails when applied 
 }
 
 TEST_CASE("Meta-annotations: stdlib-like self-contained meta-annotation system", "[annotation][meta]") {
-    // Simulate the full stdlib annotations.k pattern with self-referential and
-    // cross-referential meta-annotations, including enum fields.
-    auto comp = compile_model(R"SRC(
+    // Use the real stdlib meta-annotations to define a user annotation
+    // with all three meta-annotations applied.
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ann_stdlib_like__;
 
-        @Retention(Policy::RUNTIME)
-        @Target({ElementType::ANNOTATION})
-        annotation Retention {
-            enum Policy { SOURCE; RUNTIME; };
-            policy : Policy = Policy::RUNTIME;
-        }
-
-        @Retention(Policy::RUNTIME)
-        @Target({ElementType::ANNOTATION})
-        annotation Inherited {}
-
-        @Retention(Policy::RUNTIME)
-        @Target({ElementType::ANNOTATION})
-        annotation Target {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; };
-            value : ElementType[];
-        }
-
-        // User-defined annotation using the meta-annotations
-        @Target({ElementType::CLASS})
-        @Inherited
-        @Retention(Policy::RUNTIME)
+        // User-defined annotation using the real stdlib meta-annotations
+        @annotations::Target({ElementType::CLASS})
+        @annotations::Inherited
+        @annotations::Retention(Policy::RUNTIME)
         annotation Versioned { version : int; }
 
         @Versioned(3)
@@ -1223,17 +1001,7 @@ TEST_CASE("Meta-annotations: stdlib-like self-contained meta-annotation system",
     )SRC");
     REQUIRE(comp != nullptr);
 
-    // Retention is self-annotated
-    auto ret = find_annotation_type(comp, "Retention");
-    REQUIRE(ret != nullptr);
-    CHECK(ret->get_annotations().size() >= 1);
-
-    // Target is annotated with @Retention and @Target
-    auto tgt = find_annotation_type(comp, "Target");
-    REQUIRE(tgt != nullptr);
-    CHECK(tgt->get_annotations().size() >= 1);
-
-    // Versioned is annotated with all three
+    // Versioned is annotated with all three stdlib meta-annotations
     auto ver = find_annotation_type(comp, "Versioned");
     REQUIRE(ver != nullptr);
     CHECK(ver->get_annotations().size() == 3);
@@ -1278,16 +1046,9 @@ TEST_CASE("Function annotation: RUNTIME annotation on public function in model",
 }
 
 TEST_CASE("Function annotation: SOURCE retention annotation kept in model", "[annotation][function][retention]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_fn_ann_src_1__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention(Policy::SOURCE)
+        @annotations::Retention(Policy::SOURCE)
         annotation CompileHint {}
         class Foo {
             @CompileHint
@@ -1345,16 +1106,9 @@ TEST_CASE("Function annotation: annotation on free function (namespace level)", 
 }
 
 TEST_CASE("Function annotation: @Target(FUNCTION) allows annotation on function", "[annotation][function][target]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_fn_ann_target_1__;
-        annotation TargetDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; };
-        }
-        @TargetDef
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::FUNCTION})
+        @annotations::Target({ElementType::FUNCTION})
         annotation FuncOnly {}
         class Foo {
             @FuncOnly
@@ -1374,14 +1128,7 @@ TEST_CASE("Function annotation: @Target(FUNCTION) allows annotation on function"
 TEST_CASE("Function annotation: @Target(CLASS) rejects annotation on function", "[annotation][function][target]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __test_fn_ann_target_2__;
-        annotation TargetDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; };
-        }
-        @TargetDef
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS})
+        @annotations::Target({ElementType::CLASS})
         annotation ClassOnly {}
         class Foo {
             @ClassOnly
@@ -1458,16 +1205,9 @@ TEST_CASE("Function annotation: RUNTIME annotation on public function — no iss
 }
 
 TEST_CASE("Function annotation: SOURCE annotation on private function — no warning", "[annotation][function][retention]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_fn_ann_no_warn_src__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention(Policy::SOURCE)
+        @annotations::Retention(Policy::SOURCE)
         annotation CompileOnly {}
         class Foo {
             @CompileOnly
@@ -1532,16 +1272,9 @@ TEST_CASE("Function annotation: RUNTIME annotation on destructor compiles (warni
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Constructor annotation: @Target(CONSTRUCTOR) allows annotation on constructor", "[annotation][constructor][target]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_ctor_ann_target_1__;
-        annotation TargetDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
-        }
-        @TargetDef
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CONSTRUCTOR})
+        @annotations::Target({ElementType::CONSTRUCTOR})
         annotation CtorOnly {}
         class Foo {
             @CtorOnly
@@ -1562,14 +1295,7 @@ TEST_CASE("Constructor annotation: @Target(CONSTRUCTOR) allows annotation on con
 TEST_CASE("Constructor annotation: @Target(CLASS) rejects annotation on constructor", "[annotation][constructor][target]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __test_ctor_ann_target_2__;
-        annotation TargetDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
-        }
-        @TargetDef
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CLASS})
+        @annotations::Target({ElementType::CLASS})
         annotation ClassOnly {}
         class Foo {
             @ClassOnly
@@ -1582,14 +1308,7 @@ TEST_CASE("Constructor annotation: @Target(CLASS) rejects annotation on construc
 TEST_CASE("Constructor annotation: @Target(FUNCTION) rejects annotation on constructor", "[annotation][constructor][target]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __test_ctor_ann_target_3__;
-        annotation TargetDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
-        }
-        @TargetDef
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::FUNCTION})
+        @annotations::Target({ElementType::FUNCTION})
         annotation FuncOnly {}
         class Foo {
             @FuncOnly
@@ -1602,14 +1321,7 @@ TEST_CASE("Constructor annotation: @Target(FUNCTION) rejects annotation on const
 TEST_CASE("Constructor annotation: @Target(CONSTRUCTOR) rejects annotation on function", "[annotation][constructor][target]") {
     REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __test_ctor_ann_target_4__;
-        annotation TargetDef {
-            enum ElementType { CLASS; INTERFACE; ANNOTATION; FUNCTION; CONSTRUCTOR; };
-        }
-        @TargetDef
-        annotation Target {
-            value : ElementType[];
-        }
-        @Target({ElementType::CONSTRUCTOR})
+        @annotations::Target({ElementType::CONSTRUCTOR})
         annotation CtorOnly {}
         class Foo {
             public Foo() {}

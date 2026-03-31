@@ -56,9 +56,21 @@ static bool ensure_libk_loaded() {
     return true;
 }
 
+/**
+ * Create a file resolver that knows where the K standard library lives.
+ * This allows the compiler to resolve the implicit `import k` and to add
+ * -L<dir> for libk when linking executables and shared libraries.
+ */
+static std::shared_ptr<k::path_lookup_file_resolver> make_stdlib_resolver() {
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    return resolver;
+}
+
 std::unique_ptr<k::model::gen::jit> gen_jit(std::string_view src, bool dump, bool optimize) {
     if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
+    comp->set_file_resolver(make_stdlib_resolver());
     try {
         comp->parse_source("", src, optimize, dump);
         return comp->to_jit();
@@ -76,6 +88,7 @@ std::unique_ptr<k::model::gen::jit> gen_jit_throws(std::string_view src, bool du
     // parse_source always rethrows — compiler_error subclasses propagate directly to the caller.
     if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
+    comp->set_file_resolver(make_stdlib_resolver());
     comp->parse_source("", src, optimize, dump);
     return comp->to_jit();
 }
@@ -111,6 +124,7 @@ std::unique_ptr<k::model::gen::jit> gen_jit_multi(
     const std::string& forced_module_name) {
     if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
+    comp->set_file_resolver(make_stdlib_resolver());
     try {
         comp->parse_sources(std::move(sources), optimize, dump, forced_module_name);
         return comp->to_jit();
@@ -128,21 +142,12 @@ std::unique_ptr<k::model::gen::jit> gen_jit_multi_throws(
     const std::string& forced_module_name) {
     if (!ensure_libk_loaded()) return nullptr;
     auto comp = k::compiler::create();
+    comp->set_file_resolver(make_stdlib_resolver());
     comp->parse_sources(std::move(sources), optimize, dump, forced_module_name);
     return comp->to_jit();
 }
 
 
-/**
- * Create a file resolver that knows where the K standard library lives.
- * This allows the compiler to add -L<dir> for libk when linking executables
- * and shared libraries, even when the source code does not `import k;`.
- */
-static std::shared_ptr<k::path_lookup_file_resolver> make_stdlib_resolver() {
-    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
-    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
-    return resolver;
-}
 
 bool compile_text(const std::string_view& source, const std::string& out_file) {
     // Ensure LLVM targets are registered before any target lookup.

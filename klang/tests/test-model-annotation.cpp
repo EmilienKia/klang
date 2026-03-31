@@ -488,16 +488,9 @@ TEST_CASE("Model: is_source_retention() returns false when no @Retention", "[mod
 }
 
 TEST_CASE("Model: is_source_retention() returns true for @Retention(Policy::SOURCE) positional", "[model][annotation][retention]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_src_ret_2__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention(Policy::SOURCE)
+        @annotations::Retention(Policy::SOURCE)
         annotation CompileOnly {}
     )SRC");
     REQUIRE(comp != nullptr);
@@ -508,16 +501,9 @@ TEST_CASE("Model: is_source_retention() returns true for @Retention(Policy::SOUR
 }
 
 TEST_CASE("Model: is_source_retention() returns false for @Retention(Policy::RUNTIME) positional", "[model][annotation][retention]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_src_ret_3__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention(Policy::RUNTIME)
+        @annotations::Retention(Policy::RUNTIME)
         annotation RunOnly {}
     )SRC");
     REQUIRE(comp != nullptr);
@@ -528,16 +514,9 @@ TEST_CASE("Model: is_source_retention() returns false for @Retention(Policy::RUN
 }
 
 TEST_CASE("Model: is_source_retention() returns true for @Retention{Policy::SOURCE} brace-init", "[model][annotation][retention]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_src_ret_4__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention{Policy::SOURCE}
+        @annotations::Retention{Policy::SOURCE}
         annotation BraceSource {}
     )SRC");
     REQUIRE(comp != nullptr);
@@ -548,16 +527,9 @@ TEST_CASE("Model: is_source_retention() returns true for @Retention{Policy::SOUR
 }
 
 TEST_CASE("Model: is_source_retention() returns true for @Retention{.policy = Policy::SOURCE} designated", "[model][annotation][retention]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_src_ret_5__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention{.policy = Policy::SOURCE}
+        @annotations::Retention{.policy = Policy::SOURCE}
         annotation DesignSource {}
     )SRC");
     REQUIRE(comp != nullptr);
@@ -568,16 +540,9 @@ TEST_CASE("Model: is_source_retention() returns true for @Retention{.policy = Po
 }
 
 TEST_CASE("Model: is_source_retention() returns true for @Retention{.policy(Policy::SOURCE)} call form", "[model][annotation][retention]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_src_ret_6__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention{.policy(Policy::SOURCE)}
+        @annotations::Retention{.policy(Policy::SOURCE)}
         annotation CallSource {}
     )SRC");
     REQUIRE(comp != nullptr);
@@ -588,16 +553,9 @@ TEST_CASE("Model: is_source_retention() returns true for @Retention{.policy(Poli
 }
 
 TEST_CASE("Model: is_source_retention() returns false for @Retention{.policy = Policy::RUNTIME}", "[model][annotation][retention]") {
-    auto comp = compile_model(R"SRC(
+    auto comp = compile_model_with_stdlib(R"SRC(
         module __test_src_ret_7__;
-        annotation Src {
-            enum Policy { SOURCE; RUNTIME; };
-        }
-        @Src
-        annotation Retention {
-            policy : Policy;
-        }
-        @Retention{.policy = Policy::RUNTIME}
+        @annotations::Retention{.policy = Policy::RUNTIME}
         annotation DesignRuntime {}
     )SRC");
     REQUIRE(comp != nullptr);
