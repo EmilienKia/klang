@@ -1,0 +1,596 @@
+(* ========================================================================== *)
+(*  K Language Grammar — EBNF                                                *)
+(*                                                                           *)
+(*  Copyright 2023-2026 Emilien Kia                                          *)
+(*  Licensed under the Apache License, Version 2.0                           *)
+(*                                                                           *)
+(*  This file is the authoritative EBNF grammar for the K language,          *)
+(*  derived from the recursive-descent parser in klang/src/parse/parser.cpp. *)
+(*                                                                           *)
+(*  Notation (ISO 14977 EBNF):                                               *)
+(*    { x }       — zero or more repetitions of x                            *)
+(*    [ x ]       — zero or one occurrence of x (optional)                   *)
+(*    x | y       — alternative: x or y                                      *)
+(*    ( x )       — grouping                                                 *)
+(*    'token'     — terminal / literal token                                 *)
+(*    (* ... *)   — comment                                                  *)
+(* ========================================================================== *)
+
+
+(* ========================================================================== *)
+(*  1. LEXICAL GRAMMAR                                                       *)
+(* ========================================================================== *)
+
+LineTerminator
+    = '\n'               (* LF *)
+    | '\r'               (* CR *)
+    | '\r' , '\n'        (* CR LF *)
+    ;
+
+WhiteSpace
+    = ' ' | '\t' | '\f' | LineTerminator
+    ;
+
+Comment
+    = '/*' , { ? any character ? } , '*/'       (* block comment *)
+    | '//' , { ? any character except LineTerminator ? }   (* line comment *)
+    ;
+
+(* ---------- Identifiers ------------------------------------------------- *)
+
+IdentifierLetter
+    = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I' | 'J'
+    | 'K' | 'L' | 'M' | 'N' | 'O' | 'P' | 'Q' | 'R' | 'S' | 'T'
+    | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z'
+    | 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j'
+    | 'k' | 'l' | 'm' | 'n' | 'o' | 'p' | 'q' | 'r' | 's' | 't'
+    | 'u' | 'v' | 'w' | 'x' | 'y' | 'z'
+    | '_'
+    ;
+
+Digit
+    = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
+    ;
+
+IdentifierLetterOrDigit
+    = IdentifierLetter | Digit
+    ;
+
+Identifier
+    = IdentifierLetter , { IdentifierLetterOrDigit }
+    ;
+    (* Must not be a Keyword, nor consist solely of underscores. *)
+
+(* ---------- Keywords ----------------------------------------------------- *)
+
+Keyword
+    = 'bool'   | 'byte'    | 'char'      | 'short'    | 'int'    | 'long'
+    | 'float'  | 'double'  | 'unsigned'
+    | 'struct' | 'class'   | 'interface' | 'annotation'
+    | 'namespace' | 'module' | 'import' | 'using' | 'friend'
+    | 'static' | 'const'   | 'abstract'  | 'final'
+    | 'public' | 'protected' | 'private'
+    | 'this'   | 'return'
+    | 'if'     | 'else'    | 'while'     | 'for'
+    | 'new'    | 'delete'  | 'default'   | 'enum'
+    | 'operator'
+    ;
+
+(* ---------- Literals ----------------------------------------------------- *)
+
+HexDigit
+    = Digit | 'a' | 'b' | 'c' | 'd' | 'e' | 'f'
+            | 'A' | 'B' | 'C' | 'D' | 'E' | 'F'
+    ;
+
+OctalDigit
+    = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7'
+    ;
+
+BinaryDigit
+    = '0' | '1'
+    ;
+
+IntegerSuffix
+    = 'u' | 'l' | 'ul' | 'lu' | 's' | 'b'
+    ;
+
+IntegerLiteral
+    = Digit , { Digit } , [ IntegerSuffix ]                      (* decimal *)
+    | '0x' , HexDigit , { HexDigit } , [ IntegerSuffix ]         (* hex *)
+    | '0' , OctalDigit , { OctalDigit } , [ IntegerSuffix ]      (* octal *)
+    | '0b' , BinaryDigit , { BinaryDigit } , [ IntegerSuffix ]   (* binary *)
+    ;
+
+FloatSuffix
+    = 'f' | 'd'
+    ;
+
+FloatLiteral
+    = Digit , { Digit } , '.' , { Digit } , [ FloatSuffix ]
+    | Digit , { Digit } , [ '.' , { Digit } ] , ( 'e' | 'E' ) , [ '+' | '-' ] , Digit , { Digit } , [ FloatSuffix ]
+    ;
+
+BooleanLiteral
+    = 'true' | 'false'
+    ;
+
+CharacterLiteral
+    = "'" , ( ? any character except ' and \ ? | EscapeSequence ) , "'"
+    ;
+
+StringLiteral
+    = '"' , { ? any character except " and \ ? | EscapeSequence } , '"'
+    ;
+
+EscapeSequence
+    = '\' , ( 'n' | 'r' | 't' | '\' | "'" | '"' | '0' )
+    ;
+
+NullLiteral
+    = 'null'
+    ;
+
+Literal
+    = IntegerLiteral
+    | FloatLiteral
+    | BooleanLiteral
+    | CharacterLiteral
+    | StringLiteral
+    | NullLiteral
+    ;
+
+(* ---------- Punctuators -------------------------------------------------- *)
+
+Punctuator
+    = '(' | ')' | '{' | '}' | '[' | ']'
+    | ';' | ',' | '::' | '...' | '@'
+    ;
+
+(* ---------- Operators ---------------------------------------------------- *)
+
+Operator
+    = '.'  | '->'  | '.*' | '->*'
+    | '?'  | ':'   | '!'  | '~'
+    | '='  | '+'   | '-'  | '*'  | '/'
+    | '&'  | '|'   | '^'  | '%'  | '#'
+    | '<<' | '>>'
+    | '+=' | '-='  | '*=' | '/=' | '%='
+    | '&=' | '|='  | '^=' | '<<=' | '>>='
+    | '==' | '!='  | '<'  | '>'  | '<=' | '>='
+    | '&&' | '||'  | '++' | '--' | '**'
+    ;
+
+
+(* ========================================================================== *)
+(*  2. SYNTACTIC GRAMMAR                                                     *)
+(* ========================================================================== *)
+
+(* ---------- Compilation Unit --------------------------------------------- *)
+
+Unit
+    = [ ModuleDeclaration ] , { ImportDeclaration } , { Declaration }
+    ;
+
+ModuleDeclaration
+    = 'module' , QualifiedIdentifier , ';'
+    ;
+
+ImportDeclaration
+    = 'import' , QualifiedIdentifier , ';'
+    ;
+
+QualifiedIdentifier
+    = [ '::' ] , Identifier , { '::' , Identifier }
+    ;
+
+(* ---------- Declarations ------------------------------------------------- *)
+
+Declaration
+    = VisibilityDecl
+    | NamespaceDecl
+    | UsingDecl
+    | FriendDecl
+    | AggregateDecl
+    | EnumDecl
+    | FunctionDecl
+    | VariableDecl
+    ;
+
+VisibilityDecl
+    = ( 'public' | 'protected' | 'private' ) , ':'
+    ;
+
+NamespaceDecl
+    = 'namespace' , [ Identifier ] , '{' , { Declaration } , '}'
+    ;
+
+UsingDecl
+    = 'using' , [ UsingFilter ] , [ Identifier , '=' ] , QualifiedIdentifier , ';'
+    ;
+
+UsingFilter
+    = 'namespace' | 'struct' | 'interface' | 'class'
+    ;
+
+FriendDecl
+    = 'friend' , [ FriendFilter ] , QualifiedIdentifier , ';'
+    ;
+
+FriendFilter
+    = 'struct' | 'interface' | 'class'
+    ;
+
+(* ---------- Aggregates (struct / class / interface / annotation) ---------- *)
+
+AggregateDecl
+    = { AnnotationDef } , { Specifier } ,
+      ( 'struct' | 'class' | 'interface' | 'annotation' ) ,
+      Identifier ,
+      [ ':' , BaseClause ] ,
+      '{' , { Declaration } , '}'
+    ;
+
+BaseClause
+    = BaseSpec , { ',' , BaseSpec }
+    ;
+
+BaseSpec
+    = [ 'public' | 'protected' | 'private' ] , QualifiedIdentifier
+    ;
+
+(* ---------- Enumerations ------------------------------------------------- *)
+
+EnumDecl
+    = { Specifier } , 'enum' , Identifier ,
+      [ ':' , QualifiedIdentifier ] ,
+      '{' , { EnumEntry } , '}' , ';'
+    ;
+
+EnumEntry
+    = Identifier , [ '=' , ( IntegerLiteral | Identifier ) ] , [ 'default' ] , ';'
+    ;
+
+(* ---------- Annotations ------------------------------------------------- *)
+
+AnnotationDef
+    = '@' , QualifiedIdentifier
+    | '@' , QualifiedIdentifier , '(' , [ ExpressionList ] , ')'
+    | '@' , QualifiedIdentifier , BraceInitList
+    ;
+
+(* ---------- Functions ---------------------------------------------------- *)
+
+FunctionDecl
+    = { AnnotationDef } , { Specifier } , [ 'fun' ] ,
+      ( FunctionHead | OperatorFunctionHead | DestructorHead ) ,
+      '(' , [ ParameterList ] , ')' ,
+      [ NamedReturnVar ] ,
+      [ ':' , ( ReturnTypeOrMemberInitList ) ] ,
+      FunctionBody
+    ;
+
+FunctionHead
+    = Identifier
+    ;
+
+DestructorHead
+    = '~' , Identifier
+    ;
+
+OperatorFunctionHead
+    = 'operator' , OperatorSymbol
+    | 'operator' , '(' , ')'                                    (* cast operator *)
+    ;
+
+OperatorSymbol
+    = '+' | '-' | '*' | '/' | '%'
+    | '&' | '|' | '^' | '~'
+    | '<<' | '>>'
+    | '&&' | '||' | '!'
+    | '==' | '!=' | '<' | '>' | '<=' | '>='
+    | '='  | '+=' | '-=' | '*=' | '/=' | '%='
+    | '&=' | '|=' | '^=' | '<<=' | '>>='
+    | '++' , '_'                                                 (* prefix ++ *)
+    | '--' , '_'                                                 (* prefix -- *)
+    | '_' , '++'                                                 (* postfix ++ *)
+    | '_' , '--'                                                 (* postfix -- *)
+    ;
+
+NamedReturnVar
+    = Identifier , ':' , TypeSpec , [ NamedReturnInit ]
+    ;
+
+NamedReturnInit
+    = '=' , ConditionalExpr
+    | '(' , [ ExpressionList ] , ')'
+    ;
+
+ReturnTypeOrMemberInitList
+    = TypeSpec                                                   (* return type *)
+    | MemberInitList                                             (* constructor member init *)
+    | StaticDepList                                              (* static dependency list *)
+    ;
+
+MemberInitList
+    = MemberInit , { ',' , MemberInit }
+    ;
+
+MemberInit
+    = Identifier , '(' , [ ExpressionList ] , ')'
+    ;
+
+StaticDepList
+    = StaticDep , { ',' , StaticDep }
+    ;
+
+StaticDep
+    = QualifiedIdentifier , '(' , ')'
+    ;
+
+FunctionBody
+    = BlockStatement
+    | '->' , ( 'default' | 'delete' ) , ';'                     (* aliasing *)
+    | '->' , QualifiedIdentifier ,
+             [ '(' , [ TypeSpecList ] , ')' ] , ';'              (* redirect *)
+    | ';'                                                        (* abstract / bodyless *)
+    ;
+
+TypeSpecList
+    = TypeSpec , { ',' , TypeSpec }
+    ;
+
+(* ---------- Parameters --------------------------------------------------- *)
+
+ParameterList
+    = ParameterSpec , { ',' , ParameterSpec }
+    ;
+
+ParameterSpec
+    = { AnnotationDef } , { Specifier } ,
+      [ Identifier , ':' ] ,
+      TypeSpec ,
+      [ '=' , ConditionalExpr ]
+    ;
+
+(* ---------- Variables ---------------------------------------------------- *)
+
+VariableDecl
+    = { Specifier } , Identifier , ':' , TypeSpec , [ Initialiser ] , ';'
+    ;
+
+Initialiser
+    = '=' , ConditionalExpr
+    | '(' , [ ExpressionList ] , ')' , [ '[' , ConditionalExpr , ']' ]
+    | BraceInitList
+    ;
+
+(* ---------- Specifiers --------------------------------------------------- *)
+
+Specifier
+    = 'public' | 'protected' | 'private'
+    | 'static' | 'const' | 'abstract' | 'final'
+    ;
+
+(* ---------- Type Specifiers ---------------------------------------------- *)
+
+TypeSpec
+    = FunctionRefType
+    | QualifiedIdentifier , '::' , FunctionRefType               (* member fn ref *)
+    | [ 'const' ] , ( FundamentalTypeSpec | QualifiedIdentifier ) , { TypeSuffix }
+    ;
+
+FundamentalTypeSpec
+    = [ 'unsigned' ] , ( 'byte' | 'char' | 'short' | 'int' | 'long'
+                        | 'float' | 'double' )
+    | 'bool'
+    ;
+
+FunctionRefType
+    = FunctionRefQualifier , '(' , [ TypeList ] , ')'
+    ;
+
+FunctionRefQualifier
+    = '*' | '?' | '+'
+    ;
+
+TypeList
+    = TypeSpec , { ',' , TypeSpec }
+    ;
+
+TypeSuffix
+    = '[' , [ IntegerLiteral ] , ']'                             (* array *)
+    | '!'                                                        (* owner *)
+    | '*'                                                        (* pointer *)
+    | '&'                                                        (* reference *)
+    | '+'                                                        (* link *)
+    | '?'                                                        (* view *)
+    | '#'                                                        (* drain *)
+    ;
+
+(* ---------- Statements --------------------------------------------------- *)
+
+Statement
+    = BlockStatement
+    | ReturnStatement
+    | IfElseStatement
+    | WhileStatement
+    | ForStatement
+    | UsingDecl
+    | VariableDecl
+    | ExpressionStatement
+    ;
+
+BlockStatement
+    = '{' , { Statement } , '}'
+    ;
+
+ReturnStatement
+    = 'return' , [ Expression ] , ';'
+    ;
+
+IfElseStatement
+    = 'if' , '(' , Expression , ')' , Statement , [ 'else' , Statement ]
+    ;
+
+WhileStatement
+    = 'while' , '(' , Expression , ')' , Statement
+    ;
+
+ForStatement
+    = 'for' , '(' , ( VariableDecl | ';' ) ,
+                     [ Expression ] , ';' ,
+                     [ Expression ] ,
+              ')' , Statement
+    ;
+
+ExpressionStatement
+    = [ Expression ] , ';'
+    ;
+
+(* ---------- Expressions -------------------------------------------------- *)
+
+Expression
+    = AssignmentExpr , { ',' , AssignmentExpr }
+    ;
+
+ExpressionList
+    = AssignmentExpr , { ',' , AssignmentExpr }
+    ;
+
+AssignmentExpr
+    = ConditionalExpr , [ AssignmentOperator , AssignmentExpr ]
+    ;
+
+AssignmentOperator
+    = '=' | '*=' | '/=' | '%=' | '+=' | '-='
+    | '>>=' | '<<=' | '&=' | '^=' | '|='
+    ;
+
+ConditionalExpr
+    = LogicalOrExpr , [ '?' , ConditionalExpr , ':' , ConditionalExpr ]
+    ;
+
+LogicalOrExpr
+    = LogicalAndExpr , { '||' , LogicalAndExpr }
+    ;
+
+LogicalAndExpr
+    = InclusiveBinOrExpr , { '&&' , InclusiveBinOrExpr }
+    ;
+
+InclusiveBinOrExpr
+    = ExclusiveBinOrExpr , { '|' , ExclusiveBinOrExpr }
+    ;
+
+ExclusiveBinOrExpr
+    = BinAndExpr , { '^' , BinAndExpr }
+    ;
+
+BinAndExpr
+    = EqualityExpr , { '&' , EqualityExpr }
+    ;
+
+EqualityExpr
+    = RelationalExpr , { ( '==' | '!=' ) , RelationalExpr }
+    ;
+
+RelationalExpr
+    = ShiftingExpr , { ( '<' | '>' | '<=' | '>=' ) , ShiftingExpr }
+    ;
+
+ShiftingExpr
+    = AdditiveExpr , { ( '<<' | '>>' ) , AdditiveExpr }
+    ;
+
+AdditiveExpr
+    = MultiplicativeExpr , { ( '+' | '-' ) , MultiplicativeExpr }
+    ;
+
+MultiplicativeExpr
+    = PmExpr , { ( '*' | '/' | '%' ) , PmExpr }
+    ;
+
+PmExpr
+    = CastExpr , { ( '.*' | '->*' ) , CastExpr }
+    ;
+
+CastExpr
+    = '(' , TypeSpec , ')' , CastExpr
+    | UnaryExpr
+    ;
+
+UnaryExpr
+    = ( '++' | '--' | '*' | '&' | '+' | '-' | '!' | '~' | '#' ) , CastExpr
+    | NewExpr
+    | 'delete' , CastExpr
+    | PostfixExpr
+    ;
+
+NewExpr
+    = 'new' , TypeName , '(' , [ ExpressionList ] , ')'                    (* single object *)
+    | 'new' , TypeName , '(' , [ ExpressionList ] , ')' , '[' , Expression , ']'
+                                                                            (* uniform array *)
+    | 'new' , TypeName , '[' , [ Expression ] , ']' , [ BraceInitList ]    (* array *)
+    | 'new' , TypeName , BraceInitList                                      (* brace-init array *)
+    ;
+
+TypeName
+    = QualifiedIdentifier
+    | FundamentalTypeSpec
+    ;
+
+PostfixExpr
+    = PrimaryExpr , { PostfixOp }
+    ;
+
+PostfixOp
+    = '++'
+    | '--'
+    | '[' , Expression , ']'
+    | '(' , [ ExpressionList ] , ')'
+    | ( '.' | '->' ) , IdentifierExpr
+    ;
+
+PrimaryExpr
+    = Literal
+    | 'this'
+    | '(' , Expression , ')'
+    | AnnotationInitExpr
+    | BraceInitList
+    | IdentifierExpr
+    ;
+
+AnnotationInitExpr
+    = AnnotationDef
+    ;
+
+IdentifierExpr
+    = QualifiedIdentifier
+    ;
+
+(* ---------- Brace Initializer Lists ------------------------------------- *)
+
+BraceInitList
+    = '{' , '}'
+    | '{' , InitElement , { ',' , InitElement } , '}'
+    | '{' , DesignatedInitElement , { ',' , DesignatedInitElement } , '}'
+    ;
+    (* Positional and designated initializers cannot be mixed
+       in the same brace-init list. *)
+
+InitElement
+    = ConditionalExpr
+    |                                                            (* empty — default init *)
+    ;
+
+DesignatedInitElement
+    = '.' , DesignatedMemberName , '=' , ConditionalExpr
+    | '.' , DesignatedMemberName , '=' , BraceInitList           (* nested struct *)
+    | '.' , DesignatedMemberName , '(' , [ ExpressionList ] , ')'
+    ;
+
+DesignatedMemberName
+    = [ Identifier , '::' , { Identifier , '::' } ] , Identifier
+    ;
+

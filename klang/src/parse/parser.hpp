@@ -80,89 +80,96 @@ public:
     void parse(k::source& src);
 
     /**
-     * UNIT := ?MODULE_DECLARATION *IMPORT DECLARATIONS
+     * Unit = [ ModuleDeclaration ] , { ImportDeclaration } , { Declaration } ;
      *
      * @return The newly parsed model
-     * @throws parsing_error If a parsinng arror occurs
+     * @throws parsing_error If a parsing error occurs
      */
     std::shared_ptr<ast::unit> parse_unit();
 
     /**
-     * MODULE_DECLARATION := 'module' QUALIFIED_IDENTIFIER ';'
+     * ModuleDeclaration = 'module' , QualifiedIdentifier , ';' ;
      *
-     * @return Thhe module declaration, if any, null if not present.
-     * @throws parsing_error If a parsinng arror occurs.
+     * @return The module declaration, if any, null if not present.
+     * @throws parsing_error If a parsing error occurs.
      */
     std::shared_ptr<ast::module_name> parse_module_declaration();
 
     /**
-     * IMPORT := 'import' identifier ';'
+     * ImportDeclaration = 'import' , QualifiedIdentifier , ';' ;
      *
      * @return An import declaration, if any, null if not present.
-     * @throws parsing_error If a parsinng arror occurs.
+     * @throws parsing_error If a parsing error occurs.
      */
     std::shared_ptr<ast::import> parse_import();
 
     /**
-     * DECLARATIONS := *DECLARATION
+     * { Declaration }
      */
     std::vector<ast::decl_ptr> parse_declarations();
 
     /**
-     *  DECLARATION := VISIBILITY_DECL | NAMESPACE_DECL | FUNCTION_DECL | AGGREGATE_DECLARATION | VARIABLE_DECL
-     * @return
+     * Declaration = VisibilityDecl | NamespaceDecl | UsingDecl | FriendDecl
+     *             | AggregateDecl | EnumDecl | FunctionDecl | VariableDecl ;
      */
     ast::decl_ptr parse_declaration();
 
     /**
-     * VISIBILITY_DECL := ('public'|'protected'|'private') ':'
-     * @return
+     * VisibilityDecl = ( 'public' | 'protected' | 'private' ) , ':' ;
      */
     std::shared_ptr<ast::visibility_decl> parse_visibility_decl();
 
     /**
-     * NAMESPACE_DECL := 'namespace' ?identifier '{' *DECLARATION '}'
-     * @return
+     * NamespaceDecl = 'namespace' , [ Identifier ] , '{' , { Declaration } , '}' ;
      */
     std::shared_ptr<ast::namespace_decl> parse_namespace_decl();
 
     /**
-     * USING_DECL := 'using' ['namespace'|'struct'|'interface'|'class']? QUALIFIED_IDENTIFIER ';'
-     * @return The using declaration, if any, null if not present.
+     * UsingDecl = 'using' , [ UsingFilter ] , [ Identifier , '=' ] ,
+     *             QualifiedIdentifier , ';' ;
+     * UsingFilter = 'namespace' | 'struct' | 'interface' | 'class' ;
      */
     std::shared_ptr<ast::using_decl> parse_using_decl();
 
     /**
-     * FRIEND_DECL := 'friend' ['struct'|'interface'|'class']? QUALIFIED_IDENTIFIER ';'
-     * @return The friend declaration, if any, null if not present.
+     * FriendDecl = 'friend' , [ FriendFilter ] , QualifiedIdentifier , ';' ;
+     * FriendFilter = 'struct' | 'interface' | 'class' ;
      */
     std::shared_ptr<ast::friend_decl> parse_friend_decl();
 
     /**
-     * ANNOTATION_DEF := '@' QUALIFIED_IDENTIFIER [ '(' [ EXPRESSION_LIST ] ')' | BRACE_INIT_LIST ]
-     * @return A single annotation definition, or null if '@' is not found.
+     * AnnotationDef = '@' , QualifiedIdentifier
+     *               | '@' , QualifiedIdentifier , '(' , [ ExpressionList ] , ')'
+     *               | '@' , QualifiedIdentifier , BraceInitList ;
      */
     std::shared_ptr<ast::annotation_def> parse_annotation_def();
 
     /**
-     * ANNOTATION_DEFS := ANNOTATION_DEF*
-     * @return Zero or more annotation definitions.
+     * { AnnotationDef }
      */
     ast::annotation_def_list parse_annotation_defs();
 
     /**
-     * AGGREGATE_DECLARATION := ANNOTATION_DEFS SPECIFIERS ['struct'|'class'|'interface'|'annotation'] identifier '{' DECLARATIONS '}'
+     * AggregateDecl = { AnnotationDef } , { Specifier } ,
+     *                 ( 'struct' | 'class' | 'interface' | 'annotation' ) ,
+     *                 Identifier , [ ':' , BaseClause ] ,
+     *                 '{' , { Declaration } , '}' ;
+     * BaseClause = BaseSpec , { ',' , BaseSpec } ;
+     * BaseSpec = [ 'public' | 'protected' | 'private' ] , QualifiedIdentifier ;
      */
     std::shared_ptr<ast::aggregate_decl> parse_aggregate_decl();
 
     /**
-     * ENUM_DECLARATION := SPECIFIERS 'enum' identifier [ ':' QualifiedName ] '{' ENUM_ENTRY* '}' ';'
-     * ENUM_ENTRY := identifier [ '=' ( integer_literal | identifier ) ] [ 'default' ] ';'
+     * EnumDecl = { Specifier } , 'enum' , Identifier ,
+     *            [ ':' , QualifiedIdentifier ] ,
+     *            '{' , { EnumEntry } , '}' , ';' ;
+     * EnumEntry = Identifier , [ '=' , ( IntegerLiteral | Identifier ) ] ,
+     *             [ 'default' ] , ';' ;
      */
     std::shared_ptr<ast::enum_decl> parse_enum_decl();
 
     /**
-     * QUALIFIED_IDENTIFIER := ?'::' identifier *( '::' identifier )
+     * QualifiedIdentifier = [ '::' ] , Identifier , { '::' , Identifier } ;
      *
      * @return The qualified identifier, if parsed correctly completely.
      * @throws parsing_error If a parsing error occurs
@@ -170,30 +177,54 @@ public:
     std::shared_ptr<ast::qualified_identifier> parse_qualified_identifier();
 
     /**
-     * Current support : FUNCTION_DECL := SPECIFIERS ?[~] identifier '(' [ PARAMETER *[',' PARAMETER ] ] ')' ?([':' [MEMBER_INIT_LIST|TYPE_SPEC]]) (STATEMENT_BLOCK|FUNCTION_ALIASING_DECL|FUNCTION_REDIRECT_DECL)
-     * With: MEMBER_INIT_LIST := ':' MEMBER_INIT [',' MEMBER_INIT]*
-     *       MEMBER_INIT := QUALIFIED_IDENTIFIER '(' ?[EXPRESSION_LIST] ')'
-     *       FUNCTION_ALIASING_DECL := '->' ('default'|'delete') ';'
-     *       FUNCTION_REDIRECT_DECL := '->' QUALIFIED_IDENTIFIER ?['(' TYPE_SPEC_LIST ')'] ';'
-     *       TYPE_SPEC_LIST := TYPE_SPEC [',' TYPE_SPEC]*
-     * @return
+     * FunctionDecl = { AnnotationDef } , { Specifier } , [ 'fun' ] ,
+     *               ( FunctionHead | OperatorFunctionHead | DestructorHead ) ,
+     *               '(' , [ ParameterList ] , ')' ,
+     *               [ NamedReturnVar ] ,
+     *               [ ':' , ReturnTypeOrMemberInitList ] ,
+     *               FunctionBody ;
+     *
+     * FunctionHead          = Identifier ;
+     * DestructorHead        = '~' , Identifier ;
+     * OperatorFunctionHead  = 'operator' , OperatorSymbol
+     *                       | 'operator' , '(' , ')' ;
+     * NamedReturnVar        = Identifier , ':' , TypeSpec , [ NamedReturnInit ] ;
+     * NamedReturnInit       = '=' , ConditionalExpr
+     *                       | '(' , [ ExpressionList ] , ')' ;
+     * ReturnTypeOrMemberInitList = TypeSpec | MemberInitList | StaticDepList ;
+     * MemberInitList        = MemberInit , { ',' , MemberInit } ;
+     * MemberInit            = Identifier , '(' , [ ExpressionList ] , ')' ;
+     * FunctionBody          = BlockStatement
+     *                       | '->' , ( 'default' | 'delete' ) , ';'
+     *                       | '->' , QualifiedIdentifier ,
+     *                                [ '(' , [ TypeSpecList ] , ')' ] , ';'
+     *                       | ';' ;
      */
     std::shared_ptr<ast::function_decl> parse_function_decl();
 
     /**
-     * Current support : PARAMETER := ANNOTATION_DEFS SPECIFIERS ?[identifier ':'] TYPE_SPEC ';'
+     * ParameterSpec = { AnnotationDef } , { Specifier } ,
+     *                 [ Identifier , ':' ] , TypeSpec ,
+     *                 [ '=' , ConditionalExpr ] ;
      */
     std::shared_ptr<ast::parameter_spec> parse_parameter_spec();
 
     /**
-     * Current support : VARIABLE_DECL := SPECIFIERS identifier ':' TYPE_SPEC ?[ ['(' EXPRESSION_LIST ')'] | ['=' CONDITIONAL_EXPR]]';'
+     * VariableDecl = { Specifier } , Identifier , ':' , TypeSpec ,
+     *                [ Initialiser ] , ';' ;
+     * Initialiser = '=' , ConditionalExpr
+     *             | '(' , [ ExpressionList ] , ')' , [ '[' , ConditionalExpr , ']' ]
+     *             | BraceInitList ;
      */
     std::shared_ptr<ast::variable_decl> parse_variable_decl();
 
     /**
-     * TYPE_SPEC := ( FUNDAMENTAL_TYPE_SPEC | QUALIFIED_IDENTIFIER ) *[ ARRAY_TYPE_SUFFIX | POINTER_TYPE_SUFFIX ]
-     * ARRAY_TYPE_SUFFIX := '['  ?[ integer ] ']'
-     * POINTER_TYPE_SUFFIX := '*' | '&'
+     * TypeSpec = FunctionRefType
+     *          | QualifiedIdentifier , '::' , FunctionRefType
+     *          | [ 'const' ] , ( FundamentalTypeSpec | QualifiedIdentifier ) ,
+     *            { TypeSuffix } ;
+     * TypeSuffix = '[' , [ IntegerLiteral ] , ']'
+     *            | '!' | '*' | '&' | '+' | '?' | '#' ;
      *
      * @param stop_before_bracket  When true, the parser will NOT consume array suffixes '[...]'.
      *        Used by the 'new' expression handler to parse base types separately from array sizes.
@@ -201,217 +232,188 @@ public:
     std::shared_ptr<ast::type_specifier> parse_type_spec(bool stop_before_bracket = false);
 
     /**
-     * FUNDAMENTAL_TYPE_SPEC := ?('unsigned') ('byte'|'char'|'short'|'int'|'long'|'float'|'double')
-     * TODO support : support unsigned prefix correctly
+     * FundamentalTypeSpec = [ 'unsigned' ] , ( 'byte' | 'char' | 'short' | 'int'
+     *                       | 'long' | 'float' | 'double' )
+     *                     | 'bool' ;
      */
     std::shared_ptr<ast::type_specifier> parse_fundamental_type_spec();
 
     /**
-     * SPECIFIERS := *('public'|'protected'|'private'|'static'|'const'|'abstract'|'final')
-     * @return
+     * { Specifier }
+     * Specifier = 'public' | 'protected' | 'private'
+     *           | 'static' | 'const' | 'abstract' | 'final' ;
      */
     std::vector<lex::keyword> parse_specifiers();
 
     /**
-     * STATEMENT_BLOCK := '{' *STATEMENT '}'
-     * @return
+     * BlockStatement = '{' , { Statement } , '}' ;
      */
     std::shared_ptr<ast::block_statement> parse_statement_block();
 
     /**
-     * RETURN_STATEMENT := 'return' ?[EXPRESSION] ';'
-     * @return
+     * ReturnStatement = 'return' , [ Expression ] , ';' ;
      */
      std::shared_ptr<ast::return_statement> parse_return_statement();
 
-     /*
-      * IF_ELSE_STATEMENT := 'if' '(' [EXPRESSION] ')' [STATEMENT]  ?( 'else' [STATEMENT] )
-      * TODO Add inline variable declaration
+     /**
+      * IfElseStatement = 'if' , '(' , Expression , ')' , Statement ,
+      *                   [ 'else' , Statement ] ;
       */
      std::shared_ptr<ast::if_else_statement> parse_if_else_statement();
 
-    /*
-     * WHILE_STATEMENT := 'while' '(' [EXPRESSION] ')' [STATEMENT]
-     * TODO Add inline variable declaration
+    /**
+     * WhileStatement = 'while' , '(' , Expression , ')' , Statement ;
      */
     std::shared_ptr<ast::while_statement> parse_while_statement();
 
-    /*
-     * FOR_STATEMENT := 'FOR' '(' ([VARIABLE_DECL] | ';') [EXPRESSION_STATEMENT] ?[EXPRESSION]')' [STATEMENT]
-     * TODO add foreach
+    /**
+     * ForStatement = 'for' , '(' , ( VariableDecl | ';' ) ,
+     *                              [ Expression ] , ';' ,
+     *                              [ Expression ] ,
+     *                       ')' , Statement ;
      */
     std::shared_ptr<ast::for_statement> parse_for_statement();
 
     /**
-     * STATEMENT := STATEMENT_BLOCK | RETURN_STATEMENT | IF_ELSE_STATEMENT | WHILE_STATEMENT | FOR_STATEMENT | VARIABLE_DECL | EXPRESSION_STATEMENT
-     * @return
+     * Statement = BlockStatement | ReturnStatement | IfElseStatement
+     *           | WhileStatement | ForStatement | UsingDecl
+     *           | VariableDecl | ExpressionStatement ;
      */
     std::shared_ptr<ast::statement> parse_statement();
 
     /**
-     * EXPRESSION_STATEMENT := ?[EXPRESSION] ';'
+     * ExpressionStatement = [ Expression ] , ';' ;
      */
     std::shared_ptr<ast::expression_statement> parse_expression_statement();
 
     /**
-     * EXPRESSION := ASSIGNMENT_EXPR *[ ',' ASSIGNMENT_EXPR]
+     * Expression = AssignmentExpr , { ',' , AssignmentExpr } ;
      */
     ast::expr_ptr parse_expression();
 
     /**
-     * EXPRESSION_LIST := ASSIGNMENT_EXPR *[ ',' ASSIGNMENT_EXPR]
+     * ExpressionList = AssignmentExpr , { ',' , AssignmentExpr } ;
      */
     ast::expr_ptr parse_expression_list();
 
     /**
-     * ASSIGNMENT_EXPR := CONDITIONAL_EXPR ?[ ASSIGNMENT_OPERATOR ASSIGNMENT_EXPR ]
-     * ASSIGNMENT_OPERATOR := one of = *= /= %= += -= >>= <<= &= ^= |=
+     * AssignmentExpr = ConditionalExpr , [ AssignmentOperator , AssignmentExpr ] ;
+     * AssignmentOperator = '=' | '*=' | '/=' | '%=' | '+=' | '-='
+     *                    | '>>=' | '<<=' | '&=' | '^=' | '|=' ;
      */
     ast::expr_ptr parse_assignment_expression();
 
     /**
-     * CONDITIONAL_EXPR := LOGICAL_OR_EXPR ?[ '?' CONDITIONAL_EXPR ':' CONDITIONAL_EXPR]
-     * @return
+     * ConditionalExpr = LogicalOrExpr ,
+     *                   [ '?' , ConditionalExpr , ':' , ConditionalExpr ] ;
      */
     ast::expr_ptr parse_conditional_expr();
 
     /**
-     * LOGICAL_OR_EXPR := LOGICAL_AND_EXPR *[ '||' LOGICAL_AND_EXPR]
-     * aka
-     * LOGICAL_OR_EXPR := LOGICAL_AND_EXPR ?[ '||' LOGICAL_OR_EXPR]
-     * @return
+     * LogicalOrExpr = LogicalAndExpr , { '||' , LogicalAndExpr } ;
      */
     ast::expr_ptr  parse_logical_or_expression();
 
     /**
-     * LOGICAL_AND_EXPR := INCLUSIVE_BIN_OR_EXPR *[ '&&' INCLUSIVE_BIN_OR_EXPR]
-     * aka
-     * LOGICAL_AND_EXPR := INCLUSIVE_BIN_OR_EXPR ?[ '&&' LOGICAL_AND_EXPR]
-     * @return
+     * LogicalAndExpr = InclusiveBinOrExpr , { '&&' , InclusiveBinOrExpr } ;
      */
     ast::expr_ptr  parse_logical_and_expression();
 
     /**
-     * INCLUSIVE_BIN_OR_EXPR := EXCLUSIVE_BIN_OR_EXPR *[ '|' EXCLUSIVE_BIN_OR_EXPR]
-     * aka
-     * INCLUSIVE_BIN_OR_EXPR := EXCLUSIVE_BIN_OR_EXPR ?[ '|' INCLUSIVE_BIN_OR_EXPR]
-     * @return
+     * InclusiveBinOrExpr = ExclusiveBinOrExpr , { '|' , ExclusiveBinOrExpr } ;
      */
     ast::expr_ptr parse_inclusive_bin_or_expr();
 
     /**
-     * EXCLUSIVE_BIN_OR_EXPR := BIN_AND_EXPR *[ '^' BIN_AND_EXPR]
-     * aka
-     * EXCLUSIVE_BIN_OR_EXPR := BIN_AND_EXPR ?[ '^' EXCLUSIVE_BIN_OR_EXPR]
-     * @return
+     * ExclusiveBinOrExpr = BinAndExpr , { '^' , BinAndExpr } ;
      */
     ast::expr_ptr parse_exclusive_bin_or_expr();
 
     /**
-     * BIN_AND_EXPR := EQUALITY_EXPR *[ '&' EQUALITY_EXPR]
-     * aka
-     * BIN_AND_EXPR := EQUALITY_EXPR ?[ '&' BIN_AND_EXPR]
-     * @return
+     * BinAndExpr = EqualityExpr , { '&' , EqualityExpr } ;
      */
     ast::expr_ptr parse_bin_and_expr();
 
     /**
-     * EQUALITY_EXPR := RELATIONAL_EXPR *[ ('=='|'!=') RELATIONAL_EXPR]
-     * aka
-     * EQUALITY_EXPR := RELATIONAL_EXPR ?[ ('=='|'!=') EQUALITY_EXPR]
-     * @return
+     * EqualityExpr = RelationalExpr , { ( '==' | '!=' ) , RelationalExpr } ;
      */
     ast::expr_ptr parse_equality_expr();
 
     /**
-     * RELATIONAL_EXPR := SHIFTING_EXPR *[ ('<'|'>'|'<='|'>=') SHIFTING_EXPR]
-     * aka
-     * RELATIONAL_EXPR := SHIFTING_EXPR ?[ ('<'|'>'|'<='|'>=') RELATIONAL_EXPR]
-     * @return
+     * RelationalExpr = ShiftingExpr , { ( '<' | '>' | '<=' | '>=' ) , ShiftingExpr } ;
      */
     ast::expr_ptr parse_relational_expr();
 
     /**
-     * SHIFTING_EXPR := ADDITIVE_EXPR *[ ('<<'|'>>') ADDITIVE_EXPR]
-     * aka
-     * * SHIFTING_EXPR := ADDITIVE_EXPR ?[ ('<<'|'>>') SHIFTING_EXPR]
-     * @return
+     * ShiftingExpr = AdditiveExpr , { ( '<<' | '>>' ) , AdditiveExpr } ;
      */
     ast::expr_ptr parse_shifting_expr();
 
     /**
-     * ADDITIVE_EXPR := MULTIPLICATIVE_EXPR *[ ('+'|'-') MULTIPLICATIVE_EXPR]
-     * aka
-     * ADDITIVE_EXPR := MULTIPLICATIVE_EXPR ?[ ('+'|'-') ADDITIVE_EXPR]
-     * @return
+     * AdditiveExpr = MultiplicativeExpr , { ( '+' | '-' ) , MultiplicativeExpr } ;
      */
     ast::expr_ptr parse_additive_expr();
 
     /**
-     * MULTIPLICATIVE_EXPR := PM_EXPR *[ ('*'|'/'|'%') PM_EXPR]
-     * aka
-     * MULTIPLICATIVE_EXPR := PM_EXPR ?[ ('*'|'/'|'%') MULTIPLICATIVE_EXPR]
-     * @return
+     * MultiplicativeExpr = PmExpr , { ( '*' | '/' | '%' ) , PmExpr } ;
      */
     ast::expr_ptr parse_multiplicative_expr();
 
     /**
-     * PM_EXPR := CAST_EXPR *[ ('.*'|'->*') CAST_EXPR]
-     * aka
-     * PM_EXPR := CAST_EXPR ?[ ('.*'|'->*') PM_EXPR]
-     * @return
+     * PmExpr = CastExpr , { ( '.*' | '->*' ) , CastExpr } ;
      */
     ast::expr_ptr parse_pm_expr();
 
     /**
-     * CAST_EXPR := '(' TYPE_SPECIFIER ')' CAST_EXPR
-     *            | UNARY_EXPR
-     * @return
+     * CastExpr = '(' , TypeSpec , ')' , CastExpr
+     *          | UnaryExpr ;
      */
     ast::expr_ptr parse_cast_expr();
 
     /**
-     * UNARY_EXPR := ('++'|'--'|'*'|'&'|'+'|'-'|'!'|'~') CAST_EXPR
-     *             | 'new' TYPE_NAME '[' [EXPRESSION] ']' [BRACE_INIT_LIST]
-     *             | 'new' TYPE_NAME BRACE_INIT_LIST
-     *             | 'new' TYPE_NAME '(' [EXPRESSION_LIST] ')'
-     *             | 'delete' CAST_EXPR
-     *             | POSTFIX_EXPR
-     * @return
+     * UnaryExpr = ( '++' | '--' | '*' | '&' | '+' | '-' | '!' | '~' | '#' ) , CastExpr
+     *           | NewExpr
+     *           | 'delete' , CastExpr
+     *           | PostfixExpr ;
+     *
+     * NewExpr = 'new' , TypeName , '(' , [ ExpressionList ] , ')'
+     *         | 'new' , TypeName , '(' , [ ExpressionList ] , ')' , '[' , Expression , ']'
+     *         | 'new' , TypeName , '[' , [ Expression ] , ']' , [ BraceInitList ]
+     *         | 'new' , TypeName , BraceInitList ;
      */
     ast::expr_ptr parse_unary_expr();
 
     /**
-     * Parse a brace-enclosed initializer list: '{' [ expr { ',' expr } ] '}'
-     * Each element is a conditional expression (or nullptr for empty slots).
+     * BraceInitList = '{' , '}'
+     *               | '{' , InitElement , { ',' , InitElement } , '}'
+     *               | '{' , DesignatedInitElement , { ',' , DesignatedInitElement } , '}' ;
+     *
      * The opening brace token has already been consumed (passed as open_brace).
-     * @return A brace_init_list AST node, or nullptr on parse error.
      */
     std::shared_ptr<ast::brace_init_list> parse_brace_init_list(const lex::punctuator& open_brace);
 
     /**
-     * POSTFIX_EXPR := PRIMARY_EXPR *[ '++'|'--'
-     *                                  | [ '[' EXPRESSION ']' ]
-     *                                  | [ '(' EXPRESSION_LIST ')' ]
-     *                                  | [ ['.'|'->'] IDENTIFIER_EXPR ]
-     *                               ]
-     * TODO: support braces and arrow
-     * @return
+     * PostfixExpr = PrimaryExpr , { PostfixOp } ;
+     * PostfixOp = '++'
+     *           | '--'
+     *           | '[' , Expression , ']'
+     *           | '(' , [ ExpressionList ] , ')'
+     *           | ( '.' | '->' ) , IdentifierExpr ;
      */
     ast::expr_ptr parse_postfix_expr();
 
     /**
-     * PRIMARY_EXPR :=  LITERAL
-     *              |   'this'
-     *              |   '(' Expression  ')'
-     *              |   IDENTIFIER_EXPRESSION
-     * @return
+     * PrimaryExpr = Literal
+     *             | 'this'
+     *             | '(' , Expression , ')'
+     *             | AnnotationInitExpr
+     *             | BraceInitList
+     *             | IdentifierExpr ;
      */
     ast::expr_ptr parse_primary_expr();
 
     /**
-     * IDENTIFIER_EXPR := ?QUALIFIED_IDENTIFIER
-     * @return
+     * IdentifierExpr = QualifiedIdentifier ;
      */
     ast::expr_ptr parse_identifier_expr();
 
