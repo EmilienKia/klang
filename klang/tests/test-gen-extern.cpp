@@ -38,10 +38,10 @@
 
 #include "helpers.hpp"
 
-// ── Common K source preamble: inline definition of the Extern annotation ──
-// Tests use gen_jit() (no stdlib KDI import resolution), so we define a local
-// annotation type whose FQ name matches k::ffi::Extern.  The symbol_resolver
-// matches by FQ name of the resolved annotation type.
+// ── Common K source preamble: inline definition of the FFI annotations ────
+// Tests use gen_jit() (no stdlib KDI import resolution), so we define local
+// annotation types whose FQ names match k::ffi::Extern and k::ffi::CString.
+// The symbol_resolver matches by FQ name of the resolved annotation type.
 // We omit @Retention/@Target since the stdlib annotations namespace is not
 // available in the test context — the compiler defaults work fine.
 static const std::string FFI_PREAMBLE = R"K(
@@ -50,6 +50,8 @@ namespace ffi {
         language : const char[];
         library : const char[]? = null;
         symbol : const char[]? = null;
+    }
+    annotation CString {
     }
 }
 )K";
@@ -293,4 +295,318 @@ TEST_CASE("FFI: explicit symbol override via designated initializer", "[ffi][gen
     auto test = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(test != nullptr);
     REQUIRE(test() == 40);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  @ffi::CString — error cases
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FFI CString: @CString on non-Extern function is rejected", "[ffi][cstring][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(ffi_src(R"K(
+        not_extern(@ffi::CString s : char&) : int { return 0; }
+    )K")), k::log::compiler_error);
+}
+
+TEST_CASE("FFI CString: @CString on non-addresser type is rejected", "[ffi][cstring][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(ffi_src(R"K(
+        @ffi::Extern("C") bad(@ffi::CString s : char) : int;
+    )K")), k::log::compiler_error);
+}
+
+TEST_CASE("FFI CString: @CString on non-char addresser is rejected (int&)", "[ffi][cstring][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(ffi_src(R"K(
+        @ffi::Extern("C") bad(@ffi::CString s : int&) : int;
+    )K")), k::log::compiler_error);
+}
+
+TEST_CASE("FFI CString: @CString on non-char addresser is rejected (short*)", "[ffi][cstring][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(ffi_src(R"K(
+        @ffi::Extern("C") bad(@ffi::CString s : short*) : int;
+    )K")), k::log::compiler_error);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  @ffi::CString — valid addresser combinations
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FFI CString: char pointer compiles", "[ffi][cstring][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") ok(@ffi::CString s : char*) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+TEST_CASE("FFI CString: char reference compiles", "[ffi][cstring][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") ok(@ffi::CString s : char&) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+TEST_CASE("FFI CString: const char reference compiles", "[ffi][cstring][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") ok(@ffi::CString s : const char&) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+TEST_CASE("FFI CString: const char pointer compiles", "[ffi][cstring][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") ok(@ffi::CString s : const char*) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+TEST_CASE("FFI CString: char view compiles", "[ffi][cstring][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") ok(@ffi::CString s : char?) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+TEST_CASE("FFI CString: char link compiles", "[ffi][cstring][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") ok(@ffi::CString s : char+) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+TEST_CASE("FFI CString: char owner compiles", "[ffi][cstring][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") ok(@ffi::CString s : char!) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  @ffi::CString — warning cases (compile OK, but emit diagnostic)
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FFI CString: unsigned char reference compiles with warning", "[ffi][cstring][gen]") {
+    // byte == unsigned char — should compile but warn
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") ok(@ffi::CString s : byte&) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+TEST_CASE("FFI CString: char drain compiles with warning", "[ffi][cstring][gen]") {
+    // drain is not meaningful for C FFI — should compile but warn
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") ok(@ffi::CString s : char#) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  @ffi::CString — model flag
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FFI CString: parameter model flag is_ffi_cstring()", "[ffi][cstring][model]") {
+    auto comp = compile_model(ffi_src(R"K(
+        @ffi::Extern("C") my_strlen(@ffi::CString s : const char*) : int;
+    )K"));
+    REQUIRE(comp != nullptr);
+
+    // Find the function via the root namespace
+    auto root = comp->get_unit()->get_root_namespace();
+    REQUIRE(root != nullptr);
+    auto fn = root->get_function("my_strlen");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn->parameters().size() == 1);
+    CHECK(fn->parameters()[0]->is_ffi_cstring());
+}
+
+TEST_CASE("FFI CString: non-CString parameter is_ffi_cstring() is false", "[ffi][cstring][model]") {
+    auto comp = compile_model(ffi_src(R"K(
+        @ffi::Extern("C") my_add(a : int, b : int) : int;
+    )K"));
+    REQUIRE(comp != nullptr);
+
+    auto root = comp->get_unit()->get_root_namespace();
+    REQUIRE(root != nullptr);
+    auto fn = root->get_function("my_add");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn->parameters().size() == 2);
+    CHECK_FALSE(fn->parameters()[0]->is_ffi_cstring());
+    CHECK_FALSE(fn->parameters()[1]->is_ffi_cstring());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  @ffi::CString — runtime: calling a C function with char* parameter
+// ═══════════════════════════════════════════════════════════════════════════
+
+// C functions visible to the JIT linker (in the test executable).
+extern "C" {
+    int __k_test_cstring_len(const char* s) {
+        int len = 0;
+        while (s[len]) ++len;
+        return len;
+    }
+    int __k_test_cstring_first_char(const char* s) {
+        return s ? static_cast<int>(s[0]) : -1;
+    }
+    int __k_test_cstring_and_int(const char* s, int n) {
+        int len = 0;
+        while (s[len]) ++len;
+        return len + n;
+    }
+}
+
+TEST_CASE("FFI CString: runtime — pass char pointer to C strlen", "[ffi][cstring][runtime]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") __k_test_cstring_len(@ffi::CString s : const char*) : int;
+        call_len(s : const char[]) : int {
+            p : const char* = &s[0];
+            return __k_test_cstring_len(p);
+        }
+        test() : int {
+            return call_len("hello");
+        }
+    )K"));
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 5);
+}
+
+TEST_CASE("FFI CString: runtime — @CString alongside normal parameter", "[ffi][cstring][runtime]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") __k_test_cstring_and_int(@ffi::CString s : const char*, n : int) : int;
+        call_and_int(s : const char[], n : int) : int {
+            p : const char* = &s[0];
+            return __k_test_cstring_and_int(p, n);
+        }
+        test() : int {
+            return call_and_int("hi", 100);
+        }
+    )K"));
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 102);
+}
+
+TEST_CASE("FFI CString: runtime — mixed CString and non-CString params", "[ffi][cstring][runtime]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") __k_test_cstring_len(@ffi::CString s : const char*) : int;
+        @ffi::Extern("C") __k_test_extern_add(a : int, b : int) : int;
+        call_len(s : const char[]) : int {
+            p : const char* = &s[0];
+            return __k_test_cstring_len(p);
+        }
+        test() : int {
+            return __k_test_extern_add(call_len("abc"), 39);
+        }
+    )K"));
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 42);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  @ffi::CString — additional edge-case tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FFI CString: multiple @CString parameters", "[ffi][cstring][model]") {
+    auto comp = compile_model(ffi_src(R"K(
+        @ffi::Extern("C") cmp(@ffi::CString a : const char*, @ffi::CString b : const char*) : int;
+    )K"));
+    REQUIRE(comp != nullptr);
+
+    auto root = comp->get_unit()->get_root_namespace();
+    REQUIRE(root != nullptr);
+    auto fn = root->get_function("cmp");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn->parameters().size() == 2);
+    CHECK(fn->parameters()[0]->is_ffi_cstring());
+    CHECK(fn->parameters()[1]->is_ffi_cstring());
+}
+
+TEST_CASE("FFI CString: @CString on second parameter only", "[ffi][cstring][model]") {
+    auto comp = compile_model(ffi_src(R"K(
+        @ffi::Extern("C") write(fd : int, @ffi::CString buf : const char*) : int;
+    )K"));
+    REQUIRE(comp != nullptr);
+
+    auto root = comp->get_unit()->get_root_namespace();
+    REQUIRE(root != nullptr);
+    auto fn = root->get_function("write");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn->parameters().size() == 2);
+    CHECK_FALSE(fn->parameters()[0]->is_ffi_cstring());
+    CHECK(fn->parameters()[1]->is_ffi_cstring());
+}
+
+TEST_CASE("FFI CString: const byte pointer compiles with warning", "[ffi][cstring][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") ok(@ffi::CString s : const byte*) : int;
+    )K"));
+    REQUIRE(jit);
+}
+
+TEST_CASE("FFI CString: static member extern with @CString", "[ffi][cstring][gen]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        class Util {
+            public Util() {}
+            @ffi::Extern("C") static __k_test_cstring_len(@ffi::CString s : const char*) : int;
+        }
+        call_len(s : const char[]) : int {
+            p : const char* = &s[0];
+            return Util::__k_test_cstring_len(p);
+        }
+        test() : int {
+            return call_len("abcde");
+        }
+    )K"));
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 5);
+}
+
+TEST_CASE("FFI CString: runtime — pass char reference to C function", "[ffi][cstring][runtime]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") __k_test_cstring_first_char(@ffi::CString s : const char&) : int;
+        call_first(s : const char[]) : int {
+            return __k_test_cstring_first_char(s[0]);
+        }
+        test() : int {
+            return call_first("A");
+        }
+    )K"));
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 65);  // ASCII 'A'
+}
+
+TEST_CASE("FFI CString: runtime — multiple @CString params called", "[ffi][cstring][runtime]") {
+    auto jit = gen_jit(ffi_src(R"K(
+        @ffi::Extern("C") __k_test_cstring_len(@ffi::CString s : const char*) : int;
+        @ffi::Extern("C") __k_test_cstring_and_int(@ffi::CString s : const char*, n : int) : int;
+        get_len(s : const char[]) : int {
+            p : const char* = &s[0];
+            return __k_test_cstring_len(p);
+        }
+        call_and_int(s : const char[], n : int) : int {
+            p : const char* = &s[0];
+            return __k_test_cstring_and_int(p, n);
+        }
+        test() : int {
+            la : int = get_len("ab");
+            return call_and_int("xyz", la);
+        }
+    )K"));
+    REQUIRE(jit);
+
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    REQUIRE(test() == 5);  // len("xyz")=3 + len("ab")=2 = 5
 }

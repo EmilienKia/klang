@@ -1387,6 +1387,13 @@ protected:
     /** Optional default value expression for this parameter (may be nullptr). */
     std::shared_ptr<expression> _default_expr;
 
+    /**
+     * True if this parameter carries @k::ffi::CString and should be treated
+     * as a C `char*` (null-terminated string pointer) in FFI calls.
+     * Set by symbol_resolver when processing @ffi::CString annotations.
+     */
+    bool _is_ffi_cstring = false;
+
     parameter(std::shared_ptr<function> func, size_t pos);
 
     static std::shared_ptr<parameter> make_shared(std::shared_ptr<function> func, size_t pos);
@@ -1411,6 +1418,11 @@ public:
     void set_default_expr(std::shared_ptr<expression> expr) { _default_expr = std::move(expr); }
     /** True if this parameter has a default value expression. */
     bool has_default_expr() const { return _default_expr != nullptr; }
+
+    /** True if this parameter is marked @ffi::CString for C FFI. */
+    bool is_ffi_cstring() const { return _is_ffi_cstring; }
+    /** Mark this parameter as @ffi::CString. */
+    void set_ffi_cstring(bool v) { _is_ffi_cstring = v; }
 
     /** Set the AST parameter_spec node this parameter was built from. */
     void set_ast_parameter_spec(std::shared_ptr<k::parse::ast::parameter_spec> ast) {

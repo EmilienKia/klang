@@ -74,8 +74,10 @@ void symbol_resolver::resolve_and_validate_annotations(
                  current = current->parent<element>()) {
                 auto ns_ptr = std::dynamic_pointer_cast<k::model::ns>(current);
                 if (!ns_ptr) continue;
-                // Try descending through namespaces
-                auto cur_ns = ns_ptr;
+                // Try descending through namespaces (const lookup — must NOT
+                // create missing child namespaces, as that would mutate
+                // _children and invalidate iterators of any outer visit loop).
+                std::shared_ptr<const k::model::ns> cur_ns = ns_ptr;
                 bool found = true;
                 for (size_t i = 0; i + 1 < parts.size() && found; ++i) {
                     auto child = cur_ns->get_child_namespace(parts[i]);

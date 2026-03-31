@@ -27,4 +27,10 @@ annotation Extern {
     symbol : const char[]? = null;
 }
 
+@annotations::Retention(Policy::SOURCE)
+@annotations::Target({ElementType::PARAMETER})
+annotation CString {
+}
+
+
 } // namespace ffi

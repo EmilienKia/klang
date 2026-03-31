@@ -170,9 +170,9 @@ Annotations can be applied to:
 | `annotation` | ✓ |
 | Function (member or free) | ✓ (public functions with RTTI) |
 | Constructor / Destructor | ✓ (SOURCE retention only — no Function RTTI) |
+| Parameter | ✓ (see [`@ffi::CString`](../functions/ffi.md#2-fficstring--c-string-parameter-annotation) for usage) |
 | `struct` | ✗ (error — structs have no vtable/RTTI) |
 | Variable | ✗ (future) |
-| Parameter | ✗ (future) |
 
 ---
 

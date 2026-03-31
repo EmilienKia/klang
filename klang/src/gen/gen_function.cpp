@@ -464,6 +464,89 @@ void symbol_resolver::visit_function(function& fn) {
         }
     }
 
+    // ── Process @k::ffi::CString on parameters ───────────────────────────
+    // Validate that each @CString-annotated parameter belongs to an @Extern("C")
+    // function and that its K type is an addresser (ref, ptr, view, link or owner)
+    // to char.  Drain (#) triggers a warning and is treated as reference.
+    // unsigned char triggers a warning.  Any other addressed type is rejected.
+    for (auto& param : fn.parameters()) {
+        for (auto& ann_inst : param->get_annotations()) {
+            if (!ann_inst.resolved_type) continue;
+            std::string fq = ann_inst.resolved_type->get_fq_name();
+            if (fq != "k::ffi::CString" && fq != "::k::ffi::CString") continue;
+
+            lex::opt_any_lexeme param_lexeme;
+            if (auto ast_ps = param->get_ast_parameter_spec()) {
+                if (ast_ps->name) param_lexeme = lex::any_lexeme{*ast_ps->name};
+            }
+
+            // 1. The owning function must be @Extern("C")
+            if (!fn.is_extern()) {
+                throw_error(0x0089, param_lexeme,
+                    "@ffi::CString on parameter '{}' of function '{}': "
+                    "@ffi::CString is only valid on parameters of @ffi::Extern(\"C\") functions",
+                    {param->get_short_name(), fn.get_short_name()});
+            }
+
+            // 2. Validate the parameter type
+            auto ptype = param->get_type();
+            if (!ptype || !type::is_resolved(ptype)) break; // unresolved — skip silently
+
+            // 2a. Strip const wrappers
+            auto inner = ptype;
+            while (type::is_const(inner)) inner = inner->get_subtype();
+
+            // 2b. Check for drain — warn and peel
+            if (type::is_drain(inner)) {
+                warn(0x008A, param_lexeme,
+                    "@ffi::CString on parameter '{}': drain indirection (#) is not meaningful "
+                    "for C FFI; treating as reference",
+                    {param->get_short_name()});
+                inner = inner->get_subtype();
+            }
+            // 2c. Check for an addresser (reference, pointer, view, link, owner)
+            else if (type::is_reference(inner) || type::is_pointer(inner)
+                  || type::is_view(inner) || type::is_link(inner)
+                  || type::is_owner(inner)) {
+                inner = inner->get_subtype();
+            } else {
+                throw_error(0x008B, param_lexeme,
+                    "@ffi::CString on parameter '{}': the parameter type must be an addresser "
+                    "(reference, pointer, view, link or owner) to char, but got '{}'",
+                    {param->get_short_name(), ptype->to_string()});
+            }
+
+            // 2d. Strip const again (for `const char&` patterns)
+            while (type::is_const(inner)) inner = inner->get_subtype();
+
+            // 2e. Leaf type must be char (or unsigned char with warning)
+            auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
+            if (!prim) {
+                throw_error(0x008C, param_lexeme,
+                    "@ffi::CString on parameter '{}': the addressed type must be char, "
+                    "but got '{}'",
+                    {param->get_short_name(), inner->to_string()});
+            } else if (prim->get_type() == primitive_type::BYTE) {
+                // BYTE == UNSIGNED_CHAR
+                warn(0x008D, param_lexeme,
+                    "@ffi::CString on parameter '{}': unsigned char will be treated "
+                    "as char for C FFI",
+                    {param->get_short_name()});
+            } else if (prim->get_type() != primitive_type::CHAR) {
+                throw_error(0x008C, param_lexeme,
+                    "@ffi::CString on parameter '{}': the addressed type must be char, "
+                    "but got '{}'",
+                    {param->get_short_name(), inner->to_string()});
+            }
+
+            // 3. Mark the parameter
+            param->set_ffi_cstring(true);
+
+            // Only process the first @CString occurrence per parameter
+            break;
+        }
+    }
+
     // Resolve redirect target if this is a redirected function
     if (fn.is_redirected()) {
         auto target_name = fn.get_redirect_target_name();
