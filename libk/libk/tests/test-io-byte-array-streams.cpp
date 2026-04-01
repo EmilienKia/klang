@@ -1,0 +1,320 @@
+/*
+ * K Language standard library — I/O ByteArray stream tests
+ *
+ * Copyright 2026 Emilien Kia
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Tests for k::io::ByteArrayInputStream and k::io::ByteArrayOutputStream.
+ *
+ * Exercises write, read, size, toByteArray, reset, skip, available and
+ * round-trip (write to BAOS → extract → read from BAIS).
+ */
+
+#include <catch2/catch_all.hpp>
+
+#include "helpers.hpp"
+
+#ifndef LIBK_KDI_DIR
+#error "LIBK_KDI_DIR must be defined — check CMakeLists.txt"
+#endif
+#ifndef LIBK_LIB_DIR
+#error "LIBK_LIB_DIR must be defined — check CMakeLists.txt"
+#endif
+
+namespace {
+
+std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
+    return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
+}
+
+} // anonymous namespace
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ByteArrayOutputStream — default construction
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("ByteArrayOutputStream default ctor — size is 0", "[libk][io][baos]") {
+    auto jit = jit_k(R"SRC(
+        module __baos_default__;
+
+        test_size() : int {
+            baos : k::io::ByteArrayOutputStream;
+            return baos.size();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_size");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ByteArrayOutputStream — write single bytes
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("ByteArrayOutputStream write single bytes", "[libk][io][baos]") {
+    auto jit = jit_k(R"SRC(
+        module __baos_write_single__;
+
+        test_size() : int {
+            baos : k::io::ByteArrayOutputStream;
+            baos.write(65);
+            baos.write(66);
+            baos.write(67);
+            return baos.size();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_size");
+    REQUIRE(fn);
+    CHECK(fn() == 3);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ByteArrayOutputStream — toByteArray
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("ByteArrayOutputStream toByteArray content", "[libk][io][baos]") {
+    auto jit = jit_k(R"SRC(
+        module __baos_toarray__;
+
+        test_content() : int {
+            baos : k::io::ByteArrayOutputStream;
+            baos.write(10);
+            baos.write(20);
+            baos.write(30);
+            arr : byte[]* = baos.toByteArray();
+            if (arr[0] != (byte) 10) return 1;
+            if (arr[1] != (byte) 20) return 2;
+            if (arr[2] != (byte) 30) return 3;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_content");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ByteArrayOutputStream — reset
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("ByteArrayOutputStream reset clears size", "[libk][io][baos]") {
+    auto jit = jit_k(R"SRC(
+        module __baos_reset__;
+
+        test_reset() : int {
+            baos : k::io::ByteArrayOutputStream;
+            baos.write(1);
+            baos.write(2);
+            baos.reset();
+            return baos.size();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_reset");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ByteArrayInputStream — read single bytes and EOF
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("ByteArrayInputStream read returns bytes then -1", "[libk][io][bais]") {
+    auto jit = jit_k(R"SRC(
+        module __bais_read__;
+
+        test_read() : int {
+            sz : int = 3;
+            buf : byte[]! = new byte[sz];
+            buf[0] = (byte) 10;
+            buf[1] = (byte) 20;
+            buf[2] = (byte) 30;
+            bais : k::io::ByteArrayInputStream(buf, 3);
+            v0 : int = bais.read();
+            v1 : int = bais.read();
+            v2 : int = bais.read();
+            eof : int = bais.read();
+            if (v0 != 10) return 1;
+            if (v1 != 20) return 2;
+            if (v2 != 30) return 3;
+            if (eof != -1) return 4;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_read");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ByteArrayInputStream — available
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("ByteArrayInputStream available", "[libk][io][bais]") {
+    auto jit = jit_k(R"SRC(
+        module __bais_available__;
+
+        test_available() : int {
+            sz : int = 5;
+            buf : byte[]! = new byte[sz];
+            buf[0] = (byte) 1; buf[1] = (byte) 2; buf[2] = (byte) 3;
+            buf[3] = (byte) 4; buf[4] = (byte) 5;
+            bais : k::io::ByteArrayInputStream(buf, 5);
+            a0 : int = bais.available();
+            bais.read();
+            bais.read();
+            a1 : int = bais.available();
+            if (a0 != 5) return 1;
+            if (a1 != 3) return 2;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_available");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ByteArrayInputStream — skip
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("ByteArrayInputStream skip", "[libk][io][bais]") {
+    auto jit = jit_k(R"SRC(
+        module __bais_skip__;
+
+        test_skip() : int {
+            sz : int = 5;
+            buf : byte[]! = new byte[sz];
+            buf[0] = (byte) 10; buf[1] = (byte) 20; buf[2] = (byte) 30;
+            buf[3] = (byte) 40; buf[4] = (byte) 50;
+            bais : k::io::ByteArrayInputStream(buf, 5);
+            skipped : long = bais.skip(3);
+            val : int = bais.read();
+            if (skipped != 3) return 1;
+            if (val != 40) return 2;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_skip");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ByteArrayInputStream — bulk read
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("ByteArrayInputStream bulk read", "[libk][io][bais]") {
+    auto jit = jit_k(R"SRC(
+        module __bais_bulk_read__;
+
+        test_bulk_read() : int {
+            sz : int = 4;
+            src : byte[]! = new byte[sz];
+            src[0] = (byte) 1; src[1] = (byte) 2;
+            src[2] = (byte) 3; src[3] = (byte) 4;
+            bais : k::io::ByteArrayInputStream(src, 4);
+
+            dsz : int = 4;
+            dst : byte[]! = new byte[dsz];
+            n : int = bais.read(dst, 0, 4);
+            if (n != 4) return 1;
+            if (dst[0] != (byte) 1) return 2;
+            if (dst[1] != (byte) 2) return 3;
+            if (dst[2] != (byte) 3) return 4;
+            if (dst[3] != (byte) 4) return 5;
+            // Next read should return -1 (EOF)
+            n2 : int = bais.read(dst, 0, 4);
+            if (n2 != -1) return 6;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_bulk_read");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Round-trip: BAOS → toByteArray → BAIS
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Round-trip BAOS to BAIS", "[libk][io][baos][bais]") {
+    auto jit = jit_k(R"SRC(
+        module __baos_bais_roundtrip__;
+
+        test_roundtrip() : int {
+            baos : k::io::ByteArrayOutputStream;
+            baos.write(100);
+            baos.write(200);
+            baos.write(42);
+
+            arr : byte[]* = baos.toByteArray();
+            bais : k::io::ByteArrayInputStream(arr, baos.size());
+
+            v0 : int = bais.read();
+            v1 : int = bais.read();
+            v2 : int = bais.read();
+            eof : int = bais.read();
+
+            if (v0 != 100) return 1;
+            if (v1 != 200) return 2;
+            if (v2 != 42) return 3;
+            if (eof != -1) return 4;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_roundtrip");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ByteArrayOutputStream — bulk write
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("ByteArrayOutputStream bulk write", "[libk][io][baos]") {
+    auto jit = jit_k(R"SRC(
+        module __baos_bulk_write__;
+
+        test_bulk_write() : int {
+            baos : k::io::ByteArrayOutputStream;
+            sz : int = 3;
+            src : byte[]! = new byte[sz];
+            src[0] = (byte) 11; src[1] = (byte) 22; src[2] = (byte) 33;
+            baos.write(src, 0, 3);
+            if (baos.size() != 3) return 1;
+            arr : byte[]* = baos.toByteArray();
+            if (arr[0] != (byte) 11) return 2;
+            if (arr[1] != (byte) 22) return 3;
+            if (arr[2] != (byte) 33) return 4;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_bulk_write");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+

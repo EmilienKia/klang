@@ -591,6 +591,27 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
             }
         }
 
+        // Look at inherited members from base classes (recursive BFS)
+        if (auto agg = dynamic_cast<const aggregate*>(&elem)) {
+            std::queue<std::shared_ptr<aggregate>> base_queue;
+            for (auto& bs : agg->get_bases()) {
+                if (bs.base) base_queue.push(bs.base);
+            }
+            while (!base_queue.empty()) {
+                auto cur = base_queue.front();
+                base_queue.pop();
+                if (auto def = cur->get_variable(name.to_string())) {
+                    return def;
+                }
+                if (auto func = cur->get_function(name.to_string())) {
+                    return func;
+                }
+                for (auto& bs : cur->get_bases()) {
+                    if (bs.base) base_queue.push(bs.base);
+                }
+            }
+        }
+
         // TODO: Workaround, remove it when function will be a (parameter) variable_holder
         if (auto blck = dynamic_cast<const block*>(&elem)) {
             if (auto func = blck->get_direct_function()) {

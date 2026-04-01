@@ -768,6 +768,7 @@ public:
 
     void callee_expr(const std::shared_ptr<expression> &callee) {
         _callee_expr = callee;
+        if (_callee_expr) _callee_expr->set_parent_expression(shared_as<expression>());
     }
 
     const std::vector<std::shared_ptr<expression>> &arguments() const {

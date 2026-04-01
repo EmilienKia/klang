@@ -391,29 +391,58 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
             // Navigate __parent__ pointers until we reach the struct that owns member_var
             auto walk_struct = current_struct;
             while (walk_struct && walk_struct != member_owner) {
-                if (!walk_struct->is_inner()) {
-                    throw_internal_error(0x0004, symbol.first_lexeme(),
-                        "Internal error: could not reach owning struct '{}' for member '{}' via __parent__ chain; "
-                        "the struct hierarchy is inconsistent",
-                        {member_owner ? member_owner->get_short_name() : "?", name});
+                if (walk_struct->is_inner()) {
+                    // GEP to __parent__ field (always index 0 for inner structs)
+                    auto walk_st_type = walk_struct->get_struct_type();
+                    this_ptr = _builder->CreateStructGEP(
+                            _context->get_llvm_type(walk_st_type),
+                            this_ptr,
+                            0, // __parent__ is always field 0
+                            "parent_field_ptr"
+                    );
+                    // Load the parent reference (stored as opaque pointer, same as 'this')
+                    auto outer_struct = walk_struct->get_enclosing_structure();
+                    auto outer_ref_type = outer_struct->get_struct_type()->get_reference();
+                    this_ptr = _builder->CreateLoad(
+                            _context->get_llvm_type(outer_ref_type),
+                            this_ptr,
+                            "parent_ref"
+                    );
+                    walk_struct = outer_struct;
+                } else {
+                    // Not an inner struct: try to reach member_owner via base-class chain (__base_X__)
+                    bool found_base_path = false;
+                    std::function<bool(std::shared_ptr<aggregate>, llvm::Value*)> walk_bases;
+                    walk_bases = [&](std::shared_ptr<aggregate> cur_agg, llvm::Value* cur_ptr) -> bool {
+                        for (auto& bs : cur_agg->get_bases()) {
+                            if (!bs.base || bs.is_virtual) continue;
+                            std::string field_name = "__base_" + bs.sanitised_name() + "__";
+                            auto cur_st = cur_agg->get_struct_type();
+                            auto field = cur_st->get_member(field_name);
+                            if (!field) continue;
+                            llvm::Value* base_ptr = _builder->CreateStructGEP(
+                                    _context->get_llvm_type(cur_st),
+                                    cur_ptr,
+                                    (unsigned)field->index,
+                                    "base_" + bs.sanitised_name() + "_ptr"
+                            );
+                            if (bs.base.get() == member_owner.get()) {
+                                this_ptr = base_ptr;
+                                walk_struct = bs.base;
+                                return true;
+                            }
+                            if (walk_bases(bs.base, base_ptr)) return true;
+                        }
+                        return false;
+                    };
+                    found_base_path = walk_bases(walk_struct->shared_as<aggregate>(), this_ptr);
+                    if (!found_base_path) {
+                        throw_internal_error(0x0004, symbol.first_lexeme(),
+                            "Internal error: could not reach owning struct '{}' for member '{}' via __parent__ or __base__ chain; "
+                            "the struct hierarchy is inconsistent",
+                            {member_owner ? member_owner->get_short_name() : "?", name});
+                    }
                 }
-                // GEP to __parent__ field (always index 0 for inner structs)
-                auto walk_st_type = walk_struct->get_struct_type();
-                this_ptr = _builder->CreateStructGEP(
-                        _context->get_llvm_type(walk_st_type),
-                        this_ptr,
-                        0, // __parent__ is always field 0
-                        "parent_field_ptr"
-                );
-                // Load the parent reference (stored as opaque pointer, same as 'this')
-                auto outer_struct = walk_struct->get_enclosing_structure();
-                auto outer_ref_type = outer_struct->get_struct_type()->get_reference();
-                this_ptr = _builder->CreateLoad(
-                        _context->get_llvm_type(outer_ref_type),
-                        this_ptr,
-                        "parent_ref"
-                );
-                walk_struct = outer_struct;
             }
 
             if (!walk_struct) {
