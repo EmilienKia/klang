@@ -1129,13 +1129,30 @@ void signature_resolver::visit_klass(klass& klass) {
 //     The struct is named "__vtable_<ClassName>__" for debuggability.
 //  4. Store the resulting llvm::StructType* on the vtable_layout object so that
 //     declaration_generator and implementation_generator can reference it.
+/**
+ * Resolve types for a class aggregate: base classes, member variables, vtable,
+ * constructors, destructors, and nested aggregates.
+ *
+ * Steps:
+ *   1. Visit nested aggregates first (depth-first).
+ *   2. Resolve base class types and build the LLVM struct layout.
+ *   3. Resolve member variable types.
+ *   4. Inject vptr fields for polymorphic classes.
+ *   5. Pre-resolve function signatures via signature_resolver.
+ *   6. Visit constructors, destructor, and all member functions.
+ *   7. Check overload collisions on functions and constructors.
+ *   8. Generate default constructors and copy constructors if needed.
+ */
 void type_reference_resolver::visit_klass(klass& klass) {
+    // Step 1: Visit nested aggregates first (depth-first)
     visit_aggregate(klass);
 
     if (!klass.has_vtable()) return;
 
+    // Step 2: Resolve base class types and build the LLVM struct layout
     auto vt = klass.get_vtable();
 
+    // Step 3: Resolve member variable types
     // If aggregate_type_resolver already built the LLVM vtable struct type (Phase 1.a),
     // there is nothing left to do here. This avoids a duplicate-type-name error in LLVM.
     if (vt->llvm_type) return;
@@ -1145,6 +1162,7 @@ void type_reference_resolver::visit_klass(klass& klass) {
     llvm::LLVMContext& llvm_ctx = **_context;
     llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
+    // Step 4: Inject vptr fields for polymorphic classes
     std::vector<llvm::Type*> vtable_fields;
     vtable_fields.push_back(ptr_ty); // RTTI placeholder
     for (size_t i = 0; i < num_slots; ++i) {
@@ -1512,6 +1530,20 @@ bool implementation_generator::has_libk_import() const {
     }
     return false;
 }
+/**
+ * Patch the RTTI global with real vtable pointers, base/nested/enclosing lists,
+ * flags, annotations, and function/constructor descriptors.
+ *
+ * Steps:
+ *   1. Check if libk is imported (needed for RTTI type references).
+ *   2. Build k::Type vtable pointer reference.
+ *   3. Build base-class array, nested-class array, enclosing class pointer.
+ *   4. Build class flags (abstract, interface, inner, etc.).
+ *   5. Build annotation instance array.
+ *   6. Build function descriptor array (name, parameter count, return type).
+ *   7. Build constructor descriptor array.
+ *   8. Create final ConstantStruct and set as initializer for RTTI global.
+ */
 void implementation_generator::patch_rtti_global(klass& klass) {
     const bool has_libk = has_libk_import();
 
@@ -1617,6 +1649,7 @@ void implementation_generator::patch_rtti_global(klass& klass) {
             return gv;
         };
 
+        // Step 1: Check if libk is imported (needed for RTTI type references)
         // Helper: find or declare an extern RTTI global for a base aggregate.
         // Returns nullptr if the base has no vtable (and thus no RTTI global).
         auto get_base_rtti = [&](const std::shared_ptr<aggregate>& base_agg) -> llvm::Constant* {
@@ -1772,6 +1805,7 @@ void implementation_generator::patch_rtti_global(klass& klass) {
             }
         }
 
+        // Step 2: Build k::Type vtable pointer reference
         // ── f-pre) Look up ::k::Parameter vtable symbol (shared by functions & constructors) ──
         std::string param_vtable_name = "_KTVN1k9ParameterE";
         llvm::Constant* param_vt = _context->module().getNamedGlobal(param_vtable_name);
@@ -1944,9 +1978,11 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                 if (fn->is_static()) fn_flags |= 4;
                 fn_flags |= 8;  // is_member = true for all functions in a class
 
+                // Step 3: Build base-class array, nested-class array, enclosing class pointer
                 // Build parameter RTTI array
                 llvm::Constant* params_gv = make_params_array(fn, fn_rtti_name);
 
+                // Step 4: Build class flags (abstract, interface, inner, etc.)
                 // Build the Function struct: { ptr vptr, ptr vptr_Object, ptr name, ptr fullName, ptr owner, i32 flags, ptr annotations, ptr parameters }
                 // K implicitly adds Object as a base class for all classes, so Function
                 // has an Object sub-object at field 1 (containing the Object vptr).
@@ -2072,10 +2108,12 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                     }
                 }
 
+                // Step 5: Build annotation instance array
                 // Build parameter RTTI array for this constructor
                 llvm::Constant* ctor_params_gv = make_params_array(ctor,
                     mangler::mangle_rtti(klass.get_name()) + "_ctor" + std::to_string(ctor_index));
 
+                // Step 6: Build function descriptor array (name, parameter count, return type)
                 // Build the Constructor struct: { ptr vptr, ptr vptr_Object, i32 paramCount, ptr annotations, ptr parameters }
                 llvm::StructType* ctor_rtti_type = llvm::StructType::get(
                     llvm_ctx, {ptr_ty, ptr_ty, i32_ty, ptr_ty, ptr_ty}, /*isPacked=*/false);
@@ -2101,6 +2139,7 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                 ++ctor_index;
             }
 
+            // Step 7: Build constructor descriptor array
             if (!ctor_ptrs.empty()) {
                 constructors_gv = make_base_array(ctor_ptrs, "_constructors");
             }
@@ -2121,11 +2160,20 @@ void implementation_generator::patch_rtti_global(klass& klass) {
             constructors_gv                    // field 11: constructors
         };
 
+        // Step 8: Create final ConstantStruct and set as initializer for RTTI global
         rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_rtti_init));
         rtti_gv->setConstant(true);  // Fully initialized; mark as constant.
     }
 }
 
+/**
+ * Fill the primary vtable with resolved function pointers.
+ *
+ * Steps:
+ *   1. Build slot array: RTTI pointer at index 0, function pointers at indices 1..N.
+ *   2. For each vtable entry, resolve the LLVM function (or use null for abstract slots).
+ *   3. Create ConstantStruct and set as initializer on the vtable global.
+ */
 void implementation_generator::fill_primary_vtable(klass& klass) {
     auto vt = klass.get_vtable();
     if (!vt->llvm_global || !vt->llvm_type) return;
@@ -2133,6 +2181,7 @@ void implementation_generator::fill_primary_vtable(klass& klass) {
     llvm::LLVMContext& llvm_ctx = **_context;
     llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
+    // Step 1: Build slot array: RTTI pointer at index 0, function pointers at indices 1..N
     // ── 1. Fill the primary vtable ─────────────────────────────────────────────
     {
         std::vector<llvm::Constant*> vtable_init;
@@ -2142,6 +2191,7 @@ void implementation_generator::fill_primary_vtable(klass& klass) {
             : llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
         vtable_init.push_back(rtti_slot);
         for (auto& entry : vt->entries) {
+            // Step 2: For each vtable entry, resolve the LLVM function (or use null for abstract slots)
             llvm::Function* llvm_func = _context->lookup_llvm_function(entry.func);
             if (llvm_func) {
                 vtable_init.push_back(llvm_func);
@@ -2149,12 +2199,21 @@ void implementation_generator::fill_primary_vtable(klass& klass) {
                 vtable_init.push_back(llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)));
             }
         }
+        // Step 3: Create ConstantStruct and set as initializer on the vtable global
         llvm::Constant* new_init = llvm::ConstantStruct::get(vt->llvm_type, vtable_init);
         vt->llvm_global->setInitializer(new_init);
     }
 
 }
 
+/**
+ * Build secondary vtables from model_materializer pre-computed specs.
+ *
+ * For each secondary_vtable_spec:
+ *   1. Build the vtable constant with adjusted function pointers and offset-to-top.
+ *   2. Create or retrieve thunk functions for overridden slots needing this-adjustment.
+ *   3. Store the vtable constant in the secondary vtable global variable.
+ */
 void implementation_generator::fill_secondary_vtables(klass& klass) {
     auto vt = klass.get_vtable();
     if (!vt->llvm_global || !vt->llvm_type) return;
@@ -2264,6 +2323,15 @@ void implementation_generator::fill_secondary_vtables(klass& klass) {
 
 }
 
+/**
+ * Build secondary vtables for imported (external) base classes.
+ *
+ * Steps:
+ *   1. Walk all imported base classes that have vtables.
+ *   2. For each, check if the derived class overrides any of its virtual slots.
+ *   3. If overrides exist, create a secondary vtable with thunks for the overridden slots.
+ *   4. Emit the vtable global and GEP stores to patch the sub-object vptrs.
+ */
 void implementation_generator::fill_imported_base_vtables(klass& klass) {
     auto vt = klass.get_vtable();
     if (!vt->llvm_global || !vt->llvm_type) return;
@@ -2271,6 +2339,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
     llvm::LLVMContext& llvm_ctx = **_context;
     llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
+    // Step 1: Walk all imported base classes that have vtables
     // ── 3. Build secondary vtables for imported bases ─────────────────────────
     // For imported bases (imported_klass / imported_interface) that have a vtable,
     // the secondary vtable was created in the declaration pass but not filled here
@@ -2390,6 +2459,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                 //      means same method.)
                 const auto& kdi_vt = kdi_agg->vtable.value();
 
+                // Step 2: For each, check if the derived class overrides any of its virtual slots
                 for (std::size_t slot_idx = 0; slot_idx < kdi_vt.slots.size(); ++slot_idx) {
                     const auto& kdi_slot = kdi_vt.slots[slot_idx];
                     const std::string kdi_intro_norm = normalize_fq(kdi_slot.introducing_func);
@@ -2429,6 +2499,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                             }
                         }
 
+                        // Step 3: If overrides exist, create a secondary vtable with thunks for the overridden slots
                         // Strategy C: walk get_overrides() chain matching by fq_name
                         if (!kdi_intro_norm.empty()) {
                             auto ov = entry.func->get_overrides();
@@ -2469,6 +2540,7 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
                         continue;
                     }
 
+                    // Step 4: Emit the vtable global and GEP stores to patch the sub-object vptrs
                     // If the base subobject is at a non-zero offset, we need a thunk
                     if (base_byte_offset == 0) {
                         sec_init.push_back(override_func);

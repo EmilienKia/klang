@@ -216,8 +216,19 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
     }
 }
 
+/**
+ * Resolve a symbol expression: determine its target (variable, function, enum entry)
+ * and set its type.
+ *
+ * Steps:
+ *   1. Handle enum-qualified names (MyEnum::entry): resolve enum type and entry value.
+ *   2. For variables: set type as reference to the variable's type.
+ *   3. For functions: set type as function_reference_type.
+ *   4. Check visibility of the resolved symbol.
+ */
 void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
 {
+    // Step 1: Handle enum-qualified names (MyEnum::entry): resolve enum type and entry value
     if(!symbol.is_resolved()) {
         // Allow unresolved symbols that are arguments of a constructor_invocation_expression.
         // These may be enum entry names that will be resolved during visit_constructor_invocation_expression.
@@ -258,6 +269,7 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
                 var_type = var_type->get_const();
             }
         }
+        // Step 2: For variables: set type as reference to the variable's type
         // Variable symbol will always be a reference to the variable type.
         if (type::is_reference(var_type) || type::is_drain(var_type)) {
             // Variable is already a reference/drain (indirection), so symbol type is the variable type.
@@ -267,6 +279,7 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
             symbol.set_type(var_type->get_reference());
         }
     } else if (symbol.is_function()) {
+        // Step 4: Check visibility of the resolved symbol
         // A symbol resolved to a function (without call parentheses) yields the address
         // of the function.  The type is a function_reference_type with ref_kind::link
         // (non-null, immutable — same semantics as a reference in K).
@@ -328,6 +341,15 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
     // (symbol type resolution complete)
 }
 
+/**
+ * Generate LLVM IR for a symbol expression (variable load, parameter access, function address).
+ *
+ * Steps:
+ *   1. Variables/parameters: load alloca or global, GEP for member variables.
+ *   2. Function symbols: get the LLVM function pointer.
+ *   3. Member function pointers: create a {funcptr, adjustment} pair.
+ *   4. Handle 'this' parameter specially.
+ */
 void implementation_generator::visit_symbol_expression(symbol_expression &symbol) {
     if(symbol.is_variable_def()) {
         auto var_def = symbol.get_variable_def();
@@ -473,6 +495,7 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                     {name});
             }
 
+        // Step 1: Variables/parameters: load alloca or global, GEP for member variables
         } else {
             throw_internal_error(0x0006, symbol.first_lexeme(),
                 "Internal error: unsupported variable definition kind encountered while generating code for symbol '{}'; "
@@ -499,6 +522,7 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
     } else if (symbol.is_function()) {
         auto func = symbol.get_function();
 
+        // Step 2: Function symbols: get the LLVM function pointer
         // Find the function definition
         auto it = _context->_functions.find(func);
         if(it==_context->_functions.end()) {
@@ -529,9 +553,11 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
         auto ann = target.ann_type;
         std::string rtti_name = mangler::mangle_rtti(ann->get_name());
 
+        // Step 3: Member function pointers: create a {funcptr, adjustment} pair
         // Try to find the RTTI global in the current module (defined locally or already declared).
         llvm::GlobalVariable* rtti_gv = _context->module().getNamedGlobal(rtti_name);
 
+        // Step 4: Handle 'this' parameter specially
         // If not present, declare it as an external global (the annotation was imported).
         if (!rtti_gv) {
             llvm::Type* ptr_ty = llvm::PointerType::get(**_context, 0);
@@ -862,6 +888,18 @@ void symbol_resolver::visit_member_of_expression(member_of_expression& expr) {
     visit_unary_expression(expr);
 }
 
+/**
+ * Resolve a member-of-object expression (expr.member): field access, method lookup,
+ * unified call syntax, or enum member access.
+ *
+ * Steps:
+ *   1. Resolve the sub-expression (LHS) and determine its struct type.
+ *   2. Look up the member name in the struct (fields, methods, inherited members).
+ *   3. For fields: set type as reference to field type, record field index.
+ *   4. For methods: record the function target for later call resolution.
+ *   5. For unified-call syntax: check free functions with first param = ref to struct.
+ *   6. For enum members: resolve enum entry on an enum-typed sub-expression.
+ */
 void type_reference_resolver::visit_member_of_object_expression(member_of_object_expression& expr) {
     expr.sub_expr()->accept(*this);
     auto type = expr.sub_expr()->get_type();
@@ -1193,6 +1231,8 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                     std::string vbase_field_name = "__vbase_" + vbase_short_name + "__";
                     std::string vbptr_field_name = "__vbptr_" + vbase_short_name + "__";
 
+                    // Step 1: Resolve the sub-expression (LHS) and determine its struct type
+                    // Step 2: Look up the member name in the struct (fields, methods, inherited members)
                     if (struct_subtype->get_member(vbase_field_name)) {
                         auto base_ref_type = is_const_access
                             ? hit.in_struct_type->get_const()->get_reference()
@@ -1253,6 +1293,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
                     expr.sub_expr() = upcast;
                 }
             }
+            // Step 5: For unified-call syntax: check free functions with first param = ref to struct
             // Type of member_of_object_expression for functions is the struct ref (for 'this')
             // — leave expr type unset; function_invocation_expression will handle it.
         }
@@ -1269,12 +1310,22 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
 // If the member is a field, return the address of the field within the struct.
 // If the member is a function, return the address of the object onto which the function will be called (the future this ref).
 //
+/**
+ * Generate LLVM IR for member-of-object expression (field GEP, method address).
+ *
+ * Steps:
+ *   1. Visit sub-expression to get the object value.
+ *   2. If LHS is a reference: unwrap to get the object pointer.
+ *   3. GEP to the member field using the recorded field index.
+ *   4. Handle nested struct-in-struct member chains.
+ */
 void implementation_generator::visit_member_of_object_expression(member_of_object_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
 
     auto type = expr.sub_expr()->get_type(); // Is a reference or (for vbptr path) a pointer
 
+    // Step 1: Visit sub-expression to get the object value
     // Handle vbptr path: sub_expr was cast to pointer<VirtualBase> by the type resolver
     if (type::is_pointer(type)) {
         auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type);
@@ -1314,6 +1365,7 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
     // Strip const from the subtype to get the bare struct_type for GEP/method lookup.
     auto bare_subtype = type::remove_const(type->get_subtype());
 
+    // Step 2: If LHS is a reference: unwrap to get the object pointer
     // ── Handle unsized-array fields: const T[] = const(ref(array(T))).
     //    After stripping const, bare_subtype may be ref<array<T>>.
     //    Unwrap the inner reference (with an extra load) to reach the array struct.
@@ -1344,11 +1396,13 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
         }
     }
 
+    // Step 3: GEP to the member field using the recorded field index
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
         const auto& member_name =  expr.symbol();
         // For qualified names like A::v, use only the last part (the field name)
         const k::name& sym_name = member_name.get_name();
         std::string simple_name = sym_name.size() > 1 ? sym_name.back() : sym_name.to_string();
+        // Step 4: Handle nested struct-in-struct member chains
         if(auto field = struct_subtype->get_member(simple_name); field) {
             _value = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), _value, field->index);
         } else if(auto method = struct_subtype->get_struct()->get_function(simple_name)) {
@@ -1371,6 +1425,16 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
 // Member of pointer expression (->)
 // Acts as (*expr).member. Supported LHS: pointer (*), link (+), view (?).
 //
+/**
+ * Resolve a member-of-pointer expression (expr->member): dereference pointer/link/view
+ * then access member. Supported LHS: pointer (*), link (~), view (^).
+ *
+ * Steps:
+ *   1. Resolve the sub-expression (LHS) and determine the pointed struct type.
+ *   2. For link/view/pointer: unwrap indirection to get the struct type.
+ *   3. Look up the member name in the struct (fields and methods).
+ *   4. Set type and record field index or function target.
+ */
 void type_reference_resolver::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
     expr.sub_expr()->accept(*this);
     auto type = expr.sub_expr()->get_type();
@@ -1416,6 +1480,7 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
             {name_str});
     }
 
+    // Step 1: Resolve the sub-expression (LHS) and determine the pointed struct type
     auto pointed_nc = type::remove_const(pointed_type);
     auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_nc);
     if (!struct_subtype) {
@@ -1425,8 +1490,10 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
             {pointed_type ? pointed_type->to_string() : "?"});
     }
 
+    // Step 2: For link/view/pointer: unwrap indirection to get the struct type
     const auto& member_name = expr.symbol();
     const std::string& name_str = member_name.get_name().to_string();
+    // Step 3: Look up the member name in the struct (fields and methods)
     if (auto field = struct_subtype->get_member(name_str)) {
         // Check visibility of the accessed field
         if (auto st_model = struct_subtype->get_struct()) {
@@ -1475,6 +1542,14 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
     }
 }
 
+/**
+ * Generate LLVM IR for member-of-pointer expression: load pointer, GEP to field.
+ *
+ * Steps:
+ *   1. Visit sub-expression to get the pointer/link/view value.
+ *   2. Load the pointer value (dereference indirection).
+ *   3. GEP to the member field.
+ */
 void implementation_generator::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
     _value = nullptr;
     expr.sub_expr()->accept(*this);
@@ -1496,6 +1571,7 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
         emit_null_check(_value, fatal, "arrow");
     }
 
+    // Step 1: Visit sub-expression to get the pointer/link/view value
     std::shared_ptr<k::model::type> pointed_type;
     if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(inner_type)) pointed_type = ptr_t->get_pointed_type();
     else if (auto lnk_t = std::dynamic_pointer_cast<link_type>(inner_type)) pointed_type = lnk_t->get_linked_type();
@@ -1503,6 +1579,7 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
     else if (auto own_t = std::dynamic_pointer_cast<owner_type>(inner_type)) pointed_type = own_t->get_owned_type();
     if (!pointed_type) return;
 
+    // Step 2: Load the pointer value (dereference indirection)
     // ── Virtual member: array->size ─────────────────────────────────────────
     // For unsized arrays (int[] = int[]&), pointed_type is reference<array_type>.
     // We must unwrap the reference and add an extra load to follow the double
@@ -1529,6 +1606,7 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
         }
     }
 
+    // Step 3: GEP to the member field
     auto pointed_nc = type::remove_const(pointed_type);
     auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_nc);
     if (!struct_subtype) return;
@@ -1545,6 +1623,14 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
 // PM expression (.* and ->*)
 //
 
+/**
+ * Resolve a pointer-to-member expression (.* or ->*).
+ *
+ * Steps:
+ *   1. Resolve LHS (object or pointer to object) and RHS (member function pointer).
+ *   2. Validate that the RHS is a member_function_reference_type.
+ *   3. Set result type to the return type of the member function reference.
+ */
 void type_reference_resolver::visit_pm_expression(pm_expression& expr) {
     // Resolve both sub-expressions
     expr.left()->accept(*this);
@@ -1580,6 +1666,7 @@ void type_reference_resolver::visit_pm_expression(pm_expression& expr) {
             {expr.is_arrow() ? "->*" : ".*", obj_type ? obj_type->to_string() : "?"});
     }
 
+    // Step 1: Resolve LHS (object or pointer to object) and RHS (member function pointer)
     // ── RHS: must be a member_function_reference_type ────────────────────────
     auto mfp_type = expr.right()->get_type();
     // Unwrap ref wrapper if present
@@ -1597,6 +1684,8 @@ void type_reference_resolver::visit_pm_expression(pm_expression& expr) {
         }
     }
 
+    // Step 2: Validate that the RHS is a member_function_reference_type
+    // Step 3: Set result type to the return type of the member function reference
     // ── Result type: return type of the member function reference ────────────
     auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type);
     expr.set_type(frt ? frt->get_return_type() : nullptr);
@@ -1634,9 +1723,22 @@ void implementation_generator::visit_pm_expression(pm_expression& expr) {
 // Subscript expression
 //
 
+/**
+ * Resolve a subscript expression (expr[index]): array/pointer element access or
+ * operator[] overload.
+ *
+ * Steps:
+ *   1. Resolve LHS and RHS sub-expressions.
+ *   2. If LHS is a struct type: look for operator[] overload.
+ *   3. If LHS is an array (sized or unsized): validate index type, set element type.
+ *   4. If LHS is a pointer/link/view/owner: perform pointer arithmetic + deref.
+ *   5. Set result type as reference to element type.
+ */
 void type_reference_resolver::visit_subscript_expression(subscript_expression& expr) {
+    // Step 1: Resolve LHS and RHS sub-expressions
     visit_binary_expression(expr);
 
+    // Step 2: If LHS is a struct type: look for operator[] overload
     auto left = expr.left();
     auto right = expr.right();
 
@@ -1671,6 +1773,7 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
         left_type = std::dynamic_pointer_cast<view_type>(left_type)->get_viewed_type();
     }
 
+    // Step 3: If LHS is an array (sized or unsized): validate index type, set element type
     // Unsized arrays (e.g. char[]) are canonicalized to ref<array<T>>.
     // After unwrapping an indirection such as pointer<ref<array<T>>> we
     // may still have a reference wrapper — strip it to reach the array.
@@ -1678,9 +1781,11 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
         left_type = std::dynamic_pointer_cast<reference_type>(left_type)->get_subtype();
     }
 
+    // Step 4: If LHS is a pointer/link/view/owner: perform pointer arithmetic + deref
     // Strip any remaining const wrapper (e.g. pointer<const<array<T>>> → const<array<T>>)
     left_type = type::remove_const(left_type);
 
+    // Step 5: Set result type as reference to element type
     if(!type::is_array(left_type)) {
         throw_error(0x0020, expr.first_lexeme(),
             "Subscript operator '[]' can only be applied to an array type, "
@@ -1705,7 +1810,18 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
     }
 }
 
+/**
+ * Generate LLVM IR for subscript expression: GEP + load for arrays/pointers,
+ * or operator[] call for structs.
+ *
+ * Steps:
+ *   1. If operator overload: delegate to generate_binary_operator_overload.
+ *   2. For arrays: compute GEP with index into the array data.
+ *   3. For pointers/links/views: load pointer, then GEP with index.
+ *   4. Result is a pointer to the element (reference semantics).
+ */
 void implementation_generator::visit_subscript_expression(subscript_expression& expr) {
+    // Step 1: If operator overload: delegate to generate_binary_operator_overload
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         _value = nullptr;
@@ -1808,6 +1924,8 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
             _builder->getInt32Ty(), count_ptr, "dynarr_count");
         emit_array_bounds_check(_builder.get(), get_module(), right, count_val, "subscript");
 
+        // Step 2: For arrays: compute GEP with index into the array data
+        // Step 3: For pointers/links/views: load pointer, then GEP with index
         // GEP into field 1 (data), then index into the [0 x T] trailing array
         llvm::Value* field_data_ptr = _builder->CreateStructGEP(struct_llvm, left,
             array_type::FIELD_DATA, "dynarr_data_ptr");
@@ -1923,7 +2041,22 @@ void annotate_dispatch_info(function_invocation_expression& expr,
 }
 } // anonymous namespace
 
+/**
+ * Resolve a function invocation expression: overload resolution, argument adaptation,
+ * virtual dispatch annotation.
+ *
+ * Steps:
+ *   1. Resolve callee expression and all argument expressions.
+ *   2. If callee is a member-of-object: resolve member call (member + unified call syntax).
+ *   3. If callee is a symbol: resolve direct call or free-function call.
+ *   4. If callee is a function pointer: validate argument types.
+ *   5. Perform overload resolution via get_best_matching_function.
+ *   6. Adapt arguments to match selected function's parameter types.
+ *   7. Annotate virtual dispatch info (for virtual method calls via vtable).
+ *   8. Set result type from the selected function's return type.
+ */
 void type_reference_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
+    // Step 1: Resolve callee expression and all argument expressions
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
     auto pm_callee = std::dynamic_pointer_cast<pm_expression>(expr.callee_expr());
@@ -1941,6 +2074,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         arg->accept(*this);
     }
 
+    // Step 2: If callee is a member-of-object: resolve member call (member + unified call syntax)
     // ── Pre-process: ptr->method(args) → (*ptr).method(args) ─────────────────
     // When the callee is a member_of_pointer_expression (ptr->method), transform it
     // into member_of_object_expression(dereference(ptr), method) so that the existing
@@ -2181,6 +2315,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         return;
     }
 
+    // Step 3: If callee is a symbol: resolve direct call or free-function call
     // ----------------------------------------------------------------
     // Case 1.5 : indirect call via a function-reference variable "fp(args)"
     //   callee may be unresolved (symbol_resolver deferred it as a potential function call).
@@ -2375,6 +2510,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             }
         }
 
+        // Step 4: If callee is a function pointer: validate argument types
         if (all_candidates.empty()) {
             if (callee->is_function()) {
                 auto already_func = callee->get_function();
@@ -2401,12 +2537,14 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 {func_name});
         }
 
+        // Step 5: Perform overload resolution via get_best_matching_function
         FunctionCandidate best = get_best_matching_function(all_candidates,
                                                             this_candidate ? rest_args : args,
                                                             this_candidate,
                                                             this_candidate ? &args : nullptr);
         bool is_free_to_member_call = false;
 
+        // Step 6: Adapt arguments to match selected function's parameter types
         if (!best.func) {
             // get_best_matching_function already reported/threw an error
             return;
@@ -2472,6 +2610,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             expr.assign_arguments(best.adapted_args);
         }
 
+        // Step 7: Annotate virtual dispatch info (for virtual method calls via vtable)
         // Phase 3: annotate dispatch info
         // After the potential rewrite above, re-read member_callee from the (possibly updated) callee.
         {
@@ -2482,6 +2621,18 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     }
 }
 
+/**
+ * Generate LLVM IR for a function invocation expression.
+ *
+ * Steps:
+ *   1. Evaluate all argument expressions.
+ *   2. If virtual dispatch: load vptr, GEP to vtable slot, indirect call.
+ *   3. If direct call: resolve LLVM function, emit direct call instruction.
+ *   4. If sret return: allocate temp or use _sret_destination, pass as first arg.
+ *   5. Handle function pointer calls (indirect call through loaded pointer).
+ *   6. Handle member function pointer calls (.* / ->*).
+ *   7. Set _value to the call result.
+ */
 void implementation_generator::visit_function_invocation_expression(function_invocation_expression &expr) {
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
@@ -2754,6 +2905,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     llvm::Value* saved_sret_destination = _sret_destination;
     _sret_destination = nullptr;
 
+    // Step 1: Evaluate all argument expressions
     for(auto arg : expr.arguments()) {
         _value = nullptr;
 
@@ -2938,11 +3090,13 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 }
             }
 
+            // Step 2: If virtual dispatch: load vptr, GEP to vtable slot, indirect call
             // Load the vptr
             llvm::Value* vptr_addr = _builder->CreateStructGEP(
                 struct_llvm_type, args[0], vptr_field_index, "imp_vptr_addr");
             llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "imp_vptr");
 
+            // Step 3: If direct call: resolve LLVM function, emit direct call instruction
             // The vtable layout is { RTTI, fn0, fn1, … } so slot i → index i+1.
             // We use a byte-offset GEP because we don't have the vtable's StructType.
             // On all supported 64-bit targets a pointer is 8 bytes.
@@ -2957,6 +3111,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 && expr.get_type() && needs_sret_return(expr.get_type());
             if (call_uses_sret) {
                 llvm::Value* sret_alloca = get_sret_ptr_for_call();
+                // Step 4: If sret return: allocate temp or use _sret_destination, pass as first arg
                 args.insert(args.begin(), sret_alloca);
                 _builder->CreateCall(fn_type, fn_ptr, args);
                 handle_sret_result(sret_alloca);
@@ -3012,6 +3167,15 @@ void symbol_resolver::visit_new_expression(new_expression& expr) {
     }
 }
 
+/**
+ * Resolve a new expression (heap allocation): type resolution, constructor resolution.
+ *
+ * Steps:
+ *   1. Resolve the target type (class/struct or array).
+ *   2. For arrays: validate size expression, set result type to owner<array<T>>.
+ *   3. For structs: resolve constructor overload with provided arguments.
+ *   4. Set result type to owner<T>.
+ */
 void type_reference_resolver::visit_new_expression(new_expression& expr) {
     if (expr.is_uniform_array()) {
         // ── Uniform array form: new T(args)[N] ──
@@ -3088,6 +3252,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             }
         }
 
+        // Step 1: Resolve the target type (class/struct or array)
         // Resolve the constructor / type-check for the uniform args
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
             auto struct_model = st_type->get_struct();
@@ -3384,6 +3549,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             }
         }
 
+        // Step 2: For arrays: validate size expression, set result type to owner<array<T>>
         // Build the sized_array_type and set the expression type to owner<sized_array_type>
         auto arr_type_unsized = elem_type->get_array();
         auto sized_arr_type = arr_type_unsized->with_size(arr_size);
@@ -3399,6 +3565,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         arg->accept(*this);
     }
 
+    // Step 3: For structs: resolve constructor overload with provided arguments
     auto alloc_type = expr.allocated_type();
     if (!type::is_resolved(alloc_type)) {
         // Try to resolve unresolved type
@@ -3421,6 +3588,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             {alloc_type ? alloc_type->to_string() : "<null>"});
     }
 
+    // Step 4: Set result type to owner<T>
     // Set the expression type to owner<allocated_type>
     expr.set_type(alloc_type->get_owner());
 
@@ -3559,6 +3727,15 @@ void symbol_resolver::visit_designated_struct_init_expression(designated_struct_
     }
 }
 
+/**
+ * Resolve an array brace-initialization expression ({elem1, elem2, ...}).
+ *
+ * Steps:
+ *   1. Determine the expected element type from the parent variable's array type.
+ *   2. Resolve each element expression via visitor.
+ *   3. Adapt each element's type to match the expected element type.
+ *   4. Validate element count against the array size.
+ */
 void type_reference_resolver::visit_array_init_expression(array_init_expression& expr) {
     if (expr.is_uniform()) {
         // ── Uniform array init: var : T(args)[N]; ──
@@ -3633,6 +3810,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
         if (auto e = expr.element(i)) e->accept(*this);
     }
 
+    // Step 1: Determine the expected element type from the parent variable's array type
     // Get the array variable's type
     auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
     if (!var_def) return;
@@ -3695,6 +3873,7 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
             auto e = expr.element(i);
             if (!e) continue; // default-init slot, will use default ctor
 
+            // Step 2: Resolve each element expression via visitor
             // Check if element is a function invocation (explicit constructor call)
             // The model_builder creates function_invocation_expression for Name(args...) patterns
             auto func_inv = std::dynamic_pointer_cast<function_invocation_expression>(e);
@@ -3704,9 +3883,11 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
                 for (auto& arg : func_inv->arguments()) {
                     ctor_args.push_back(arg);
                 }
+                // Step 3: Adapt each element's type to match the expected element type
                 auto [best_ctor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
                 if (!best_ctor) {
                     throw_error(0x4213, expr.first_lexeme(),
+                        // Step 4: Validate element count against the array size
                         "No matching constructor for array element {} of type '{}'",
                         {std::to_string(i), st_type->to_string()});
                 }
@@ -3732,6 +3913,15 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
     }
 }
 
+/**
+ * Resolve a designated struct initialization expression ({.field1 = val1, .field2 = val2}).
+ *
+ * Steps:
+ *   1. Determine the target struct type from the parent variable.
+ *   2. For each designator: look up the field in the struct, resolve the value expression.
+ *   3. Adapt each value's type to match the field's type.
+ *   4. Validate that all designators refer to valid fields.
+ */
 void type_reference_resolver::visit_designated_struct_init_expression(designated_struct_init_expression& expr) {
     // Resolve sub-expressions in each member initializer
     for (auto& m : expr.members_mutable()) {
@@ -3741,6 +3931,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
         }
     }
 
+    // Step 1: Determine the target struct type from the parent variable
     // Determine the target struct type.
     // For top-level designated inits, derive from the constructed variable's type.
     // For nested designated inits (no constructed_symbol), _target_aggregate is pre-set by the parent.
@@ -3775,6 +3966,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
             return;
         }
 
+        // Step 2: For each designator: look up the field in the struct, resolve the value expression
         // Store the resolved aggregate in the expression
         expr._target_aggregate = target_struct;
     } else {
@@ -3782,6 +3974,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
         st_type = target_struct->get_struct_type();
     }
 
+    // Step 3: Adapt each value's type to match the field's type
     // Collect all accessible member variables from the struct and its bases
     // Map: member_name -> (member_var, owning_aggregate)
     struct member_info {
@@ -3816,6 +4009,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
         }
     }
 
+    // Step 4: Validate that all designators refer to valid fields
     // Validate and resolve each designated member
     std::set<std::string> seen_members;
     for (auto& m : expr.members_mutable()) {
@@ -3948,6 +4142,14 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
     }
 }
 
+/**
+ * Generate LLVM IR for array brace-initialization: alloca + element stores.
+ *
+ * Steps:
+ *   1. Allocate the array on the stack.
+ *   2. For each element: evaluate expression, GEP to array slot, store value.
+ *   3. Zero-fill remaining elements if fewer initializers than array size.
+ */
 void implementation_generator::visit_array_init_expression(array_init_expression& expr) {
     auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
     if (!var_def) return;
@@ -3979,17 +4181,20 @@ void implementation_generator::visit_array_init_expression(array_init_expression
             arr_size, false),
         size_ptr);
 
+    // Step 1: Allocate the array on the stack
     // Get pointer to the data array (field 1)
     llvm::Value* data_ptr = _builder->CreateStructGEP(struct_llvm, arr_alloca,
         sized_array_type::FIELD_DATA, "arr_data");
     auto* llvm_arr_type = arr_type->get_llvm_data_array_type();
 
+    // Step 2: For each element: evaluate expression, GEP to array slot, store value
     if (expr.is_uniform()) {
         // ── Uniform mode: initialize all elements with the same ctor args ──
         for (size_t i = 0; i < arr_size; ++i) {
             llvm::Value* elem_ptr = _builder->CreateConstInBoundsGEP2_32(
                 llvm_arr_type, data_ptr, 0, i, "uarr_elem_" + std::to_string(i));
 
+            // Step 3: Zero-fill remaining elements if fewer initializers than array size
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
                 auto ctor = expr.uniform_constructor();
                 if (ctor) {
@@ -4043,7 +4248,16 @@ void implementation_generator::visit_array_init_expression(array_init_expression
     _value = arr_alloca;
 }
 
+/**
+ * Generate LLVM IR for designated struct initialization: alloca + field stores.
+ *
+ * Steps:
+ *   1. Allocate the struct on the stack, zero-initialize.
+ *   2. For each designator: evaluate the value expression, GEP to the field, store.
+ *   3. Call the default constructor if the struct has one and not all fields are designated.
+ */
 void implementation_generator::visit_designated_struct_init_expression(designated_struct_init_expression& expr) {
+    // Step 1: Allocate the struct on the stack, zero-initialize
     auto target_struct = expr.target_aggregate();
     if (!target_struct) return;
 
@@ -4083,6 +4297,7 @@ void implementation_generator::visit_designated_struct_init_expression(designate
         }
     }
 
+    // Step 2: For each designator: evaluate the value expression, GEP to the field, store
     // ── Helper: DFS to find GEP path from a source aggregate to a target aggregate
     //    through __base_X__ sub-objects. Returns the sequence of (struct_type, field_index)
     //    pairs to GEP through.
@@ -4171,6 +4386,7 @@ void implementation_generator::visit_designated_struct_init_expression(designate
             && name[name.size()-1] == '_' && name[name.size()-2] == '_';
     };
 
+    // Step 3: Call the default constructor if the struct has one and not all fields are designated
     // For each member in the struct (and its bases) that has a default constructor
     // and is NOT designated, call its default constructor.
     // Process direct members first
@@ -4272,6 +4488,18 @@ void implementation_generator::visit_designated_struct_init_expression(designate
     _value = struct_alloca;
 }
 
+/**
+ * Generate LLVM IR for a new expression: heap allocation + constructor call.
+ *
+ * Steps:
+ *   1. Compute allocation size (struct size or array element size * count).
+ *   2. Call malloc or the allocator function.
+ *   3. Cast raw pointer to the target type.
+ *   4. For structs: call the resolved constructor on the allocated object.
+ *   5. For arrays: zero-initialize or element-wise construct.
+ *   6. Store vptr(s) for polymorphic classes.
+ *   7. Set _value to the owner<T> result.
+ */
 void implementation_generator::visit_new_expression(new_expression& expr) {
     auto alloc_type = expr.allocated_type();
     if (!alloc_type) { _value = nullptr; return; }
@@ -4349,6 +4577,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
         llvm::Value* data_ptr = _builder->CreateStructGEP(struct_llvm, raw_ptr,
             array_type::FIELD_DATA, "dynarr_data");
 
+        // Step 1: Compute allocation size (struct size or array element size * count)
         // For struct element types with a constructor, emit an IR loop to call
         // the default constructor on each element.
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
@@ -4433,6 +4662,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
                 llvm::ConstantInt::get(i64_ty, header_size),
                 "alloc_size");
 
+            // Step 2: Call malloc or the allocator function
             // malloc
             llvm::Value* raw_ptr = _builder->CreateCall(
                 malloc_fn->getFunctionType(), malloc_fn, {alloc_size}, "new_uarr_raw");
@@ -4506,6 +4736,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
             // ── Static uniform array: new T(args)[N] ──
             size_t arr_size = expr.array_size();
 
+            // Step 3: Cast raw pointer to the target type
             auto own_type = std::dynamic_pointer_cast<owner_type>(expr.get_type());
             auto sized_arr_type = own_type
                 ? std::dynamic_pointer_cast<sized_array_type>(own_type->get_owned_type())
@@ -4676,6 +4907,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
     llvm::Value* raw_ptr = _builder->CreateCall(
         malloc_fn->getFunctionType(), malloc_fn, malloc_args, "new_raw");
 
+    // Step 4: For structs: call the resolved constructor on the allocated object
     // Call constructor if struct
     if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
         auto ctor = expr.get_constructor();
@@ -4704,6 +4936,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
         }
     }
 
+    // Step 5: For arrays: zero-initialize or element-wise construct
     _value = raw_ptr;
 }
 
@@ -4929,7 +5162,19 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
     }
 }
 
+/**
+ * Generate LLVM IR for a constructor invocation expression.
+ *
+ * Steps:
+ *   1. Evaluate all argument expressions.
+ *   2. Determine the constructor's LLVM function.
+ *   3. Allocate the target struct on the stack (or use provided destination).
+ *   4. Call the constructor with 'this' pointer + adapted arguments.
+ *   5. For inner classes: pass __parent__ pointer as first constructor arg.
+ *   6. Handle copy-construction (direct aggregate copy if no constructor).
+ */
 void implementation_generator::visit_constructor_invocation_expression(constructor_invocation_expression& expr) {
+    // Step 1: Evaluate all argument expressions
     auto var_def = expr.constructed_symbol()->get_variable_def();
     if (!var_def) {
         throw_internal_error(0x0012, expr.first_lexeme(),
@@ -5208,17 +5453,20 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 auto dest_arr = std::dynamic_pointer_cast<sized_array_type>(ref_sub);
                 auto src_ptr  = _value; // ptr to source struct { i32, [M x T] }
 
+                // Step 2: Determine the constructor's LLVM function
                 auto* struct_llvm    = dest_arr->get_llvm_struct_type();
                 auto* data_arr_llvm  = dest_arr->get_llvm_data_array_type();
                 auto* elem_llvm      = _context->get_llvm_type(dest_arr->get_subtype());
                 auto  dest_n         = static_cast<uint64_t>(dest_arr->get_size());
 
+                // Step 3: Allocate the target struct on the stack (or use provided destination)
                 // Allocate the destination struct in the entry block
                 auto* fn = _builder->GetInsertBlock()->getParent();
                 llvm::IRBuilder<> entry_build(&fn->getEntryBlock(), fn->getEntryBlock().begin());
                 llvm::AllocaInst* dest_struct_alloca = entry_build.CreateAlloca(
                     struct_llvm, nullptr, var_def->get_short_name() + "_arr_storage");
 
+                // Step 4: Call the constructor with 'this' pointer + adapted arguments
                 // Zero-fill destination struct, then set its size field
                 _builder->CreateStore(llvm::ConstantAggregateZero::get(struct_llvm), dest_struct_alloca);
                 llvm::Value* dest_size_field = _builder->CreateStructGEP(struct_llvm, dest_struct_alloca,
@@ -5227,6 +5475,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                     llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()), dest_n, false),
                     dest_size_field);
 
+                // Step 5: For inner classes: pass __parent__ pointer as first constructor arg
                 // Determine the source struct type (may differ in array size from dest_arr)
                 // We read the source capacity from field 0.
                 // Use the source's struct type by reading src_n from field 0.
@@ -5248,6 +5497,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 llvm::Value* copy_n_val = _builder->CreateSelect(
                     _builder->CreateICmpULT(src_n, dest_n_val), src_n, dest_n_val, "copy_n");
 
+                // Step 6: Handle copy-construction (direct aggregate copy if no constructor)
                 // --- copy loop ---
                 auto* copy_entry_bb = _builder->GetInsertBlock();
                 auto* copy_loop_bb  = llvm::BasicBlock::Create(_builder->getContext(), "arr_ref_copy_loop", fn);
@@ -5396,6 +5646,17 @@ void implementation_generator::visit_constructor_invocation_expression(construct
 // Cast expression
 //
 
+/**
+ * Resolve a cast expression: validate source-to-target type compatibility.
+ *
+ * Steps:
+ *   1. Resolve the sub-expression and the target type.
+ *   2. Check for casting operator overload on the source struct type.
+ *   3. Validate primitive casts (widening, narrowing, int↔float).
+ *   4. Validate pointer/link/view/owner casts (same indirection kind or cross-kind).
+ *   5. Validate struct upcast (static) and downcast (dynamic, requires RTTI).
+ *   6. Set the result type to the cast target type.
+ */
 void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
     auto sub_expr = expr.sub_expr();
     sub_expr->accept(*this);
@@ -5403,6 +5664,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
     auto source_type = sub_expr->get_type();
     auto target_type = expr.get_cast_type();
 
+    // Step 1: Resolve the sub-expression and the target type
     // ── Resolve the target type if it is not yet resolved ────────────────────
     // A `(Type)expr` cast produces an unresolved type for named types (struct/class/interface).
     // We must resolve it here before any validation.
@@ -5545,6 +5807,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
             // Keep as-is (no load_value replacement).
         }
 
+        // Step 2: Check for casting operator overload on the source struct type
         // ── Casting operator overload: (TargetType)struct_value ──────────────
         // Check BEFORE ref→value unwrapping so that the reference is preserved
         // as the 'this' parameter for the casting operator call.
@@ -5561,16 +5824,19 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                 return nullptr;
             };
 
+            // Step 3: Validate primitive casts (widening, narrowing, int↔float)
             auto source_agg = get_source_aggregate(source_type);
             if (source_agg) {
                 bool is_const_this = false;
                 auto ref_sub = std::dynamic_pointer_cast<reference_type>(source_type)->get_referenced_type();
                 is_const_this = type::is_const(ref_sub);
 
+                // Step 4: Validate pointer/link/view/owner casts (same indirection kind or cross-kind)
                 auto cast_func = resolve_cast_operator_overload(source_agg, target_type, is_const_this);
                 if (cast_func) {
                     expr.set_operator_func(cast_func);
 
+                    // Step 5: Validate struct upcast (static) and downcast (dynamic, requires RTTI)
                     // Compute virtual dispatch info if the function is virtual
                     if (cast_func->is_virtual() && cast_func->get_vtable_slot() >= 0) {
                         auto receiver_type = source_type;
@@ -5578,6 +5844,7 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                         expr.set_operator_dispatch_info(std::move(di));
                     }
 
+                    // Step 6: Set the result type to the cast target type
                     expr.set_type(target_type);
                     return;
                 }
@@ -5593,7 +5860,20 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
     expr.set_type(expr.get_cast_type());
 }
 
+/**
+ * Generate LLVM IR for a cast expression.
+ *
+ * Steps:
+ *   1. If casting operator overload: delegate to generate_cast_operator_overload.
+ *   2. Primitive-to-primitive: emit trunc/zext/sext/fptrunc/fpext/sitofp/fptosi.
+ *   3. Pointer/link/view/owner casts: bitcast or GEP for struct upcast.
+ *   4. Struct upcast: GEP to base sub-object at known offset.
+ *   5. Dynamic downcast: emit RTTI-based dynamic cast IR.
+ *   6. Null → pointer/link/view: emit null constant.
+ *   7. Enum ↔ underlying: emit zext/trunc as needed.
+ */
 void implementation_generator::visit_cast_expression(cast_expression& expr) {
+    // Step 1: If casting operator overload: delegate to generate_cast_operator_overload
     // ── Casting operator overload: call __operator_cv_<type>() ───────────────
     if (generate_cast_operator_overload(expr)) return;
 
@@ -6093,6 +6373,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         }
     }
 
+    // Step 2: Primitive-to-primitive: emit trunc/zext/sext/fptrunc/fpext/sitofp/fptosi
     if(!type::is_primitive(source_type) || !type::is_primitive(target_type)) {
         throw_error(0x001A, expr.first_lexeme(),
             "Casting between non-primitive types is not yet supported: "
@@ -6102,6 +6383,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
     auto src = std::dynamic_pointer_cast<primitive_type>(source_type);
     auto tgt = std::dynamic_pointer_cast<primitive_type>(target_type);
 
+    // Step 3: Pointer/link/view/owner casts: bitcast or GEP for struct upcast
     _value = nullptr;
     expr.sub_expr()->accept(*this);
     if(!_value) {
@@ -6110,6 +6392,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             "this indicates a code-generation bug in the sub-expression");
     }
 
+    // Step 4: Struct upcast: GEP to base sub-object at known offset
     if(src->is_boolean()) {
         if(tgt->is_integer()) {
             // Bool is logically 0 or 1: always zero-extend, regardless of target signedness.
@@ -6149,6 +6432,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                 }
             }
             // Extension type depends on source signedness:
+            // Step 7: Enum ↔ underlying: emit zext/trunc as needed
             // unsigned source → ZExt, signed source → SExt. Truncation is the same either way.
             if (src->is_unsigned()) {
                 _value = _builder->CreateZExtOrTrunc(_value, _context->get_llvm_type(tgt));
@@ -6211,6 +6495,16 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 //  6. On mismatch: null.
 //  7. If expr.null_is_fatal(): emit debugtrap on null (target is lnk or ref).
 //
+/**
+ * Emit RTTI-based dynamic cast IR for a cast_expression.
+ *
+ * Steps:
+ *   1. Load the vptr from the source object.
+ *   2. Load the RTTI pointer from the vtable (slot 0).
+ *   3. Call the runtime dynamic_cast function with source RTTI, target RTTI, and object ptr.
+ *   4. If null_is_fatal: emit a null check + fatal trap.
+ *   5. Set _value to the cast result pointer.
+ */
 void implementation_generator::emit_dynamic_cast(
         cast_expression& expr,
         std::shared_ptr<struct_type> src_st_type,
@@ -6255,6 +6549,7 @@ void implementation_generator::emit_dynamic_cast(
             {rtti_name});
     }
 
+    // Step 1: Load the vptr from the source object
     // ── 3. Load the vptr from the source object (field 0 of the aggregate) ──
     if (!src_st->has_rtti()) {
         throw_internal_error(0x0028, expr.first_lexeme(),
@@ -6271,6 +6566,7 @@ void implementation_generator::emit_dynamic_cast(
         src_llvm_type, base_raw, 0, "dyncast_vptr_addr");
     llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "dyncast_vptr");
 
+    // Step 2: Load the RTTI pointer from the vtable (slot 0)
     // ── 4. Load vtable[0] → actual RTTI pointer ──────────────────────────────
     // For imported classes, no vtable_layout exists — synthesise a minimal
     // vtable struct { ptr } since RTTI is always at slot 0.
@@ -6351,16 +6647,19 @@ void implementation_generator::emit_dynamic_cast(
     }
     if (!derived_ptr) derived_ptr = base_raw; // degenerate: same address
 
+    // Step 3: Call the runtime dynamic_cast function with source RTTI, target RTTI, and object ptr
     // ── 7. Select result: derived_ptr on match, null on mismatch ─────────────
     auto* null_val = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
     llvm::Value* result = _builder->CreateSelect(rtti_match, derived_ptr, null_val, "dyncast_result");
 
+    // Step 4: If null_is_fatal: emit a null check + fatal trap
     // ── 8. Fatal-null check for lnk/ref targets ───────────────────────────────
     if (expr.null_is_fatal()) {
         auto* fatal_fn = get_or_declare_fatal_null_function("__k_fatal_null_dyncast");
         emit_null_check(result, fatal_fn, "dyncast");
     }
 
+    // Step 5: Set _value to the cast result pointer
     _value = result;
 }
 

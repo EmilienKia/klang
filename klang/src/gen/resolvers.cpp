@@ -152,6 +152,15 @@ bool scope_lookup::is_struct_member_accessible(
     return false;
 }
 
+/**
+ * Determine whether the current access site is a friend of the given aggregate.
+ *
+ * Steps:
+ *   1. Resolve the friend target name from the unit root by walking namespaces/aggregates.
+ *   2. Apply the type filter (struct/class/interface) if specified.
+ *   3. If the target is an aggregate, check if the current function is a direct member.
+ *   4. If the target is a function, check if the current function is that exact function.
+ */
 bool scope_lookup::is_friend_of(
     const aggregate& owner_agg,
     const std::vector<std::shared_ptr<function>>& function_stack,
@@ -165,6 +174,7 @@ bool scope_lookup::is_friend_of(
     // The innermost function on the stack is the current access site
     const auto& current_fn = function_stack.back();
 
+    // Step 1: Resolve the friend target name from the unit root by walking namespaces/aggregates
     for (const auto& dir : directives) {
         // Resolve the friend target name from the unit root
         auto root = unit.get_root_namespace();
@@ -212,6 +222,7 @@ bool scope_lookup::is_friend_of(
 
         auto target = current;
 
+        // Step 2: Apply the type filter (struct/class/interface) if specified
         // Check filter: if a type filter is specified, the target must match
         if (auto target_agg = std::dynamic_pointer_cast<const aggregate>(target)) {
             if (dir.filter != friend_directive::filter_t::NONE) {
@@ -226,6 +237,7 @@ bool scope_lookup::is_friend_of(
                 if (!filter_match) continue;
             }
 
+            // Step 3: If the target is an aggregate, check if the current function is a direct member
             // Friend is an aggregate: check if current function is a DIRECT member
             // (not inherited, not from nested aggregates).
             auto fn_owner = current_fn->get_owner();
@@ -244,6 +256,7 @@ bool scope_lookup::is_friend_of(
         }
     }
 
+    // Step 4: If the target is a function, check if the current function is that exact function
     return false;
 }
 
@@ -381,12 +394,22 @@ symbol_resolver::resolve_qualified_from(const element& elem, const name& name) {
  *     ::func, ::struct::method, ::subns::func).
  */
 std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+/**
+ * Resolve a name anchored at the root namespace of the unit.
+ *
+ * Steps:
+ *   1. If first component matches the module name, enter root_ns and resolve the rest.
+ *   2. Otherwise resolve directly from root_ns.
+ *   3. Fallback: search imported functions and variables.
+ *   4. Fallback: try imported aggregate static methods.
+ */
 symbol_resolver::resolve_symbol_from_root(const name& name) {
     if (name.empty()) return std::monostate{};
 
     auto root_ns = _unit.get_root_namespace();
     if (!root_ns) return std::monostate{};
 
+    // Step 1: If first component matches the module name, enter root_ns and resolve the rest
     // Strategy 1: first component is the module/unit namespace name
     // The unit name may be multi-part (e.g. "the::test"), so only its last component
     // is the immediate child namespace of the root.  But since the root_namespace IS
@@ -407,10 +430,12 @@ symbol_resolver::resolve_symbol_from_root(const name& name) {
         // a child namespace that has the same name as the module.
     }
 
+    // Step 2: Otherwise resolve directly from root_ns
     // Strategy 2: resolve directly from root namespace (omit module prefix)
     auto local = resolve_qualified_from(*root_ns, name);
     if (local.index() != 0) return local;
 
+    // Step 3: Fallback: search imported functions and variables
     // Strategy 3: fallback — search imported modules for a matching function or variable.
     if (auto* kdi_fn = _unit.find_imported_function(name)) {
         return _unit.get_or_create_imported_function(kdi_fn, _context);
@@ -419,6 +444,7 @@ symbol_resolver::resolve_symbol_from_root(const name& name) {
         return _unit.get_or_create_imported_variable(kdi_var, _context);
     }
 
+    // Step 4: Fallback: try imported aggregate static methods
     // Strategy 4: try to resolve a method inside an imported aggregate.
     if (name.size() >= 2) {
         auto agg_name = name.without_back();
@@ -522,8 +548,20 @@ std::shared_ptr<function> symbol_resolver::resolve_redirect_chain(function& fn, 
 }
 
 std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>> // TODO Add traversal direction flag
+/**
+ * Resolve a symbol (variable or function) from the given scope, climbing the parent chain.
+ *
+ * Steps:
+ *   1. Handle 'this' keyword: find nearest non-static member function's this parameter.
+ *   2. Root-prefixed names: delegate to resolve_symbol_from_root.
+ *   3. Qualified names: search aggregates, enumerations, namespaces.
+ *   4. Simple names: search variables, functions, inherited members (BFS), parameters.
+ *   5. Check using directives at this scope level.
+ *   6. Recurse to parent, or fall back to imported modules.
+ */
 symbol_resolver::resolve_symbol(const element& elem, const name& name) {
 
+    // Step 1: Handle 'this' keyword: find nearest non-static member function's this parameter
     // Specifically look at the "this" symbol (non-static function specific parameter)
     if (name.size() == 1 && name.to_string() == "this") {
         auto func = elem.ancestor<function>();
@@ -537,6 +575,7 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
             "'this' can only be used inside a non-static member function");
     }
 
+    // Step 2: Root-prefixed names: delegate to resolve_symbol_from_root
     if (name.has_root_prefix()) {
         return resolve_symbol_from_root(name.without_root_prefix());
     } else if (name.empty()) {
@@ -565,6 +604,7 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
             }
         }
 
+        // Step 3: Qualified names: search aggregates, enumerations, namespaces
         // Look at namespace
         if (auto nspc = dynamic_cast<const ns*>(&elem)) {
             if (auto child = nspc->get_child_namespace(name.front())) {
@@ -591,6 +631,7 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
             }
         }
 
+        // Step 4: Simple names: search variables, functions, inherited members (BFS), parameters
         // Look at inherited members from base classes (recursive BFS)
         if (auto agg = dynamic_cast<const aggregate*>(&elem)) {
             std::queue<std::shared_ptr<aggregate>> base_queue;
@@ -622,6 +663,7 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
         }
     }
 
+    // Step 5: Check using directives at this scope level
     // Check using directives at this scope level (between direct members and parent scope)
     {
         auto using_result = resolve_via_using(elem, name);
@@ -641,6 +683,7 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
             return _unit.get_or_create_imported_variable(kdi_var, _context);
         }
 
+        // Step 6: Recurse to parent, or fall back to imported modules
         // Fallback: try to resolve a method (possibly static) inside an imported
         // aggregate.  For a name like "k::math::Math::abs", peel off the last
         // component as the function name and try to find the rest as an imported
@@ -696,6 +739,16 @@ resolve_using_target(const k::name& target_name, const unit& unit) {
 }
 
 std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
+/**
+ * Resolve a symbol through the using directives of the given scope element.
+ *
+ * Handles three directive kinds:
+ *   1. Anonymous namespace using: all members of the target are injected.
+ *   2. Aliased namespace using: alias acts as a prefix for member access.
+ *   3. Specific element using (with or without alias): only that element is accessible.
+ *
+ * Detects ambiguity when multiple directives match the same name.
+ */
 symbol_resolver::resolve_via_using(const element& elem, const name& name) {
     const using_holder* uh = dynamic_cast<const using_holder*>(&elem);
     if (!uh) return std::monostate{};
@@ -841,7 +894,17 @@ symbol_resolver::resolve_via_using(const element& elem, const name& name) {
     return result;
 }
 
+/**
+ * Check if a variable (member or global) is accessible from the current access site.
+ *
+ * Steps:
+ *   1. Member variable: check struct member visibility and friend access.
+ *   2. Global variable: check namespace visibility (protected = same module, private = same ns).
+ *
+ * Throws a resolution_error if the variable is not accessible.
+ */
 void symbol_resolver::check_variable_visibility(const variable_definition& var, const element& /*access_site*/) {
+    // Step 1: Member variable: check struct member visibility and friend access
     // Member variable in a struct
     if (auto mv = dynamic_cast<const member_variable_definition*>(&var)) {
         auto owner_agg = std::const_pointer_cast<aggregate>(mv->parent<aggregate>());
@@ -860,6 +923,7 @@ void symbol_resolver::check_variable_visibility(const variable_definition& var, 
              vis == PROTECTED ? " or its subclasses or friends" : ""});
     }
 
+    // Step 2: Global variable: check namespace visibility (protected = same module, private = same ns)
     // Global variable in a namespace
     if (auto gv = dynamic_cast<const global_variable_definition*>(&var)) {
         auto vis = gv->get_visibility();
@@ -907,6 +971,17 @@ std::shared_ptr<expression> symbol_resolver::adapt_reference_load_value(const st
 }
 
 
+/**
+ * Adapt an expression to match a target type by applying implicit casts (symbol_resolver version).
+ *
+ * Steps:
+ *   1. Pointer source: check pointer-to-pointer compatibility only.
+ *   2. Double reference: unwrap one level.
+ *   3. Reference source: unwrap ref if inner type matches target.
+ *   4. Primitive-to-primitive: insert a cast_expression.
+ *
+ * @return The expression if compatible, a cast expression, or nullptr if impossible.
+ */
 std::shared_ptr<expression> symbol_resolver::adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type) {
     if(!expr || !type::is_resolved(type) || !type::is_resolved(expr->get_type())) {
         // Arguments must not be null, expr must have a type and types (expr and target) must be resolved.
@@ -915,6 +990,7 @@ std::shared_ptr<expression> symbol_resolver::adapt_type(std::shared_ptr<expressi
 
     auto type_src = expr->get_type();
 
+    // Step 1: Pointer source: check pointer-to-pointer compatibility only
     if(type::is_pointer(type_src)) {
         if(type::is_pointer(type)) {
             if (type == type_src) {
@@ -931,6 +1007,7 @@ std::shared_ptr<expression> symbol_resolver::adapt_type(std::shared_ptr<expressi
         }
     }
 
+    // Step 2: Double reference: unwrap one level
     if(type::is_double_reference(type_src)) {
         auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
         auto deref = load_value_expression::make_shared(expr);
@@ -939,6 +1016,7 @@ std::shared_ptr<expression> symbol_resolver::adapt_type(std::shared_ptr<expressi
         type_src = ref_src->get_subtype();
     }
 
+    // Step 3: Reference source: unwrap ref if inner type matches target
     if(type::is_reference(type_src)) {
         if(type::is_reference(type)) {
             if (type == type_src) {
@@ -956,6 +1034,7 @@ std::shared_ptr<expression> symbol_resolver::adapt_type(std::shared_ptr<expressi
         }
     }
 
+    // Step 4: Primitive-to-primitive: insert a cast_expression
     auto prim_src = std::dynamic_pointer_cast<primitive_type>(expr->get_type());
     auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type);
 
@@ -1031,18 +1110,32 @@ aggregate_type_resolver::resolve_type_from_root(const k::name& name_without_pref
 }
 
 std::shared_ptr<type>
+/**
+ * Resolve a type by qualified name from a context element, walking up the scope chain
+ * (aggregate_type_resolver version, used during Phase 1.a).
+ *
+ * Steps:
+ *   1. Root-prefixed: delegate to resolve_type_from_root.
+ *   2. Try primitive types via context->from_string.
+ *   3. Walk up the scope chain looking for aggregates and enumerations.
+ *   4. At each scope level, check using directives (anonymous, aliased, specific).
+ *   5. Fallback: imported aggregates and enums.
+ */
 aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const element& context_elem) {
+    // Step 1: Root-prefixed: delegate to resolve_type_from_root
     if (type_name.empty()) return {};
 
     if (type_name.has_root_prefix()) {
         return resolve_type_from_root(type_name.without_root_prefix());
     }
 
+    // Step 2: Try primitive types via context->from_string
     if (type_name.size() == 1) {
         auto prim = _context->from_string(type_name.front());
         if (prim && type::is_resolved(prim)) return prim;
     }
 
+    // Step 3: Walk up the scope chain looking for aggregates and enumerations
     for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
         if (auto st = resolve_struct_from(*current, type_name)) return st->get_struct_type();
         // Also look for enum types (simple names only for now)
@@ -1054,6 +1147,7 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
             }
         }
 
+        // Step 4: At each scope level, check using directives
         // Check using directives at this scope level for type resolution
         if (auto uh = std::dynamic_pointer_cast<const using_holder>(current)) {
             for (const auto& dir : uh->get_using_directives()) {
@@ -1160,6 +1254,7 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
         }
     }
 
+    // Step 5: Fallback: imported aggregates and enums
     // Fallback: search imported modules (relative name, scope chain exhausted)
     if (auto agg = _unit.get_or_create_imported_aggregate(type_name, _context)) {
         return agg->get_struct_type();
@@ -1274,6 +1369,13 @@ void aggregate_type_resolver::visit_member_variable_definition(member_variable_d
     // Do NOT visit init expressions — those are expressions, handled by type_reference_resolver
 }
 
+/**
+ * Visit and resolve the type of a global variable during Phase 1.a.
+ *
+ * Handles unresolved_function_ref_type by resolving parameter types.
+ * For other types, delegates to resolve_one_type.
+ * Does NOT visit init expressions (Phase 1.b handles those).
+ */
 void aggregate_type_resolver::visit_global_variable_definition(global_variable_definition& var) {
     if (!type::is_resolved(var.get_type())) {
         if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var.get_type())) {
@@ -1315,7 +1417,18 @@ void aggregate_type_resolver::visit_global_variable_definition(global_variable_d
     // Do NOT visit init expressions — those are expressions, handled by type_reference_resolver
 }
 
+/**
+ * Resolve the type of a function parameter during Phase 1.a (signatures only).
+ *
+ * Steps:
+ *   1. Handle unresolved_function_ref_type: resolve parameter types and optional owner.
+ *   2. For other types: try context->resolve_type, then peel composite wrappers to find
+ *      the inner unresolved_type, resolve it by name, and re-apply wrappers.
+ *
+ * Does NOT process default expressions (type_reference_resolver handles those).
+ */
 void aggregate_type_resolver::visit_parameter(parameter& param) {
+    // Step 1: Handle unresolved_function_ref_type: resolve parameter types and optional owner
     // Resolve the type only (no default expressions — those are handled by type_reference_resolver)
     if (!type::is_resolved(param.get_type())) {
         // Handle unresolved_function_ref_type (function pointer/pin/link parameter type)
@@ -1362,6 +1475,7 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
             // Try name-based resolution.
             // The parameter type may be a composite wrapping an unresolved_type
             // (e.g. reference_type("iface_one::ICounter&")), so we peel wrappers to
+            // Step 2: For other types: try context->resolve_type, then peel composite wrappers to find the inner unreso...
             // find the inner unresolved name, resolve the inner aggregate, then
             // rebuild the composite wrapper around the resolved inner type.
             auto owner_func = param.parent<function>();
@@ -1409,18 +1523,31 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
     }
 }
 
+/**
+ * Resolve function signatures during Phase 1.a: this parameter, parameters, and return type.
+ *
+ * Steps:
+ *   1. Resolve 'this' parameter type for non-static member functions.
+ *   2. Resolve all parameter types.
+ *   3. Resolve return type (including function pointer return types).
+ *
+ * Does NOT visit the function body (Phase 1.b).
+ */
 void aggregate_type_resolver::visit_function(function& fn) {
+    // Step 1: Resolve 'this' parameter type for non-static member functions
     // Resolve 'this' parameter type for non-static member functions
     if (fn.is_member() && !fn.is_static() && fn.get_this_parameter()) {
         auto this_param = std::const_pointer_cast<parameter>(fn.get_this_parameter());
         this_param->accept(*this);
     }
 
+    // Step 2: Resolve all parameter types
     // Resolve parameter types (signatures only, no default expressions)
     for (auto param : fn.parameters()) {
         param->accept(*this);
     }
 
+    // Step 3: Resolve return type (including function pointer return types)
     // Resolve return type
     if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
         // Handle unresolved_function_ref_type (function pointer return type)
@@ -1559,6 +1686,17 @@ bool model_materializer::validate_vtable(klass& kl) {
     return ok;
 }
 
+/**
+ * Compute secondary vtable thunk descriptors for a class with multiple base classes.
+ *
+ * Steps:
+ *   1. Walk all non-virtual sub-objects transitively, computing cumulative byte offsets.
+ *   2. For each sub-object with a vtable, build a secondary_vtable_spec with thunk_info
+ *      records: slot index, real function, this-adjustment, and needs_thunk flag.
+ *   3. Handle virtual bases separately via __vbase_X__ fields.
+ *
+ * Populates vtable_layout::secondary_vtables.
+ */
 void model_materializer::compute_secondary_vtable_specs(klass& kl) {
     auto vt = kl.get_vtable();
     if (!vt) return;
@@ -1643,6 +1781,7 @@ void model_materializer::compute_secondary_vtable_specs(klass& kl) {
         vt->secondary_vtables.push_back(std::move(spec));
     };
 
+    // Step 1: Walk all non-virtual sub-objects transitively, computing cumulative byte offsets
     // Walk ALL non-virtual sub-objects transitively reachable from kl,
     // computing their cumulative byte offsets in kl's layout.
     // For each sub-object with a vtable, generate a secondary_vtable_spec.
@@ -1652,6 +1791,7 @@ void model_materializer::compute_secondary_vtable_specs(klass& kl) {
     // We use `already_processed` to avoid duplicating specs for the same type.
     std::unordered_set<const klass*> already_processed;
 
+    // Step 2: For each sub-object with a vtable, build a secondary_vtable_spec with thunk_info records
     // DFS: for each aggregate, walk its non-virtual bases and build specs for
     // all sub-objects that have a vtable, at their correct cumulative offsets.
     std::function<void(const aggregate&, llvm::StructType*, size_t)> walk;
@@ -1687,6 +1827,7 @@ void model_materializer::compute_secondary_vtable_specs(klass& kl) {
 
     walk(kl, kl_llvm_type, 0);
 
+    // Step 3: Handle virtual bases separately via __vbase_X__ fields. Populates vtable_layout::secondary_vtables
     // ── Virtual bases: generate secondary vtable specs for __vbase_X__ ───────
     // (same logic as before, unchanged)
     {
@@ -1873,7 +2014,17 @@ type_reference_resolver::resolve_type_from_root(const k::name& name_without_pref
  * Falls back to context->from_string for primitive types.
  */
 std::shared_ptr<type>
+/**
+ * Resolve a type by name from a context element, walking up the scope chain.
+ *
+ * Steps:
+ *   1. Root-prefixed: delegate to resolve_type_from_root.
+ *   2. Try primitive types via context->from_string.
+ *   3. Walk the scope chain: aggregates, enums, using directives.
+ *   4. Fallback: imported aggregates and enums.
+ */
 type_reference_resolver::resolve_type_by_name(const k::name& type_name, const element& context_elem) {
+    // Step 1: Root-prefixed: delegate to resolve_type_from_root
     if (type_name.empty()) return {};
 
     // Root-prefixed: anchor at unit root
@@ -1881,6 +2032,7 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
         return resolve_type_from_root(type_name.without_root_prefix());
     }
 
+    // Step 2: Try primitive types via context->from_string
     // Try primitive types first via context (for simple names only)
     if (type_name.size() == 1) {
         auto prim = _context->from_string(type_name.front());
@@ -1889,6 +2041,7 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
         }
     }
 
+    // Step 3: Walk the scope chain: aggregates, enums, using directives
     // Walk up the scope chain looking for the type
     for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
         if (auto st = resolve_struct_from(*current, type_name)) {
@@ -2009,6 +2162,7 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
         }
     }
 
+    // Step 4: Fallback: imported aggregates and enums
     // Fallback: search imported modules (scope chain exhausted)
     if (auto agg = _unit.get_or_create_imported_aggregate(type_name, _context)) {
         return agg->get_struct_type();
@@ -2058,6 +2212,13 @@ namespace {
     }
 } // anonymous namespace
 
+/**
+ * Check all function overloads in a function_holder for arity-overlap collisions
+ * caused by default-parameter values.
+ *
+ * For each pair of same-named overloads, if at least one has default params and their
+ * arity ranges overlap, throw an ambiguity error.
+ */
 void type_reference_resolver::check_overload_collisions(function_holder& fh)
 {
     // Collect all unique function names.
@@ -2121,12 +2282,22 @@ void type_reference_resolver::check_constructor_overload_collisions(aggregate& s
 
 
 std::shared_ptr<type>
+/**
+ * Resolve an unresolved_function_ref_type to a concrete function_reference_type.
+ *
+ * Steps:
+ *   1. Resolve each parameter type via resolve_type_by_name / from_string.
+ *   2. If member function reference: resolve the owner aggregate.
+ *   3. Build using function_reference_type_builder.
+ *   4. Cache the resolved type into the unresolved placeholder.
+ */
 type_reference_resolver::resolve_function_ref_type(
     const std::shared_ptr<unresolved_function_ref_type>& ufrt,
     const element& context_elem)
 {
     if (!ufrt) return {};
 
+    // Step 1: Resolve each parameter type via resolve_type_by_name / from_string
     // Resolve parameter types
     std::vector<std::shared_ptr<type>> resolved_params;
     for (const auto& pt : ufrt->parameter_types()) {
@@ -2155,6 +2326,7 @@ type_reference_resolver::resolve_function_ref_type(
         builder.append_parameter_type(rp);
     }
 
+    // Step 2: If member function reference: resolve the owner aggregate
     // Member function reference: resolve the owner structure
     if (!ufrt->owner_name().empty()) {
         auto owner_agg = resolve_struct_from(context_elem, ufrt->owner_name());
@@ -2178,7 +2350,9 @@ type_reference_resolver::resolve_function_ref_type(
         builder.member_of(owner_agg);
     }
 
+    // Step 3: Build using function_reference_type_builder
     auto resolved_type = builder.build();
+    // Step 4: Cache the resolved type into the unresolved placeholder
     // Cache the resolved type into the unresolved placeholder
     const_cast<unresolved_function_ref_type*>(ufrt.get())->resolve(resolved_type);
     return resolved_type;
@@ -2219,8 +2393,19 @@ std::shared_ptr<type> type_reference_resolver::strip_ref_array(const std::shared
 }
 
 
+/**
+ * Visit a variable definition: resolve its type, process init expressions, and validate.
+ *
+ * Steps:
+ *   1. Extract AST lexeme for error reporting.
+ *   2. Phase 1: resolve the unresolved type (resolve_variable_type).
+ *   3. Resolve init expressions via visitor.
+ *   4. For function_reference_type: propagate return type from init symbol.
+ *   5. Phase 2: dispatch to per-type-category validation.
+ */
 void type_reference_resolver::visit_variable_definition(variable_definition& var)
 {
+    // Step 1: Extract AST lexeme for error reporting
     // Extract AST lexeme for error reporting
     lex::opt_any_lexeme var_lexeme;
     if (auto* vs = dynamic_cast<variable_statement*>(&var)) {
@@ -2232,15 +2417,18 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         }
     }
 
+    // Step 2: Phase 1: resolve the unresolved type (resolve_variable_type)
     // Phase 1: resolve the unresolved type
     resolve_variable_type(var, var_lexeme);
 
+    // Step 3: Resolve init expressions via visitor
     // Resolve init expressions if any
     auto init_expr_base = var.get_init_expr();
     if (init_expr_base) {
         init_expr_base->accept(*this);
     }
 
+    // Step 4: For function_reference_type: propagate return type from init symbol
     auto init_expr = std::dynamic_pointer_cast<constructor_invocation_expression>(init_expr_base);
 
     // If the variable has a function_reference_type with no return type yet (e.g. 'fp : *(int) = add_one'),
@@ -2262,6 +2450,7 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
         }
     }
 
+    // Step 5: Phase 2: dispatch to per-type-category validation
     // Phase 2: validate init expression per type category
     auto var_type = var.get_type();
     var_init_context ctx{var, var_lexeme, var_type, init_expr_base, init_expr};
@@ -2312,6 +2501,20 @@ bool type_reference_resolver::types_match_array_const_compatible(
 }
 
 type_reference_resolver::cast_weight
+/**
+ * Compute the cost (weight) of an implicit conversion from expr's type to the target type.
+ *
+ * Returns a cast_weight value (NONE, REF_CONV, WIDENING, NARROWING, CONSTRUCT, IMPOSSIBLE).
+ *
+ * Steps:
+ *   1. Function reference type cases.
+ *   2. Pointer/link/view/owner/drain cases: same-kind, cross-kind, ref borrow, struct upcast.
+ *   3. ref<owner/ptr/lnk/view/drain> unwrapping.
+ *   4. Double reference: unwrap one level.
+ *   5. Reference cases: const widening, struct upcast, value load, primitive cast.
+ *   6. Null → pointer/link/view/owner.
+ *   7. Enum, struct, primitive conversions.
+ */
 type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& expr, const std::shared_ptr<k::model::type>& tgt) {
     if (!expr || !type::is_resolved(tgt) || !type::is_resolved(expr->get_type())) {
         return CAST_IMPOSSIBLE;
@@ -2323,6 +2526,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     // Const-checking for assignment targets is done separately in visit_assignation_expression.
     auto tgt_nc = type::remove_const(tgt);
 
+    // Step 1: Function reference type cases
     // ── Function reference type cases ─────────────────────────────────────────
     // frt → frt (any ref_kind combination): free conversion (same LLVM type).
     // ref<frt> → frt: allowed (load from variable / direct function address).
@@ -2453,6 +2657,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         return CAST_IMPOSSIBLE;
     }
 
+    // Step 2: Pointer/link/view/owner/drain cases: same-kind, cross-kind, ref borrow, struct upcast
     // --- Owner cases ---
     // owner<T> → owner<T>  : move (CAST_NONE)
     // owner<T> → owner<Base>: implicit upcast-move (CAST_REF_CONV)
@@ -2576,6 +2781,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         return CAST_IMPOSSIBLE;
     }
 
+    // Step 3: ref<owner/ptr/lnk/view/drain> unwrapping
     // ref<owner<T>> → ptr<T>: load owner and borrow as pointer
     // Also handles ref<const<owner<T>>> (const class member) → ptr<T>
     if (type::is_reference(type_src) && !type::is_double_reference(type_src)) {
@@ -2681,6 +2887,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         }
     }
 
+    // Step 4: Double reference: unwrap one level
     // --- Double reference: unwrap one level ---
     std::shared_ptr<k::model::type> effective_src = type_src;
     if (type::is_double_reference(type_src)) {
@@ -2894,6 +3101,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         }
     }
 
+    // Step 5: Reference cases: const widening, struct upcast, value load, primitive cast
     // --- Upcast: struct ref → base struct ref (implicit) ---
     if (type::is_reference(tgt_nc) && type::is_reference(effective_src)) {
         auto src_st_type = std::dynamic_pointer_cast<struct_type>(
@@ -2922,10 +3130,19 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         }
     }
 
+    // Step 6: Null → pointer/link/view/owner
     return CAST_IMPOSSIBLE;
 }
 
 std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::shared_ptr<expression>>/*adapted_args*/>
+/**
+ * Choose the best-matching constructor among candidates given a set of arguments.
+ *
+ * Scoring: max cast_weight across all parameters.
+ * Handles arity mismatch, impossible casts, and ambiguity (same lowest score).
+ *
+ * @return {best_constructor, adapted_args} or {nullptr, {}} on failure.
+ */
 type_reference_resolver::get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args) {
     const size_t arg_count = args.size();
 
@@ -3114,6 +3331,19 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 
 
 type_reference_resolver::FunctionCandidate
+/**
+ * Choose the best-matching function among candidates given arguments.
+ *
+ * Supports three modes:
+ *   A. Member call: this_expr + args (member functions, skip this in scoring).
+ *   B. Direct call: direct_args (free/static functions, full arg list).
+ *   C. Unified call: free functions with first param = ref to struct.
+ *
+ * Scoring: max cast_weight across all parameters. Member operators preferred
+ * over non-member when scores are equal.
+ *
+ * @return FunctionCandidate with the best match, or {nullptr,...} on failure.
+ */
 type_reference_resolver::get_best_matching_function(
         const std::vector<std::shared_ptr<function>>& candidates,
         const std::vector<std::shared_ptr<expression>>& args,
@@ -3297,6 +3527,14 @@ std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(
     }
 }
 
+/**
+ * Adapt an expression to match a target type by applying implicit casts.
+ *
+ * Dispatches to per-category helpers: function_ref, pointer, link, view, owner, drain,
+ * ref<owner>, double-reference, reference, enum, primitive/struct.
+ *
+ * @return The expression if compatible, a cast expression, or nullptr if impossible.
+ */
 std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type) {
     if(!expr || !type::is_resolved(type) || !type::is_resolved(expr->get_type())) {
         // Arguments must not be null, expr must have a type and types (expr and target) must be resolved.
@@ -3509,6 +3747,14 @@ void init_order_resolver::collect_global_deps_from_expr(
     // value_expression — no dependencies
 }
 
+/**
+ * Collect dependencies of a global_variable_definition node.
+ *
+ * Steps:
+ *   1. Rule 3: if GV has a struct type with a static constructor, depend on that SC.
+ *   2. Rules 4-6: inspect init expression for global variable references and struct types
+ *      from constructor invocations and function call bodies.
+ */
 void init_order_resolver::collect_deps_for_global(
         const std::shared_ptr<global_variable_definition>& gv,
         const std::unordered_map<const static_constructor*, size_t>& sctor_index,
@@ -3516,6 +3762,7 @@ void init_order_resolver::collect_deps_for_global(
         std::vector<std::vector<size_t>>& adj,
         size_t my_idx)
 {
+    // Step 1: Rule 3: if GV has a struct type with a static constructor, depend on that SC
     // Rule 3: if GV has a struct type with a static constructor, it depends on that SC
     if (auto st_type = std::dynamic_pointer_cast<struct_type>(gv->get_type())) {
         if (auto st = st_type->get_struct()) {
@@ -3528,6 +3775,7 @@ void init_order_resolver::collect_deps_for_global(
         }
     }
 
+    // Step 2: Rules 4-6: inspect init expression for global variable references and struct types from construct...
     // Rules 4–6: inspect init expression
     auto init_expr_base = gv->get_init_expr();
     if (!init_expr_base) return;
@@ -3564,6 +3812,14 @@ void init_order_resolver::collect_deps_for_global(
     }
 }
 
+/**
+ * Collect dependencies of a static_constructor node.
+ *
+ * Steps:
+ *   1. Rule 1: explicit deps from mem-init list (already resolved by symbol_resolver).
+ *   2. Implicit: static constructors of base classes must run before this one.
+ *   3. Rule 2 (handled elsewhere): static members of the owning struct depend on this SC.
+ */
 void init_order_resolver::collect_deps_for_sctor(
         const std::shared_ptr<static_constructor>& sctor,
         const std::unordered_map<const static_constructor*, size_t>& sctor_index,
@@ -3571,6 +3827,7 @@ void init_order_resolver::collect_deps_for_sctor(
         std::vector<std::vector<size_t>>& adj,
         size_t my_idx)
 {
+    // Step 1: Rule 1: explicit deps from mem-init list (already resolved by symbol_resolver)
     // Rule 1: explicit deps from static constructor mem-init list.
     // `static S() : A(), gvar() {}`
     // By this point every static_dep_spec has already been resolved to a concrete model
@@ -3601,6 +3858,7 @@ void init_order_resolver::collect_deps_for_sctor(
         }
     }
 
+    // Step 2: Implicit: static constructors of base classes must run before this one
     // Implicit: static constructors of BASE CLASSES must run BEFORE this one.
     // (A derived struct's static constructor depends on its bases' static constructors.)
     if (auto owner = sctor->get_owner()) {
@@ -3615,15 +3873,29 @@ void init_order_resolver::collect_deps_for_sctor(
         }
     }
 
+    // Step 3: Rule 2 (handled elsewhere): static members of the owning struct depend on this SC
     // Rule 2 (implicit): static members of owner struct must be initialized AFTER this SC.
     // This is handled in collect_deps_for_global (rule 3): each static member variable
     // of struct S depends on SC(S).
 }
 
+/**
+ * Compute the unified ordered init/finit sequence using topological sort.
+ *
+ * Steps:
+ *   1. Collect standalone static destructors (no matching static constructor).
+ *   2. Build node index: [static constructors | global variables].
+ *   3. Build dependency graph (adjacency list) using collect_deps_for_sctor/global.
+ *   4. Kahn's topological sort (BFS) to produce construction order.
+ *   5. Detect cycles (if topo sort didn't consume all nodes).
+ *   6. Store construction order on global_constructor_function,
+ *      reverse as destruction order on global_destructor_function.
+ */
 void init_order_resolver::resolve() {
     auto& ctor_func = _unit.get_global_constructor_function();
     auto& dtor_func = _unit.get_global_destructor_function();
 
+    // Step 1: Collect standalone static destructors (no matching static constructor)
     const auto& raw_sctors = ctor_func.get_static_constructors();
     const auto& raw_gvars  = ctor_func.get_global_variables();
 
@@ -3666,6 +3938,7 @@ void init_order_resolver::resolve() {
     const size_t G = raw_gvars.size();
     const size_t N = S + G;
 
+    // Step 2: Build node index: [static constructors | global variables]
     std::unordered_map<const static_constructor*, size_t>           sctor_index;
     std::unordered_map<const global_variable_definition*, size_t>   gv_index;
 
@@ -3691,12 +3964,14 @@ void init_order_resolver::resolve() {
         collect_deps_for_global(raw_gvars[i], sctor_index, gv_index, adj, S + i);
     }
 
+    // Step 3: Build dependency graph (adjacency list) using collect_deps_for_sctor/global
     // Deduplicate adjacency lists
     for (auto& list : adj) {
         std::sort(list.begin(), list.end());
         list.erase(std::unique(list.begin(), list.end()), list.end());
     }
 
+    // Step 4: Kahn's topological sort (BFS) to produce construction order
     // -------------------------------------------------------------------------
     // Kahn's topological sort (BFS)
     // -------------------------------------------------------------------------
@@ -3723,6 +3998,7 @@ void init_order_resolver::resolve() {
         }
     }
 
+    // Step 5: Detect cycles (if topo sort didn't consume all nodes)
     // -------------------------------------------------------------------------
     // Cycle detection
     // -------------------------------------------------------------------------
@@ -3741,6 +4017,7 @@ void init_order_resolver::resolve() {
             {cycle_members});
     }
 
+    // Step 6: Store construction order on global_constructor_function, reverse as destruction order on global_d...
     // -------------------------------------------------------------------------
     // Store construction order into the constructor function,
     // and the REVERSE as the destruction order into the destructor function.

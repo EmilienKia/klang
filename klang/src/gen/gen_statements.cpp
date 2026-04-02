@@ -84,6 +84,15 @@ void declaration_generator::visit_block(block& block) {
     }
 }
 
+/**
+ * Generate LLVM IR for a block: set up cleanup tracking and visit all statements.
+ *
+ * Steps:
+ *   1. Push new cleanup block and variable tracking stacks.
+ *   2. Visit each statement in the block.
+ *   3. On block exit: emit destructor calls for all block-scoped struct/owner variables.
+ *   4. Pop cleanup stacks.
+ */
 void implementation_generator::visit_block(block& blk) {
     // Look at static/global var definitions
     for (auto var_entry : blk.variables()) {
@@ -117,6 +126,7 @@ void implementation_generator::visit_block(block& blk) {
     llvm::BasicBlock* cleanup_block = nullptr;
     llvm::BasicBlock* continue_block = nullptr;
 
+    // Step 1: Push new cleanup block and variable tracking stacks
     if (needs_cleanup) {
         cleanup_block  = llvm::BasicBlock::Create(**_context, "block-cleanup");
         continue_block = llvm::BasicBlock::Create(**_context, "block-continue");
@@ -134,6 +144,7 @@ void implementation_generator::visit_block(block& blk) {
         // On the normal exit path, branch to cleanup
         _builder->CreateBr(cleanup_block);
 
+        // Step 2: Visit each statement in the block
         // Emit cleanup block: call destructors in REVERSE declaration order
         func->insert(func->end(), cleanup_block);
         _builder->SetInsertPoint(cleanup_block);
@@ -150,6 +161,7 @@ void implementation_generator::visit_block(block& blk) {
             if (var_it == _context->_variables.end()) continue;
             llvm::AllocaInst* alloca = var_it->second;
 
+            // Step 3: On block exit: emit destructor calls for all block-scoped struct/owner variables
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
                 // Struct destructor
                 auto dtor = st_type->get_struct()->get_destructor();
@@ -167,6 +179,7 @@ void implementation_generator::visit_block(block& blk) {
         // On normal path, branch to continue
         _builder->CreateBr(continue_block);
 
+        // Step 4: Pop cleanup stacks
         // Pop cleanup entries
         _cleanup_blocks.pop();
         _cleanup_vars_stack.pop();
@@ -188,12 +201,20 @@ void symbol_resolver::visit_return_statement(return_statement& stmt)
     }
 }
 
+/**
+ * Resolve a return statement: validate return expression type matches function return type.
+ *
+ * Steps:
+ *   1. Resolve the return expression (if any).
+ *   2. Adapt the expression type to match the enclosing function's return type.
+ */
 void type_reference_resolver::visit_return_statement(return_statement& stmt)
 {
     auto func = stmt.get_block()->get_function();
     auto ret_type = func->get_return_type();
     // TODO check if return type is void to prevent to return sometinhg
 
+    // Step 1: Resolve the return expression (if any)
     if(auto expr = stmt.get_expression()) {
         // Warn if function uses named return variable and return has an expression
         if (func->has_named_return_var()) {
@@ -206,6 +227,7 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
             }
         }
 
+        // Step 2: Adapt the expression type to match the enclosing function's return type
         expr->accept(*this);
         auto cast = adapt_type(expr, ret_type);
         if(!cast) {
@@ -223,6 +245,16 @@ void declaration_generator::visit_return_statement(return_statement& stmt) {
     // Nothing to do here (nothing in expressions)
 }
 
+/**
+ * Generate LLVM IR for a return statement.
+ *
+ * Steps:
+ *   1. Evaluate the return expression (if any).
+ *   2. Emit cleanup for all block-scoped variables (reverse order).
+ *   3. For sret functions: store result into sret pointer.
+ *   4. For NRVO candidates: no copy needed (already in sret destination).
+ *   5. Emit ret instruction.
+ */
 void implementation_generator::visit_return_statement(return_statement& stmt) {
 
     auto func = stmt.get_block()->get_function();
@@ -332,11 +364,13 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
             // Nothing to copy here.
         }
 
+        // Step 1: Evaluate the return expression (if any)
         // Destroy any struct temporaries created during the return expression evaluation
         emit_expression_temporaries_cleanup();
         } // end else (non-named-return expression handling)
     }
 
+    // Step 2: Emit cleanup for all block-scoped variables (reverse order)
     // Emit destructor calls for all active scopes, from innermost to outermost.
     // We use a copy of the cleanup vars stack to iterate without modifying the live stack.
     if (!_cleanup_vars_stack.empty() || !_owner_params_stack.empty() || !_struct_params_stack.empty()) {
@@ -362,6 +396,7 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
                 if (var_it == _context->_variables.end()) continue;
                 llvm::AllocaInst* alloca = var_it->second;
 
+                // Step 3: For sret functions: store result into sret pointer
                 if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
                     auto dtor = st_type->get_struct()->get_destructor();
                     if (!dtor) continue;
@@ -409,6 +444,8 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
         }
     }
 
+    // Step 4: For NRVO candidates: no copy needed (already in sret destination)
+    // Step 5: Emit ret instruction
     // Emit the actual ret instruction
     if (_sret_ptr) {
         // sret functions always return void
@@ -489,8 +526,20 @@ void declaration_generator::visit_if_else_statement(if_else_statement& stmt) {
     }
 }
 
+/**
+ * Generate LLVM IR for an if-else statement.
+ *
+ * Steps:
+ *   1. Evaluate the condition expression.
+ *   2. Create then/else/merge basic blocks.
+ *   3. Emit conditional branch.
+ *   4. Visit then-block, emit branch to merge.
+ *   5. Visit else-block (if present), emit branch to merge.
+ *   6. Set insertion point to merge block.
+ */
 void implementation_generator::visit_if_else_statement(if_else_statement& stmt) {
 
+    // Step 1: Evaluate the condition expression
     // Condition expression
     _value = nullptr;
     stmt.get_test_expr()->accept(*this);
@@ -502,12 +551,14 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
     bool has_else = (bool)stmt.get_else_stmt();
 
+    // Step 2: Create then/else/merge basic blocks
     // Retrieve current block and create then, else and continue blocks
     llvm::Function* func = _builder->GetInsertBlock()->getParent();
     llvm::BasicBlock* then_block = llvm::BasicBlock::Create(**_context, "if-then", func);
     llvm::BasicBlock* else_block = has_else ? llvm::BasicBlock::Create(**_context, "if-else") : nullptr;
     llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(**_context, "if-continue");
 
+    // Step 3: Emit conditional branch
     // Do branching
     if(has_else) {
         _builder->CreateCondBr(test_value, then_block, else_block);
@@ -515,11 +566,13 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         _builder->CreateCondBr(test_value, then_block, cont_block);
     }
 
+    // Step 4: Visit then-block, emit branch to merge
     // Generate "then" branch
     _builder->SetInsertPoint(then_block);
     stmt.get_then_stmt()->accept(*this);
     _builder->CreateBr(cont_block);
 
+    // Step 5: Visit else-block (if present), emit branch to merge
     // Generate "else" branch, if any
     if(has_else) {
         func->insert(func->end(), else_block);
@@ -528,6 +581,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         _builder->CreateBr(cont_block);
     }
 
+    // Step 6: Set insertion point to merge block
     // Generate "continuation" block
     func->insert(func->end(), cont_block);
     _builder->SetInsertPoint(cont_block);
@@ -568,8 +622,18 @@ void declaration_generator::visit_while_statement(while_statement& stmt) {
     stmt.get_nested_stmt()->accept(*this);
 }
 
+/**
+ * Generate LLVM IR for a while loop.
+ *
+ * Steps:
+ *   1. Create cond/body/after basic blocks.
+ *   2. Evaluate condition, branch to body or after.
+ *   3. Visit body block, branch back to cond.
+ *   4. Set insertion point to after block.
+ */
 void implementation_generator::visit_while_statement(while_statement& stmt) {
 
+    // Step 1: Create cond/body/after basic blocks
     // Retrieve current block and create nested and continue blocks
     llvm::Function* func = _builder->GetInsertBlock()->getParent();
     llvm::BasicBlock* while_block = llvm::BasicBlock::Create(**_context, "while-condition");
@@ -587,12 +651,15 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
     auto test_value = _value;
     _value = nullptr;
 
+    // Step 2: Evaluate condition, branch to body or after
     // Destroy any struct temporaries created during condition evaluation
     emit_expression_temporaries_cleanup();
 
+    // Step 3: Visit body block, branch back to cond
     // Do branching
     _builder->CreateCondBr(test_value, nested_block, cont_block);
 
+    // Step 4: Set insertion point to after block
     // Nest block
     func->insert(func->end(), nested_block);
     _builder->SetInsertPoint(nested_block);
@@ -665,8 +732,20 @@ void declaration_generator::visit_for_statement(for_statement& stmt) {
     stmt.get_nested_stmt()->accept(*this);
 }
 
+/**
+ * Generate LLVM IR for a for loop.
+ *
+ * Steps:
+ *   1. Visit init statement/expression.
+ *   2. Create cond/body/step/after basic blocks.
+ *   3. Evaluate condition, branch to body or after.
+ *   4. Visit body block, branch to step.
+ *   5. Visit step expression, branch to cond.
+ *   6. Set insertion point to after block.
+ */
 void implementation_generator::visit_for_statement(for_statement& stmt) {
 
+    // Step 1: Visit init statement/expression
     // Retrieve current block and create nested and continue blocks
     llvm::Function* func = _builder->GetInsertBlock()->getParent();
     llvm::BasicBlock* for_block = llvm::BasicBlock::Create(**_context, "for-condition");
@@ -705,6 +784,7 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     _builder->SetInsertPoint(nested_block);
     stmt.get_nested_stmt()->accept(*this);
 
+    // Step 2: Create cond/body/step/after basic blocks
     // Step, if any
     if(auto step = stmt.get_step_expr()) {
         _value = nullptr;
@@ -712,15 +792,19 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
         auto step_value = _value;
         _value = nullptr;
 
+        // Step 3: Evaluate condition, branch to body or after
         // Destroy any struct temporaries created during step evaluation
         emit_expression_temporaries_cleanup();
     }
 
+    // Step 4: Visit body block, branch to step
     // Go back to test
     _builder->CreateBr(for_block);
 
+    // Step 5: Visit step expression, branch to cond
     // Generate "continuation" block
     func->insert(func->end(), cont_block);
+    // Step 6: Set insertion point to after block
     _builder->SetInsertPoint(cont_block);
 }
 
@@ -792,8 +876,16 @@ void symbol_resolver::visit_variable_statement(variable_statement& var)
     }
 }
 
+/**
+ * Resolve a variable statement (local variable declaration with optional init).
+ *
+ * Steps:
+ *   1. Delegate type and init expression resolution to visit_variable_definition.
+ *   2. Track struct-typed and owner-typed variables for block-scoped cleanup.
+ */
 void type_reference_resolver::visit_variable_statement(variable_statement& var)
 {
+    // Step 1: Delegate type and init expression resolution to visit_variable_definition
     // For local variables, first try to resolve qualified types using the statement's
     // element context (which allows walking up the scope chain).
     if (!type::is_resolved(var.get_type())) {
@@ -841,6 +933,19 @@ void declaration_generator::visit_variable_statement(variable_statement& stmt) {
     // Nothing to do here (nothing in expressions)
 }
 
+/**
+ * Generate LLVM IR for a local variable declaration.
+ *
+ * Steps:
+ *   1. Allocate stack space (alloca) for the variable.
+ *   2. For NRVO candidates: alias alloca to sret pointer.
+ *   3. Evaluate init expression (if any).
+ *   4. For struct types with constructor: call constructor.
+ *   5. For primitives: store init value.
+ *   6. For owner/pointer/link/view: store init value.
+ *   7. Emit expression temporaries cleanup.
+ *   8. Track variable for block-scoped cleanup.
+ */
 void implementation_generator::visit_variable_statement(variable_statement& var) {
     // Create the alloca at beginning of the function ...
     auto var_func = var.get_function();
@@ -850,6 +955,7 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     std::shared_ptr<k::model::type> var_type = var.get_type();
     llvm::Type *  type = _context->get_llvm_type(var_type);
 
+    // Step 1: Allocate stack space (alloca) for the variable
     // NRVO: if this variable is the NRVO candidate, we still create a normal alloca here.
     // After the function body is fully generated, visit_function will RAUW (Replace All
     // Uses With) this alloca with _sret_ptr and erase it — achieving zero-copy NRVO
@@ -857,6 +963,7 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     llvm::AllocaInst* alloca;
     bool is_nrvo_var = (_nrvo_candidate && var.shared_as<variable_statement>() == _nrvo_candidate && _sret_ptr);
 
+    // Step 2: For NRVO candidates: alias alloca to sret pointer
     alloca = build.CreateAlloca(type, nullptr, var.get_short_name());
     _context->_variables.insert({var.shared_as<variable_statement>(), alloca});
 
@@ -924,7 +1031,9 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
             {var.get_fq_name()});
     }
 
+    // Step 3: Evaluate init expression (if any)
     // Destroy any struct temporaries created during the init expression evaluation
+    // Step 7: Emit expression temporaries cleanup
     emit_expression_temporaries_cleanup();
 
 }

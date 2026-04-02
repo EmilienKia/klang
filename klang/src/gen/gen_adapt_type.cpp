@@ -32,12 +32,24 @@ namespace k::model::gen {
 // ── adapt_function_ref_type ──────────────────────────────────────────────────
 
 std::shared_ptr<expression>
+/**
+ * Adapt function reference types (frt → frt, ref<frt> → frt, etc.).
+ *
+ * Steps:
+ *   1. frt → frt with different ref_kind: cast_expression to reinterpret.
+ *   2. ref<frt> → frt: load_value_expression to dereference.
+ *   3. frt → ref<frt>: no direct conversion possible.
+ *
+ * @return The adapted expression, or nullptr if not a function reference case.
+ */
 type_reference_resolver::adapt_function_ref_type(
     std::shared_ptr<expression> expr,
     const std::shared_ptr<type>& type_src,
     const std::shared_ptr<type>& type_nc)
 {
+    // Step 1: frt → frt with different ref_kind: cast_expression to reinterpret
     // Case 1: target is a bare function_reference_type
+    // Step 2: ref<frt> → frt: load_value_expression to dereference
     if (auto tgt_frt = std::dynamic_pointer_cast<function_reference_type>(type_nc)) {
         if (std::dynamic_pointer_cast<function_reference_type>(type_src)) {
             // Source is already a bare frt — no load needed.
@@ -67,6 +79,7 @@ type_reference_resolver::adapt_function_ref_type(
                 ? std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype()
                 : type_src;
             if (std::dynamic_pointer_cast<function_reference_type>(type::remove_const(src_sub))) {
+                // Step 3: frt → ref<frt>: no direct conversion possible
                 return expr; // compatible frt ref
             }
         }
@@ -78,11 +91,21 @@ type_reference_resolver::adapt_function_ref_type(
 // ── adapt_from_pointer ───────────────────────────────────────────────────────
 
 std::shared_ptr<expression>
+/**
+ * Adapt when source is a pointer type (ptr<T> → ptr/lnk/view/ref).
+ *
+ * Steps:
+ *   1. ptr<T> → ptr<T>/lnk<T>: identity or const-widening, struct upcast if needed.
+ *   2. ptr<T> → ref<T>: dereference pointer to obtain reference to pointed object.
+ *
+ * @return The adapted expression, or nullptr if conversion is impossible.
+ */
 type_reference_resolver::adapt_from_pointer(
     std::shared_ptr<expression> expr,
     const std::shared_ptr<type>& type_src,
     const std::shared_ptr<type>& type_nc)
 {
+    // Step 1: ptr<T> → ptr<T>/lnk<T>: identity or const-widening, struct upcast if needed
     if (type::is_pointer(type_nc) || type::is_link(type_nc)) {
         if (type_nc == type_src) {
             // Pointers to same type, return the expression
@@ -109,6 +132,7 @@ type_reference_resolver::adapt_from_pointer(
         }
         return expr;
     } else {
+        // Step 2: ptr<T> → ref<T>: dereference pointer to obtain reference to pointed object
         // ptr<T> → ref<T>: borrow pointer target as reference (LLVM-level identical)
         if (type::is_reference(type_nc)) {
             auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
@@ -128,11 +152,21 @@ type_reference_resolver::adapt_from_pointer(
 // ── adapt_from_link ──────────────────────────────────────────────────────────
 
 std::shared_ptr<expression>
+/**
+ * Adapt when source is a link type (lnk<T> → lnk/ptr/view/ref).
+ *
+ * Steps:
+ *   1. lnk<T> → lnk<T>/ptr<T>/view<T>: cast with const-check and struct upcast.
+ *   2. lnk<T> → ref<T>: borrow link target as reference.
+ *
+ * @return The adapted expression, or nullptr if conversion is impossible.
+ */
 type_reference_resolver::adapt_from_link(
     std::shared_ptr<expression> expr,
     const std::shared_ptr<type>& type_src,
     const std::shared_ptr<type>& type_nc)
 {
+    // Step 1: lnk<T> → lnk<T>/ptr<T>/view<T>: cast with const-check and struct upcast
     if (type::is_link(type_nc) || type::is_pointer(type_nc) || type::is_view(type_nc)) {
         if (type_nc == type_src) {
             return expr;
@@ -158,6 +192,7 @@ type_reference_resolver::adapt_from_link(
         }
         return expr;
     } else {
+        // Step 2: lnk<T> → ref<T>: borrow link target as reference
         // lnk<T> → ref<T>: borrow link target as reference
         if (type::is_reference(type_nc)) {
             auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
@@ -176,11 +211,21 @@ type_reference_resolver::adapt_from_link(
 // ── adapt_from_view ──────────────────────────────────────────────────────────
 
 std::shared_ptr<expression>
+/**
+ * Adapt when source is a view type (view<T> → view/ptr/ref).
+ *
+ * Steps:
+ *   1. view<T> → view<T>/ptr<T>: cast with const-check and struct upcast.
+ *   2. view<T> → ref<T>: borrow view target as reference.
+ *
+ * @return The adapted expression, or nullptr if conversion is impossible.
+ */
 type_reference_resolver::adapt_from_view(
     std::shared_ptr<expression> expr,
     const std::shared_ptr<type>& type_src,
     const std::shared_ptr<type>& type_nc)
 {
+    // Step 1: view<T> → view<T>/ptr<T>: cast with const-check and struct upcast
     if (type::is_view(type_nc) || type::is_pointer(type_nc)) {
         if (type_nc == type_src) {
             return expr;
@@ -206,6 +251,7 @@ type_reference_resolver::adapt_from_view(
         }
         return expr;
     } else {
+        // Step 2: view<T> → ref<T>: borrow view target as reference
         // view<T> → ref<T>: borrow view target as reference
         if (type::is_reference(type_nc)) {
             auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
@@ -224,11 +270,23 @@ type_reference_resolver::adapt_from_view(
 // ── adapt_from_owner ─────────────────────────────────────────────────────────
 
 std::shared_ptr<expression>
+/**
+ * Adapt when source is an owner type (owner<T> → owner/ptr/lnk/view/ref).
+ *
+ * Steps:
+ *   1. owner<T> → owner<T>: identity.
+ *   2. owner<T> → ptr<T>/lnk<T>/view<T>: borrow as observer pointer/link/view.
+ *   3. owner<T> → ref<T>: borrow owned object as reference.
+ *   4. Struct upcast (owner<Derived> → ptr<Base>) where applicable.
+ *
+ * @return The adapted expression, or nullptr if conversion is impossible.
+ */
 type_reference_resolver::adapt_from_owner(
     std::shared_ptr<expression> expr,
     const std::shared_ptr<type>& type_src,
     const std::shared_ptr<type>& type_nc)
 {
+    // Step 1: owner<T> → owner<T>: identity
     auto src_sub = type_src->get_subtype();
     auto src_sub_nc = type::remove_const(src_sub);
     if (type::is_owner(type_nc)) {
@@ -266,6 +324,7 @@ type_reference_resolver::adapt_from_owner(
         }
         return {};
     }
+    // Step 2: owner<T> → ptr<T>/lnk<T>/view<T>: borrow as observer pointer/link/view
     // owner<T> → lnk<T> / view<T>: borrow as link or view (same LLVM representation)
     if (type::is_link(type_nc) || type::is_view(type_nc)) {
         auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
@@ -275,6 +334,7 @@ type_reference_resolver::adapt_from_owner(
             return cast;
         }
     }
+    // Step 3: owner<T> → ref<T>: borrow owned object as reference
     // owner<T> → ref<T>: borrow owned object as reference (same LLVM representation)
     if (type::is_reference(type_nc)) {
         auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
@@ -291,6 +351,18 @@ type_reference_resolver::adapt_from_owner(
 // ── adapt_from_drain ─────────────────────────────────────────────────────────
 
 std::shared_ptr<expression>
+/**
+ * Adapt when source is a drain type (drain<T> → drain/ref/lnk/view/ptr/value).
+ *
+ * Steps:
+ *   1. drain<T> → drain<T>: identity or struct upcast.
+ *   2. drain<T> → ref<T>: implicit borrow (drain can always be used as a reference).
+ *   3. drain<T> → link/view/ptr<T>: implicit borrow.
+ *   4. drain<T> → T: load through drain.
+ *   5. drain<T> → different primitive: load + cast.
+ *
+ * @return The adapted expression, or nullptr if conversion is impossible.
+ */
 type_reference_resolver::adapt_from_drain(
     std::shared_ptr<expression> expr,
     const std::shared_ptr<type>& type_src,
@@ -300,6 +372,7 @@ type_reference_resolver::adapt_from_drain(
     auto src_sub = drn->get_drained_type();
     auto src_sub_nc = type::remove_const(src_sub);
 
+    // Step 1: drain<T> → drain<T>: identity or struct upcast
     // drain<T> → drain<T>: identity
     if (type::is_drain(type_nc)) {
         auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
@@ -315,6 +388,7 @@ type_reference_resolver::adapt_from_drain(
         }
         return {};
     }
+    // Step 2: drain<T> → ref<T>: implicit borrow (drain can always be used as a reference)
     // drain<T> → ref<T>: implicit cast (drain is a superset of reference)
     if (type::is_reference(type_nc)) {
         auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
@@ -334,6 +408,7 @@ type_reference_resolver::adapt_from_drain(
         }
         return {};
     }
+    // Step 3: drain<T> → link/view/ptr<T>: implicit borrow
     // drain<T> → link<T>, view<T>, ptr<T>: implicit borrow
     if (type::is_link(type_nc) || type::is_view(type_nc) || type::is_pointer(type_nc)) {
         auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
@@ -344,12 +419,14 @@ type_reference_resolver::adapt_from_drain(
         }
         return {};
     }
+    // Step 4: drain<T> → T: load through drain
     // drain<T> → value T: load through drain (like ref → value)
     if (src_sub_nc == type_nc) {
         auto loaded = load_value_expression::make_shared(expr);
         loaded->set_type(src_sub_nc);
         return loaded;
     }
+    // Step 5: drain<T> → different primitive: load + cast
     // drain<primA> → primB: load first, then cast
     auto prim_drn_sub = std::dynamic_pointer_cast<primitive_type>(src_sub_nc);
     auto prim_drn_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
@@ -368,6 +445,17 @@ type_reference_resolver::adapt_from_drain(
 // ── adapt_from_ref_owner ─────────────────────────────────────────────────────
 
 std::shared_ptr<expression>
+/**
+ * Adapt ref<owner<T>> to owner/ptr/lnk/view/ref (owner borrow and move patterns).
+ *
+ * Steps:
+ *   1. ref<owner<T>> → owner<T>: owner_move_expression (ownership transfer).
+ *   2. ref<owner<T>> → ptr<T>/lnk<T>/view<T>: load owner, borrow as observer.
+ *   3. ref<owner<T>> → ref<T>: load owner pointer, borrow as reference.
+ *   4. Struct upcast variants for all of the above.
+ *
+ * @return The adapted expression, or nullptr if conversion is impossible.
+ */
 type_reference_resolver::adapt_from_ref_owner(
     std::shared_ptr<expression> expr,
     const std::shared_ptr<type>& type_src,
@@ -378,6 +466,7 @@ type_reference_resolver::adapt_from_ref_owner(
     auto inner_nc = type::remove_const(inner);
     auto own_sub_nc = type::remove_const(inner_nc->get_subtype());
 
+    // Step 1: ref<owner<T>> → owner<T>: owner_move_expression (ownership transfer)
     // ref<owner<T>> → owner<T>: move ownership (load + null source)
     if (type::is_owner(type_nc)) {
         auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
@@ -421,6 +510,7 @@ type_reference_resolver::adapt_from_ref_owner(
             return upcast;
         }
     }
+    // Step 2: ref<owner<T>> → ptr<T>/lnk<T>/view<T>: load owner, borrow as observer
     // ref<owner<T>> → lnk<T> / view<T>: load owner, borrow as link or view
     if (type::is_link(type_nc) || type::is_view(type_nc)) {
         auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
@@ -432,6 +522,7 @@ type_reference_resolver::adapt_from_ref_owner(
             return cast;
         }
     }
+    // Step 3: ref<owner<T>> → ref<T>: load owner pointer, borrow as reference
     // ref<owner<T>> → ref<T>: load owner pointer value, borrow as reference
     if (type::is_reference(type_nc)) {
         auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
@@ -450,12 +541,30 @@ type_reference_resolver::adapt_from_ref_owner(
 // ── adapt_from_reference ─────────────────────────────────────────────────────
 
 std::shared_ptr<expression>
+/**
+ * Adapt when source is a reference type (ref<T> → ref/value/lnk/view/owner + loads and casts).
+ *
+ * Steps:
+ *   1. ref<T> → ref<T>: identity, const-widening, struct upcast.
+ *   2. ref<T> → T: load_value_expression.
+ *   3. ref<T> → lnk<T>/view<T>: borrow as link or view.
+ *   4. ref<ptr/lnk/view<T>> → ptr/lnk/view<U>: unwrap ref, then delegate.
+ *   5. ref<drain<T>> → various: unwrap drain, then convert.
+ *   6. ref<Struct> → value Struct: load.
+ *   7. ref<enum> → enum or underlying primitive: load + enum conversion.
+ *   8. ref<primitive> → different primitive: load + widening/narrowing cast.
+ *   9. ref<Derived> → ref<Base>: struct upcast.
+ *   10. ref<T[N]> → ref<T[]>: sized array to unsized array widening.
+ *
+ * @return The adapted expression, or nullptr if conversion is impossible.
+ */
 type_reference_resolver::adapt_from_reference(
     std::shared_ptr<expression> expr,
     const std::shared_ptr<type>& type_src,
     const std::shared_ptr<type>& type_nc,
     const std::shared_ptr<type>& type_orig)
 {
+    // Step 1: ref<T> → ref<T>: identity, const-widening, struct upcast
     // ── ref<ptr/lnk/view<T>> → ptr/lnk/pin<Base>: load the stored pointer then upcast ──
     // ── ref<ptr/lnk/view<T>> → ref<T>: load the indirection value, use as reference ──
     if (!type::is_reference(type_nc)) {
@@ -489,6 +598,7 @@ type_reference_resolver::adapt_from_reference(
         }
     }
 
+    // Step 2: ref<T> → T: load_value_expression
     if (type::is_reference(type_nc)) {
         if (type_nc == type_src) {
             // Reference to same type, return the expression
@@ -583,6 +693,7 @@ type_reference_resolver::adapt_from_reference(
         loaded->set_type(ref_subtype);
         return adapt_type(loaded, type_nc);
     }
+    // Step 3: ref<T> → lnk<T>/view<T>: borrow as link or view
     // ref<T> → link<T> or ref<T> → view<T>: pass the address directly (LLVM ptr is compatible)
     if (type::is_link(type_nc) || type::is_view(type_nc)) {
         auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
@@ -624,10 +735,13 @@ type_reference_resolver::adapt_from_reference(
     // ref<indirection> → bool: load the pointer then compare to null.
     if (type::is_prim_bool(type_nc)) {
         if (type::is_pointer(ref_subtype) || type::is_link(ref_subtype) ||
+            // Step 4: ref<ptr/lnk/view<T>> → ptr/lnk/view<U>: unwrap ref, then delegate
             type::is_view(ref_subtype) || type::is_owner(ref_subtype)) {
+            // Step 6: ref<Struct> → value Struct: load
             auto loaded = adapt_reference_load_value(expr);
             if (!loaded) return {};
             auto bool_type = _context->from_type(primitive_type::BOOL);
+            // Step 8: ref<primitive> → different primitive: load + widening/narrowing cast
             auto cast = cast_expression::make_shared(loaded, bool_type);
             cast->set_type(bool_type);
             return cast;
@@ -640,10 +754,21 @@ type_reference_resolver::adapt_from_reference(
 // ── adapt_enum_type ──────────────────────────────────────────────────────────
 
 std::shared_ptr<expression>
+/**
+ * Adapt enum conversions (enum ↔ enum, enum ↔ primitive).
+ *
+ * Steps:
+ *   1. enum → same enum: identity.
+ *   2. enum → derived enum (upcast): cast_expression.
+ *   3. enum → underlying primitive or vice versa: cast_expression.
+ *
+ * @return The adapted expression, or nullptr if not an enum case.
+ */
 type_reference_resolver::adapt_enum_type(
     std::shared_ptr<expression> expr,
     const std::shared_ptr<type>& type_nc)
 {
+    // Step 1: enum → same enum: identity
     auto enum_src = std::dynamic_pointer_cast<enum_type>(type::remove_const(expr->get_type()));
     auto enum_tgt = std::dynamic_pointer_cast<enum_type>(type_nc);
 
@@ -652,6 +777,7 @@ type_reference_resolver::adapt_enum_type(
         return expr;
     }
 
+    // Step 2: enum → derived enum (upcast): cast_expression
     // enum → enum (different enums): allowed with warning (both primitive-backed)
     if (enum_src && enum_tgt && enum_src->get_enumeration() != enum_tgt->get_enumeration()) {
         // Implicit conversion between different enum types — emit a warning
@@ -661,6 +787,7 @@ type_reference_resolver::adapt_enum_type(
         return cast;
     }
 
+    // Step 3: enum → underlying primitive or vice versa: cast_expression
     // enum → primitive int: implicit (use underlying type)
     if (enum_src && !enum_tgt) {
         auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
@@ -696,6 +823,16 @@ type_reference_resolver::adapt_enum_type(
 // ── adapt_primitive_or_struct_type ───────────────────────────────────────────
 
 std::shared_ptr<expression>
+/**
+ * Adapt primitive-to-primitive or struct identity conversions (terminal fallback).
+ *
+ * Steps:
+ *   1. Struct identity: same struct type → return as-is.
+ *   2. Struct upcast: Derived → Base (value) → cast_expression.
+ *   3. Same primitive: return as-is.
+ *   4. Different primitives: insert cast_expression (widening or narrowing).
+ *   5. 1-arg constructor: construct target type from source via CAST_CONSTRUCT.
+ */
 type_reference_resolver::adapt_primitive_or_struct_type(
     std::shared_ptr<expression> expr,
     const std::shared_ptr<type>& type_nc)
@@ -703,6 +840,7 @@ type_reference_resolver::adapt_primitive_or_struct_type(
     auto prim_src = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr->get_type()));
     auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
 
+    // Step 1: Struct identity: same struct type → return as-is
     if (!prim_src || !prim_tgt) {
         // For non-primitive (struct/class) value types: accept if they are the same type object.
         auto src_nc = type::remove_const(expr->get_type());
@@ -716,10 +854,12 @@ type_reference_resolver::adapt_primitive_or_struct_type(
         return {};
     }
 
+    // Step 2: Struct upcast: Derived → Base (value) → cast_expression
     if (*prim_src == *prim_tgt) {
         return expr;
     }
 
+    // Step 3: Same primitive: return as-is
     auto cast = cast_expression::make_shared(expr, prim_tgt);
     cast->set_type(prim_tgt);
     return cast;

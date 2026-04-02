@@ -204,6 +204,18 @@ collect_member_operators_from_hierarchy(
  * on the right operand to select the best match among multiple candidates.
  */
 std::pair<std::shared_ptr<function>, std::shared_ptr<expression>>
+/**
+ * Resolve a binary operator overload for an aggregate type using cast-weight scoring.
+ *
+ * Steps:
+ *   1. Collect member operator candidates from the aggregate.
+ *   2. Collect non-member operator candidates from enclosing scopes.
+ *   3. Score each candidate by cast_weight on the right operand (and left for non-member).
+ *   4. Prefer member operators over non-member when scores are equal.
+ *   5. Filter by const-this if the left operand is const.
+ *
+ * @return {best_func, adapted_right} or {nullptr, nullptr} if no viable match.
+ */
 type_reference_resolver::resolve_binary_operator_overload(
     const binary_expression& expr,
     const std::shared_ptr<aggregate>& left_agg,
@@ -214,6 +226,7 @@ type_reference_resolver::resolve_binary_operator_overload(
     std::string op_name = get_binary_operator_name(expr);
     if (op_name.empty()) return {nullptr, nullptr};
 
+    // Step 1: Collect member operator candidates from the aggregate
     // Collect all candidate functions: member first (with inheritance), then non-member.
     // collect_member_operators_from_hierarchy implements C++-style name hiding: if the left
     // aggregate itself declares any operator with op_name, only those are returned;
@@ -275,6 +288,7 @@ type_reference_resolver::resolve_binary_operator_overload(
         }
     }
 
+    // Step 2: Collect non-member operator candidates from enclosing scopes
     // Score non-member operator functions: parameter list has 2 params (left, right)
     // Must validate BOTH left (params[0]) and right (params[1]) parameter compatibility.
     for (auto& func : non_member_funcs) {
@@ -291,14 +305,17 @@ type_reference_resolver::resolve_binary_operator_overload(
         auto wr = compute_cast_weight(right_expr, right_param_type);
         if (wr == CAST_IMPOSSIBLE) continue;
 
+        // Step 3: Score each candidate by cast_weight on the right operand (and left for non-member)
         // Overall score = worst of left and right
         cast_weight w = std::max(wl, wr);
         auto adapted = adapt_type(right_expr, right_param_type);
         valid.push_back({func, w, false, adapted ? adapted : right_expr});
     }
 
+    // Step 4: Prefer member operators over non-member when scores are equal
     if (valid.empty()) return {nullptr, nullptr};
 
+    // Step 5: Filter by const-this if the left operand is const
     // Best = lowest score; among equal scores, prefer member over non-member
     cast_weight best_score = CAST_IMPOSSIBLE;
     bool best_is_member = false;
@@ -345,6 +362,17 @@ type_reference_resolver::resolve_binary_operator_overload(
  * to select the best match among multiple candidates.
  */
 std::shared_ptr<function>
+/**
+ * Resolve a unary operator overload for an aggregate type using cast-weight scoring.
+ *
+ * Steps:
+ *   1. Collect member operator candidates from the aggregate.
+ *   2. Collect non-member operator candidates from enclosing scopes.
+ *   3. Score each candidate by cast_weight on the operand.
+ *   4. Prefer member operators over non-member when scores are equal.
+ *
+ * @return The best matching function, or nullptr if no viable match.
+ */
 type_reference_resolver::resolve_unary_operator_overload(
     const unary_expression& expr,
     const std::shared_ptr<aggregate>& operand_agg,
@@ -354,6 +382,7 @@ type_reference_resolver::resolve_unary_operator_overload(
     std::string op_name = get_unary_operator_name(expr);
     if (op_name.empty()) return nullptr;
 
+    // Step 1: Collect member operator candidates from the aggregate
     // Collect all candidate functions: member first (with inheritance), then non-member.
     std::vector<std::shared_ptr<function>> member_funcs =
         collect_member_operators_from_hierarchy(operand_agg, op_name);
@@ -405,11 +434,13 @@ type_reference_resolver::resolve_unary_operator_overload(
         valid.push_back({func, CAST_NONE, true});
     }
 
+    // Step 2: Collect non-member operator candidates from enclosing scopes
     // Score non-member operator functions: parameter list has 1 param (the operand)
     for (auto& func : non_member_funcs) {
         const auto& params = func->parameters();
         if (params.size() != 1) continue; // Unary non-member operator should have exactly 1 param
 
+        // Step 3: Score each candidate by cast_weight on the operand
         auto operand_param_type = params[0]->get_type();
         auto w = compute_cast_weight(operand_expr, operand_param_type);
         if (w != CAST_IMPOSSIBLE) {
@@ -417,6 +448,7 @@ type_reference_resolver::resolve_unary_operator_overload(
         }
     }
 
+    // Step 4: Prefer member operators over non-member when scores are equal
     if (valid.empty()) return nullptr;
 
     // Best = lowest score; among equal scores, prefer member over non-member
@@ -561,6 +593,19 @@ virtual_dispatch_info compute_operator_dispatch_info(
 // Operator overload code generation helpers
 //
 
+/**
+ * Generate LLVM IR for a binary operator overload function call.
+ *
+ * Steps:
+ *   1. Evaluate left and right operand expressions.
+ *   2. Resolve the operator function (member or non-member).
+ *   3. For member operators: load 'this' from left operand, call with right as arg.
+ *   4. For non-member operators: call with both operands as args.
+ *   5. Handle virtual dispatch if the operator function is virtual.
+ *   6. Handle sret return for aggregate return types.
+ *
+ * @return true if an overload was handled, false if not an overload.
+ */
 bool implementation_generator::generate_binary_operator_overload(binary_expression& expr) {
     if (!expr.has_operator_overload()) return false;
 
@@ -663,6 +708,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
         }
         args.push_back(_value);
 
+        // Step 1: Evaluate left and right operand expressions
         // Right operand is the argument
         expr.right()->accept(*this);
         if (!_value) {
@@ -679,6 +725,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
         }
         args.push_back(_value);
 
+        // Step 2: Resolve the operator function (member or non-member)
         expr.right()->accept(*this);
         if (!_value) {
             throw_internal_error(0x0064, expr.first_lexeme(),
@@ -760,6 +807,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
             {op_func->get_short_name()});
     }
 
+    // Step 3: For member operators: load 'this' from left operand, call with right as arg
     // Direct call
     bool op_uses_sret = llvm_func->getReturnType()->isVoidTy() && op_needs_sret();
     if (op_uses_sret) {
@@ -773,9 +821,23 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
     return true;
 }
 
+/**
+ * Generate LLVM IR for a unary operator overload function call.
+ *
+ * Steps:
+ *   1. Evaluate the operand expression.
+ *   2. Resolve the operator function (member or non-member).
+ *   3. For member operators: load 'this' from operand, call with no additional args.
+ *   4. For non-member operators: call with operand as arg.
+ *   5. Handle virtual dispatch and sret return.
+ *
+ * @return true if an overload was handled, false if not an overload.
+ */
 bool implementation_generator::generate_unary_operator_overload(unary_expression& expr) {
+    // Step 1: Evaluate the operand expression
     if (!expr.has_operator_overload()) return false;
 
+    // Step 2: Resolve the operator function (member or non-member)
     auto op_func = expr.get_operator_func();
 
     // Find the LLVM function (may be null for abstract or external virtual operators)
@@ -837,9 +899,11 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
         return sret_tmp;
     };
 
+    // Step 3: For member operators: load 'this' from operand, call with no additional args
     // Build arguments
     std::vector<llvm::Value*> args;
 
+    // Step 4: For non-member operators: call with operand as arg
     if (op_func->is_member()) {
         // Member operator: 'this' is the operand (a reference/pointer to the struct)
         expr.sub_expr()->accept(*this);
@@ -858,6 +922,7 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
         args.push_back(_value);
     }
 
+    // Step 5: Handle virtual dispatch and sret return
     // Check for virtual dispatch
     if (expr.has_operator_dispatch_info()) {
         auto& di = expr.get_operator_dispatch_info();
@@ -939,6 +1004,17 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
     return true;
 }
 
+/**
+ * Generate LLVM IR for a casting operator overload function call.
+ *
+ * Steps:
+ *   1. Evaluate the source expression.
+ *   2. Resolve the operator_cast function on the source aggregate type.
+ *   3. Call the casting operator with 'this' pointer.
+ *   4. Handle virtual dispatch and sret return.
+ *
+ * @return true if an overload was handled, false if not an overload.
+ */
 bool implementation_generator::generate_cast_operator_overload(cast_expression& expr) {
     if (!expr.has_operator_overload()) return false;
 
@@ -1021,9 +1097,11 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
         return sret_dest;
     };
 
+    // Step 1: Evaluate the source expression
     // Build arguments: only 'this' (the source object being cast)
     std::vector<llvm::Value*> args;
 
+    // Step 2: Resolve the operator_cast function on the source aggregate type
     // Member casting operator: 'this' is the source operand (a reference/pointer to the struct)
     expr.sub_expr()->accept(*this);
     if (!_value) {
@@ -1032,6 +1110,7 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
     }
     args.push_back(_value);
 
+    // Step 3: Call the casting operator with 'this' pointer
     // Check for virtual dispatch
     if (expr.has_operator_dispatch_info()) {
         auto& di = expr.get_operator_dispatch_info();
@@ -1100,6 +1179,7 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
             {op_func->get_short_name()});
     }
 
+    // Step 4: Handle virtual dispatch and sret return
     // Direct call
     bool op_uses_sret = llvm_func->getReturnType()->isVoidTy() && op_needs_sret();
     if (op_uses_sret) {
@@ -1614,6 +1694,18 @@ void implementation_generator::visit_right_shift_expression(right_shift_expressi
 // Assignation expression
 //
 
+/**
+ * Resolve an assignment expression (=, +=, -=, etc.): validate target, type-check operands.
+ *
+ * Steps:
+ *   1. Resolve left and right sub-expressions.
+ *   2. Validate that the left operand is assignable (reference, not const).
+ *   3. For struct types: check for operator= overload or direct copy.
+ *   4. For owner types: validate move semantics (right must be owner or new).
+ *   5. For pointer/link/view: validate type compatibility and const-correctness.
+ *   6. For primitives: adapt right operand type to match left.
+ *   7. Set result type.
+ */
 void type_reference_resolver::visit_assignation_expression(assignation_expression &expr) {
     // TODO Rework conversions and promotions and mutualize with symbol_type_resolver::process_arithmetic(...)
     visit_binary_expression(expr);
@@ -1644,6 +1736,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     }
     // ─────────────────────────────────────────────────────────────────────────
 
+    // Step 1: Resolve left and right sub-expressions
     if(type::is_reference(target_type)) {
         // Left hand is ref-to-ref: assignment acts on the underlying object.
         left = load_value_expression::make_shared(left);
@@ -2060,6 +2153,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     // Type of an assignation is a reference
     expr.set_type(ref_target_type);
 
+    // Step 2: Validate that the left operand is assignable (reference, not const)
     // If source type is reference, deref it
     if(type::is_reference(source_type)) {
         // Source type must be de-referenced
@@ -2069,6 +2163,8 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         expr.assign_right(right);
     }
 
+    // Step 3: For struct types: check for operator= overload or direct copy
+    // Step 6: For primitives: adapt right operand type to match left
     // TODO Promote to largest target_type instead to align to left operand.
     auto cast = adapt_type(right, target_type);
     if(!cast) {
@@ -2090,9 +2186,20 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
 // Simple assignment expression (=)
 //
 
+/**
+ * Generate LLVM IR for simple assignment (=).
+ *
+ * Steps:
+ *   1. Evaluate left and right operands.
+ *   2. For operator= overload: delegate to generate_binary_operator_overload.
+ *   3. For owner assignment: emit owner_move + null the source.
+ *   4. For struct copy: emit memcpy or copy constructor call.
+ *   5. For primitives/pointers: emit store instruction.
+ */
 void implementation_generator::visit_simple_assignation_expression(simple_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
+    // Step 1: Evaluate left and right operands
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         throw_internal_error(0x001B, expr.first_lexeme(),
@@ -2100,6 +2207,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             "this indicates a code-generation bug in an operand expression");
     }
 
+    // Step 2: For operator= overload: delegate to generate_binary_operator_overload
     // left is a pointer to the storage.
     // Determine what the target type really is after one level of ref-unwrap.
     auto expr_left_type = expr.left()->get_type();
@@ -2176,6 +2284,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         auto& llvm_ctx = _builder->getContext();
         auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
+        // Step 3: For owner assignment: emit owner_move + null the source
         // If non-null, destroy + free the existing object (don't null-out, we're about to store the new value)
         auto own_type = std::dynamic_pointer_cast<owner_type>(target_type);
         emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
@@ -2198,6 +2307,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
     // Scalar / pointer assignment (existing behaviour)
     // ------------------------------------------------------------------
 
+    // Step 4: For struct copy: emit memcpy or copy constructor call
     // Link rebind from nullable source: emit null-check before store.
     // (The resolver emits warning 0x0072 at compile-time; we add the runtime guard here.)
     if (target_type && type::is_link(target_type)) {
@@ -2217,6 +2327,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         }
     }
 
+    // Step 5: For primitives/pointers: emit store instruction
     _value = right;
     _value = _builder->CreateStore(_value, left);
     _value = left;
@@ -3229,7 +3340,18 @@ void implementation_generator::visit_bitwise_not_expression(bitwise_not_expressi
 // Logical binary expression
 //
 
+/**
+ * Resolve a logical binary expression (&& or ||): validate both operands are boolean
+ * or can be converted to boolean.
+ *
+ * Steps:
+ *   1. Resolve both operands.
+ *   2. For struct types: look for operator overload.
+ *   3. For non-bool types: insert implicit cast to bool.
+ *   4. Set result type to bool.
+ */
 void type_reference_resolver::visit_logical_binary_expression(logical_binary_expression& expr) {
+    // Step 1: Resolve both operands
     visit_binary_expression(expr);
 
     auto left = expr.left();
@@ -3252,6 +3374,7 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
         return false;
     };
 
+    // Step 2: For struct types: look for operator overload
     // ── Operator overload for aggregate types (before reference stripping) ──
     {
         auto check_left = left_type;
@@ -3336,6 +3459,7 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
 
     auto bool_type = _context->from_type(primitive_type::BOOL);
 
+    // Step 3: For non-bool types: insert implicit cast to bool
     auto cast_left = adapt_type(left, bool_type);
     if(!cast_left) {
         throw_error(0x0025, expr.first_lexeme(),
@@ -3349,6 +3473,7 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
         // Compatible type, no need to cast.
     }
 
+    // Step 4: Set result type to bool
     auto cast_right = adapt_type(right, bool_type);
     if(!cast_right) {
         throw_error(0x0026, expr.first_lexeme(),
@@ -3481,7 +3606,17 @@ void implementation_generator::visit_logical_or_expression(logical_or_expression
 // Logical not expression (!)
 //
 
+/**
+ * Resolve a logical not expression (!expr): validate operand is boolean or convertible.
+ *
+ * Steps:
+ *   1. Resolve the operand.
+ *   2. For struct types: look for operator! overload.
+ *   3. For non-bool types: insert implicit cast to bool.
+ *   4. Set result type to bool.
+ */
 void type_reference_resolver::visit_logical_not_expression(logical_not_expression& expr) {
+    // Step 1: Resolve the operand
     visit_unary_expression(expr);
 
     auto& sub = expr.sub_expr();
@@ -3496,6 +3631,7 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
         }
     }
 
+    // Step 2: For struct types: look for operator! overload
     // ── Operator overload for aggregate types ──
     {
         auto check_type = type::remove_const(type);
@@ -3549,6 +3685,7 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
             {type ? type->to_string() : "?"});
     }
 
+    // Step 3: For non-bool types: insert implicit cast to bool
     static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto cast = adapt_type(sub, bool_type);
     if(!cast) {
@@ -3563,6 +3700,7 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
         // Compatible type, no need to cast.
     }
 
+    // Step 4: Set result type to bool
     // For primitive type, logical is always returning boolean
     expr.set_type(bool_type);
 }
@@ -3599,7 +3737,19 @@ void implementation_generator::visit_logical_not_expression(logical_not_expressi
 //
 // Comparison expressions
 //
+/**
+ * Resolve a comparison expression (==, !=, <, >, <=, >=): validate operand types,
+ * check for operator overloads on struct types.
+ *
+ * Steps:
+ *   1. Resolve both operands.
+ *   2. If either operand is a struct type: look for operator overload.
+ *   3. For pointers: validate pointed-type compatibility.
+ *   4. For primitives: adapt types for comparison.
+ *   5. Set result type to bool.
+ */
 void type_reference_resolver::visit_comparison_expression(comparison_expression& expr) {
+    // Step 1: Resolve both operands
     visit_binary_expression(expr);
 
     auto& left = expr.left();
@@ -3616,6 +3766,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
             || type::is_owner(t)   || type::is_null(t);
     };
 
+    // Step 2: If either operand is a struct type: look for operator overload
     // Strip one level of reference to get the underlying type.
     // For ref<ptr<T>>, ref<link<T>>, ref<pin<T>>, ref<owner<T>>:
     //   load the stored pointer/link/pin/owner so we can compare addresses.
@@ -3630,6 +3781,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         }
     };
 
+    // Step 3: For pointers: validate pointed-type compatibility
     unwrap_ref_indirection(left, left_type);
     unwrap_ref_indirection(right, right_type);
 
@@ -3783,6 +3935,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         adapted_right = adapt_type(right, left_prim_type);
     }
 
+    // Step 4: For primitives: adapt types for comparison
     if(!adapted_left || !adapted_right) {
         throw_error(0x002D, expr.first_lexeme(),
             "Incompatible types in comparison: "
@@ -3799,6 +3952,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         expr.assign_right(adapted_right);
     }
 
+    // Step 5: Set result type to bool
     // For primitive type, logical is always returning boolean
     static auto bool_type = _context->from_type(primitive_type::BOOL);
     expr.set_type(bool_type);

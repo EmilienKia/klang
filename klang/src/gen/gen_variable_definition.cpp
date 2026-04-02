@@ -60,6 +60,12 @@ void type_reference_resolver::var_init_context::assign_single_init_arg(std::shar
 
 // ── Shared utility helpers ────────────────────────────────────────────────────
 
+/**
+ * Extract the inner (pointed/linked/viewed/owned) type from any indirection wrapper,
+ * stripping an outer reference layer first if present.
+ *
+ * Returns nullptr if the type is not an indirection (pointer, link, view, owner, or reference).
+ */
 std::shared_ptr<type>
 type_reference_resolver::extract_indirection_subtype(const std::shared_ptr<type>& arg_type) {
     auto effective = arg_type;
@@ -80,6 +86,26 @@ type_reference_resolver::extract_indirection_subtype(const std::shared_ptr<type>
     return nullptr;
 }
 
+/**
+ * Check whether two (const-stripped) subtypes are compatible through an inheritance relationship,
+ * and if so, insert the appropriate cast expression into the AST via the assign_arg callback.
+ *
+ * Preconditions:
+ *   - src_sub_nc and tgt_sub_nc are non-null, const-stripped types (the inner type of an indirection).
+ *   - arg is the original initialiser expression.
+ *   - assign_arg is a callback that replaces arg in the parent AST node with the cast expression.
+ *
+ * Postconditions:
+ *   - Returns true if the types are equal, or if a cast (upcast or downcast) was inserted.
+ *   - Returns false if the types are incompatible (no inheritance relationship).
+ *
+ * Steps:
+ *   1. If types are already equal, return true immediately (no cast needed).
+ *   2. If source derives from target (upcast): insert a static cast_expression.
+ *   3. If target derives from source and has RTTI (downcast): insert a dynamic cast_expression
+ *      with the given null_is_fatal policy.
+ *   4. Otherwise return false (incompatible types).
+ */
 bool type_reference_resolver::check_and_insert_inheritance_cast(
     const std::shared_ptr<type>& src_sub_nc,
     const std::shared_ptr<type>& tgt_sub_nc,
@@ -88,11 +114,13 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
     std::function<void(std::shared_ptr<expression>)> assign_arg,
     bool null_is_fatal)
 {
+    // Step 1: If types are already equal, return true immediately (no cast needed)
     if (type::are_equal(src_sub_nc, tgt_sub_nc)) return true;
 
     auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
     auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
 
+    // Step 2: If source derives from target (upcast): insert a static cast_expression
     // Static upcast: Derived -> Base
     if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
         src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
@@ -102,6 +130,7 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
         return true;
     }
 
+    // Step 3: If target derives from source and has RTTI (downcast)
     // Dynamic downcast: Base -> Derived (requires RTTI)
     if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
         tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
@@ -111,17 +140,45 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
         return true;
     }
 
+    // Step 4: Otherwise return false (incompatible types)
     return false;  // incompatible
 }
 
 
 // ── resolve_variable_type (phase 1) ──────────────────────────────────────────
 
+/**
+ * Resolve the type of a variable from its unresolved form to a concrete resolved type.
+ *
+ * Preconditions:
+ *   - var has a non-null type that may be unresolved (unresolved_type, unresolved_function_ref_type,
+ *     or a wrapper like pointer/link/view/owner/reference around an unresolved inner type).
+ *   - var_lexeme is the source location for error reporting.
+ *
+ * Postconditions:
+ *   - On success, var.get_type() returns a fully resolved type.
+ *   - On failure, a diagnostic error is thrown and var's type is unchanged.
+ *
+ * Steps:
+ *   1. If the type is already resolved, return immediately (no-op).
+ *   2. Handle unresolved_function_ref_type: delegate to resolve_function_ref_type.
+ *   3. Handle owner<Unresolved>: resolve the inner type, strip ref-array wrapping, rebuild owner.
+ *   4. Handle wrapper types (pointer/link/view/reference/drain) around an unresolved inner type:
+ *      resolve the inner type then rewrap with the corresponding indirection.
+ *   5. Handle plain unresolved_type via a 4-step fallback chain:
+ *      a. Qualified name resolution from root namespace (resolve_type_by_name).
+ *      b. Primitive type lookup via context->from_string.
+ *      c. Imported aggregate lookup (get_or_create_imported_aggregate).
+ *      d. Imported enum lookup (get_or_create_imported_enum).
+ *   6. If all resolution attempts fail, throw a diagnostic error.
+ */
 void type_reference_resolver::resolve_variable_type(
     variable_definition& var, const lex::opt_any_lexeme& var_lexeme)
 {
+    // Step 1: If the type is already resolved, return immediately (no-op)
     if (type::is_resolved(var.get_type())) return;
 
+    // Step 2: Handle unresolved_function_ref_type: delegate to resolve_function_ref_type
     // Handle unresolved_function_ref_type (function pointer/pin/link type)
     if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var.get_type())) {
         const element* var_elem = dynamic_cast<const element*>(&var);
@@ -142,6 +199,7 @@ void type_reference_resolver::resolve_variable_type(
         return;
     }
 
+    // Step 3: Handle owner<Unresolved>: resolve the inner type, strip ref-array wrapping, rebuild owner
     // owner<UnresolvedType> — resolve the inner type then rebuild the owner wrapper
     if (auto own_type = std::dynamic_pointer_cast<owner_type>(var.get_type())) {
         auto inner = own_type->get_subtype();
@@ -162,6 +220,7 @@ void type_reference_resolver::resolve_variable_type(
         return;
     }
 
+    // Step 4: Handle wrapper types (pointer/link/view/reference/drain) around an unresolved inner type
     auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
     if (!unres_type) {
         // The type is not resolved but is not a plain unresolved_type either.
@@ -201,6 +260,8 @@ void type_reference_resolver::resolve_variable_type(
         return;
     }
 
+    // Step 5: Handle plain unresolved_type via a 4-step fallback chain:
+    // Step 5a: Qualified name resolution from root namespace (resolve_type_by_name)
     // Plain unresolved_type: qualified name resolution
     std::shared_ptr<type> resolved;
     if (unres_type->type_id().has_root_prefix()) {
@@ -213,11 +274,13 @@ void type_reference_resolver::resolve_variable_type(
         }
     }
     if (!resolved || !type::is_resolved(resolved)) {
+        // Step 5b: Primitive type lookup via context->from_string
         // Fall back to context->from_string (handles primitive types by string)
         resolved = _context->from_string(unres_type->type_id());
     }
     if (!resolved || !type::is_resolved(resolved)) {
         // Fall back to imported aggregates
+        // Step 5c: Imported aggregate lookup (get_or_create_imported_aggregate)
         auto imported_agg = _unit.get_or_create_imported_aggregate(
             unres_type->type_id(), _context);
         if (imported_agg && imported_agg->get_struct_type()) {
@@ -226,6 +289,7 @@ void type_reference_resolver::resolve_variable_type(
     }
     if (!resolved || !type::is_resolved(resolved)) {
         // Fall back to imported enums
+        // Step 5d: Imported enum lookup (get_or_create_imported_enum)
         auto imported_en = _unit.get_or_create_imported_enum(
             unres_type->type_id(), _context);
         if (imported_en && imported_en->get_enum_type()) {
@@ -233,6 +297,7 @@ void type_reference_resolver::resolve_variable_type(
         }
     }
     if (!resolved || !type::is_resolved(resolved)) {
+        // Step 6: If all resolution attempts fail, throw a diagnostic error
         throw_error(0x0005, var_lexeme,
             "Unknown type '{}' for variable '{}': no type with this name could be found in scope",
             {unres_type->type_id().to_string(), var.get_fq_name()});
@@ -244,7 +309,26 @@ void type_reference_resolver::resolve_variable_type(
 
 // ── Per-type-category validation helpers ──────────────────────────────────────
 
+/**
+ * Validate the initialisation of a variable with a primitive type (int, float, bool, etc.).
+ *
+ * Preconditions:
+ *   - ctx.var has a resolved primitive type.
+ *   - ctx.init_expr may be null (no explicit init) or contain one or more arguments.
+ *
+ * Postconditions:
+ *   - If no init expression: accepted (zero-filled by default).
+ *   - If a single init expression is provided, it is adapted (cast-inserted if needed) to match
+ *     the variable's type; the init_expr argument is updated in place.
+ *   - If multiple init expressions are provided, a diagnostic error is thrown.
+ *
+ * Steps:
+ *   1. No init → accept (zero-init).
+ *   2. Multiple init args → error.
+ *   3. Single init arg → call adapt_type to insert implicit cast if needed.
+ */
 void type_reference_resolver::validate_primitive_variable(var_init_context& ctx) {
+    // Step 1: No init → accept (zero-init)
     if (!ctx.init_expr || ctx.init_expr->empty()) {
         // If no explicit initialization, let's have 0-filled initialization:
     } else if (ctx.init_expr->size() > 1) {
@@ -260,6 +344,7 @@ void type_reference_resolver::validate_primitive_variable(var_init_context& ctx)
             // TODO throw_error(0x0004, ...)
         } else if (cast != expr) {
             // Casted, assign casted expression as return expr.
+            // Step 3: Single init arg → call adapt_type to insert implicit cast if needed
             ctx.init_expr->assign_argument(0, cast);
         } else {
             // Compatible type, no need to cast.
@@ -273,9 +358,32 @@ void type_reference_resolver::validate_primitive_variable(var_init_context& ctx)
 }
 
 
+/**
+ * Validate the initialisation of a variable with a struct (class/struct) type, resolving
+ * constructor calls, direct copies and designated initialisers.
+ *
+ * Preconditions:
+ *   - ctx.var has a resolved struct_type.
+ *   - ctx.init_expr_base / ctx.init_expr hold the raw initialisation expressions from the AST.
+ *
+ * Postconditions:
+ *   - On success, ctx.var.get_var_constructor() is set (or null for a direct aggregate copy),
+ *     and init_expr arguments are adapted to match the selected constructor signature.
+ *   - On failure, a diagnostic error is thrown.
+ *
+ * Steps:
+ *   1. Check for designated struct init (delegated to visit_designated_struct_init_expression).
+ *   2. For inner (non-static nested) structs: auto-prepend 'this' as __parent__ argument
+ *      when the variable is declared inside a method of the enclosing struct.
+ *   3. Detect direct struct copy (single arg of same struct type, by value or by ref):
+ *      set null constructor to signal aggregate store in impl_gen.
+ *   4. Otherwise, find the best matching constructor via overload resolution
+ *      (get_best_matching_constructor), check visibility, and set it on the variable.
+ */
 void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
     auto st_type = std::dynamic_pointer_cast<struct_type>(ctx.var.get_type());
 
+    // Step 1: Check for designated struct init (delegated to visit_designated_struct_init_expression)
     // Check for designated struct init first
     auto desig_init = std::dynamic_pointer_cast<designated_struct_init_expression>(ctx.init_expr_base);
     if (desig_init) {
@@ -289,6 +397,7 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
     std::vector<std::shared_ptr<expression>> ctor_args =
         ctx.init_expr ? ctx.init_expr->arguments() : std::vector<std::shared_ptr<expression>>{};
 
+    // Step 2: For inner (non-static nested) structs
     // For non-static inner structs: the constructor's first parameter is __parent__.
     // If we are inside a method of the direct enclosing struct, auto-prepend 'this'.
     if (struct_model && struct_model->is_inner()) {
@@ -328,6 +437,7 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
         }
     }
 
+    // Step 3: Detect direct struct copy (single arg of same struct type, by value or by ref)
     // Direct struct copy: if single arg has the same struct type (by value or by ref),
     // allow direct aggregate copy without a constructor.
     bool handled_as_direct_copy = false;
@@ -357,6 +467,7 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
         }
     }
 
+    // Step 4: Otherwise, find the best matching constructor via overload resolution (get_best_matching_construc...
     if (!handled_as_direct_copy) {
         auto [best_constructor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
         if (!best_constructor) {
@@ -379,15 +490,40 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
 }
 
 
+/**
+ * Validate the initialisation of a reference variable (T&), including the special case of
+ * references to sized arrays (T[N]&).
+ *
+ * Preconditions:
+ *   - ctx.var has a resolved reference_type.
+ *   - ctx.init_expr holds the raw initialisation expression(s).
+ *
+ * Postconditions:
+ *   - On success, the initialisation expression is verified to be a compatible lvalue reference.
+ *     If the referenced types are related by inheritance, a cast expression is inserted.
+ *   - On failure, a diagnostic error is thrown.
+ *
+ * Steps:
+ *   Case A — ref to sized array (T[N]&):
+ *     1. Require exactly one initialiser.
+ *     2. The initialiser must be a reference to a sized array.
+ *     3. Element types must match exactly.
+ *   Case B — plain reference (T&):
+ *     1. Initialisation is mandatory (references cannot be left unbound).
+ *     2. Only one initialiser expression is allowed.
+ *     3. The initialiser must be a reference (lvalue), not a bare value.
+ *     4. Type compatibility check: exact match or inheritance cast (upcast/downcast).
+ */
 void type_reference_resolver::validate_reference_variable(var_init_context& ctx) {
     auto ref_var_type = std::dynamic_pointer_cast<reference_type>(ctx.var.get_type());
     auto ref_sub = ref_var_type->get_subtype();
 
     // ------------------------------------------------------------------
-    // Case A: ref to sized array, i.e.  int[N]&
+    // Case A: ref to sized array (T[N]&)
     // ------------------------------------------------------------------
     if (type::is_sized_array(ref_sub)) {
         auto dest_arr = std::dynamic_pointer_cast<sized_array_type>(ref_sub);
+        // Case A, step 1: Require exactly one initialiser
         if (!ctx.init_expr || ctx.init_expr->empty()) {
             throw_error(0x4101, ctx.var_lexeme,
                 "Array reference variable '{}' of type '{}' must be initialised at its declaration; "
@@ -405,6 +541,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
         }
         auto arg = ctx.init_expr->argument(0);
         auto arg_type = arg ? arg->get_type() : nullptr;
+        // Case A, step 2: The initialiser must be a reference to a sized array
         // Initialiser must be a reference to a sized array of the same element type.
         if (!arg_type || !type::is_reference(arg_type)) {
             throw_error(0x4104, ctx.var_lexeme,
@@ -425,6 +562,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
                  arg_sub ? arg_sub->to_string() : "?"});
             return;
         }
+        // Case A, step 3: Element types must match exactly
         // Element types must match exactly.
         if (!type::are_equal(dest_arr->get_subtype(), src_arr->get_subtype())) {
             throw_error(0x4106, ctx.var_lexeme,
@@ -442,7 +580,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
     // Case B: plain reference (non-array), e.g.  int&
     // ------------------------------------------------------------------
 
-    // 1. Initialization is mandatory
+    // Case B, step 1: Initialisation is mandatory (references cannot be left unbound)
     if (!ctx.init_expr || ctx.init_expr->empty()) {
         throw_error(0x4001, ctx.var_lexeme,
             "Reference variable '{}' of type '{}' must be initialised at its declaration: "
@@ -451,7 +589,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
         return;
     }
 
-    // 2. Only one initializer expression is allowed
+    // Case B, step 2: Only one initialiser expression is allowed
     if (ctx.init_expr->size() > 1) {
         throw_error(0x4002, ctx.var_lexeme,
             "Reference variable '{}' of type '{}' must be initialised with exactly one expression, "
@@ -472,7 +610,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
 
     auto arg_type = arg->get_type();
 
-    // 3. Initialization must be a reference (lvalue), not a bare value
+    // Case B, step 3: The initialiser must be a reference (lvalue), not a bare value
     if (!type::is_reference(arg_type)) {
         throw_error(0x4004, ctx.var_lexeme,
             "Reference variable '{}' of type '{}' must be initialised with a reference (an addressable "
@@ -483,7 +621,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
         return;
     }
 
-    // 4. Type compatibility check
+    // Case B, step 4: Type compatibility check: exact match or inheritance cast
     auto arg_ref = std::dynamic_pointer_cast<reference_type>(arg_type);
     auto arg_sub = arg_ref ? arg_ref->get_subtype() : nullptr;
     auto var_sub = ref_var_type->get_subtype();
@@ -514,12 +652,34 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
 }
 
 
+/**
+ * Validate the initialisation of a pointer variable (T*), checking const-compatibility
+ * and pointed-type compatibility (including inheritance casts).
+ *
+ * Preconditions:
+ *   - ctx.var has a resolved pointer_type.
+ *   - ctx may or may not have a single init argument (no init → silently accepted).
+ *
+ * Postconditions:
+ *   - If the initialiser is null or absent: accepted without checks.
+ *   - If the pointed types are compatible: accepted, with an inheritance cast inserted if needed.
+ *   - If const-mutable incompatibility or unrelated types: a diagnostic error is thrown.
+ *
+ * Steps:
+ *   1. No init argument → return (pointers default to null).
+ *   2. Null literal → return (always valid).
+ *   3. Unwrap ref and owner wrappers from the argument type.
+ *   4. Extract the source sub-type from the indirection (pointer/link/view/owner).
+ *   5. Check const-compatibility: mutable pointer from const source → error.
+ *   6. Check type compatibility: exact match or inheritance cast (upcast/downcast).
+ */
 void type_reference_resolver::validate_pointer_variable(var_init_context& ctx) {
     // Pointer variable (*): validate const-compatibility of initializer and type compatibility.
     if (!ctx.has_single_init_arg()) return;
     auto arg = ctx.get_single_init_arg();
     if (!arg) return;
 
+    // Step 1: No init argument → return (pointers default to null)
     // Null literal is always compatible with any pointer type — skip type checks.
     bool is_null_init = type::is_null(arg->get_type());
     if (!is_null_init) {
@@ -530,6 +690,7 @@ void type_reference_resolver::validate_pointer_variable(var_init_context& ctx) {
     }
     if (is_null_init) return;
 
+    // Step 2: Null literal → return (always valid)
     auto arg_type = arg->get_type();
     auto effective_arg = arg_type;
     if (type::is_reference(arg_type)) {
@@ -552,9 +713,11 @@ void type_reference_resolver::validate_pointer_variable(var_init_context& ctx) {
     }
     if (!tgt_ptr || !src_sub) return;
 
+    // Step 3: Unwrap ref and owner wrappers from the argument type
     auto tgt_sub = tgt_ptr->get_subtype();
     if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
         throw_error(0x0081, ctx.var_lexeme,
+            // Step 5: Check const-compatibility: mutable pointer from const source → error
             "Cannot initialise a pointer-to-mutable ('{}') from a pointer-to-const ('{}'): "
             "this would allow modification of a const object through the mutable pointer",
             {ctx.var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
@@ -562,6 +725,7 @@ void type_reference_resolver::validate_pointer_variable(var_init_context& ctx) {
     auto src_sub_nc = type::remove_const(src_sub);
     auto tgt_sub_nc = type::remove_const(tgt_sub);
     if (!type::are_equal(src_sub_nc, tgt_sub_nc)) {
+        // Step 6: Check type compatibility: exact match or inheritance cast (upcast/downcast)
         bool ok = check_and_insert_inheritance_cast(
             src_sub_nc, tgt_sub_nc, arg, ctx.var.get_type(),
             [&](std::shared_ptr<expression> e) { ctx.assign_single_init_arg(e); },
@@ -578,10 +742,30 @@ void type_reference_resolver::validate_pointer_variable(var_init_context& ctx) {
 }
 
 
+/**
+ * Validate the initialisation of a link variable (T~), a non-null rebindable indirection.
+ *
+ * Preconditions:
+ *   - ctx.var has a resolved link_type.
+ *   - A link must always be initialised (non-null guarantee).
+ *
+ * Postconditions:
+ *   - On success, the init expression is validated and potentially wrapped with an inheritance cast.
+ *   - On failure (missing init, non-indirection source, const mismatch, incompatible types),
+ *     a diagnostic error is thrown.
+ *
+ * Steps:
+ *   1. Require exactly one initialiser (links cannot be left unbound).
+ *   2. The initialiser must be an indirection type (reference, link, view, pointer, or owner).
+ *   3. Check const-compatibility: link-to-mutable from const source → error.
+ *   4. Emit a warning if initialising from a nullable source (view, pointer, or owner).
+ *   5. Check type compatibility: exact match or inheritance cast (upcast/downcast).
+ */
 void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
     // Link variable (~): validate const-compatibility of initializer (for rebind semantics).
     auto link_var_type = std::dynamic_pointer_cast<link_type>(ctx.var.get_type());
 
+    // Step 1: Require exactly one initialiser (links cannot be left unbound)
     if (!ctx.has_single_init_arg()) {
         throw_error(0x4501, ctx.var_lexeme,
             "Link variable '{}' of type '{}' must be initialised at its declaration: "
@@ -637,7 +821,9 @@ void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
         auto src_pointed_nc = extract_indirection_subtype(arg_type);
         if (src_pointed_nc) src_pointed_nc = type::remove_const(src_pointed_nc);
 
+        // Step 2: The initialiser must be an indirection type (reference, link, view, pointer, or owner)
         if (src_pointed_nc && !type::are_equal(src_pointed_nc, link_sub_nc)) {
+            // Step 5: Check type compatibility: exact match or inheritance cast (upcast/downcast)
             bool ok = check_and_insert_inheritance_cast(
                 src_pointed_nc, link_sub_nc, arg, ctx.var_type,
                 [&](std::shared_ptr<expression> e) { ctx.assign_single_init_arg(e); },
@@ -655,7 +841,26 @@ void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
 }
 
 
+/**
+ * Validate the initialisation of a view variable (T^), an immutable (non-rebindable), nullable indirection.
+ *
+ * Preconditions:
+ *   - ctx.var has a resolved view_type.
+ *   - A view must be initialised at declaration (it cannot be rebound later).
+ *
+ * Postconditions:
+ *   - On success, the init expression is validated and potentially wrapped with an inheritance cast.
+ *   - On failure (missing init, non-indirection/non-null source, incompatible types),
+ *     a diagnostic error is thrown.
+ *
+ * Steps:
+ *   1. Require exactly one initialiser (views cannot be left unbound).
+ *   2. Accept null literal as a valid initialiser.
+ *   3. The initialiser must be an indirection or owner type if not null.
+ *   4. Check type compatibility: exact match or inheritance cast (upcast/downcast).
+ */
 void type_reference_resolver::validate_view_variable(var_init_context& ctx) {
+    // Step 1: Require exactly one initialiser (views cannot be left unbound)
     // Pinned variable (^): immutable (not rebindable after init), nullable.
     // Must be initialised at declaration; initialiser can be any indirection, owner or null.
     if (!ctx.has_single_init_arg()) {
@@ -693,10 +898,13 @@ void type_reference_resolver::validate_view_variable(var_init_context& ctx) {
         auto view_var_type = std::dynamic_pointer_cast<view_type>(ctx.var.get_type());
         auto view_sub_nc = type::remove_const(view_var_type->get_viewed_type());
 
+        // Step 2: Accept null literal as a valid initialiser
         auto src_pointed_nc = extract_indirection_subtype(arg_type);
         if (src_pointed_nc) src_pointed_nc = type::remove_const(src_pointed_nc);
 
+        // Step 3: The initialiser must be an indirection or owner type if not null
         if (src_pointed_nc && !type::are_equal(src_pointed_nc, view_sub_nc)) {
+            // Step 4: Check type compatibility: exact match or inheritance cast (upcast/downcast)
             bool ok = check_and_insert_inheritance_cast(
                 src_pointed_nc, view_sub_nc, arg, ctx.var_type,
                 [&](std::shared_ptr<expression> e) { ctx.assign_single_init_arg(e); },
@@ -714,12 +922,33 @@ void type_reference_resolver::validate_view_variable(var_init_context& ctx) {
 }
 
 
+/**
+ * Validate the initialisation of an owner variable (T!), which holds exclusive ownership
+ * of a heap-allocated object.
+ *
+ * Preconditions:
+ *   - ctx.var has a resolved owner_type.
+ *   - An owner can optionally be left uninitialised (defaults to null).
+ *
+ * Postconditions:
+ *   - On success, the init expression is validated; if the source is a ref<owner<T>>,
+ *     it is wrapped in an owner_move_expression to express ownership transfer.
+ *   - On failure (non-owner/non-null source, incompatible owned type), a diagnostic error is thrown.
+ *
+ * Steps:
+ *   1. No init or null literal → accept (owner defaults to null).
+ *   2. Unwrap ref<owner<T>> to owner<T> for type checks.
+ *   3. Reject non-owner sources (only new-expression, another owner, or null are valid).
+ *   4. Check owned-type compatibility: exact match or static upcast for polymorphic types.
+ *   5. If source is ref<owner<T>>, wrap in owner_move_expression to transfer ownership.
+ */
 void type_reference_resolver::validate_owner_variable(var_init_context& ctx) {
     // Owner variable (!): owns a heap-allocated object.
     if (!ctx.has_single_init_arg()) return;
     auto arg = ctx.get_single_init_arg();
     if (!arg) return;
 
+    // Step 1: No init or null literal → accept (owner defaults to null)
     auto arg_type = arg->get_type();
     // Accept: new_expression (owner<T>), null literal, or ref<owner<T>> / owner<compatible_T>
     bool is_null_init = type::is_null(arg_type);
@@ -730,6 +959,7 @@ void type_reference_resolver::validate_owner_variable(var_init_context& ctx) {
     }
     if (is_null_init) return;
 
+    // Step 2: Unwrap ref<owner<T>> to owner<T> for type checks
     // Unwrap ref<owner<T>> to owner<T> for type checks
     auto effective_arg_type = arg_type;
     bool is_ref_owner = false;
@@ -740,6 +970,7 @@ void type_reference_resolver::validate_owner_variable(var_init_context& ctx) {
             is_ref_owner = true;
         }
     }
+    // Step 3: Reject non-owner sources (only new-expression, another owner, or null are valid)
     if (!type::is_owner(effective_arg_type)) {
         throw_error(0x4802, ctx.var_lexeme,
             "Owner variable '{}' of type '{}' must be initialised with a 'new' expression, "
@@ -756,6 +987,7 @@ void type_reference_resolver::validate_owner_variable(var_init_context& ctx) {
         auto var_sub = type::remove_const(own_var->get_owned_type());
         auto arg_sub = type::remove_const(own_arg->get_owned_type());
         if (!type::are_equal(var_sub, arg_sub)) {
+            // Step 4: Check owned-type compatibility: exact match or static upcast for polymorphic types
             // Allow static upcast for polymorphic types
             auto src_st = std::dynamic_pointer_cast<struct_type>(arg_sub);
             auto tgt_st = std::dynamic_pointer_cast<struct_type>(var_sub);
@@ -772,6 +1004,7 @@ void type_reference_resolver::validate_owner_variable(var_init_context& ctx) {
             }
         }
     }
+    // Step 5: If source is ref<owner<T>>, wrap in owner_move_expression to transfer ownership
     // If the source is ref<owner<T>>, wrap it in owner_move_expression
     // (load + null source = transfer ownership)
     if (is_ref_owner) {
@@ -782,13 +1015,23 @@ void type_reference_resolver::validate_owner_variable(var_init_context& ctx) {
 }
 
 
+/**
+ * Validate the initialisation of a sized array variable (T[N]).
+ *
+ * Steps:
+ *   1. If a brace-init expression is present, delegate to visit_array_init_expression.
+ *   2. If a non-brace explicit initialiser is present, emit an error.
+ *   3. No initialiser → zero-init (always valid).
+ */
 void type_reference_resolver::validate_sized_array_variable(var_init_context& ctx) {
+    // Step 1: If a brace-init expression is present, delegate to visit_array_init_expression
     // Sized array variable: int[N]
     auto arr_init = std::dynamic_pointer_cast<array_init_expression>(ctx.init_expr_base);
     if (arr_init) {
         // Array brace init — resolve handled in visit_array_init_expression
         arr_init->accept(*this);
     } else if (ctx.init_expr && !ctx.init_expr->empty()) {
+        // Step 2: If a non-brace explicit initialiser is present, emit an error
         // Non-brace-init explicit initializer is not supported
         throw_error(0x4201, ctx.var_lexeme,
             "Array variable '{}' of type '{}' cannot have an explicit initialiser at declaration; "
@@ -796,6 +1039,7 @@ void type_reference_resolver::validate_sized_array_variable(var_init_context& ct
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?"});
         return;
     }
+    // Step 3: No initialiser → zero-init (always valid)
     // No initializer = zero-init (always valid for any element type).
 }
 

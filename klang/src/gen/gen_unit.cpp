@@ -90,8 +90,17 @@ static bool is_type_available(unit& unit, const std::string& type_name) {
     return false;
 }
 
+/**
+ * Visit the compilation unit during symbol resolution.
+ *
+ * Steps:
+ *   1. Process import statements: load KDI files and resolve imported modules.
+ *   2. Visit the root namespace (recursively resolves all symbols).
+ *   3. Visit global constructor, destructor, and main functions.
+ */
 void symbol_resolver::visit_unit(unit& unit)
 {
+    // Step 1: Process import statements: load KDI files and resolve imported modules
     auto root_ns = _unit.get_root_namespace();
 
     // ── Pre-pass 0: implicit Object inheritance ─────────────────────────────────
@@ -198,8 +207,10 @@ void symbol_resolver::visit_unit(unit& unit)
         klass::compute_virtual_bases(all_structs);
     }
 
+    // Step 2: Visit the root namespace (recursively resolves all symbols)
     visit_namespace(*_unit.get_root_namespace());
 
+    // Step 3: Visit global constructor, destructor, and main functions
     visit_global_constructor_function(_unit.get_global_constructor_function());
     visit_global_destructor_function(_unit.get_global_destructor_function());
 }
@@ -223,6 +234,16 @@ void type_reference_resolver::visit_unit(unit& unit)
     }
 }
 
+/**
+ * First-pass IR generation: emit all declarations (globals, functions, vtables).
+ *
+ * Steps:
+ *   1. Set LLVM module metadata (target triple, data layout).
+ *   2. Visit root namespace to emit all function/variable declarations.
+ *   3. Emit vtable stubs for polymorphic classes.
+ *   4. Emit redirect aliases for forwarded functions.
+ *   5. Emit global constructor/destructor/main function declarations.
+ */
 void declaration_generator::visit_unit(unit &unit) {
     visit_namespace(*_unit.get_root_namespace());
 
@@ -233,6 +254,7 @@ void declaration_generator::visit_unit(unit &unit) {
         visit_global_main_function(*unit._global_main_func);
     }
 
+    // Step 1: Set LLVM module metadata (target triple, data layout)
     // ── Emit LLVM declarations for all imported entities ──────────────────
     // Strategy: if the entity has a non-empty llvm_def we parse it directly
     // via context::declare_llvm_function_from_def — this guarantees ABI
@@ -314,12 +336,14 @@ void declaration_generator::visit_unit(unit &unit) {
         _context->_global_vars.insert({var, gv});
     }
 
+    // Step 2: Visit root namespace to emit all function/variable declarations
     // ── Emit GlobalAlias for redirected functions ─────────────────────────
     // After all normal function declarations are emitted, create LLVM
     // GlobalAlias entries for redirected functions pointing to their
     // resolved targets.
     emit_redirect_aliases(*_unit.get_root_namespace());
 
+    // Step 3: Emit vtable stubs for polymorphic classes
     // ── Emit Unit RTTI global (::k::Unit instance) ──────────────────────────
     // Only emit when libk is available (Unit is a class from module k).
     // Layout: { ptr __vptr__, ptr __vptr_Object__, ptr name, ptr fullName, ptr functions }
@@ -339,6 +363,7 @@ void declaration_generator::visit_unit(unit &unit) {
         llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
         llvm::Type* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
+        // Step 4: Emit redirect aliases for forwarded functions
         std::string unit_rtti_struct_name = "__rtti_unit_" + _unit.get_unit_name().to_string() + "__";
         std::vector<llvm::Type*> unit_rtti_fields = {
             ptr_ty,     // __vptr__
@@ -350,6 +375,7 @@ void declaration_generator::visit_unit(unit &unit) {
         llvm::StructType* unit_rtti_llvm_type = llvm::StructType::create(
             llvm_ctx, unit_rtti_fields, unit_rtti_struct_name);
 
+        // Step 5: Emit global constructor/destructor/main function declarations
         std::string unit_rtti_name = mangler::mangle_rtti_unit(_unit.get_unit_name());
 
         // Helper: emit a K-sized-array string constant { i32 size, [N x i8] data }.
@@ -442,7 +468,17 @@ void declaration_generator::emit_redirect_alias(function& fn) {
     (void)alias; // alias is owned by the module
 }
 
+/**
+ * Second-pass IR generation: emit all function implementations and global initializers.
+ *
+ * Steps:
+ *   1. Visit root namespace to emit all function bodies.
+ *   2. Fill vtables with resolved function pointers.
+ *   3. Emit global variable initializers.
+ *   4. Emit global constructor, destructor, and main function bodies.
+ */
 void implementation_generator::visit_unit(unit &unit) {
+    // Step 1: Visit root namespace to emit all function bodies
     visit_namespace(*_unit.get_root_namespace());
 
     visit_global_constructor_function(_unit.get_global_constructor_function());
@@ -638,6 +674,7 @@ void implementation_generator::visit_unit(unit &unit) {
                 return fn_gv;
             };
 
+            // Step 2: Fill vtables with resolved function pointers
             // Recursively collect public non-member functions from namespaces
             std::vector<llvm::Constant*> fn_ptrs;
             std::function<void(const k::model::ns&)> collect_ns_functions;
@@ -649,6 +686,7 @@ void implementation_generator::visit_unit(unit &unit) {
                     // Only non-member functions (defined at namespace level, not inside aggregates)
                     if (fn->is_member()) continue;
 
+                    // Step 3: Emit global variable initializers
                     llvm::Constant* fn_gv = make_func_rtti(fn);
                     if (fn_gv) fn_ptrs.push_back(fn_gv);
                 }
@@ -661,6 +699,7 @@ void implementation_generator::visit_unit(unit &unit) {
             };
             collect_ns_functions(*_unit.get_root_namespace());
 
+            // Step 4: Emit global constructor, destructor, and main function bodies
             // Build K-array of function pointers
             llvm::Constant* functions_gv = null_ptr;
             if (!fn_ptrs.empty()) {
@@ -751,8 +790,17 @@ void signature_resolver::visit_namespace(ns& ns) {
     }
 }
 
+/**
+ * Visit a namespace during type resolution.
+ *
+ * Steps:
+ *   1. Run signature_resolver pre-pass on all aggregates in this namespace.
+ *   2. Visit all children (namespaces, aggregates, functions, variables).
+ *   3. Check overload collisions on free functions in this namespace.
+ */
 void type_reference_resolver::visit_namespace(ns& ns)
 {
+    // Step 1: Run signature_resolver pre-pass on all aggregates in this namespace
     // Pre-pass: resolve all aggregate function signatures (parameter + return types)
     // WITHOUT processing function bodies.  This ensures that when function bodies
     // reference types from sibling classes (e.g. String's operator+ returning
@@ -762,12 +810,14 @@ void type_reference_resolver::visit_namespace(ns& ns)
         sig_resolver.resolve_signatures(ns);
     }
 
+    // Step 2: Visit all children (namespaces, aggregates, functions, variables)
     // Full pass: visit everything (including function bodies).
     // Signature resolution is idempotent (already-resolved types are skipped),
     // so only the function bodies and expressions are newly processed.
     for(auto& child : ns.get_children()) {
         child->accept(*this);
     }
+    // Step 3: Check overload collisions on free functions in this namespace
     // After all children are resolved, check for overload collisions among free functions.
     check_overload_collisions(ns);
 }

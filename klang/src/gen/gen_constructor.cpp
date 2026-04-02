@@ -37,7 +37,17 @@
 #include <unordered_map>
 #include <unordered_set>
 namespace k::model::gen {
+/**
+ * Visit a constructor during symbol resolution: resolve parameter types,
+ * member-initializer targets, and body symbols.
+ *
+ * Steps:
+ *   1. Resolve parameter types and default expressions.
+ *   2. Resolve each member-initializer target (field or base class).
+ *   3. Visit the constructor body block.
+ */
 void symbol_resolver::visit_constructor(constructor& ctor) {
+    // Step 1: Resolve parameter types and default expressions
     // Deleted constructors have no body: skip body resolution and member-init injection.
     // The constructor already appears in the overload set because it was added to
     // _constructors by model_builder. Naming and 'this' setup are not needed here
@@ -72,6 +82,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
             base_by_name.emplace(vbase->get_short_name(), vbase);
         }
 
+        // Step 2: Resolve each member-initializer target (field or base class)
         // Mark each explicit mem-init as base-init or member-init
         for (auto& mi : const_cast<std::vector<constructor::member_init_spec>&>(ctor.member_inits())) {
             auto it = base_by_name.find(mi.member_name);
@@ -97,6 +108,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
         }
     }
 
+    // Step 3: Visit the constructor body block
     // Before resolving the block, inject expression_statements for each explicit member
     // initializer into the beginning of the constructor block. This ensures that when
     // visit_function → visit_block visits the block, the symbol expressions inside the
@@ -277,6 +289,16 @@ void signature_resolver::visit_constructor(constructor& ctor) {
     visit_function(ctor);
 }
 
+/**
+ * Resolve types in a constructor: parameter types, member-initializer expressions,
+ * and body.
+ *
+ * Steps:
+ *   1. Resolve parameter types (including default expression types).
+ *   2. Resolve each member-initializer expression type.
+ *   3. Match initializer expressions to constructor overloads for field types.
+ *   4. Visit the constructor body block.
+ */
 void type_reference_resolver::visit_constructor(constructor& ctor) {
     auto st = ctor.get_owner();
     if (!st) {
@@ -287,6 +309,7 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
             "every constructor must belong to a struct — this indicates a compiler bug");
     }
 
+    // Step 1: Resolve parameter types (including default expression types)
     // Deleted constructors have no body and must never be called (enforced at resolution time).
     // Ensure _this_param exists (needed by check_constructor_visibility and type queries)
     // and resolve the formal parameter types so overload resolution can match argument types.
@@ -315,6 +338,7 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
     // mem-initializer-list). Fall through to the standard injection logic below.
     // (do NOT return early here)
 
+    // Step 2: Resolve each member-initializer expression type
     // Note : the statements for explicit member_inits and base inits were already injected by
     // symbol_resolver::visit_constructor (in struct member declaration order).
     // Here we insert fallback initialization statements for members NOT listed in the
@@ -360,6 +384,7 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
         }
     }
 
+    // Step 3: Match initializer expressions to constructor overloads for field types
     for (auto& var_entry : st->variables()) {
         if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
             // Skip __parent__ field — stored directly at IR level in constructor prologue
@@ -373,6 +398,7 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
             // Skip vptr fields — set at IR level
             if (var->get_short_name().rfind("__vptr", 0) == 0) continue;
 
+            // Step 4: Visit the constructor body block
             if (explicit_init_names.count(var->get_short_name()) > 0) {
                 // This member has an explicit initializer already in the block: skip past it
                 ++insert_idx2;
@@ -446,9 +472,17 @@ void type_reference_resolver::visit_destructor(destructor& dtor) {
 // Registers the static constructor with the global initializer function.
 //
 
+/**
+ * Visit a static constructor: resolve mem-init list dependency names and body.
+ *
+ * Steps:
+ *   1. For each static_dep_spec: resolve the target name to a structure or global variable.
+ *   2. Visit the static constructor body block.
+ */
 void symbol_resolver::visit_static_constructor(static_constructor& sctor) {
     visit_function(sctor);
 
+    // Step 1: For each static_dep_spec: resolve the target name to a structure or global variable
     // Resolve each dependency name declared in the mem-init list to a concrete model element.
     // Resolution is: name → structure (requires static ctor) OR global_variable_definition.
     // The scope walk starts from the owning structure and climbs to the root namespace.
@@ -457,6 +491,7 @@ void symbol_resolver::visit_static_constructor(static_constructor& sctor) {
     auto owner = sctor.get_owner();
     if (!owner) return;
 
+    // Step 2: Visit the static constructor body block
     auto start = std::dynamic_pointer_cast<element>(owner);
 
     for (auto& dep : sctor.mutable_member_inits()) {
@@ -539,10 +574,22 @@ void type_reference_resolver::visit_global_constructor_function(global_construct
     visit_function(func);
 }
 
+/**
+ * Generate LLVM IR for the global constructor function (__k_global_ctor).
+ *
+ * Steps:
+ *   1. Get or create the LLVM function.
+ *   2. Create entry basic block.
+ *   3. Iterate ordered init items (static constructors and global variables).
+ *   4. For static constructors: emit a call to the static constructor function.
+ *   5. For global variables with init expressions: evaluate and store.
+ *   6. Emit ret void.
+ */
 void implementation_generator::visit_global_constructor_function(global_constructor_function& func) {
     const auto& items = func.get_ordered_items();
     if (items.empty()) return;
 
+    // Step 1: Get or create the LLVM function
     // Generate the function body (global variable constructor-invocation statements are in the block).
     visit_function(func);
 
@@ -578,6 +625,7 @@ void implementation_generator::visit_global_constructor_function(global_construc
     llvm::BasicBlock& last_bb = llvm_func->back();
     llvm::IRBuilder<> ctor_builder(&last_bb, last_bb.getTerminator()->getIterator());
 
+    // Step 2: Create entry basic block
     // Walk ordered items: for each static_constructor, emit a call just before the terminator.
     // Global variable inits are already emitted by visit_function in order from the block.
     // To achieve interleaved ordering (static ctors and var inits mixed), we collect
@@ -600,6 +648,7 @@ void implementation_generator::visit_global_constructor_function(global_construc
     // For simplicity and correctness (since ordering is resolved), we emit static ctor calls
     // in the order they appear in items, just before the terminator.
 
+    // Step 3: Iterate ordered init items (static constructors and global variables)
     for (auto& item : items) {
         if (auto sc = std::get_if<std::shared_ptr<static_constructor>>(&item)) {
             auto sctor_it = _context->_functions.find(*sc);
@@ -608,6 +657,7 @@ void implementation_generator::visit_global_constructor_function(global_construc
         }
     }
 
+    // Step 4: For static constructors: emit a call to the static constructor function
     // Register the global constructor function with the runtime
     llvm::appendToGlobalCtors(get_module(), llvm_func, 65535);
 }
@@ -662,6 +712,18 @@ void type_reference_resolver::visit_global_destructor_function(global_destructor
 //  7. Verify the function with llvm::verifyFunction.
 //  8. Register the function with the LLVM global_dtors table at priority 65535
 //     via llvm::appendToGlobalDtors, ensuring it runs at program shutdown.
+/**
+ * Generate LLVM IR for the global destructor function (__k_global_dtor).
+ *
+ * Steps:
+ *   1. Get or create the LLVM function.
+ *   2. Create entry basic block.
+ *   3. Iterate ordered finit items (reverse construction order).
+ *   4. For static destructors: emit a call to the static destructor function.
+ *   5. For global variables with destructors: emit destructor calls.
+ *   6. Emit standalone static destructors (no matching static constructor).
+ *   7. Emit ret void.
+ */
 void implementation_generator::visit_global_destructor_function(global_destructor_function& func) {
     // The destructor function holds items in REVERSE construction order
     // (set by init_order_resolver). We iterate forward through them.
@@ -686,12 +748,14 @@ void implementation_generator::visit_global_destructor_function(global_destructo
     }
     if (!has_work) return;
 
+    // Step 1: Get or create the LLVM function
     // Generate a void() function for the global destructor
     llvm::FunctionType* func_type = llvm::FunctionType::get(llvm::Type::getVoidTy(**_context), false);
     llvm::Function* llvm_func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage,
                                                         func.get_mangled_name(), *_context->_module);
     _context->_functions.insert({func.shared_as<function>(), llvm_func});
 
+    // Step 2: Create entry basic block
     llvm::BasicBlock* entry = llvm::BasicBlock::Create(**_context, "entry", llvm_func);
     llvm::IRBuilder<> dtor_builder(entry);
 
@@ -702,6 +766,7 @@ void implementation_generator::visit_global_destructor_function(global_destructo
         dtor_builder.CreateCall(sdtor_it->second, {});
     }
 
+    // Step 3: Iterate ordered finit items (reverse construction order)
     // Then: emit finalization in the order stored in items (reverse-construction order).
     for (auto& item : items) {
         if (auto sc = std::get_if<std::shared_ptr<static_constructor>>(&item)) {
@@ -726,6 +791,8 @@ void implementation_generator::visit_global_destructor_function(global_destructo
         }
     }
 
+    // Step 4: For static destructors: emit a call to the static destructor function
+    // Step 7: Emit ret void
     dtor_builder.CreateRetVoid();
     llvm::verifyFunction(*llvm_func);
     llvm::appendToGlobalDtors(get_module(), llvm_func, 65535);
@@ -760,10 +827,19 @@ void implementation_generator::visit_global_destructor_function(global_destructo
 //       c. Append a return_statement returning the integer literal 0.
 //  5. The block is now complete; visit_function will be called later in the
 //     normal visitor flow to resolve types within the synthesized body.
+/**
+ * Resolve the global main function: wrap the user's main() into the runtime entry point.
+ *
+ * Steps:
+ *   1. Find the user-defined main() function in the unit.
+ *   2. Build a wrapper block that calls global_ctor, user main, global_dtor.
+ *   3. Resolve all expressions in the wrapper block.
+ */
 void type_reference_resolver::visit_global_main_function(global_main_function& main_func) {
 
     std::vector<std::shared_ptr<expression>> args;
 
+    // Step 1: Find the user-defined main() function in the unit
     // Look at the compatible prototypes
     // TODO Add a better method prototype compatibility checking/searching
     if (main_func.get_real_func().has_parameter()) {
@@ -781,9 +857,11 @@ void type_reference_resolver::visit_global_main_function(global_main_function& m
     main_func.append_parameter("argc", int_type);
     main_func.append_parameter("argv", _context->from_type(primitive_type::UNSIGNED_CHAR)->get_pointer()->get_pointer());
 
+    // Step 2: Build a wrapper block that calls global_ctor, user main, global_dtor
     auto main_block = main_func.get_block();
     auto ret_stmt = std::make_shared<model::return_statement>(main_block);
 
+    // Step 3: Resolve all expressions in the wrapper block
     std::shared_ptr<expression> invoke = function_invocation_expression::make_shared(main_func.get_real_func().shared_as<function>(), args);
 
     // Annotate with DIRECT dispatch_info — the real 'main' function is always

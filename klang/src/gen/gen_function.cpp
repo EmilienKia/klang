@@ -736,6 +736,21 @@ void declaration_generator::visit_function(function &function) {
     }
 }
 
+/**
+ * Generate LLVM IR for a function body.
+ *
+ * Steps:
+ *   1. Resolve the LLVM Function from the context.
+ *   2. Create entry basic block and reset per-function state.
+ *   3. Handle sret (structure-return) ABI: add sret parameter.
+ *   4. Perform NRVO analysis (Named Return Value Optimization).
+ *   5. Allocate parameters and store incoming values.
+ *   6. For constructors: emit pre-block IR (zero-init, parent ptr, copy ctor).
+ *   7. Visit the function body block.
+ *   8. For constructors: emit post-block IR (vptr stores, virtual base init).
+ *   9. For destructors: emit cleanup (member/base destructor calls).
+ *   10. Emit function epilogue (return, cleanup, dead instruction elimination).
+ */
 void implementation_generator::visit_function(function &function) {
     // Deleted functions have no LLVM declaration and must never be implemented.
     if (function.is_deleted()) {
@@ -754,6 +769,7 @@ void implementation_generator::visit_function(function &function) {
         return;
     }
 
+    // Step 1: Resolve the LLVM Function from the context
     auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
     if (func_it==_context->_functions.end()) {
         lex::opt_any_lexeme fn_lexeme;
@@ -766,6 +782,7 @@ void implementation_generator::visit_function(function &function) {
 
     llvm::Function* func = func_it->second;
 
+    // Step 2: Create entry basic block and reset per-function state
     // create the function content:
     llvm::BasicBlock *block = llvm::BasicBlock::Create(**_context, "entry", func);
     _builder->SetInsertPoint(block);
@@ -781,6 +798,7 @@ void implementation_generator::visit_function(function &function) {
     while (!_owner_params_stack.empty()) _owner_params_stack.pop();
     while (!_struct_params_stack.empty()) _struct_params_stack.pop();
 
+    // Step 3: Handle sret (structure-return) ABI: add sret parameter
     // Determine if this function uses sret ABI
     const bool use_sret = function.has_return_type() && needs_sret_return(function.get_return_type());
 
@@ -791,6 +809,7 @@ void implementation_generator::visit_function(function &function) {
         sret_arg->setName("sret");
         _sret_ptr = sret_arg;
 
+        // Step 4: Perform NRVO analysis (Named Return Value Optimization)
         // Named return variable: guaranteed NRVO — skip heuristic scan
         if (function.has_named_return_var()) {
             _nrvo_candidate = function.get_named_return_var();
@@ -891,6 +910,7 @@ void implementation_generator::visit_function(function &function) {
         _builder->CreateStore(arg, alloca);
     }
 
+    // Step 5: Allocate parameters and store incoming values
     // Collect owner-typed parameters for end-of-function cleanup (destroy + free on scope exit).
     // This enables RAII semantics for owner parameters: when a function receives an owner,
     // it takes ownership, and the object is destroyed when the function returns.
@@ -926,6 +946,7 @@ void implementation_generator::visit_function(function &function) {
         }
     }
 
+    // Step 6: For constructors: emit pre-block IR (zero-init, parent ptr, copy ctor)
     // Constructor pre-block: zero-init, parent pointer, copy ctor, standalone vbase init
     if (emit_constructor_pre_block(function, func)) {
         return; // Function fully handled (e.g. generated copy constructor)
@@ -936,21 +957,37 @@ void implementation_generator::visit_function(function &function) {
         return; // Function fully handled
     }
 
+    // Step 7: Visit the function body block
     // Produce content
     function.get_block()->accept(*this);
 
+    // Step 8: For constructors: emit post-block IR (vptr stores, virtual base init)
     // Constructor post-block: vptr stores + virtual base pointer initialization
     emit_constructor_post_block(function);
 
+    // Step 9: For destructors: emit cleanup (member/base destructor calls)
     // Destructor: member and base destructor calls
     emit_destructor_cleanup(function);
 
+    // Step 10: Emit function epilogue (return, cleanup, dead instruction elimination)
     // Epilogue: param cleanup, return, NRVO, optimization, verification
     emit_function_return_epilogue(function, func, use_sret);
 }
 
 // ── visit_function extracted helpers ──────────────────────────────────────────
 
+/**
+ * Emit constructor pre-block IR: zero-init, parent pointer store, generated copy
+ * constructor memberwise copy, standalone virtual base initialization.
+ *
+ * Steps:
+ *   1. Zero-initialize the struct via memset(this, 0, sizeof(struct)).
+ *   2. Store __parent__ pointer for inner (non-static nested) structs.
+ *   3. For generated copy constructors: emit memberwise copy and return true.
+ *   4. For virtual base initialization: store virtual base sub-object pointers.
+ *
+ * @return true if the function was fully handled (e.g. generated copy ctor).
+ */
 bool implementation_generator::emit_constructor_pre_block(function& function, llvm::Function* func) {
     auto ctor = function.shared_as<constructor>();
     if (!ctor) return false;
@@ -1056,9 +1093,11 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
             llvm::AllocaInst* vbase_alloca = alloca_builder.CreateAlloca(
                 vbase_llvm_type, nullptr, "vbase_" + vbase->get_short_name() + "_standalone");
 
+            // Step 1: Zero-initialize the struct via memset(this, 0, sizeof(struct))
             // Zero-initialize the alloca
             _builder->CreateStore(llvm::ConstantAggregateZero::get(vbase_llvm_type), vbase_alloca);
 
+            // Step 2: Store __parent__ pointer for inner (non-static nested) structs
             // Store its address into the __vbptr_X__ field of 'this'
             auto st_llvm_type = _context->get_llvm_type(st->get_struct_type());
             llvm::Value* vbptr_addr = _builder->CreateStructGEP(
@@ -1066,6 +1105,7 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
                 "vbptr_" + vbase->get_short_name() + "_standalone_addr");
             _builder->CreateStore(vbase_alloca, vbptr_addr);
 
+            // Step 3: For generated copy constructors: emit memberwise copy and return true
             // Call the virtual base's default constructor on the alloca
             // (this handles A() : x(10) {} etc.)
             if (auto vbase_ctor_list = &vbase->constructors(); !vbase_ctor_list->empty()) {
@@ -1081,6 +1121,7 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
                 }
             }
 
+            // Step 4: For virtual base initialization: store virtual base sub-object pointers
             // Store the alloca in context for potential use by constructor_invocation_expression
             _context->_vbase_standalone_allocas[st->shared_as<aggregate>()][vbase->get_short_name()] = vbase_alloca;
         }
@@ -1089,7 +1130,19 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
     return false; // not fully handled, continue with block visit
 }
 
+/**
+ * Emit compiler-generated copy assignment operator (operator=) memberwise copy.
+ *
+ * Steps:
+ *   1. Verify this is a generated copy-assignment operator.
+ *   2. Load 'this' and 'other' parameters.
+ *   3. For each member variable: GEP to field, load from other, store to this.
+ *   4. Return this pointer.
+ *
+ * @return true if the function was fully handled.
+ */
 bool implementation_generator::emit_copy_assignment_operator(function& function, llvm::Function* func) {
+    // Step 1: Verify this is a generated copy-assignment operator
     // ── Compiler-generated copy assignment operator: emit memberwise copy ──
     if (!(function.is_compiler_generated() && function.is_operator()
         && function.get_short_name() == "__operator_aS_"
@@ -1103,11 +1156,13 @@ bool implementation_generator::emit_copy_assignment_operator(function& function,
     auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
     if (this_param_it == _context->_function_this_variables.end()) return false;
 
+    // Step 2: Load 'this' and 'other' parameters
     auto this_ptr = _builder->CreateLoad(
         st->get_struct_type()->get_reference()->get_llvm_type(),
         this_param_it->second, "this_ptr");
     auto other_param = function.get_parameter("other");
     if (other_param) {
+        // Step 3: For each member variable: GEP to field, load from other, store to this
         auto other_alloca_it = _context->_parameter_variables.find(
             std::const_pointer_cast<parameter>(other_param));
         if (other_alloca_it != _context->_parameter_variables.end()) {
@@ -1131,7 +1186,16 @@ bool implementation_generator::emit_copy_assignment_operator(function& function,
     return true; // fully handled
 }
 
+/**
+ * Emit post-block constructor IR: vptr stores and virtual base pointer initialization.
+ *
+ * Steps:
+ *   1. Store vptr(s) into the most-derived object (after base ctors, so most-derived wins).
+ *   2. For each virtual base sub-object in the derived class: store virtual base
+ *      pointers across all sub-objects that reference the same virtual base.
+ */
 void implementation_generator::emit_constructor_post_block(function& function) {
+    // Step 1: Store vptr(s) into the most-derived object (after base ctors, so most-derived wins)
     // ── Class vptr initialization (after base ctors, so our vtable wins) ─────
     // This must be done AFTER the block (which calls base constructors that also
     // set their own vptrs). By setting the vptr last, we ensure the most-derived
@@ -1152,6 +1216,7 @@ void implementation_generator::emit_constructor_post_block(function& function) {
         }
     }
 
+    // Step 2: For each virtual base sub-object in the derived class
     // ── Virtual base pointer initialization ───────────────────────────────
     // For each transitively-declared virtual base, find the __vbase_X__ sub-object
     // in the most-derived class (this class) and write its address into all
@@ -1262,6 +1327,15 @@ void implementation_generator::emit_constructor_post_block(function& function) {
     }
 }
 
+/**
+ * Emit destructor cleanup IR: member and base destructor calls.
+ *
+ * Steps:
+ *   1. Call destructors for struct-typed member variables (reverse declaration order).
+ *   2. Call destructors for owner-typed member variables (free heap memory).
+ *   3. Call base class destructors (reverse base-declaration order).
+ *   4. For the most-derived class: call virtual base sub-object destructors.
+ */
 void implementation_generator::emit_destructor_cleanup(function& function) {
     // ── For destructors: call member and base destructors ──────────────────
     auto dtor = function.shared_as<destructor>();
@@ -1279,6 +1353,7 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
         st->get_struct_type()->get_reference()->get_llvm_type(),
         this_param, "this_ptr");
 
+    // Step 1: Call destructors for struct-typed member variables (reverse declaration order)
     // ── Member struct destructor calls (reverse declaration order) ──
     // Collect member variables that have a destructor (own members, not base subobjs)
     std::vector<std::pair<std::shared_ptr<member_variable_definition>, unsigned>> dtor_members;
@@ -1315,6 +1390,7 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
         _builder->CreateCall(m_dtor_it->second, {member_ptr});
     }
 
+    // Step 2: Call destructors for owner-typed member variables (free heap memory)
     // ── Base destructors in reverse base-declaration order ──
     if (st->has_bases() || st->has_virtual_bases()) {
         const auto& bases = st->get_bases();
@@ -1343,6 +1419,7 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
             _builder->CreateCall(dtor_it->second, {base_ptr});
         }
 
+        // Step 3: Call base class destructors (reverse base-declaration order)
         // ── Virtual base sub-object destructors (most-derived class only) ──
         // Only the class that owns __vbase_X__ should call X's destructor.
         // Collect virtual bases transitively
@@ -1353,6 +1430,7 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
             auto vbase_field = st->get_struct_type()->get_member(vbase_field_name);
             if (!vbase_field) continue; // not in this class's layout (not the collector)
 
+            // Step 4: For the most-derived class: call virtual base sub-object destructors
             auto vbase_dtor = vbase->get_destructor();
             if (!vbase_dtor) continue;
             auto dtor_it = _context->_functions.find(vbase_dtor->shared_as<k::model::function>());
@@ -1372,7 +1450,19 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
     }
 }
 
+/**
+ * Emit function return epilogue: cleanup and return instruction.
+ *
+ * Steps:
+ *   1. Emit owner parameter cleanup (null the caller's owner after move).
+ *   2. Emit struct parameter destructor calls.
+ *   3. Emit return instruction (ret void, ret value, or ret through sret pointer).
+ *   4. NRVO: replace NRVO candidate alloca with sret pointer.
+ *   5. Dead instruction elimination pass.
+ *   6. LLVM function verification.
+ */
 void implementation_generator::emit_function_return_epilogue(function& function, llvm::Function* func, bool use_sret) {
+    // Step 1: Emit owner parameter cleanup (null the caller's owner after move)
     // Force adding a terminator as last instruction guard (will be eliminated if unreachable).
     // Before that, emit cleanup for owner-typed parameters (fall-through exit path).
     // For functions with an explicit return statement, this code is unreachable and will be
@@ -1392,6 +1482,7 @@ void implementation_generator::emit_function_return_epilogue(function& function,
         }
     }
 
+    // Step 2: Emit struct parameter destructor calls
     // Clean up struct-typed by-value parameters at fall-through exit
     if (!_struct_params_stack.empty()) {
         auto params = _struct_params_stack.top();
@@ -1409,6 +1500,7 @@ void implementation_generator::emit_function_return_epilogue(function& function,
         }
     }
 
+    // Step 3: Emit return instruction (ret void, ret value, or ret through sret pointer)
     if (function.has_return_type() && !use_sret) {
         // Named return variable (non-sret): load and return it at fall-through
         if (function.has_named_return_var()) {
@@ -1430,6 +1522,7 @@ void implementation_generator::emit_function_return_epilogue(function& function,
         _builder->CreateRetVoid();
     }
 
+    // Step 4: NRVO: replace NRVO candidate alloca with sret pointer
     // NRVO: replace the NRVO candidate's alloca with _sret_ptr in all IR uses.
     // During code generation, the alloca was used normally (constructor writes into it,
     // symbol references return it, etc.). Now that all IR is generated, we swap it out
@@ -1444,9 +1537,11 @@ void implementation_generator::emit_function_return_epilogue(function& function,
         }
     }
 
+    // Step 5: Dead instruction elimination pass
     // Pre-optimize function
     optimize_function_dead_inst_elimination(*func);
 
+    // Step 6: LLVM function verification
     // Verify function
     llvm::verifyFunction(*func);
 }

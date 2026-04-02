@@ -40,6 +40,15 @@ namespace k::model::gen {
 // Shared annotation resolution & @Target validation
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Resolve and validate annotation instances on any annotation_holder.
+ *
+ * Steps:
+ *   1. For each annotation instance: look up the annotation type by name.
+ *   2. Validate that the resolved type is an annotation_type.
+ *   3. Check @Target constraints: the element_kind must be in the allowed list.
+ *   4. Resolve annotation argument expressions.
+ */
 void symbol_resolver::resolve_and_validate_annotations(
     annotation_holder& holder,
     element& scope,
@@ -51,6 +60,7 @@ void symbol_resolver::resolve_and_validate_annotations(
     for (auto& ann_inst : holder.get_annotations_mutable()) {
         if (ann_inst.resolved_type) continue; // already resolved
 
+        // Step 1: For each annotation instance: look up the annotation type by name
         // Look up by name in local scope
         auto ann_agg = scope_lookup::lookup_structure(scope.shared_as<element>(), ann_inst.raw_name);
 
@@ -124,6 +134,7 @@ void symbol_resolver::resolve_and_validate_annotations(
         ann_inst.resolved_type = ann_agg;
     }
 
+    // Step 2: Validate that the resolved type is an annotation_type
     // ── Phase 2: validate @Target constraints on resolved annotations
     for (auto& ann_inst : holder.get_annotations_mutable()) {
         if (!ann_inst.resolved_type) continue;
@@ -164,6 +175,7 @@ void symbol_resolver::resolve_and_validate_annotations(
                 collect_from_brace(ast->brace_init);
             }
 
+            // Step 3: Check @Target constraints: the element_kind must be in the allowed list
             if (!allowed_types.empty()) {
                 bool found = false;
                 for (auto& allowed : allowed_types) {
@@ -798,6 +810,15 @@ void symbol_resolver::visit_enumeration(enumeration& en) {
     resolve_enumeration(en);
 }
 
+/**
+ * Resolve an enumeration: base enum, underlying type, and entry values.
+ *
+ * Steps:
+ *   1. Resolve the base enum (if derived) recursively.
+ *   2. Determine the underlying type (explicit or inherited from base).
+ *   3. Build the enum_type from the enumeration model.
+ *   4. Resolve each entry's value expression, checking for duplicates.
+ */
 void symbol_resolver::resolve_enumeration(enumeration& en) {
     if (en.is_resolved()) return;
 
@@ -812,6 +833,7 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
     }
     en._resolving = true;
 
+    // Step 1: Resolve the base enum (if derived) recursively
     // ── 1. Resolve base enum if present ──
     if (en.get_base_name().has_value()) {
         const std::string& base_name_str = *en.get_base_name();
@@ -839,6 +861,7 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
             base_en = _unit.get_or_create_imported_enum(qualified_name, _context);
         }
 
+        // Step 2: Determine the underlying type (explicit or inherited from base)
         if (!base_en) {
             throw_error(0x0091, en_lexeme,
                 "Enum '{}': base enum '{}' not found",
@@ -1004,12 +1027,14 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         en.add_entry(we.name, we.resolved_value, we.is_default);
     }
 
+    // Step 3: Build the enum_type from the enumeration model
     // ── 7. Create and register enum_type ──
     auto et = std::shared_ptr<enum_type>(new enum_type(
         std::dynamic_pointer_cast<enumeration>(en.shared_from_this()), underlying));
     en.set_enum_type(et);
     _context->add_enum(en.get_short_name(), et);
 
+    // Step 4: Resolve each entry's value expression, checking for duplicates
     en._resolving = false;
     en.set_resolved(true);
 }
