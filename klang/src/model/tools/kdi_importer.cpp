@@ -26,6 +26,7 @@
 
 #include <sstream>
 #include <stdexcept>
+#include "../../errors.hpp"
 
 namespace k::model {
 
@@ -69,7 +70,7 @@ void kdi_importer::register_root_ns(const std::string& module_name) {
             (existing.starts_with(module_name + "::"));
         if (!same_hierarchy) {
             auto diag = k::log::diagnostic::make_error(
-                0x80001,
+                static_cast<unsigned int>(k::diag::compiler_diag::ERR_NS_ROOT_COLLISION),
                 "Namespace root collision: module '{}' and module '{}' share the "
                 "same root namespace component '{}'",
                 {module_name, existing, root});
@@ -86,7 +87,7 @@ void kdi_importer::register_root_ns(const std::string& module_name) {
             const std::string unit_root = unit_name.parts().front();
             if (!unit_root.empty() && unit_root == root) {
                 auto diag = k::log::diagnostic::make_error(
-                    0x80002,
+                    static_cast<unsigned int>(k::diag::compiler_diag::ERR_NS_COLLISION_ENFORCED),
                     "--enforce-ns-collision: imported module '{}' root '{}' "
                     "collides with the root namespace of the unit being compiled",
                     {module_name, root});
@@ -119,7 +120,7 @@ kdi_importer::load_module(const std::string& canon) {
         }
         cycle_path += canon;   // closing node of the cycle
         auto diag = k::log::diagnostic::make_error(
-            0x80003,
+            static_cast<unsigned int>(k::diag::compiler_diag::ERR_CIRCULAR_IMPORT),
             "Circular import dependency detected: {}",
             {cycle_path});
         _logger.report(diag);
@@ -136,7 +137,7 @@ kdi_importer::load_module(const std::string& canon) {
     auto path_opt = _resolver.resolve(canon, ".kdi");
     if (!path_opt) {
         auto diag = k::log::diagnostic::make_error(
-            0x80004,
+            static_cast<unsigned int>(k::diag::compiler_diag::ERR_KDI_NOT_FOUND),
             "Cannot find KDI description file for imported module '{}': "
             "no .kdi file found on any search path",
             {canon});
@@ -150,7 +151,7 @@ kdi_importer::load_module(const std::string& canon) {
         kdi_ptr = std::make_shared<kdi::kdi_file>(kdi::kdi_read_cbor_file(path_opt->string()));
     } catch (const std::exception& ex) {
         auto diag = k::log::diagnostic::make_error(
-            0x80005,
+            static_cast<unsigned int>(k::diag::compiler_diag::ERR_KDI_PARSE_FAILED),
             "Failed to read or parse KDI file '{}' for module '{}': {}",
             {path_opt->string(), canon, ex.what()});
         _logger.report(diag);
@@ -181,7 +182,7 @@ kdi_importer::load_module(const std::string& canon) {
             }
             cycle_path += dep_name;
             auto diag = k::log::diagnostic::make_error(
-                0x80003,
+                static_cast<unsigned int>(k::diag::compiler_diag::ERR_CIRCULAR_IMPORT),
                 "Circular import dependency detected: {}",
                 {cycle_path});
             _logger.report(diag);
@@ -438,7 +439,7 @@ void kdi_importer::check_unused_imports() const {
     for (const auto& imp : _unit.get_imports()) {
         if (!imp.used && !imp.implicit) {
             auto diag = k::log::diagnostic::make_warning(
-                0x80010,
+                static_cast<unsigned int>(k::diag::compiler_diag::WARN_UNUSED_IMPORT),
                 "Imported module '{}' is declared but none of its symbols "
                 "are used in this compilation unit",
                 {canonical(imp.module_name)});

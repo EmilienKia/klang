@@ -23,6 +23,7 @@
 #include "../common/logger.hpp"
 
 #include <map>
+#include "../errors.hpp"
 
 namespace k::lex {
 
@@ -341,7 +342,7 @@ namespace k::lex {
                                 }
                                 if(!found) {
                                     /* Error, unknown punctuator nor operator. */
-                                    error(0x0001, "Unknown operator '{}'", {std::string{get_content()}}, begin, pos);
+                                    error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_CONFLICTING_MODULE_DECL), "Unknown operator '{}'", {std::string{get_content()}}, begin, pos);
                                     // TODO throw exception
                                 }
                             }
@@ -394,7 +395,7 @@ namespace k::lex {
                                    || c >= 'a' && c <= 'f'
                                    || c >= 'A' && c <= 'F') {
                             /* Error : no Hexadec digit for octal number. */
-                            error(0x0002, "Forbiden hexadigital character in octal number '{}'", {std::string{get_content()} + c}, begin, pos);
+                            error(static_cast<unsigned int>(k::diag::compiler_diag::WARN_NO_MODULE_DECL), "Forbiden hexadigital character in octal number '{}'", {std::string{get_content()} + c}, begin, pos);
                             // TODO throw exception
                                    } else if (c == 'u' || c == 'U') {
                                        saved_state = lex_state;
@@ -434,14 +435,14 @@ namespace k::lex {
                             num_content_size++;
                             lex_state = HEXADECIMAL;
                             } else if (c == 'u' || c == 'U') {
-                                warn(0x0003, "Hexadecimal number should have at least one digit before unsigned suffix '{}'", {std::string{get_content()} + c}, pos);
+                                warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_HEX_MISSING_DIGIT_UNSIGNED), "Hexadecimal number should have at least one digit before unsigned suffix '{}'", {std::string{get_content()} + c}, pos);
                                 // WARN should have at least one digit after prefix
                                 saved_state = lex_state;
                                 unsigned_num = true;
                                 lex_state = INT_UNSIGNED_SUFFIX;
                             } else {
                                 // TODO also add size suffix handling
-                                warn(0x0004, "Hexadecimal number should have at least one digit before size suffix '{}'", {std::string{get_content()} + c}, pos);
+                                warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_HEX_MISSING_DIGIT_SIZE), "Hexadecimal number should have at least one digit before size suffix '{}'", {std::string{get_content()} + c}, pos);
                                 // WARN should have at least one digit after prefix
                             }
                         break;
@@ -452,7 +453,7 @@ namespace k::lex {
                         } else {
                             // TODO also add unsigned suffix handling
                             // TODO also add size suffix handling
-                            warn(0x0005 /* and 0x0006 */, "Binary number should have at least one digit before suffix '{}'", {std::string{get_content()} + c}, pos);
+                            warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_BIN_MISSING_DIGIT_SUFFIX) /* and 0x0006 */, "Binary number should have at least one digit before suffix '{}'", {std::string{get_content()} + c}, pos);
                             // WARN should have at least one digit after prefix
                             /* Error, binary number must have at least one digit. */
                         }
@@ -465,7 +466,7 @@ namespace k::lex {
                             // TODO also add unsigned suffix handling
                             // TODO also add size suffix handling
                             // WARN should have at least one digit after prefix
-                            warn(0x0007 /* and 0x0008 */, "Octal number should have at least one digit before suffix '{}'", {std::string{get_content()} + c}, pos);
+                            warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_OCT_MISSING_DIGIT_SUFFIX) /* and 0x0008 */, "Octal number should have at least one digit before suffix '{}'", {std::string{get_content()} + c}, pos);
                             /* Error, octal number must have at least one digit. */
                         }
                         break;
@@ -791,7 +792,7 @@ namespace k::lex {
                                 lex_temp_count = 0;
                                 lex_state = ESCAPE_UNIVERSAL_LONG;
                             } else {
-                                error(0x0009, "Bad escape sequence '{}'", {std::string{get_content()} + c}, pos);
+                                error(static_cast<unsigned int>(k::diag::lexer_diag::ERR_BAD_ESCAPE_SEQ), "Bad escape sequence '{}'", {std::string{get_content()} + c}, pos);
                                 /* error : bad escape sequence character. */
                                 // TODO throw exception
                             }
@@ -824,7 +825,7 @@ namespace k::lex {
                                 saved_state = START;
                             }
                             } else {
-                                warn(0x000A, "Incomplete hexa escape sequence '{}'", {std::string{get_content()} + c}, pos);
+                                warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_INCOMPLETE_HEX_ESCAPE), "Incomplete hexa escape sequence '{}'", {std::string{get_content()} + c}, pos);
                                 // WARN/TODO : not a complete hexa escape.
                                 lex_state = saved_state;
                                 saved_state = START;
@@ -843,7 +844,7 @@ namespace k::lex {
                                 saved_state = START;
                             }
                             } else {
-                                warn(0x000B, "Incomplete universal escape sequence '{}'", {std::string{get_content()} + c}, pos);
+                                warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_INCOMPLETE_UNICODE_ESCAPE), "Incomplete universal escape sequence '{}'", {std::string{get_content()} + c}, pos);
                                 // WARN/TODO : not a complete universal escape.
                                 lex_state = saved_state;
                                 saved_state = START;
@@ -862,7 +863,7 @@ namespace k::lex {
                                 saved_state = START;
                             }
                             } else {
-                                warn(0x000C, "Incomplete long universal escape sequence '{}'", {std::string{get_content()} + c}, pos);
+                                warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_INCOMPLETE_LONG_UNICODE), "Incomplete long universal escape sequence '{}'", {std::string{get_content()} + c}, pos);
                                 // WARN/TODO : not a complete long universal escape.
                                 lex_state = saved_state;
                                 saved_state = START;
@@ -909,7 +910,7 @@ namespace k::lex {
                             push_integer_and_reset();
                             lex_state = START;
                         } else {
-                            warn(0x000D, "Bad integer suffix '{}', expect character '4'", {std::string{get_content()} + c}, pos);
+                            warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_BAD_INT_SUFFIX_4), "Bad integer suffix '{}', expect character '4'", {std::string{get_content()} + c}, pos);
                             // TODO/ERROR Bad integer suffix, expect character '4'.
                             size = LONG;
                             push_integer_and_reset(false);
@@ -921,7 +922,7 @@ namespace k::lex {
                         if (c == '2') {
                             lex_state = INT_LONG128B_SUFFIX;
                         } else {
-                            warn(0x000E, "Bad integer suffix '{}', expect character '2'", {std::string{get_content()} + c}, pos);
+                            warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_BAD_INT_SUFFIX_2), "Bad integer suffix '{}', expect character '2'", {std::string{get_content()} + c}, pos);
                             // TODO/ERROR Bad integer suffix, expect character '2'.
                             size = LONGLONG;
                             push_integer_and_reset(false);
@@ -935,7 +936,7 @@ namespace k::lex {
                             push_integer_and_reset();
                             lex_state = START;
                         } else {
-                            warn(0x000F, "Bad integer suffix '{}', expect character '8'", {std::string{get_content()} + c}, pos);
+                            warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_BAD_INT_SUFFIX_8), "Bad integer suffix '{}', expect character '8'", {std::string{get_content()} + c}, pos);
                             // TODO/ERROR Bad integer suffix, expect character '8'.
                             size = LONGLONG;
                             push_integer_and_reset(false);
@@ -950,7 +951,7 @@ namespace k::lex {
                             lex_state = START;
                         } else {
                             // TODO handle byte size here
-                            warn(0x0010, "Bad big integer suffix '{}', expect character 'B'", {std::string{get_content()} + c}, pos);
+                            warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_BAD_BIGINT_SUFFIX), "Bad big integer suffix '{}', expect character 'B'", {std::string{get_content()} + c}, pos);
                             // TODO/ERROR Bad integer suffix, expect character 'B'.
                             size = LONGLONG;
                             push_integer_and_reset(false);

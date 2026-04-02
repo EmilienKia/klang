@@ -22,8 +22,8 @@
  * THE RULES:
  *   struct = pure aggregation — NO virtuality at all:
  *     - No vtable, no virtual member functions
- *     - 'virtual' in base clause is a compile-time error (0x0034)
- *     - cross-inheritance struct↔class is a compile-time error (0x0035)
+ *     - 'virtual' in base clause is a compile-time error
+ *     - cross-inheritance struct↔class is a compile-time error (0x00BE)
  *
  *   class = full virtuality (automatic virtual dispatch):
  *     - All non-static, non-private, non-constructor/destructor member functions
@@ -38,9 +38,9 @@
  * Tests covered:
  *  ── struct no-virtuality enforcement ─────────────────────────────────────
  *   [A] struct methods are NOT virtual (no vtable, no dispatch)
- *   [B] struct with virtual base → error 0x0034
- *   [C] class inheriting from struct → error 0x0035
- *   [D] struct inheriting from class → error 0x0035
+ *   [B] struct with virtual base → error
+ *   [C] class inheriting from struct → error 0x00BE
+ *   [D] struct inheriting from class → error 0x00BE
  *  ── class auto-virtual public methods ────────────────────────────────────
  *   [E] public class methods are automatically virtual (vtable slot assigned)
  *   [F] virtual dispatch works through base reference
@@ -147,7 +147,7 @@ test_derived() : int {
 // ════════════════════════════════════════════════════════════════════════════
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [C,D] / [S,T] cross-struct/class inheritance → error 0x0035
+//  [C,D] / [S,T] cross-struct/class inheritance → error 0x00BE
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[C/D] cross-struct/class inheritance is forbidden", "[struct][class][virtuality][error]") {

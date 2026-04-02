@@ -20,6 +20,7 @@
 #include "gen_helpers.hpp"
 
 #include "../model/imported.hpp"
+#include "../errors.hpp"
 
 namespace k::model::gen {
 
@@ -219,7 +220,7 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
         // Warn if function uses named return variable and return has an expression
         if (func->has_named_return_var()) {
             if (stmt.get_ast_return_statement()) {
-                logger_relay::warn(with_flag(0x6001), lex::any_lexeme{stmt.get_ast_return_statement()->ret},
+                warn(static_cast<unsigned int>(k::diag::statement_diag::WARN_UNREACHABLE_AFTER_RETURN), lex::any_lexeme{stmt.get_ast_return_statement()->ret},
                     "Function with named return variable '{}' uses 'return expr;'; "
                     "the expression will be assigned to '{}' before returning",
                     {func->get_named_return_var()->get_short_name(),
@@ -231,7 +232,7 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
         expr->accept(*this);
         auto cast = adapt_type(expr, ret_type);
         if(!cast) {
-            throw_error(0x000E, stmt.get_ast_return_statement()->ret, "Return expression type must be compatible to the expected function return type");
+            throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH), stmt.get_ast_return_statement()->ret, "Return expression type must be compatible to the expected function return type");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_expression(cast);
@@ -501,7 +502,7 @@ void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
         expr->accept(*this);
         auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
         if(!cast) {
-            throw_error(0x000F, stmt.get_ast_if_else_stmt()->if_kw, "If test expression type must be convertible to bool");
+            throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL), stmt.get_ast_if_else_stmt()->if_kw, "If test expression type must be convertible to bool");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_test_expr(cast);
@@ -605,7 +606,7 @@ void type_reference_resolver::visit_while_statement(while_statement& stmt)
         expr->accept(*this);
         auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
         if(!cast) {
-            throw_error(0x0010, stmt.get_ast_while_stmt()->while_kw, "While test expression type must be convertible to bool");
+            throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_WHILE_COND_NOT_BOOL), stmt.get_ast_while_stmt()->while_kw, "While test expression type must be convertible to bool");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_test_expr(cast);
@@ -710,7 +711,7 @@ void type_reference_resolver::visit_for_statement(for_statement& stmt)
         expr->accept(*this);
         auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
         if(!cast) {
-            throw_error(0x0011, stmt.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
+            throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_FOR_COND_NOT_BOOL), stmt.get_ast_for_stmt()->for_kw, "For test expression type must be convertible to bool");
         } else if(cast != expr ) {
             // Casted, assign casted expression as return expr.
             stmt.set_test_expr(cast);
@@ -829,7 +830,7 @@ void type_reference_resolver::visit_expression_statement(expression_statement& s
         // immediately discarded.  This covers both 'new Foo();' and a function call
         // returning T! used as a statement.
         if (type::is_owner(expr->get_type())) {
-            warn(0x5010, expr->first_lexeme(),
+            warn(static_cast<unsigned int>(k::diag::statement_diag::WARN_UNUSED_EXPR_RESULT), expr->first_lexeme(),
                 "Result of expression producing owner type '{}' is immediately discarded — "
                 "the allocated object will be deleted right after construction",
                 {expr->get_type()->to_string()});
@@ -1025,7 +1026,7 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
         if (auto ast_decl = var.get_ast_variable_decl()) {
             var_lexeme = lex::any_lexeme{ast_decl->name};
         }
-        throw_error(0x0003, var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_LOCAL_VAR_TYPE_UNRESOLVED), var_lexeme,
             "Variable '{}' has no initialisation expression; "
             "all variable declarations must have an initialiser (uninitialized variables are not yet supported)",
             {var.get_fq_name()});

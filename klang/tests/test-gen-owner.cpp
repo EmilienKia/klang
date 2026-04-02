@@ -40,8 +40,8 @@
  *  - bare new array expression statement: elements allocated and freed
  *
  *  Error tests:
- *  - Error 0x005A: delete applied to non-owner type
- *  - Error 0x0057: new on abstract class
+ *  - Error 0x0117: delete applied to non-owner type
+ *  - Error 0x0114: new on abstract class
  */
 
 #include <catch2/catch_all.hpp>
@@ -821,7 +821,7 @@ TEST_CASE("Bare new array expression statement: elements allocated and freed (Wa
 // Error tests: delete on non-owner, new abstract class
 // =============================================================================
 
-TEST_CASE("delete on non-owner type — error 0x005A", "[gen][owner][error]") {
+TEST_CASE("delete on non-owner type — error 0x0117", "[gen][owner][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __own_err_del_nonowner__;
         test() : int {
@@ -833,7 +833,7 @@ TEST_CASE("delete on non-owner type — error 0x005A", "[gen][owner][error]") {
     )SRC"));
 }
 
-TEST_CASE("new abstract class — error 0x0057", "[gen][owner][error]") {
+TEST_CASE("new abstract class — error 0x0114", "[gen][owner][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __own_err_new_abstract__;
 

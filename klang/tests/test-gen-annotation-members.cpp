@@ -57,7 +57,7 @@ TEST_CASE("Annotation: implicit const — annotation type is const struct", "[an
 
 TEST_CASE("Annotation: explicit const is redundant but compiles", "[annotation][const]") {
     // 'const annotation' is accepted — annotation is still const.
-    // The compiler emits a warning (0x2002C) but compilation succeeds.
+    // The compiler emits a warning (0x00A9) but compilation succeeds.
     auto comp = compile_model(R"SRC(
         module __test_ann_const_2__;
         const annotation Redundant {

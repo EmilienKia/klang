@@ -39,6 +39,7 @@
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
+#include "../errors.hpp"
 
 
 namespace k::model::gen {
@@ -246,7 +247,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
             if (resolved && type::is_resolved(resolved)) {
                 param.set_type(resolved);
             } else {
-                throw_error(0x0001, param_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_VOID_NOT_ALLOWED), param_lexeme,
                     "Cannot resolve function reference type for parameter '{}'",
                     {param.get_short_name()});
             }
@@ -290,7 +291,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
             }
         }
         if (!type::is_resolved(res_type)) {
-            throw_error(0x0001, param_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_VOID_NOT_ALLOWED), param_lexeme,
                 "Cannot resolve type for parameter '{}': the type name is unknown",
                 {param.get_short_name()});
         }
@@ -357,7 +358,7 @@ void symbol_resolver::visit_function(function& fn) {
                     } else {
                         reason = "destructors have no RTTI";
                     }
-                    warn(0x003D, fn_lexeme,
+                    warn(static_cast<unsigned int>(k::diag::symbol_diag::WARN_UNUSED_PRIVATE_CTOR), fn_lexeme,
                         "RUNTIME annotation '@{}' on '{}' will not be accessible at runtime; {}",
                         {ann_inst.raw_name, fn.get_short_name(), reason});
                 }
@@ -410,7 +411,7 @@ void symbol_resolver::visit_function(function& fn) {
 
             // Validate language parameter (mandatory, case-insensitive, only "C" supported)
             if (!language.has_value() || language->empty()) {
-                throw_error(0x0080, fn_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ANNOTATION_MISMATCH), fn_lexeme,
                     "@ffi::Extern on '{}': 'language' parameter is required and must not be empty",
                     {fn.get_short_name()});
             }
@@ -418,21 +419,21 @@ void symbol_resolver::visit_function(function& fn) {
             std::transform(lang_lower.begin(), lang_lower.end(), lang_lower.begin(),
                 [](unsigned char c) { return std::tolower(c); });
             if (lang_lower != "c") {
-                throw_error(0x0080, fn_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ANNOTATION_MISMATCH), fn_lexeme,
                     "@ffi::Extern on '{}': unsupported language '{}'; only \"C\" is currently supported",
                     {fn.get_short_name(), language.value()});
             }
 
             // Warn if 'library' is specified (not yet used for C FFI)
             if (library.has_value()) {
-                warn(0x0081, fn_lexeme,
+                warn(static_cast<unsigned int>(k::diag::function_diag::WARN_FUNC_BODY_IGNORED), fn_lexeme,
                     "@ffi::Extern on '{}': 'library' parameter is not yet used for language \"C\" and will be ignored",
                     {fn.get_short_name()});
             }
 
             // Validate: non-static member methods cannot be @Extern
             if (fn.is_member() && !fn.is_static()) {
-                throw_error(0x0082, fn_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ABSTRACT_HAS_BODY), fn_lexeme,
                     "@ffi::Extern on '{}': only global or static functions can be declared as FFI extern; "
                     "non-static member functions are not supported",
                     {fn.get_short_name()});
@@ -440,7 +441,7 @@ void symbol_resolver::visit_function(function& fn) {
 
             // Validate: @Extern function must not have a body
             if (fn.get_ast_function_decl() && fn.get_ast_function_decl()->content) {
-                throw_error(0x0080, fn_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ANNOTATION_MISMATCH), fn_lexeme,
                     "@ffi::Extern function '{}' must not have a body; "
                     "remove the body or the @ffi::Extern annotation",
                     {fn.get_short_name()});
@@ -448,7 +449,7 @@ void symbol_resolver::visit_function(function& fn) {
 
             // Validate: @Extern + abstract is not allowed
             if (fn.is_abstract_func()) {
-                throw_error(0x0080, fn_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ANNOTATION_MISMATCH), fn_lexeme,
                     "Function '{}' cannot be both @ffi::Extern and abstract",
                     {fn.get_short_name()});
             }
@@ -482,7 +483,7 @@ void symbol_resolver::visit_function(function& fn) {
 
             // 1. The owning function must be @Extern("C")
             if (!fn.is_extern()) {
-                throw_error(0x0089, param_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED), param_lexeme,
                     "@ffi::CString on parameter '{}' of function '{}': "
                     "@ffi::CString is only valid on parameters of @ffi::Extern(\"C\") functions",
                     {param->get_short_name(), fn.get_short_name()});
@@ -498,7 +499,7 @@ void symbol_resolver::visit_function(function& fn) {
 
             // 2b. Check for drain — warn and peel
             if (type::is_drain(inner)) {
-                warn(0x008A, param_lexeme,
+                warn(static_cast<unsigned int>(k::diag::function_diag::WARN_PARAM_DRAIN_NON_STRUCT), param_lexeme,
                     "@ffi::CString on parameter '{}': drain indirection (#) is not meaningful "
                     "for C FFI; treating as reference",
                     {param->get_short_name()});
@@ -510,7 +511,7 @@ void symbol_resolver::visit_function(function& fn) {
                   || type::is_owner(inner)) {
                 inner = inner->get_subtype();
             } else {
-                throw_error(0x008B, param_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_DRAIN_MUST_BE_LAST), param_lexeme,
                     "@ffi::CString on parameter '{}': the parameter type must be an addresser "
                     "(reference, pointer, view, link or owner) to char, but got '{}'",
                     {param->get_short_name(), ptype->to_string()});
@@ -522,18 +523,18 @@ void symbol_resolver::visit_function(function& fn) {
             // 2e. Leaf type must be char (or unsigned char with warning)
             auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
             if (!prim) {
-                throw_error(0x008C, param_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH), param_lexeme,
                     "@ffi::CString on parameter '{}': the addressed type must be char, "
                     "but got '{}'",
                     {param->get_short_name(), inner->to_string()});
             } else if (prim->get_type() == primitive_type::BYTE) {
                 // BYTE == UNSIGNED_CHAR
-                warn(0x008D, param_lexeme,
+                warn(static_cast<unsigned int>(k::diag::function_diag::WARN_PARAM_DEFAULT_NARROWING), param_lexeme,
                     "@ffi::CString on parameter '{}': unsigned char will be treated "
                     "as char for C FFI",
                     {param->get_short_name()});
             } else if (prim->get_type() != primitive_type::CHAR) {
-                throw_error(0x008C, param_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH), param_lexeme,
                     "@ffi::CString on parameter '{}': the addressed type must be char, "
                     "but got '{}'",
                     {param->get_short_name(), inner->to_string()});
@@ -556,7 +557,7 @@ void symbol_resolver::visit_function(function& fn) {
         } else {
             lex::opt_any_lexeme fn_lexeme;
             if (auto ast_fd = fn.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-            throw_error(0x0050, fn_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_FUNC_RETURN_UNRESOLVED), fn_lexeme,
                 "Function redirector '{}' targets '{}', which could not be resolved to a function",
                 {fn.get_short_name(), target_name.to_string()});
         }
@@ -675,7 +676,7 @@ void declaration_generator::visit_function(function &function) {
         && !function.is_defaulted()) {
         lex::opt_any_lexeme fn_lexeme;
         if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-        throw_error(0x002C, fn_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_INTERFACE_NOT_IMPLEMENTED), fn_lexeme,
             "Function '{}' has no body; a function body is required unless the function is abstract, "
             "declared inside an interface, or annotated with @ffi::Extern",
             {function.get_fq_name()});
@@ -774,7 +775,7 @@ void implementation_generator::visit_function(function &function) {
     if (func_it==_context->_functions.end()) {
         lex::opt_any_lexeme fn_lexeme;
         if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-        throw_internal_error(0x0001, fn_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
             "Internal error: LLVM function declaration not found for '{}'; "
             "the declaration pass must be run before the implementation pass",
             {function.get_fq_name()});

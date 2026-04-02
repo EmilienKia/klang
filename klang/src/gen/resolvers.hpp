@@ -176,7 +176,7 @@ protected:
 
 public:
     symbol_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
-    k::log::logger_relay(logger, 0x30000),
+    k::log::logger_relay(logger),
     _context(context),
     _unit(unit)  {
     }
@@ -208,38 +208,25 @@ protected:
     std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_ptr<function>>
     resolve_via_using(const element& elem, const name& name);
 
-    /**
-     * Base offset for internal-error codes.
-     * Internal errors indicate compiler bugs that cannot be triggered by any valid
-     * (or invalid) K source file.  Their diagnostic codes are 0xA000 + local_code,
-     * which keeps them visually distinct from user-facing errors (0x0001 … 0x09FF).
-     */
-    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
-
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        auto diag = k::log::diagnostic::make_error(code, message, args);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        auto diag = k::log::diagnostic::make_error(code, message, args);
         if (lexeme) diag.at(*lexeme);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }
 
-    /** Throw an internal-compiler-error (should never be reachable via any K source input). */
-    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
-    }
 
 protected:
 
     /**
      * Check if a variable (member or global) is accessible from the given access-site element.
-     * Throws a resolution_error (code 0x3000E for namespace-level, 0x3000F for struct-level)
-     * if the element is not accessible.
+     * Throws a resolution_error if the element is not accessible.
      * @param var   The variable definition being accessed.
      * @param access_site  The element from which the access occurs.
      */
@@ -363,7 +350,7 @@ protected:
 
 public:
     aggregate_type_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit)
-        : k::log::logger_relay(logger, 0x50000),
+        : k::log::logger_relay(logger),
           _context(context),
           _unit(unit) {}
 
@@ -375,20 +362,15 @@ public:
     std::shared_ptr<type> resolve_type_from_root(const k::name& name_without_prefix);
 
 protected:
-    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme,
                                   const std::string& message, const std::vector<std::string>& args = {}) {
-        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        auto diag = k::log::diagnostic::make_error(code, message, args);
         if (lexeme) diag.at(*lexeme);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }
 
-    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_any_lexeme& lexeme,
-                                           const std::string& message, const std::vector<std::string>& args = {}) {
-        throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
-    }
 
     void visit_unit(unit&) override;
     void visit_namespace(ns&) override;
@@ -440,27 +422,22 @@ protected:
 
 public:
     model_materializer(k::log::logger& logger, std::shared_ptr<context> context, unit& unit)
-        : k::log::logger_relay(logger, 0x60000),
+        : k::log::logger_relay(logger),
           _context(context),
           _unit(unit) {}
 
     void materialize();
 
 protected:
-    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xB000;
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme,
                                   const std::string& message, const std::vector<std::string>& args = {}) {
-        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        auto diag = k::log::diagnostic::make_error(code, message, args);
         if (lexeme) diag.at(*lexeme);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }
 
-    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_any_lexeme& lexeme,
-                                           const std::string& message, const std::vector<std::string>& args = {}) {
-        throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
-    }
 
     void visit_unit(unit&) override;
     void visit_namespace(ns&) override;
@@ -510,7 +487,7 @@ protected:
 
 public:
     signature_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit)
-        : k::log::logger_relay(logger, 0x45000),
+        : k::log::logger_relay(logger),
           _context(context),
           _unit(unit) {}
 
@@ -561,7 +538,7 @@ protected:
 public:
 
     type_reference_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
-    k::log::logger_relay(logger, 0x40000),
+    k::log::logger_relay(logger),
     _context(context),
     _unit(unit)  {
     }
@@ -613,25 +590,19 @@ protected:
      */
     static std::shared_ptr<type> strip_ref_array(const std::shared_ptr<type>& t);
 
-    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
-
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        auto diag = k::log::diagnostic::make_error(code, message, args);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        auto diag = k::log::diagnostic::make_error(code, message, args);
         if (lexeme) diag.at(*lexeme);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }
 
-    /** Throw an internal-compiler-error (should never be reachable via any K source input). */
-    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
-    }
 
     void visit_unit(unit&) override;
 
@@ -1041,26 +1012,17 @@ protected:
     std::shared_ptr<context> _context;
     unit& _unit;
 
-    static constexpr unsigned int LOG_BASE = 0x60000;
-    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
-
     [[noreturn]] void throw_error(unsigned int code,
                                   const std::string& message,
                                   const std::vector<std::string>& args = {}) {
-        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        auto diag = k::log::diagnostic::make_error(code, message, args);
         logger_relay::report(diag);
         throw resolution_error(std::move(diag));
     }
 
-    [[noreturn]] void throw_internal_error(unsigned int code,
-                                           const std::string& message,
-                                           const std::vector<std::string>& args = {}) {
-        throw_error(INTERNAL_ERROR_BASE + code, message, args);
-    }
-
 public:
     init_order_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& u)
-        : k::log::logger_relay(logger, LOG_BASE), _context(context), _unit(u) {}
+        : k::log::logger_relay(logger), _context(context), _unit(u) {}
 
     /**
      * Run the resolver: compute the unified ordered init/finit sequence and

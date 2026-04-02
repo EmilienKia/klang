@@ -66,6 +66,7 @@
 #include <set>
 #include <unordered_set>
 #include <functional>
+#include "../errors.hpp"
 
 namespace k::model::gen {
 
@@ -509,7 +510,7 @@ void symbol_resolver::resolve_redirect_chains(unit& unit) {
 
 std::shared_ptr<function> symbol_resolver::resolve_redirect_chain(function& fn, std::unordered_set<function*>& visited) {
     if (visited.count(&fn)) {
-        throw_error(0x0051, fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_CHAIN_CYCLE), fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "Circular redirect chain detected involving function '{}'",
             {fn.get_short_name()});
     }
@@ -517,7 +518,7 @@ std::shared_ptr<function> symbol_resolver::resolve_redirect_chain(function& fn, 
 
     auto target = fn.get_redirect_target();
     if (!target) {
-        throw_error(0x0052, fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_TARGET_NOT_FOUND), fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "Function redirector '{}' has no resolved target",
             {fn.get_short_name()});
     }
@@ -525,7 +526,7 @@ std::shared_ptr<function> symbol_resolver::resolve_redirect_chain(function& fn, 
     // If the target is itself a redirect, follow the chain
     if (target->is_redirected()) {
         if (!target->get_redirect_target()) {
-            throw_error(0x0053, fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
+            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_AMBIGUOUS), fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
                 "Function redirector '{}' targets '{}', which is itself a redirector with no resolved target",
                 {fn.get_short_name(), target->get_short_name()});
         }
@@ -534,12 +535,12 @@ std::shared_ptr<function> symbol_resolver::resolve_redirect_chain(function& fn, 
 
     // Target is a concrete function — check it's not abstract or deleted
     if (target->is_abstract_func()) {
-        throw_error(0x0054, fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_SELF_REF), fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "Function redirector '{}' targets abstract function '{}', which has no implementation",
             {fn.get_short_name(), target->get_short_name()});
     }
     if (target->is_deleted()) {
-        throw_error(0x0055, fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_REDIRECT_INCOMPATIBLE_SIG), fn.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{fn.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "Function redirector '{}' targets deleted function '{}'",
             {fn.get_short_name(), target->get_short_name()});
     }
@@ -571,7 +572,7 @@ symbol_resolver::resolve_symbol(const element& elem, const name& name) {
             }
             func = func->ancestor<function>();
         }
-        throw_error(0x0002, std::nullopt,
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_SYMBOL_NOT_FOUND), std::nullopt,
             "'this' can only be used inside a non-static member function");
     }
 
@@ -915,7 +916,7 @@ void symbol_resolver::check_variable_visibility(const variable_definition& var, 
         if (vis == PROTECTED && scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
         lex::opt_any_lexeme agg_lexeme;
         if (auto ast_ad = owner_agg->get_ast_aggregate_decl()) agg_lexeme = lex::any_lexeme{ast_ad->name};
-        throw_error(0x000F, agg_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_AGGREGATE_VISIBILITY_DENIED), agg_lexeme,
             "{} member variable '{}' of struct '{}' is not accessible here; "
             "it can only be accessed from member functions of '{}'{}",
             {vis == PROTECTED ? "protected" : "private",
@@ -939,13 +940,13 @@ void symbol_resolver::check_variable_visibility(const variable_definition& var, 
         if (vis == PROTECTED) {
             auto owner_root = scope_lookup::root_namespace(*owner_ns);
             if (!owner_root || scope_lookup::is_in_same_module(*site, *owner_root)) return;
-            throw_error(0x000E, std::nullopt,
+            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_VISIBILITY_ACCESS_DENIED), std::nullopt,
                 "protected variable '{}' is only accessible within the same module; "
                 "it is declared in module '{}' but accessed from outside",
                 {gv->get_short_name(), owner_root->get_short_name()});
         } else { // PRIVATE
             if (scope_lookup::is_in_same_namespace(*site, *owner_ns)) return;
-            throw_error(0x000E, std::nullopt,
+            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_VISIBILITY_ACCESS_DENIED), std::nullopt,
                 "private variable '{}' is only accessible within namespace '{}'; "
                 "it cannot be accessed from outside that namespace",
                 {gv->get_short_name(), owner_ns->get_short_name()});
@@ -1672,7 +1673,7 @@ bool model_materializer::validate_vtable(klass& kl) {
         // that is a compilation error (should have been caught by symbol_resolver, but we
         // double-check here as a defensive measure).
         if (entry.func->is_abstract_func() && !kl.is_abstract()) {
-            throw_error(0x0001, kl.get_ast_aggregate_decl() ? lex::opt_any_lexeme{lex::any_lexeme{kl.get_ast_aggregate_decl()->name}} : lex::opt_any_lexeme{},
+            throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_DUPLICATE_BASE_CLASS), kl.get_ast_aggregate_decl() ? lex::opt_any_lexeme{lex::any_lexeme{kl.get_ast_aggregate_decl()->name}} : lex::opt_any_lexeme{},
                 "class '{}' must implement abstract method '{}' (introduced in '{}') "
                 "or be declared 'abstract'",
                 {kl.get_short_name(),
@@ -1872,7 +1873,7 @@ void type_reference_resolver::check_function_visibility(const function& func, co
     if (owner_agg) {
         if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
         if (vis == PROTECTED && scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
-        throw_error(0x002F, func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
+        throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_ACCESS_DENIED), func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
             "{} member function '{}' of struct '{}' is not accessible here; "
             "it can only be called from member functions of '{}'{}",
             {vis == PROTECTED ? "protected" : "private",
@@ -1890,13 +1891,13 @@ void type_reference_resolver::check_function_visibility(const function& func, co
         if (vis == PROTECTED) {
             auto owner_root = scope_lookup::root_namespace(*owner_ns);
             if (!owner_root || scope_lookup::is_in_same_module(*site, *owner_root)) return;
-            throw_error(0x002E, func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
+            throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ACCESS_DENIED), func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
                 "protected function '{}' is only accessible within the same module; "
                 "it is declared in module '{}' but accessed from outside",
                 {func.get_short_name(), owner_root->get_short_name()});
         } else {
             if (scope_lookup::is_in_same_namespace(*site, *owner_ns)) return;
-            throw_error(0x002E, func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
+            throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ACCESS_DENIED), func.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{func.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
                 "private function '{}' is only accessible within namespace '{}'; "
                 "it cannot be called from outside that namespace",
                 {func.get_short_name(), owner_ns->get_short_name()});
@@ -1914,7 +1915,7 @@ void type_reference_resolver::check_constructor_visibility(const constructor& ct
     if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
     if (vis == PROTECTED && scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
 
-    throw_error(0x0030, ctor.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{ctor.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
+    throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_VISIBILITY_MISMATCH), ctor.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{ctor.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
         "{} constructor of struct '{}' is not accessible here; "
         "it can only be called from member functions of '{}'{}",
         {vis == PROTECTED ? "protected" : "private",
@@ -2243,7 +2244,7 @@ void type_reference_resolver::check_overload_collisions(function_holder& fh)
                 if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
                     lex::opt_any_lexeme fn_lexeme;
                     if (auto ast_fd = overloads[i]->get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-                    throw_error(0x0002, fn_lexeme,
+                    throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ARITH_TYPE_MISMATCH), fn_lexeme,
                         "Ambiguous overload: '{}{}' and overload '{}{}' can both be called with the same number of arguments "
                         "because of default parameter values; rename one overload or remove the default value(s) to resolve the ambiguity",
                         {fname, param_list_str(overloads[i]->parameters()),
@@ -2269,7 +2270,7 @@ void type_reference_resolver::check_constructor_overload_collisions(aggregate& s
 
             if ((has_default_i || has_default_j) && ranges_overlap(min_i, max_i, min_j, max_j)) {
                 const std::string& sname = st.get_short_name();
-                throw_error(0x0003, st.get_ast_aggregate_decl() ? lex::opt_any_lexeme{lex::any_lexeme{st.get_ast_aggregate_decl()->name}} : lex::opt_any_lexeme{},
+                throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ARITH_NO_COMMON_TYPE), st.get_ast_aggregate_decl() ? lex::opt_any_lexeme{lex::any_lexeme{st.get_ast_aggregate_decl()->name}} : lex::opt_any_lexeme{},
                     "Ambiguous constructor overload in '{}': constructor '{}{}' and constructor '{}{}' can both be called with the same number of arguments "
                     "because of default parameter values; remove one constructor or remove the default value(s) to resolve the ambiguity",
                     {sname,
@@ -2313,7 +2314,7 @@ type_reference_resolver::resolve_function_ref_type(
             resolved = _context->resolve_type(pt);
         }
         if (!resolved || !type::is_resolved(resolved)) {
-            throw_error(0x4042, std::nullopt,
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_SIGNATURE_STRUCT_NOT_FOUND), std::nullopt,
                 "Cannot resolve parameter type in function reference type",
                 {});
         }
@@ -2336,14 +2337,14 @@ type_reference_resolver::resolve_function_ref_type(
             if (root_ns) owner_agg = resolve_struct_from(*root_ns, ufrt->owner_name());
         }
         if (!owner_agg) {
-            throw_error(0x4043, std::nullopt,
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_SIGNATURE_STRUCT_WRONG_KIND), std::nullopt,
                 "Cannot find owner struct '{}' for member function reference type",
                 {ufrt->owner_name().to_string()});
         }
         // Accept both structure and klass as owner aggregates
         if (!std::dynamic_pointer_cast<structure>(owner_agg) &&
             !std::dynamic_pointer_cast<klass>(owner_agg)) {
-            throw_error(0x4044, std::nullopt,
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_SIGNATURE_ENUM_BAD_UNDERLYING), std::nullopt,
                 "'{}' is not a structure or class; member function pointers require a struct/class owner",
                 {ufrt->owner_name().to_string()});
         }
@@ -3176,7 +3177,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
                 first = false;
             }
         }
-        auto d = k::log::diagnostic::make_error(0x30006,
+        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_STATIC_CTOR_INIT_FAILED),
             "No constructor found with {} argument(s){}",
             {std::to_string(arg_count), avail.empty() ? "" : "; available constructors have: " + avail});
         report(d);
@@ -3192,7 +3193,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         }
         if (non_deleted.empty()) {
             // All arity-matched constructors are deleted
-            auto d = k::log::diagnostic::make_error(0x30007,
+            auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
                 "Use of deleted constructor: a constructor matching {} argument(s) exists but has been explicitly deleted with '-> delete'",
                 {std::to_string(arg_count)});
             report(d);
@@ -3257,7 +3258,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 
     // --- Step 3: no valid candidates ---
     if (valid_candidates.empty()) {
-        auto d = k::log::diagnostic::make_error(0x30007,
+        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
             "No viable constructor found: none of the {} candidate(s) accept the provided argument types",
             {std::to_string(failed_candidates.size())});
         for (auto& fc : failed_candidates) {
@@ -3308,7 +3309,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 
     // --- Step 6: ambiguity check ---
     if (best_candidates.size() > 1) {
-        auto d = k::log::diagnostic::make_error(0x30008,
+        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH),
             "Ambiguous constructor call: {} equally viable candidates",
             {std::to_string(best_candidates.size())});
         for (auto* cand : best_candidates) {
@@ -3456,7 +3457,7 @@ type_reference_resolver::get_best_matching_function(
         if (!candidates.empty()) {
             if (auto ast_fd = candidates.front()->get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
         }
-        throw_error(0x0009, fn_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_VISIBILITY_MISMATCH), fn_lexeme,
             "No viable overload found for '{}' with {} argument(s): "
             "none of the {} candidate(s) can be called with the provided arguments",
             {fname, std::to_string(args.size()), std::to_string(candidates.size())});
@@ -3484,7 +3485,7 @@ type_reference_resolver::get_best_matching_function(
 
     if (best.size() > 1) {
         std::string fname = best[0]->func ? best[0]->func->get_short_name() : "<unknown>";
-        auto d = k::log::diagnostic::make_error(0x3000A,
+        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_FUNC_VISIBILITY_DENIED),
             "Ambiguous call to '{}': {} equally viable overloads",
             {fname, std::to_string(best.size())});
         for (auto* c : best) {
@@ -4011,7 +4012,7 @@ void init_order_resolver::resolve() {
                 cycle_members += node_label(nodes[i]);
             }
         }
-        throw_error(0x0002,
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_INIT_ORDER_CYCLE),
             "Cycle detected in global initialization dependency graph. "
             "The following items form a circular dependency: {}",
             {cycle_members});

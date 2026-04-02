@@ -36,6 +36,7 @@
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
+#include "../errors.hpp"
 namespace k::model::gen {
 /**
  * Visit a constructor during symbol resolution: resolve parameter types,
@@ -304,7 +305,7 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
     if (!st) {
         lex::opt_any_lexeme ctor_lexeme;
         if (auto ast_fd = ctor.get_ast_function_decl()) ctor_lexeme = lex::any_lexeme{ast_fd->name};
-        throw_internal_error(0x0001, ctor_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F003), ctor_lexeme,
             "Internal error: constructor has no owner structure; "
             "every constructor must belong to a struct — this indicates a compiler bug");
     }
@@ -431,7 +432,7 @@ void type_reference_resolver::visit_destructor(destructor& dtor) {
     if (!st) {
         lex::opt_any_lexeme dtor_lexeme;
         if (auto ast_fd = dtor.get_ast_function_decl()) dtor_lexeme = lex::any_lexeme{ast_fd->name};
-        throw_internal_error(0x0002, dtor_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F004), dtor_lexeme,
             "Internal error: destructor has no owner structure; "
             "every destructor must belong to a struct — this indicates a compiler bug");
     }
@@ -510,7 +511,7 @@ void symbol_resolver::visit_static_constructor(static_constructor& sctor) {
         // Not found — report error
         lex::opt_any_lexeme sctor_lexeme;
         if (auto ast_fd = sctor.get_ast_function_decl()) sctor_lexeme = lex::any_lexeme{ast_fd->name};
-        throw_error(0x0006, sctor_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_STATIC_CTOR_INIT_FAILED), sctor_lexeme,
             "In static constructor '{}': dependency '{}' in the mem-init list "
             "does not refer to any known struct or global variable in scope",
             {sctor.get_fq_name(), dep.name});
@@ -597,7 +598,7 @@ void implementation_generator::visit_global_constructor_function(global_construc
     if (it_func == _context->_functions.end()) {
         lex::opt_any_lexeme fn_lexeme;
         if (auto ast_fd = func.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-        throw_internal_error(0x0002, fn_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01C), fn_lexeme,
             "Internal error: global constructor function not found in LLVM function table; "
             "the declaration pass may not have run");
     }
@@ -845,7 +846,7 @@ void type_reference_resolver::visit_global_main_function(global_main_function& m
     if (main_func.get_real_func().has_parameter()) {
         lex::opt_any_lexeme main_lexeme;
         if (auto ast_fd = main_func.get_real_func().get_ast_function_decl()) main_lexeme = lex::any_lexeme{ast_fd->name};
-        throw_error(0x000C, main_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_RETURN_TYPE), main_lexeme,
             "'main' function does not support parameters yet; "
             "declare it as 'func main() : int' or 'func main() : void'");
     }
@@ -879,7 +880,7 @@ void type_reference_resolver::visit_global_main_function(global_main_function& m
         if(!cast) {
             lex::opt_any_lexeme main_lexeme;
             if (auto ast_fd = main_func.get_real_func().get_ast_function_decl()) main_lexeme = lex::any_lexeme{ast_fd->name};
-            throw_error(0x000D, main_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_PARAMS), main_lexeme,
                 "'main' function return type '{}' cannot be implicitly cast to 'int'; "
                 "the return type must be 'int', 'void', or a type castable to 'int'",
                 {main_func.get_real_func().get_return_type() ? main_func.get_real_func().get_return_type()->to_string() : "?"});

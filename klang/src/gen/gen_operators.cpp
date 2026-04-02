@@ -22,6 +22,7 @@
 #include "../parse/ast.hpp"
 
 #include "llvm/Support/raw_os_ostream.h"
+#include "../errors.hpp"
 template<typename STM>
 inline STM& operator << (STM& stm, const llvm::Type& type) {
     llvm::raw_os_ostream ross(stm);
@@ -255,7 +256,7 @@ type_reference_resolver::resolve_binary_operator_overload(
         if (const_members.empty() && had_mutable && non_member_funcs.empty()) {
             std::string op_sym = get_operator_symbol(op_name);
             std::string type_str = left_agg->get_struct_type() ? left_agg->get_struct_type()->to_string() : left_agg->get_short_name();
-            throw_error(0x0087, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_BINARY_OVERLOAD_BAD_RECEIVER), expr.first_lexeme(),
                 "Cannot call mutable member operator '{}' on a const object of type '{}': "
                 "only const member operators can be called on const objects; "
                 "declare the operator as 'const' to allow calls on const objects",
@@ -337,7 +338,7 @@ type_reference_resolver::resolve_binary_operator_overload(
     if (best.size() > 1) {
         std::string op_sym = get_operator_symbol(op_name);
         std::string left_type_str = left_expr->get_type() ? left_expr->get_type()->to_string() : "?";
-        auto d = k::log::diagnostic::make_error(0x3000B,
+        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_BINARY_OVERLOAD_NOT_FOUND),
             "Ambiguous operator '{}' for type '{}': {} equally viable overloads",
             {op_sym, left_type_str, std::to_string(best.size())});
         for (auto* c : best) {
@@ -407,7 +408,7 @@ type_reference_resolver::resolve_unary_operator_overload(
         if (const_members.empty() && had_mutable && non_member_funcs.empty()) {
             std::string op_sym = get_operator_symbol(op_name);
             std::string type_str = operand_agg->get_struct_type() ? operand_agg->get_struct_type()->to_string() : operand_agg->get_short_name();
-            throw_error(0x0088, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_UNARY_OVERLOAD_BAD_RECEIVER), expr.first_lexeme(),
                 "Cannot call mutable member operator '{}' on a const object of type '{}': "
                 "only const member operators can be called on const objects; "
                 "declare the operator as 'const' to allow calls on const objects",
@@ -472,7 +473,7 @@ type_reference_resolver::resolve_unary_operator_overload(
     if (best.size() > 1) {
         std::string op_sym = get_operator_symbol(op_name);
         std::string operand_type_str = operand_expr->get_type() ? operand_expr->get_type()->to_string() : "?";
-        auto d = k::log::diagnostic::make_error(0x3000C,
+        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_UNARY_OVERLOAD_NOT_FOUND),
             "Ambiguous unary operator '{}' for type '{}': {} equally viable overloads",
             {op_sym, operand_type_str, std::to_string(best.size())});
         for (auto* c : best) {
@@ -618,7 +619,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
             (op_func->is_abstract_func() || op_func->is_external())) {
             // Abstract/external virtual operator: no LLVM definition, dispatch via vtable below.
         } else {
-            throw_internal_error(0x0060, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04A), expr.first_lexeme(),
                 "Internal error: operator overload function '{}' has no LLVM definition",
                 {op_func->get_short_name()});
         }
@@ -703,7 +704,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
         // Member operator: 'this' is the left operand (a reference/pointer to the struct)
         expr.left()->accept(*this);
         if (!_value) {
-            throw_internal_error(0x0061, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04B), expr.first_lexeme(),
                 "Internal error: left operand for operator overload produced no LLVM value");
         }
         args.push_back(_value);
@@ -712,7 +713,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
         // Right operand is the argument
         expr.right()->accept(*this);
         if (!_value) {
-            throw_internal_error(0x0062, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04C), expr.first_lexeme(),
                 "Internal error: right operand for operator overload produced no LLVM value");
         }
         args.push_back(_value);
@@ -720,7 +721,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
         // Non-member operator: both operands are arguments
         expr.left()->accept(*this);
         if (!_value) {
-            throw_internal_error(0x0063, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04D), expr.first_lexeme(),
                 "Internal error: left operand for non-member operator overload produced no LLVM value");
         }
         args.push_back(_value);
@@ -728,7 +729,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
         // Step 2: Resolve the operator function (member or non-member)
         expr.right()->accept(*this);
         if (!_value) {
-            throw_internal_error(0x0064, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04E), expr.first_lexeme(),
                 "Internal error: right operand for non-member operator overload produced no LLVM value");
         }
         args.push_back(_value);
@@ -802,7 +803,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
     }
 
     if (!llvm_func) {
-        throw_internal_error(0x0060, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04A), expr.first_lexeme(),
             "Internal error: operator overload function '{}' has no LLVM definition and is not dispatched virtually",
             {op_func->get_short_name()});
     }
@@ -847,7 +848,7 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
             (op_func->is_abstract_func() || op_func->is_external())) {
             // Abstract/external virtual operator: no LLVM definition, dispatch via vtable below.
         } else {
-            throw_internal_error(0x0065, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04F), expr.first_lexeme(),
                 "Internal error: operator overload function '{}' has no LLVM definition",
                 {op_func->get_short_name()});
         }
@@ -908,7 +909,7 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
         // Member operator: 'this' is the operand (a reference/pointer to the struct)
         expr.sub_expr()->accept(*this);
         if (!_value) {
-            throw_internal_error(0x0066, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F050), expr.first_lexeme(),
                 "Internal error: operand for unary operator overload produced no LLVM value");
         }
         args.push_back(_value);
@@ -916,7 +917,7 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
         // Non-member operator: operand is the argument
         expr.sub_expr()->accept(*this);
         if (!_value) {
-            throw_internal_error(0x0067, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F051), expr.first_lexeme(),
                 "Internal error: operand for non-member unary operator overload produced no LLVM value");
         }
         args.push_back(_value);
@@ -986,7 +987,7 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
     }
 
     if (!llvm_func) {
-        throw_internal_error(0x0065, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F04F), expr.first_lexeme(),
             "Internal error: operator overload function '{}' has no LLVM definition and is not dispatched virtually",
             {op_func->get_short_name()});
     }
@@ -1027,7 +1028,7 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
             (op_func->is_abstract_func() || op_func->is_external())) {
             // Abstract/external virtual operator: no LLVM definition, dispatch via vtable below.
         } else {
-            throw_internal_error(0x0068, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F052), expr.first_lexeme(),
                 "Internal error: casting operator function '{}' has no LLVM definition",
                 {op_func->get_short_name()});
         }
@@ -1105,7 +1106,7 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
     // Member casting operator: 'this' is the source operand (a reference/pointer to the struct)
     expr.sub_expr()->accept(*this);
     if (!_value) {
-        throw_internal_error(0x0069, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F053), expr.first_lexeme(),
             "Internal error: source operand for casting operator overload produced no LLVM value");
     }
     args.push_back(_value);
@@ -1174,7 +1175,7 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
     }
 
     if (!llvm_func) {
-        throw_internal_error(0x0068, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F052), expr.first_lexeme(),
             "Internal error: casting operator function '{}' has no LLVM definition and is not dispatched virtually",
             {op_func->get_short_name()});
     }
@@ -1263,20 +1264,20 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
                 }
             }
         }
-        throw_error(0x0001, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_VOID_NOT_ALLOWED), expr.first_lexeme(),
             "No matching operator overload found for non-primitive type: "
             "the left operand has type '{}'; define an operator function or use primitive types",
             {target_type ? target_type->to_string() : "?"});
     }
 
     if(!type::is_primitive(target_type)) {
-        throw_error(0x0001, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_VOID_NOT_ALLOWED), expr.first_lexeme(),
             "Arithmetic operators are not supported for non-primitive types: "
             "the left operand has type '{}'; only numeric primitive types are supported",
             {target_type ? target_type->to_string() : "?"});
     }
     if(type::is_prim_bool(target_type)) {
-        throw_error(0x0002, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ARITH_TYPE_MISMATCH), expr.first_lexeme(),
             "Arithmetic operators cannot be applied to boolean operands: "
             "use logical operators ('&&', '||', '!') instead of arithmetic operators for boolean values");
     }
@@ -1285,7 +1286,7 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
 
     auto source_type = right->get_type();
     if(type::is_pointer(source_type)) {
-        throw_error(0x0003, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ARITH_NO_COMMON_TYPE), expr.first_lexeme(),
             "Arithmetic operators are not supported for pointer types: "
             "the right operand has a pointer type '{}'; pointer arithmetic is not allowed",
             {source_type ? source_type->to_string() : "?"});
@@ -1317,7 +1318,7 @@ void type_reference_resolver::process_arithmetic(binary_expression& expr) {
     // TODO Promote to largest target_type instead to align to left operand.
     auto cast = adapt_type(right, target_type);
     if(!cast) {
-        throw_error(0x0004, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ARITH_MODULO_NOT_INT), expr.first_lexeme(),
             "Incompatible types in arithmetic expression: "
             "the right operand of type '{}' cannot be implicitly converted to the left operand type '{}'; "
             "use an explicit cast if a narrowing conversion is intended",
@@ -1528,7 +1529,7 @@ void implementation_generator::visit_bitwise_and_expression(bitwise_and_expressi
         if(prim->is_integer()) {
             _value = _builder->CreateAnd(left, right);
         } else if(prim->is_float()) {
-            throw_error(0x0005, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_BITWISE_AND_INCOMPATIBLE), expr.first_lexeme(),
                 "Bitwise AND ('&') cannot be applied to floating-point values: "
                 "bitwise operations are only defined for integer types; "
                 "the operand has type '{}'",
@@ -1564,7 +1565,7 @@ void implementation_generator::visit_bitwise_or_expression(bitwise_or_expression
         if(prim->is_integer()) {
             _value = _builder->CreateOr(left, right);
         } else if(prim->is_float()) {
-            throw_error(0x0006, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_BITWISE_OR_INCOMPATIBLE), expr.first_lexeme(),
                 "Bitwise OR ('|') cannot be applied to floating-point values: "
                 "bitwise operations are only defined for integer types; "
                 "the operand has type '{}'",
@@ -1600,7 +1601,7 @@ void implementation_generator::visit_bitwise_xor_expression(bitwise_xor_expressi
         if(prim->is_integer()) {
             _value = _builder->CreateXor(left, right);
         } else if(prim->is_float()) {
-            throw_error(0x0007, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_BITWISE_XOR_INCOMPATIBLE), expr.first_lexeme(),
                 "Bitwise XOR ('^') cannot be applied to floating-point values: "
                 "bitwise operations are only defined for integer types; "
                 "the operand has type '{}'",
@@ -1637,7 +1638,7 @@ void implementation_generator::visit_left_shift_expression(left_shift_expression
             // TODO may it poison when overflow ?
             _value = _builder->CreateShl(left, right);
         } else if(prim->is_float()) {
-            throw_error(0x0008, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SHIFT_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
                 "Left shift ('<<') cannot be applied to floating-point values: "
                 "shift operations are only defined for integer types; "
                 "the operand has type '{}'",
@@ -1679,7 +1680,7 @@ void implementation_generator::visit_right_shift_expression(right_shift_expressi
                 _value = _builder->CreateAShr(left, right);
             }
         } else if(prim->is_float()) {
-            throw_error(0x0009, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_BITWISE_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
                 "Right shift ('>>') cannot be applied to floating-point values: "
                 "shift operations are only defined for integer types; "
                 "the operand has type '{}'",
@@ -1716,7 +1717,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     auto left_type = left->get_type();
 
     if(!type::is_reference(left_type)) {
-        throw_error(0x000A, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
             "The left operand of an assignment must be assignable (an lvalue): "
             "the left-hand side has type '{}' which is not a reference; "
             "you can only assign to a variable, parameter, or array element",
@@ -1728,7 +1729,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     // ── Const-check ──────────────────────────────────────────────────────────
     // If the target type is const-qualified (ref<const T>), assignment is forbidden.
     if (type::is_const(target_type)) {
-        throw_error(0x0080, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_CALL_NO_MATCH), expr.first_lexeme(),
             "Cannot assign to a const variable: "
             "the left-hand side has type '{}' which is const; "
             "const variables cannot be modified after initialisation",
@@ -1779,7 +1780,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         if (is_rebind_compatible()) {
             // Rebind: check const compatibility (const T~ ← T~ is OK; T~ ← const T~ is not)
             if (type::is_const(rhs_effective->get_subtype()) && !type::is_const(link_subtype)) {
-                throw_error(0x0082, expr.first_lexeme(),
+                throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_ARG_TYPE_MISMATCH), expr.first_lexeme(),
                     "Cannot rebind a link-to-mutable ('{}') from a link-to-const ('{}'): "
                     "this would allow modification of a const object",
                     {target_type ? target_type->to_string() : "?",
@@ -1788,7 +1789,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             // Rebind: load the source address and store into the link alloca.
             // If source is nullable, warn — null-check at IR level.
             if (type::is_nullable_indirection(rhs_effective)) {
-                auto diag = k::log::diagnostic::make_warning(with_flag(0x0072),
+                auto diag = k::log::diagnostic::make_warning(static_cast<unsigned int>(k::diag::operator_diag::WARN_IMPLICIT_LOSSY_CAST),
                     "Rebinding a link from a nullable indirection (type '{}'): "
                     "a runtime null-check will be inserted",
                     {rhs_type ? rhs_type->to_string() : "?"});
@@ -1835,7 +1836,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         target_type = link_subtype;
         ref_target_type = ref_to_target;
     } else if (type::is_view(target_type)) {
-        throw_error(0x0070, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_LOGICAL_NOT_BOOL), expr.first_lexeme(),
             "Cannot assign to a view indirection (type '{}'): "
             "a view ('?') is immutable after initialisation",
             {target_type ? target_type->to_string() : "?"});
@@ -1877,7 +1878,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                                  tgt_st->get_struct()->has_rtti();
                                  std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
                 if (!is_static_upcast && !is_dynamic_downcast) {
-                    throw_error(0x000B, expr.first_lexeme(),
+                    throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ASSIGN_TO_CONST), expr.first_lexeme(),
                         "Pointer assignment type mismatch: "
                         "cannot assign a '{}' to a '{}'; pointer subtypes must match "
                         "or source must be a derived type of the target",
@@ -1886,7 +1887,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 }
                 // Forbid const T* → T* (would lose const-ness on pointed object)
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
-                    throw_error(0x0081, expr.first_lexeme(),
+                    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_GEN_FUNC_OVERLOAD_AMBIGUOUS), expr.first_lexeme(),
                         "Cannot assign a pointer-to-const ('{}') to a pointer-to-mutable ('{}'): "
                         "this would allow modification of a const object through the mutable pointer",
                         {source_type ? source_type->to_string() : "?",
@@ -1913,7 +1914,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             }
             // Forbid const T* → T* (would lose const-ness on pointed object)
             if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
-                throw_error(0x0081, expr.first_lexeme(),
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_GEN_FUNC_OVERLOAD_AMBIGUOUS), expr.first_lexeme(),
                     "Cannot assign a pointer-to-const ('{}') to a pointer-to-mutable ('{}'): "
                     "this would allow modification of a const object through the mutable pointer",
                     {source_type ? source_type->to_string() : "?",
@@ -1928,7 +1929,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             expr.set_type(ref_target_type);
             return;
         } else {
-            throw_error(0x000C, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_RETURN_TYPE), expr.first_lexeme(),
                 "Pointer assignment requires a pointer or link on the right-hand side: "
                 "cannot assign a value of type '{}' to a pointer of type '{}'",
                 {source_type ? source_type->to_string() : "?",
@@ -1937,13 +1938,13 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     } else if (type::is_link(target_type)) {
         // Direct link rebind (reached after link-to-link case not matched above).
         if (!type::is_any_indirection(effective_source_type)) {
-            throw_error(0x0071, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_LOGICAL_AND_INCOMPATIBLE), expr.first_lexeme(),
                 "Link assignment requires an indirection on the right-hand side, "
                 "but got type '{}'",
                 {source_type ? source_type->to_string() : "?"});
         }
         if (type::is_nullable_indirection(effective_source_type)) {
-            auto diag = k::log::diagnostic::make_warning(with_flag(0x0072),
+            auto diag = k::log::diagnostic::make_warning(static_cast<unsigned int>(k::diag::operator_diag::WARN_IMPLICIT_LOSSY_CAST),
                 "Assigning a nullable indirection (type '{}') to a link: "
                 "a runtime null-check will be inserted",
                 {source_type ? source_type->to_string() : "?"});
@@ -1966,14 +1967,14 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             src_inner_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
         }
         if (!type::is_sized_array(src_inner_type)) {
-            throw_error(0x0060, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SHIFT_NOT_INT), expr.first_lexeme(),
                 "Array assignment: the right-hand side must be an array of the same element type, "
                 "but '{}' is not a sized array",
                 {source_type ? source_type->to_string() : "?"});
         }
         auto src_arr = std::dynamic_pointer_cast<sized_array_type>(src_inner_type);
         if (!type::are_equal(dest_arr->get_subtype(), src_arr->get_subtype())) {
-            throw_error(0x0061, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SHIFT_INCOMPATIBLE), expr.first_lexeme(),
                 "Array assignment: element type mismatch — cannot copy from '{}' to '{}'",
                 {source_type ? source_type->to_string() : "?",
                  target_type ? target_type->to_string() : "?"});
@@ -1995,7 +1996,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         // Check: only pointer (*) frt is rebindable; view (?) and link (+) are immutable.
         auto frt_target = std::dynamic_pointer_cast<function_reference_type>(target_type);
         if (frt_target && frt_target->get_ref_kind() != function_reference_type::ref_kind::pointer) {
-            throw_error(0x0090, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_PM_EXPR_BAD_TYPE), expr.first_lexeme(),
                 "Cannot assign to an immutable function reference (type '{}'): "
                 "only pointer (*) function references are rebindable",
                 {target_type ? target_type->to_string() : "?"});
@@ -2057,7 +2058,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                     auto tgt_st = std::dynamic_pointer_cast<struct_type>(own_tgt_nc);
                     if (!src_st || !tgt_st || !src_st->get_struct() || !tgt_st->get_struct() ||
                         !src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
-                        throw_error(0x00A1, expr.first_lexeme(),
+                        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SUBSCRIPT_OVERLOAD_CONST), expr.first_lexeme(),
                             "Owner assignment type mismatch: cannot move '{}' into '{}'",
                             {source_type->to_string(), target_type->to_string()});
                     }
@@ -2075,7 +2076,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             expr.set_type(ref_target_type);
             return;
         }
-        throw_error(0x00A0, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SUBSCRIPT_OVERLOAD_NOT_FOUND), expr.first_lexeme(),
             "Owner assignment: right-hand side must be an owner value, "
             "another owner variable (move), or null; got type '{}'",
             {source_type ? source_type->to_string() : "?"});
@@ -2092,7 +2093,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                     auto member_funcs = collect_member_operators_from_hierarchy(agg, op_name);
                     for (auto& f : member_funcs) {
                         if (f->is_deleted()) {
-                            throw_error(0x00B0, expr.first_lexeme(),
+                            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SUBSCRIPT_OVERLOAD_BAD_RETURN), expr.first_lexeme(),
                                 "Use of deleted operator '{}' on type '{}': "
                                 "this operator was explicitly deleted with '-> delete'",
                                 {get_operator_symbol(op_name),
@@ -2139,12 +2140,12 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         }
         return;
     } else if(!type::is_primitive(target_type)) {
-        throw_error(0x000D, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_PARAMS), expr.first_lexeme(),
             "Assignment to a non-primitive, non-pointer type is not yet supported: "
             "the target has type '{}'; only assignments to primitive types, pointers and arrays are supported",
             {target_type ? target_type->to_string() : "?"});
     } else if(type::is_prim_bool(target_type)) {
-        throw_error(0x000E, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH), expr.first_lexeme(),
             "Direct arithmetic assignment to a boolean variable is not supported: "
             "use a comparison or logical expression to produce a boolean value for '{}'",
             {target_type ? target_type->to_string() : "?"});
@@ -2168,7 +2169,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
     // TODO Promote to largest target_type instead to align to left operand.
     auto cast = adapt_type(right, target_type);
     if(!cast) {
-        throw_error(0x000F, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL), expr.first_lexeme(),
             "Incompatible types in assignment: "
             "the right-hand side of type '{}' cannot be implicitly converted to the target type '{}'; "
             "use an explicit cast if a narrowing conversion is intended",
@@ -2202,7 +2203,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
     // Step 1: Evaluate left and right operands
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x001B, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F035), expr.first_lexeme(),
             "Internal error: assignment expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -2355,7 +2356,7 @@ void type_reference_resolver::visit_arithmetic_assignation_expression(arithmetic
     auto ref_target_type = std::dynamic_pointer_cast<reference_type>(left_type);
     auto target_type = ref_target_type->get_subtype();
     if(type::is_pointer(target_type)) {
-        throw_error(0x0011, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_FOR_COND_NOT_BOOL), expr.first_lexeme(),
             "Arithmetic-assignment operators (e.g. '+=', '-=') cannot be applied to pointer types: "
             "the target has type '{}'; pointer arithmetic is not supported",
             {target_type ? target_type->to_string() : "?"});
@@ -2371,7 +2372,7 @@ void implementation_generator::visit_addition_assignation_expression(additition_
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x001C, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F036), expr.first_lexeme(),
             "Internal error: '+=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -2403,7 +2404,7 @@ void implementation_generator::visit_substraction_assignation_expression(substra
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x001D, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F037), expr.first_lexeme(),
             "Internal error: '-=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -2435,7 +2436,7 @@ void implementation_generator::visit_multiplication_assignation_expression(multi
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x001E, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F038), expr.first_lexeme(),
             "Internal error: '*=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -2467,7 +2468,7 @@ void implementation_generator::visit_division_assignation_expression(division_as
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x001F, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F039), expr.first_lexeme(),
             "Internal error: '/=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -2505,7 +2506,7 @@ void implementation_generator::visit_modulo_assignation_expression(modulo_assign
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x0020, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03A), expr.first_lexeme(),
             "Internal error: '%=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -2543,7 +2544,7 @@ void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x0021, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03B), expr.first_lexeme(),
             "Internal error: '&=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -2557,7 +2558,7 @@ void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_
         if(prim->is_integer()) {
             _value = _builder->CreateAnd(left_val, right);
         } else if(prim->is_float()) {
-            throw_error(0x0018, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ADD_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
                 "Bitwise AND-assignment ('&=') cannot be applied to floating-point values: "
                 "bitwise operations are only defined for integer types; "
                 "the operand has type '{}'",
@@ -2581,7 +2582,7 @@ void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_o
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x0022, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03C), expr.first_lexeme(),
             "Internal error: '|=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -2595,7 +2596,7 @@ void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_o
         if(prim->is_integer()) {
             _value = _builder->CreateOr(left_val, right);
         } else if(prim->is_float()) {
-            throw_error(0x001A, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_NOT_SUPPORTED), expr.first_lexeme(),
                 "Bitwise OR-assignment ('|=') cannot be applied to floating-point values: "
                 "bitwise operations are only defined for integer types; "
                 "the operand has type '{}'",
@@ -2619,7 +2620,7 @@ void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x0023, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03D), expr.first_lexeme(),
             "Internal error: '^=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -2633,7 +2634,7 @@ void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_
         if(prim->is_integer()) {
             _value = _builder->CreateXor(left_val, right);
         } else if(prim->is_float()) {
-            throw_error(0x001C, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MUL_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
                 "Bitwise XOR-assignment ('^=') cannot be applied to floating-point values: "
                 "bitwise operations are only defined for integer types; "
                 "the operand has type '{}'",
@@ -2657,7 +2658,7 @@ void implementation_generator::visit_left_shift_assignation_expression(left_shif
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x0024, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03E), expr.first_lexeme(),
             "Internal error: '<<=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -2672,7 +2673,7 @@ void implementation_generator::visit_left_shift_assignation_expression(left_shif
             // TODO may it poison when overflow ?
             _value = _builder->CreateShl(left_val, right);
         } else if(prim->is_float()) {
-            throw_error(0x001E, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SUB_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
                 "Left shift-assignment ('<<=') cannot be applied to floating-point values: "
                 "shift operations are only defined for integer types; "
                 "the operand has type '{}'",
@@ -2696,7 +2697,7 @@ void implementation_generator::visit_right_shift_assignation_expression(right_sh
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x0025, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03F), expr.first_lexeme(),
             "Internal error: '>>=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -2716,7 +2717,7 @@ void implementation_generator::visit_right_shift_assignation_expression(right_sh
                 _value = _builder->CreateAShr(left_val, right);
             }
         } else if(prim->is_float()) {
-            throw_error(0x0020, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_DIV_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
                 "Right shift-assignment ('>>=') cannot be applied to floating-point values: "
                 "shift operations are only defined for integer types; "
                 "the operand has type '{}'",
@@ -2742,7 +2743,7 @@ void type_reference_resolver::visit_arithmetic_unary_expression(arithmetic_unary
     auto type = sub->get_type();
 
     if(type::is_pointer(type)) {
-        throw_error(0x0021, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_SUBSCRIPT_INDEX_TYPE), expr.first_lexeme(),
             "Unary arithmetic operators cannot be applied to pointer types: "
             "the operand has type '{}'; only numeric primitive types are supported",
             {type ? type->to_string() : "?"});
@@ -2785,7 +2786,7 @@ void type_reference_resolver::visit_arithmetic_unary_expression(arithmetic_unary
     }
 
     if(!type::is_primitive(type)) {
-        throw_error(0x0022, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_NOT_CALLABLE), expr.first_lexeme(),
             "Unary arithmetic operators are not supported for non-primitive types: "
             "the operand has type '{}'; only numeric primitive types are supported",
             {type ? type->to_string() : "?"});
@@ -2805,7 +2806,7 @@ void type_reference_resolver::visit_prefix_increment_expression(prefix_increment
     auto type = sub->get_type();
 
     if(!type::is_reference(type)) {
-        throw_error(0x002F, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_ACCESS_DENIED), expr.first_lexeme(),
             "The operand of prefix '++' must be an assignable lvalue (a variable or dereferenced pointer), "
             "but got a non-reference type '{}'",
             {type ? type->to_string() : "?"});
@@ -2818,7 +2819,7 @@ void type_reference_resolver::visit_prefix_increment_expression(prefix_increment
     }
 
     if(type::is_const(value_type)) {
-        throw_error(0x0083, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_RETURN_TYPE_MISMATCH), expr.first_lexeme(),
             "Cannot apply prefix '++' to a const variable of type '{}'",
             {value_type ? value_type->to_string() : "?"});
     }
@@ -2853,12 +2854,12 @@ void type_reference_resolver::visit_prefix_increment_expression(prefix_increment
     }
 
     if(!type::is_primitive(value_type)) {
-        throw_error(0x0030, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_VISIBILITY_MISMATCH), expr.first_lexeme(),
             "Prefix '++' requires a numeric primitive operand, but got type '{}'",
             {value_type ? value_type->to_string() : "?"});
     }
     if(type::is_prim_bool(value_type)) {
-        throw_error(0x0031, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_DEREF_NOT_POINTER), expr.first_lexeme(),
             "Prefix '++' cannot be applied to a boolean operand");
     }
 
@@ -2916,7 +2917,7 @@ void type_reference_resolver::visit_prefix_decrement_expression(prefix_decrement
     auto type = sub->get_type();
 
     if(!type::is_reference(type)) {
-        throw_error(0x0032, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_FUNC_NO_MATCH), expr.first_lexeme(),
             "The operand of prefix '--' must be an assignable lvalue (a variable or dereferenced pointer), "
             "but got a non-reference type '{}'",
             {type ? type->to_string() : "?"});
@@ -2929,7 +2930,7 @@ void type_reference_resolver::visit_prefix_decrement_expression(prefix_decrement
     }
 
     if(type::is_const(value_type)) {
-        throw_error(0x0084, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_CONST_MISMATCH), expr.first_lexeme(),
             "Cannot apply prefix '--' to a const variable of type '{}'",
             {value_type ? value_type->to_string() : "?"});
     }
@@ -2964,12 +2965,12 @@ void type_reference_resolver::visit_prefix_decrement_expression(prefix_decrement
     }
 
     if(!type::is_primitive(value_type)) {
-        throw_error(0x0033, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_INCOMPATIBLE), expr.first_lexeme(),
             "Prefix '--' requires a numeric primitive operand, but got type '{}'",
             {value_type ? value_type->to_string() : "?"});
     }
     if(type::is_prim_bool(value_type)) {
-        throw_error(0x0034, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_UNSUPPORTED), expr.first_lexeme(),
             "Prefix '--' cannot be applied to a boolean operand");
     }
 
@@ -3024,7 +3025,7 @@ void type_reference_resolver::visit_postfix_increment_expression(postfix_increme
     auto type = sub->get_type();
 
     if(!type::is_reference(type)) {
-        throw_error(0x0035, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_OPERATOR_NOT_FOUND), expr.first_lexeme(),
             "The operand of postfix '++' must be an assignable lvalue (a variable or dereferenced pointer), "
             "but got a non-reference type '{}'",
             {type ? type->to_string() : "?"});
@@ -3037,7 +3038,7 @@ void type_reference_resolver::visit_postfix_increment_expression(postfix_increme
     }
 
     if(type::is_const(value_type)) {
-        throw_error(0x0085, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_VISIBILITY_DENIED), expr.first_lexeme(),
             "Cannot apply postfix '++' to a const variable of type '{}'",
             {value_type ? value_type->to_string() : "?"});
     }
@@ -3072,12 +3073,12 @@ void type_reference_resolver::visit_postfix_increment_expression(postfix_increme
     }
 
     if(!type::is_primitive(value_type)) {
-        throw_error(0x0036, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_PREINC_NOT_REF), expr.first_lexeme(),
             "Postfix '++' requires a numeric primitive operand, but got type '{}'",
             {value_type ? value_type->to_string() : "?"});
     }
     if(type::is_prim_bool(value_type)) {
-        throw_error(0x0037, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_PREINC_NOT_NUMERIC), expr.first_lexeme(),
             "Postfix '++' cannot be applied to a boolean operand");
     }
 
@@ -3133,7 +3134,7 @@ void type_reference_resolver::visit_postfix_decrement_expression(postfix_decreme
     auto type = sub->get_type();
 
     if(!type::is_reference(type)) {
-        throw_error(0x0038, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_PREDEC_NOT_REF), expr.first_lexeme(),
             "The operand of postfix '--' must be an assignable lvalue (a variable or dereferenced pointer), "
             "but got a non-reference type '{}'",
             {type ? type->to_string() : "?"});
@@ -3146,7 +3147,7 @@ void type_reference_resolver::visit_postfix_decrement_expression(postfix_decreme
     }
 
     if(type::is_const(value_type)) {
-        throw_error(0x0086, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_NOT_FOUND), expr.first_lexeme(),
             "Cannot apply postfix '--' to a const variable of type '{}'",
             {value_type ? value_type->to_string() : "?"});
     }
@@ -3181,12 +3182,12 @@ void type_reference_resolver::visit_postfix_decrement_expression(postfix_decreme
     }
 
     if(!type::is_primitive(value_type)) {
-        throw_error(0x0039, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_POSTINC_NOT_REF), expr.first_lexeme(),
             "Postfix '--' requires a numeric primitive operand, but got type '{}'",
             {value_type ? value_type->to_string() : "?"});
     }
     if(type::is_prim_bool(value_type)) {
-        throw_error(0x003A, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_POSTINC_NOT_NUMERIC), expr.first_lexeme(),
             "Postfix '--' cannot be applied to a boolean operand");
     }
 
@@ -3323,7 +3324,7 @@ void implementation_generator::visit_bitwise_not_expression(bitwise_not_expressi
         if(prim->is_integer_or_bool()) {
             _value = _builder->CreateNot(val);
         } else if(prim->is_float()) {
-            throw_error(0x0023, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_ARG_TYPE_MISMATCH), expr.first_lexeme(),
                 "Bitwise NOT ('~') cannot be applied to floating-point values: "
                 "bitwise operations are only defined for integer and boolean types; "
                 "the operand has type '{}'",
@@ -3449,7 +3450,7 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
     }
 
     if(!is_bool_compatible(left->get_type()) || !is_bool_compatible(right->get_type())) {
-        throw_error(0x0024, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_TOO_MANY_ARGS), expr.first_lexeme(),
             "Logical operators ('&&', '||') are not supported for non-primitive types: "
             "operands must be of a primitive type or indirection type convertible to boolean, "
             "but found '{}' and '{}'",
@@ -3462,7 +3463,7 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
     // Step 3: For non-bool types: insert implicit cast to bool
     auto cast_left = adapt_type(left, bool_type);
     if(!cast_left) {
-        throw_error(0x0025, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_TOO_FEW_ARGS), expr.first_lexeme(),
             "The left operand of a logical operator cannot be implicitly converted to bool: "
             "the operand has type '{}'; logical operators require boolean-compatible operands",
             {left->get_type() ? left->get_type()->to_string() : "?"});
@@ -3476,7 +3477,7 @@ void type_reference_resolver::visit_logical_binary_expression(logical_binary_exp
     // Step 4: Set result type to bool
     auto cast_right = adapt_type(right, bool_type);
     if(!cast_right) {
-        throw_error(0x0026, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_NO_MATCHING_OVERLOAD), expr.first_lexeme(),
             "The right operand of a logical operator cannot be implicitly converted to bool: "
             "the operand has type '{}'; logical operators require boolean-compatible operands",
             {right->get_type() ? right->get_type()->to_string() : "?"});
@@ -3679,7 +3680,7 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
         return false;
     };
     if(!is_bool_compatible(type)) {
-        throw_error(0x0029, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_ASSIGN_RESULT), expr.first_lexeme(),
             "Logical NOT ('!') is not supported for non-primitive types: "
             "the operand has type '{}'; only primitive or indirection types convertible to boolean are supported",
             {type ? type->to_string() : "?"});
@@ -3689,7 +3690,7 @@ void type_reference_resolver::visit_logical_not_expression(logical_not_expressio
     static auto bool_type = _context->from_type(primitive_type::BOOL);
     auto cast = adapt_type(sub, bool_type);
     if(!cast) {
-        throw_error(0x002A, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_MEMBER_NO_MATCH), expr.first_lexeme(),
             "The operand of logical NOT ('!') cannot be implicitly converted to bool: "
             "the operand has type '{}'; logical NOT requires a boolean-compatible operand",
             {type ? type->to_string() : "?"});
@@ -3726,7 +3727,7 @@ void implementation_generator::visit_logical_not_expression(logical_not_expressi
     }
 
     if(!type::is_primitive(type)) {
-        throw_internal_error(0x0028, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F00B), expr.first_lexeme(),
             "Internal error: '!' operator has a non-primitive operand during code generation; "
             "this should have been rejected during type resolution");
     }
@@ -3789,7 +3790,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
     if (is_address_comparable(left_type) || is_address_comparable(right_type)) {
         // Both sides must be address-comparable.
         if (!is_address_comparable(left_type) || !is_address_comparable(right_type)) {
-            throw_error(0x002C, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_CTOR_RESULT), expr.first_lexeme(),
                 "Address comparison requires both operands to be indirections "
                 "(pointer, link, pinned, owner) or null, but found '{}' and '{}'",
                 {left_type ? left_type->to_string() : "?",
@@ -3798,7 +3799,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         // Only == and != are valid for address comparison (not <, >, <=, >=).
         if (!dynamic_cast<equal_expression*>(&expr) &&
             !dynamic_cast<different_expression*>(&expr)) {
-            throw_error(0x002E, expr.first_lexeme(),
+            throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ACCESS_DENIED), expr.first_lexeme(),
                 "Only '==' and '!=' are valid for address comparison between indirections; "
                 "relational operators (<, >, <=, >=) are not supported for types '{}' and '{}'",
                 {left_type ? left_type->to_string() : "?",
@@ -3889,7 +3890,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
             auto right_underlying = right_enum ? right_enum->get_underlying_type()
                                                : std::dynamic_pointer_cast<primitive_type>(right_type);
             if (!left_underlying || !right_underlying) {
-                throw_error(0x0085, expr.first_lexeme(),
+                throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_VISIBILITY_DENIED), expr.first_lexeme(),
                     "Cannot compare enum with non-primitive type: "
                     "operands have types '{}' and '{}'",
                     {left_type ? left_type->to_string() : "?",
@@ -3910,7 +3911,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
     }
 
     if(!type::is_primitive(left_type) || !type::is_primitive(right_type)) {
-        throw_error(0x002C, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_CTOR_RESULT), expr.first_lexeme(),
             "Comparison operators are not supported for non-primitive types: "
             "operands must be primitive types, but found '{}' and '{}'",
             {left_type ? left_type->to_string() : "?",
@@ -3937,7 +3938,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
 
     // Step 4: For primitives: adapt types for comparison
     if(!adapted_left || !adapted_right) {
-        throw_error(0x002D, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_METHOD_ARG_MISMATCH), expr.first_lexeme(),
             "Incompatible types in comparison: "
             "cannot align operand types '{}' and '{}' for comparison; "
             "use an explicit cast to make the types comparable",
@@ -3967,7 +3968,7 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x0029, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F00C), expr.first_lexeme(),
             "Internal error: '==' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -3999,7 +4000,7 @@ void implementation_generator::visit_equal_expression(equal_expression& expr) {
     }
 
     if(!type::is_primitive(left_type) || !type::is_primitive(right_type)) {
-        throw_internal_error(0x002A, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F00D), expr.first_lexeme(),
             "Internal error: '==' operator has a non-primitive operand during code generation; "
             "this should have been rejected during type resolution");
     }
@@ -4027,7 +4028,7 @@ void implementation_generator::visit_different_expression(different_expression& 
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x002B, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F00E), expr.first_lexeme(),
             "Internal error: '!=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -4059,7 +4060,7 @@ void implementation_generator::visit_different_expression(different_expression& 
     }
 
     if(!type::is_primitive(left_type) || !type::is_primitive(right_type)) {
-        throw_internal_error(0x002C, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F00F), expr.first_lexeme(),
             "Internal error: '!=' operator has non-primitive operand during code generation; "
             "this should have been rejected during type resolution");
     }
@@ -4087,7 +4088,7 @@ void implementation_generator::visit_lesser_expression(lesser_expression& expr) 
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x002D, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F010), expr.first_lexeme(),
             "Internal error: '<' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -4102,7 +4103,7 @@ void implementation_generator::visit_lesser_expression(lesser_expression& expr) 
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        throw_internal_error(0x002E, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F011), expr.first_lexeme(),
             "Internal error: '<' operator has non-primitive operand during code generation; "
             "this should have been rejected during type resolution");
     }
@@ -4134,7 +4135,7 @@ void implementation_generator::visit_greater_expression(greater_expression& expr
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x002F, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F012), expr.first_lexeme(),
             "Internal error: '>' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -4149,7 +4150,7 @@ void implementation_generator::visit_greater_expression(greater_expression& expr
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        throw_internal_error(0x0030, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F013), expr.first_lexeme(),
             "Internal error: '>' operator has non-primitive operand during code generation; "
             "this should have been rejected during type resolution");
     }
@@ -4181,7 +4182,7 @@ void implementation_generator::visit_lesser_equal_expression(lesser_equal_expres
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x0031, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F014), expr.first_lexeme(),
             "Internal error: '<=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -4196,7 +4197,7 @@ void implementation_generator::visit_lesser_equal_expression(lesser_equal_expres
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        throw_internal_error(0x0032, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F015), expr.first_lexeme(),
             "Internal error: '<=' operator has non-primitive operand during code generation; "
             "this should have been rejected during type resolution");
     }
@@ -4228,7 +4229,7 @@ void implementation_generator::visit_greater_equal_expression(greater_equal_expr
 
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
-        throw_internal_error(0x0034, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F016), expr.first_lexeme(),
             "Internal error: '>=' expression produced a null left or right LLVM value; "
             "this indicates a code-generation bug in an operand expression");
     }
@@ -4243,7 +4244,7 @@ void implementation_generator::visit_greater_equal_expression(greater_equal_expr
     }
 
     if(!type::is_primitive(expr.left()->get_type()) || !type::is_primitive(expr.right()->get_type())) {
-        throw_internal_error(0x0034, expr.first_lexeme(),
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F016), expr.first_lexeme(),
             "Internal error: '>=' operator has non-primitive operand during code generation; "
             "this should have been rejected during type resolution");
     }

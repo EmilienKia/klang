@@ -108,6 +108,7 @@
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
+#include "../errors.hpp"
 
 namespace k::model::gen {
 
@@ -1068,7 +1069,7 @@ void symbol_resolver::visit_klass(klass& klass) {
 
     for (auto& f : error_private_overrides) {
         auto diag = k::log::diagnostic::make_error(
-            0x30037,
+            static_cast<unsigned int>(k::diag::structure_diag::ERR_PRIVATE_OVERRIDE),
             "private function '{}' in class '{}' cannot override a virtual function",
             {f->get_short_name(), klass.get_short_name()});
         throw resolution_error(std::move(diag));
@@ -1080,7 +1081,7 @@ void symbol_resolver::visit_klass(klass& klass) {
         auto func = std::dynamic_pointer_cast<function>(child);
         if (func && func->is_abstract_func() && !klass.is_abstract()) {
             auto diag = k::log::diagnostic::make_error(
-                with_flag(0x0038),
+                static_cast<unsigned int>(k::diag::structure_diag::ERR_ABSTRACT_METHOD_IN_NON_ABSTRACT),
                 "class '{}' has abstract method '{}' but is not declared 'abstract'; "
                 "add the 'abstract' specifier to the class declaration",
                 {klass.get_short_name(), func->get_short_name()});
@@ -1092,7 +1093,7 @@ void symbol_resolver::visit_klass(klass& klass) {
     for (auto& entry : vt->entries) {
         if (entry.func && entry.func->is_abstract_func() && !klass.is_abstract()) {
             auto diag = k::log::diagnostic::make_error(
-                with_flag(0x0039),
+                static_cast<unsigned int>(k::diag::structure_diag::ERR_INHERITED_ABSTRACT_NOT_IMPL),
                 "class '{}' inherits unimplemented abstract method '{}' from '{}' but is not declared 'abstract'; "
                 "either override '{}' with a concrete implementation or add 'abstract' to the class declaration",
                 {klass.get_short_name(), entry.func->get_short_name(),

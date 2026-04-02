@@ -25,7 +25,7 @@
  *   - Interface member functions are implicitly abstract: no body is allowed (unless
  *     explicitly marked otherwise e.g. final with body, but those would not be virtual).
  *   - Writing 'abstract' on an interface declaration or its member functions is
- *     redundant and triggers a warning (0x2002A / 0x2002B), not an error.
+ *     redundant and triggers a warning (0x00A7 / 0x00A8), not an error.
  *   - A class implementing all interface methods can be instantiated.
  *   - Virtual dispatch through an interface reference works correctly.
  *   - Interfaces can extend other interfaces.
@@ -37,8 +37,8 @@
  *   [A] Interface is represented as k::model::interface in the model
  *   [B] Interface is implicitly abstract
  *   [C] Interface member functions are implicitly abstract
- *   [D] 'abstract' on interface declaration triggers warning 0x2002A, still compiles
- *   [E] 'abstract' on interface member function triggers warning 0x2002B, still compiles
+ *   [D] 'abstract' on interface declaration triggers warning 0x00A7, still compiles
+ *   [E] 'abstract' on interface member function triggers warning 0x00A8, still compiles
  *
  *  ── Valid usage ──────────────────────────────────────────────────────────
  *   [F] Interface with one method: class implements it, virtual dispatch works
@@ -52,19 +52,19 @@
  *   [M] Nested interface inside a class
  *
  *  ── Error: cannot instantiate interface ──────────────────────────────────
- *   [N] Direct instantiation of interface → error 0x40032
+ *   [N] Direct instantiation of interface → error 0x0107
  *
  *  ── Error: unimplemented methods ─────────────────────────────────────────
  *   [O] Class that does not implement all interface methods, and is not abstract → error
  *
  *  ── Error: abstract/static/final/body constraints ────────────────────────
- *   [P] Interface method with a body → error 0x20026
- *   [Q] Interface method marked 'static' + implicit abstract → error 0x20024
+ *   [P] Interface method with a body → error 0x00A3
+ *   [Q] Interface method marked 'static' + implicit abstract → error 0x00A1
  *   [R] Interface method marked 'final' (no body) → NOT abstract (final new method)
- *   [S] Interface method marked 'abstract' + 'static' → error 0x20024
- *   [T] Interface method marked 'abstract' + 'final' → error 0x20025
- *   [U] Interface method marked 'abstract' + body → error 0x20026
- *   [V] 'abstract' on private interface method → error 0x20029
+ *   [S] Interface method marked 'abstract' + 'static' → error 0x00A1
+ *   [T] Interface method marked 'abstract' + 'final' → error 0x00A2
+ *   [U] Interface method marked 'abstract' + body → error 0x00A3
+ *   [V] 'abstract' on private interface method → error 0x00A6
  */
 
 #include <catch2/catch_all.hpp>
@@ -158,7 +158,7 @@ interface Measurable {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [D] 'abstract' on interface declaration: warning 0x2002A, still compiles
+//  [D] 'abstract' on interface declaration: warning 0x00A7, still compiles
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[D] Redundant 'abstract' on interface declaration emits warning, still compiles", "[interface][warning]") {
@@ -182,7 +182,7 @@ abstract interface Marker {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [E] 'abstract' on interface member function: warning 0x2002B, still compiles
+//  [E] 'abstract' on interface member function: warning 0x00A8, still compiles
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[E] Redundant 'abstract' on interface method emits warning, still compiles", "[interface][warning]") {
@@ -539,7 +539,7 @@ class Outer {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [N] Direct instantiation of interface → error 0x40032
+//  [N] Direct instantiation of interface → error 0x0107
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[N] Direct instantiation of interface is an error", "[interface][error]") {
@@ -576,7 +576,7 @@ class Dog : public Animal {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [P] Interface method with a body → error 0x20026
+//  [P] Interface method with a body → error 0x00A3
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[P] Interface method with a body is an error", "[interface][error]") {
@@ -590,13 +590,13 @@ interface Broken {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [Q] Interface method marked 'static' → error 0x20024 (implicit abstract + static)
+//  [Q] Interface method marked 'static' → error 0x00A1 (implicit abstract + static)
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[Q] Static method in interface is an error (abstract+static conflict)", "[interface][error]") {
 
     // A static method has no implicit abstract flag applied, but if one tries to
-    // explicitly use 'abstract static' it should fail with 0x20024.
+    // explicitly use 'abstract static' it should fail with 0x00A1.
     // Without body+static: the implicit-abstract block skips static functions,
     // so this produces a valid (non-abstract, non-virtual) static method.
     // With 'abstract static': error.
@@ -617,7 +617,7 @@ TEST_CASE("[R] 'final' method without body in interface is an error (no implemen
 
     // A 'final' method in an interface is NOT abstract (implicit-abstract skips final).
     // Without a body and without being abstract, it is a function with no implementation,
-    // which is an error (0x002C).
+    // which is an error (0x00AB).
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
 module __iface_final_method__;
 interface HasFinal {
@@ -627,7 +627,7 @@ interface HasFinal {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [S] 'abstract' + 'static' on interface method → error 0x20024
+//  [S] 'abstract' + 'static' on interface method → error 0x00A1
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[S] abstract+static on interface method is an error", "[interface][error]") {
@@ -641,7 +641,7 @@ interface Bad {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [T] 'abstract' + 'final' on interface method → error 0x20025
+//  [T] 'abstract' + 'final' on interface method → error 0x00A2
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[T] abstract+final on interface method is an error", "[interface][error]") {
@@ -655,7 +655,7 @@ interface Bad {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [U] 'abstract' + body on interface method → error 0x20026
+//  [U] 'abstract' + body on interface method → error 0x00A3
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[U] abstract method with body in interface is an error", "[interface][error]") {
@@ -669,7 +669,7 @@ interface Bad {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [V] 'abstract' on private interface method → error 0x20029
+//  [V] 'abstract' on private interface method → error 0x00A6
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[V] abstract+private on interface method is an error", "[interface][error]") {

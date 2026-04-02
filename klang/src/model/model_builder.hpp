@@ -32,8 +32,6 @@
 namespace k::model {
 
 class model_builder : public k::parse::default_ast_visitor, protected k::log::logger_relay {
-public:
-    static constexpr unsigned int log_error_class = 0x20000;
 
 protected:
 
@@ -119,7 +117,7 @@ protected:
     std::shared_ptr<k::parse::ast::declaration> _current_ast_decl;
 
     model_builder(k::log::logger& logger, std::shared_ptr<k::model::context> context, k::model::unit& unit) :
-        k::log::logger_relay(logger, log_error_class),
+        k::log::logger_relay(logger),
         _context(context),
         _unit(unit) {}
 
@@ -176,14 +174,14 @@ protected:
     void visit_comma_expr(parse::ast::expr_list_expr &) override;
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        auto diag = k::log::diagnostic::make_error(code, message, args);
         logger_relay::report(diag);
         throw parse::parsing_error(std::move(diag));
     }
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_ref_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         k::lex::opt_any_lexeme opt = lexeme ? k::lex::opt_any_lexeme{lexeme->get()} : std::nullopt;
-        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        auto diag = k::log::diagnostic::make_error(code, message, args);
         if (opt) diag.at(*opt);
         logger_relay::report(diag);
         throw parse::parsing_error(std::move(diag));

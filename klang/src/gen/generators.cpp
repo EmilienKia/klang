@@ -40,7 +40,7 @@ namespace k::model::gen {
 //
 
 declaration_generator::declaration_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit):
-k::log::logger_relay(logger, 0x50000),
+k::log::logger_relay(logger),
 _context(context),
 _unit(unit)
 {
@@ -62,7 +62,7 @@ void declaration_generator::generate() {
 //
 
 implementation_generator::implementation_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit):
-k::log::logger_relay(logger, 0x50000),
+k::log::logger_relay(logger),
 _context(context),
 _unit(unit)
 {

@@ -344,109 +344,20 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// logger_relay — forwards all diagnostics to a parent logger, optionally
-// ORing a class-flag into the error code.
+// logger_relay — forwards all diagnostics to a parent logger.
 // ---------------------------------------------------------------------------
 class logger_relay : public logger {
 protected:
     logger& _log;
-    unsigned int _class_flag = 0;
-
-    unsigned int with_flag(unsigned int code) const {
-        return code != 0 ? (_class_flag | code) : 0;
-    }
 
 public:
-    logger_relay(logger& log, unsigned int class_flag = 0)
-        : _log(log), _class_flag(class_flag) {}
+    explicit logger_relay(logger& log)
+        : _log(log) {}
 
     ~logger_relay() override = default;
 
     void report(const diagnostic& diag) override {
-        if(diag.code == 0 || _class_flag == 0) {
-            _log.report(diag);
-        } else {
-            diagnostic flagged = diag;
-            flagged.code = with_flag(diag.code);
-            _log.report(flagged);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Helpers that build a diagnostic with the class-flagged code and forward.
-    // -----------------------------------------------------------------------
-
-    void info (unsigned int code, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_info(with_flag(code), msg, args));
-    }
-    void warn (unsigned int code, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_warning(with_flag(code), msg, args));
-    }
-    void error(unsigned int code, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_error(with_flag(code), msg, args));
-    }
-    void fatal(unsigned int code, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_fatal(with_flag(code), msg, args));
-    }
-
-    void info (unsigned int code, const k::lex::any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_info(with_flag(code), msg, args).at(pos));
-    }
-    void warn (unsigned int code, const k::lex::any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_warning(with_flag(code), msg, args).at(pos));
-    }
-    void error(unsigned int code, const k::lex::any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_error(with_flag(code), msg, args).at(pos));
-    }
-    void fatal(unsigned int code, const k::lex::any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_fatal(with_flag(code), msg, args).at(pos));
-    }
-
-    void info (unsigned int code, const k::lex::opt_any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        auto d = diagnostic::make_info(with_flag(code), msg, args);
-        if(pos) d.at(*pos);
-        report(d);
-    }
-    void warn (unsigned int code, const k::lex::opt_any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        auto d = diagnostic::make_warning(with_flag(code), msg, args);
-        if(pos) d.at(*pos);
-        report(d);
-    }
-    void error(unsigned int code, const k::lex::opt_any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        auto d = diagnostic::make_error(with_flag(code), msg, args);
-        if(pos) d.at(*pos);
-        report(d);
-    }
-    void fatal(unsigned int code, const k::lex::opt_any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        auto d = diagnostic::make_fatal(with_flag(code), msg, args);
-        if(pos) d.at(*pos);
-        report(d);
-    }
-
-    void info (unsigned int code, const k::lex::any_lexeme& start, const k::lex::any_lexeme& end, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_info(with_flag(code), msg, args).range(start, end));
-    }
-    void warn (unsigned int code, const k::lex::any_lexeme& start, const k::lex::any_lexeme& end, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_warning(with_flag(code), msg, args).range(start, end));
-    }
-    void error(unsigned int code, const k::lex::any_lexeme& start, const k::lex::any_lexeme& end, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_error(with_flag(code), msg, args).range(start, end));
-    }
-    void fatal(unsigned int code, const k::lex::any_lexeme& start, const k::lex::any_lexeme& end, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_fatal(with_flag(code), msg, args).range(start, end));
-    }
-
-    void info (unsigned int code, const k::lex::any_lexeme& start, const k::lex::any_lexeme& end, const k::lex::any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_info(with_flag(code), msg, args).range(start, end).at(pos));
-    }
-    void warn (unsigned int code, const k::lex::any_lexeme& start, const k::lex::any_lexeme& end, const k::lex::any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_warning(with_flag(code), msg, args).range(start, end).at(pos));
-    }
-    void error(unsigned int code, const k::lex::any_lexeme& start, const k::lex::any_lexeme& end, const k::lex::any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_error(with_flag(code), msg, args).range(start, end).at(pos));
-    }
-    void fatal(unsigned int code, const k::lex::any_lexeme& start, const k::lex::any_lexeme& end, const k::lex::any_lexeme& pos, const std::string& msg, const std::vector<std::string>& args = {}) {
-        report(diagnostic::make_fatal(with_flag(code), msg, args).range(start, end).at(pos));
+        _log.report(diag);
     }
 };
 

@@ -31,6 +31,7 @@
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
 #include "../parse/ast.hpp"
+#include "../errors.hpp"
 
 namespace k::model::gen {
 
@@ -192,7 +193,7 @@ void type_reference_resolver::resolve_variable_type(
         if (resolved && type::is_resolved(resolved)) {
             var.set_type(resolved);
         } else {
-            throw_internal_error(0x0002, var_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F004), var_lexeme,
                 "Internal error: cannot resolve function reference type for variable '{}'",
                 {var.get_fq_name()});
         }
@@ -212,7 +213,7 @@ void type_reference_resolver::resolve_variable_type(
                 resolved_inner = strip_ref_array(resolved_inner);
                 var.set_type(resolved_inner->get_owner());
             } else {
-                throw_error(0x0005, var_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_TYPE_UNRESOLVED), var_lexeme,
                     "Unknown inner type for owner variable '{}': cannot resolve '{}'",
                     {var.get_fq_name(), inner ? inner->to_string() : "?"});
             }
@@ -252,7 +253,7 @@ void type_reference_resolver::resolve_variable_type(
         if (resolved && type::is_resolved(resolved)) {
             var.set_type(resolved);
         } else {
-            throw_internal_error(0x0001, var_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F003), var_lexeme,
                 "Internal error: variable '{}' has an unresolvable type that is not an unresolved_type instance; "
                 "this indicates a compiler bug",
                 {var.get_fq_name()});
@@ -298,7 +299,7 @@ void type_reference_resolver::resolve_variable_type(
     }
     if (!resolved || !type::is_resolved(resolved)) {
         // Step 6: If all resolution attempts fail, throw a diagnostic error
-        throw_error(0x0005, var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_TYPE_UNRESOLVED), var_lexeme,
             "Unknown type '{}' for variable '{}': no type with this name could be found in scope",
             {unres_type->type_id().to_string(), var.get_fq_name()});
     } else {
@@ -332,7 +333,7 @@ void type_reference_resolver::validate_primitive_variable(var_init_context& ctx)
     if (!ctx.init_expr || ctx.init_expr->empty()) {
         // If no explicit initialization, let's have 0-filled initialization:
     } else if (ctx.init_expr->size() > 1) {
-        throw_error(0x0006, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_INIT_TYPE_MISMATCH), ctx.var_lexeme,
             "Variable '{}' of primitive type '{}' can only be initialised with a single expression, "
             "but {} were provided",
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -341,7 +342,7 @@ void type_reference_resolver::validate_primitive_variable(var_init_context& ctx)
         // Align init expr type to variable type
         auto cast = adapt_type(expr, ctx.var_type);
         if (!cast) {
-            // TODO throw_error(0x0004, ...)
+            // TODO throw_error(static_cast<unsigned int>(k::diag::compiler_diag::ERR_NS_COLLISION_ENFORCED), ...)
         } else if (cast != expr) {
             // Casted, assign casted expression as return expr.
             // Step 3: Single init arg → call adapt_type to insert implicit cast if needed
@@ -350,7 +351,7 @@ void type_reference_resolver::validate_primitive_variable(var_init_context& ctx)
             // Compatible type, no need to cast.
         }
     } else {
-        throw_internal_error(0x0002, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F004), ctx.var_lexeme,
             "Variable '{}' of primitive type '{}' has an empty initialisation expression list; "
             "this is an internal inconsistency",
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?"});
@@ -471,7 +472,7 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
     if (!handled_as_direct_copy) {
         auto [best_constructor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
         if (!best_constructor) {
-            throw_error(0x0008, ctx.var_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_INIT_ARG_MISMATCH), ctx.var_lexeme,
                 "No matching constructor found for variable '{}' of type '{}': "
                 "none of the available constructors can be called with the provided arguments",
                 {ctx.var.get_fq_name(), st_type->to_string()});
@@ -525,14 +526,14 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
         auto dest_arr = std::dynamic_pointer_cast<sized_array_type>(ref_sub);
         // Case A, step 1: Require exactly one initialiser
         if (!ctx.init_expr || ctx.init_expr->empty()) {
-            throw_error(0x4101, ctx.var_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_REF_VAR_NEEDS_INIT), ctx.var_lexeme,
                 "Array reference variable '{}' of type '{}' must be initialised at its declaration; "
                 "an array reference cannot be left unbound",
                 {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?"});
             return;
         }
         if (ctx.init_expr->size() > 1) {
-            throw_error(0x4102, ctx.var_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_REF_VAR_INCOMPATIBLE_INIT), ctx.var_lexeme,
                 "Array reference variable '{}' of type '{}' must be initialised with exactly one "
                 "expression, but {} were provided",
                 {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -544,7 +545,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
         // Case A, step 2: The initialiser must be a reference to a sized array
         // Initialiser must be a reference to a sized array of the same element type.
         if (!arg_type || !type::is_reference(arg_type)) {
-            throw_error(0x4104, ctx.var_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_REF_VAR_WRONG_SUBTYPE), ctx.var_lexeme,
                 "Array reference variable '{}' of type '{}' must be initialised with an array "
                 "reference (lvalue), but the initialiser has type '{}' which is not a reference",
                 {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -555,7 +556,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
         auto arg_sub = arg_ref->get_subtype();
         auto src_arr = std::dynamic_pointer_cast<sized_array_type>(arg_sub);
         if (!type::is_sized_array(arg_sub)) {
-            throw_error(0x4105, ctx.var_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_REF_VAR_CONST_MISMATCH), ctx.var_lexeme,
                 "Array reference variable '{}' of type '{}' can only be initialised from another "
                 "array reference, but the initialiser refers to type '{}' which is not a sized array",
                 {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -565,7 +566,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
         // Case A, step 3: Element types must match exactly
         // Element types must match exactly.
         if (!type::are_equal(dest_arr->get_subtype(), src_arr->get_subtype())) {
-            throw_error(0x4106, ctx.var_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_REF_VAR_MULTIPLE_INIT), ctx.var_lexeme,
                 "Array reference variable '{}' of type '{}' cannot be initialised from an array of "
                 "type '{}': element types must match exactly",
                 {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -582,7 +583,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
 
     // Case B, step 1: Initialisation is mandatory (references cannot be left unbound)
     if (!ctx.init_expr || ctx.init_expr->empty()) {
-        throw_error(0x4001, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_STRUCT_VAR_NO_CTOR), ctx.var_lexeme,
             "Reference variable '{}' of type '{}' must be initialised at its declaration: "
             "a reference is an alias for an existing object and cannot be left unbound",
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?"});
@@ -591,7 +592,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
 
     // Case B, step 2: Only one initialiser expression is allowed
     if (ctx.init_expr->size() > 1) {
-        throw_error(0x4002, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_STRUCT_VAR_CTOR_AMBIGUOUS), ctx.var_lexeme,
             "Reference variable '{}' of type '{}' must be initialised with exactly one expression, "
             "but {} were provided",
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -601,7 +602,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
 
     auto arg = ctx.init_expr->argument(0);
     if (!arg) {
-        throw_internal_error(0x4003, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F018), ctx.var_lexeme,
             "Reference variable '{}': initialisation argument is null; "
             "this is an internal compiler inconsistency",
             {ctx.var.get_fq_name()});
@@ -612,7 +613,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
 
     // Case B, step 3: The initialiser must be a reference (lvalue), not a bare value
     if (!type::is_reference(arg_type)) {
-        throw_error(0x4004, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_STRUCT_VAR_CTOR_ARG_MISMATCH), ctx.var_lexeme,
             "Reference variable '{}' of type '{}' must be initialised with a reference (an addressable "
             "object), but the initialiser has type '{}' which is not a reference; "
             "you cannot bind a reference to a temporary or rvalue",
@@ -627,7 +628,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
     auto var_sub = ref_var_type->get_subtype();
 
     if (!arg_sub || !var_sub) {
-        throw_error(0x4005, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_STRUCT_VAR_CTOR_NOT_FOUND), ctx.var_lexeme,
             "Reference variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
             "the referenced type must match exactly",
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -641,7 +642,7 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
             [&](std::shared_ptr<expression> e) { ctx.init_expr->assign_argument(0, e); },
             /*null_is_fatal=*/true);
         if (!ok) {
-            throw_error(0x4005, ctx.var_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_STRUCT_VAR_CTOR_NOT_FOUND), ctx.var_lexeme,
                 "Reference variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
                 "the referenced type must match exactly",
                 {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -716,7 +717,7 @@ void type_reference_resolver::validate_pointer_variable(var_init_context& ctx) {
     // Step 3: Unwrap ref and owner wrappers from the argument type
     auto tgt_sub = tgt_ptr->get_subtype();
     if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
-        throw_error(0x0081, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_GEN_FUNC_OVERLOAD_AMBIGUOUS), ctx.var_lexeme,
             // Step 5: Check const-compatibility: mutable pointer from const source → error
             "Cannot initialise a pointer-to-mutable ('{}') from a pointer-to-const ('{}'): "
             "this would allow modification of a const object through the mutable pointer",
@@ -731,7 +732,7 @@ void type_reference_resolver::validate_pointer_variable(var_init_context& ctx) {
             [&](std::shared_ptr<expression> e) { ctx.assign_single_init_arg(e); },
             /*null_is_fatal=*/false);
         if (!ok) {
-            throw_error(0x4700, ctx.var_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_POINTER_VAR_INIT_MISMATCH), ctx.var_lexeme,
                 "Pointer variable '{}' of type '{}' cannot be initialised from an expression of type '{}': "
                 "the pointed types are incompatible (no inheritance relationship)",
                 {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -767,7 +768,7 @@ void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
 
     // Step 1: Require exactly one initialiser (links cannot be left unbound)
     if (!ctx.has_single_init_arg()) {
-        throw_error(0x4501, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_LINK_VAR_NEEDS_INIT), ctx.var_lexeme,
             "Link variable '{}' of type '{}' must be initialised at its declaration: "
             "a link is non-null and cannot be left unbound",
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?"});
@@ -775,7 +776,7 @@ void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
     }
     auto arg = ctx.get_single_init_arg();
     if (!arg) {
-        throw_internal_error(0x4503, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F019), ctx.var_lexeme,
             "Link variable '{}': initialisation argument is null; "
             "this is an internal compiler inconsistency",
             {ctx.var.get_fq_name()});
@@ -784,7 +785,7 @@ void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
     auto arg_type = arg->get_type();
     // The initialiser must provide an address: reference, link, view, pointer or owner.
     if (!type::is_any_indirection(arg_type) && !type::is_owner(arg_type)) {
-        throw_error(0x4504, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_LINK_VAR_INIT_MISMATCH), ctx.var_lexeme,
             "Link variable '{}' of type '{}' must be initialised with an addressable expression "
             "(reference, link, view, pointer or owner), but the initialiser has type '{}' "
             "which is not an indirection type",
@@ -800,7 +801,7 @@ void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
             src_pointed_type = arg_type;
         }
         if (src_pointed_type && type::is_const(src_pointed_type) && !type::is_const(link_sub)) {
-            throw_error(0x0082, ctx.var_lexeme,
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_ARG_TYPE_MISMATCH), ctx.var_lexeme,
                 "Cannot initialise link-to-mutable ('{}') from a const source (type '{}'): "
                 "this would allow modification of a const object",
                 {ctx.var.get_type()->to_string(), arg_type ? arg_type->to_string() : "?"});
@@ -808,7 +809,7 @@ void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
     }
     // If initialising from a nullable indirection (view, pointer or owner), emit a warning:
     if (type::is_nullable_indirection(arg_type) || type::is_owner(arg_type)) {
-        auto diag = k::log::diagnostic::make_warning(with_flag(0x4505),
+        auto diag = k::log::diagnostic::make_warning(static_cast<unsigned int>(k::diag::variable_diag::WARN_NARROWING_INIT),
             "Link variable '{}' of type '{}' is being initialised from a nullable source "
             "(type '{}'): a runtime null-check will be inserted",
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -829,7 +830,7 @@ void type_reference_resolver::validate_link_variable(var_init_context& ctx) {
                 [&](std::shared_ptr<expression> e) { ctx.assign_single_init_arg(e); },
                 /*null_is_fatal=*/true);
             if (!ok) {
-                throw_error(0x4506, ctx.var_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_LINK_VAR_WRONG_TYPE), ctx.var_lexeme,
                     "Link variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
                     "the linked types are incompatible (no inheritance relationship)",
                     {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -864,7 +865,7 @@ void type_reference_resolver::validate_view_variable(var_init_context& ctx) {
     // Pinned variable (^): immutable (not rebindable after init), nullable.
     // Must be initialised at declaration; initialiser can be any indirection, owner or null.
     if (!ctx.has_single_init_arg()) {
-        throw_error(0x4601, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VIEW_VAR_NEEDS_INIT), ctx.var_lexeme,
             "Pinned variable '{}' of type '{}' must be initialised at its declaration: "
             "a view indirection cannot be left unbound",
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?"});
@@ -872,7 +873,7 @@ void type_reference_resolver::validate_view_variable(var_init_context& ctx) {
     }
     auto arg = ctx.get_single_init_arg();
     if (!arg) {
-        throw_internal_error(0x4603, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01A), ctx.var_lexeme,
             "Pinned variable '{}': initialisation argument is null; "
             "this is an internal compiler inconsistency",
             {ctx.var.get_fq_name()});
@@ -886,7 +887,7 @@ void type_reference_resolver::validate_view_variable(var_init_context& ctx) {
         }
     }
     if (!is_null_init && !type::is_any_indirection(arg_type) && !type::is_owner(arg_type)) {
-        throw_error(0x4604, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VIEW_VAR_INIT_MISMATCH), ctx.var_lexeme,
             "View variable '{}' of type '{}' must be initialised with an addressable expression "
             "(reference, link, view, pointer, owner or null), but the initialiser has type '{}' "
             "which is not an indirection type",
@@ -910,7 +911,7 @@ void type_reference_resolver::validate_view_variable(var_init_context& ctx) {
                 [&](std::shared_ptr<expression> e) { ctx.assign_single_init_arg(e); },
                 /*null_is_fatal=*/false);
             if (!ok) {
-                throw_error(0x4605, ctx.var_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VIEW_VAR_WRONG_TYPE), ctx.var_lexeme,
                     "View variable '{}' of type '{}' cannot be bound to an expression of type '{}': "
                     "the view types are incompatible (no inheritance relationship)",
                     {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -972,7 +973,7 @@ void type_reference_resolver::validate_owner_variable(var_init_context& ctx) {
     }
     // Step 3: Reject non-owner sources (only new-expression, another owner, or null are valid)
     if (!type::is_owner(effective_arg_type)) {
-        throw_error(0x4802, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_OWNER_VAR_NEEDS_INIT), ctx.var_lexeme,
             "Owner variable '{}' of type '{}' must be initialised with a 'new' expression, "
             "another owner variable, or null, but the initialiser has type '{}' which is not "
             "an owner type",
@@ -995,7 +996,7 @@ void type_reference_resolver::validate_owner_variable(var_init_context& ctx) {
                 src_st->get_struct() && tgt_st->get_struct() &&
                 src_st->get_struct()->is_derived_from(tgt_st->get_struct());
             if (!is_upcast) {
-                throw_error(0x4803, ctx.var_lexeme,
+                throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_OWNER_VAR_INIT_MISMATCH), ctx.var_lexeme,
                     "Owner variable '{}' of type '{}' cannot be initialised from "
                     "an owner of incompatible type '{}'",
                     {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?",
@@ -1033,7 +1034,7 @@ void type_reference_resolver::validate_sized_array_variable(var_init_context& ct
     } else if (ctx.init_expr && !ctx.init_expr->empty()) {
         // Step 2: If a non-brace explicit initialiser is present, emit an error
         // Non-brace-init explicit initializer is not supported
-        throw_error(0x4201, ctx.var_lexeme,
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_SIZED_ARRAY_INIT_MISMATCH), ctx.var_lexeme,
             "Array variable '{}' of type '{}' cannot have an explicit initialiser at declaration; "
             "use brace initialization syntax: arr : T[N] {{elem1, elem2, ...}}",
             {ctx.var.get_fq_name(), ctx.var_type ? ctx.var_type->to_string() : "?"});

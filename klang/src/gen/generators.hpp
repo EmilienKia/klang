@@ -81,19 +81,13 @@ protected:
 
     std::stack<std::shared_ptr<aggregate>> _struct_stack;
 
-    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
-
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        auto diag = k::log::diagnostic::make_error(code, message, args);
         if (lexeme) diag.at(*lexeme);
         logger_relay::report(diag);
         throw generation_error(std::move(diag));
     }
 
-    /** Throw an internal-compiler-error (should never be reachable via any K source input). */
-    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
-    }
 
 public:
     declaration_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit);
@@ -201,19 +195,13 @@ protected:
      *  visit_return_statement. */
     llvm::Value* _sret_destination = nullptr;
 
-    static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
-
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        auto diag = k::log::diagnostic::make_error(with_flag(code), message, args);
+        auto diag = k::log::diagnostic::make_error(code, message, args);
         if (lexeme) diag.at(*lexeme);
         logger_relay::report(diag);
         throw generation_error(std::move(diag));
     }
 
-    /** Throw an internal-compiler-error (should never be reachable via any K source input). */
-    [[noreturn]] void throw_internal_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
-        throw_error(INTERNAL_ERROR_BASE + code, lexeme, message, args);
-    }
 
 public:
     implementation_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit);

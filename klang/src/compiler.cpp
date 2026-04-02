@@ -57,6 +57,7 @@
 #include "common/path_lookup_file_resolver.hpp"
 
 #include <kdi.hpp>
+#include "errors.hpp"
 
 namespace k {
 
@@ -244,7 +245,7 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
                     } else if (!(*mod_name == resolved_unit_name)) {
                         // Conflicting module declarations
                         auto diag = k::log::diagnostic::make_error(
-                            0x0001,
+                            static_cast<unsigned int>(k::diag::compiler_diag::ERR_CONFLICTING_MODULE_DECL),
                             "Conflicting module declarations: '{}' vs '{}'",
                             {resolved_unit_name.to_string(), mod_name->to_string()});
                         report(diag);
@@ -257,7 +258,7 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
             if (!found_module_decl) {
                 // No module declaration in any file — warning, generate random name
                 auto diag = k::log::diagnostic::make_warning(
-                    0x0002,
+                    static_cast<unsigned int>(k::diag::compiler_diag::WARN_NO_MODULE_DECL),
                     "No module declaration found in any source file; generating a random unit name");
                 report(diag);
             }

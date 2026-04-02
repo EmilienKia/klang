@@ -301,17 +301,17 @@ automatically (e.g. `output.opt.ll`).
 
 ## DIAGNOSTICS
 
-Error codes follow the pattern `0xCCCCC` where the leading digit indicates the
-compiler phase.
+Error codes are sequential hexadecimal numbers. User-facing codes range from
+`0x0001` upward; internal compiler errors use the `0xF000+` range.
 
 | Code | Severity | Condition |
 |---|---|---|
-| `0x80001` | Error | Namespace root collision between two imported modules |
-| `0x80002` | Error | `--enforce-ns-collision`: imported root collides with the unit's own root |
-| `0x80003` | Error | **Circular import dependency detected** — message includes the full cycle path, e.g. `A → B → C → A` |
-| `0x80004` | Error | KDI file not found for an imported module |
-| `0x80005` | Error | KDI file found but failed to parse (corrupt or wrong schema version) |
-| `0x80010` | Warning | **Imported module declared but none of its symbols are used** — emitted once per unused `import` declaration after all resolver passes complete |
+| `0x0003` | Error | Namespace root collision between two imported modules |
+| `0x0004` | Error | `--enforce-ns-collision`: imported root collides with the unit's own root |
+| `0x0005` | Error | **Circular import dependency detected** — message includes the full cycle path, e.g. `A → B → C → A` |
+| `0x0006` | Error | KDI file not found for an imported module |
+| `0x0007` | Error | KDI file found but failed to parse (corrupt or wrong schema version) |
+| `0x0008` | Warning | **Imported module declared but none of its symbols are used** — emitted once per unused `import` declaration after all resolver passes complete |
 
 Diagnostic messages are printed to **stderr** in the following format:
 

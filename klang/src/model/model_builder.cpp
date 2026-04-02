@@ -27,6 +27,7 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include "../errors.hpp"
 
 namespace k::model {
 
@@ -108,7 +109,7 @@ namespace k::model {
     void model_builder::visit_visibility_decl(parse::ast::visibility_decl &visibility) {
         auto scope = current_context<visibility_context>();
         if(!scope) {
-            throw_error(0x0001, visibility.scope, "Visibility specifier '{}' is only allowed inside a namespace or a structure body, not at the current scope", {std::string{visibility.scope.content}});
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_VISIBILITY_BAD_SCOPE), visibility.scope, "Visibility specifier '{}' is only allowed inside a namespace or a structure body, not at the current scope", {std::string{visibility.scope.content}});
         }
 
         switch(visibility.scope.type) {
@@ -122,7 +123,7 @@ namespace k::model {
                 scope->visibility = model::PRIVATE;
                 break;
             default:
-                throw_error(0x0002, visibility.scope, "'{}' is not a valid visibility keyword; expected 'public', 'protected' or 'private'", {std::string{visibility.scope.content}});
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_VISIBILITY_INVALID_KEYWORD), visibility.scope, "'{}' is not a valid visibility keyword; expected 'public', 'protected' or 'private'", {std::string{visibility.scope.content}});
                 break;
         }
     }
@@ -154,7 +155,7 @@ namespace k::model {
                 case lex::keyword::INTERFACE: dir.filter = model::using_directive::filter_t::INTERFACE; break;
                 case lex::keyword::CLASS:     dir.filter = model::using_directive::filter_t::CLASS;     break;
                 default:
-                    throw_error(0x0062, decl.element_filter.value(),
+                    throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_USING_FILTER_INVALID), decl.element_filter.value(),
                         "'{}' is not a valid filter for a using declaration; expected 'namespace', 'struct', 'interface' or 'class'",
                         {std::string{decl.element_filter->content}});
             }
@@ -196,7 +197,7 @@ namespace k::model {
             return;
         }
 
-        throw_error(0x0063, decl.using_kw,
+        throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_USING_BAD_SCOPE), decl.using_kw,
             "Using declaration is not allowed here; it must appear inside a namespace, structure, or block scope");
     }
 
@@ -211,7 +212,7 @@ namespace k::model {
                 case lex::keyword::INTERFACE: dir.filter = model::friend_directive::filter_t::INTERFACE; break;
                 case lex::keyword::CLASS:     dir.filter = model::friend_directive::filter_t::CLASS;     break;
                 default:
-                    throw_error(0x0072, decl.element_filter.value(),
+                    throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ENUM_ENTRY_VALUE_NOT_INT), decl.element_filter.value(),
                         "'{}' is not a valid filter for a friend declaration; expected 'struct', 'interface' or 'class'",
                         {std::string{decl.element_filter->content}});
             }
@@ -228,14 +229,14 @@ namespace k::model {
             return;
         }
 
-        throw_error(0x0070, decl.friend_kw,
+        throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ENUM_BAD_SCOPE), decl.friend_kw,
             "Friend declaration is not allowed here; it must appear inside a struct, class or interface body");
     }
 
     void model_builder::visit_aggregate_decl(parse::ast::aggregate_decl& st) {
         std::shared_ptr<model::aggregate_holder> parent_scope = current_context_content<model::aggregate_holder>();
         if(!parent_scope){
-            throw_error(0x0003, st.kw_aggregate_type, "Structure '{}' cannot be declared here; structures are only allowed at namespace or structure scope", {std::string{st.name.content}});
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STRUCT_BAD_SCOPE), st.kw_aggregate_type, "Structure '{}' cannot be declared here; structures are only allowed at namespace or structure scope", {std::string{st.name.content}});
         }
 
         // Determine if this is a class (keyword 'class'), interface (keyword 'interface'),
@@ -267,13 +268,13 @@ namespace k::model {
         // Detect if the abstract specifier is present (only valid on classes and interfaces, not structs)
         if (lex::keyword::has(st.specifiers, lex::keyword::ABSTRACT)) {
             if (!is_class && !is_interface) {
-                throw_error(0x0023, st.kw_aggregate_type,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ABSTRACT_ON_STRUCT), st.kw_aggregate_type,
                     "Specifier 'abstract' is not allowed on struct '{}'; 'abstract' is only valid on classes and interfaces",
                     {std::string{st.name.content}});
             }
             if (is_interface) {
                 // 'abstract' is redundant on an interface: interfaces are implicitly abstract
-                logger_relay::warn(with_flag(0x002A), lex::any_lexeme{st.kw_aggregate_type},
+                warn(static_cast<unsigned int>(k::diag::model_diag::WARN_ABSTRACT_REDUNDANT_ON_IFACE), lex::any_lexeme{st.kw_aggregate_type},
                     "Specifier 'abstract' is redundant on interface '{}'; interfaces are implicitly abstract",
                     {std::string{st.name.content}});
             }
@@ -293,7 +294,7 @@ namespace k::model {
         if (is_annotation) {
             if (is_const_struct) {
                 // 'const' is redundant on an annotation: annotations are implicitly const
-                logger_relay::warn(with_flag(0x002C), lex::any_lexeme{st.kw_aggregate_type},
+                warn(static_cast<unsigned int>(k::diag::model_diag::WARN_IFACE_NON_VIRTUAL_FUNC), lex::any_lexeme{st.kw_aggregate_type},
                     "Specifier 'const' is redundant on annotation '{}'; annotations are implicitly const",
                     {std::string{st.name.content}});
             }
@@ -327,7 +328,7 @@ namespace k::model {
                     case lex::keyword::PRIVATE:
                         // Private inheritance is forbidden for classes and interfaces
                         if (is_class || is_interface) {
-                            throw_error(0x0022, st.kw_aggregate_type,
+                            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_DUPLICATE_DEFINITION), st.kw_aggregate_type,
                                 "Class/interface '{}' cannot use private inheritance; private inheritance is not supported in K language; use public or protected inheritance",
                                 {std::string{st.name.content}});
                         }
@@ -342,7 +343,7 @@ namespace k::model {
         // Populate annotation instances from the AST annotation list
         // Annotations are currently only supported on classes, interfaces, and annotation types.
         if (!st.annotations.empty() && !is_class && !is_interface && !is_annotation) {
-            throw_error(0x0024, st.kw_aggregate_type,
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ABSTRACT_BAD_DECL_SCOPE), st.kw_aggregate_type,
                 "Annotations are only supported on classes and interfaces; '{}' is not a class or interface",
                 {std::string{st.name.content}});
         }
@@ -378,7 +379,7 @@ namespace k::model {
         // Determine parent scope (must be an enum_holder — ns or aggregate)
         std::shared_ptr<model::enum_holder> parent_scope = current_context_content<model::enum_holder>();
         if (!parent_scope) {
-            throw_error(0x0070, decl.name, "Enum '{}' cannot be declared here", {std::string{decl.name.content}});
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ENUM_BAD_SCOPE), decl.name, "Enum '{}' cannot be declared here", {std::string{decl.name.content}});
         }
 
         auto en = parent_scope->define_enum(std::string{decl.name.content});
@@ -407,7 +408,7 @@ namespace k::model {
 
             if (re.is_default) {
                 if (has_explicit_default) {
-                    throw_error(0x0071, ast_entry->name, "Enum '{}': only one entry may be marked 'default'", {std::string{decl.name.content}});
+                    throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ENUM_DUPLICATE_DEFAULT), ast_entry->name, "Enum '{}': only one entry may be marked 'default'", {std::string{decl.name.content}});
                 }
                 has_explicit_default = true;
             }
@@ -418,7 +419,7 @@ namespace k::model {
                     auto& int_lit = lit.get<lex::integer>();
                     re.explicit_value = static_cast<int64_t>(int_lit.to_unsigned_int());
                 } else {
-                    throw_error(0x0072, ast_entry->name, "Enum entry '{}' value must be an integer literal", {re.name});
+                    throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ENUM_ENTRY_VALUE_NOT_INT), ast_entry->name, "Enum entry '{}' value must be an integer literal", {re.name});
                 }
             } else if (ast_entry->ref_value.has_value()) {
                 re.ref_name = std::string{ast_entry->ref_value->content};
@@ -434,7 +435,7 @@ namespace k::model {
     void model_builder::visit_variable_decl(parse::ast::variable_decl &decl) {
         std::shared_ptr<model::variable_holder> parent_scope = current_context_content<model::variable_holder>();
         if(!parent_scope){
-            throw_error(0x0004, decl.name, "Variable '{}' cannot be declared here; variable declarations are not allowed in the current context", {std::string{decl.name.content}});
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_VAR_BAD_SCOPE), decl.name, "Variable '{}' cannot be declared here; variable declarations are not allowed in the current context", {std::string{decl.name.content}});
         }
 
         bool is_static = lex::keyword::has(decl.specifiers, lex::keyword::STATIC);
@@ -553,7 +554,7 @@ namespace k::model {
                 // Brace initializer list: { expr, expr, ... } or designated { .x = expr, ... }
                 auto brace_list = std::dynamic_pointer_cast<parse::ast::brace_init_list>(decl.init);
                 if (!brace_list) {
-                    throw_error(0x0062, decl.name, "Internal error: brace init flag set but init is not a brace_init_list");
+                    throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_USING_FILTER_INVALID), decl.name, "Internal error: brace init flag set but init is not a brace_init_list");
                 }
 
                 if (brace_list->is_designated) {
@@ -563,7 +564,7 @@ namespace k::model {
                     for (auto& elem_ast : brace_list->elements) {
                         auto desig = std::dynamic_pointer_cast<parse::ast::designated_init_element>(elem_ast);
                         if (!desig) {
-                            throw_error(0x0069, decl.name, "Internal error: designated init element expected but got something else");
+                            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_BRACE_INIT_INTERNAL), decl.name, "Internal error: designated init element expected but got something else");
                             continue;
                         }
                         model::designated_struct_init_expression::member_init_entry entry;
@@ -679,7 +680,7 @@ namespace k::model {
     void model_builder::visit_function_decl(parse::ast::function_decl & func) {
         auto parent_scope = current_context_content<function_holder>();
         if(!parent_scope) {
-            throw_error(0x0005, func.name, "Function '{}' cannot be declared here; function declarations are only allowed at namespace or structure scope", {std::string{func.name.content}});
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_BAD_SCOPE), func.name, "Function '{}' cannot be declared here; function declarations are only allowed at namespace or structure scope", {std::string{func.name.content}});
         }
 
         bool is_static = lex::keyword::has(func.specifiers, lex::keyword::STATIC);
@@ -716,7 +717,7 @@ namespace k::model {
             if (is_assignment_op) {
                 auto owner_agg = current_context_content<model::aggregate>();
                 if (!owner_agg) {
-                    throw_error(0x0059, func.name,
+                    throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_NO_IMPL_NO_ABSTRACT), func.name,
                         "Assignment operator '{}' must be declared as a member function of a struct, class, or interface; "
                         "non-member assignment operators are not allowed",
                         {func_name});
@@ -727,20 +728,20 @@ namespace k::model {
         // const member is only meaningful for non-static member functions (not constructors/destructors/static)
         if (is_const_member) {
             if (is_static) {
-                throw_error(0x0009, func.name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_OPERATOR_BAD_SCOPE), func.name,
                     "Function '{}' cannot be both 'const' and 'static': "
                     "'const' on a member function qualifies the implicit 'this' parameter as const, "
                     "which is meaningless for a static function that has no 'this' parameter",
                     {func_name});
             }
             if (func.is_destructor) {
-                throw_error(0x000A, func.name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_BLOCK_UNEXPECTED), func.name,
                     "Destructor '~{}' cannot be declared 'const': "
                     "destructors always operate on mutable objects",
                     {std::string{func.name.content}});
             }
             if (std::dynamic_pointer_cast<model::constructor>(function)) {
-                throw_error(0x000B, func.name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_STATIC_CTOR_BAD_SCOPE), func.name,
                     "Constructor '{}' cannot be declared 'const': "
                     "constructors always operate on mutable objects being initialised",
                     {func_name});
@@ -752,12 +753,12 @@ namespace k::model {
         if(func.aliasing_spec == parse::ast::function_decl::aliasing_spec_t::REDIRECT) {
             // Function redirect: -> qualifiedId ;
             if(func.content) {
-                throw_error(0x0022, func.name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_DUPLICATE_DEFINITION), func.name,
                     "Function redirector '{}' must not have a body; the body is provided by the target function",
                     {func_name});
             }
             if(!func.member_inits.empty()) {
-                throw_error(0x0023, func.name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ABSTRACT_ON_STRUCT), func.name,
                     "Function redirector '{}' must not have a member initializer list",
                     {func_name});
             }
@@ -767,7 +768,7 @@ namespace k::model {
             // DEFAULT/DELETE is allowed on non-static constructors and assignment operator functions.
             bool is_assignment_operator = func.is_operator && k::op::is_assignment_operator(func_name);
             if(!std::dynamic_pointer_cast<constructor>(function) && !is_assignment_operator) {
-                throw_error(0x0021, func.name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_VIRTUAL_ON_STRUCT), func.name,
                     "'-> default' / '-> delete' is only allowed on non-static constructors or assignment operators; "
                     "function '{}' is not a non-static constructor or assignment operator",
                     {func_name});
@@ -791,35 +792,35 @@ namespace k::model {
         if (lex::keyword::has(func.specifiers, lex::keyword::ABSTRACT)) {
             // abstract is only valid on non-static, non-private, non-final member functions of classes/interfaces
             if (is_static) {
-                throw_error(0x0024, func.name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ABSTRACT_BAD_DECL_SCOPE), func.name,
                     "Function '{}' cannot be both 'abstract' and 'static': abstract functions require virtual dispatch",
                     {func_name});
             }
             if (is_final_func) {
-                throw_error(0x0025, func.name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ABSTRACT_ON_STATIC), func.name,
                     "Function '{}' cannot be both 'abstract' and 'final': a final function is already defined",
                     {func_name});
             }
             if (func.content) {
-                throw_error(0x0026, func.name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ABSTRACT_ON_FINAL), func.name,
                     "Abstract function '{}' must not have a body; remove the body or remove the 'abstract' specifier",
                     {func_name});
             }
             // Check that we are inside a class or interface, not a struct
             if (auto owner_agg = current_context_content<model::aggregate>()) {
                 if (!owner_agg->is_class() && !std::dynamic_pointer_cast<model::interface>(owner_agg)) {
-                    throw_error(0x0027, func.name,
+                    throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ABSTRACT_WITH_BODY), func.name,
                         "Abstract function '{}' is only allowed inside a class or interface, not a struct",
                         {func_name});
                 }
                 // Warn if 'abstract' is redundant (inside an interface)
                 if (std::dynamic_pointer_cast<model::interface>(owner_agg)) {
-                    logger_relay::warn(with_flag(0x002B), lex::any_lexeme{func.name},
+                    warn(static_cast<unsigned int>(k::diag::model_diag::WARN_ABSTRACT_REDUNDANT_ON_IFACE_METHOD), lex::any_lexeme{func.name},
                         "Specifier 'abstract' is redundant on function '{}' inside interface '{}'; interface member functions are implicitly abstract",
                         {func_name, owner_agg->get_short_name()});
                 }
             } else {
-                throw_error(0x0028, func.name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ABSTRACT_ON_PRIVATE), func.name,
                     "Abstract function '{}' can only be declared as a member of a class or interface",
                     {func_name});
             }
@@ -839,7 +840,7 @@ namespace k::model {
                     && !is_final_func) {
                     if (func.content) {
                         // Interface member functions must not have a body
-                        throw_error(0x002D, func.name,
+                        throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DEFAULT_PARAM_IN_BODY), func.name,
                             "Function '{}' inside interface '{}' must not have a body; interface member functions are implicitly abstract",
                             {func_name, owner_iface->get_short_name()});
                     }
@@ -867,7 +868,7 @@ namespace k::model {
 
         // Post-visibility check: abstract cannot be private (private functions are never virtual)
         if (function->is_abstract_func() && function->get_visibility() == model::PRIVATE) {
-            throw_error(0x0029, func.name,
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_ABSTRACT_BAD_SCOPE), func.name,
                 "Function '{}' cannot be both 'abstract' and 'private': abstract functions must be publicly or protectedly accessible for overriding",
                 {func_name});
         }
@@ -878,11 +879,11 @@ namespace k::model {
         // Reject named return variables on constructors and static constructors/destructors
         if (func.has_named_return) {
             if (std::dynamic_pointer_cast<constructor>(function)) {
-                throw_error(0x0079, *func.return_var_name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_RETURN_VAR_NOT_IN_FUNC), *func.return_var_name,
                     "Constructor '{}' must not have a named return variable",
                     {func_name});
             } else if (std::dynamic_pointer_cast<static_constructor>(function)) {
-                throw_error(0x007A, *func.return_var_name,
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_RETURN_VAR_TYPE_NOT_REF), *func.return_var_name,
                     "Static constructor '{}' must not have a named return variable",
                     {func_name});
             }
@@ -892,30 +893,30 @@ namespace k::model {
 
         if(func.type) {
             if(std::dynamic_pointer_cast<constructor>(function)) {
-                throw_error(0x0006, func.name, "Constructor '{}' must not have a return type; constructors implicitly return an instance of their owning type", {func_name});
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_CTOR_HAS_RETURN_TYPE), func.name, "Constructor '{}' must not have a return type; constructors implicitly return an instance of their owning type", {func_name});
             } else if(std::dynamic_pointer_cast<destructor>(function)) {
-                throw_error(0x0007, func.name, "Destructor '~{}' must not have a return type; destructors do not return a value", {std::string{func.name.content}});
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DTOR_HAS_RETURN_TYPE), func.name, "Destructor '~{}' must not have a return type; destructors do not return a value", {std::string{func.name.content}});
             } else if(std::dynamic_pointer_cast<static_constructor>(function)) {
-                throw_error(0x001C, func.name, "Static constructor '{}' must not have a return type; static constructors are void by definition", {func_name});
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_UNSUPPORTED_POSTFIX_OP), func.name, "Static constructor '{}' must not have a return type; static constructors are void by definition", {func_name});
             } else if(std::dynamic_pointer_cast<static_destructor>(function)) {
-                throw_error(0x001D, func.name, "Static destructor '~{}' must not have a return type; static destructors are void by definition", {std::string{func.name.content}});
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STATIC_DTOR_HAS_RETURN_TYPE), func.name, "Static destructor '~{}' must not have a return type; static destructors are void by definition", {std::string{func.name.content}});
             } else {
                 function->set_return_type(_context->from_type_specifier(*func.type));
             }
         }
 
         if(func.is_destructor && !func.params.empty()) {
-            throw_error(0x0008, func.name, "Destructor '~{}' must not have parameters; destructors take no arguments", {std::string{func.name.content}});
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_DTOR_HAS_PARAMS), func.name, "Destructor '~{}' must not have parameters; destructors take no arguments", {std::string{func.name.content}});
         }
 
         // Static constructor must have no parameters
         if(std::dynamic_pointer_cast<static_constructor>(function) && !func.params.empty()) {
-            throw_error(0x001E, func.name, "Static constructor '{}' must not have parameters; static constructors take no arguments", {func_name});
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STATIC_CTOR_HAS_PARAMS), func.name, "Static constructor '{}' must not have parameters; static constructors take no arguments", {func_name});
         }
 
         // Static destructor must have no parameters
         if(std::dynamic_pointer_cast<static_destructor>(function) && !func.params.empty()) {
-            throw_error(0x001F, func.name, "Static destructor '~{}' must not have parameters; static destructors take no arguments", {std::string{func.name.content}});
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STATIC_DTOR_HAS_PARAMS), func.name, "Static destructor '~{}' must not have parameters; static destructors take no arguments", {std::string{func.name.content}});
         }
 
         for(auto param : func.params) {
@@ -975,7 +976,7 @@ namespace k::model {
             // No initialization arguments are accepted; we validate and record the names only.
             for (auto& ast_mi : func.member_inits) {
                 if (!ast_mi.args.empty()) {
-                    throw_error(0x0020, func.name,
+                    throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_RETURN_VAR_TYPE_MISMATCH), func.name,
                         "Static constructor dependency '{}' must not have arguments; "
                         "the mem-init list of a static constructor declares ordering dependencies only, not initializers",
                         {std::string{ast_mi.name.content}});
@@ -989,7 +990,7 @@ namespace k::model {
             // at the beginning of the block_statement so it gets processed with proper scope.
             if (func.has_named_return && func.return_var_name) {
                 if (!func.type) {
-                    throw_error(0x0078, *func.return_var_name,
+                    throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_RETURN_VAR_NAME_MISMATCH), *func.return_var_name,
                         "Named return variable '{}' requires the function to have a return type",
                         {std::string{func.return_var_name->content}});
                 }
@@ -1021,7 +1022,7 @@ namespace k::model {
             // A non-abstract function with no body is only valid inside an interface
             // (where it is implicitly abstract), when using '-> default'/'-> delete'/'-> target',
             // or when carrying an FFI annotation (validated later by the symbol resolver).
-            throw_error(0x002C, func.name,
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::WARN_IFACE_NON_VIRTUAL_FUNC), func.name,
                 "Function '{}' has no body; a function body is required unless the function is abstract or declared inside an interface",
                 {func_name});
         }
@@ -1030,7 +1031,7 @@ namespace k::model {
     void model_builder::visit_block_statement(parse::ast::block_statement &block_stmt) {
         auto parent_scope = current_context_content<element>(); // Could be a function or a block
         if(!parent_scope) {
-            throw_error(0x000A, block_stmt.open_brace, "Unexpected block '{{...}}': a block statement can only appear inside a function or another block, not at the current scope");
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_BLOCK_UNEXPECTED), block_stmt.open_brace, "Unexpected block '{{...}}': a block statement can only appear inside a function or another block, not at the current scope");
         }
 
         std::shared_ptr<model::block> block = std::make_shared<model::block>(parent_scope);
@@ -1057,7 +1058,7 @@ namespace k::model {
     void model_builder::visit_return_statement(parse::ast::return_statement &stmt) {
         auto parent_scope = current_context_content<statement>();
         if(!parent_scope) {
-            throw_error(0x000B, stmt.ret, "'return' statement cannot appear here; it must be inside a function body");
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_STATIC_CTOR_BAD_SCOPE), stmt.ret, "'return' statement cannot appear here; it must be inside a function body");
         }
 
         std::shared_ptr<model::return_statement> ret_stmt = std::make_shared<model::return_statement>(parent_scope, stmt.shared_as<parse::ast::return_statement>());
@@ -1080,7 +1081,7 @@ namespace k::model {
     void model_builder::visit_if_else_statement(parse::ast::if_else_statement &stmt) {
         auto parent_scope = current_context_content<statement>();
         if(!parent_scope) {
-            throw_error(0x000C, stmt.if_kw, "'if' statement cannot appear here; it must be inside a function or block body");
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_IF_STMT_BAD_SCOPE), stmt.if_kw, "'if' statement cannot appear here; it must be inside a function or block body");
         }
 
         std::shared_ptr<model::if_else_statement> if_else_stmt = std::make_shared<model::if_else_statement>(parent_scope, stmt.shared_as<parse::ast::if_else_statement>());
@@ -1098,7 +1099,7 @@ namespace k::model {
             _expr.reset();
         } else {
             // Test expression is mandatory
-            throw_error(0x000D, stmt.if_kw, "'if' statement requires a condition expression between the parentheses: 'if (condition) ...'");
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_IF_STMT_NEEDS_CONDITION), stmt.if_kw, "'if' statement requires a condition expression between the parentheses: 'if (condition) ...'");
         }
 
         // Then statement
@@ -1111,7 +1112,7 @@ namespace k::model {
             _stmt.reset();
         } else {
             // Then statement is mandatory
-            throw_error(0x000E, stmt.if_kw, "'if' statement requires a body: 'if (condition) {{ ... }}'");
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_IF_STMT_NEEDS_BODY), stmt.if_kw, "'if' statement requires a body: 'if (condition) {{ ... }}'");
         }
 
         // Else statement
@@ -1123,7 +1124,7 @@ namespace k::model {
                 _stmt.reset();
             } else {
                 // Error in processing else statement
-                throw_error(0x000F, *stmt.else_kw, "'else' clause is present but its body could not be built; check that the else body is a valid statement or block");
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_ELSE_CLAUSE_BAD_BODY), *stmt.else_kw, "'else' clause is present but its body could not be built; check that the else body is a valid statement or block");
             }
         } /* else else statement is not mandatory */
 
@@ -1133,7 +1134,7 @@ namespace k::model {
     void model_builder::visit_while_statement(parse::ast::while_statement &stmt) {
         auto parent_scope = current_context_content<statement>();
         if(!parent_scope) {
-            throw_error(0x0010, stmt.while_kw, "'while' statement cannot appear here; it must be inside a function or block body");
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_WHILE_STMT_BAD_SCOPE), stmt.while_kw, "'while' statement cannot appear here; it must be inside a function or block body");
         }
 
         auto while_stmt = std::make_shared<model::while_statement>(parent_scope, stmt.shared_as<parse::ast::while_statement>());
@@ -1151,7 +1152,7 @@ namespace k::model {
             _expr.reset();
         } else {
             // Test expression is mandatory
-            throw_error(0x0011, stmt.while_kw, "'while' statement requires a condition expression between the parentheses: 'while (condition) ...'");
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_WHILE_STMT_NEEDS_CONDITION), stmt.while_kw, "'while' statement requires a condition expression between the parentheses: 'while (condition) ...'");
         }
 
         // Nested statement
@@ -1164,7 +1165,7 @@ namespace k::model {
             _stmt.reset();
         } else {
             // Nested statement is mandatory
-            throw_error(0x0012, stmt.while_kw, "'while' statement requires a body: 'while (condition) {{ ... }}'");
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_WHILE_STMT_NEEDS_BODY), stmt.while_kw, "'while' statement requires a body: 'while (condition) {{ ... }}'");
         }
 
         _stmt = while_stmt;
@@ -1173,7 +1174,7 @@ namespace k::model {
     void model_builder::visit_for_statement(parse::ast::for_statement &stmt) {
         auto parent_scope = current_context_content<statement>();
         if(!parent_scope) {
-            throw_error(0x0013, stmt.for_kw, "'for' statement cannot appear here; it must be inside a function or block body");
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FOR_STMT_BAD_SCOPE), stmt.for_kw, "'for' statement cannot appear here; it must be inside a function or block body");
         }
 
         auto for_stmt = std::make_shared<model::for_statement>(parent_scope, stmt.shared_as<parse::ast::for_statement>());
@@ -1198,7 +1199,7 @@ namespace k::model {
                 _expr.reset();
             } else {
                 // Test expression failed
-                throw_error(0x0014, stmt.first_semicolon_kw, "Failed to build the condition expression of the 'for' statement; check the expression between the two semicolons: 'for (init; condition; step)'");
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FOR_STMT_BAD_CONDITION), stmt.first_semicolon_kw, "Failed to build the condition expression of the 'for' statement; check the expression between the two semicolons: 'for (init; condition; step)'");
             }
         }
         _expr.reset();
@@ -1212,7 +1213,7 @@ namespace k::model {
                 _expr.reset();
             } else {
                 // Step expression failed
-                throw_error(0x0015, stmt.second_semicolon_kw, "Failed to build the step expression of the 'for' statement; check the expression after the second semicolon: 'for (init; condition; step)'");
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FOR_STMT_BAD_STEP), stmt.second_semicolon_kw, "Failed to build the step expression of the 'for' statement; check the expression after the second semicolon: 'for (init; condition; step)'");
             }
         }
         _expr.reset();
@@ -1227,7 +1228,7 @@ namespace k::model {
             _stmt.reset();
         } else {
             // Nested statement is mandatory
-            throw_error(0x0016, stmt.for_kw, "'for' statement requires a body: 'for (init; condition; step) {{ ... }}'");
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FOR_STMT_NEEDS_BODY), stmt.for_kw, "'for' statement requires a body: 'for (init; condition; step) {{ ... }}'");
         }
 
         _stmt = for_stmt;
@@ -1237,7 +1238,7 @@ namespace k::model {
         auto parent_scope = current_context_content<statement>();
         if(!parent_scope) {
             // Use the opt_ref_any_lexeme overload (no direct token available on expression_statement)
-            throw_error(0x0017, lex::opt_ref_any_lexeme{}, "Expression statement cannot appear here; expression statements are only allowed inside a function or block body");
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_EXPR_STMT_BAD_SCOPE), lex::opt_ref_any_lexeme{}, "Expression statement cannot appear here; expression statements are only allowed inside a function or block body");
         }
 
         std::shared_ptr<model::expression_statement> expr = std::make_shared<model::expression_statement>(parent_scope, stmt.shared_as<parse::ast::expression_statement>());
@@ -1385,7 +1386,7 @@ namespace k::model {
                 _expr = model::greater_equal_expression::make_shared(lexpr, rexpr);
                 break;
             default: // TODO other operations
-                throw_error(0x0018, expr.op, "Binary operator '{}' is not supported", {std::string{expr.op.content}});
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_UNSUPPORTED_BINARY_OP), expr.op, "Binary operator '{}' is not supported", {std::string{expr.op.content}});
                 break;
         }
         if (_expr) {
@@ -1437,7 +1438,7 @@ namespace k::model {
                 unary = model::prefix_decrement_expression::make_shared(sub);
                 break;
             default:
-                throw_error(0x0019, expr.op, "Unary prefix operator '{}' is not supported", {std::string{expr.op.content}});
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_UNSUPPORTED_UNARY_PREFIX_OP), expr.op, "Unary prefix operator '{}' is not supported", {std::string{expr.op.content}});
                 break;
         }
         unary->set_ast_unary_expr(expr.shared_as<parse::ast::unary_prefix_expr>());
@@ -1458,7 +1459,7 @@ namespace k::model {
                 unary = model::postfix_decrement_expression::make_shared(sub);
                 break;
             default:
-                throw_error(0x001C, expr.op, "Unary postfix operator '{}' is not supported", {std::string{expr.op.content}});
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_UNSUPPORTED_POSTFIX_OP), expr.op, "Unary postfix operator '{}' is not supported", {std::string{expr.op.content}});
                 break;
         }
         unary->set_ast_unary_expr(expr.shared_as<parse::ast::unary_postfix_expr>());
@@ -1507,7 +1508,7 @@ namespace k::model {
         expr.ident_expr->visit(*this);
         std::shared_ptr<model::symbol_expression> member = std::dynamic_pointer_cast<symbol_expression>(_expr);
         if(!member) {
-            throw_error(0x001A, expr.op, "The right-hand side of '{}' must be a plain identifier (e.g. 'obj.field'), not a complex expression", {std::string{expr.op.content}});
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_MEMBER_ACCESS_NOT_IDENTIFIER), expr.op, "The right-hand side of '{}' must be a plain identifier (e.g. 'obj.field'), not a complex expression", {std::string{expr.op.content}});
         }
 
         switch (expr.op.type) {
@@ -1518,7 +1519,7 @@ namespace k::model {
                 _expr = model::member_of_pointer_expression::make_shared(callee, member);
                 break;
             default:
-                throw_error(0x001B, expr.op, "Member access operator '{}' is not supported; expected '.' to access a member of an object, or '->' to access a member through a pointer", {std::string{expr.op.content}});
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_UNSUPPORTED_MEMBER_ACCESS_OP), expr.op, "Member access operator '{}' is not supported; expected '.' to access a member of an object, or '->' to access a member through a pointer", {std::string{expr.op.content}});
                 break;
         }
         if (_expr) {

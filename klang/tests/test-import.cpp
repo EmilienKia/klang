@@ -1476,7 +1476,7 @@ TEST_CASE("import transitive function — transitive global function used by dir
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// P2 — Unused-import warnings (warning 0x80010)
+// P2 — Unused-import warnings (warning 0x0008)
 //
 // Strategy: use kdi_importer directly with a test_logger so we can inspect
 // the emitted diagnostics without going through the full compiler pipeline
@@ -1484,10 +1484,10 @@ TEST_CASE("import transitive function — transitive global function used by dir
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Test: an import whose symbols are never touched → warning 0x80010
+// Test: an import whose symbols are never touched → warning 0x0008
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST_CASE("unused import — declared but never used emits warning 0x80010",
+TEST_CASE("unused import — declared but never used emits warning 0x0008",
           "[import][unused-import]")
 {
     // Build the library
@@ -1504,7 +1504,7 @@ TEST_CASE("unused import — declared but never used emits warning 0x80010",
 
     bool found_warning = false;
     for (const auto& d : diags) {
-        if (d.level == k::log::diagnostic::severity::warning && d.code == 0x80010)
+        if (d.level == k::log::diagnostic::severity::warning && d.code == 0x0008)
             found_warning = true;
     }
     REQUIRE(found_warning);
@@ -1578,7 +1578,7 @@ TEST_CASE("unused import — one used one unused, only unused triggers warning",
     bool warned_about_unused = false;
     bool warned_about_used = false;
     for (const auto& d : diags) {
-        if (d.level == k::log::diagnostic::severity::warning && d.code == 0x80010) {
+        if (d.level == k::log::diagnostic::severity::warning && d.code == 0x0008) {
             ++warning_count;
             for (const auto& arg : d.args) {
                 if (arg.find("lib_unused") != std::string::npos) warned_about_unused = true;
@@ -1597,7 +1597,7 @@ TEST_CASE("unused import — one used one unused, only unused triggers warning",
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// P1 — Circular import detection (error 0x80003)
+// P1 — Circular import detection (error 0x0005)
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ─────────────────────────────────────────────────────────────────────────────

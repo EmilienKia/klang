@@ -23,14 +23,14 @@
  * Phase 2-5: Model, resolver, codegen, end-to-end JIT tests
  * Bounds-check tests: runtime bounds checking for array subscript
  * Error code coverage:
- *   - Error 0x4221: array size expression not convertible to unsigned int
+ *   - Error 0x0141: array size expression not convertible to unsigned int
  *   - Error 0x4222: too many initializers
- *   - Error 0x4224: cannot convert init list element to array element type
- *   - Error 0x4226: abstract class element type
- *   - Error 0x4227: no matching explicit constructor for element
- *   - Error 0x4228: no matching single-param constructor for implicit element
+ *   - Error 0x0144: cannot convert init list element to array element type
+ *   - Error 0x0146: abstract class element type
+ *   - Error 0x0147: no matching explicit constructor for element
+ *   - Error 0x0148: no matching single-param constructor for implicit element
  *   - Error 0x4229: cannot infer array size
- *   - Error 0x422A: brace init forbidden for dynamic-sized arrays
+ *   - Error 0x014A: brace init forbidden for dynamic-sized arrays
  */
 
 #include <catch2/catch_all.hpp>
@@ -888,8 +888,8 @@ TEST_CASE("Bounds check: negative index (unsigned wrap) on array aborts", "[gen]
 // Error code coverage for array new expressions
 // =============================================================================
 
-TEST_CASE("new array — dynamic size with brace init — error 0x422A", "[gen][new-array][error]") {
-    // n is not a compile-time constant → dynamic size; brace init {} is forbidden → error 0x422A
+TEST_CASE("new array — dynamic size with brace init — error 0x014A", "[gen][new-array][error]") {
+    // n is not a compile-time constant → dynamic size; brace init {} is forbidden → error 0x014A
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __na_err_nonconst__;
         test() : int {
@@ -900,7 +900,7 @@ TEST_CASE("new array — dynamic size with brace init — error 0x422A", "[gen][
     )SRC"));
 }
 
-TEST_CASE("new array — abstract class element — error 0x4226", "[gen][new-array][error]") {
+TEST_CASE("new array — abstract class element — error 0x0146", "[gen][new-array][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __na_err_abstract__;
 
@@ -916,7 +916,7 @@ TEST_CASE("new array — abstract class element — error 0x4226", "[gen][new-ar
     )SRC"));
 }
 
-TEST_CASE("new struct array — no matching explicit ctor — error 0x4227", "[gen][new-array][error]") {
+TEST_CASE("new struct array — no matching explicit ctor — error 0x0147", "[gen][new-array][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __na_err_noctor__;
 
@@ -933,7 +933,7 @@ TEST_CASE("new struct array — no matching explicit ctor — error 0x4227", "[g
     )SRC"));
 }
 
-TEST_CASE("new struct array — no matching single-param ctor — error 0x4228", "[gen][new-array][error]") {
+TEST_CASE("new struct array — no matching single-param ctor — error 0x0148", "[gen][new-array][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __na_err_nodefctor__;
 
@@ -950,7 +950,7 @@ TEST_CASE("new struct array — no matching single-param ctor — error 0x4228",
     )SRC"));
 }
 
-TEST_CASE("new dynamic array — brace init forbidden — error 0x422A", "[gen][new-array][error]") {
+TEST_CASE("new dynamic array — brace init forbidden — error 0x014A", "[gen][new-array][error]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __na_err_dynbrace__;
         test() : int {
@@ -1197,8 +1197,8 @@ TEST_CASE("Bounds check: out-of-bounds on dynamic owner array aborts", "[gen][bo
 // Additional error code coverage
 // =============================================================================
 
-TEST_CASE("new array — struct as size expression — error 0x4221", "[gen][new-array][error]") {
-    // A struct value cannot be converted to unsigned int → error 0x4221
+TEST_CASE("new array — struct as size expression — error 0x0141", "[gen][new-array][error]") {
+    // A struct value cannot be converted to unsigned int → error 0x0141
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __na_err_sizetyp__;
 
@@ -1215,8 +1215,8 @@ TEST_CASE("new array — struct as size expression — error 0x4221", "[gen][new
     )SRC"));
 }
 
-TEST_CASE("new array — struct value in primitive init list — error 0x4224", "[gen][new-array][error]") {
-    // A struct value cannot be converted to the primitive element type → error 0x4224
+TEST_CASE("new array — struct value in primitive init list — error 0x0144", "[gen][new-array][error]") {
+    // A struct value cannot be converted to the primitive element type → error 0x0144
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module __na_err_elemtyp__;
 

@@ -30,6 +30,7 @@
 
 #include <queue>
 #include <unordered_map>
+#include "../errors.hpp"
 
 namespace k::model::gen {
 
@@ -750,7 +751,7 @@ void symbol_resolver::visit_namespace(ns& ns)
             // Root namespace
             // Should not happen, supposed to be handled at model construction level
             if (ns.get_name().empty()) {
-                throw_internal_error(0x0001, std::nullopt,
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F001), std::nullopt,
                     "Internal error: root namespace has no name at code generation stage; "
                     "this should not happen and indicates a compiler bug");
             } else {

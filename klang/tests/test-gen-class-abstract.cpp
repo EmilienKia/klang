@@ -41,21 +41,21 @@
  *   [E] Virtual dispatch through base ref to concrete derived class
  *
  *  ── Error: abstract consistency ─────────────────────────────────────────
- *   [F] Abstract method in non-abstract class → error 0x30038
- *   [G] Derived class leaving abstract method unimplemented, not abstract → error 0x30039
+ *   [F] Abstract method in non-abstract class → error 0x0173
+ *   [G] Derived class leaving abstract method unimplemented, not abstract → error 0x0174
  *
  *  ── Error: cannot instantiate abstract class ────────────────────────────
- *   [H] Direct instantiation of abstract class → error 0x40032
- *   [I] Explicit-abstract class (no abstract methods) cannot be instantiated → error 0x40032
+ *   [H] Direct instantiation of abstract class → error 0x0107
+ *   [I] Explicit-abstract class (no abstract methods) cannot be instantiated → error 0x0107
  *
  *  ── Error: abstract specifier constraints ───────────────────────────────
- *   [J] 'abstract' on struct → error 0x20023
- *   [K] 'abstract' on static function → error 0x20024
- *   [L] 'abstract' on final function → error 0x20025
- *   [M] 'abstract' method with a body → error 0x20026
- *   [N] 'abstract' method inside a struct → error 0x20027
- *   [O] 'abstract' method not inside any class → error 0x20028
- *   [P] 'abstract' on private method → error 0x20029
+ *   [J] 'abstract' on struct → error 0x00A0
+ *   [K] 'abstract' on static function → error 0x00A1
+ *   [L] 'abstract' on final function → error 0x00A2
+ *   [M] 'abstract' method with a body → error 0x00A3
+ *   [N] 'abstract' method inside a struct → error 0x00A4
+ *   [O] 'abstract' method not inside any class → error 0x00A5
+ *   [P] 'abstract' on private method → error 0x00A6
  */
 
 #include <catch2/catch_all.hpp>
@@ -249,7 +249,7 @@ test() : int { l: Leaf; return call_id(l); }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [F] Abstract method in non-abstract class → error 0x30038
+//  [F] Abstract method in non-abstract class → error 0x0173
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[F] Abstract method in non-abstract class is an error", "[class][abstract][error]") {
@@ -265,7 +265,7 @@ class Broken {
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [G] Derived class with unimplemented abstract method, not declared abstract
-//       → error 0x30039
+//       → error 0x0174
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[G] Derived class with unimplemented abstract method must be abstract", "[class][abstract][error]") {
@@ -283,7 +283,7 @@ class Derived : public Base {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [H] Direct instantiation of abstract class → error 0x40032
+//  [H] Direct instantiation of abstract class → error 0x0107
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[H] Direct instantiation of abstract class is an error", "[class][abstract][error]") {
@@ -303,7 +303,7 @@ test() : int {
 
 // ════════════════════════════════════════════════════════════════════════════
 //  [I] Explicitly abstract class (no abstract methods) cannot be instantiated
-//       → error 0x40032
+//       → error 0x0107
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[I] Explicit abstract class (no abstract methods) cannot be instantiated", "[class][abstract][error]") {
@@ -322,7 +322,7 @@ test() : int {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [J] 'abstract' on struct → error 0x20023
+//  [J] 'abstract' on struct → error 0x00A0
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[J] abstract specifier on struct is an error", "[struct][abstract][error]") {
@@ -336,7 +336,7 @@ abstract struct S {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [K] 'abstract' on static function → error 0x20024
+//  [K] 'abstract' on static function → error 0x00A1
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[K] abstract specifier on static function is an error", "[class][abstract][error]") {
@@ -351,7 +351,7 @@ abstract class C {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [L] 'abstract' on final function → error 0x20025
+//  [L] 'abstract' on final function → error 0x00A2
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[L] abstract specifier on final function is an error", "[class][abstract][error]") {
@@ -366,7 +366,7 @@ abstract class C {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [M] 'abstract' method with a body → error 0x20026
+//  [M] 'abstract' method with a body → error 0x00A3
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[M] abstract method with a body is an error", "[class][abstract][error]") {
@@ -381,7 +381,7 @@ abstract class C {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [N] 'abstract' method inside a struct → error 0x20027
+//  [N] 'abstract' method inside a struct → error 0x00A4
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[N] abstract method inside a struct is an error", "[struct][abstract][error]") {
@@ -395,7 +395,7 @@ struct S {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  [P] 'abstract' on private method → error 0x20029
+//  [P] 'abstract' on private method → error 0x00A6
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("[P] abstract specifier on private method is an error", "[class][abstract][error]") {

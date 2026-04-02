@@ -1363,10 +1363,10 @@ TEST_CASE("Constructor annotation: RUNTIME annotation on public constructor — 
         }
     )SRC", nullptr, logger);
     CHECK(ok);
-    // No 0x003D warning should be emitted for a public constructor with annotations
+    // No 0x00C3 warning should be emitted for a public constructor with annotations
     bool has_003D = false;
     for (auto& diag : logger.diagnostics) {
-        if (diag.code == 0x003D) {
+        if (diag.code == 0x00C3) {
             has_003D = true;
             break;
         }
