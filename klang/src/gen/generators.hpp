@@ -231,6 +231,24 @@ public:
     void visit_interface(interface&) override;
     void visit_annotation_type(annotation_type&) override;
     void visit_member_variable_definition(member_variable_definition&) override;
+
+    // ── visit_klass extracted helpers (defined in gen_class.cpp) ─────────────
+
+    /** Check if this module imports libk (directly or transitively). */
+    bool has_libk_import() const;
+
+    /** Patch the RTTI global with real vtable pointers, base/nested/enclosing lists,
+     *  flags, annotations, and function/constructor descriptors. */
+    void patch_rtti_global(klass& klass);
+
+    /** Fill the primary vtable with resolved function pointers. */
+    void fill_primary_vtable(klass& klass);
+
+    /** Build secondary vtables from model_materializer pre-computed specs. */
+    void fill_secondary_vtables(klass& klass);
+
+    /** Build secondary vtables for imported (external) base classes. */
+    void fill_imported_base_vtables(klass& klass);
     void visit_global_variable_definition(global_variable_definition &) override;
 
     /**
@@ -258,6 +276,41 @@ public:
      */
     void emit_vptr_stores(llvm::IRBuilder<>& b, structure& st,
                           llvm::Value* this_val, bool is_complete);
+
+    // ── visit_function extracted helpers (defined in gen_function.cpp) ────────
+
+    /**
+     * Emit constructor pre-block IR: zero-init, parent pointer store, generated copy
+     * constructor memberwise copy, standalone virtual base initialization.
+     * @return true if the function was fully handled (e.g. generated copy ctor) and
+     *         visit_function should return immediately.
+     */
+    bool emit_constructor_pre_block(function& function, llvm::Function* func);
+
+    /**
+     * Emit compiler-generated copy assignment operator (operator=) memberwise copy.
+     * @return true if the function was fully handled and visit_function should return.
+     */
+    bool emit_copy_assignment_operator(function& function, llvm::Function* func);
+
+    /**
+     * Emit post-block constructor IR: vptr stores (after base ctors so most-derived wins)
+     * and virtual base pointer initialization across sub-objects.
+     */
+    void emit_constructor_post_block(function& function);
+
+    /**
+     * Emit destructor IR: member struct destructor calls (reverse declaration order),
+     * base destructors (reverse base-declaration order), and virtual base sub-object
+     * destructor calls (most-derived class only).
+     */
+    void emit_destructor_cleanup(function& function);
+
+    /**
+     * Emit function return epilogue: owner/struct parameter cleanup, return instruction,
+     * NRVO alloca→sret replacement, dead instruction elimination, and verification.
+     */
+    void emit_function_return_epilogue(function& function, llvm::Function* func, bool use_sret);
 
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;

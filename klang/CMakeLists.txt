@@ -40,6 +40,9 @@ add_library(klangcomp
         src/gen/gen_struct.cpp
         src/gen/gen_class.cpp
         src/gen/gen_function.cpp
+        src/gen/gen_constructor.cpp
+        src/gen/gen_variable_definition.cpp
+        src/gen/gen_adapt_type.cpp
         src/compiler.hpp
         src/compiler.cpp
         src/common/process.cpp

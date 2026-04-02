@@ -1486,8 +1486,34 @@ void declaration_generator::visit_klass(klass& klass) {
 //     pass) with the now-populated constant struct, completing the vtable.
 void implementation_generator::visit_klass(klass& klass) {
     visit_aggregate(klass);
-
     if (!klass.has_vtable()) return;
+    // Phase 0: Patch RTTI global with real vtable pointers, base/nested/enclosing
+    //          lists, flags, annotations, and function/constructor descriptors.
+    patch_rtti_global(klass);
+    // Abstract classes have no vtable global to fill (not emitted in declaration pass).
+    if (klass.is_abstract()) return;
+    // Phase 1: Fill the primary vtable with function pointers.
+    fill_primary_vtable(klass);
+    // Phase 2: Build secondary vtables using pre-computed model_materializer data.
+    fill_secondary_vtables(klass);
+    // Phase 3: Build secondary vtables for imported bases.
+    fill_imported_base_vtables(klass);
+}
+
+
+/**
+ * Check if this module imports libk (directly or transitively).
+ * Used by RTTI patching to decide whether to declare external vtable symbols.
+ */
+bool implementation_generator::has_libk_import() const {
+    if (_unit.find_import(k::name("k")) != nullptr) return true;
+    for (const auto& tdep : _unit.get_transitive_kdis()) {
+        if (tdep && tdep->header.module_name == "k") return true;
+    }
+    return false;
+}
+void implementation_generator::patch_rtti_global(klass& klass) {
+    const bool has_libk = has_libk_import();
 
     // ── 0. Patch RTTI global with real vtable pointers, base/nested/enclosing lists, flags,
     //       annotations, and function descriptors ───────────────────────────────────────
@@ -1543,12 +1569,6 @@ void implementation_generator::visit_klass(klass& klass) {
         // and can be resolved from libk — declare them as external when unavailable.
         if (!desc_vt) {
             // Check if this module imports k (directly or transitively)
-            bool has_libk = _unit.find_import(k::name("k")) != nullptr;
-            if (!has_libk) {
-                for (const auto& tdep : _unit.get_transitive_kdis()) {
-                    if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
-                }
-            }
             if (has_libk) {
                 desc_vt = new llvm::GlobalVariable(
                     _context->module(), ptr_ty,
@@ -1557,12 +1577,6 @@ void implementation_generator::visit_klass(klass& klass) {
             }
         }
         if (!desc_at_vt) {
-            bool has_libk = _unit.find_import(k::name("k")) != nullptr;
-            if (!has_libk) {
-                for (const auto& tdep : _unit.get_transitive_kdis()) {
-                    if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
-                }
-            }
             if (has_libk) {
                 desc_at_vt = new llvm::GlobalVariable(
                     _context->module(), ptr_ty,
@@ -1571,12 +1585,6 @@ void implementation_generator::visit_klass(klass& klass) {
             }
         }
         if (!desc_ti_vt) {
-            bool has_libk = _unit.find_import(k::name("k")) != nullptr;
-            if (!has_libk) {
-                for (const auto& tdep : _unit.get_transitive_kdis()) {
-                    if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
-                }
-            }
             if (has_libk) {
                 desc_ti_vt = new llvm::GlobalVariable(
                     _context->module(), ptr_ty,
@@ -1768,12 +1776,6 @@ void implementation_generator::visit_klass(klass& klass) {
         std::string param_vtable_name = "_KTVN1k9ParameterE";
         llvm::Constant* param_vt = _context->module().getNamedGlobal(param_vtable_name);
         if (!param_vt) {
-            bool has_libk = _unit.find_import(k::name("k")) != nullptr;
-            if (!has_libk) {
-                for (const auto& tdep : _unit.get_transitive_kdis()) {
-                    if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
-                }
-            }
             if (has_libk) {
                 param_vt = new llvm::GlobalVariable(
                     _context->module(), ptr_ty,
@@ -1891,12 +1893,6 @@ void implementation_generator::visit_klass(klass& klass) {
             std::string func_vtable_name = "_KTVN1k8FunctionE";
             llvm::Constant* func_vt = _context->module().getNamedGlobal(func_vtable_name);
             if (!func_vt) {
-                bool has_libk = _unit.find_import(k::name("k")) != nullptr;
-                if (!has_libk) {
-                    for (const auto& tdep : _unit.get_transitive_kdis()) {
-                        if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
-                    }
-                }
                 if (has_libk) {
                     func_vt = new llvm::GlobalVariable(
                         _context->module(), ptr_ty,
@@ -2007,12 +2003,6 @@ void implementation_generator::visit_klass(klass& klass) {
             std::string ctor_vtable_name = "_KTVN1k11ConstructorE";
             llvm::Constant* ctor_vt = _context->module().getNamedGlobal(ctor_vtable_name);
             if (!ctor_vt) {
-                bool has_libk = _unit.find_import(k::name("k")) != nullptr;
-                if (!has_libk) {
-                    for (const auto& tdep : _unit.get_transitive_kdis()) {
-                        if (tdep && tdep->header.module_name == "k") { has_libk = true; break; }
-                    }
-                }
                 if (has_libk) {
                     ctor_vt = new llvm::GlobalVariable(
                         _context->module(), ptr_ty,
@@ -2134,10 +2124,9 @@ void implementation_generator::visit_klass(klass& klass) {
         rtti_gv->setInitializer(llvm::ConstantStruct::get(rtti_type, new_rtti_init));
         rtti_gv->setConstant(true);  // Fully initialized; mark as constant.
     }
+}
 
-    // Abstract classes have no vtable global to fill (not emitted in declaration pass).
-    if (klass.is_abstract()) return;
-
+void implementation_generator::fill_primary_vtable(klass& klass) {
     auto vt = klass.get_vtable();
     if (!vt->llvm_global || !vt->llvm_type) return;
 
@@ -2163,6 +2152,15 @@ void implementation_generator::visit_klass(klass& klass) {
         llvm::Constant* new_init = llvm::ConstantStruct::get(vt->llvm_type, vtable_init);
         vt->llvm_global->setInitializer(new_init);
     }
+
+}
+
+void implementation_generator::fill_secondary_vtables(klass& klass) {
+    auto vt = klass.get_vtable();
+    if (!vt->llvm_global || !vt->llvm_type) return;
+
+    llvm::LLVMContext& llvm_ctx = **_context;
+    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
     // ── 2. Build secondary vtables using pre-computed model_materializer data ──────
     // model_materializer::compute_secondary_vtable_specs() has already computed
@@ -2263,6 +2261,15 @@ void implementation_generator::visit_klass(klass& klass) {
         llvm::Constant* sec_struct = llvm::ConstantStruct::get(base_vt->llvm_type, sec_init);
         sec_gv->setInitializer(sec_struct);
     }
+
+}
+
+void implementation_generator::fill_imported_base_vtables(klass& klass) {
+    auto vt = klass.get_vtable();
+    if (!vt->llvm_global || !vt->llvm_type) return;
+
+    llvm::LLVMContext& llvm_ctx = **_context;
+    llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
     // ── 3. Build secondary vtables for imported bases ─────────────────────────
     // For imported bases (imported_klass / imported_interface) that have a vtable,

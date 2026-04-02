@@ -19,6 +19,7 @@
 #ifndef KLANG_RESOLVERS_HPP
 #define KLANG_RESOLVERS_HPP
 
+#include <functional>
 #include <limits>
 #include <unordered_map>
 #include <unordered_set>
@@ -591,6 +592,27 @@ protected:
         const std::shared_ptr<unresolved_function_ref_type>& ufrt,
         const element& context_elem);
 
+    /**
+     * Resolve an unresolved_type to a concrete type using the standard 4-step
+     * fallback chain:  resolve_type_by_name → from_string → imported_aggregate → imported_enum.
+     *
+     * If the inner type is already resolved, delegates to context::resolve_type.
+     *
+     * @param inner          The type to resolve (may be an unresolved_type or already resolved).
+     * @param scope_elem     The element used as starting scope for name-based lookups (may be nullptr).
+     * @return The resolved type, or nullptr/unresolved if resolution failed.
+     */
+    std::shared_ptr<type> resolve_inner_type(
+        const std::shared_ptr<type>& inner,
+        const element* scope_elem);
+
+    /**
+     * Strip the spurious reference(array(T)) → array(T) layer that resolve_type
+     * adds for unsized arrays.  Indirection wrappers (pointer, link, view, owner)
+     * should NOT contain the reference layer.
+     */
+    static std::shared_ptr<type> strip_ref_array(const std::shared_ptr<type>& t);
+
     static constexpr unsigned int INTERNAL_ERROR_BASE = 0xA000;
 
     [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
@@ -619,6 +641,79 @@ protected:
     void visit_interface(interface&) override;
     void visit_annotation_type(annotation_type&) override;
     void visit_variable_definition(variable_definition&);
+
+    /**
+     * Helper context passed to the per-type-category variable validation helpers.
+     * Bundles the common state needed by all validation paths so that each helper
+     * has a clean, uniform signature.
+     */
+    struct var_init_context {
+        variable_definition& var;
+        const lex::opt_any_lexeme& var_lexeme;
+        std::shared_ptr<type> var_type;
+        std::shared_ptr<expression> init_expr_base;
+        std::shared_ptr<constructor_invocation_expression> init_expr;
+
+        /** Get the single init argument regardless of storage form. */
+        std::shared_ptr<expression> get_single_init_arg() const;
+        /** True if there is a single init argument. */
+        bool has_single_init_arg() const;
+        /** Assign a new expression as the single init argument. */
+        void assign_single_init_arg(std::shared_ptr<expression> new_arg);
+    };
+
+    /** Resolve the unresolved type of a variable (phase 1 of visit_variable_definition). */
+    void resolve_variable_type(variable_definition& var, const lex::opt_any_lexeme& var_lexeme);
+
+    /** Validate init expression for a primitive-typed variable. */
+    void validate_primitive_variable(var_init_context& ctx);
+
+    /** Validate init expression for a struct-typed variable (constructor resolution). */
+    void validate_struct_variable(var_init_context& ctx);
+
+    /** Validate init expression for a reference-typed variable. */
+    void validate_reference_variable(var_init_context& ctx);
+
+    /** Validate init expression for a pointer-typed variable. */
+    void validate_pointer_variable(var_init_context& ctx);
+
+    /** Validate init expression for a link-typed variable. */
+    void validate_link_variable(var_init_context& ctx);
+
+    /** Validate init expression for a view-typed variable. */
+    void validate_view_variable(var_init_context& ctx);
+
+    /** Validate init expression for an owner-typed variable. */
+    void validate_owner_variable(var_init_context& ctx);
+
+    /** Validate init expression for a sized-array-typed variable. */
+    void validate_sized_array_variable(var_init_context& ctx);
+
+    /**
+     * Extract the pointed/linked/viewed/owned sub-type from any indirection type,
+     * after stripping a reference wrapper.  Returns nullptr if the type is not an
+     * indirection or owner.
+     */
+    static std::shared_ptr<type> extract_indirection_subtype(const std::shared_ptr<type>& arg_type);
+
+    /**
+     * Check whether two types (after const-stripping) are compatible considering
+     * unsized array element const widening (e.g. array<T> matches array<const<T>>).
+     */
+    static bool types_match_array_const_compatible(const std::shared_ptr<type>& src_nc, const std::shared_ptr<type>& tgt_nc);
+
+    /**
+     * Check inheritance-based type compatibility and insert cast expressions
+     * for upcast/downcast when necessary.
+     * @return true if types are compatible (equal or cast inserted), false if incompatible.
+     */
+    bool check_and_insert_inheritance_cast(
+        const std::shared_ptr<type>& src_sub_nc,
+        const std::shared_ptr<type>& tgt_sub_nc,
+        const std::shared_ptr<expression>& arg,
+        const std::shared_ptr<type>& target_type,
+        std::function<void(std::shared_ptr<expression>)> assign_arg,
+        bool null_is_fatal);
 
     /**
      * Inject vptr fields into the LLVM struct type for a polymorphic class.
@@ -805,6 +900,29 @@ protected:
      * @return The given arg expression if already compatible, the new wrapping casting expr if mapping, nullptr if not possible.
      */
     std::shared_ptr<expression> adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type);
+
+    // ── adapt_type per-category helpers (defined in gen_adapt_type.cpp) ──────
+
+    /** Adapt function reference types (frt → frt, ref<frt> → frt, etc.). Returns nullptr if not a frt case. */
+    std::shared_ptr<expression> adapt_function_ref_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is a pointer type (ptr<T> → ptr/lnk/ref). */
+    std::shared_ptr<expression> adapt_from_pointer(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is a link type (lnk<T> → lnk/ptr/view/ref). */
+    std::shared_ptr<expression> adapt_from_link(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is a view type (view<T> → view/ptr/ref). */
+    std::shared_ptr<expression> adapt_from_view(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is an owner type (owner<T> → owner/ptr/lnk/view/ref). */
+    std::shared_ptr<expression> adapt_from_owner(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is a drain type (drain<T> → drain/ref/lnk/view/ptr/value). */
+    std::shared_ptr<expression> adapt_from_drain(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt ref<owner<T>> to owner/ptr/lnk/view/ref (owner borrow and move patterns). */
+    std::shared_ptr<expression> adapt_from_ref_owner(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is a reference type (ref<T> → ref/value/lnk/view/owner + loads and casts). */
+    std::shared_ptr<expression> adapt_from_reference(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc, const std::shared_ptr<type>& type_orig);
+    /** Adapt enum conversions (enum ↔ enum, enum ↔ primitive). Returns nullptr if not an enum case. */
+    std::shared_ptr<expression> adapt_enum_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_nc);
+    /** Adapt primitive-to-primitive or struct identity. Terminal fallback. */
+    std::shared_ptr<expression> adapt_primitive_or_struct_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_nc);
 
     /**
      * Resolve a binary operator overload for an aggregate type, using cast-weight scoring
