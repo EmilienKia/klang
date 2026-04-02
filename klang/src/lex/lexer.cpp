@@ -179,6 +179,7 @@ namespace k::lex {
     }
 
     std::vector<any_lexeme> lexer::parse(k::source& source) {
+        trace("[lexer::parse] lexing source ({} bytes)", {std::to_string(source.content.size())});
         this->source = &source;
 
         const std::string& src = this->source->content;

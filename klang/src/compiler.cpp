@@ -23,6 +23,7 @@
 
 #include <cassert>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <unordered_set>
 #include <llvm/IR/Verifier.h>
@@ -212,16 +213,19 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
                               bool optimize, bool dump,
                               const std::string& forced_module_name) {
     // ── Phase 0 — Load all sources into _sources with a single reserve ─────
+    trace("[compiler::parse_sources] Phase 0 — loading {} source file(s)", {std::to_string(sources.size())});
     assert(!_sources_locked && "Cannot add sources after lexing/parsing has started");
     _sources.clear();
     _sources.reserve(sources.size());
     for (auto& [path, content] : sources) {
         _sources.emplace_back(std::string_view(path), std::string_view(content));
+        debug("[compiler::parse_sources] loaded source '{}' ({} bytes)", {path, std::to_string(content.size())});
     }
     _sources_locked = true;
 
     try {
         // ── Phase 1 — Pre-lookup: discover the module name ─────────────────
+        trace("[compiler::parse_sources] Phase 1 — module name discovery");
         k::name resolved_unit_name;
         bool found_module_decl = false;
         size_t module_decl_file_idx = 0; // index of (first) file with module decl
@@ -230,6 +234,7 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
             // CLI --module-name overrides everything
             resolved_unit_name = k::name::from(forced_module_name);
             found_module_decl = true;
+            debug("[compiler::parse_sources] forced module name: '{}'", {forced_module_name});
         } else {
             // Scan each source for a module declaration
             for (size_t i = 0; i < _sources.size(); ++i) {
@@ -264,7 +269,12 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
             }
         }
 
+        if (found_module_decl) {
+            debug("[compiler::parse_sources] resolved module name: '{}'", {resolved_unit_name.to_string()});
+        }
+
         // ── Phase 2 — Full parse of each source, merge into single AST ─────
+        trace("[compiler::parse_sources] Phase 2 — parsing and AST merge");
         // Parse files that declare the module first so the unit name / root
         // namespace is established before other files are processed.
         // Build a parsing order: file with module decl first (if any), then the rest.
@@ -290,6 +300,7 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         per_file_asts.reserve(_sources.size());
 
         for (size_t idx : parse_order) {
+            trace("[compiler::parse_sources] parsing source '{}'", {_sources[idx].path});
             k::parse::parser parser(*this);
             parser.parse(_sources[idx]);
             auto file_ast = parser.parse_unit();
@@ -316,6 +327,7 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         }
 
         // ── Phase 3 — Model building ───────────────────────────────────────
+        trace("[compiler::parse_sources] Phase 3 — model building");
         if(dump) {
             std::cout << "#" << std::endl << "# Unit construction" << std::endl << "#" << std::endl;
         }
@@ -347,6 +359,7 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         }
 
         // ── Import resolution ──────────────────────────────────────────────
+        trace("[compiler::parse_sources] import resolution");
         // Build a default resolver (current dir) if none was set by the caller.
         if (!_file_resolver) {
             auto r = std::make_shared<k::path_lookup_file_resolver>();
@@ -368,6 +381,7 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         }
 
         k::model::gen::symbol_resolver var_resolver(*this, _context, *_model_unit);
+        trace("[compiler::parse_sources] symbol resolution");
         if(dump) {
             std::cout << "#" << std::endl << "# Variable resolution" << std::endl << "#" << std::endl;
         }
@@ -380,12 +394,15 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
 
         _context->resolve_types();
 
+        trace("[compiler::parse_sources] aggregate type resolution");
         k::model::gen::aggregate_type_resolver agg_type_resolver(*this, _context, *_model_unit);
         agg_type_resolver.resolve();
 
+        trace("[compiler::parse_sources] model materialization");
         k::model::gen::model_materializer materializer(*this, _context, *_model_unit);
         materializer.materialize();
 
+        trace("[compiler::parse_sources] type reference resolution");
         k::model::gen::type_reference_resolver type_ref_resolver(*this, _context, *_model_unit);
         type_ref_resolver.resolve();
 
@@ -396,6 +413,7 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         }
 
         // ── Phase C — unused-import check ─────────────────────────────────
+        trace("[compiler::parse_sources] unused-import check");
         // Must run after all resolver passes so that the 'used' flags are set.
         importer.check_unused_imports();
 
@@ -418,6 +436,7 @@ bool compiler::has_main_method() const {
 
 void compiler::process_generation(bool optimize, bool dump) {
 
+    trace("[compiler::process_generation] initializing LLVM module");
     _context->init_module(_model_unit->get_unit_name());
 
     if (_target) {
@@ -428,6 +447,7 @@ void compiler::process_generation(bool optimize, bool dump) {
     if(dump) {
         std::cout << "#" << std::endl << "# Generate declarations in LLVM module" << std::endl << "#" << std::endl;
     }
+    trace("[compiler::process_generation] declaration generation");
     k::model::gen::declaration_generator gen_decl(*this, _context, *_model_unit);
 
     _model_unit->accept(gen_decl);
@@ -435,6 +455,7 @@ void compiler::process_generation(bool optimize, bool dump) {
     if(dump) {
         std::cout << "#" << std::endl << "# Generate implementation in LLVM module" << std::endl << "#" << std::endl;
     }
+    trace("[compiler::process_generation] implementation generation");
     k::model::gen::implementation_generator gen_impl(*this, _context, *_model_unit);
 
     _model_unit->accept(gen_impl);
@@ -447,6 +468,7 @@ void compiler::process_generation(bool optimize, bool dump) {
     }
 
     if (optimize) {
+        trace("[compiler::process_generation] optimization");
         if(dump) {
             std::cout << "#" << std::endl << "# Optimize LLVM module" << std::endl << "#" << std::endl;
         }
@@ -486,6 +508,29 @@ void compiler::set_enforce_ns_collision(bool enforce) {
 
 void compiler::set_extra_object_files(std::vector<std::string> paths) {
     _extra_object_files = std::move(paths);
+}
+
+void compiler::set_log_level(log::diagnostic::severity level) {
+    _log_level = level;
+}
+
+void compiler::set_log_file(const std::string& path) {
+    if (path.empty()) {
+        _log_stream = nullptr;
+        _log_file_stream.reset();
+    } else if (path == "stderr") {
+        _log_stream = &std::cerr;
+        _log_file_stream.reset();
+    } else {
+        _log_file_stream = std::make_unique<std::ofstream>(path, std::ios::out | std::ios::trunc);
+        if (!_log_file_stream->is_open()) {
+            std::cerr << "Warning: cannot open log file '" << path << "', falling back to stdout." << std::endl;
+            _log_file_stream.reset();
+            _log_stream = nullptr;
+        } else {
+            _log_stream = _log_file_stream.get();
+        }
+    }
 }
 
 void compiler::emit_ir(const std::string& filepath) {
@@ -903,6 +948,8 @@ std::pair<char_coord,char_coord> compiler::coordinates_from_lex(const lex::lexem
 }
 
 static const char* severity_str[] = {
+    "Trace  ",
+    "Debug  ",
     "Info   ",
     "Warning",
     "Error  ",
@@ -910,9 +957,25 @@ static const char* severity_str[] = {
 };
 
 void compiler::report(const k::log::diagnostic& diag) {
+    // Filter by log-level threshold
+    if (diag.level < _log_level) return;
+
     const unsigned int code = diag.code;
     const auto sev = (int)diag.level;
-    const char* sev_str = severity_str[sev < 4 ? sev : 2];
+    const char* sev_str = severity_str[sev < 6 ? sev : 4];
+
+    // Trace and debug messages use a simplified format (no source location, no error code)
+    if (diag.level == log::diagnostic::severity::trace || diag.level == log::diagnostic::severity::debug) {
+        std::string formatted = diag.message;
+        if (!diag.args.empty()) {
+            fmt::dynamic_format_arg_store<fmt::format_context> store;
+            for(const auto& arg : diag.args) store.push_back(arg);
+            try { formatted = fmt::vformat(diag.message, store); } catch(...) {}
+        }
+        std::ostream& out = _log_stream ? *_log_stream : std::cout;
+        out << sev_str << " : " << formatted << "\n";
+        return;
+    }
 
     // Resolve source location from the primary lexeme (pos), then range (start/end).
     // The resolved source file and coordinates are returned together.

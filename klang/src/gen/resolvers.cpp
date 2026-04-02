@@ -462,12 +462,15 @@ symbol_resolver::resolve_symbol_from_root(const name& name) {
 
 void symbol_resolver::resolve()
 {
+    trace("[symbol_resolver::resolve] begin");
     visit_unit(_unit);
 
     // Resolve chained redirects: follow redirect targets transitively.
+    trace("[symbol_resolver::resolve] resolving redirect chains");
     // After visit_unit, each redirected function has its immediate target set.
     // Now resolve chains: a -> b -> c becomes a -> c, b -> c.
     resolve_redirect_chains(_unit);
+    trace("[symbol_resolver::resolve] done");
 }
 
 static void collect_all_functions_from_aggregate(aggregate& agg, std::vector<std::shared_ptr<function>>& out) {
@@ -1295,7 +1298,9 @@ resolve_one_type(const std::shared_ptr<type>& t,
 // ── Visitors ─────────────────────────────────────────────────────────────────
 
 void aggregate_type_resolver::resolve() {
+    trace("[aggregate_type_resolver::resolve] begin");
     visit_unit(_unit);
+    trace("[aggregate_type_resolver::resolve] done");
 }
 
 void aggregate_type_resolver::visit_unit(unit& /*unit*/) {
@@ -1623,7 +1628,9 @@ void aggregate_type_resolver::visit_global_main_function(global_main_function& /
 //
 
 void model_materializer::materialize() {
+    trace("[model_materializer::materialize] begin");
     visit_unit(_unit);
+    trace("[model_materializer::materialize] done");
 }
 
 void model_materializer::visit_unit(unit& /*u*/) {
@@ -1646,10 +1653,13 @@ void model_materializer::visit_aggregate(aggregate& st) {
 }
 
 void model_materializer::visit_klass(klass& kl) {
+    trace("[model_materializer::visit_klass] '{}'", {kl.get_short_name()});
     // Recurse into nested aggregates
     visit_aggregate(kl);
 
     if (!kl.has_vtable()) return;
+
+    debug("[model_materializer::visit_klass] '{}' has vtable, validating and computing secondary specs", {kl.get_short_name()});
 
     // 1. Validate vtable consistency
     validate_vtable(kl);
@@ -2178,7 +2188,9 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
 
 void type_reference_resolver::resolve()
 {
+    trace("[type_reference_resolver::resolve] begin");
     visit_unit(_unit);
+    trace("[type_reference_resolver::resolve] done");
 }
 
 //
@@ -3503,6 +3515,8 @@ type_reference_resolver::get_best_matching_function(
     }
 
     auto* b = best[0];
+    debug("[type_reference_resolver::get_best_matching_function] selected '{}' (score={}, unified={})",
+          {b->func->get_fq_name(), std::to_string(b->score), b->is_unified ? "yes" : "no"});
     return {b->func, b->adapted_args, b->is_unified, b->this_for_unified};
 }
 
@@ -3893,6 +3907,7 @@ void init_order_resolver::collect_deps_for_sctor(
  *      reverse as destruction order on global_destructor_function.
  */
 void init_order_resolver::resolve() {
+    trace("[init_order_resolver::resolve] begin");
     auto& ctor_func = _unit.get_global_constructor_function();
     auto& dtor_func = _unit.get_global_destructor_function();
 

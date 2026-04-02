@@ -318,6 +318,7 @@ void type_reference_resolver::visit_parameter(parameter& param) {
 //
 
 void symbol_resolver::visit_function(function& fn) {
+    trace("[symbol_resolver::visit_function] '{}'", {fn.get_short_name()});
     visit_named_element(fn);
 
     if (fn.is_member() && !fn.is_static()) {
@@ -597,6 +598,7 @@ void signature_resolver::visit_function(function& fn) {
 }
 
 void type_reference_resolver::visit_function(function& fn) {
+    trace("[type_reference_resolver::visit_function] '{}'", {fn.get_short_name()});
 
     if (fn.is_member() && !fn.is_static()) {
         fn.get_this_parameter()->accept(*this);
@@ -627,6 +629,7 @@ void type_reference_resolver::visit_function(function& fn) {
 }
 
 void declaration_generator::visit_function(function &function) {
+    trace("[declaration_generator::visit_function] '{}'", {function.get_short_name()});
     // Deleted constructors must never be called; do not emit any LLVM declaration for them.
     if (function.is_deleted()) {
         return;
@@ -753,6 +756,7 @@ void declaration_generator::visit_function(function &function) {
  *   10. Emit function epilogue (return, cleanup, dead instruction elimination).
  */
 void implementation_generator::visit_function(function &function) {
+    trace("[implementation_generator::visit_function] '{}'", {function.get_short_name()});
     // Deleted functions have no LLVM declaration and must never be implemented.
     if (function.is_deleted()) {
         return;
@@ -804,6 +808,7 @@ void implementation_generator::visit_function(function &function) {
     const bool use_sret = function.has_return_type() && needs_sret_return(function.get_return_type());
 
     if (use_sret) {
+        debug("[implementation_generator::visit_function] '{}' uses sret ABI", {function.get_short_name()});
         // Capture the sret argument (first LLVM argument, before 'this' or explicit params)
         auto arg_it_sret = func->arg_begin();
         llvm::Argument* sret_arg = &*(arg_it_sret);
@@ -876,6 +881,10 @@ void implementation_generator::visit_function(function &function) {
             }
         }
         } // end else (heuristic NRVO when no named return var)
+    }
+
+    if (_nrvo_candidate) {
+        debug("[implementation_generator::visit_function] '{}' NRVO candidate selected", {function.get_short_name()});
     }
 
     // If function has a non-void return type AND is NOT sret, pre-create an alloca for
@@ -992,6 +1001,8 @@ void implementation_generator::visit_function(function &function) {
 bool implementation_generator::emit_constructor_pre_block(function& function, llvm::Function* func) {
     auto ctor = function.shared_as<constructor>();
     if (!ctor) return false;
+
+    debug("[implementation_generator::emit_constructor_pre_block] constructor for '{}'", {function.get_fq_name()});
 
     // For constructor, start by initializing all members
     auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());

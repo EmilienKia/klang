@@ -21,6 +21,7 @@
 
 #include <string_view>
 #include <vector>
+#include <map>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -77,6 +78,8 @@ int main(int argc, const char** argv) {
     std::vector<std::string> lib_files;     // -l <name-or-path>
     std::string lib_path_env;               // --lib-path-env
     std::string forced_module_name;         // --module-name
+    std::string log_level_str;              // --log-level
+    std::string log_file;                   // --log-file
 
     k::compiler::initialize();
 
@@ -134,6 +137,15 @@ int main(int argc, const char** argv) {
             ("enforce-ns-collision",
                 "Reject compilation if the root namespace of the unit being "
                 "compiled collides with the root namespace of any imported module.")
+            // ── Diagnostic / logging options ────────────────────────────────
+            ("log-level",
+                po::value<std::string>(&log_level_str)->default_value("info"),
+                "Set the global log-level threshold. Accepted values: "
+                "trace, debug, info (default), warning, error, fatal.")
+            ("log-file",
+                po::value<std::string>(&log_file),
+                "Redirect log output to a file. Use 'stderr' to write to "
+                "standard error. Default: stdout.")
             ;
 
     po::options_description cli_target_options("Target options");
@@ -372,6 +384,29 @@ int main(int argc, const char** argv) {
             }
             if (!effective_output.empty()) {
                 compiler->resolve_ir_filenames(effective_output);
+            }
+        }
+
+        // ── Log level / log file ────────────────────────────────────────────
+        {
+            using sev = k::log::diagnostic::severity;
+            static const std::map<std::string, sev> level_map = {
+                {"trace",   sev::trace},
+                {"debug",   sev::debug},
+                {"info",    sev::info},
+                {"warning", sev::warning},
+                {"error",   sev::error},
+                {"fatal",   sev::fatal}
+            };
+            auto it = level_map.find(log_level_str);
+            if (it != level_map.end()) {
+                compiler->set_log_level(it->second);
+            } else {
+                std::cerr << "Warning: unknown log level '" << log_level_str
+                          << "', falling back to 'info'." << std::endl;
+            }
+            if (vm.count("log-file") > 0) {
+                compiler->set_log_file(log_file);
             }
         }
 

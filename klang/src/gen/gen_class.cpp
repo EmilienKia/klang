@@ -1041,6 +1041,7 @@ llvm::Value* emit_virtual_dispatch_call(
 //  4. If the vtable is non-empty, attach it to the class and inject a synthetic
 //     __vptr__ field as the first member via klass::inject_vptr_field.
 void symbol_resolver::visit_klass(klass& klass) {
+    trace("[symbol_resolver::visit_klass] '{}'", {klass.get_short_name()});
     visit_aggregate(klass);
 
     // Build vtable layout
@@ -1145,6 +1146,7 @@ void signature_resolver::visit_klass(klass& klass) {
  *   8. Generate default constructors and copy constructors if needed.
  */
 void type_reference_resolver::visit_klass(klass& klass) {
+    trace("[type_reference_resolver::visit_klass] '{}'", {klass.get_short_name()});
     // Step 1: Visit nested aggregates first (depth-first)
     visit_aggregate(klass);
 
@@ -1195,6 +1197,7 @@ void type_reference_resolver::visit_klass(klass& klass) {
 //  5. Emit a GlobalVariable named after the mangled vtable name with the null initializer
 //     and ExternalLinkage, and store its pointer on the vtable_layout object.
 void declaration_generator::visit_klass(klass& klass) {
+    trace("[declaration_generator::visit_klass] '{}'", {klass.get_short_name()});
     // ── Pre-create secondary vtable globals BEFORE visit_aggregate ─────────────
     // Secondary vtable globals must exist before constructors are generated
     // (emit_vptr_store references them). We create null-initialised placeholders here
@@ -1504,6 +1507,7 @@ void declaration_generator::visit_klass(klass& klass) {
 //  4. Replace the GlobalVariable's initializer (previously all-null from declaration
 //     pass) with the now-populated constant struct, completing the vtable.
 void implementation_generator::visit_klass(klass& klass) {
+    trace("[implementation_generator::visit_klass] '{}'", {klass.get_short_name()});
     visit_aggregate(klass);
     if (!klass.has_vtable()) return;
     // Phase 0: Patch RTTI global with real vtable pointers, base/nested/enclosing

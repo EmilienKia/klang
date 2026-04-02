@@ -234,6 +234,7 @@ void symbol_resolver::resolve_and_validate_annotations(
 // 15. Generate an implicit destructor if any base or member struct has a destructor.
 // Note: class-specific processing (vtable layout, vptr injection) is done in visit_klass.
 void symbol_resolver::visit_aggregate(aggregate& st) {
+    trace("[symbol_resolver::visit_aggregate] '{}'", {st.get_short_name()});
     lex::opt_any_lexeme st_lexeme;
     if (auto ast_ad = st.get_ast_aggregate_decl()) st_lexeme = lex::any_lexeme{ast_ad->name};
 
@@ -710,6 +711,7 @@ void signature_resolver::visit_aggregate(aggregate& st) {
 //     (duplicate signatures) and constructor overload collisions within this aggregate.
 // Note: class-specific LLVM vtable struct-type building is done in visit_klass.
 void type_reference_resolver::visit_aggregate(aggregate& st) {
+    trace("[type_reference_resolver::visit_aggregate] '{}'", {st.get_short_name()});
     lex::opt_any_lexeme st_lexeme;
     if (auto ast_ad = st.get_ast_aggregate_decl()) st_lexeme = lex::any_lexeme{ast_ad->name};
     // Note: const-struct method promotion is already done in symbol_resolver phase.
@@ -781,6 +783,7 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
 //  3. Pop the struct stack.
 // Note: class vtable global-variable emission is done in visit_klass.
 void declaration_generator::visit_aggregate(aggregate& st) {
+    trace("[declaration_generator::visit_aggregate] '{}'", {st.get_short_name()});
     _struct_stack.push(st.shared_as<aggregate>());
 
     // Visit all children (variables, methods, constructors, destructor, nested aggregates).
@@ -1053,6 +1056,7 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
 //  3. Pop the struct stack.
 // Note: vtable initializer filling is done in visit_klass (class-specific).
 void implementation_generator::visit_aggregate(aggregate& st) {
+    trace("[implementation_generator::visit_aggregate] '{}'", {st.get_short_name()});
     _struct_stack.push(st.shared_as<aggregate>());
 
     // Visit all children (variables, methods, constructors, destructor, nested aggregates).

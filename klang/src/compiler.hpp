@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <ostream>
 
 #include "common/logger.hpp"
 #include "common/file_resolver.hpp"
@@ -80,6 +81,16 @@ protected:
     bool _has_compilation_error = false;
 
     IrOutputOptions _ir_output_options;
+
+    /** Current log-level threshold. Messages below this level are silently discarded.
+     *  Default: info (trace and debug are suppressed). */
+    log::diagnostic::severity _log_level = log::diagnostic::severity::info;
+
+    /** Output stream for log messages. Defaults to stdout.
+     *  When a --log-file is specified, this points to the opened file stream. */
+    std::ostream* _log_stream = nullptr;
+    /** Owned file stream when --log-file is used (non-stderr). */
+    std::unique_ptr<std::ofstream> _log_file_stream;
 
     /** File resolver used to locate .kdi files for imports. */
     std::shared_ptr<k::file_resolver> _file_resolver;
@@ -188,6 +199,20 @@ public:
      * The paths are passed verbatim to clang / ar after the K-generated .o.
      */
     void set_extra_object_files(std::vector<std::string> paths);
+
+    /**
+     * Set the global log-level threshold.
+     * Messages with severity below this level are silently discarded.
+     * Default: info (trace and debug messages are suppressed).
+     */
+    void set_log_level(log::diagnostic::severity level);
+
+    /**
+     * Set the log output destination.
+     * @param path  File path for log output. If "stderr", logs go to std::cerr.
+     *              If empty, logs go to std::cout (the default).
+     */
+    void set_log_file(const std::string& path);
 
     /**
      * Resolve automatic IR file names based on the output file path.

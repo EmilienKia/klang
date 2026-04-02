@@ -46,6 +46,7 @@ namespace k::model {
     }
 
     void model_builder::visit_unit(parse::ast::unit &unit) {
+        trace("[model_builder::visit_unit] begin");
         // Push root ns context
         stack<ns_context> push(_contexts, _unit.get_root_namespace());
 
@@ -131,6 +132,8 @@ namespace k::model {
     void model_builder::visit_namespace_decl(parse::ast::namespace_decl &ns) {
         auto parent_ns = current_context_content<model::ns>();
         std::shared_ptr<k::model::ns> namesp = parent_ns->get_child_namespace(std::string{ns.name->content});
+
+        trace("[model_builder::visit_namespace_decl] namespace '{}'", {std::string{ns.name->content}});
 
         // Push namespace context
         stack<ns_context> push(_contexts, namesp);
@@ -256,6 +259,10 @@ namespace k::model {
             agg = parent_scope->define_structure(std::string{st.name.content});
         }
 
+        {
+            const char* kind = is_class ? "class" : is_interface ? "interface" : is_annotation ? "annotation" : "struct";
+            debug("[model_builder::visit_aggregate_decl] defined {} '{}'", {kind, std::string{st.name.content}});
+        }
         // Detect if declared inside an outer aggregate
         bool is_static_nested = lex::keyword::has(st.specifiers, lex::keyword::STATIC);
         agg->set_static_nested(is_static_nested);
@@ -441,6 +448,7 @@ namespace k::model {
         bool is_static = lex::keyword::has(decl.specifiers, lex::keyword::STATIC);
         bool is_const  = lex::keyword::has(decl.specifiers, lex::keyword::CONST);
         std::shared_ptr<model::variable_definition> var = parent_scope->append_variable(std::string{decl.name.content}, is_static);
+        debug("[model_builder::visit_variable_decl] defined variable '{}'", {std::string{decl.name.content}});
         // Store the AST node on the variable for source location reporting in diagnostics.
         if (auto var_stmt = std::dynamic_pointer_cast<model::variable_statement>(var)) {
             // variable_decl has diamond inheritance (declaration + statement from ast_node);
@@ -692,6 +700,7 @@ namespace k::model {
             : std::string{func.name.content};
 
         std::shared_ptr<model::function> function = parent_scope->define_function(func_name, is_static);
+        debug("[model_builder::visit_function_decl] defined function '{}'", {func_name});
 
         // Wire AST function_decl to the model function
         function->set_ast_function_decl(func.shared_as<parse::ast::function_decl>());

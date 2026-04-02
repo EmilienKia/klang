@@ -41,6 +41,8 @@ namespace k::log {
  * (e.g. candidate declarations when resolving an ambiguous call).
  *
  * Severity levels:
+ *  - trace : fine-grained flow tracking (method entry/exit across phases)
+ *  - debug : state dumps at key decision points (resolver outcomes, vtable layout, etc.)
  *  - info  : informational, no issue, compilation continues and produces output
  *  - warning : something suspicious, compilation continues and produces output
  *  - error : something is wrong, compilation continues to gather more errors
@@ -63,6 +65,8 @@ namespace k::log {
 struct diagnostic {
 
     enum class severity {
+        trace,
+        debug,
         info,
         warning,
         error,
@@ -134,8 +138,17 @@ struct diagnostic {
         return make(severity::error, code, std::move(msg), std::move(args));
     }
     static diagnostic make_fatal(unsigned int code, std::string msg,
-                                 std::vector<std::string> args = {}) {
+                                  std::vector<std::string> args = {}) {
         return make(severity::fatal, code, std::move(msg), std::move(args));
+    }
+
+    static diagnostic make_trace(std::string msg,
+                                 std::vector<std::string> args = {}) {
+        return make(severity::trace, 0, std::move(msg), std::move(args));
+    }
+    static diagnostic make_debug(std::string msg,
+                                 std::vector<std::string> args = {}) {
+        return make(severity::debug, 0, std::move(msg), std::move(args));
     }
 
     // -------------------------------------------------------------------------
@@ -252,6 +265,12 @@ public:
     // Convenience helpers — no location
     // -----------------------------------------------------------------------
 
+    void trace(const std::string& msg, const std::vector<std::string>& args = {}) {
+        report(diagnostic::make_trace(msg, args));
+    }
+    void debug(const std::string& msg, const std::vector<std::string>& args = {}) {
+        report(diagnostic::make_debug(msg, args));
+    }
     void info (unsigned int code, const std::string& msg, const std::vector<std::string>& args = {}) {
         report(diagnostic::make_info(code, msg, args));
     }

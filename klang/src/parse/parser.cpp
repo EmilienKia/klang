@@ -66,6 +66,7 @@ void parser::parse(k::source& src) {
 
 std::shared_ptr<ast::unit> parser::parse_unit()
 {
+    trace("[parser::parse_unit] begin");
     auto unit = std::make_shared<ast::unit>();
 
     auto module_name = parse_module_declaration();
@@ -451,6 +452,8 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
         return {};
     }
 
+    trace("[parser::parse_aggregate_decl] parsing aggregate '{}'", {std::string{lex::as<lex::identifier>(lname).content}});
+
     // Optional base-class clause: ':' [vis] Name [',' [vis] Name]*
     std::vector<ast::aggregate_decl::base_clause_entry> bases;
     {
@@ -552,6 +555,7 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
     }
     auto enum_name = lex::as<lex::identifier>(lname);
 
+    trace("[parser::parse_enum_decl] parsing enum '{}'", {std::string{enum_name.content}});
     // Optional base enum clause: ':' QualifiedName
     std::optional<std::string> base_name;
     {
@@ -915,6 +919,13 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             holder.rollback();
             return {};
         }
+    }
+
+    {
+        std::string fn_name = is_operator ? canonical_name
+                            : is_destructor ? ("~" + std::string{lex::as<lex::identifier>(lname).content})
+                            : std::string{lex::as<lex::identifier>(lname).content};
+        trace("[parser::parse_function_decl] parsing function '{}'", {fn_name});
     }
 
     // Look for parameter_spec declarations (skip for casting operators which have no params)
