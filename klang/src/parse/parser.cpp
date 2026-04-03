@@ -120,6 +120,8 @@ std::shared_ptr<ast::import> parser::parse_import()
         return {};
     }
 
+    trace("[parser::parse_import] parsing import", {});
+
     // Expect a qualified identifier (e.g. "math::vec" or "foo")
     auto qname = parse_qualified_identifier();
     if(!qname || qname->names.empty()) {
@@ -1438,6 +1440,8 @@ std::shared_ptr<ast::block_statement> parser::parse_statement_block()
         //throw parsing_error("Closing brace for statement block is missing" /*, *lopenbrace */);
     }
 
+    trace("[parser::parse_statement_block] parsing statement block", {});
+
     std::vector<std::shared_ptr<ast::statement>> statements;
     while(auto statement = parse_statement()) {
         if(statement) {
@@ -1635,6 +1639,8 @@ std::shared_ptr<ast::for_statement> parser::parse_for_statement()
 
 std::shared_ptr<ast::statement> parser::parse_statement()
 {
+    trace("[parser::parse_statement] parsing statement", {});
+
     if(auto block = parse_statement_block()) {
         return block;
     }
@@ -1693,6 +1699,9 @@ std::shared_ptr<ast::variable_decl> parser::parse_variable_decl()
        holder.rollback();
         return {};
     }
+
+    trace("[parser::parse_variable_decl] parsing variable '{}'", {std::string{lex::as<lex::identifier>(lname).content}});
+
     std::shared_ptr<ast::type_specifier> type = parse_type_spec();
     if(!type) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_VARDECL_EXPECT_TYPE), _lexer.pick_current(), "Variable declaration expects a type specifier after the semicolon ';'");

@@ -1051,10 +1051,11 @@ void symbol_resolver::visit_klass(klass& klass) {
 
     for (auto& f : warning_override_final) {
         // Warning: attempting to override a 'final' virtual function → new branch
-        std::clog << "Warning: function '" << f->get_short_name()
-                  << "' in class '" << klass.get_short_name()
-                  << "' attempts to override a 'final' virtual function; "
-                     "it will be treated as a new (non-overriding) virtual function." << std::endl;
+        logger_relay::report(k::log::diagnostic::make_warning(
+            static_cast<unsigned int>(k::diag::structure_diag::WARN_OVERRIDE_FINAL),
+            "function '{}' in class '{}' attempts to override a 'final' virtual function; "
+            "it will be treated as a new (non-overriding) virtual function",
+            {f->get_short_name(), klass.get_short_name()}));
         if (!f->is_final_func()) {
             size_t next_slot = 0;
             for (auto& e : vt->entries) next_slot = std::max(next_slot, e.slot_index + 1);

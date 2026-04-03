@@ -101,6 +101,7 @@ static bool is_type_available(unit& unit, const std::string& type_name) {
  */
 void symbol_resolver::visit_unit(unit& unit)
 {
+    trace("[symbol_resolver::visit_unit] begin");
     // Step 1: Process import statements: load KDI files and resolve imported modules
     auto root_ns = _unit.get_root_namespace();
 
@@ -218,6 +219,7 @@ void symbol_resolver::visit_unit(unit& unit)
 
 void type_reference_resolver::visit_unit(unit& unit)
 {
+    trace("[type_reference_resolver::visit_unit] begin");
     visit_namespace(*_unit.get_root_namespace());
 
     // Compute unified initialization/finalization order over all static constructors
@@ -246,6 +248,7 @@ void type_reference_resolver::visit_unit(unit& unit)
  *   5. Emit global constructor/destructor/main function declarations.
  */
 void declaration_generator::visit_unit(unit &unit) {
+    trace("[declaration_generator::visit_unit] begin");
     visit_namespace(*_unit.get_root_namespace());
 
     visit_global_constructor_function(_unit.get_global_constructor_function());
@@ -479,6 +482,7 @@ void declaration_generator::emit_redirect_alias(function& fn) {
  *   4. Emit global constructor, destructor, and main function bodies.
  */
 void implementation_generator::visit_unit(unit &unit) {
+    trace("[implementation_generator::visit_unit] begin");
     // Step 1: Visit root namespace to emit all function bodies
     visit_namespace(*_unit.get_root_namespace());
 
@@ -746,6 +750,7 @@ void implementation_generator::visit_unit(unit &unit) {
 
 void symbol_resolver::visit_namespace(ns& ns)
 {
+    trace("[symbol_resolver::visit_namespace] '{}'", {ns.get_short_name()});
     if (ns.get_fq_name().empty()) {
         if (ns.is_root()) {
             // Root namespace
@@ -801,6 +806,7 @@ void signature_resolver::visit_namespace(ns& ns) {
  */
 void type_reference_resolver::visit_namespace(ns& ns)
 {
+    trace("[type_reference_resolver::visit_namespace] '{}'", {ns.get_short_name()});
     // Step 1: Run signature_resolver pre-pass on all aggregates in this namespace
     // Pre-pass: resolve all aggregate function signatures (parameter + return types)
     // WITHOUT processing function bodies.  This ensures that when function bodies
@@ -824,12 +830,14 @@ void type_reference_resolver::visit_namespace(ns& ns)
 }
 
 void declaration_generator::visit_namespace(ns &ns) {
+    trace("[declaration_generator::visit_namespace] '{}'", {ns.get_short_name()});
     for(auto child : ns.get_children()) {
         child->accept(*this);
     }
 }
 
 void implementation_generator::visit_namespace(ns &ns) {
+    trace("[implementation_generator::visit_namespace] '{}'", {ns.get_short_name()});
     for(auto child : ns.get_children()) {
         child->accept(*this);
     }
@@ -878,6 +886,7 @@ void symbol_resolver::visit_global_variable_definition(global_variable_definitio
 
 void type_reference_resolver::visit_global_variable_definition(global_variable_definition& var)
 {
+    debug("[type_reference_resolver::visit_global_variable_definition] '{}'", {var.get_short_name()});
     visit_variable_definition(var);
 
     // Unconditionnally register global variable to global constructor for now, because we need to be sure it is registered before any possible use in other variable initialization expression.
@@ -893,6 +902,7 @@ void type_reference_resolver::visit_global_variable_definition(global_variable_d
 }
 
 void declaration_generator::visit_global_variable_definition(global_variable_definition& var) {
+    debug("[declaration_generator::visit_global_variable_definition] '{}'", {var.get_mangled_name()});
     auto type = var.get_type();
     llvm::Type *llvm_type = _context->get_llvm_type(type);
     if (!llvm_type) return; // type not yet resolved or unsupported

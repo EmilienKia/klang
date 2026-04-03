@@ -291,6 +291,7 @@ enum class structure_diag : unsigned int {
     WARN_CONST_STRUCT_NON_CONST_MEMBER            = 0x012E,
     ERR_ABSTRACT_METHOD_IN_NON_ABSTRACT           = 0x0173,
     ERR_INHERITED_ABSTRACT_NOT_IMPL               = 0x0174,
+    WARN_OVERRIDE_FINAL                           = 0x0175,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

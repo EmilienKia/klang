@@ -79,6 +79,7 @@ namespace k::model {
     void model_builder::visit_import(parse::ast::import& imp) {
         // Register the import name in the unit (resolved later by kdi_importer)
         if(imp.qname) {
+            trace("[model_builder::visit_import] import '{}'", {imp.qname->to_name().to_string()});
             _unit.add_import(imp.qname->to_name());
         }
     }
@@ -148,6 +149,7 @@ namespace k::model {
 
     void model_builder::visit_using_decl(parse::ast::using_decl &decl) {
         // Build the using_directive descriptor from the AST node
+        trace("[model_builder::visit_using_decl] using directive", {});
         model::using_directive dir;
 
         // Map the optional element-type filter keyword
@@ -206,6 +208,7 @@ namespace k::model {
 
     void model_builder::visit_friend_decl(parse::ast::friend_decl &decl) {
         // Build the friend_directive descriptor from the AST node
+        trace("[model_builder::visit_friend_decl] friend directive", {});
         model::friend_directive dir;
 
         // Map the optional element-type filter keyword
@@ -383,6 +386,7 @@ namespace k::model {
     }
 
     void model_builder::visit_enum_decl(parse::ast::enum_decl &decl) {
+        trace("[model_builder::visit_enum_decl] enum '{}'", {std::string{decl.name.content}});
         // Determine parent scope (must be an enum_holder — ns or aggregate)
         std::shared_ptr<model::enum_holder> parent_scope = current_context_content<model::enum_holder>();
         if (!parent_scope) {
@@ -686,6 +690,7 @@ namespace k::model {
     }
 
     void model_builder::visit_function_decl(parse::ast::function_decl & func) {
+        trace("[model_builder::visit_function_decl] function '{}'", {std::string{func.name.content}});
         auto parent_scope = current_context_content<function_holder>();
         if(!parent_scope) {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_FUNC_BAD_SCOPE), func.name, "Function '{}' cannot be declared here; function declarations are only allowed at namespace or structure scope", {std::string{func.name.content}});

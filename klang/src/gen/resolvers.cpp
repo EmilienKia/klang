@@ -564,6 +564,7 @@ std::variant<std::monostate, std::shared_ptr<variable_definition>, std::shared_p
  *   6. Recurse to parent, or fall back to imported modules.
  */
 symbol_resolver::resolve_symbol(const element& elem, const name& name) {
+    debug("[symbol_resolver::resolve_symbol] resolving '{}'", {name.to_string()});
 
     // Step 1: Handle 'this' keyword: find nearest non-static member function's this parameter
     // Specifically look at the "this" symbol (non-static function specific parameter)
@@ -2035,6 +2036,7 @@ std::shared_ptr<type>
  *   4. Fallback: imported aggregates and enums.
  */
 type_reference_resolver::resolve_type_by_name(const k::name& type_name, const element& context_elem) {
+    debug("[type_reference_resolver::resolve_type_by_name] '{}'", {type_name.to_string()});
     // Step 1: Root-prefixed: delegate to resolve_type_from_root
     if (type_name.empty()) return {};
 
@@ -3157,6 +3159,7 @@ std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::sha
  * @return {best_constructor, adapted_args} or {nullptr, {}} on failure.
  */
 type_reference_resolver::get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args) {
+    debug("[type_reference_resolver::get_best_matching_constructor] {} candidates, {} args", {std::to_string(constructors.size()), std::to_string(args.size())});
     const size_t arg_count = args.size();
 
     // Helper: a constructor is callable with arg_count args if it has exactly arg_count params,
