@@ -307,7 +307,7 @@ type_reference_resolver::adapt_from_owner(
     if (type::is_pointer(type_nc)) {
         // Borrow as pointer observer — address is used, ownership stays in the owner
         auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
-        if (src_sub_nc == tgt_sub_nc) {
+        if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
             // Same subtype: reinterpret owner value as pointer (same LLVM representation)
             auto cast = cast_expression::make_shared(expr, type_nc);
             cast->set_type(type_nc);
@@ -328,7 +328,7 @@ type_reference_resolver::adapt_from_owner(
     // owner<T> → lnk<T> / view<T>: borrow as link or view (same LLVM representation)
     if (type::is_link(type_nc) || type::is_view(type_nc)) {
         auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
-        if (src_sub_nc == tgt_sub_nc) {
+        if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
             auto cast = cast_expression::make_shared(expr, type_nc);
             cast->set_type(type_nc);
             return cast;
@@ -338,7 +338,7 @@ type_reference_resolver::adapt_from_owner(
     // owner<T> → ref<T>: borrow owned object as reference (same LLVM representation)
     if (type::is_reference(type_nc)) {
         auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
-        if (src_sub_nc == tgt_sub_nc) {
+        if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
             auto cast = cast_expression::make_shared(expr, type_nc);
             cast->set_type(type_nc);
             return cast;

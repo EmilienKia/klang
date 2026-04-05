@@ -6309,7 +6309,16 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         if (is_heap_indirection(source_type) && is_heap_indirection(target_type)) {
             auto src_inner = type::remove_const(source_type->get_subtype());
             auto tgt_inner = type::remove_const(target_type->get_subtype());
-            if (src_inner == tgt_inner) {
+            bool match = (src_inner == tgt_inner);
+            if (!match) {
+                // Check array element const-widening: array<T> matches array<const<T>>
+                auto sa = std::dynamic_pointer_cast<array_type>(src_inner);
+                auto ta = std::dynamic_pointer_cast<array_type>(tgt_inner);
+                if (sa && ta && !sa->is_sized() && !ta->is_sized()) {
+                    match = (type::remove_const(sa->get_subtype()) == type::remove_const(ta->get_subtype()));
+                }
+            }
+            if (match) {
                 _value = nullptr;
                 expr.sub_expr()->accept(*this);
                 return;

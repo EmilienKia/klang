@@ -20,6 +20,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/filter_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/buffered_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/data_stream.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
@@ -74,7 +75,20 @@ add_custom_command(
     VERBATIM
 )
 
-set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ})
+# ── Compile the file I/O C runtime helpers ────────────────────────────────
+set(FILE_IO_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file.c)
+set(FILE_IO_OBJ ${LIBK_OUTPUT_DIR}/file_io.o)
+
+add_custom_command(
+    OUTPUT  ${FILE_IO_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -o ${FILE_IO_OBJ} ${FILE_IO_C}
+    DEPENDS ${FILE_IO_C}
+    COMMENT "Compiling K runtime file I/O helpers (file.c)"
+    VERBATIM
+)
+
+set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(
@@ -125,6 +139,7 @@ add_executable(libk-tests
     tests/test-io-filter-streams.cpp
     tests/test-io-buffered-streams.cpp
     tests/test-io-data-streams.cpp
+    tests/test-io-file.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)

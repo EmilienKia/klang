@@ -2699,7 +2699,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             // owner<T> as an observer pointer: address is borrowed, no ownership change
             auto tgt_sub = tgt_nc->get_subtype();
             auto tgt_sub_nc = type::remove_const(tgt_sub);
-            if (src_sub_nc == tgt_sub_nc) {
+            if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
                 return CAST_WIDENING;
             }
             // Upcast observer: owner<Derived> → ptr<Base>
