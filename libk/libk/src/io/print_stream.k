@@ -54,17 +54,12 @@ public:
 
     /** Print a boolean as "true" or "false". */
     print(v: bool) : PrintStream& {
+        static const TRUE : byte[4] { 't', 'r', 'u', 'e' };
+        static const FALSE : byte[5] { 'f', 'a', 'l', 's', 'e' };
         if (v) {
-            buf : byte[4];
-            buf[0] = (byte) 't'; buf[1] = (byte) 'r';
-            buf[2] = (byte) 'u'; buf[3] = (byte) 'e';
-            _out->write(buf, 0, 4);
+            _out->write(TRUE, 0, 4);
         } else {
-            buf : byte[5];
-            buf[0] = (byte) 'f'; buf[1] = (byte) 'a';
-            buf[2] = (byte) 'l'; buf[3] = (byte) 's';
-            buf[4] = (byte) 'e';
-            _out->write(buf, 0, 5);
+            _out->write(FALSE, 0, 5);
         }
         return this;
     }

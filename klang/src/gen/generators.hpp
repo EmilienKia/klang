@@ -107,6 +107,13 @@ public:
     void visit_global_variable_definition(global_variable_definition &) override;
 
     /**
+     * No-op: global tool functions (global ctor / dtor) are created directly
+     * by the implementation_generator with InternalLinkage.  Declaring them
+     * here would produce a bodyless declaration that conflicts with InternalLinkage.
+     */
+    void visit_global_tool_function(global_tool_function&) override;
+
+    /**
      * Emit the @_KVT<mangled> vtable global stub and declare $impl / thunk
      * function variants for a polymorphic class aggregate.
      * Called from visit_klass for class aggregates only.

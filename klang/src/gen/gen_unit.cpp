@@ -901,6 +901,11 @@ void type_reference_resolver::visit_global_variable_definition(global_variable_d
     }
 }
 
+void declaration_generator::visit_global_tool_function(global_tool_function&) {
+    // No-op: global tool functions (global ctor / dtor) are created directly
+    // by the implementation_generator with InternalLinkage.
+}
+
 void declaration_generator::visit_global_variable_definition(global_variable_definition& var) {
     debug("[declaration_generator::visit_global_variable_definition] '{}'", {var.get_mangled_name()});
     auto type = var.get_type();
@@ -960,6 +965,48 @@ void implementation_generator::visit_global_variable_definition(global_variable_
                         auto c = get_llvm_constant_from_value_expr(*value);
                         if (c) {
                             elem_constants.push_back(c);
+                        } else {
+                            all_constant = false;
+                            break;
+                        }
+                    } else if (auto cast = std::dynamic_pointer_cast<cast_expression>(elem)) {
+                        // Handle cast_expression wrapping a value_expression
+                        // (e.g. char→byte cast inserted by type resolver for byte[] { 'a', 'b' })
+                        if (auto inner_val = std::dynamic_pointer_cast<value_expression>(cast->sub_expr())) {
+                            auto c = get_llvm_constant_from_value_expr(*inner_val);
+                            if (c && llvm_elem_type) {
+                                // Perform the cast at constant level (e.g. i8→i8 for char→byte)
+                                if (c->getType() == llvm_elem_type) {
+                                    elem_constants.push_back(c);
+                                } else if (c->getType()->isIntegerTy() && llvm_elem_type->isIntegerTy()) {
+                                    // Integer-to-integer cast (trunc/zext/sext as needed)
+                                    auto* ci = llvm::dyn_cast<llvm::ConstantInt>(c);
+                                    if (ci) {
+                                        elem_constants.push_back(llvm::ConstantInt::get(llvm_elem_type, ci->getZExtValue()));
+                                    } else {
+                                        all_constant = false;
+                                        break;
+                                    }
+                                } else if (c->getType()->isFloatingPointTy() && llvm_elem_type->isFloatingPointTy()) {
+                                    auto* cf = llvm::dyn_cast<llvm::ConstantFP>(c);
+                                    if (cf) {
+                                        bool lossy = false;
+                                        llvm::APFloat val = cf->getValueAPF();
+                                        val.convert(llvm_elem_type->isFloatTy() ? llvm::APFloat::IEEEsingle() : llvm::APFloat::IEEEdouble(),
+                                                    llvm::APFloat::rmNearestTiesToEven, &lossy);
+                                        elem_constants.push_back(llvm::ConstantFP::get(llvm_elem_type, val));
+                                    } else {
+                                        all_constant = false;
+                                        break;
+                                    }
+                                } else {
+                                    all_constant = false;
+                                    break;
+                                }
+                            } else {
+                                all_constant = false;
+                                break;
+                            }
                         } else {
                             all_constant = false;
                             break;

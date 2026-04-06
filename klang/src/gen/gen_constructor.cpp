@@ -590,7 +590,18 @@ void implementation_generator::visit_global_constructor_function(global_construc
     const auto& items = func.get_ordered_items();
     if (items.empty()) return;
 
-    // Step 1: Get or create the LLVM function
+    // Step 1: Create the LLVM function with InternalLinkage.
+    // InternalLinkage is required because this function is only called through
+    // .init_array entries; ExternalLinkage would cause ELF symbol interposition
+    // across shared libraries (e.g. libk.so and the user module both producing
+    // a __K_global_init symbol, making the dynamic linker call one of them twice).
+    {
+        llvm::FunctionType* ft = llvm::FunctionType::get(llvm::Type::getVoidTy(**_context), false);
+        llvm::Function* llvm_func = llvm::Function::Create(
+            ft, llvm::Function::InternalLinkage, func.get_mangled_name(), *_context->_module);
+        _context->_functions.insert({func.shared_as<function>(), llvm_func});
+    }
+
     // Generate the function body (global variable constructor-invocation statements are in the block).
     visit_function(func);
 
@@ -750,9 +761,11 @@ void implementation_generator::visit_global_destructor_function(global_destructo
     if (!has_work) return;
 
     // Step 1: Get or create the LLVM function
-    // Generate a void() function for the global destructor
+    // Generate a void() function for the global destructor.
+    // Use InternalLinkage — this function is only called through .fini_array;
+    // ExternalLinkage would cause symbol interposition across shared libraries.
     llvm::FunctionType* func_type = llvm::FunctionType::get(llvm::Type::getVoidTy(**_context), false);
-    llvm::Function* llvm_func = llvm::Function::Create(func_type, llvm::Function::ExternalLinkage,
+    llvm::Function* llvm_func = llvm::Function::Create(func_type, llvm::Function::InternalLinkage,
                                                         func.get_mangled_name(), *_context->_module);
     _context->_functions.insert({func.shared_as<function>(), llvm_func});
 
