@@ -192,6 +192,120 @@ TEST_CASE("FilterOutputStream delegates bulk write", "[libk][io][filter]") {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// FilterInputStream — delegates skip()
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FilterInputStream delegates skip()", "[libk][io][filter]") {
+    auto jit = jit_k(R"SRC(
+        module __fis_skip__;
+
+        test_skip() : int {
+            sz : int = 5;
+            buf : byte[]! = new byte[sz];
+            buf[0] = (byte) 10; buf[1] = (byte) 20; buf[2] = (byte) 30;
+            buf[3] = (byte) 40; buf[4] = (byte) 50;
+            bais : k::io::ByteArrayInputStream(buf, 5);
+            fis : k::io::FilterInputStream(&bais);
+
+            skipped : unsigned long = fis.skip(2uL);
+            if (skipped != 2uL) return 1;
+            v : int = fis.read();
+            if (v != 30) return 2;
+            // skip beyond remaining
+            skipped = fis.skip(10uL);
+            if (skipped != 2uL) return 3;
+            eof : int = fis.read();
+            if (eof != -1) return 4;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_skip");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// FilterInputStream — delegates close()
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FilterInputStream delegates close()", "[libk][io][filter]") {
+    auto jit = jit_k(R"SRC(
+        module __fis_close__;
+
+        test_close() : int {
+            sz : int = 2;
+            buf : byte[]! = new byte[sz];
+            buf[0] = (byte) 1; buf[1] = (byte) 2;
+            bais : k::io::ByteArrayInputStream(buf, 2);
+            fis : k::io::FilterInputStream(&bais);
+
+            v : int = fis.read();
+            if (v != 1) return 1;
+            fis.close();
+            // After close on ByteArrayInputStream, nothing crashes
+            // (BAIS close is a no-op)
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_close");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// FilterOutputStream — delegates flush()
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FilterOutputStream delegates flush()", "[libk][io][filter]") {
+    auto jit = jit_k(R"SRC(
+        module __fos_flush__;
+
+        test_flush() : int {
+            baos : k::io::ByteArrayOutputStream;
+            fos : k::io::FilterOutputStream(&baos);
+            fos.write(42);
+            fos.flush();
+            if (baos.size() != 1) return 1;
+            arr : byte[]* = baos.toByteArray();
+            if (arr[0] != (byte) 42) return 2;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_flush");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// FilterOutputStream — delegates close()
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("FilterOutputStream delegates close()", "[libk][io][filter]") {
+    auto jit = jit_k(R"SRC(
+        module __fos_close__;
+
+        test_fos_close() : int {
+            baos : k::io::ByteArrayOutputStream;
+            fos : k::io::FilterOutputStream(&baos);
+            fos.write(99);
+            fos.close();
+            // Data still in baos after close (BAOS close is no-op)
+            if (baos.size() != 1) return 1;
+            arr : byte[]* = baos.toByteArray();
+            if (arr[0] != (byte) 99) return 2;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_fos_close");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // Filter streams round-trip
 // ═════════════════════════════════════════════════════════════════════════════
 

@@ -28,6 +28,7 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
 
 /* ── Float / double bitcast helpers ─────────────────────────────────────── */
 
@@ -90,6 +91,40 @@ void __k_io_long_to_native_bytes(int64_t v, uint8_t* buf) {
     memcpy(buf, &v, sizeof(v));
 }
 
+/* ── Number-to-string helpers (used by PrintStream) ─────────────────────── */
 
+int32_t __k_io_int_to_str(int32_t v, uint8_t* buf, int32_t bufLen) {
+    int n = snprintf((char*)buf, (size_t)bufLen, "%d", (int)v);
+    return (int32_t)(n < bufLen ? n : bufLen - 1);
+}
 
+int32_t __k_io_long_to_str(int64_t v, uint8_t* buf, int32_t bufLen) {
+    int n = snprintf((char*)buf, (size_t)bufLen, "%lld", (long long)v);
+    return (int32_t)(n < bufLen ? n : bufLen - 1);
+}
 
+int32_t __k_io_uint_to_str(uint32_t v, uint8_t* buf, int32_t bufLen) {
+    int n = snprintf((char*)buf, (size_t)bufLen, "%u", (unsigned)v);
+    return (int32_t)(n < bufLen ? n : bufLen - 1);
+}
+
+int32_t __k_io_ulong_to_str(uint64_t v, uint8_t* buf, int32_t bufLen) {
+    int n = snprintf((char*)buf, (size_t)bufLen, "%llu", (unsigned long long)v);
+    return (int32_t)(n < bufLen ? n : bufLen - 1);
+}
+
+int32_t __k_io_float_to_str(float v, uint8_t* buf, int32_t bufLen) {
+    int n = snprintf((char*)buf, (size_t)bufLen, "%g", (double)v);
+    return (int32_t)(n < bufLen ? n : bufLen - 1);
+}
+
+int32_t __k_io_double_to_str(double v, uint8_t* buf, int32_t bufLen) {
+    int n = snprintf((char*)buf, (size_t)bufLen, "%g", v);
+    return (int32_t)(n < bufLen ? n : bufLen - 1);
+}
+
+/* ── char-to-byte copy helper (used by PrintStream) ─────────────────────── */
+
+void __k_io_chars_to_bytes(const uint8_t* src, uint8_t* dst, int32_t len) {
+    memcpy(dst, src, (size_t)len);
+}
