@@ -907,7 +907,13 @@ void declaration_generator::visit_global_variable_definition(global_variable_def
     llvm::Type *llvm_type = _context->get_llvm_type(type);
     if (!llvm_type) return; // type not yet resolved or unsupported
 
-    auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, nullptr, var.get_mangled_name());
+    // Static local variables (parent is a block) use InternalLinkage so they
+    // are not visible outside the compilation unit.
+    auto linkage = var.parent<block>()
+        ? llvm::GlobalValue::InternalLinkage
+        : llvm::GlobalValue::ExternalLinkage;
+
+    auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, linkage, nullptr, var.get_mangled_name());
     _context->_global_vars.insert({var.shared_as<global_variable_definition>(), variable});
 }
 
@@ -994,7 +1000,10 @@ void implementation_generator::visit_global_variable_definition(global_variable_
     auto variable_it = _context->_global_vars.find(var.shared_as<global_variable_definition>());
     if (variable_it == _context->_global_vars.end()) {
         // Not declared yet, should not append, but let's create it lazily anyway
-        auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, llvm::GlobalValue::ExternalLinkage, constInitValue, var.get_mangled_name());
+        auto linkage = var.parent<block>()
+            ? llvm::GlobalValue::InternalLinkage
+            : llvm::GlobalValue::ExternalLinkage;
+        auto variable = new llvm::GlobalVariable(*_context->_module, llvm_type, false, linkage, constInitValue, var.get_mangled_name());
         _context->_global_vars.insert({var.shared_as<global_variable_definition>(), variable});
     } else {
         // Already declared, just add initializer

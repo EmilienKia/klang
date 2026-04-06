@@ -10,7 +10,6 @@
 - Add unions, typed unions
 - Add state classes
 - Add templates
-- Add static function variables
 - Better private visibility support
 - Improve log and debug messages 
 - Add in comment documentation support (e.g. for doc generation)

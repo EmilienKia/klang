@@ -508,6 +508,16 @@ namespace k::model {
             }
         }
 
+        // Static local variables (declared inside a block) get PRIVATE visibility:
+        // they are not accessible from outside their enclosing function.
+        if (is_static) {
+            if (auto gv = std::dynamic_pointer_cast<model::global_variable_definition>(var)) {
+                if (std::dynamic_pointer_cast<model::block>(parent_scope)) {
+                    gv->set_visibility(model::PRIVATE);
+                }
+            }
+        }
+
         if (decl.is_uniform_array_init) {
             // ── Uniform array init: var : T(args)[N]; ──
 
