@@ -1551,6 +1551,91 @@ namespace k::model {
         }
     }
 
+    void model_builder::visit_brace_postfix_expr(parse::ast::brace_postfix_expr &expr) {
+        // Brace-init postfix: S{.x=10, .y=20} or S{expr, ...}
+        // The callee should be an identifier expression (type name).
+        auto ident = std::dynamic_pointer_cast<parse::ast::identifier_expr>(expr.callee);
+        if (!ident) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_BRACE_INIT_INTERNAL),
+                expr.brace_init->open_brace,
+                "Brace-init postfix requires a type name identifier as callee");
+        }
+
+        std::string type_name;
+        if (ident->qident.initial_doublecolon) type_name += "::";
+        for (size_t i = 0; i < ident->qident.names.size(); ++i) {
+            if (i > 0) type_name += "::";
+            type_name += std::string{ident->qident.names[i].content};
+        }
+
+        if (expr.brace_init && expr.brace_init->is_designated) {
+            // Designated struct init temporary: S{.x=10, .y=20}
+            std::vector<model::designated_struct_init_expression::member_init_entry> members;
+            for (auto& elem_ast : expr.brace_init->elements) {
+                auto desig = std::dynamic_pointer_cast<parse::ast::designated_init_element>(elem_ast);
+                if (!desig) continue;
+                model::designated_struct_init_expression::member_init_entry entry;
+                entry.member_name = std::string{desig->member_name.content};
+                std::string qual;
+                for (auto& q : desig->qualifier) {
+                    if (!qual.empty()) qual += "::";
+                    qual += std::string{q.content};
+                }
+                entry.qualifier = qual;
+                entry.is_call_form = desig->is_call_form;
+                if (desig->is_call_form) {
+                    for (auto& arg_ast : desig->args) {
+                        _expr.reset();
+                        arg_ast->visit(*this);
+                        entry.args.push_back(_expr);
+                        _expr.reset();
+                    }
+                } else {
+                    if (desig->value) {
+                        _expr.reset();
+                        desig->value->visit(*this);
+                        entry.value = _expr;
+                        _expr.reset();
+                    }
+                }
+                members.push_back(std::move(entry));
+            }
+            _expr = model::designated_struct_init_expression::make_temporary_shared(type_name, members);
+        } else {
+            // Positional brace init temporary: S{} or S{expr, expr, ...}
+            // For empty brace: treat as designated init with no members (zero-init + default ctors)
+            if (!expr.brace_init || expr.brace_init->elements.empty()) {
+                _expr = model::designated_struct_init_expression::make_temporary_shared(type_name, {});
+            } else {
+                // Positional brace init: build element expressions
+                // Currently only supported for struct temporaries (treated as constructor args)
+                // Convert to temporary_construction_expression later in type_reference_resolver
+                std::vector<std::shared_ptr<model::expression>> args;
+                for (auto& elem_ast : expr.brace_init->elements) {
+                    if (elem_ast) {
+                        _expr.reset();
+                        elem_ast->visit(*this);
+                        args.push_back(_expr);
+                        _expr.reset();
+                    } else {
+                        args.push_back(nullptr);
+                    }
+                }
+                // For now, create as function invocation (will be resolved by type_reference_resolver)
+                auto callee_model = model::symbol_expression::from_identifier(
+                    name(ident->qident.has_root_prefix(), [&]{
+                        std::vector<std::string> idents;
+                        for (auto& id : ident->qident.names) idents.emplace_back(id.content);
+                        return idents;
+                    }()));
+                _expr = model::function_invocation_expression::make_shared(callee_model, args);
+            }
+        }
+        if (_expr) {
+            _expr->set_ast_expression(expr.shared_as<parse::ast::brace_postfix_expr>());
+        }
+    }
+
     void model_builder::visit_identifier_expr(parse::ast::identifier_expr &expr) {
         bool has_prefix = expr.qident.initial_doublecolon.has_value();
         std::vector<std::string> idents;

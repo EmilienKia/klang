@@ -155,6 +155,10 @@ void default_model_visitor::visit_constructor_invocation_expression(constructor_
     visit_expression(expr);
 }
 
+void default_model_visitor::visit_temporary_construction_expression(temporary_construction_expression& expr) {
+    visit_expression(expr);
+}
+
 void default_model_visitor::visit_new_expression(new_expression& expr) {
     visit_expression(expr);
 }

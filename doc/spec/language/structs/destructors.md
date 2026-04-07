@@ -192,7 +192,8 @@ if (make(1).get() > 0) {
 ### Member access on temporaries
 
 The `.` operator may be used on a struct-typed rvalue (a temporary returned from a function
-call) to access fields or call member functions.  The temporary remains alive for the full
+call or created via a [temporary construction expression](../expressions/temporary-construction.md))
+to access fields or call member functions.  The temporary remains alive for the full
 statement:
 
 ```k

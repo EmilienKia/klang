@@ -541,6 +541,22 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * Brace-init postfix expression: callee { init_list }
+         * Used for temporary anonymous construction with brace initializers:
+         *   S{.x = 10, .y = 20}   (struct with designated init)
+         *   S{expr, expr, ...}     (struct/array with positional init)
+         */
+        struct brace_postfix_expr : public expression {
+            expr_ptr callee;
+            std::shared_ptr<brace_init_list> brace_init;
+
+            brace_postfix_expr(const expr_ptr& callee, const std::shared_ptr<brace_init_list>& brace_init)
+                : callee(callee), brace_init(brace_init) {}
+
+            virtual void visit(ast_visitor& visitor) override;
+        };
+
         //
         // Statements
         //
@@ -1186,6 +1202,7 @@ namespace k::parse {
         virtual void visit_bracket_postifx_expr(ast::bracket_postifx_expr &) = 0;
         virtual void visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr &) = 0;
         virtual void visit_member_access_postfix_expr(ast::member_access_postfix_expr &) = 0;
+        virtual void visit_brace_postfix_expr(ast::brace_postfix_expr &) = 0;
         virtual void visit_identifier_expr(ast::identifier_expr &) = 0;
 
         virtual void visit_new_expr(ast::new_expr &) = 0;
@@ -1247,6 +1264,7 @@ namespace k::parse {
         void visit_bracket_postifx_expr(ast::bracket_postifx_expr &) override;
         void visit_parenthesis_postifx_expr(ast::parenthesis_postifx_expr &) override;
         void visit_member_access_postfix_expr(ast::member_access_postfix_expr &) override;
+        void visit_brace_postfix_expr(ast::brace_postfix_expr &) override;
         void visit_identifier_expr(ast::identifier_expr &) override;
 
         void visit_new_expr(ast::new_expr &) override;

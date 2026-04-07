@@ -55,10 +55,13 @@ Member initializers use the syntax `fieldName(expression)`.
 Fields not listed are default-initialized (zero or their declared default value).
 ---
 ## 3. Compiler-generated default constructor
-If a struct has no explicitly defined constructors, the compiler generates a default (no-argument) constructor.  
+If a struct has no explicitly defined instance constructors and no explicitly deleted default constructor (`-> delete`), the compiler generates a default (no-argument) constructor.  
 The generated constructor initializes each field to its declared default value (or zero if no default is specified).
-If the struct has any user-defined constructor, **no** compiler-generated default constructor is added.  
+
+If the struct has any user-defined instance constructor, or if the default constructor is explicitly deleted with `-> delete`, **no** compiler-generated default constructor is added.  
 In that case, a default-construction expression (`p : plop;`) requires that a user-defined no-argument constructor exists.
+
+**Note:** Static constructors (class initializers, see §6) are **not** counted as instance constructors and do **not** suppress the compiler-generated default constructor.
 ---
 ## 4. Constructor invocation syntax
 ### Variable declaration with constructor
@@ -71,6 +74,10 @@ pt : Point(10, 20);    // calls Point(int, int) constructor
 p : plop;              // calls default (no-argument) constructor
 ```
 If the struct has no constructor, the compiler-generated one is called.
+
+### Temporary construction in expressions
+The same syntax can be used in expression context (`T(args…)`) to create an anonymous
+stack-allocated temporary.  See [Temporary Object Construction](../expressions/temporary-construction.md).
 ---
 ## 5. Constructor overloading
 Multiple constructors may be defined with different parameter lists.  
@@ -132,6 +139,7 @@ struct B {
 - A static constructor cannot be called explicitly.
 - It must be no-argument and have no return type.
 - There may be at most one static constructor per struct.
+- A static constructor is **not** an instance constructor: it does not suppress the compiler-generated default constructor (see §3), and it does not participate in overload resolution for object construction.
 ---
 ## 7. Defaulted and deleted constructors
 

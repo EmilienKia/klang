@@ -229,7 +229,13 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
         }
 
         // Step 2: Adapt the expression type to match the enclosing function's return type
+        _replacement_expr = nullptr;
         expr->accept(*this);
+        if (_replacement_expr) {
+            stmt.set_expression(_replacement_expr);
+            expr = _replacement_expr;
+            _replacement_expr = nullptr;
+        }
         auto cast = adapt_type(expr, ret_type);
         if(!cast) {
             throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH), stmt.get_ast_return_statement()->ret, "Return expression type must be compatible to the expected function return type");
@@ -823,7 +829,13 @@ void symbol_resolver::visit_expression_statement(expression_statement& stmt)
 void type_reference_resolver::visit_expression_statement(expression_statement& stmt)
 {
     if(auto expr = stmt.get_expression()) {
+        _replacement_expr = nullptr;
         expr->accept(*this);
+        if (_replacement_expr) {
+            stmt.set_expression(_replacement_expr);
+            expr = _replacement_expr;
+            _replacement_expr = nullptr;
+        }
 
         // Warning 0x5010: if the expression produces an owner type and its result
         // is not assigned (bare expression statement), the allocated object will be

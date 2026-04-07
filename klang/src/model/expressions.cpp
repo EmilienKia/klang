@@ -388,6 +388,24 @@ void new_expression::accept(model_visitor& visitor) {
     visitor.visit_new_expression(*this);
 }
 
+//
+// Temporary construction expression
+//
+
+void temporary_construction_expression::accept(model_visitor& visitor) {
+    visitor.visit_temporary_construction_expression(*this);
+}
+
+std::shared_ptr<temporary_construction_expression> temporary_construction_expression::make_shared(
+    const std::shared_ptr<type>& constructed_type,
+    const std::vector<std::shared_ptr<expression>>& args)
+{
+    std::shared_ptr<temporary_construction_expression> expr{new temporary_construction_expression()};
+    expr->_constructed_type = constructed_type;
+    expr->assign_arguments(args);
+    return expr;
+}
+
 std::shared_ptr<new_expression> new_expression::make_shared(
     const std::shared_ptr<type>& allocated_type,
     const std::vector<std::shared_ptr<expression>>& args)
@@ -536,6 +554,23 @@ std::shared_ptr<designated_struct_init_expression> designated_struct_init_expres
     const std::vector<member_init_entry>& members)
 {
     return make_shared(symbol_expression::from_variable(variable), target_aggregate, members);
+}
+
+std::shared_ptr<designated_struct_init_expression> designated_struct_init_expression::make_temporary_shared(
+    const std::string& type_name,
+    const std::vector<member_init_entry>& members)
+{
+    std::shared_ptr<designated_struct_init_expression> expr{new designated_struct_init_expression()};
+    expr->_is_temporary = true;
+    expr->_type_name = type_name;
+    for (auto& m : members) {
+        expr->_members.push_back(m);
+        if (m.value) m.value->set_parent_expression(expr);
+        for (auto& a : m.args) {
+            if (a) a->set_parent_expression(expr);
+        }
+    }
+    return expr;
 }
 
 

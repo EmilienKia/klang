@@ -36,6 +36,7 @@ class array_init_expression;
 
 
 class designated_struct_init_expression;
+class temporary_construction_expression;
 
 
 class model_visitor {
@@ -77,6 +78,7 @@ public:
     virtual void visit_value_expression(value_expression&) =0;
     virtual void visit_symbol_expression(symbol_expression&) =0;
     virtual void visit_constructor_invocation_expression(constructor_invocation_expression&) =0;
+    virtual void visit_temporary_construction_expression(temporary_construction_expression&) =0;
     virtual void visit_new_expression(new_expression&) =0;
     virtual void visit_delete_expression(delete_expression&) =0;
     virtual void visit_array_init_expression(array_init_expression&) =0;
@@ -188,6 +190,7 @@ public:
     void visit_value_expression(value_expression&) override;
     void visit_symbol_expression(symbol_expression&) override;
     void visit_constructor_invocation_expression(constructor_invocation_expression&) override;
+    void visit_temporary_construction_expression(temporary_construction_expression&) override;
     void visit_new_expression(new_expression&) override;
     void visit_delete_expression(delete_expression&) override;
     void visit_array_init_expression(array_init_expression&) override;

@@ -35,6 +35,7 @@
  * +- subscript_expression
  * +- function_invocation_expression
  * +- constructor_invocation_expression
+ * +- temporary_construction_expression
  * +- designated_struct_init_expression
  */
 
@@ -79,6 +80,7 @@ protected:
     friend class delete_expression;
     friend class array_init_expression;
     friend class designated_struct_init_expression;
+    friend class temporary_construction_expression;
 
     void set_parent_expression(const std::shared_ptr<expression> &expression) {
         set_parent(expression);
@@ -923,6 +925,81 @@ public:
 };
 
 /**
+ * Temporary anonymous object construction expression.
+ * Represents `S(args...)` used as a sub-expression (not a variable initialization).
+ * Allocates a stack temporary, calls the constructor, and registers the object for
+ * destructor cleanup at the end of the enclosing full-expression.
+ *
+ * Unlike constructor_invocation_expression, this expression does NOT reference a
+ * named variable — the temporary is anonymous and its lifetime is the enclosing
+ * full-expression.
+ *
+ * Result type: struct_type (the aggregate type being constructed).
+ */
+class temporary_construction_expression : public expression {
+protected:
+    /** The type being constructed (must be a struct_type once resolved). */
+    std::shared_ptr<type> _constructed_type;
+
+    /** Construction argument expressions. */
+    std::vector<std::shared_ptr<expression>> _arguments;
+
+    /** Resolved constructor to call (set during type resolution). */
+    std::shared_ptr<constructor> _constructor;
+
+    temporary_construction_expression() = default;
+    temporary_construction_expression(const temporary_construction_expression&) = delete;
+
+    friend class gen::type_reference_resolver;
+    friend class gen::implementation_generator;
+
+public:
+
+    const std::shared_ptr<type>& constructed_type() const { return _constructed_type; }
+
+    const std::vector<std::shared_ptr<expression>>& arguments() const { return _arguments; }
+
+    size_t size() const { return _arguments.size(); }
+
+    bool empty() const { return _arguments.empty(); }
+
+    std::shared_ptr<expression> argument(size_t index) const { return _arguments[index]; }
+
+    void assign_arguments(const std::vector<std::shared_ptr<expression>>& args) {
+        _arguments = args;
+        for (auto& a : _arguments) if (a) a->set_parent_expression(shared_as<expression>());
+    }
+
+    void assign_argument(size_t index, const std::shared_ptr<expression>& arg) {
+        if (index < _arguments.size()) {
+            _arguments[index] = arg;
+            if (arg) arg->set_parent_expression(shared_as<expression>());
+        }
+    }
+
+    std::shared_ptr<constructor> get_constructor() const { return _constructor; }
+
+    void set_constructor(const std::shared_ptr<constructor>& ctor) { _constructor = ctor; }
+
+    static std::shared_ptr<temporary_construction_expression> make_shared(
+        const std::shared_ptr<type>& constructed_type,
+        const std::vector<std::shared_ptr<expression>>& args);
+
+    void accept(model_visitor& visitor) override;
+
+    std::shared_ptr<expression> clone() const override {
+        std::shared_ptr<temporary_construction_expression> c{new temporary_construction_expression()};
+        c->_type = _type;
+        c->_constructed_type = _constructed_type;
+        c->_constructor = _constructor;
+        std::vector<std::shared_ptr<expression>> args;
+        for (auto& a : _arguments) args.push_back(a->clone());
+        c->assign_arguments(args);
+        return c;
+    }
+};
+
+/**
  * New expression — allocates a heap object (or array) and returns an owner.
  * Corresponds to AST new_expr.
  *
@@ -1280,7 +1357,7 @@ public:
     };
 
 protected:
-    /** The variable being initialized. */
+    /** The variable being initialized (null for temporaries and nested inits). */
     std::shared_ptr<symbol_expression> _constructed_symbol;
 
     /** The target struct type. */
@@ -1288,6 +1365,12 @@ protected:
 
     /** Member initializers in declaration order. */
     std::vector<member_init_entry> _members;
+
+    /** True when this designated init is used as a temporary expression (no variable). */
+    bool _is_temporary = false;
+
+    /** Type name for temporary mode (resolved during type resolution). */
+    std::string _type_name;
 
     designated_struct_init_expression() = default;
     designated_struct_init_expression(const designated_struct_init_expression&) = delete;
@@ -1305,6 +1388,9 @@ public:
 
     size_t size() const { return _members.size(); }
 
+    bool is_temporary() const { return _is_temporary; }
+    const std::string& type_name() const { return _type_name; }
+
     static std::shared_ptr<designated_struct_init_expression> make_shared(
         const std::shared_ptr<symbol_expression>& constructed_symbol,
         const std::shared_ptr<aggregate>& target_aggregate,
@@ -1315,12 +1401,19 @@ public:
         const std::shared_ptr<aggregate>& target_aggregate,
         const std::vector<member_init_entry>& members);
 
+    /** Create a temporary designated init expression (no variable). */
+    static std::shared_ptr<designated_struct_init_expression> make_temporary_shared(
+        const std::string& type_name,
+        const std::vector<member_init_entry>& members);
+
     void accept(model_visitor& visitor) override;
 
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<designated_struct_init_expression> c{new designated_struct_init_expression()};
         c->_type = _type;
         c->_target_aggregate = _target_aggregate;
+        c->_is_temporary = _is_temporary;
+        c->_type_name = _type_name;
         auto sym = _constructed_symbol
             ? std::dynamic_pointer_cast<symbol_expression>(_constructed_symbol->clone())
             : nullptr;

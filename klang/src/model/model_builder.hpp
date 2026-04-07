@@ -164,6 +164,7 @@ protected:
     void visit_bracket_postifx_expr(parse::ast::bracket_postifx_expr &) override;
     void visit_parenthesis_postifx_expr(parse::ast::parenthesis_postifx_expr &) override;
     void visit_member_access_postfix_expr(parse::ast::member_access_postfix_expr &) override;
+    void visit_brace_postfix_expr(parse::ast::brace_postfix_expr &) override;
     void visit_identifier_expr(parse::ast::identifier_expr &) override;
 
     void visit_new_expr(parse::ast::new_expr &) override;

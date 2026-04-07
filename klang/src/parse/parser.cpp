@@ -2643,6 +2643,24 @@ ast::expr_ptr parser::parse_postfix_expr()
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_STRUCT_MISSING_OPEN_BRACE), _lexer.pick_current(), "Member access postfix expression expects an identifier after the '.' or '->' operator");
             }
             any = std::make_shared<ast::member_access_postfix_expr>(lex::as<lex::operator_>(lop), any, ident_expr);
+        } else if(lop == lex::punctuator::BRACE_OPEN
+                  && std::dynamic_pointer_cast<ast::identifier_expr>(any)) {
+            // Brace-init postfix: S{.x=10, .y=20}
+            // Only consume as brace postfix when the content starts with '.'
+            // (designated initializer), to avoid ambiguity with statement blocks.
+            lex::lex_holder brace_peek_holder(_lexer);
+            auto peek_first = _lexer.get();
+            brace_peek_holder.rollback();
+
+            if (peek_first == lex::operator_::DOT) {
+                auto open_brace = lex::as<lex::punctuator>(lop);
+                auto brace_init = parse_brace_init_list(open_brace);
+                any = std::make_shared<ast::brace_postfix_expr>(any, brace_init);
+            } else {
+                // Not a brace-init postfix — unget the '{' and stop
+                _lexer.unget();
+                break;
+            }
         } else {
             _lexer.unget();
             break;

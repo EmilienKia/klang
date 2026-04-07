@@ -3,7 +3,7 @@
 ### K Language
 
 - Review casting algorithm and implicit casting strategy (char[]! -> const char[]?  ou  char[]! -> const char[], etc.)
-- Add temporary object explicit construction (incl in return expr)
+- Add temporary object explicit construction (incl in return expr) — **struct form done**, **struct designated init done** (`S{.x=val}`), array temporary `T[]{init}` pending
 - Add return type covariance
 - Add "virtual" symbols (parent, self, etc.)
 - Add typed enums

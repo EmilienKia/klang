@@ -306,7 +306,6 @@ TEST_CASE("FilterOutputStream delegates close()", "[libk][io][filter]") {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Filter streams round-trip
 // ═════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Filter streams round-trip", "[libk][io][filter]") {

@@ -516,6 +516,25 @@ public:
         dump_expr_type(expr);
     }
 
+    void visit_temporary_construction_expression(temporary_construction_expression& expr) override {
+        _stm << "tmp_ctor:";
+        if(auto t = expr.constructed_type()) {
+            _stm << t->to_string();
+        } else {
+            _stm << "<<no-type>>";
+        }
+        if(auto ctor = expr.get_constructor()) {
+            _stm << " [" << ctor->get_mangled_name() << "]";
+        }
+        _stm << "(";
+        for(size_t i = 0; i < expr.arguments().size(); ++i) {
+            if(i > 0) _stm << ", ";
+            expr.arguments()[i]->accept(*this);
+        }
+        _stm << ")";
+        dump_expr_type(expr);
+    }
+
     void visit_function_invocation_expression(function_invocation_expression& expr) override {
         // Callee
         if(auto callee = expr.callee_expr()) {

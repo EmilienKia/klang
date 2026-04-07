@@ -172,6 +172,11 @@ void ast::member_access_postfix_expr::visit(ast_visitor &visitor)
     visitor.visit_member_access_postfix_expr(*this);
 }
 
+void ast::brace_postfix_expr::visit(ast_visitor &visitor)
+{
+    visitor.visit_brace_postfix_expr(*this);
+}
+
 void ast::literal_expr::visit(ast_visitor& visitor) {
     visitor.visit_literal_expr(*this);
 }
@@ -375,6 +380,10 @@ void default_ast_visitor::visit_parenthesis_postifx_expr(ast::parenthesis_postif
 }
 
 void default_ast_visitor::visit_member_access_postfix_expr(ast::member_access_postfix_expr &) {
+
+}
+
+void default_ast_visitor::visit_brace_postfix_expr(ast::brace_postfix_expr &) {
 
 }
 

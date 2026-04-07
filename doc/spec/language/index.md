@@ -38,6 +38,7 @@ Examples are included where they clarify the normative text.
 | [Binary Operators](expressions/binary.md) | Arithmetic, bitwise, shift, comparison, logical |
 | [Assignment Operators](expressions/assignment.md) | `=` and compound assignment |
 | [Function Call and Subscript](expressions/call.md) | Invocation, subscript `[]`, member access `.` and `->`, pointer-to-member operators `.*` and `->*` |
+| [Temporary Object Construction](expressions/temporary-construction.md) | `T(args…)` in expression context: stack-allocated anonymous temporary, lifetime, destruction order, sret optimisation |
 
 ### Statements
 

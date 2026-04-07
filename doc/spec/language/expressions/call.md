@@ -78,6 +78,10 @@ i : Outer::Inner(42);
 ```
 This is equivalent to a variable declaration with constructor arguments (not a standalone expression).  
 See [Constructors](../structs/constructors.md) for the full constructor syntax.
+
+To create an **anonymous temporary** of a struct type within an expression (without declaring
+a variable), use the same syntax in expression context: `T(args…)`.  
+See [Temporary Object Construction](temporary-construction.md).
 ---
 ## 3. Subscript operator
 The subscript operator accesses an element of an array through any supported type.

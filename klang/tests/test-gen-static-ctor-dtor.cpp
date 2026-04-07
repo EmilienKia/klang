@@ -300,43 +300,47 @@ TEST_CASE("Multiple structs with static destructors: all called at finit", "[gen
 }
 
 // =============================================================================
-// Error: explicit call to static constructor is forbidden
+// Error: static constructor cannot be called explicitly
+// A struct with a static constructor and a deleted default instance constructor
+// cannot be instantiated. Tracker() in expression context attempts temporary
+// construction, which fails because the only matching constructor is deleted.
 // =============================================================================
 
-TEST_CASE("Explicit call to static constructor is forbidden", "[gen][struct][static-ctor][error]") {
-    // Direct call syntax: Tracker() is interpreted as calling static ctor
-    // This should produce a compilation error since static constructors
-    // are not in the regular function table (not callable via normal lookup).
-    // The compiler either raises "no function named 'Tracker'" or a dedicated error.
-    auto jit = gen_jit(R"SRC(
+TEST_CASE("Static constructor cannot be called explicitly", "[gen][struct][static-ctor][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __explicit_static_ctor__;
 
         struct Tracker {
             static Tracker() {}
+            Tracker() -> delete;
         }
 
         bad() {
             Tracker();
         }
-        )SRC");
-    // gen_jit returns nullptr on compilation error
-    REQUIRE_FALSE(jit);
+        )SRC"), k::log::compiler_error);
 }
 
-TEST_CASE("Explicit call to static destructor is forbidden", "[gen][struct][static-dtor][error]") {
-    auto jit = gen_jit(R"SRC(
+// =============================================================================
+// Error: static destructor cannot be called explicitly
+// A struct with a static destructor and a deleted default instance constructor
+// cannot be instantiated. ~Cleaner() is parsed as ~(Cleaner()), and Cleaner()
+// fails because the only matching constructor is deleted.
+// =============================================================================
+
+TEST_CASE("Static destructor cannot be called explicitly", "[gen][struct][static-dtor][error]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
         module __explicit_static_dtor__;
 
         struct Cleaner {
             static ~Cleaner() {}
+            Cleaner() -> delete;
         }
 
         bad() {
-            Cleaner();
+            ~Cleaner();
         }
-        )SRC");
-    // Calling a static destructor by its name should fail
-    REQUIRE_FALSE(jit);
+        )SRC"), k::log::compiler_error);
 }
 
 // =============================================================================

@@ -394,6 +394,7 @@ public:
     void visit_subscript_expression(subscript_expression&) override;
     void visit_function_invocation_expression(function_invocation_expression&) override;
     void visit_constructor_invocation_expression(constructor_invocation_expression&) override;
+    void visit_temporary_construction_expression(temporary_construction_expression&) override;
     void visit_new_expression(new_expression&) override;
     void visit_delete_expression(delete_expression&) override;
     void visit_owner_move_expression(owner_move_expression&) override;

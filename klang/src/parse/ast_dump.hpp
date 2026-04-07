@@ -569,6 +569,13 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             expr.ident_expr->visit(*this);
         }
 
+        void visit_brace_postfix_expr(ast::brace_postfix_expr& expr) override {
+            if (expr.callee) expr.callee->visit(*this);
+            _stm << "{";
+            if (expr.brace_init) expr.brace_init->visit(*this);
+            _stm << "}";
+        }
+
         void visit_identifier_expr(ast::identifier_expr& expr) override {
             _stm << "<<identifier:";
             visit_qualified_identifier(expr.qident);

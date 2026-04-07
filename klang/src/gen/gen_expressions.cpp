@@ -2071,8 +2071,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
     }
 
     // Resolve and type-check all arguments first
-    for(auto& arg : expr.arguments()) {
-        arg->accept(*this);
+    for(size_t arg_idx = 0; arg_idx < expr.arguments().size(); ++arg_idx) {
+        _replacement_expr = nullptr;
+        expr.arguments()[arg_idx]->accept(*this);
+        if (_replacement_expr) {
+            expr.assign_argument(arg_idx, _replacement_expr);
+            _replacement_expr = nullptr;
+        }
     }
 
     // Step 2: If callee is a member-of-object: resolve member call (member + unified call syntax)
@@ -2532,6 +2537,37 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 }
                 return;
             }
+
+            // ── Temporary anonymous object construction: S(args...) ────────────
+            // The callee name does not resolve to any function. Try to resolve it
+            // as a struct/class type. If found, this is a temporary construction
+            // expression: allocate a stack temporary, call the constructor, and
+            // register for destructor cleanup.
+            {
+                auto resolved_type = resolve_type_by_name(callee->get_name(), expr);
+                if (resolved_type) {
+                    auto resolved_nc = type::remove_const(resolved_type);
+                    // Strip reference wrapper if present (resolve_type_by_name may return ref<struct>)
+                    if (type::is_reference(resolved_nc))
+                        resolved_nc = resolved_nc->get_subtype();
+                    auto st_type = std::dynamic_pointer_cast<struct_type>(resolved_nc);
+                    if (st_type && st_type->get_struct()) {
+                        // Create a temporary_construction_expression
+                        auto temp_expr = temporary_construction_expression::make_shared(
+                            st_type, expr.arguments());
+                        // Copy AST node for diagnostics
+                        if (auto ast = expr.get_ast_expression()) {
+                            temp_expr->set_ast_expression(ast);
+                        }
+                        // Visit it to resolve constructor + argument types
+                        temp_expr->accept(*this);
+                        // Signal to the caller to replace expr with temp_expr
+                        _replacement_expr = temp_expr;
+                        return;
+                    }
+                }
+            }
+
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_AMBIGUOUS_OVERLOAD), expr.first_lexeme(),
                 "No function named '{}' found in the current scope; "
                 "check the spelling or add the appropriate declaration",
@@ -3143,6 +3179,12 @@ void implementation_generator::visit_function_invocation_expression(function_inv
 void symbol_resolver::visit_constructor_invocation_expression(constructor_invocation_expression& expr) {
     for (auto arg : expr.arguments()) {
         arg->accept(*this);
+    }
+}
+
+void symbol_resolver::visit_temporary_construction_expression(temporary_construction_expression& expr) {
+    for (auto& arg : expr.arguments()) {
+        if (arg) arg->accept(*this);
     }
 }
 
@@ -3932,44 +3974,77 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
         }
     }
 
-    // Step 1: Determine the target struct type from the parent variable
-    // Determine the target struct type.
+    // Step 1: Determine the target struct type.
+    // For temporaries, resolve from the type name.
     // For top-level designated inits, derive from the constructed variable's type.
     // For nested designated inits (no constructed_symbol), _target_aggregate is pre-set by the parent.
     std::shared_ptr<struct_type> st_type;
     std::shared_ptr<aggregate> target_struct = expr._target_aggregate;
 
     if (!target_struct) {
-        auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
-        if (!var_def) return;
-        auto var_type = var_def->get_type();
+        if (expr.is_temporary()) {
+            // Temporary designated init: resolve type by name
+            auto resolved_type = resolve_type_by_name(expr.type_name(), expr);
+            if (!resolved_type) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_STRUCT_NOT_FOUND), expr.first_lexeme(),
+                    "Unknown type '{}' in temporary designated initializer",
+                    {expr.type_name()});
+                return;
+            }
+            auto resolved_nc = type::remove_const(resolved_type);
+            if (type::is_reference(resolved_nc))
+                resolved_nc = resolved_nc->get_subtype();
+            st_type = std::dynamic_pointer_cast<struct_type>(resolved_nc);
+            if (!st_type || !st_type->get_struct()) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_STRUCT_NOT_FOUND), expr.first_lexeme(),
+                    "Designated initializer can only be used with struct types, but '{}' is not a struct",
+                    {expr.type_name()});
+                return;
+            }
+            target_struct = st_type->get_struct();
 
-        // Unwrap reference if needed
-        if (type::is_reference(var_type)) {
-            var_type = std::dynamic_pointer_cast<reference_type>(var_type)->get_subtype();
+            // Check for abstract classes
+            if (target_struct->is_abstract()) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_EXPECT_STRUCT_OR_PRIM), expr.first_lexeme(),
+                    "Cannot create temporary of abstract type '{}'",
+                    {target_struct->get_short_name()});
+                return;
+            }
+
+            expr._target_aggregate = target_struct;
+            // Set the expression type to a reference to the struct type
+            expr.set_type(st_type->get_reference());
+        } else {
+            auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
+            if (!var_def) return;
+            auto var_type = var_def->get_type();
+
+            // Unwrap reference if needed
+            if (type::is_reference(var_type)) {
+                var_type = std::dynamic_pointer_cast<reference_type>(var_type)->get_subtype();
+            }
+
+            st_type = std::dynamic_pointer_cast<struct_type>(var_type);
+            if (!st_type) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_STRUCT_NOT_FOUND), expr.first_lexeme(),
+                    "Designated initializer can only be used with struct types, but '{}' has type '{}'",
+                    {var_def->get_fq_name(), var_type ? var_type->to_string() : "?"});
+                return;
+            }
+            target_struct = st_type->get_struct();
+            if (!target_struct) return;
+
+            // Only valid for structs, not classes with virtual inheritance
+            if (target_struct->is_class() && target_struct->has_virtual_bases()) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_STRUCT_TOO_FEW_ARGS), expr.first_lexeme(),
+                    "Designated initializer cannot be used with class '{}' which has virtual bases",
+                    {target_struct->get_short_name()});
+                return;
+            }
+
+            // Store the resolved aggregate in the expression
+            expr._target_aggregate = target_struct;
         }
-
-        st_type = std::dynamic_pointer_cast<struct_type>(var_type);
-        if (!st_type) {
-            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_STRUCT_NOT_FOUND), expr.first_lexeme(),
-                "Designated initializer can only be used with struct types, but '{}' has type '{}'",
-                {var_def->get_fq_name(), var_type ? var_type->to_string() : "?"});
-            return;
-        }
-        target_struct = st_type->get_struct();
-        if (!target_struct) return;
-
-        // Only valid for structs, not classes with virtual inheritance
-        if (target_struct->is_class() && target_struct->has_virtual_bases()) {
-            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_STRUCT_TOO_FEW_ARGS), expr.first_lexeme(),
-                "Designated initializer cannot be used with class '{}' which has virtual bases",
-                {target_struct->get_short_name()});
-            return;
-        }
-
-        // Step 2: For each designator: look up the field in the struct, resolve the value expression
-        // Store the resolved aggregate in the expression
-        expr._target_aggregate = target_struct;
     } else {
         // Nested designated init: _target_aggregate already set
         st_type = target_struct->get_struct_type();
@@ -4265,7 +4340,23 @@ void implementation_generator::visit_designated_struct_init_expression(designate
     std::shared_ptr<struct_type> st_type;
     llvm::Value* struct_alloca = nullptr;
 
-    if (expr.constructed_symbol()) {
+    if (expr.is_temporary()) {
+        // Temporary designated init: create a stack alloca
+        st_type = target_struct->get_struct_type();
+        if (!st_type) return;
+        llvm::Type* llvm_struct_ty = _context->get_llvm_type(st_type);
+
+        llvm::Function* current_fn = _builder->GetInsertBlock()->getParent();
+        llvm::IRBuilder<> entry_builder(&current_fn->getEntryBlock(),
+                                         current_fn->getEntryBlock().begin());
+        struct_alloca = entry_builder.CreateAlloca(llvm_struct_ty, nullptr, "tmp.desig");
+
+        // Zero-init
+        auto* llvm_type = st_type->get_llvm_type();
+        if (llvm_type) {
+            _builder->CreateStore(llvm::ConstantAggregateZero::get(llvm_type), struct_alloca);
+        }
+    } else if (expr.constructed_symbol()) {
         // Top-level designated init: get alloca from variable
         auto var_def = expr.constructed_symbol()->get_variable_def();
         if (!var_def) return;
@@ -4482,6 +4573,19 @@ void implementation_generator::visit_designated_struct_init_expression(designate
                     m.value->accept(*this);
                     if (_value) _builder->CreateStore(_value, mem_ptr);
                 }
+            }
+        }
+    }
+
+    // For temporaries, register destructor cleanup at full-expression boundary
+    if (expr.is_temporary()) {
+        auto dtor = target_struct->get_destructor();
+        if (dtor) {
+            auto dtor_fn = dtor->shared_as<k::model::function>();
+            auto dtor_it = _context->_functions.find(dtor_fn);
+            if (dtor_it != _context->_functions.end()) {
+                auto* temp_alloca_inst = llvm::cast<llvm::AllocaInst>(struct_alloca);
+                _expression_temporaries.push_back(std::make_pair(temp_alloca_inst, dtor_it->second));
             }
         }
     }
@@ -5163,6 +5267,70 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
     }
 }
 
+//
+// Temporary construction expression (type_reference_resolver)
+//
+void type_reference_resolver::visit_temporary_construction_expression(temporary_construction_expression& expr) {
+    // Step 1: Resolve all argument expressions
+    for (size_t i = 0; i < expr.arguments().size(); ++i) {
+        _replacement_expr = nullptr;
+        expr.arguments()[i]->accept(*this);
+        if (_replacement_expr) {
+            expr.assign_argument(i, _replacement_expr);
+            _replacement_expr = nullptr;
+        }
+    }
+
+    auto st_type = std::dynamic_pointer_cast<struct_type>(expr.constructed_type());
+    if (!st_type || !st_type->get_struct()) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_EXPECT_STRUCT_OR_PRIM), expr.first_lexeme(),
+            "Temporary construction expression requires a struct type, but '{}' was provided",
+            {expr.constructed_type() ? expr.constructed_type()->to_string() : "?"});
+    }
+
+    auto st = st_type->get_struct();
+
+    // Check not abstract
+    if (st->is_abstract()) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_FUNC_NO_MATCH), expr.first_lexeme(),
+            "Cannot instantiate abstract class '{}' as a temporary; abstract classes cannot be directly instantiated",
+            {st->get_short_name()});
+    }
+
+    // Step 2: Resolve constructor
+    auto constructors = st->constructors();
+    if (constructors.empty() && expr.empty()) {
+        // No constructors and no arguments: zero-init (default construction)
+        expr.set_type(st_type->get_reference());
+        return;
+    }
+
+    if (constructors.empty() && expr.size() == 1) {
+        // Direct copy from a single argument (struct copy)
+        expr.set_type(st_type->get_reference());
+        return;
+    }
+
+    if (constructors.empty()) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_CTOR_ARG_MISMATCH), expr.first_lexeme(),
+            "Struct '{}' has no constructors, but {} arguments were provided for temporary construction",
+            {st->get_short_name(), std::to_string(expr.size())});
+    }
+
+    auto [best_constructor, adapted_args] = get_best_matching_constructor(constructors, expr.arguments());
+    if (!best_constructor) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_CTOR_ARG_MISMATCH), expr.first_lexeme(),
+            "No matching constructor found for temporary construction of '{}' with {} argument(s)",
+            {st->get_short_name(), std::to_string(expr.size())});
+    }
+
+    check_constructor_visibility(*best_constructor, expr);
+    expr.set_constructor(best_constructor);
+    expr.assign_arguments(adapted_args);
+    // The temporary is an alloca → its type is a reference to the struct
+    expr.set_type(st_type->get_reference());
+}
+
 /**
  * Generate LLVM IR for a constructor invocation expression.
  *
@@ -5641,6 +5809,86 @@ void implementation_generator::visit_constructor_invocation_expression(construct
 
     // The result of a constructor invocation is the reference to the constructed object
     _value = object_ref;
+}
+
+//
+// Temporary construction expression (implementation_generator)
+//
+void implementation_generator::visit_temporary_construction_expression(temporary_construction_expression& expr) {
+    auto st_type = std::dynamic_pointer_cast<struct_type>(expr.constructed_type());
+    if (!st_type || !st_type->get_struct()) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),
+            "Internal error: temporary construction expression has no resolved struct type");
+    }
+
+    auto st = st_type->get_struct();
+    llvm::Type* llvm_struct_ty = _context->get_llvm_type(st_type);
+
+    // Create a stack alloca in the entry block for the temporary
+    llvm::Function* current_fn = _builder->GetInsertBlock()->getParent();
+    llvm::IRBuilder<> entry_builder(&current_fn->getEntryBlock(),
+                                     current_fn->getEntryBlock().begin());
+    auto* temp_alloca = entry_builder.CreateAlloca(llvm_struct_ty, nullptr, "tmp_ctor");
+
+    auto ctor = expr.get_constructor();
+
+    if (!ctor && expr.empty()) {
+        // No constructor and no arguments: zero-init
+        _builder->CreateStore(llvm::ConstantAggregateZero::get(llvm_struct_ty), temp_alloca);
+    } else if (!ctor && expr.size() == 1) {
+        // Direct struct copy from a single argument
+        _value = nullptr;
+        expr.argument(0)->accept(*this);
+        if (_value) {
+            auto arg_type = expr.argument(0)->get_type();
+            llvm::Value* src_val = _value;
+            if (type::is_reference(arg_type) || type::is_struct(arg_type)) {
+                src_val = _builder->CreateLoad(llvm_struct_ty, _value, "tmp_copy_load");
+            }
+            _builder->CreateStore(src_val, temp_alloca);
+        }
+    } else if (ctor) {
+        // Constructor call: evaluate arguments and call the constructor
+        std::vector<llvm::Value*> args;
+        args.push_back(temp_alloca); // 'this' pointer
+        for (auto& arg : expr.arguments()) {
+            _value = nullptr;
+            arg->accept(*this);
+            if (!_value) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F030), expr.first_lexeme(),
+                    "Internal error: a constructor argument for temporary '{}' produced no LLVM value",
+                    {st_type->to_string()});
+            }
+            args.push_back(_value);
+        }
+        auto ctor_fn = ctor->shared_as<k::model::function>();
+        auto it = _context->_functions.find(ctor_fn);
+        if (it == _context->_functions.end()) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031), expr.first_lexeme(),
+                "Internal error: LLVM declaration not found for constructor of type '{}'",
+                {st_type->to_string()});
+        }
+        llvm::Function* llvm_ctor = it->second;
+        if (!llvm_ctor) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F032), expr.first_lexeme(),
+                "Internal error: LLVM constructor function object is null for type '{}'",
+                {st_type->to_string()});
+        }
+        _builder->CreateCall(llvm_ctor, args);
+    }
+
+    // Register the temporary for destructor cleanup at full-expression boundary
+    auto dtor = st->get_destructor();
+    if (dtor) {
+        auto dtor_fn = dtor->shared_as<k::model::function>();
+        auto dtor_it = _context->_functions.find(dtor_fn);
+        if (dtor_it != _context->_functions.end()) {
+            _expression_temporaries.push_back(std::make_pair(temp_alloca, dtor_it->second));
+        }
+    }
+
+    // The result is the alloca pointer (like a reference to the temporary)
+    _value = temp_alloca;
 }
 
 //
