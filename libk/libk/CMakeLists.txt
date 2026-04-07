@@ -21,6 +21,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/buffered_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/data_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/print_stream.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
