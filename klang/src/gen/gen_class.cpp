@@ -174,7 +174,9 @@ collect_virtual_bases_bfs(const aggregate& st) {
 std::shared_ptr<vtable_layout>
 build_vtable_layout(aggregate& st,
                     std::vector<std::shared_ptr<function>>& warning_override_final,
-                    std::vector<std::shared_ptr<function>>& error_private_overrides) {
+                    std::vector<std::shared_ptr<function>>& error_private_overrides,
+                    std::vector<std::shared_ptr<function>>& warning_missing_override,
+                    std::vector<std::shared_ptr<function>>& error_override_not_overriding) {
     auto vt = std::make_shared<vtable_layout>();
 
     // Inherit slots from primary base (first direct class base with a vtable).
@@ -262,18 +264,30 @@ build_vtable_layout(aggregate& st,
                 // Check if the current slot occupant (entry.func) is declared 'final'.
                 if (entry.func->is_final_func()) {
                     warning_override_final.push_back(func);
+                    // If user explicitly wrote 'override' on a final slot, it's an error
+                    if (func->is_override_specifier()) {
+                        error_override_not_overriding.push_back(func);
+                    }
                 } else {
                     func->set_virtual(true);
                     func->set_vtable_slot((int)entry.slot_index);
                     func->set_overrides(entry.func);
                     entry.func = func;
                     found_override = true;
+                    // Warn if user did NOT write 'override' on a real override
+                    if (!func->is_override_specifier()) {
+                        warning_missing_override.push_back(func);
+                    }
                 }
                 break;
             }
         }
 
         if (!found_override) {
+            // If user wrote 'override' but nothing was overridden, it's an error
+            if (func->is_override_specifier()) {
+                error_override_not_overriding.push_back(func);
+            }
             if (func->is_final_func() && !func->is_abstract_func()) {
                 func->set_virtual(false);
                 func->set_vtable_slot(-1);
@@ -1047,7 +1061,10 @@ void symbol_resolver::visit_klass(klass& klass) {
     // Build vtable layout
     std::vector<std::shared_ptr<function>> warning_override_final;
     std::vector<std::shared_ptr<function>> error_private_overrides;
-    auto vt = build_vtable_layout(klass, warning_override_final, error_private_overrides);
+    std::vector<std::shared_ptr<function>> warning_missing_override;
+    std::vector<std::shared_ptr<function>> error_override_not_overriding;
+    auto vt = build_vtable_layout(klass, warning_override_final, error_private_overrides,
+                                  warning_missing_override, error_override_not_overriding);
 
     for (auto& f : warning_override_final) {
         // Warning: attempting to override a 'final' virtual function → new branch
@@ -1075,6 +1092,27 @@ void symbol_resolver::visit_klass(klass& klass) {
             "private function '{}' in class '{}' cannot override a virtual function",
             {f->get_short_name(), klass.get_short_name()});
         throw resolution_error(std::move(diag));
+    }
+
+    // ── Override specifier consistency checks ────────────────────────────────
+    // Error: user wrote 'override' but the function does not actually override anything
+    for (auto& f : error_override_not_overriding) {
+        auto diag = k::log::diagnostic::make_error(
+            static_cast<unsigned int>(k::diag::structure_diag::ERR_OVERRIDE_NOT_OVERRIDING),
+            "function '{}' in class '{}' is declared 'override' but does not override "
+            "any inherited virtual function",
+            {f->get_short_name(), klass.get_short_name()});
+        logger_relay::report(diag);
+        throw resolution_error(std::move(diag));
+    }
+
+    // Warning: function overrides a virtual slot but user did not write 'override'
+    for (auto& f : warning_missing_override) {
+        logger_relay::report(k::log::diagnostic::make_warning(
+            static_cast<unsigned int>(k::diag::structure_diag::WARN_MISSING_OVERRIDE),
+            "function '{}' in class '{}' overrides a virtual function but is not "
+            "declared 'override'; add the 'override' specifier",
+            {f->get_short_name(), klass.get_short_name()}));
     }
 
     // ── Abstract consistency checks ────────────────────────────────────────

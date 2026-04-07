@@ -32,6 +32,8 @@ The most important distinction between `struct` and `class` is *virtuality*:
 12. [Abstract classes and methods](#12-abstract-classes-and-methods)
 13. [Const member functions in classes](#13-const-member-functions-in-classes)
 14. [RTTI and dynamic downcast](#14-rtti-and-dynamic-downcast)
+15. [Classes and library export](#15-classes-and-library-export)
+16. [The `override` specifier](#16-the-override-specifier)
 
 ---
 
@@ -984,3 +986,124 @@ exported (they are required to inherit from or dispatch through the class).
 
 See [Libraries — Export and Import](../basic/libraries.md) for worked
 examples, including cross-library inheritance and interface implementation.
+
+---
+
+## 16. The `override` specifier
+
+The `override` specifier can be placed before a member function name inside a class or interface implementation to assert that it overrides an inherited virtual slot.
+
+### 16.1 Purpose
+
+`override` provides an explicit contract between the programmer and the compiler: the programmer states that this function is intended to replace an inherited virtual method, and the compiler verifies that claim.
+
+### 16.2 Rules
+
+| Constraint | Effect on violation |
+|---|---|
+| The function must actually override an inherited virtual slot | Error `0x0177` |
+| Must NOT be combined with `abstract` | Error `0x0179` |
+| Must NOT be combined with `static` | Error `0x0178` |
+| Must NOT be placed on a constructor or destructor | Error `0x017A` |
+| Must NOT be used in a `struct` (only `class` / `interface` implementations) | Error `0x017B` |
+| Overriding without `override` specifier | Warning `0x0176` |
+| Overriding a `final` slot with `override` | Error `0x0177` |
+| Overriding a `final` slot without `override` | Warning `0x0175` (new vtable slot) |
+
+### 16.3 Examples
+
+#### Valid override of a concrete method
+
+```k
+class Base {
+    Base() {}
+    val() : int { return 1; }
+}
+class Derived : public Base {
+    Derived() {}
+    override val() : int { return 2; }    // OK: overrides Base::val
+}
+```
+
+#### Valid override of an abstract method
+
+```k
+abstract class Shape {
+    Shape() {}
+    abstract area() : int;
+}
+class Square : public Shape {
+    Square() {}
+    override area() : int { return 4; }   // OK: implements abstract slot
+}
+```
+
+#### Valid override of an interface method
+
+```k
+interface Counter {
+    count() : int;
+}
+class MyCounter : public Counter {
+    MyCounter() {}
+    override count() : int { return 7; }  // OK: implements interface slot
+}
+```
+
+#### Combining `override` and `final`
+
+A function can be both `override` and `final`: it overrides the inherited slot and then seals it, preventing further overrides in subclasses.
+
+```k
+class A {
+    A() {}
+    val() : int { return 1; }
+}
+class B : public A {
+    B() {}
+    final override val() : int { return 2; }  // overrides + seals
+}
+```
+
+#### Error: override on a non-overriding function
+
+```k
+class Base {
+    Base() {}
+    val() : int { return 1; }
+}
+class Derived : public Base {
+    Derived() {}
+    override other() : int { return 2; }  // Error 0x0177: 'other' is not in Base
+}
+```
+
+#### Warning: missing override
+
+```k
+class Base {
+    Base() {}
+    val() : int { return 1; }
+}
+class Derived : public Base {
+    Derived() {}
+    val() : int { return 2; }             // Warning 0x0176: overrides but no 'override'
+}
+```
+
+### 16.4 Operators
+
+The `override` specifier is valid on operator functions that override inherited virtual operator slots:
+
+```k
+class Base {
+    public v : int;
+    Base() : v(0) {}
+    operator +(other: Base&) : int { return v + other.v; }
+}
+class Derived : public Base {
+    Derived() : Base() {}
+    override operator +(other: Base&) : int { return v + other.v + 100; }
+}
+```
+

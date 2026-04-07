@@ -241,7 +241,8 @@ public:
     /**
      * { Specifier }
      * Specifier = 'public' | 'protected' | 'private'
-     *           | 'static' | 'const' | 'abstract' | 'final' ;
+     *           | 'static' | 'const' | 'abstract' | 'final'
+     *           | 'override' ;
      */
     std::vector<lex::keyword> parse_specifiers();
 

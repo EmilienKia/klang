@@ -1490,6 +1490,14 @@ protected:
     bool _is_abstract_func = false;
 
     /**
+     * True if this function is declared 'override' by the user.
+     * An override specifier asserts that this function overrides an inherited
+     * virtual slot. If no inherited slot exists, it is a compilation error.
+     * Conversely, overriding without this specifier emits a warning.
+     */
+    bool _is_override_specifier = false;
+
+    /**
      * True if this function is an FFI extern function: it has no body, no K mangling,
      * and is resolved at link time from an external library.
      * Set automatically by set_extern_c_symbol().
@@ -1654,6 +1662,11 @@ public:
     bool is_abstract_func() const { return _is_abstract_func; }
     /** Set whether this function is abstract. */
     void set_abstract_func(bool v) { _is_abstract_func = v; }
+
+    /** True if this function is declared 'override' by the user. */
+    bool is_override_specifier() const { return _is_override_specifier; }
+    /** Set whether this function has the 'override' specifier. */
+    void set_override_specifier(bool v) { _is_override_specifier = v; }
 
     /**
      * True if this function is an FFI extern function (resolved at link time

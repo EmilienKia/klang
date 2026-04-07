@@ -103,6 +103,7 @@ add_executable(klang-tests
         tests/test-gen-virtual-inheritance.cpp
         tests/test-gen-class-virtuality.cpp
         tests/test-gen-class-abstract.cpp
+        tests/test-gen-override.cpp
         tests/test-gen-interface.cpp
         tests/test-model-materializer.cpp
         tests/test-model-annotation.cpp

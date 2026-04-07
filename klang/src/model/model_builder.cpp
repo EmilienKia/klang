@@ -853,6 +853,41 @@ namespace k::model {
             function->set_abstract_func(true);
         }
 
+        // Propagate 'override' specifier for functions
+        if (lex::keyword::has(func.specifiers, lex::keyword::OVERRIDE)) {
+            // override is only valid on non-static, non-abstract, non-ctor/dtor member functions of classes/interfaces
+            if (is_static) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_OVERRIDE_ON_STATIC), func.name,
+                    "Function '{}' cannot be both 'override' and 'static': static functions are not virtual",
+                    {func_name});
+            }
+            if (function->is_abstract_func() || lex::keyword::has(func.specifiers, lex::keyword::ABSTRACT)) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_OVERRIDE_ON_ABSTRACT), func.name,
+                    "Function '{}' cannot be both 'override' and 'abstract': an abstract function declares a new contract, it does not override an existing one",
+                    {func_name});
+            }
+            if (std::dynamic_pointer_cast<model::constructor>(function)
+                || std::dynamic_pointer_cast<model::destructor>(function)
+                || func.is_destructor) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_OVERRIDE_ON_CTOR_DTOR), func.name,
+                    "Specifier 'override' is not allowed on constructor or destructor '{}'",
+                    {func_name});
+            }
+            // Check that we are inside a class or interface, not a struct or namespace
+            if (auto owner_agg = current_context_content<model::aggregate>()) {
+                if (!owner_agg->is_class() && !std::dynamic_pointer_cast<model::interface>(owner_agg)) {
+                    throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_OVERRIDE_ON_STRUCT), func.name,
+                        "Specifier 'override' is not allowed on function '{}' inside struct '{}'; 'override' is only valid inside classes and interfaces",
+                        {func_name, owner_agg->get_short_name()});
+                }
+            } else {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_OVERRIDE_ON_STRUCT), func.name,
+                    "Specifier 'override' on function '{}' is only valid inside a class or interface",
+                    {func_name});
+            }
+            function->set_override_specifier(true);
+        }
+
         // Implicitly mark member functions inside an interface as abstract
         // (non-static, non-ctor/dtor, non-final functions that have no body)
         if (!lex::keyword::has(func.specifiers, lex::keyword::ABSTRACT)) {

@@ -35,6 +35,7 @@ They may **not** be used as ordinary identifiers.
 | `protected` | Protected visibility modifier |
 | `private`   | Private visibility modifier |
 | `final`     | Final modifier: prevents further inheritance or overriding |
+| `override`  | Override modifier: asserts that a method overrides an inherited virtual slot |
 | `this`      | Reference to the current object inside a member function |
 | `return`    | Return statement |
 | `if`        | Conditional statement |
@@ -52,7 +53,7 @@ Keyword: (one of)
     bool     byte     char     short    int      long
     float    double   unsigned
     struct   class    interface   annotation   namespace   module   import   using
-    static   const    abstract   final
+    static   const    abstract   final   override
     public   protected   private
     this     return
     if       else     while    for
@@ -68,6 +69,7 @@ Keyword: (one of)
 - `abstract` is valid on a `class` or its methods to mark them as requiring overriding. On an `interface` or its methods it is accepted but redundant (warning).
 - `annotation` declares an annotation type. See [Annotations](../annotations/annotations.md).
 - `final` prevents further inheritance or overriding. See the relevant sections in [Classes and Virtuality](../structs/classes.md).
+- `override` asserts that a method overrides an inherited virtual slot. If the function does not actually override, it is a compile-time error. Omitting `override` on a valid override emits a warning. See [The `override` specifier](../structs/classes.md#16-the-override-specifier).
 - `const` marks a variable or parameter as immutable. See [Const-ness](types.md#14-const-ness) for the full specification.
 - `public`, `protected`, and `private` are parsed as visibility declarations inside namespace and struct bodies; they end with a colon (e.g., `public:`).
 - `unsigned` is used as a type modifier: `unsigned int`, `unsigned short`, etc. It is not a standalone type.

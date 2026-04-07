@@ -144,7 +144,8 @@ struct keyword : public lexeme {
         OPERATOR,
         USING,
         FRIEND,
-        ANNOTATION
+        ANNOTATION,
+        OVERRIDE
     };
 
     type_t type;

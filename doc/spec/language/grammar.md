@@ -36,7 +36,7 @@ Grammar notation used here:
     `bool` `byte` `char` `short` `int` `long`
     `float` `double` `unsigned`
     `struct` `namespace` `module` `import` `using`
-    `static` `const` `abstract` `final`
+    `static` `const` `abstract` `final` `override`
     `public` `protected` `private`
     `this` `return`
     `if` `else` `while` `for`
@@ -174,7 +174,7 @@ Grammar notation used here:
 <a id="specifier"></a>**Specifier:**
     *(one of)*
     `'public'` `'protected'` `'private'` `'static'`
-    `'const'` `'abstract'` `'final'`
+    `'const'` `'abstract'` `'final'` `'override'`
 ### Type specifiers
 *Full description:* [Types](basic/types.md)
 <a id="typespec"></a>**TypeSpec:**

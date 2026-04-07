@@ -68,7 +68,7 @@ Keyword
     | 'float'  | 'double'  | 'unsigned'
     | 'struct' | 'class'   | 'interface' | 'annotation'
     | 'namespace' | 'module' | 'import' | 'using' | 'friend'
-    | 'static' | 'const'   | 'abstract'  | 'final'
+    | 'static' | 'const'   | 'abstract'  | 'final'  | 'override'
     | 'public' | 'protected' | 'private'
     | 'this'   | 'return'
     | 'if'     | 'else'    | 'while'     | 'for'
@@ -369,7 +369,7 @@ Initialiser
 
 Specifier
     = 'public' | 'protected' | 'private'
-    | 'static' | 'const' | 'abstract' | 'final'
+    | 'static' | 'const' | 'abstract' | 'final' | 'override'
     ;
 
 (* ---------- Type Specifiers ---------------------------------------------- *)

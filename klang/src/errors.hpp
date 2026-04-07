@@ -242,6 +242,10 @@ enum class model_diag : unsigned int {
     ERR_RETURN_VAR_NAME_MISMATCH                  = 0x00B2,
     ERR_RETURN_VAR_NOT_IN_FUNC                    = 0x00B3,
     ERR_RETURN_VAR_TYPE_NOT_REF                   = 0x00B4,
+    ERR_OVERRIDE_ON_STATIC                        = 0x0178,
+    ERR_OVERRIDE_ON_ABSTRACT                      = 0x0179,
+    ERR_OVERRIDE_ON_CTOR_DTOR                     = 0x017A,
+    ERR_OVERRIDE_ON_STRUCT                        = 0x017B,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -292,6 +296,8 @@ enum class structure_diag : unsigned int {
     ERR_ABSTRACT_METHOD_IN_NON_ABSTRACT           = 0x0173,
     ERR_INHERITED_ABSTRACT_NOT_IMPL               = 0x0174,
     WARN_OVERRIDE_FINAL                           = 0x0175,
+    WARN_MISSING_OVERRIDE                         = 0x0176,
+    ERR_OVERRIDE_NOT_OVERRIDING                   = 0x0177,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

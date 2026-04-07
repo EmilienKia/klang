@@ -13,6 +13,7 @@
 - Better private visibility support
 - Improve log and debug messages 
 - Add in comment documentation support (e.g. for doc generation)
+- Varargs
 
 ### libk
 - Refactor libk C functions wrapping to reduce intermediate method counts
