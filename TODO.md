@@ -19,10 +19,9 @@
 
 ### libk
 - Refactor libk C functions wrapping to reduce intermediate method counts
-- Move math stub functions
 - Add following to base libk:
   - containers 
-  - maths
+  - maths (to be completed)
   - time/date
   - log facade
   - filesystem

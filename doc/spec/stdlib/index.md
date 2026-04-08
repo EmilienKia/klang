@@ -9,23 +9,20 @@ functions shipped with the K compiler and available to all K programs.
 
 ## Organisation
 
-The K standard library is split into two tiers:
-
-| Tier | Module | Location | Linking |
-|------|--------|----------|---------|
-| **Base** | `k` | `libk/libk/` | **Automatic** — every K module (except `k` itself) implicitly imports and links the base library. |
-| **Optional** | `k::<name>` | `libk/lib<name>/` | **Explicit** — the programmer writes `import k::<name>;` and the compiler resolves the KDI / shared library via the standard search path. |
+The K standard library is contained in a single module — `k` — compiled into
+`libk.so` / `libk.a`.  It is automatically linked with every K program; no
+explicit `import` is ever needed to use its types and namespaces.
 
 ### Base standard library (module `k`)
 
-The base library provides the minimal common infrastructure that every K
+The base library provides the complete common infrastructure that every K
 program can rely on.  The compiler injects `import k;` automatically (unless
 the module being compiled *is* `k`), and `-lk` is added to the link command.
 
 Contents:
 
-| Type | Description | Source |
-|------|-------------|--------|
+| Type / Namespace | Description | Source |
+|------------------|-------------|--------|
 | [`Object`](object.md) | Root base class for all K classes. | `src/object.k` |
 | [`CharHelpers`](string.md#charhelpers) | Static utility methods for `char[]` buffer operations. | `src/string.k` |
 | [`String`](string.md#string) | Immutable, final string class wrapping a null-terminated `char[]!` buffer. | `src/string.k` |
@@ -33,18 +30,9 @@ Contents:
 | [`RTTI Types`](rtti.md) | Runtime type information: `Visibility`, `TypeInfo`, `AggregateType`, `Class`, `Interface`, `AnnotationType`, `Annotation`, `Function`, `Unit`. | `src/rtti.k` |
 | [`Meta-Annotations`](rtti.md#11-meta-annotation-types) | Meta-annotation types: `Retention` (with `Policy` enum), `Inherited`, `Target` (with `ElementType` enum). Control annotation retention, inheritance, and applicability. | `src/annotations.k` |
 | [`I/O Streams`](io.md) | Byte-oriented I/O stream abstractions: `InputStream`, `OutputStream`, `ByteArray*Stream`, `Filter*Stream`, `Buffered*Stream`, `DataInput`/`DataOutput`, `Data*Stream`. | `src/io/` |
+| [`k::math::Math`](math.md) | Static utility class for integer and long mathematical operations (`abs`, `min`, `max`, `clamp`, …). | `src/math/math.k` |
 
-### Optional standard libraries
-
-Optional libraries extend the base with domain-specific functionality.
-They are **not** linked automatically — the programmer must explicitly import
-them.
-
-| Module | Library | Description |
-|--------|---------|-------------|
-| `k::math` | `libkmath` | Basic mathematical utility functions. |
-
-*(More libraries will be added as the language evolves.)*
+*(More types and namespaces will be added as the language evolves.)*
 
 ---
 

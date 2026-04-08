@@ -19,12 +19,12 @@
 /**
  * Tests for k::math::Math static utility class.
  *
- * These tests exercise the behaviour of the optional k::math library by
- * JIT-compiling small K programs that call Math::abs, Math::min, Math::max
- * and Math::clamp.
+ * These tests exercise the behaviour of the k::math namespace (part of the
+ * base k module / libk.so) by JIT-compiling small K programs that call
+ * Math::abs, Math::min, Math::max and Math::clamp.
  *
- * The test executable loads both libk.so (base stdlib) and libk.math.so
- * (optional math library) via dlopen at test startup.
+ * k::math is a namespace inside module k, which is auto-imported by every
+ * K compilation unit — no explicit `import` is required.
  */
 
 #include <catch2/catch_all.hpp>
@@ -34,18 +34,12 @@
 #include <dlfcn.h>
 #include <unordered_map>
 
-// Compile-time paths injected by CMake (see libk/libkmath/CMakeLists.txt).
+// Compile-time paths injected by CMake (see libk/libk/CMakeLists.txt).
 #ifndef LIBK_KDI_DIR
 #error "LIBK_KDI_DIR must be defined — check CMakeLists.txt"
 #endif
 #ifndef LIBK_LIB_DIR
 #error "LIBK_LIB_DIR must be defined — check CMakeLists.txt"
-#endif
-#ifndef LIBKMATH_KDI_DIR
-#error "LIBKMATH_KDI_DIR must be defined — check CMakeLists.txt"
-#endif
-#ifndef LIBKMATH_LIB_DIR
-#error "LIBKMATH_LIB_DIR must be defined — check CMakeLists.txt"
 #endif
 
 namespace {
@@ -61,18 +55,14 @@ void load_lib_once(const std::string& path) {
     loaded[path] = h;
 }
 
-/// Compile K source that imports both k and k::math, then JIT it.
+/// Compile K source that uses k::math (part of base module k), then JIT it.
+/// k is auto-imported — no explicit `import k;` or `import k::math;` needed.
 std::unique_ptr<k::model::gen::jit> jit_math(std::string_view src) {
-    // Load both libraries into the current process.
-    // LD_LIBRARY_PATH is set by CTest so dlopen can find libk.so as a
-    // transitive dependency of libk.math.so.
     load_lib_once(std::string(LIBK_LIB_DIR) + "/libk.so");
-    load_lib_once(std::string(LIBKMATH_LIB_DIR) + "/libk.math.so");
 
     auto comp = k::compiler::create();
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
     resolver->add_search_dir(LIBK_KDI_DIR);
-    resolver->add_search_dir(LIBKMATH_KDI_DIR);
     comp->set_file_resolver(resolver);
 
     try {
@@ -93,10 +83,9 @@ std::unique_ptr<k::model::gen::jit> jit_math(std::string_view src) {
 // 1. Math::abs
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Math::abs — positive and negative integers", "[libkmath][math]") {
+TEST_CASE("Math::abs — positive and negative integers", "[libk][math]") {
     auto jit = jit_math(R"SRC(
         module __math_abs__;
-        import k::math;
 
         test_abs_pos() : int {
             return k::math::Math::abs(42);
@@ -129,10 +118,9 @@ TEST_CASE("Math::abs — positive and negative integers", "[libkmath][math]") {
 // 2. Math::min and Math::max
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Math::min and Math::max", "[libkmath][math]") {
+TEST_CASE("Math::min and Math::max", "[libk][math]") {
     auto jit = jit_math(R"SRC(
         module __math_minmax__;
-        import k::math;
 
         test_min() : int {
             return k::math::Math::min(3, 7);
@@ -189,10 +177,9 @@ TEST_CASE("Math::min and Math::max", "[libkmath][math]") {
 // 3. Math::clamp
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Math::clamp", "[libkmath][math]") {
+TEST_CASE("Math::clamp", "[libk][math]") {
     auto jit = jit_math(R"SRC(
         module __math_clamp__;
-        import k::math;
 
         test_clamp_within() : int {
             return k::math::Math::clamp(50, 0, 100);
@@ -241,10 +228,9 @@ TEST_CASE("Math::clamp", "[libkmath][math]") {
 // 4. Math::absLong
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Math::absLong — positive and negative longs", "[libkmath][math]") {
+TEST_CASE("Math::absLong — positive and negative longs", "[libk][math]") {
     auto jit = jit_math(R"SRC(
         module __math_abs_long__;
-        import k::math;
 
         test_abs_pos() : long {
             return k::math::Math::absLong(42L);
@@ -285,10 +271,9 @@ TEST_CASE("Math::absLong — positive and negative longs", "[libkmath][math]") {
 // 5. Math::minLong and Math::maxLong
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Math::minLong and Math::maxLong", "[libkmath][math]") {
+TEST_CASE("Math::minLong and Math::maxLong", "[libk][math]") {
     auto jit = jit_math(R"SRC(
         module __math_minmax_long__;
-        import k::math;
 
         test_min() : long {
             return k::math::Math::minLong(3L, 7L);
@@ -345,10 +330,9 @@ TEST_CASE("Math::minLong and Math::maxLong", "[libkmath][math]") {
 // 6. Math::clampLong
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Math::clampLong", "[libkmath][math]") {
+TEST_CASE("Math::clampLong", "[libk][math]") {
     auto jit = jit_math(R"SRC(
         module __math_clamp_long__;
-        import k::math;
 
         test_clamp_within() : long {
             return k::math::Math::clampLong(50L, 0L, 100L);
@@ -392,5 +376,4 @@ TEST_CASE("Math::clampLong", "[libkmath][math]") {
     REQUIRE(at_hi);
     CHECK(at_hi() == 100L);
 }
-
 

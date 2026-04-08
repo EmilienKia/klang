@@ -2,10 +2,8 @@
 # libk — K language standard libraries
 #
 # This directory contains the standard library sources for the K language.
-# Each subdirectory is a separate library module:
-#   - libk/      → base standard library (module "k"), automatically linked
-#   - libkmath/  → optional math library (module "k::math")
+# The libk/ subdirectory hosts both the base standard library (module "k")
+# and all optional sub-libraries (e.g. "k::math") compiled from src/math/.
 # ─────────────────────────────────────────────────────────────────────────────
 add_subdirectory(libk)
 
-add_subdirectory(libkmath)

@@ -1,13 +1,17 @@
 # Math
-**Module:** `k::math`  
-**Source:** `libk/libkmath/src/math.k`  
-**Linking:** Optional — requires `import k::math;`
+**Module:** `k`  
+**Namespace:** `k::math`  
+**Source:** `libk/libk/src/math/math.k`  
+**Linking:** Automatic — part of the base `k` library
 ---
 ## Overview
-The `k::math` module provides basic mathematical utility functions through
+The `k::math` namespace provides basic mathematical utility functions through
 the `Math` static final class.  All methods are public and static.
-This is an **optional** standard library — it is not linked automatically.
-Users must add an explicit `import k::math;` declaration.
+
+`k::math` is compiled into the base `k` module (`libk.so`), which is
+automatically linked with every K program.  No explicit `import` declaration
+is needed — `k::math::Math` is directly accessible in any K compilation unit.
+
 ---
 ## Math
 `public final class Math` — static utility methods for common mathematical
@@ -30,16 +34,16 @@ operations on integers and longs.
 ## Usage Example
 ```k
 module myapp;
-import k::math;
+
 main() : int {
     x : int = -42;
-    a : int = k::math::Math::abs(x);     // 42
-    m : int = k::math::Math::min(a, 10); // 10
+    a : int = k::math::Math::abs(x);          // 42
+    m : int = k::math::Math::min(a, 10);      // 10
     c : int = k::math::Math::clamp(a, 0, 100); // 42
 
     y : long = -1000L;
-    b : long = k::math::Math::absLong(y);           // 1000
-    d : long = k::math::Math::clampLong(b, 0L, 500L); // 500
+    b : long = k::math::Math::absLong(y);              // 1000
+    d : long = k::math::Math::clampLong(b, 0L, 500L);  // 500
     return c;
 }
 ```

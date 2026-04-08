@@ -16,7 +16,9 @@
  * limitations under the License.
  */
 
-module k::math;
+module k;
+
+namespace math {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Math — Static utility class providing basic mathematical functions.
@@ -80,4 +82,4 @@ public:
     }
 }
 
-
+} // namespace math
