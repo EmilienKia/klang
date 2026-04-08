@@ -43,6 +43,11 @@ public struct CFile {
 @ffi::Extern("C") __k_io_file_create_new(path: const char*) : int;
 @ffi::Extern("C") __k_io_file_last_separator(path: const char*) : int;
 
+// ── FFI declarations for standard stream handles ────────────────────────
+@ffi::Extern("C") __k_io_file_get_stdin() : CFile*;
+@ffi::Extern("C") __k_io_file_get_stdout() : CFile*;
+@ffi::Extern("C") __k_io_file_get_stderr() : CFile*;
+
 
 // ═════════════════════════════════════════════════════════════════════════════
 // FileDescriptor — Wraps an OS-level file descriptor (integer).
@@ -177,6 +182,14 @@ public:
         _fp = __k_io_file_fopen(&p[0], &"rb\0"[0]);
     }
 
+    /**
+     * Construct a FileInputStream from a raw CFile* handle.
+     * The stream does NOT take ownership — the caller must ensure the
+     * handle remains valid for the lifetime of this stream.
+     * Primarily used internally (e.g. for wrapping libc stdin).
+     */
+    FileInputStream(fp: CFile*) : _fp(fp) {}
+
     /** Return true if the underlying file was opened successfully. */
     const isOpen() : bool {
         return _fp != null;
@@ -260,6 +273,14 @@ public:
             _fp = __k_io_file_fopen(&p[0], &"wb\0"[0]);
         }
     }
+
+    /**
+     * Construct a FileOutputStream from a raw CFile* handle.
+     * The stream does NOT take ownership — the caller must ensure the
+     * handle remains valid for the lifetime of this stream.
+     * Primarily used internally (e.g. for wrapping libc stdout/stderr).
+     */
+    FileOutputStream(fp: CFile*) : _fp(fp) {}
 
     /** Return true if the underlying file was opened successfully. */
     const isOpen() : bool {

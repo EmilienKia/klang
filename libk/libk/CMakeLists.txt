@@ -22,6 +22,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/data_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/print_stream.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/file.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/io/stdio.k
 )
 set(LIBK_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
@@ -142,6 +143,7 @@ add_executable(libk-tests
     tests/test-io-data-streams.cpp
     tests/test-io-file.cpp
     tests/test-io-print-stream.cpp
+    tests/test-io-stdio.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)
