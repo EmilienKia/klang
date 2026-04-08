@@ -17,15 +17,18 @@ The hierarchy:
 ```
 InputStream (interface)
 ├── ByteArrayInputStream
+├── FileInputStream
 └── FilterInputStream
     ├── BufferedInputStream
     └── DataInputStream (also implements DataInput)
 
 OutputStream (interface)
 ├── ByteArrayOutputStream
+├── FileOutputStream
 └── FilterOutputStream
     ├── BufferedOutputStream
-    └── DataOutputStream (also implements DataOutput)
+    ├── DataOutputStream (also implements DataOutput)
+    └── PrintStream
 
 DataInput  (interface)
 DataOutput (interface)
@@ -179,6 +182,54 @@ class ByteArrayOutputStream : public OutputStream {
 
 ---
 
+### FileInputStream
+
+Reads bytes from a file via a C `FILE*` handle.  Implements `InputStream`.
+
+```k
+class FileInputStream : public InputStream {
+    FileInputStream(path: const char[]);
+    FileInputStream(fp: CFile*);
+
+    isOpen() : bool;
+    getFD() : FileDescriptor;
+}
+```
+
+| Constructor / Method | Description |
+|----------------------|-------------|
+| `FileInputStream(path)` | Open the file at `path` for reading (`"rb"`). |
+| `FileInputStream(fp)` | Wrap an existing `CFile*` handle. The stream does **not** take ownership — the caller must keep the handle valid. Used internally to wrap libc `stdin`. |
+| `isOpen() : bool` | Return `true` if the underlying file was opened successfully. |
+| `getFD() : FileDescriptor` | Return a `FileDescriptor` for the OS-level file descriptor. |
+
+---
+
+### FileOutputStream
+
+Writes bytes to a file via a C `FILE*` handle.  Implements `OutputStream`.
+
+```k
+class FileOutputStream : public OutputStream {
+    FileOutputStream(path: const char[]);
+    FileOutputStream(path: const char[], append: bool);
+    FileOutputStream(fp: CFile*);
+
+    isOpen() : bool;
+    getFD() : FileDescriptor;
+}
+```
+
+| Constructor / Method | Description |
+|----------------------|-------------|
+| `FileOutputStream(path)` | Open the file at `path` for writing (`"wb"`). |
+| `FileOutputStream(path, append)` | Open the file for writing; if `append` is `true`, use append mode (`"ab"`). |
+| `FileOutputStream(fp)` | Wrap an existing `CFile*` handle. The stream does **not** take ownership — the caller must keep the handle valid. Used internally to wrap libc `stdout`/`stderr`. |
+| `isOpen() : bool` | Return `true` if the underlying file was opened successfully. |
+| `getFD() : FileDescriptor` | Return a `FileDescriptor` for the OS-level file descriptor. |
+
+---
+
 ### FilterInputStream
 
 Wraps an `InputStream` and delegates all calls.  Subclasses override
@@ -276,7 +327,103 @@ class DataOutputStream : public FilterOutputStream, public DataOutput {
 
 ---
 
-## Example
+### PrintStream
+
+Adds convenient `print` / `println` methods to an `OutputStream`.  Converts
+primitive values to their textual representation and writes them to the
+underlying stream.  All `print`/`println` methods return `PrintStream&` for
+fluent chaining.
+
+Extends `FilterOutputStream`.  The wrapped stream is held by pointer
+(non-owning).
+
+```k
+class PrintStream : public FilterOutputStream {
+    PrintStream(output: OutputStream*);
+
+    // ── print (no trailing newline) ──────────────────────
+    print(v: bool)           : PrintStream&;
+    print(v: char)           : PrintStream&;
+    print(v: byte)           : PrintStream&;
+    print(v: short)          : PrintStream&;
+    print(v: int)            : PrintStream&;
+    print(v: long)           : PrintStream&;
+    print(v: unsigned short) : PrintStream&;
+    print(v: unsigned int)   : PrintStream&;
+    print(v: unsigned long)  : PrintStream&;
+    print(v: float)          : PrintStream&;
+    print(v: double)         : PrintStream&;
+    print(v: const char[])   : PrintStream&;
+
+    // ── println (value + newline) ────────────────────────
+    println()                 : PrintStream&;
+    println(v: bool)          : PrintStream&;
+    println(v: char)          : PrintStream&;
+    println(v: byte)          : PrintStream&;
+    println(v: short)         : PrintStream&;
+    println(v: int)           : PrintStream&;
+    println(v: long)          : PrintStream&;
+    println(v: unsigned short): PrintStream&;
+    println(v: unsigned int)  : PrintStream&;
+    println(v: unsigned long) : PrintStream&;
+    println(v: float)         : PrintStream&;
+    println(v: double)        : PrintStream&;
+    println(v: const char[])  : PrintStream&;
+}
+```
+
+| Method | Description |
+|--------|-------------|
+| `print(v)` | Write the textual representation of `v` (boolean → `"true"`/`"false"`, char → single byte, numbers → decimal string, `const char[]` → characters without trailing null). |
+| `println()` | Write a newline (`\n`). |
+| `println(v)` | `print(v)` followed by a newline. |
+
+---
+
+## Standard I/O Streams
+
+**Source:** `libk/libk/src/io/stdio.k`
+
+Three global references provide access to the process standard streams,
+connected to the underlying libc `stdin`, `stdout`, and `stderr` handles.
+They are available as soon as global initialisation completes (before
+`main()` is called).
+
+| Reference | Type | Backed by | Description |
+|-----------|------|-----------|-------------|
+| `k::io::stdin` | `InputStream&` | `FileInputStream` wrapping libc `stdin` | Standard input stream. |
+| `k::io::stdout` | `PrintStream&` | `PrintStream` wrapping a `FileOutputStream` on libc `stdout` | Standard output stream. |
+| `k::io::stderr` | `PrintStream&` | `PrintStream` wrapping a `FileOutputStream` on libc `stderr` | Standard error stream. |
+
+The backing objects (`FileInputStream`, `FileOutputStream`, `PrintStream`
+instances) are **private** to the library.  Only the three references above
+are public.  The compiler's global init-order resolver ensures that
+dependent objects are constructed in the correct order.
+
+### Usage
+
+```k
+module myapp;
+
+main() : int {
+    // Write to standard output
+    k::io::stdout.println("Hello, world!");
+    k::io::stdout.print("value = ").println(42);
+
+    // Write to standard error
+    k::io::stderr.println("An error occurred");
+
+    // Read a byte from standard input
+    b : int = k::io::stdin.read();
+    return 0;
+}
+```
+
+---
+
+## Examples
+
+### Data stream round-trip
 
 Round-trip: write primitives with `DataOutputStream`, read them back
 with `DataInputStream`.  All multi-byte values use the platform native
@@ -301,6 +448,30 @@ test() : int {
     v2 : long = dis.readLong();     // 1234567890
     v3 : bool = dis.readBool();     // true
     return v1;
+}
+```
+
+### Standard I/O echo
+
+Read bytes from standard input and echo them to standard output and
+standard error:
+
+```k
+module echo;
+
+main() : int {
+    k::io::stdout.print("Enter text: ");
+    k::io::stdout.flush();
+
+    b : int = k::io::stdin.read();
+    while (b != -1) {
+        k::io::stdout.write(b);
+        k::io::stderr.write(b);
+        b = k::io::stdin.read();
+    }
+
+    k::io::stdout.println();
+    return 0;
 }
 ```
 

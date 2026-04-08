@@ -25,6 +25,7 @@ operations on integers and longs.
 | `absLong(x: long)` | `long` | Absolute value of `x`. |
 | `minLong(a: long, b: long)` | `long` | Smaller of `a` and `b`. |
 | `maxLong(a: long, b: long)` | `long` | Larger of `a` and `b`. |
+| `clampLong(x: long, lo: long, hi: long)` | `long` | `x` clamped to the range `[lo, hi]`. |
 ---
 ## Usage Example
 ```k
@@ -35,6 +36,10 @@ main() : int {
     a : int = k::math::Math::abs(x);     // 42
     m : int = k::math::Math::min(a, 10); // 10
     c : int = k::math::Math::clamp(a, 0, 100); // 42
+
+    y : long = -1000L;
+    b : long = k::math::Math::absLong(y);           // 1000
+    d : long = k::math::Math::clampLong(b, 0L, 500L); // 500
     return c;
 }
 ```
