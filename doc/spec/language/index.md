@@ -104,6 +104,12 @@ Examples are included where they clarify the normative text.
 |------|-------------|
 | [Grammar](grammar.md) | Complete grammar reference with links to descriptions |
 
+### Quick Reference
+
+| Page | Description |
+|------|-------------|
+| [Language Summary](summary.md) | A single, self-contained summary of every K language rule. Designed to be read alongside [`grammar.ebnf`](grammar.ebnf) and sufficient on its own — no need to consult the individual specification pages above. |
+
 ---
 
 ## Language Overview
