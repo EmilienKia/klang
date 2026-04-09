@@ -58,6 +58,13 @@ namespace k::parse {
         struct qualified_identifier;
         struct brace_init_list;
         struct annotation_def;
+        struct template_parameter;
+        struct template_arg;
+
+        /** List of template parameters in a template declaration. */
+        using template_param_list = std::vector<std::shared_ptr<template_parameter>>;
+        /** List of template arguments in a template instantiation. */
+        using template_arg_list = std::vector<std::shared_ptr<template_arg>>;
 
         /** List of annotation definitions attached to a declaration. */
         using annotation_def_list = std::vector<std::shared_ptr<annotation_def>>;
@@ -113,10 +120,15 @@ namespace k::parse {
 
         struct identified_type_specifier : public type_specifier {
             qualified_identifier name;
+            /** Template arguments, empty if not a template type. */
+            template_arg_list template_args;
 
             identified_type_specifier(const qualified_identifier &name) : name(name) {}
 
             identified_type_specifier(qualified_identifier &&name) : name(name) {}
+
+            identified_type_specifier(const qualified_identifier &name, const template_arg_list &template_args)
+                : name(name), template_args(template_args) {}
 
             virtual void visit(ast_visitor &visitor) override;
 
@@ -811,8 +823,78 @@ namespace k::parse {
             virtual void visit(ast_visitor &visitor) override;
         };
 
+        /**
+         * A single template parameter in a template declaration.
+         * Syntax: TemplateParameterKind Identifier [ ':' TypeSpec ] [ '=' ConditionalExpr ]
+         *
+         * kind_kw determines the parameter kind:
+         *   - TYPENAME: any type
+         *   - STRUCT/CLASS/INTERFACE: constrained to that aggregate kind
+         *   - For value parameters, kind_kw is absent and value_type is set.
+         */
+        struct template_parameter : public ast_node {
+            /** The kind keyword: TYPENAME, STRUCT, CLASS, INTERFACE, or nullopt for value params. */
+            std::optional<lex::keyword> kind_kw;
+            /** Parameter name. */
+            lex::identifier name;
+            /** Optional constraint type (the type after ':'). */
+            std::shared_ptr<type_specifier> constraint_type;
+            /** Optional default value/type expression. */
+            expr_ptr default_expr;
+            /** For value parameters: the explicit type specifier (e.g. 'unsigned int'). */
+            std::shared_ptr<type_specifier> value_type;
+
+            // Type parameter constructor
+            template_parameter(const lex::keyword& kind_kw,
+                               const lex::identifier& name,
+                               std::shared_ptr<type_specifier> constraint_type = nullptr,
+                               expr_ptr default_expr = nullptr)
+                : kind_kw(kind_kw), name(name), constraint_type(std::move(constraint_type)),
+                  default_expr(std::move(default_expr)) {}
+
+            // Value parameter constructor
+            template_parameter(std::shared_ptr<type_specifier> value_type,
+                               const lex::identifier& name,
+                               expr_ptr default_expr = nullptr)
+                : name(name), default_expr(std::move(default_expr)),
+                  value_type(std::move(value_type)) {}
+
+            /** True if this is a type parameter (typename/struct/class/interface). */
+            bool is_type_param() const { return kind_kw.has_value(); }
+            /** True if this is a value parameter (e.g. N : unsigned int). */
+            bool is_value_param() const { return !kind_kw.has_value(); }
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
+        /**
+         * A single template argument in a template instantiation.
+         * Can be either a type argument or a value (expression) argument.
+         */
+        struct template_arg : public ast_node {
+            /** Type argument (mutually exclusive with value_arg). */
+            std::shared_ptr<type_specifier> type_arg;
+            /** Value argument expression (mutually exclusive with type_arg). */
+            expr_ptr value_arg;
+
+            // Type argument constructor
+            explicit template_arg(std::shared_ptr<type_specifier> type_arg)
+                : type_arg(std::move(type_arg)) {}
+
+            // Value argument constructor
+            explicit template_arg(expr_ptr value_arg)
+                : value_arg(std::move(value_arg)) {}
+
+            bool is_type() const { return type_arg != nullptr; }
+            bool is_value() const { return value_arg != nullptr; }
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
         struct aggregate_decl : public declaration {
             annotation_def_list annotations;
+            /** Template parameters, empty if not a template. */
+            template_param_list template_params;
             std::vector <lex::keyword> specifiers;
             lex::keyword kw_aggregate_type;
             lex::punctuator open_brace, close_brace;
@@ -836,6 +918,7 @@ namespace k::parse {
             bool is_struct() const { return kw_aggregate_type.type == lex::keyword::STRUCT; }
             bool is_interface() const { return kw_aggregate_type.type == lex::keyword::INTERFACE; }
             bool is_annotation() const { return kw_aggregate_type.type == lex::keyword::ANNOTATION; }
+            bool is_template() const { return !template_params.empty(); }
 
             aggregate_decl(const std::vector <lex::keyword>& specifiers,
                             const lex::keyword& kw_aggregate_type,
@@ -1005,6 +1088,8 @@ namespace k::parse {
 
             /** Annotations applied to this function (parsed before specifiers). */
             annotation_def_list annotations;
+            /** Template parameters, empty if not a template function. */
+            template_param_list template_params;
             std::vector<lex::keyword> specifiers;
             lex::identifier name;
             std::shared_ptr<ast::type_specifier> type;
@@ -1024,6 +1109,9 @@ namespace k::parse {
             std::vector<std::shared_ptr<type_specifier>> redirect_param_types;
             /** True if redirect_param_types was explicitly provided (even if empty). */
             bool redirect_has_param_types = false;
+
+            /** True if this is a template function declaration. */
+            bool is_template() const { return !template_params.empty(); }
 
             /** Named return variable — present when function uses named return syntax:
              *  func(params) retVarName : RetType [ Initialiser ] { body }
@@ -1214,6 +1302,9 @@ namespace k::parse {
         virtual void visit_annotation_def(ast::annotation_def &) = 0;
         virtual void visit_annotation_init_expr(ast::annotation_init_expr &) = 0;
 
+        virtual void visit_template_parameter(ast::template_parameter &) = 0;
+        virtual void visit_template_arg(ast::template_arg &) = 0;
+
         virtual void visit_comma_expr(ast::expr_list_expr &) = 0;
 
     };
@@ -1275,6 +1366,9 @@ namespace k::parse {
 
         void visit_annotation_def(ast::annotation_def &) override;
         void visit_annotation_init_expr(ast::annotation_init_expr &) override;
+
+        void visit_template_parameter(ast::template_parameter &) override;
+        void visit_template_arg(ast::template_arg &) override;
 
         void visit_comma_expr(ast::expr_list_expr &) override;
     };

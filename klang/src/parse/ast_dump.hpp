@@ -256,6 +256,22 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             }
         }
 
+        void visit_template_parameter(ast::template_parameter& param) override {
+            if (param.kind_kw.has_value()) {
+                prefix() << "template_param(type) " << param.name.content << std::endl;
+            } else {
+                prefix() << "template_param(value) " << param.name.content << std::endl;
+            }
+        }
+
+        void visit_template_arg(ast::template_arg& arg) override {
+            if (arg.is_type()) {
+                prefix() << "template_arg(type)" << std::endl;
+            } else {
+                prefix() << "template_arg(value)" << std::endl;
+            }
+        }
+
         void visit_enum_decl(ast::enum_decl& decl) override {
             prefix() << "enum " << decl.name.content;
             if (decl.base_name.has_value()) {

@@ -88,6 +88,7 @@ target_compile_definitions(klang-test-helpers PUBLIC
 add_executable(klang-tests
         tests/test-lexer.cpp
         tests/test-parser.cpp
+        tests/test-parser-templates.cpp
         tests/test-gen-arithmetic.cpp
         tests/test-gen-statements.cpp
         tests/test-gen.cpp

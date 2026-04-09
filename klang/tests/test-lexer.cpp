@@ -107,6 +107,53 @@ TEST_CASE( "Lex one keyword", "[lexer]" ) {
         REQUIRE( l.content == "null" );
     }
     */
+
+    SECTION("Lex template keyword") {
+        k::source src{"template"};
+        auto lexemes = lex.parse(src);
+        REQUIRE( lexemes.size() == 1 );
+
+        any_lexeme the_lexeme = lexemes[0];
+        REQUIRE( std::holds_alternative<keyword>(the_lexeme) );
+
+        keyword l = std::get<keyword>(the_lexeme);
+        REQUIRE( l.content == "template" );
+        REQUIRE( l.type == keyword::TEMPLATE );
+    }
+
+    SECTION("Lex typename keyword") {
+        k::source src{"typename"};
+        auto lexemes = lex.parse(src);
+        REQUIRE( lexemes.size() == 1 );
+
+        any_lexeme the_lexeme = lexemes[0];
+        REQUIRE( std::holds_alternative<keyword>(the_lexeme) );
+
+        keyword l = std::get<keyword>(the_lexeme);
+        REQUIRE( l.content == "typename" );
+        REQUIRE( l.type == keyword::TYPENAME );
+    }
+
+    SECTION("Lex template keyword in context") {
+        k::source src{"template<typename T>"};
+        auto lexemes = lex.parse(src);
+        REQUIRE( lexemes.size() == 5 );
+
+        REQUIRE( std::holds_alternative<keyword>(lexemes[0]) );
+        REQUIRE( std::get<keyword>(lexemes[0]).type == keyword::TEMPLATE );
+
+        REQUIRE( std::holds_alternative<operator_>(lexemes[1]) );
+        REQUIRE( std::get<operator_>(lexemes[1]).type == operator_::CHEVRON_OPEN );
+
+        REQUIRE( std::holds_alternative<keyword>(lexemes[2]) );
+        REQUIRE( std::get<keyword>(lexemes[2]).type == keyword::TYPENAME );
+
+        REQUIRE( std::holds_alternative<identifier>(lexemes[3]) );
+        REQUIRE( std::get<identifier>(lexemes[3]).content == "T" );
+
+        REQUIRE( std::holds_alternative<operator_>(lexemes[4]) );
+        REQUIRE( std::get<operator_>(lexemes[4]).type == operator_::CHEVRON_CLOSE );
+    }
 }
 
 TEST_CASE( "Lex one integer", "[lexer][integer]" ) {

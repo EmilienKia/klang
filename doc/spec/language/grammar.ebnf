@@ -74,6 +74,7 @@ Keyword
     | 'if'     | 'else'    | 'while'     | 'for'
     | 'new'    | 'delete'  | 'default'   | 'enum'
     | 'operator'
+    | 'template' | 'typename'
     ;
 
 (* ---------- Literals ----------------------------------------------------- *)
@@ -181,7 +182,43 @@ ImportDeclaration
     ;
 
 QualifiedIdentifier
-    = [ '::' ] , Identifier , { '::' , Identifier }
+    = [ '::' ] , IdentifierSegment , { '::' , IdentifierSegment }
+    ;
+
+IdentifierSegment
+    = Identifier , [ TemplateArgList ]
+    ;
+
+(* ---------- Templates ---------------------------------------------------- *)
+
+TemplateDeclaration
+    = 'template' , '<' , TemplateParameterList , '>'
+    ;
+
+TemplateParameterList
+    = TemplateParameter , { ',' , TemplateParameter }
+    ;
+
+TemplateParameter
+    = TemplateParameterKind , Identifier , [ ':' , TypeSpec ] , [ '=' , ConditionalExpr ]
+    ;
+
+TemplateParameterKind
+    = 'typename'
+    | 'struct'
+    | 'class'
+    | 'interface'
+    | Identifier                                                 (* value parameter — identifier names the type *)
+    | TypeSpec                                                   (* value parameter — explicit type *)
+    ;
+
+TemplateArgList
+    = '<' , TemplateArg , { ',' , TemplateArg } , '>'
+    ;
+
+TemplateArg
+    = TypeSpec                                                   (* type argument *)
+    | ConditionalExpr                                            (* value argument *)
     ;
 
 (* ---------- Declarations ------------------------------------------------- *)
@@ -224,7 +261,7 @@ FriendFilter
 (* ---------- Aggregates (struct / class / interface / annotation) ---------- *)
 
 AggregateDecl
-    = { AnnotationDef } , { Specifier } ,
+    = { AnnotationDef } , [ TemplateDeclaration ] , { Specifier } ,
       ( 'struct' | 'class' | 'interface' | 'annotation' ) ,
       Identifier ,
       [ ':' , BaseClause ] ,
@@ -262,7 +299,7 @@ AnnotationDef
 (* ---------- Functions ---------------------------------------------------- *)
 
 FunctionDecl
-    = { AnnotationDef } , { Specifier } , [ 'fun' ] ,
+    = { AnnotationDef } , [ TemplateDeclaration ] , { Specifier } , [ 'fun' ] ,
       ( FunctionHead | OperatorFunctionHead | DestructorHead ) ,
       '(' , [ ParameterList ] , ')' ,
       [ NamedReturnVar ] ,

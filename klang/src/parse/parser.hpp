@@ -150,6 +150,27 @@ public:
     ast::annotation_def_list parse_annotation_defs();
 
     /**
+     * TemplateDeclaration = 'template' , '<' , TemplateParameterList , '>' ;
+     * Returns empty list if no 'template' keyword is present.
+     */
+    ast::template_param_list parse_template_declaration();
+
+    /**
+     * TemplateParameter = TemplateParameterKind , Identifier ,
+     *                     [ ':' , TypeSpec ] , [ '=' , ConditionalExpr ] ;
+     */
+    std::shared_ptr<ast::template_parameter> parse_template_parameter();
+
+    /**
+     * TemplateArgList = '<' , TemplateArg , { ',' , TemplateArg } , '>' ;
+     * Attempts to parse a template argument list after an identifier.
+     * Uses tentative parsing with save/restore to disambiguate '<' as
+     * template vs comparison operator.
+     * Returns empty list if no template arguments are present.
+     */
+    ast::template_arg_list parse_template_arg_list();
+
+    /**
      * AggregateDecl = { AnnotationDef } , { Specifier } ,
      *                 ( 'struct' | 'class' | 'interface' | 'annotation' ) ,
      *                 Identifier , [ ':' , BaseClause ] ,

@@ -427,12 +427,256 @@ ast::annotation_def_list parser::parse_annotation_defs()
     return annotations;
 }
 
+ast::template_param_list parser::parse_template_declaration()
+{
+    lex::lex_holder holder(_lexer);
+
+    // Check for 'template' keyword
+    auto ltemplate = _lexer.get();
+    if (ltemplate != lex::keyword::TEMPLATE) {
+        holder.rollback();
+        return {};
+    }
+
+    // Expect '<'
+    auto lopen = _lexer.get();
+    if (lopen != lex::operator_::CHEVRON_OPEN) {
+        throw_error(0x10040, _lexer.pick_current(), "Expected '<' after 'template' keyword");
+    }
+
+    // Parse template parameters
+    ast::template_param_list params;
+    auto first_param = parse_template_parameter();
+    if (!first_param) {
+        throw_error(0x10041, _lexer.pick_current(), "Expected at least one template parameter");
+    }
+    params.push_back(std::move(first_param));
+
+    while (true) {
+        lex::lex_holder comma_holder(_lexer);
+        auto maybe_comma = _lexer.get();
+        if (maybe_comma == lex::punctuator::COMMA) {
+            auto param = parse_template_parameter();
+            if (!param) {
+                throw_error(0x10042, _lexer.pick_current(), "Expected template parameter after ','");
+            }
+            params.push_back(std::move(param));
+        } else {
+            comma_holder.rollback();
+            break;
+        }
+    }
+
+    // Expect '>'
+    // Handle '>>' by splitting: consume '>' and replace the current lexeme with '>'
+    auto lclose = _lexer.get();
+    if (lclose == lex::operator_::DOUBLE_CHEVRON_CLOSE) {
+        // Split '>>' into '>' + '>': replace the consumed '>>' with a single '>'
+        // so the outer context can consume the remaining '>'
+        auto last_mut = _lexer.pick_last_mutable();
+        if (last_mut) {
+            auto& lex_ref = last_mut->get();
+            auto& op = std::get<lex::operator_>(lex_ref);
+            // Rewrite to single '>'
+            lex_ref = lex::operator_(op.content.substr(0, 1), lex::operator_::CHEVRON_CLOSE);
+        }
+        _lexer.unget(); // unget so the '>' can be consumed by the caller
+    } else if (lclose != lex::operator_::CHEVRON_CLOSE) {
+        throw_error(0x10043, _lexer.pick_current(), "Expected '>' to close template parameter list");
+    }
+
+    return params;
+}
+
+std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
+{
+    lex::lex_holder holder(_lexer);
+
+    auto lkind = _lexer.get();
+    if (!lkind) {
+        holder.rollback();
+        return {};
+    }
+
+    // Type parameter: typename, struct, class, interface
+    if (lkind == lex::keyword::TYPENAME || lkind == lex::keyword::STRUCT
+        || lkind == lex::keyword::CLASS || lkind == lex::keyword::INTERFACE) {
+        auto kind_kw = lex::as<lex::keyword>(lkind);
+
+        // Expect parameter name
+        auto lname = _lexer.get();
+        if (lex::is_not<lex::identifier>(lname)) {
+            throw_error(0x10044, _lexer.pick_current(), "Expected template parameter name");
+        }
+        auto param_name = lex::as<lex::identifier>(lname);
+
+        // Optional constraint: ':' TypeSpec
+        std::shared_ptr<ast::type_specifier> constraint;
+        {
+            lex::lex_holder colon_holder(_lexer);
+            auto maybe_colon = _lexer.get();
+            if (maybe_colon == lex::operator_::COLON) {
+                constraint = parse_type_spec();
+                if (!constraint) {
+                    throw_error(0x10045, _lexer.pick_current(), "Expected type specifier after ':' in template parameter constraint");
+                }
+            } else {
+                colon_holder.rollback();
+            }
+        }
+
+        // Optional default: '=' ConditionalExpr
+        // Note: use primary_expr to avoid consuming '>' or '>>' as relational ops
+        ast::expr_ptr default_expr;
+        {
+            lex::lex_holder eq_holder(_lexer);
+            auto maybe_eq = _lexer.get();
+            if (maybe_eq == lex::operator_::EQUAL) {
+                default_expr = parse_primary_expr();
+                if (!default_expr) {
+                    throw_error(0x10046, _lexer.pick_current(), "Expected expression after '=' in template parameter default");
+                }
+            } else {
+                eq_holder.rollback();
+            }
+        }
+
+        return std::make_shared<ast::template_parameter>(kind_kw, param_name, std::move(constraint), std::move(default_expr));
+    }
+
+    // Value parameter: the kind token was actually a type specifier
+    // Roll back and try to parse as type specifier
+    holder.rollback();
+    auto value_type = parse_type_spec();
+    if (!value_type) {
+        return {};
+    }
+
+    // Expect parameter name
+    auto lname = _lexer.get();
+    if (lex::is_not<lex::identifier>(lname)) {
+        holder.rollback();
+        return {};
+    }
+    auto param_name = lex::as<lex::identifier>(lname);
+
+    // Optional default: '=' ConditionalExpr
+    // Note: use primary_expr to avoid consuming '>' or '>>' as relational ops
+    ast::expr_ptr default_expr;
+    {
+        lex::lex_holder eq_holder(_lexer);
+        auto maybe_eq = _lexer.get();
+        if (maybe_eq == lex::operator_::EQUAL) {
+            default_expr = parse_primary_expr();
+            if (!default_expr) {
+                throw_error(0x10047, _lexer.pick_current(), "Expected expression after '=' in template value parameter default");
+            }
+        } else {
+            eq_holder.rollback();
+        }
+    }
+
+    return std::make_shared<ast::template_parameter>(std::move(value_type), param_name, std::move(default_expr));
+}
+
+ast::template_arg_list parser::parse_template_arg_list()
+{
+    lex::lex_holder holder(_lexer);
+
+    // Check for '<'
+    auto lopen = _lexer.get();
+    if (lopen != lex::operator_::CHEVRON_OPEN) {
+        holder.rollback();
+        return {};
+    }
+
+    // Tentative parse: try to parse template arguments.
+    // If we fail, roll back and treat '<' as comparison.
+    size_t save_pos = _lexer.tell();
+
+    ast::template_arg_list args;
+    int angle_depth = 1;
+
+    try {
+        // Try to parse the first argument as a type specifier
+        auto type_spec = parse_type_spec();
+        if (type_spec) {
+            args.push_back(std::make_shared<ast::template_arg>(std::move(type_spec)));
+        } else {
+            // Try as expression
+            auto expr = parse_conditional_expr();
+            if (expr) {
+                args.push_back(std::make_shared<ast::template_arg>(std::move(expr)));
+            } else {
+                // Failed — rollback
+                _lexer.seek(save_pos);
+                holder.rollback();
+                return {};
+            }
+        }
+
+        // Parse remaining arguments
+        while (true) {
+            lex::lex_holder comma_holder(_lexer);
+            auto maybe_comma = _lexer.get();
+            if (maybe_comma == lex::punctuator::COMMA) {
+                auto type_spec2 = parse_type_spec();
+                if (type_spec2) {
+                    args.push_back(std::make_shared<ast::template_arg>(std::move(type_spec2)));
+                } else {
+                    auto expr2 = parse_conditional_expr();
+                    if (expr2) {
+                        args.push_back(std::make_shared<ast::template_arg>(std::move(expr2)));
+                    } else {
+                        // Failed — rollback everything
+                        _lexer.seek(save_pos);
+                        holder.rollback();
+                        return {};
+                    }
+                }
+            } else {
+                comma_holder.rollback();
+                break;
+            }
+        }
+
+        // Expect '>'
+        // Handle '>>' by splitting
+        auto lclose = _lexer.get();
+        if (lclose == lex::operator_::DOUBLE_CHEVRON_CLOSE) {
+            // Split '>>' into '>' + '>'
+            auto last_mut = _lexer.pick_last_mutable();
+            if (last_mut) {
+                auto& lex_ref = last_mut->get();
+                auto& op = std::get<lex::operator_>(lex_ref);
+                lex_ref = lex::operator_(op.content.substr(0, 1), lex::operator_::CHEVRON_CLOSE);
+            }
+            _lexer.unget();
+        } else if (lclose != lex::operator_::CHEVRON_CLOSE) {
+            // Not a valid template arg list — rollback
+            _lexer.seek(save_pos);
+            holder.rollback();
+            return {};
+        }
+    } catch (const parsing_error&) {
+        // Parse failed — treat '<' as comparison operator
+        _lexer.seek(save_pos);
+        holder.rollback();
+        return {};
+    }
+
+    return args;
+}
+
 std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
 {
     lex::lex_holder holder(_lexer);
 
     // Parse leading annotation definitions
     ast::annotation_def_list annotations = parse_annotation_defs();
+
+    // Parse optional template declaration
+    ast::template_param_list template_params = parse_template_declaration();
 
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
@@ -531,7 +775,9 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_STRUCT_MISSING_CLOSE_BRACE), _lexer.pick_current(), "Struct closing brace is expected");
     }
 
-    return std::make_shared<ast::aggregate_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations, annotations);
+    auto result = std::make_shared<ast::aggregate_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations, annotations);
+    result->template_params = std::move(template_params);
+    return result;
 }
 
 std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
@@ -767,6 +1013,9 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
 
     // Parse leading annotation definitions (before specifiers, same as aggregate_decl)
     ast::annotation_def_list annotations = parse_annotation_defs();
+
+    // Parse optional template declaration
+    ast::template_param_list template_params = parse_template_declaration();
 
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
@@ -1296,6 +1545,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), params, aliasing);
                 decl->is_operator = is_operator;
                 decl->annotations = std::move(annotations);
+                decl->template_params = std::move(template_params);
                 return decl;
             }
 
@@ -1349,6 +1599,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params,
                 redirect_target, redirect_param_types, redirect_has_param_types);
             decl->annotations = std::move(annotations);
+            decl->template_params = std::move(template_params);
             return decl;
         }
         alias_holder.rollback();
@@ -1364,6 +1615,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, nullptr, is_destructor);
                 decl->is_operator = is_operator;
                 decl->annotations = std::move(annotations);
+                decl->template_params = std::move(template_params);
                 return decl;
             }
             semi_holder.rollback();
@@ -1374,6 +1626,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     auto decl = std::make_shared<ast::function_decl>(specifiers, lex::as<lex::identifier>(lname), restype, params, member_inits, statements, is_destructor);
     decl->is_operator = is_operator;
     decl->annotations = std::move(annotations);
+    decl->template_params = std::move(template_params);
     if (has_named_return) {
         decl->has_named_return = true;
         decl->return_var_name = return_var_name;
@@ -1925,7 +2178,9 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
         // Expect a type qualified identifier:
         std::shared_ptr<ast::qualified_identifier> qid = parse_qualified_identifier();
         if(qid) {
-            res = std::make_shared<ast::identified_type_specifier>(*qid);
+            // Try to parse template arguments after the identifier
+            auto tpl_args = parse_template_arg_list();
+            res = std::make_shared<ast::identified_type_specifier>(*qid, tpl_args);
         } else {
             holder.rollback();
             return {};

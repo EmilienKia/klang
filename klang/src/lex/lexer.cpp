@@ -69,7 +69,9 @@ namespace k::lex {
         {"using", keyword::USING},
         {"friend", keyword::FRIEND},
         {"annotation", keyword::ANNOTATION},
-        {"override", keyword::OVERRIDE}
+        {"override", keyword::OVERRIDE},
+        {"template", keyword::TEMPLATE},
+        {"typename", keyword::TYPENAME}
     };
 
     const std::map<std::string, punctuator::type_t> punctuators {
