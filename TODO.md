@@ -23,20 +23,25 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [x] AST: add `template_parameter` node, `template_arg_list` in `identified_type_specifier`, optional `template_params` in `aggregate_decl` and `function_decl` (Milestone 2)
 - [x] Model: `template.hpp` with `template_param_descriptor`, `template_argument`, `tpl_info` (Milestone 3)
 - [x] Model: `_tpl_info` in `aggregate` and `function`, `is_template()` helpers (Milestone 3)
-- [x] Model builder: detect template declarations, build `tpl_info` model nodes, skip member processing (Milestone 3)
+- [x] Model builder: detect template declarations, build `tpl_info` model nodes, **continue processing members** with `unresolved_type` for template param references (Milestone 3–4)
 - [x] Resolution passes: skip template definitions in all passes (symbol_resolver, aggregate_type_resolver, type_reference_resolver, signature_resolver, model_materializer, declaration_generator, implementation_generator) (Milestone 3)
 - [x] Tests: lexer tests for `template`/`typename` keywords (Milestone 1)
 - [x] Tests: parser tests for template declarations (Milestone 2)
 - [x] Tests: model tests for template aggregate definitions (Milestone 3)
 - [x] Tests: model tests for template function definitions (Milestone 3)
+- [x] AST Cloner: deep copy of AST subtree (retained for general use, no longer required for instantiation) (Milestone 4)
+- [x] Template Instantiator: **model-level** — clone model members, substitute types via `substitute_type()`, no AST dependency (Milestone 4)
+- [x] Type substitution: `substitute_type()` utility recursively substitutes `unresolved_type` through wrapper type chains (Milestone 4)
+- [x] Name generation: `build_instantiation_key` and `build_instantiated_name` helpers (Milestone 4)
+- [x] Instantiation cache: same args return same instance, different args produce different instances (Milestone 4)
+- [x] Tests: template instantiator model-level tests (aggregate + function + cache + names + member type verification + body cloning) (Milestone 4)
 
 **To do — Phase 1:**
-- [ ] Symbol resolver: resolve template names, trigger monomorphization on `Name<Args>` usage (Milestone 4/5)
-- [ ] AST Cloner: deep copy of AST subtree for instantiation (Milestone 4)
-- [ ] Template Instantiator: clone AST, substitute params, rebuild model (Milestone 4)
+- [ ] Symbol resolver: resolve template names, trigger monomorphization on `Name<Args>` usage (Milestone 5)
 - [ ] Aggregate type resolver: handle template type parameter substitution (Milestone 5)
 - [ ] Type reference resolver: resolve template type arguments in expressions (Milestone 5)
 - [ ] Value parameter support: compile-time constant expression evaluation for value parameters
+- [ ] Suppress cosmetic "cannot resolve type: T" messages for template param unresolved_type entries
 - [ ] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint
 - [ ] Default template parameters: apply defaults when trailing arguments are omitted
 - [ ] Name mangling: encode template arguments (`I…E` markers) in mangled names (Milestone 5)

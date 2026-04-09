@@ -370,6 +370,11 @@ namespace k::parse {
                 return _exprs;
             }
 
+            /** Mutable access to the expression list (for AST rewriting). */
+            std::vector<expr_ptr>& mutable_exprs() {
+                return _exprs;
+            }
+
         };
 
         struct literal_expr : public expression {

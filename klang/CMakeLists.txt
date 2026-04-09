@@ -54,6 +54,7 @@ add_library(klangcomp
         src/model/tools/kdi_importer.cpp
         src/model/tools/kdi_type_converter.hpp
         src/model/tools/kdi_type_converter.cpp
+        src/model/template_instantiator.cpp
 )
 
 target_include_directories(klangcomp PRIVATE
@@ -150,6 +151,7 @@ add_executable(klang-tests
         tests/test-gen-temporary-brace-init.cpp
         tests/test-gen-template-aggregates.cpp
         tests/test-gen-template-functions.cpp
+        tests/test-template-instantiator.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
 # Export symbols from the test executable so that the JIT's

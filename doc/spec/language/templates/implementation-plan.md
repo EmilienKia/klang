@@ -115,39 +115,36 @@ aggregates and functions are recognized in the model but not yet instantiable.
 
 ---
 
-### Milestone 4 — AST Cloner & Template Instantiator
+### Milestone 4 — Template Instantiator (model-level) ✅ DONE
 
-**Goal:** The core instantiation engine works. Given a template + concrete arguments,
-it can clone the AST, substitute parameters, and rebuild the model.
+**Status:** Completed. All tests passing.
+
+**Goal:** The core instantiation engine works at the model level. Given a template
+definition (whose members are already built with unresolved_type placeholders) and
+concrete arguments, it clones model nodes and substitutes types directly — no AST
+cloning or re-parsing is needed.
 
 **Steps:**
-1. **AST Cloner** (`klang/src/parse/ast_cloner.hpp/.cpp`):
-   - Visitor-based deep copy of an AST subtree.
-   - Produces structurally identical tree with fresh shared_ptr ownership.
-   - Test by cloning various AST subtrees and comparing.
-2. **Template Instantiator** (`klang/src/model/template_instantiator.hpp/.cpp`):
-   - `instantiate(template_info, args, parent_scope)`:
-     a. Clone the stored AST.
-     b. Walk the cloned AST to replace:
-        - `identified_type_specifier` matching a type parameter -> concrete type's
-          type specifier.
-        - `identifier_expr` matching a value parameter -> `literal_expr` with the
-          concrete value.
-     c. Feed the rewritten AST to a fresh `model_builder` pass.
-     d. Return the resulting model node(s).
-3. **Unit-level instantiation methods**:
-   - `unit::instantiate_aggregate_template(template_def, args)`.
-   - `unit::instantiate_function_template(template_def, args)`.
-   - Check registry, delegate to `template_instantiator`, register result.
-4. **Name generation**: Concrete instantiations get a name that encodes the arguments
-   (e.g., `Pair__int` internally, mangled as `N4PairIiEE`).
+1. **Template Instantiator** (`klang/src/model/template_instantiator.hpp/.cpp`):
+   - `instantiate_aggregate(tpl_def, args, parent_ns, unit, ctx, logger)`:
+     a. Build a type substitution map from template params → concrete types.
+     b. Create a new concrete aggregate in the parent namespace.
+     c. Clone member variables, methods, constructors, destructors from the
+        template definition, substituting types.
+   - `instantiate_function(tpl_def, args, parent_ns, unit, ctx, logger)`:
+     a. Same substitution approach for free functions.
+     b. Clone parameters, return type, and body with type substitution.
+   - Expression and statement cloning with recursive type substitution.
+2. **Instantiation cache**: `tpl_info::instantiations` map ensures the same
+   argument combination is not instantiated twice.
+3. **Name generation**: Concrete instantiations get a name that encodes the arguments
+   (e.g., `Box__int` internally).
 
 **Tests (Milestone 4):**
-- Test AST cloner: clone a function_decl AST, verify structural equality.
-- Test parameter substitution: clone + substitute `T->int` in a simple function AST.
-- Instantiate a template function with `int`, verify model has a concrete function.
-
-**Estimated effort:** Large (8-12 hours). This is the core new machinery.
+- Instantiate a template struct with `T=int`, verify concrete aggregate and members.
+- Instantiate a template function with `T=int`, verify concrete function, params, body.
+- Cache hit: same args → same instance; different args → different instances.
+- Name helpers: verify key and name generation.
 
 ---
 
@@ -356,6 +353,8 @@ from other modules.
 
 *Each milestone should end with a green test suite. Milestones can be submitted as
 individual PRs for review.*
+
+
 
 
 

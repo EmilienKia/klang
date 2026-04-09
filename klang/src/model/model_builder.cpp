@@ -401,12 +401,11 @@ namespace k::model {
                 }
                 ti->params.push_back(std::move(desc));
             }
-            // Store the original AST for future cloning/instantiation
-            ti->original_aggregate_ast = st.shared_as<parse::ast::aggregate_decl>();
             agg->set_tpl_info(std::move(ti));
-            // Do NOT process member declarations for template definitions;
-            // they will be processed for each concrete instantiation.
-            return;
+            // Continue processing member declarations: they will have unresolved_type
+            // for template parameter references (e.g. "T"), which is fine because
+            // resolution passes skip template definitions. The populated model members
+            // serve as the "recipe" for model-level instantiation.
         }
 
         // Push aggregate context
@@ -787,10 +786,11 @@ namespace k::model {
                 }
                 ti->params.push_back(std::move(desc));
             }
-            ti->original_function_ast = func.shared_as<parse::ast::function_decl>();
             function->set_tpl_info(std::move(ti));
-            // Do NOT process parameters, body, or other details for template definitions.
-            return;
+            // Continue processing parameters, body, and other details: they will
+            // have unresolved_type for template parameter references, which is fine
+            // because resolution passes skip template definitions. The populated
+            // model serves as the "recipe" for model-level instantiation.
         }
 
         // Populate annotation instances from the AST annotation list

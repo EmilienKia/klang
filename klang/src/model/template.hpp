@@ -26,11 +26,6 @@
 #include <variant>
 #include <vector>
 
-namespace k::parse::ast {
-struct aggregate_decl;
-struct function_decl;
-}
-
 namespace k::model {
 
 class type;
@@ -144,8 +139,14 @@ using template_instantiation_key = std::string;
 /**
  * Describes a template definition attached to an aggregate or function.
  *
- * Stores the template parameter descriptors and the original AST node
- * (needed for future instantiation in Milestone 4).
+ * Stores the template parameter descriptors.  The model members of the
+ * template entity (variables, functions, body, etc.) are built with
+ * unresolved_type placeholders for template parameter references.
+ * Instantiation clones and type-substitutes at the model level.
+ *
+ * The original AST nodes are retained optionally for diagnostic purposes
+ * (source location in error/warning messages) but are NOT required for
+ * instantiation.
  *
  * The instantiations map caches already-instantiated concrete entities
  * so that the same <Args> combination is not instantiated twice.
@@ -153,20 +154,6 @@ using template_instantiation_key = std::string;
 struct tpl_info {
     /** Template parameter descriptors (in declaration order). */
     std::vector<template_param_descriptor> params;
-
-    /**
-     * Original AST aggregate_decl (for template aggregates).
-     * Stored so that the instantiator (Milestone 4) can clone and
-     * re-build the model for each concrete instantiation.
-     */
-    std::shared_ptr<k::parse::ast::aggregate_decl> original_aggregate_ast;
-
-    /**
-     * Original AST function_decl (for template functions).
-     * Stored so that the instantiator (Milestone 4) can clone and
-     * re-build the model for each concrete instantiation.
-     */
-    std::shared_ptr<k::parse::ast::function_decl> original_function_ast;
 
     /**
      * Cache of concrete instantiations keyed by a canonical string

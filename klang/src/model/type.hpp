@@ -22,6 +22,7 @@
 #include <memory>
 #include <map>
 #include <optional>
+#include <unordered_map>
 
 #include "../common/common.hpp"
 
@@ -1013,6 +1014,25 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
     return false;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Type substitution support (for template instantiation at model level)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Map from template parameter name to concrete type. */
+using type_substitution_map = std::unordered_map<std::string, std::shared_ptr<type>>;
+
+/**
+ * Recursively substitute types through wrapper chains.
+ *
+ * If \p t is an unresolved_type whose name matches a key in \p subst,
+ * the concrete type from the map is returned.  For wrapper types
+ * (pointer, reference, const, owner, view, link, drain, array) the
+ * inner type is substituted and the wrapper is rebuilt on the new inner
+ * type.  All other types are returned unchanged.
+ */
+std::shared_ptr<type> substitute_type(
+    const std::shared_ptr<type>& t,
+    const type_substitution_map& subst);
 
 } // namespace k::model
 #endif //KLANG_TYPE_HPP

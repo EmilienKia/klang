@@ -276,6 +276,7 @@ struct vtable_layout {
 
 
 class model_visitor;
+class template_instantiator;
 
 /**
  * Base class for all language construction.
@@ -293,6 +294,7 @@ protected:
 
     friend class statement;
     friend class variable_definition;
+    friend class template_instantiator;
     void set_parent(const std::shared_ptr<element> &parent_element) {
         _parent = parent_element;
     }
@@ -486,6 +488,7 @@ public:
     typedef std::map<std::string, std::shared_ptr<variable_definition>> variable_map_t;
         
 protected:
+    friend class template_instantiator;
     /** Map of all defined vars. */
     variable_map_t _vars;
 

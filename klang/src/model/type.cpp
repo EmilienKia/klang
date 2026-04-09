@@ -819,5 +819,51 @@ std::string enum_type::to_string() const {
     return "enum <unknown>";
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Type substitution (template instantiation support)
+// ═══════════════════════════════════════════════════════════════════════════
+
+std::shared_ptr<type> substitute_type(
+    const std::shared_ptr<type>& t,
+    const type_substitution_map& subst)
+{
+    if (!t) return nullptr;
+
+    // Leaf: unresolved_type → look up in substitution map
+    if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        auto it = subst.find(ut->type_id().to_string());
+        if (it != subst.end()) {
+            return it->second;
+        }
+        return t; // not a template param, keep as-is
+    }
+
+    // Wrapper types: substitute inner type and rebuild wrapper if changed
+    auto inner = t->get_subtype();
+    if (!inner) return t; // primitive or leaf — no substitution needed
+
+    auto new_inner = substitute_type(inner, subst);
+    if (new_inner == inner) return t; // unchanged
+
+    // Rebuild the wrapper on the substituted inner type
+    if (type::is_reference(t))   return new_inner->get_reference();
+    if (type::is_pointer(t))     return new_inner->get_pointer();
+    if (type::is_link(t))        return new_inner->get_link();
+    if (type::is_view(t))        return new_inner->get_view();
+    if (type::is_owner(t))       return new_inner->get_owner();
+    if (type::is_drain(t))       return new_inner->get_drain();
+    if (type::is_const(t))       return new_inner->get_const();
+    if (type::is_array(t)) {
+        if (type::is_sized_array(t)) {
+            auto sa = std::dynamic_pointer_cast<sized_array_type>(t);
+            return new_inner->get_array(sa->get_size());
+        }
+        return new_inner->get_array();
+    }
+
+    // Unknown wrapper — return as-is
+    return t;
+}
+
 
 } // k::model

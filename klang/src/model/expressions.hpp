@@ -55,6 +55,8 @@ namespace gen {
 class symbol_resolver;
 }
 
+class template_instantiator;
+
 
 /**
  * Base class for all expressions.
@@ -88,6 +90,7 @@ protected:
 
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
+    friend class template_instantiator;
 
     void set_type(std::shared_ptr<type> type);
 

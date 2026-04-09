@@ -25,6 +25,8 @@
 
 namespace k::model {
 
+class template_instantiator;
+
 
 /**
  * Base statement class
@@ -305,6 +307,7 @@ protected:
     friend class block;
     friend class for_statement;
     friend class gen::implementation_generator;
+    friend class template_instantiator;
 
     std::shared_ptr<parameter> _func_param;
 
