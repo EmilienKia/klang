@@ -1,0 +1,194 @@
+/*
+ * K Language compiler
+ *
+ * Copyright 2023-2026 Emilien Kia
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef KLANG_TEMPLATE_HPP
+#define KLANG_TEMPLATE_HPP
+
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <variant>
+#include <vector>
+
+namespace k::parse::ast {
+struct aggregate_decl;
+struct function_decl;
+}
+
+namespace k::model {
+
+class type;
+class aggregate;
+class function;
+
+/**
+ * Describes the kind of a template parameter.
+ *
+ * - TYPENAME: accepts any type argument.
+ * - STRUCT/CLASS/INTERFACE: constrained to the corresponding aggregate kind.
+ * - VALUE: a non-type (value) parameter with an explicit type.
+ */
+enum class template_param_kind {
+    TYPENAME,
+    STRUCT,
+    CLASS,
+    INTERFACE,
+    VALUE
+};
+
+/**
+ * Describes a single parameter of a template definition.
+ *
+ * For type parameters: kind is TYPENAME/STRUCT/CLASS/INTERFACE,
+ *   constraint_type is an optional base-type constraint,
+ *   default_type is an optional default type.
+ *
+ * For value parameters: kind is VALUE,
+ *   value_type is the explicit type (e.g. unsigned int),
+ *   default_value is an optional compile-time constant default.
+ */
+struct template_param_descriptor {
+    /** Parameter kind (type or value). */
+    template_param_kind kind = template_param_kind::TYPENAME;
+
+    /** Parameter name (e.g. "T", "N"). */
+    std::string name;
+
+    /**
+     * For type parameters: optional constraint type (e.g. the "Base" in
+     * "template<class T : Base>"). nullptr if unconstrained.
+     */
+    std::shared_ptr<type> constraint_type;
+
+    /**
+     * For type parameters: optional default type. nullptr if no default.
+     */
+    std::shared_ptr<type> default_type;
+
+    /**
+     * For value parameters: the explicit type of the value parameter
+     * (e.g. "unsigned int" in "N : unsigned int"). nullptr for type parameters.
+     */
+    std::shared_ptr<type> value_type;
+
+    /**
+     * For value parameters: optional default value as a compile-time constant.
+     * 0 if no default. Only meaningful when kind == VALUE.
+     */
+    std::optional<int64_t> default_value;
+
+    /** True if this is a type parameter. */
+    bool is_type_param() const {
+        return kind != template_param_kind::VALUE;
+    }
+
+    /** True if this is a value parameter. */
+    bool is_value_param() const {
+        return kind == template_param_kind::VALUE;
+    }
+};
+
+/**
+ * A concrete template argument provided at an instantiation site.
+ *
+ * Exactly one of type_arg / value_arg is set:
+ * - type_arg for type arguments (e.g. "int" in Pair<int>)
+ * - value_arg for value arguments (e.g. "10" in Array<int, 10>)
+ */
+struct template_argument {
+    /** Type argument (nullptr if this is a value argument). */
+    std::shared_ptr<type> type_arg;
+
+    /** Value argument (nullopt if this is a type argument). */
+    std::optional<int64_t> value_arg;
+
+    /** True if this is a type argument. */
+    bool is_type() const { return type_arg != nullptr; }
+
+    /** True if this is a value argument. */
+    bool is_value() const { return value_arg.has_value(); }
+
+    /** Create a type argument. */
+    static template_argument make_type(std::shared_ptr<type> t) {
+        return {std::move(t), std::nullopt};
+    }
+
+    /** Create a value argument. */
+    static template_argument make_value(int64_t v) {
+        return {nullptr, v};
+    }
+};
+
+/**
+ * Key for looking up an existing instantiation in the instantiation registry.
+ * Encodes the list of concrete arguments as a string for map lookup.
+ */
+using template_instantiation_key = std::string;
+
+/**
+ * Describes a template definition attached to an aggregate or function.
+ *
+ * Stores the template parameter descriptors and the original AST node
+ * (needed for future instantiation in Milestone 4).
+ *
+ * The instantiations map caches already-instantiated concrete entities
+ * so that the same <Args> combination is not instantiated twice.
+ */
+struct tpl_info {
+    /** Template parameter descriptors (in declaration order). */
+    std::vector<template_param_descriptor> params;
+
+    /**
+     * Original AST aggregate_decl (for template aggregates).
+     * Stored so that the instantiator (Milestone 4) can clone and
+     * re-build the model for each concrete instantiation.
+     */
+    std::shared_ptr<k::parse::ast::aggregate_decl> original_aggregate_ast;
+
+    /**
+     * Original AST function_decl (for template functions).
+     * Stored so that the instantiator (Milestone 4) can clone and
+     * re-build the model for each concrete instantiation.
+     */
+    std::shared_ptr<k::parse::ast::function_decl> original_function_ast;
+
+    /**
+     * Cache of concrete instantiations keyed by a canonical string
+     * encoding of the template arguments.
+     *
+     * For template aggregates: values are shared_ptr<aggregate>.
+     * For template functions: values are shared_ptr<function>.
+     * (We use a variant so both can share the same tpl_info type.)
+     */
+    using instantiation_entry = std::variant<
+        std::shared_ptr<aggregate>,
+        std::shared_ptr<function>
+    >;
+    std::unordered_map<template_instantiation_key, instantiation_entry> instantiations;
+
+    /** True if this tpl_info has been populated with parameters. */
+    bool is_valid() const { return !params.empty(); }
+
+    /** Number of template parameters. */
+    size_t param_count() const { return params.size(); }
+};
+
+} // namespace k::model
+#endif // KLANG_TEMPLATE_HPP
+

@@ -148,6 +148,8 @@ add_executable(klang-tests
         tests/test-gen-static-local.cpp
         tests/test-gen-temporary-construction.cpp
         tests/test-gen-temporary-brace-init.cpp
+        tests/test-gen-template-aggregates.cpp
+        tests/test-gen-template-functions.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
 # Export symbols from the test executable so that the JIT's

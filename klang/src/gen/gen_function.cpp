@@ -318,6 +318,11 @@ void type_reference_resolver::visit_parameter(parameter& param) {
 //
 
 void symbol_resolver::visit_function(function& fn) {
+    // Skip template definitions — they are not instantiated yet.
+    if (fn.is_template()) {
+        trace("[symbol_resolver::visit_function] skipping template '{}'", {fn.get_short_name()});
+        return;
+    }
     trace("[symbol_resolver::visit_function] '{}'", {fn.get_short_name()});
     visit_named_element(fn);
 
@@ -574,6 +579,9 @@ void symbol_resolver::visit_function(function& fn) {
 }
 
 void signature_resolver::visit_function(function& fn) {
+    // Skip template definitions — they are not instantiated yet.
+    if (fn.is_template()) return;
+
     // Resolve this-parameter type
     if (fn.is_member() && !fn.is_static()) {
         if (auto this_param = fn.get_this_parameter()) {
@@ -598,6 +606,11 @@ void signature_resolver::visit_function(function& fn) {
 }
 
 void type_reference_resolver::visit_function(function& fn) {
+    // Skip template definitions — they are not instantiated yet.
+    if (fn.is_template()) {
+        trace("[type_reference_resolver::visit_function] skipping template '{}'", {fn.get_short_name()});
+        return;
+    }
     trace("[type_reference_resolver::visit_function] '{}'", {fn.get_short_name()});
 
     if (fn.is_member() && !fn.is_static()) {
@@ -629,6 +642,11 @@ void type_reference_resolver::visit_function(function& fn) {
 }
 
 void declaration_generator::visit_function(function &function) {
+    // Skip template definitions — they are not instantiated yet.
+    if (function.is_template()) {
+        trace("[declaration_generator::visit_function] skipping template '{}'", {function.get_short_name()});
+        return;
+    }
     trace("[declaration_generator::visit_function] '{}'", {function.get_short_name()});
     // Deleted constructors must never be called; do not emit any LLVM declaration for them.
     if (function.is_deleted()) {
@@ -756,6 +774,11 @@ void declaration_generator::visit_function(function &function) {
  *   10. Emit function epilogue (return, cleanup, dead instruction elimination).
  */
 void implementation_generator::visit_function(function &function) {
+    // Skip template definitions — they are not instantiated yet.
+    if (function.is_template()) {
+        trace("[implementation_generator::visit_function] skipping template '{}'", {function.get_short_name()});
+        return;
+    }
     trace("[implementation_generator::visit_function] '{}'", {function.get_short_name()});
     // Deleted functions have no LLVM declaration and must never be implemented.
     if (function.is_deleted()) {

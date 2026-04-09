@@ -369,6 +369,46 @@ namespace k::model {
             }
         }
 
+        // ── Template declaration handling ──
+        // If this aggregate is a template, build the tpl_info descriptor
+        // and skip processing of member declarations (they will be processed
+        // later when the template is instantiated).
+        if (st.is_template()) {
+            debug("[model_builder::visit_aggregate_decl] template aggregate '{}'", {std::string{st.name.content}});
+            auto ti = std::make_unique<tpl_info>();
+            for (auto& tp : st.template_params) {
+                template_param_descriptor desc;
+                desc.name = std::string{tp->name.content};
+                if (tp->is_type_param()) {
+                    // Type parameter: kind determined by kind_kw
+                    if (tp->kind_kw->type == lex::keyword::TYPENAME) {
+                        desc.kind = template_param_kind::TYPENAME;
+                    } else if (tp->kind_kw->type == lex::keyword::STRUCT) {
+                        desc.kind = template_param_kind::STRUCT;
+                    } else if (tp->kind_kw->type == lex::keyword::CLASS) {
+                        desc.kind = template_param_kind::CLASS;
+                    } else if (tp->kind_kw->type == lex::keyword::INTERFACE) {
+                        desc.kind = template_param_kind::INTERFACE;
+                    } else {
+                        desc.kind = template_param_kind::TYPENAME;
+                    }
+                    // Constraint type and default type will be resolved later
+                    // during instantiation (Milestone 4+)
+                } else {
+                    // Value parameter
+                    desc.kind = template_param_kind::VALUE;
+                    // Value type will be resolved later during instantiation
+                }
+                ti->params.push_back(std::move(desc));
+            }
+            // Store the original AST for future cloning/instantiation
+            ti->original_aggregate_ast = st.shared_as<parse::ast::aggregate_decl>();
+            agg->set_tpl_info(std::move(ti));
+            // Do NOT process member declarations for template definitions;
+            // they will be processed for each concrete instantiation.
+            return;
+        }
+
         // Push aggregate context
         stack<struct_context> push(_contexts, agg);
 
@@ -719,6 +759,39 @@ namespace k::model {
 
         // Wire AST function_decl to the model function
         function->set_ast_function_decl(func.shared_as<parse::ast::function_decl>());
+
+        // ── Template function handling ──
+        // If this function is a template, build the tpl_info descriptor
+        // and skip processing of parameters and body (they will be processed
+        // later when the template is instantiated).
+        if (func.is_template()) {
+            debug("[model_builder::visit_function_decl] template function '{}'", {func_name});
+            auto ti = std::make_unique<tpl_info>();
+            for (auto& tp : func.template_params) {
+                template_param_descriptor desc;
+                desc.name = std::string{tp->name.content};
+                if (tp->is_type_param()) {
+                    if (tp->kind_kw->type == lex::keyword::TYPENAME) {
+                        desc.kind = template_param_kind::TYPENAME;
+                    } else if (tp->kind_kw->type == lex::keyword::STRUCT) {
+                        desc.kind = template_param_kind::STRUCT;
+                    } else if (tp->kind_kw->type == lex::keyword::CLASS) {
+                        desc.kind = template_param_kind::CLASS;
+                    } else if (tp->kind_kw->type == lex::keyword::INTERFACE) {
+                        desc.kind = template_param_kind::INTERFACE;
+                    } else {
+                        desc.kind = template_param_kind::TYPENAME;
+                    }
+                } else {
+                    desc.kind = template_param_kind::VALUE;
+                }
+                ti->params.push_back(std::move(desc));
+            }
+            ti->original_function_ast = func.shared_as<parse::ast::function_decl>();
+            function->set_tpl_info(std::move(ti));
+            // Do NOT process parameters, body, or other details for template definitions.
+            return;
+        }
 
         // Populate annotation instances from the AST annotation list
         for (auto& ast_ann : func.annotations) {

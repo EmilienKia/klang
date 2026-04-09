@@ -234,6 +234,11 @@ void symbol_resolver::resolve_and_validate_annotations(
 // 15. Generate an implicit destructor if any base or member struct has a destructor.
 // Note: class-specific processing (vtable layout, vptr injection) is done in visit_klass.
 void symbol_resolver::visit_aggregate(aggregate& st) {
+    // Skip template definitions — they are not instantiated yet.
+    if (st.is_template()) {
+        trace("[symbol_resolver::visit_aggregate] skipping template '{}'", {st.get_short_name()});
+        return;
+    }
     trace("[symbol_resolver::visit_aggregate] '{}'", {st.get_short_name()});
     lex::opt_any_lexeme st_lexeme;
     if (auto ast_ad = st.get_ast_aggregate_decl()) st_lexeme = lex::any_lexeme{ast_ad->name};
@@ -679,6 +684,9 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
 // Pre-resolve function signatures (parameter + return types) within an aggregate,
 // without processing function bodies or member variable init expressions.
 void signature_resolver::visit_aggregate(aggregate& st) {
+    // Skip template definitions — they are not instantiated yet.
+    if (st.is_template()) return;
+
     // Visit nested aggregate children first (depth-first)
     for (auto& child : st.get_children()) {
         if (auto nested_st = std::dynamic_pointer_cast<aggregate>(child)) {
@@ -711,6 +719,11 @@ void signature_resolver::visit_aggregate(aggregate& st) {
 //     (duplicate signatures) and constructor overload collisions within this aggregate.
 // Note: class-specific LLVM vtable struct-type building is done in visit_klass.
 void type_reference_resolver::visit_aggregate(aggregate& st) {
+    // Skip template definitions — they are not instantiated yet.
+    if (st.is_template()) {
+        trace("[type_reference_resolver::visit_aggregate] skipping template '{}'", {st.get_short_name()});
+        return;
+    }
     trace("[type_reference_resolver::visit_aggregate] '{}'", {st.get_short_name()});
     lex::opt_any_lexeme st_lexeme;
     if (auto ast_ad = st.get_ast_aggregate_decl()) st_lexeme = lex::any_lexeme{ast_ad->name};
@@ -783,6 +796,11 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
 //  3. Pop the struct stack.
 // Note: class vtable global-variable emission is done in visit_klass.
 void declaration_generator::visit_aggregate(aggregate& st) {
+    // Skip template definitions — they are not instantiated yet.
+    if (st.is_template()) {
+        trace("[declaration_generator::visit_aggregate] skipping template '{}'", {st.get_short_name()});
+        return;
+    }
     trace("[declaration_generator::visit_aggregate] '{}'", {st.get_short_name()});
     _struct_stack.push(st.shared_as<aggregate>());
 
@@ -1056,6 +1074,11 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
 //  3. Pop the struct stack.
 // Note: vtable initializer filling is done in visit_klass (class-specific).
 void implementation_generator::visit_aggregate(aggregate& st) {
+    // Skip template definitions — they are not instantiated yet.
+    if (st.is_template()) {
+        trace("[implementation_generator::visit_aggregate] skipping template '{}'", {st.get_short_name()});
+        return;
+    }
     trace("[implementation_generator::visit_aggregate] '{}'", {st.get_short_name()});
     _struct_stack.push(st.shared_as<aggregate>());
 

@@ -30,6 +30,7 @@
 #include "../common/common.hpp"
 #include "type.hpp"
 #include "import.hpp"
+#include "template.hpp"
 
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
@@ -984,6 +985,12 @@ protected:
     /** Base classes declared in the inheritance clause (in declaration order). */
     std::vector<base_spec> _bases;
 
+    /**
+     * Template information for this aggregate (non-null only if this is a template definition).
+     * Holds parameter descriptors, the original AST, and the instantiation cache.
+     */
+    std::unique_ptr<tpl_info> _tpl_info;
+
 
     aggregate(std::shared_ptr<element> parent) :
         element(parent) {}
@@ -1167,6 +1174,19 @@ public:
 
     /** Returns the copy constructor if one exists, nullptr otherwise. */
     std::shared_ptr<constructor> get_copy_constructor() const;
+
+    //
+    // Template support
+    //
+
+    /** True if this aggregate is a template definition (has template parameters). */
+    bool is_template() const { return _tpl_info != nullptr; }
+
+    /** Returns the template info (nullptr if not a template). */
+    tpl_info* get_tpl_info() const { return _tpl_info.get(); }
+
+    /** Set the template info (takes ownership). */
+    void set_tpl_info(std::unique_ptr<tpl_info> ti) { _tpl_info = std::move(ti); }
 };
 
 /**
@@ -1545,6 +1565,12 @@ protected:
      *  The variable_statement is inserted as the first statement in the function's block. */
     std::shared_ptr<variable_statement> _named_return_var;
 
+    /**
+     * Template information for this function (non-null only if this is a template definition).
+     * Holds parameter descriptors, the original AST, and the instantiation cache.
+     */
+    std::unique_ptr<tpl_info> _tpl_info;
+
     function(std::shared_ptr<element> parent, bool is_static = false) :
         element(parent), _is_static(is_static) {}
 
@@ -1714,6 +1740,19 @@ public:
     std::shared_ptr<k::parse::ast::function_decl> get_ast_function_decl() const {
         return get_ast_node_as<k::parse::ast::function_decl>();
     }
+
+    //
+    // Template support
+    //
+
+    /** True if this function is a template definition (has template parameters). */
+    bool is_template() const { return _tpl_info != nullptr; }
+
+    /** Returns the template info (nullptr if not a template). */
+    tpl_info* get_tpl_info() const { return _tpl_info.get(); }
+
+    /** Set the template info (takes ownership). */
+    void set_tpl_info(std::unique_ptr<tpl_info> ti) { _tpl_info = std::move(ti); }
 
 };
 

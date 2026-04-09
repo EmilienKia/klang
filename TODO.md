@@ -17,22 +17,29 @@ Phase 1 implements the core template infrastructure with explicit-only instantia
 See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templates.md) for the full specification.
 
 **Done:**
-- (nothing yet)
+- [x] Lexer: add `template` and `typename` keywords (Milestone 1)
+- [x] Parser: parse `TemplateDeclaration` clause before aggregates and functions (Milestone 2)
+- [x] Parser: parse `TemplateArgList` in `QualifiedIdentifier` / `TypeSpec` (angle-bracket disambiguation) (Milestone 2)
+- [x] AST: add `template_parameter` node, `template_arg_list` in `identified_type_specifier`, optional `template_params` in `aggregate_decl` and `function_decl` (Milestone 2)
+- [x] Model: `template.hpp` with `template_param_descriptor`, `template_argument`, `tpl_info` (Milestone 3)
+- [x] Model: `_tpl_info` in `aggregate` and `function`, `is_template()` helpers (Milestone 3)
+- [x] Model builder: detect template declarations, build `tpl_info` model nodes, skip member processing (Milestone 3)
+- [x] Resolution passes: skip template definitions in all passes (symbol_resolver, aggregate_type_resolver, type_reference_resolver, signature_resolver, model_materializer, declaration_generator, implementation_generator) (Milestone 3)
+- [x] Tests: lexer tests for `template`/`typename` keywords (Milestone 1)
+- [x] Tests: parser tests for template declarations (Milestone 2)
+- [x] Tests: model tests for template aggregate definitions (Milestone 3)
+- [x] Tests: model tests for template function definitions (Milestone 3)
 
 **To do — Phase 1:**
-- [ ] Lexer: add `template` and `typename` keywords
-- [ ] Parser: parse `TemplateDeclaration` clause before aggregates and functions
-- [ ] Parser: parse `TemplateArgList` in `QualifiedIdentifier` / `TypeSpec` (angle-bracket disambiguation)
-- [ ] AST: add `template_parameter` node, `template_arg_list` in `identified_type_specifier`, optional `template_params` in `aggregate_decl` and `function_decl`
-- [ ] Model: `template_parameter` (type or value), `template_definition<T>` wrapper for function/aggregate, `template_instantiation_registry` in `unit`
-- [ ] Model builder: detect template declarations, build `template_definition` model nodes
-- [ ] Symbol resolver: resolve template names, trigger monomorphization on `Name<Args>` usage
-- [ ] Aggregate type resolver: handle template type parameter substitution
-- [ ] Type reference resolver: resolve template type arguments in expressions
+- [ ] Symbol resolver: resolve template names, trigger monomorphization on `Name<Args>` usage (Milestone 4/5)
+- [ ] AST Cloner: deep copy of AST subtree for instantiation (Milestone 4)
+- [ ] Template Instantiator: clone AST, substitute params, rebuild model (Milestone 4)
+- [ ] Aggregate type resolver: handle template type parameter substitution (Milestone 5)
+- [ ] Type reference resolver: resolve template type arguments in expressions (Milestone 5)
 - [ ] Value parameter support: compile-time constant expression evaluation for value parameters
 - [ ] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint
 - [ ] Default template parameters: apply defaults when trailing arguments are omitted
-- [ ] Name mangling: encode template arguments (`I…E` markers) in mangled names
+- [ ] Name mangling: encode template arguments (`I…E` markers) in mangled names (Milestone 5)
 - [ ] Declaration generator: emit LLVM declarations for each concrete instantiation (with weak/COMDAT linkage)
 - [ ] Implementation generator: emit LLVM IR bodies for each concrete instantiation
 - [ ] KDI exporter: export concrete instantiations as regular entities with `template_origin` metadata
@@ -41,8 +48,6 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [ ] kdi-tool: display template origin info in `dump` and `json-dump` commands
 - [ ] Grammar: update `grammar.ebnf` with `TemplateDeclaration`, `TemplateArgList`, updated `QualifiedIdentifier`
 - [ ] Spec: update `summary.md` with §25 Templates
-- [ ] Tests: lexer tests for `template`/`typename` keywords
-- [ ] Tests: parser tests for template declarations and instantiations
 - [ ] Tests: gen-jit tests for template functions (primitives, structs)
 - [ ] Tests: gen-jit tests for template aggregates (struct, class, interface)
 - [ ] Tests: gen-jit tests for template value parameters

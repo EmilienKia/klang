@@ -1318,6 +1318,9 @@ void aggregate_type_resolver::visit_namespace(ns& ns) {
 }
 
 void aggregate_type_resolver::visit_aggregate(aggregate& st) {
+    // Skip template definitions — they are not instantiated yet.
+    if (st.is_template()) return;
+
     // Visit nested aggregate children first (depth-first), so their types are available
     // before we process members of the outer aggregate.
     for (auto& child : st.get_children()) {
@@ -1645,6 +1648,9 @@ void model_materializer::visit_namespace(ns& n) {
 }
 
 void model_materializer::visit_aggregate(aggregate& st) {
+    // Skip template definitions — they are not instantiated yet.
+    if (st.is_template()) return;
+
     // Visit nested aggregates first (depth-first)
     for (auto& child : st.get_children()) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {

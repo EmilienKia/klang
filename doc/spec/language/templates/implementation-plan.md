@@ -12,7 +12,7 @@ Each milestone ends with a set of passing tests that validates the work done so 
 
 ---
 
-### Milestone 1 — Lexer & Grammar Foundation
+### Milestone 1 — Lexer & Grammar Foundation ✅ DONE
 
 **Goal:** The lexer recognizes `template` and `typename` as keywords. The grammar spec
 is updated. No functional change in the compiler yet.
@@ -37,7 +37,7 @@ is updated. No functional change in the compiler yet.
 
 ---
 
-### Milestone 2 — AST Nodes & Parser
+### Milestone 2 — AST Nodes & Parser ✅ DONE
 
 **Goal:** The parser can parse template declarations and template argument lists.
 Templates are represented in the AST but have no semantic effect yet.
@@ -77,9 +77,11 @@ Templates are represented in the AST but have no semantic effect yet.
 
 ---
 
-### Milestone 3 — Model Layer & Template Definitions
+### Milestone 3 — Model Layer & Template Definitions ✅ DONE
 
-**Goal:** The model builder creates `template_info` for template declarations. Template
+**Status:** Completed. All tests passing (14 test cases, 77 assertions).
+
+**Goal:** The model builder creates `tpl_info` for template declarations. Template
 aggregates and functions are recognized in the model but not yet instantiable.
 
 **Steps:**
@@ -354,4 +356,7 @@ from other modules.
 
 *Each milestone should end with a green test suite. Milestones can be submitted as
 individual PRs for review.*
+
+
+
 
