@@ -362,6 +362,18 @@ public:
     static std::shared_ptr<aggregate> resolve_struct_from(const element& elem, const k::name& qualified_name);
     std::shared_ptr<type> resolve_type_from_root(const k::name& name_without_prefix);
 
+    /**
+     * Try to resolve an unresolved_type that carries AST template arguments
+     * (e.g. Box<int>) by finding the template definition, converting the AST
+     * args to model template_argument values, and triggering instantiation.
+     *
+     * Returns the struct_type of the concrete instantiated aggregate, or
+     * nullptr if the base name is not a known template.
+     */
+    std::shared_ptr<type> try_instantiate_template_type(
+        const std::shared_ptr<unresolved_type>& unres,
+        const element& context_elem);
+
 protected:
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme,
@@ -591,6 +603,18 @@ protected:
     std::shared_ptr<type> resolve_inner_type(
         const std::shared_ptr<type>& inner,
         const element* scope_elem);
+
+    /**
+     * Try to resolve an unresolved_type that carries AST template arguments
+     * (e.g. Box<int>) by finding the template definition, converting the AST
+     * args to model template_argument values, and triggering instantiation.
+     *
+     * Returns the struct_type of the concrete instantiated aggregate, or
+     * nullptr if the base name is not a known template.
+     */
+    std::shared_ptr<type> try_instantiate_template_type(
+        const std::shared_ptr<unresolved_type>& unres,
+        const element& context_elem);
 
     /**
      * Strip the spurious reference(array(T)) → array(T) layer that resolve_type

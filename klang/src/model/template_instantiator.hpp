@@ -193,9 +193,22 @@ private:
     static void substitute_expr_types(
         std::shared_ptr<expression> expr,
         const type_substitution_map& subst);
+
+    /**
+     * Retarget the _constructed_symbol in a cloned init expression to point
+     * to the new (concrete) variable instead of the original template variable.
+     *
+     * Handles constructor_invocation_expression, designated_struct_init_expression,
+     * and array_init_expression — all of which carry a _constructed_symbol set by
+     * model_builder targeting the original variable definition.
+     */
+    static void retarget_init_expr(
+        const std::shared_ptr<expression>& init_expr,
+        const std::shared_ptr<variable_definition>& new_var);
 };
 
 } // namespace k::model
 
 #endif // KLANG_TEMPLATE_INSTANTIATOR_HPP
+
 

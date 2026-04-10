@@ -262,6 +262,21 @@ void type_reference_resolver::resolve_variable_type(
     }
 
     // Step 5: Handle plain unresolved_type via a 4-step fallback chain:
+
+    // ── Template instantiation path ──────────────────────────────────
+    // If the unresolved type carries AST template arguments (e.g. Box<int>),
+    // try to instantiate the template before the regular resolution fallback.
+    if (unres_type->has_template_args()) {
+        const element* var_elem = dynamic_cast<const element*>(&var);
+        if (var_elem) {
+            auto tpl_resolved = try_instantiate_template_type(unres_type, *var_elem);
+            if (tpl_resolved && type::is_resolved(tpl_resolved)) {
+                var.set_type(tpl_resolved);
+                return;
+            }
+        }
+    }
+
     // Step 5a: Qualified name resolution from root namespace (resolve_type_by_name)
     // Plain unresolved_type: qualified name resolution
     std::shared_ptr<type> resolved;

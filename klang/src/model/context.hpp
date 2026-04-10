@@ -52,6 +52,8 @@ class global_variable_definition;
 namespace gen {
     class declaration_generator;
     class implementation_generator;
+    class type_reference_resolver;
+    class aggregate_type_resolver;
 }
 
 
@@ -220,6 +222,8 @@ protected:
 
 
     friend class k::compiler;
+    friend class gen::type_reference_resolver;
+    friend class gen::aggregate_type_resolver;
     std::unique_ptr<llvm::LLVMContext> move_llvm_context();
 
 private:

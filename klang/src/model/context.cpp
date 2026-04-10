@@ -239,7 +239,11 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
         auto inner = from_type_specifier(*ct->subtype);
         return inner ? inner->get_const() : std::shared_ptr<type>{};
     } else if(auto ident = dynamic_cast<const k::parse::ast::identified_type_specifier*>(&type_spec)) {
-        return create_unresolved(ident->name.to_name());
+        auto unres = create_unresolved(ident->name.to_name());
+        if (!ident->template_args.empty()) {
+            unres->_ast_template_args = ident->template_args;
+        }
+        return unres;
     } else if(auto kw = dynamic_cast<const k::parse::ast::keyword_type_specifier*>(&type_spec)) {
         return from_keyword(kw->keyword, kw->is_unsigned);
     } else if(auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(&type_spec)) {
@@ -577,6 +581,37 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
         } else if (!type->is_resolved() || type::contains_unresolved(type)) {
             // Not resolved, or contains stale unresolved_type wrappers that need
             // to be replaced with clean type chains.
+            //
+            // If the type is an unresolved template type (carries AST template args),
+            // it should have been resolved by aggregate_type_resolver already.
+            // If it hasn't, try resolve_type as a last resort; if still unresolved,
+            // skip this struct — it will be resolved in a later pass.
+            bool handled = false;
+            if (auto unres = std::dynamic_pointer_cast<unresolved_type>(type)) {
+                if (unres->has_template_args() && !unres->is_resolved()) {
+                    // Try to resolve via the standard fallback
+                    auto res_type = resolve_type(type);
+                    if (res_type && type::is_resolved(res_type)) {
+                        var->set_type(res_type);
+                        effective_type = res_type;
+                        // Walk through to find inner struct_type to resolve
+                        auto walk = res_type;
+                        while (walk) {
+                            if (auto dep_st_type = std::dynamic_pointer_cast<struct_type>(walk)) {
+                                resolve_struct_type(dep_st_type, in_progress);
+                                break;
+                            }
+                            walk = walk->get_subtype();
+                        }
+                        handled = true;
+                    } else {
+                        // Still unresolved — bail out
+                        in_progress.erase(st_type.get());
+                        return; // Will be resolved in a later pass
+                    }
+                }
+            }
+            if (!handled) {
             auto res_type = resolve_type(type);
             if (!res_type) {
                 throw std::runtime_error("Cannot resolve structure field type: " + type->to_string());
@@ -597,6 +632,7 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
             }
             var->set_type(res_type);
             effective_type = res_type;
+            }
         } else if (auto dep_st_type = std::dynamic_pointer_cast<struct_type>(type)) {
             // Already a struct_type but may not have its LLVM type yet (e.g. forward reference).
             resolve_struct_type(dep_st_type, in_progress);

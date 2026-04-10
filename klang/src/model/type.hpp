@@ -38,6 +38,7 @@ namespace llvm {
 namespace k {
 namespace parse::ast {
 class type_specifier;
+struct template_arg;
 }
 
 namespace lex {
@@ -175,6 +176,14 @@ protected:
 
     std::shared_ptr<type> _resolved;
 
+    /**
+     * Optional AST-level template arguments carried from identified_type_specifier.
+     * Empty if the type is not a template instantiation (e.g. plain "Foo").
+     * Populated when the parser sees "Foo<int, float>" — the resolvers later
+     * convert these into model-level template_argument values and trigger instantiation.
+     */
+    std::vector<std::shared_ptr<k::parse::ast::template_arg>> _ast_template_args;
+
     friend class context;
 
     unresolved_type(const name& type_id): _type_id(type_id) {}
@@ -189,6 +198,14 @@ public:
 
     bool is_resolved()const {return !!_resolved;}
     std::shared_ptr<type> get_resolved()const {return _resolved;}
+
+    /** True if this unresolved type carries template arguments (e.g. Box<int>). */
+    bool has_template_args() const { return !_ast_template_args.empty(); }
+
+    /** Return the AST-level template arguments (empty if none). */
+    const std::vector<std::shared_ptr<k::parse::ast::template_arg>>& get_ast_template_args() const {
+        return _ast_template_args;
+    }
 
     llvm::Type* get_llvm_type() const override {
         return _resolved ? _resolved->get_llvm_type() : nullptr;

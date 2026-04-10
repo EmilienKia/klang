@@ -58,6 +58,8 @@
 #include "../model/imported.hpp"
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
+#include "../model/template.hpp"
+#include "../model/template_instantiator.hpp"
 #include "../parse/ast.hpp"
 
 #include <llvm/IR/DerivedTypes.h>
@@ -1114,6 +1116,118 @@ aggregate_type_resolver::resolve_type_from_root(const k::name& name_without_pref
     return {};
 }
 
+// ── Template instantiation from type reference (aggregate_type_resolver) ─────
+
+std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
+    const std::shared_ptr<unresolved_type>& unres,
+    const element& context_elem)
+{
+    const auto& base_name = unres->type_id();
+    const auto& ast_args = unres->get_ast_template_args();
+
+    // 1. Look up the template aggregate by base name (walking scope chain)
+    std::shared_ptr<aggregate> tpl_agg;
+    for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
+        if (auto st = resolve_struct_from(*current, base_name)) {
+            if (st->is_template()) { tpl_agg = st; break; }
+            return {}; // Found non-template — not a template instantiation
+        }
+    }
+    if (!tpl_agg) {
+        auto root_ns = _unit.get_root_namespace();
+        if (root_ns) {
+            if (auto st = resolve_struct_from(*root_ns, base_name)) {
+                if (st->is_template()) tpl_agg = st;
+            }
+        }
+    }
+    if (!tpl_agg) return {};
+
+    auto* ti = tpl_agg->get_tpl_info();
+    if (!ti) return {};
+
+    // 2. Validate argument count
+    if (ast_args.size() != ti->params.size()) return {};
+
+    // 3. Convert AST template args to model template_arguments
+    std::vector<template_argument> model_args;
+    model_args.reserve(ast_args.size());
+    for (size_t i = 0; i < ast_args.size(); ++i) {
+        const auto& ast_arg = ast_args[i];
+        if (ast_arg->is_type()) {
+            auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
+            if (!arg_type || !type::is_resolved(arg_type)) {
+                if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
+                    auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
+                    if (resolved && type::is_resolved(resolved)) {
+                        arg_type = resolved;
+                    }
+                }
+            }
+            if (!arg_type || !type::is_resolved(arg_type)) return {};
+            model_args.push_back(template_argument::make_type(arg_type));
+        } else {
+            return {}; // Value template args not yet supported
+        }
+    }
+
+    // 4. Instantiate the template aggregate
+    auto parent_ns = scope_lookup::enclosing_namespace(*tpl_agg);
+    if (!parent_ns) return {};
+
+    auto concrete = template_instantiator::instantiate_aggregate(
+        *tpl_agg, model_args, parent_ns, _unit, _context, *this);
+    if (!concrete) return {};
+
+    // 5. Return existing struct_type or create a new one
+    if (concrete->get_struct_type()) return concrete->get_struct_type();
+
+    std::shared_ptr<struct_type> st_type{
+        new struct_type(concrete->get_short_name(), concrete->shared_as<aggregate>())};
+    _context->add_struct(st_type);
+    concrete->set_struct_type(st_type);
+
+    // 5b. Create 'this' parameters for member functions (requires struct_type)
+    for (auto& child : concrete->get_children()) {
+        if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+            if (fn->is_member() && !fn->is_static()) {
+                fn->create_this_parameter();
+            }
+        }
+    }
+    // 5c. Assign FQ (fully-qualified) name to the concrete aggregate.
+    //     symbol_resolver::visit_named_element normally does this, but the
+    //     concrete aggregate was created after that pass already ran.
+    //     Without a root-prefixed FQ name, update_mangled_name() produces
+    //     an empty mangled name which breaks code generation and the JIT.
+    if (concrete->get_fq_name().empty() && !concrete->get_short_name().empty()) {
+        if (auto ancestor = concrete->template ancestor<named_element>()) {
+            concrete->assign_name(ancestor->get_name().with_back(concrete->get_short_name()));
+        }
+    }
+    concrete->update_mangled_name();
+
+    // 5d. Update FQ names and mangled names for children (functions, constructors, etc.)
+    for (auto& child : concrete->get_children()) {
+        if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+            // Build FQ name from parent chain (mirrors symbol_resolver::visit_named_element)
+            if (fn->get_fq_name().empty() && !fn->get_short_name().empty()) {
+                if (auto parent_named = fn->template parent<named_element>()) {
+                    fn->assign_name(parent_named->get_name().with_back(fn->get_short_name()));
+                }
+            }
+            fn->update_mangled_name();
+        }
+    }
+
+    // 6. Resolve the LLVM struct type immediately (member types are already
+    //    concrete thanks to the instantiator's type substitution).
+    std::unordered_set<struct_type*> in_progress;
+    _context->resolve_struct_type(st_type, in_progress);
+
+    return st_type;
+}
+
 std::shared_ptr<type>
 /**
  * Resolve a type by qualified name from a context element, walking up the scope chain
@@ -1289,6 +1403,12 @@ resolve_one_type(const std::shared_ptr<type>& t,
     auto unres = std::dynamic_pointer_cast<unresolved_type>(t);
     if (!unres) return t; // cannot resolve further
 
+    // ── Template instantiation path ──────────────────────────────────
+    if (unres->has_template_args()) {
+        auto tpl_resolved = resolver.try_instantiate_template_type(unres, context_elem);
+        if (tpl_resolved && type::is_resolved(tpl_resolved)) return tpl_resolved;
+    }
+
     auto resolved = resolver.resolve_type_by_name(unres->type_id(), context_elem);
     if (!resolved || !type::is_resolved(resolved)) {
         resolved = ctx->from_string(unres->type_id());
@@ -1312,8 +1432,10 @@ void aggregate_type_resolver::visit_unit(unit& /*unit*/) {
 }
 
 void aggregate_type_resolver::visit_namespace(ns& ns) {
-    for (auto& child : ns.get_children()) {
-        child->accept(*this);
+    // Use index-based loop: template instantiation can add new aggregates
+    // to this namespace's children list, invalidating range-based iterators.
+    for (size_t i = 0; i < ns.get_children().size(); ++i) {
+        ns.get_children()[i]->accept(*this);
     }
 }
 
@@ -1329,11 +1451,17 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
         }
     }
 
-    // NOTE: member variable type resolution, global variable type resolution, and
-    // function signature resolution are intentionally NOT done here for Phase 1.
-    // type_reference_resolver handles all of these in Phase 1.b.
-    // aggregate_type_resolver's role is limited to building LLVM vtable struct types
-    // in visit_klass (see below) so they are available before type_reference_resolver runs.
+    // Visit member variable children to resolve their types.
+    // This triggers template instantiation for types like Wrapper<int>,
+    // ensuring concrete instantiations exist before resolve_types() builds
+    // LLVM struct types.
+    for (auto& child : st.get_children()) {
+        if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
+            mv->accept(*this);
+        } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
+            gv->accept(*this);
+        }
+    }
 }
 
 void aggregate_type_resolver::visit_klass(klass& klass) {
@@ -1369,6 +1497,8 @@ void aggregate_type_resolver::visit_interface(interface& iface) {
 void aggregate_type_resolver::visit_member_variable_definition(member_variable_definition& var) {
     // __parent__ is already assigned a resolved type by symbol_resolver
     if (var.get_short_name() == "__parent__") return;
+    // Skip members with no type yet (e.g. annotation fields before resolution)
+    if (!var.get_type()) return;
 
     if (!type::is_resolved(var.get_type())) {
         auto resolved = resolve_one_type(var.get_type(), *this, var, _context);
@@ -1387,6 +1517,7 @@ void aggregate_type_resolver::visit_member_variable_definition(member_variable_d
  * Does NOT visit init expressions (Phase 1.b handles those).
  */
 void aggregate_type_resolver::visit_global_variable_definition(global_variable_definition& var) {
+    if (!var.get_type()) return; // No type yet (e.g. unprocessed static member)
     if (!type::is_resolved(var.get_type())) {
         if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var.get_type())) {
             // Function reference type for a global variable: resolve it using the variable's scope.
@@ -1508,7 +1639,14 @@ void aggregate_type_resolver::visit_parameter(parameter& param) {
                 auto unres = std::dynamic_pointer_cast<unresolved_type>(inner);
                 if (unres && !unres->type_id().empty()) {
                     // Resolve the inner aggregate type
-                    auto inner_resolved = resolve_type_by_name(unres->type_id(), *owner_func);
+                    std::shared_ptr<type> inner_resolved;
+                    // If the inner type has template args, try template instantiation first
+                    if (unres->has_template_args()) {
+                        inner_resolved = try_instantiate_template_type(unres, *owner_func);
+                    }
+                    if (!inner_resolved || !type::is_resolved(inner_resolved)) {
+                        inner_resolved = resolve_type_by_name(unres->type_id(), *owner_func);
+                    }
                     if (type::is_resolved(inner_resolved)) {
                         // Re-apply wrappers in reverse order (innermost first)
                         res_type = inner_resolved;
@@ -1581,11 +1719,17 @@ void aggregate_type_resolver::visit_function(function& fn) {
                 if (resolved) fn.set_return_type(resolved);
             }
         } else {
-        auto resolved = resolve_type_by_name(
-            std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type())
-                ? std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type())->type_id()
-                : k::name{},
-            fn);
+        // Try template instantiation for return types with template args (e.g. Box<int>)
+        auto unres_ret = std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type());
+        std::shared_ptr<type> resolved;
+        if (unres_ret && unres_ret->has_template_args()) {
+            resolved = try_instantiate_template_type(unres_ret, fn);
+        }
+        if (!resolved || !type::is_resolved(resolved)) {
+            resolved = resolve_type_by_name(
+                unres_ret ? unres_ret->type_id() : k::name{},
+                fn);
+        }
         if (resolved && type::is_resolved(resolved)) {
             fn.set_return_type(resolved);
         } else {
@@ -2379,12 +2523,156 @@ type_reference_resolver::resolve_function_ref_type(
     return resolved_type;
 }
 
+// ── Template instantiation from type reference ──────────────────────────────
+
+std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
+    const std::shared_ptr<unresolved_type>& unres,
+    const element& context_elem)
+{
+    const auto& base_name = unres->type_id();
+    const auto& ast_args = unres->get_ast_template_args();
+
+    // 1. Look up the template aggregate by base name (walking scope chain)
+    std::shared_ptr<aggregate> tpl_agg;
+    for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
+        if (auto st = resolve_struct_from(*current, base_name)) {
+            if (st->is_template()) {
+                tpl_agg = st;
+                break;
+            }
+            // Found a non-template aggregate with that name — not a template instantiation
+            return {};
+        }
+    }
+    if (!tpl_agg) {
+        // Try root namespace
+        auto root_ns = _unit.get_root_namespace();
+        if (root_ns) {
+            if (auto st = resolve_struct_from(*root_ns, base_name)) {
+                if (st->is_template()) tpl_agg = st;
+            }
+        }
+    }
+    if (!tpl_agg) return {};
+
+    auto* ti = tpl_agg->get_tpl_info();
+    if (!ti) return {};
+
+    // 2. Validate argument count
+    if (ast_args.size() != ti->params.size()) {
+        // TODO: handle default template arguments
+        return {};
+    }
+
+    // 3. Convert AST template args to model template_arguments
+    std::vector<template_argument> model_args;
+    model_args.reserve(ast_args.size());
+    for (size_t i = 0; i < ast_args.size(); ++i) {
+        const auto& ast_arg = ast_args[i];
+        if (ast_arg->is_type()) {
+            // Resolve the type argument through the context
+            auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
+            if (!arg_type || !type::is_resolved(arg_type)) {
+                // Try resolving it further through the resolver
+                if (arg_type) {
+                    if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
+                        auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
+                        if (resolved && type::is_resolved(resolved)) {
+                            arg_type = resolved;
+                        }
+                    }
+                }
+            }
+            if (!arg_type || !type::is_resolved(arg_type)) return {};
+            model_args.push_back(template_argument::make_type(arg_type));
+        } else if (ast_arg->is_value()) {
+            // TODO: evaluate value expressions at compile time
+            // For now, only integer literals are supported
+            return {};
+        } else {
+            return {};
+        }
+    }
+
+    // 4. Instantiate the template aggregate
+    auto parent_ns_ptr = scope_lookup::enclosing_namespace(*tpl_agg);
+    if (!parent_ns_ptr) return {};
+
+    auto concrete_agg = template_instantiator::instantiate_aggregate(
+        *tpl_agg, model_args, parent_ns_ptr, _unit, _context, *this);
+    if (!concrete_agg) return {};
+
+    // 5. If the concrete aggregate already has a struct_type, return it
+    if (concrete_agg->get_struct_type()) {
+        return concrete_agg->get_struct_type();
+    }
+
+    // 6. Create a struct_type for the freshly instantiated aggregate
+    //    (mimics what symbol_resolver::visit_aggregate does)
+    std::shared_ptr<struct_type> st_type{
+        new struct_type(concrete_agg->get_short_name(), concrete_agg->shared_as<aggregate>())};
+    _context->add_struct(st_type);
+    concrete_agg->set_struct_type(st_type);
+
+    // 6b. Create 'this' parameters for member functions (requires struct_type)
+    for (auto& child : concrete_agg->get_children()) {
+        if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+            if (fn->is_member() && !fn->is_static()) {
+                fn->create_this_parameter();
+            }
+        }
+    }
+    // 6c. Assign FQ (fully-qualified) name to the concrete aggregate.
+    //     symbol_resolver::visit_named_element normally does this, but the
+    //     concrete aggregate was created after that pass already ran.
+    //     Without a root-prefixed FQ name, update_mangled_name() produces
+    //     an empty mangled name which breaks code generation and the JIT.
+    if (concrete_agg->get_fq_name().empty() && !concrete_agg->get_short_name().empty()) {
+        if (auto ancestor = concrete_agg->template ancestor<named_element>()) {
+            concrete_agg->assign_name(ancestor->get_name().with_back(concrete_agg->get_short_name()));
+        }
+    }
+    concrete_agg->update_mangled_name();
+
+    // 6d. Update FQ names and mangled names for children (functions, constructors, etc.)
+    for (auto& child : concrete_agg->get_children()) {
+        if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+            // Build FQ name from parent chain (mirrors symbol_resolver::visit_named_element)
+            if (fn->get_fq_name().empty() && !fn->get_short_name().empty()) {
+                if (auto parent_named = fn->template parent<named_element>()) {
+                    fn->assign_name(parent_named->get_name().with_back(fn->get_short_name()));
+                }
+            }
+            fn->update_mangled_name();
+        }
+    }
+
+    // 7. Resolve the LLVM struct type immediately (member types are already
+    //    concrete thanks to the instantiator's type substitution)
+    std::unordered_set<struct_type*> in_progress;
+    _context->resolve_struct_type(st_type, in_progress);
+
+    return st_type;
+}
+
 std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
     const std::shared_ptr<type>& inner,
     const element* scope_elem)
 {
     if (type::is_resolved(inner)) return inner;
     if (auto unres_inner = std::dynamic_pointer_cast<unresolved_type>(inner)) {
+
+        // ── Template instantiation path ─────────────────────────────────
+        // If the unresolved type carries AST template arguments (e.g. Box<int>),
+        // look up the template definition, convert the AST args to model-level
+        // template_argument values, instantiate, and return the concrete type.
+        if (unres_inner->has_template_args() && scope_elem) {
+            auto resolved = try_instantiate_template_type(unres_inner, *scope_elem);
+            if (resolved && type::is_resolved(resolved)) return resolved;
+            // If instantiation failed (e.g. not a template), fall through
+            // to normal resolution for a better error message.
+        }
+
         std::shared_ptr<type> resolved;
         if (scope_elem) {
             resolved = resolve_type_by_name(unres_inner->type_id(), *scope_elem);

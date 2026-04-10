@@ -946,6 +946,8 @@ protected:
     friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
+    friend class gen::aggregate_type_resolver;
+    friend class template_instantiator;
 
     /** Collection of all children of this aggregate. */
     std::vector<std::shared_ptr<element>> _children;
@@ -1474,6 +1476,8 @@ protected:
     friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
+    friend class gen::aggregate_type_resolver;
+    friend class template_instantiator;
 
     bool _is_static = false;
 
@@ -1764,6 +1768,7 @@ protected:
     friend class aggregate;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
+    friend class template_instantiator;
 
 public:
     struct member_init_spec {

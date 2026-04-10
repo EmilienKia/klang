@@ -398,6 +398,10 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         k::model::gen::aggregate_type_resolver agg_type_resolver(*this, _context, *_model_unit);
         agg_type_resolver.resolve();
 
+        // Re-resolve types for any template instantiations that were created
+        // during aggregate type resolution (their LLVM struct types need to be built).
+        _context->resolve_types();
+
         trace("[compiler::parse_sources] model materialization");
         k::model::gen::model_materializer materializer(*this, _context, *_model_unit);
         materializer.materialize();

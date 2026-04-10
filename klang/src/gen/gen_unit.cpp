@@ -821,8 +821,13 @@ void type_reference_resolver::visit_namespace(ns& ns)
     // Full pass: visit everything (including function bodies).
     // Signature resolution is idempotent (already-resolved types are skipped),
     // so only the function bodies and expressions are newly processed.
-    for(auto& child : ns.get_children()) {
-        child->accept(*this);
+    //
+    // Use an index-based loop instead of range-based: template instantiation
+    // triggered during body processing can add new aggregates to this namespace's
+    // children list (via define_structure), which would invalidate range-based
+    // iterators.  An index-based loop naturally picks up the new elements.
+    for (size_t i = 0; i < ns.get_children().size(); ++i) {
+        ns.get_children()[i]->accept(*this);
     }
     // Step 3: Check overload collisions on free functions in this namespace
     // After all children are resolved, check for overload collisions among free functions.
@@ -831,15 +836,15 @@ void type_reference_resolver::visit_namespace(ns& ns)
 
 void declaration_generator::visit_namespace(ns &ns) {
     trace("[declaration_generator::visit_namespace] '{}'", {ns.get_short_name()});
-    for(auto child : ns.get_children()) {
-        child->accept(*this);
+    for (size_t i = 0; i < ns.get_children().size(); ++i) {
+        ns.get_children()[i]->accept(*this);
     }
 }
 
 void implementation_generator::visit_namespace(ns &ns) {
     trace("[implementation_generator::visit_namespace] '{}'", {ns.get_short_name()});
-    for(auto child : ns.get_children()) {
-        child->accept(*this);
+    for (size_t i = 0; i < ns.get_children().size(); ++i) {
+        ns.get_children()[i]->accept(*this);
     }
 }
 

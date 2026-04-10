@@ -162,6 +162,39 @@ std::shared_ptr<expression> template_instantiator::clone_and_substitute_expr(
     return cloned;
 }
 
+void template_instantiator::retarget_init_expr(
+    const std::shared_ptr<expression>& init_expr,
+    const std::shared_ptr<variable_definition>& new_var)
+{
+    if (!init_expr || !new_var) return;
+
+    // constructor_invocation_expression
+    if (auto cie = std::dynamic_pointer_cast<constructor_invocation_expression>(init_expr)) {
+        if (cie->constructed_symbol()) {
+            cie->constructed_symbol()->set_target(new_var);
+        }
+        return;
+    }
+
+    // designated_struct_init_expression
+    if (auto dsie = std::dynamic_pointer_cast<designated_struct_init_expression>(init_expr)) {
+        auto sym = dsie->constructed_symbol();
+        if (sym) {
+            sym->set_target(new_var);
+        }
+        return;
+    }
+
+    // array_init_expression
+    if (auto aie = std::dynamic_pointer_cast<array_init_expression>(init_expr)) {
+        auto sym = aie->constructed_symbol();
+        if (sym) {
+            sym->set_target(new_var);
+        }
+        return;
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Statement cloning with type substitution
 // ═══════════════════════════════════════════════════════════════════════════
@@ -316,10 +349,12 @@ void template_instantiator::clone_member_variable(
     new_var->set_type(substitute_type(src_type, subst));
     new_var->set_const(src.is_const());
 
-    // Clone init expression
+    // Clone init expression and retarget to new variable
     if (src.get_init_expr()) {
-        new_var->set_init_expr(clone_and_substitute_expr(
-            std::const_pointer_cast<expression>(src.get_init_expr()), subst));
+        auto cloned_init = clone_and_substitute_expr(
+            std::const_pointer_cast<expression>(src.get_init_expr()), subst);
+        new_var->set_init_expr(cloned_init);
+        retarget_init_expr(cloned_init, new_var);
     }
 
     // Copy visibility
@@ -521,8 +556,10 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
                 new_var->set_type(substitute_type(src_type, subst));
                 new_var->set_const(gv->is_const());
                 if (gv->get_init_expr()) {
-                    new_var->set_init_expr(clone_and_substitute_expr(
-                        std::const_pointer_cast<expression>(gv->get_init_expr()), subst));
+                    auto cloned_init = clone_and_substitute_expr(
+                        std::const_pointer_cast<expression>(gv->get_init_expr()), subst);
+                    new_var->set_init_expr(cloned_init);
+                    retarget_init_expr(cloned_init, new_var);
                 }
                 if (auto gv_new = std::dynamic_pointer_cast<global_variable_definition>(new_var)) {
                     gv_new->set_visibility(gv->get_visibility());
@@ -532,7 +569,25 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
         // Nested aggregates, enums, using declarations — handled as needed in future
     }
 
-    // 3. Register in the instantiation cache
+    // 3. Post-instantiation: generate default constructor and set up this parameters
+    //    The concrete aggregate was not visited by symbol_resolver, so it needs
+    //    these essential setup steps that symbol_resolver::visit_aggregate normally does.
+
+    // 3a. Generate a default constructor if no explicit constructor was cloned
+    if (concrete->constructors().empty()) {
+        auto default_ctor = constructor::make_shared(concrete->shared_as<aggregate>());
+        default_ctor->set_compiler_generated(true);
+        concrete->_constructors.push_back(default_ctor);
+        concrete->_children.push_back(default_ctor);
+    }
+
+    // 3b. Set up 'this' parameters for all member functions and constructors
+    //     (requires struct_type to be set — callers must ensure this after creating the struct_type)
+
+    // 3c. Update mangled names (if possible — struct_type may not be set yet)
+    concrete->update_mangled_name();
+
+    // 4. Register in the instantiation cache
     ti->instantiations[key] = concrete;
 
     return concrete;
@@ -590,6 +645,10 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
 }
 
 } // namespace k::model
+
+
+
+
 
 
 
