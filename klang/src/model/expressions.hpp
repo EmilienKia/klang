@@ -47,6 +47,8 @@
 namespace k::parse::ast {
 struct expression;
 struct unary_expression;
+struct template_arg;
+using template_arg_list = std::vector<std::shared_ptr<template_arg>>;
 }
 
 namespace k::model {
@@ -224,6 +226,13 @@ protected:
             annotation_type_rtti_target
     > _target;
 
+    /**
+     * Optional AST template arguments carried from the parser.
+     * Set when the user writes func<type_args>(...) — the resolver will
+     * use these to instantiate a template function before resolving the call.
+     */
+    k::parse::ast::template_arg_list _ast_template_args;
+
     symbol_expression(const name &name);
 
     symbol_expression(const std::shared_ptr<variable_definition> &var);
@@ -300,8 +309,19 @@ public:
 
     void set_target(annotation_type_rtti_target target) { _target = std::move(target); }
 
+    /** True if this symbol carries explicit template arguments (from func<args>() syntax). */
+    bool has_ast_template_args() const { return !_ast_template_args.empty(); }
+
+    /** Returns the AST template arguments. */
+    const k::parse::ast::template_arg_list& get_ast_template_args() const { return _ast_template_args; }
+
+    /** Set the AST template arguments. */
+    void set_ast_template_args(k::parse::ast::template_arg_list args) { _ast_template_args = std::move(args); }
+
     std::shared_ptr<expression> clone() const override {
-        return std::shared_ptr<symbol_expression>(new symbol_expression(*this));
+        auto c = std::shared_ptr<symbol_expression>(new symbol_expression(*this));
+        c->_ast_template_args = _ast_template_args;
+        return c;
     }
 };
 

@@ -1790,6 +1790,13 @@ namespace k::model {
         _expr = model::symbol_expression::from_identifier(name(has_prefix, std::move(idents)));
         if (_expr) {
             _expr->set_ast_expression(expr.shared_as<parse::ast::identifier_expr>());
+            // Transfer template arguments from AST (e.g. identity<int>) to model
+            if (expr.has_template_args()) {
+                auto sym = std::dynamic_pointer_cast<model::symbol_expression>(_expr);
+                if (sym) {
+                    sym->set_ast_template_args(expr.template_args);
+                }
+            }
         }
     }
 

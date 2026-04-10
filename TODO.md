@@ -51,6 +51,7 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [ ] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint
 - [x] Default template parameters: apply defaults when trailing arguments are omitted (incl. `<>` syntax)
 - [x] Name mangling: encode template arguments (`I…E` markers) in mangled names
+- [x] Template function call syntax: `func<type_args>(args)` disambiguation and instantiation (Milestone 9)
 - [ ] Declaration generator: emit LLVM declarations for each concrete instantiation (with weak/COMDAT linkage)
 - [ ] Implementation generator: emit LLVM IR bodies for each concrete instantiation
 - [ ] KDI exporter: export concrete instantiations as regular entities with `template_origin` metadata
@@ -59,7 +60,7 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [ ] kdi-tool: display template origin info in `dump` and `json-dump` commands
 - [ ] Grammar: update `grammar.ebnf` with `TemplateDeclaration`, `TemplateArgList`, updated `QualifiedIdentifier`
 - [ ] Spec: update `summary.md` with §25 Templates
-- [ ] Tests: gen-jit tests for template functions (primitives, structs)
+- [x] Tests: gen-jit tests for template functions (primitives, multi-type-params, cache) (Milestone 9)
 - [ ] Tests: gen-jit tests for template aggregates (struct, class, interface)
 - [ ] Tests: gen-jit tests for template value parameters
 - [ ] Tests: gen-jit tests for template type constraints

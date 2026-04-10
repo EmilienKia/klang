@@ -2885,6 +2885,54 @@ ast::expr_ptr parser::parse_postfix_expr()
         return {};
     }
 
+    // ── Template function call disambiguation ────────────────────────────
+    // If the primary expression is an identifier and the next token is '<',
+    // try to parse template arguments.  If successful AND followed by '(',
+    // this is a template function call (e.g. identity<int>(42)).
+    // Otherwise, roll back and let '<' be parsed as a comparison operator.
+    if (auto ident_expr = std::dynamic_pointer_cast<ast::identifier_expr>(any)) {
+        lex::lex_holder tpl_holder(_lexer);
+        size_t save_tpl = _lexer.tell();
+        auto peek_lt = _lexer.get();
+        if (peek_lt == lex::operator_::CHEVRON_OPEN) {
+            _lexer.unget(); // put '<' back for parse_template_arg_list
+            bool was_explicit = false;
+            auto tpl_args = parse_template_arg_list(&was_explicit);
+            if (was_explicit && !tpl_args.empty()) {
+                // Check if followed by '(' — confirms this is a function call
+                auto peek_paren = _lexer.get();
+                if (peek_paren == lex::punctuator::PARENTHESIS_OPEN) {
+                    _lexer.unget(); // put '(' back for the postfix loop below
+                    ident_expr->template_args = std::move(tpl_args);
+                    // Continue — the postfix loop will pick up the '(' and create
+                    // a parenthesis_postfix_expr (function call).
+                } else {
+                    // Not a function call — rollback the template args
+                    _lexer.seek(save_tpl);
+                    tpl_holder.rollback();
+                }
+            } else if (was_explicit && tpl_args.empty()) {
+                // Empty template arg list <>( — also valid for default params
+                auto peek_paren = _lexer.get();
+                if (peek_paren == lex::punctuator::PARENTHESIS_OPEN) {
+                    _lexer.unget();
+                    ident_expr->template_args = {};
+                    // Mark that we had explicit <> — but template_args is empty
+                    // The resolver will need to apply defaults.
+                } else {
+                    _lexer.seek(save_tpl);
+                    tpl_holder.rollback();
+                }
+            } else {
+                // Failed to parse template args — rollback
+                _lexer.seek(save_tpl);
+                tpl_holder.rollback();
+            }
+        } else {
+            tpl_holder.rollback();
+        }
+    }
+
     while(auto lop = _lexer.get())
     {
         if(lop == lex::operator_::DOUBLE_PLUS || lop == lex::operator_::DOUBLE_MINUS) {

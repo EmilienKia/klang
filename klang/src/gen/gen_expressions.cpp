@@ -24,6 +24,8 @@
 #include "../model/operators.hpp"
 #include "../model/mangler.hpp"
 #include "../model/imported.hpp"
+#include "../model/template.hpp"
+#include "../model/template_instantiator.hpp"
 #include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 
@@ -2512,6 +2514,97 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         }
                     };
                     collect_member_fns(st);
+                }
+            }
+        }
+
+        // ── Template function instantiation ──────────────────────────────
+        // If the callee carries explicit template arguments (e.g. identity<int>),
+        // try to find a template function definition, instantiate it with the
+        // provided arguments, run it through the resolution pipeline, and
+        // replace the candidates with the concrete instance.
+        if (callee && callee->has_ast_template_args()) {
+            const auto& ast_args = callee->get_ast_template_args();
+            // Look up the template function by base name (could be in all_candidates or root ns)
+            std::shared_ptr<function> tpl_func;
+            for (auto& cand : all_candidates) {
+                if (cand->is_template()) {
+                    tpl_func = cand;
+                    break;
+                }
+            }
+            if (!tpl_func) {
+                auto root_ns = _unit.get_root_namespace();
+                if (root_ns) {
+                    for (auto& fn : root_ns->functions()) {
+                        if (fn->get_short_name() == func_name && fn->is_template()) {
+                            tpl_func = fn;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (tpl_func) {
+                auto* ti = tpl_func->get_tpl_info();
+                if (ti && ast_args.size() <= ti->params.size()) {
+                    // Convert AST template args to model template_arguments
+                    std::vector<template_argument> model_args;
+                    bool args_ok = true;
+                    for (size_t i = 0; i < ast_args.size(); ++i) {
+                        const auto& ast_arg = ast_args[i];
+                        if (ast_arg->is_type()) {
+                            auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
+                            if (!arg_type || !type::is_resolved(arg_type)) {
+                                if (arg_type) {
+                                    if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
+                                        auto resolved = resolve_type_by_name(unres_arg->type_id(), expr);
+                                        if (resolved && type::is_resolved(resolved)) {
+                                            arg_type = resolved;
+                                        }
+                                    }
+                                }
+                            }
+                            if (!arg_type || !type::is_resolved(arg_type)) { args_ok = false; break; }
+                            model_args.push_back(template_argument::make_type(arg_type));
+                        } else {
+                            args_ok = false; break;
+                        }
+                    }
+                    // Fill defaults for trailing params
+                    for (size_t i = ast_args.size(); i < ti->params.size() && args_ok; ++i) {
+                        auto& param = ti->params[i];
+                        if (param.is_type_param() && param.default_type) {
+                            auto def = param.default_type;
+                            if (!type::is_resolved(def)) def = _context->resolve_type(def);
+                            if (def && type::is_resolved(def)) {
+                                model_args.push_back(template_argument::make_type(def));
+                            } else { args_ok = false; }
+                        } else if (param.is_value_param() && param.default_value.has_value()) {
+                            model_args.push_back(template_argument::make_value(*param.default_value));
+                        } else { args_ok = false; }
+                    }
+                    if (args_ok) {
+                        auto root_ns = _unit.get_root_namespace();
+                        auto concrete = template_instantiator::instantiate_function(
+                            *tpl_func, model_args, root_ns, _unit, _context, *this);
+                        if (concrete) {
+                            // Run the concrete function through the resolver pipeline
+                            {
+                                symbol_resolver sr(*this, _context, _unit);
+                                concrete->accept(sr);
+                            }
+                            {
+                                signature_resolver sigr(*this, _context, _unit);
+                                concrete->accept(sigr);
+                            }
+                            concrete->accept(*this);
+
+                            // Replace all_candidates with just the concrete instance
+                            callee->set_target(concrete);
+                            all_candidates.clear();
+                            all_candidates.push_back(concrete);
+                        }
+                    }
                 }
             }
         }

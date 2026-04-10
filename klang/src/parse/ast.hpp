@@ -557,8 +557,17 @@ namespace k::parse {
 
             ast::qualified_identifier qident;
 
+            /** Optional template arguments — set when parsing func<T>(args). */
+            template_arg_list template_args;
+
             identifier_expr(const ast::qualified_identifier& qident) :
                     qident(qident) {}
+
+            identifier_expr(const ast::qualified_identifier& qident, template_arg_list tpl_args) :
+                    qident(qident), template_args(std::move(tpl_args)) {}
+
+            /** True if this identifier carries explicit template arguments. */
+            bool has_template_args() const { return !template_args.empty(); }
 
             virtual void visit(ast_visitor &visitor) override;
         };
