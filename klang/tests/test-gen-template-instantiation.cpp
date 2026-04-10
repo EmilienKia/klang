@@ -246,5 +246,83 @@ TEST_CASE("[G] M6: no cosmetic error messages on stderr",
     CHECK(stderr_output.find("cannot resolve reference subtype") == std::string::npos);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [H] M7: Template struct with default type parameter (all defaults, <> syntax)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[H] M7: template struct with default type param — all defaults",
+          "[milestone7][template][defaults]") {
+    auto jit = gen_jit(R"SRC(
+        module __m7_def_a__;
+        template<typename T = int>
+        struct Box {
+            public value : T;
+        }
+
+        get_value() : int {
+            b : Box<>;
+            b.value = 77;
+            return b.value;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto get_value = jit->lookup_symbol<int(*)()>("_KFN12__m7_def_a__9get_valueEv");
+    REQUIRE(get_value != nullptr);
+    CHECK(get_value() == 77);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [I] M7: Template struct with partial defaults
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[I] M7: template struct with partial default type params",
+          "[milestone7][template][defaults]") {
+    auto jit = gen_jit(R"SRC(
+        module __m7_def_b__;
+        template<typename K, typename V = int>
+        struct Pair {
+            public first : K;
+            public second : V;
+        }
+
+        test_pair() : int {
+            p : Pair<int>;
+            p.first = 10;
+            p.second = 20;
+            return p.first + p.second;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_pair = jit->lookup_symbol<int(*)()>("_KFN12__m7_def_b__9test_pairEv");
+    REQUIRE(test_pair != nullptr);
+    CHECK(test_pair() == 30);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [J] M7: Default and explicit instantiations produce the same cached type
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[J] M7: default and explicit args produce same cached type",
+          "[milestone7][template][defaults]") {
+    auto comp = compile_model(R"SRC(
+        module __m7_def_c__;
+        template<typename T = int>
+        struct Box {
+            public value : T;
+        }
+        struct A {
+            public b1 : Box<int>;
+            public b2 : Box<>;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto root_ns = comp->get_unit()->get_root_namespace();
+    // Both Box<int> and Box<> should resolve to the same Box__int
+    auto box_int = root_ns->get_aggregate("Box__int");
+    REQUIRE(box_int != nullptr);
+    CHECK_FALSE(box_int->is_template());
+}
+
 
 

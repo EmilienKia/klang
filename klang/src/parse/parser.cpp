@@ -525,23 +525,22 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
             }
         }
 
-        // Optional default: '=' ConditionalExpr
-        // Note: use primary_expr to avoid consuming '>' or '>>' as relational ops
-        ast::expr_ptr default_expr;
+        // Optional default: '=' TypeSpec (for type parameters, the default is a type)
+        std::shared_ptr<ast::type_specifier> default_type_spec;
         {
             lex::lex_holder eq_holder(_lexer);
             auto maybe_eq = _lexer.get();
             if (maybe_eq == lex::operator_::EQUAL) {
-                default_expr = parse_primary_expr();
-                if (!default_expr) {
-                    throw_error(0x10046, _lexer.pick_current(), "Expected expression after '=' in template parameter default");
+                default_type_spec = parse_type_spec();
+                if (!default_type_spec) {
+                    throw_error(0x10046, _lexer.pick_current(), "Expected type specifier after '=' in template parameter default");
                 }
             } else {
                 eq_holder.rollback();
             }
         }
 
-        return std::make_shared<ast::template_parameter>(kind_kw, param_name, std::move(constraint), std::move(default_expr));
+        return std::make_shared<ast::template_parameter>(kind_kw, param_name, std::move(constraint), std::move(default_type_spec));
     }
 
     // Value parameter: the kind token was actually a type specifier
@@ -579,7 +578,7 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
     return std::make_shared<ast::template_parameter>(std::move(value_type), param_name, std::move(default_expr));
 }
 
-ast::template_arg_list parser::parse_template_arg_list()
+ast::template_arg_list parser::parse_template_arg_list(bool* was_explicit)
 {
     lex::lex_holder holder(_lexer);
 
@@ -587,6 +586,7 @@ ast::template_arg_list parser::parse_template_arg_list()
     auto lopen = _lexer.get();
     if (lopen != lex::operator_::CHEVRON_OPEN) {
         holder.rollback();
+        if (was_explicit) *was_explicit = false;
         return {};
     }
 
@@ -598,6 +598,18 @@ ast::template_arg_list parser::parse_template_arg_list()
     int angle_depth = 1;
 
     try {
+        // Handle empty template arg list: <> (for types with all-default params)
+        {
+            lex::lex_holder empty_holder(_lexer);
+            auto maybe_close = _lexer.get();
+            if (maybe_close == lex::operator_::CHEVRON_CLOSE) {
+                // Empty arg list <> — return empty vector (signals "explicit template args")
+                if (was_explicit) *was_explicit = true;
+                return args;
+            }
+            empty_holder.rollback();
+        }
+
         // Try to parse the first argument as a type specifier
         auto type_spec = parse_type_spec();
         if (type_spec) {
@@ -662,9 +674,11 @@ ast::template_arg_list parser::parse_template_arg_list()
         // Parse failed — treat '<' as comparison operator
         _lexer.seek(save_pos);
         holder.rollback();
+        if (was_explicit) *was_explicit = false;
         return {};
     }
 
+    if (was_explicit) *was_explicit = true;
     return args;
 }
 
@@ -2179,8 +2193,9 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
         std::shared_ptr<ast::qualified_identifier> qid = parse_qualified_identifier();
         if(qid) {
             // Try to parse template arguments after the identifier
-            auto tpl_args = parse_template_arg_list();
-            res = std::make_shared<ast::identified_type_specifier>(*qid, tpl_args);
+            bool tpl_explicit = false;
+            auto tpl_args = parse_template_arg_list(&tpl_explicit);
+            res = std::make_shared<ast::identified_type_specifier>(*qid, tpl_args, tpl_explicit);
         } else {
             holder.rollback();
             return {};

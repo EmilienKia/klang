@@ -240,3 +240,69 @@ TEST_CASE("Parse template with struct kind constraint", "[parser][template]") {
     CHECK(std::string{param->name.content} == "S");
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// M7: Default template parameters — parser level
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Parse template struct with default type parameter", "[parser][template][defaults]") {
+    test_logger log;
+    k::source src{"template<typename T = int> struct Box {}"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto agg = std::dynamic_pointer_cast<ast::aggregate_decl>(unit->declarations[0]);
+    REQUIRE(agg);
+    REQUIRE(agg->is_template());
+    REQUIRE(agg->template_params.size() == 1);
+
+    auto& param = agg->template_params[0];
+    CHECK(param->is_type_param());
+    CHECK(param->kind_kw->type == k::lex::keyword::TYPENAME);
+    CHECK(std::string{param->name.content} == "T");
+    CHECK(param->default_type_spec != nullptr);
+}
+
+TEST_CASE("Parse template struct with multiple params and partial defaults", "[parser][template][defaults]") {
+    test_logger log;
+    k::source src{"template<typename K, typename V = int> struct Pair {}"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto agg = std::dynamic_pointer_cast<ast::aggregate_decl>(unit->declarations[0]);
+    REQUIRE(agg);
+    REQUIRE(agg->is_template());
+    REQUIRE(agg->template_params.size() == 2);
+
+    auto& p0 = agg->template_params[0];
+    CHECK(p0->is_type_param());
+    CHECK(std::string{p0->name.content} == "K");
+    CHECK(p0->default_type_spec == nullptr);
+
+    auto& p1 = agg->template_params[1];
+    CHECK(p1->is_type_param());
+    CHECK(std::string{p1->name.content} == "V");
+    CHECK(p1->default_type_spec != nullptr);
+}
+
+TEST_CASE("Parse type reference with empty template arg list <>", "[parser][template][defaults]") {
+    test_logger log;
+    k::source src{"foo(b: Box<>) {}"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto func = std::dynamic_pointer_cast<ast::function_decl>(unit->declarations[0]);
+    REQUIRE(func);
+    REQUIRE(func->params.size() == 1);
+
+    auto& param_type = func->params[0]->type;
+    auto ident_ts = std::dynamic_pointer_cast<ast::identified_type_specifier>(param_type);
+    REQUIRE(ident_ts != nullptr);
+    CHECK(ident_ts->has_explicit_template_args == true);
+    CHECK(ident_ts->template_args.empty());
+}
+
+
+

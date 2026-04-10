@@ -185,6 +185,13 @@ protected:
     std::vector<std::shared_ptr<k::parse::ast::template_arg>> _ast_template_args;
 
     /**
+     * True when '<>' or '<args>' was explicitly written in source, even if the
+     * arg list is empty (all defaults). Used to distinguish "Box" (not a
+     * template instantiation) from "Box<>" (instantiation with all defaults).
+     */
+    bool _has_explicit_template_args = false;
+
+    /**
      * True when this unresolved type represents a template parameter placeholder
      * (e.g. "T" inside a template definition).  Such types are expected to remain
      * unresolved until instantiation substitutes them with concrete types.
@@ -211,8 +218,13 @@ public:
     bool is_template_param_placeholder() const { return _is_template_param_placeholder; }
     void set_template_param_placeholder(bool v = true) { _is_template_param_placeholder = v; }
 
-    /** True if this unresolved type carries template arguments (e.g. Box<int>). */
-    bool has_template_args() const { return !_ast_template_args.empty(); }
+    /** True if '<>' or '<args>' was explicitly written (even if args is empty). */
+    bool has_explicit_template_args() const { return _has_explicit_template_args; }
+    void set_has_explicit_template_args(bool v = true) { _has_explicit_template_args = v; }
+
+    /** True if this unresolved type carries template arguments (e.g. Box<int>).
+     *  Also true for Box<> (explicit empty arg list). */
+    bool has_template_args() const { return !_ast_template_args.empty() || _has_explicit_template_args; }
 
     /** Return the AST-level template arguments (empty if none). */
     const std::vector<std::shared_ptr<k::parse::ast::template_arg>>& get_ast_template_args() const {

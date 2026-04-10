@@ -122,13 +122,18 @@ namespace k::parse {
             qualified_identifier name;
             /** Template arguments, empty if not a template type. */
             template_arg_list template_args;
+            /** True when '<>' or '<args>' was explicitly written (even if template_args is empty). */
+            bool has_explicit_template_args = false;
 
             identified_type_specifier(const qualified_identifier &name) : name(name) {}
 
             identified_type_specifier(qualified_identifier &&name) : name(name) {}
 
             identified_type_specifier(const qualified_identifier &name, const template_arg_list &template_args)
-                : name(name), template_args(template_args) {}
+                : name(name), template_args(template_args), has_explicit_template_args(!template_args.empty()) {}
+
+            identified_type_specifier(const qualified_identifier &name, const template_arg_list &template_args, bool explicit_tpl)
+                : name(name), template_args(template_args), has_explicit_template_args(explicit_tpl) {}
 
             virtual void visit(ast_visitor &visitor) override;
 
@@ -844,8 +849,10 @@ namespace k::parse {
             lex::identifier name;
             /** Optional constraint type (the type after ':'). */
             std::shared_ptr<type_specifier> constraint_type;
-            /** Optional default value/type expression. */
+            /** Optional default value expression (for value parameters). */
             expr_ptr default_expr;
+            /** Optional default type specifier (for type parameters, e.g. '= int'). */
+            std::shared_ptr<type_specifier> default_type_spec;
             /** For value parameters: the explicit type specifier (e.g. 'unsigned int'). */
             std::shared_ptr<type_specifier> value_type;
 
@@ -853,9 +860,9 @@ namespace k::parse {
             template_parameter(const lex::keyword& kind_kw,
                                const lex::identifier& name,
                                std::shared_ptr<type_specifier> constraint_type = nullptr,
-                               expr_ptr default_expr = nullptr)
+                               std::shared_ptr<type_specifier> default_type_spec = nullptr)
                 : kind_kw(kind_kw), name(name), constraint_type(std::move(constraint_type)),
-                  default_expr(std::move(default_expr)) {}
+                  default_type_spec(std::move(default_type_spec)) {}
 
             // Value parameter constructor
             template_parameter(std::shared_ptr<type_specifier> value_type,

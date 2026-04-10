@@ -392,12 +392,17 @@ namespace k::model {
                     } else {
                         desc.kind = template_param_kind::TYPENAME;
                     }
-                    // Constraint type and default type will be resolved later
-                    // during instantiation (Milestone 4+)
+                    // Store default type if present (e.g. typename T = int)
+                    if (tp->default_type_spec) {
+                        desc.default_type = _context->from_type_specifier(*tp->default_type_spec);
+                    }
                 } else {
                     // Value parameter
                     desc.kind = template_param_kind::VALUE;
-                    // Value type will be resolved later during instantiation
+                    // Store value type (e.g. N : unsigned int)
+                    if (tp->value_type) {
+                        desc.value_type = _context->from_type_specifier(*tp->value_type);
+                    }
                 }
                 ti->params.push_back(std::move(desc));
             }
@@ -793,8 +798,16 @@ namespace k::model {
                     } else {
                         desc.kind = template_param_kind::TYPENAME;
                     }
+                    // Store default type if present (e.g. typename T = int)
+                    if (tp->default_type_spec) {
+                        desc.default_type = _context->from_type_specifier(*tp->default_type_spec);
+                    }
                 } else {
                     desc.kind = template_param_kind::VALUE;
+                    // Store value type (e.g. N : unsigned int)
+                    if (tp->value_type) {
+                        desc.value_type = _context->from_type_specifier(*tp->value_type);
+                    }
                 }
                 ti->params.push_back(std::move(desc));
             }

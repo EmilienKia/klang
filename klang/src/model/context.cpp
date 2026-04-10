@@ -242,6 +242,10 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
         auto unres = create_unresolved(ident->name.to_name());
         if (!ident->template_args.empty()) {
             unres->_ast_template_args = ident->template_args;
+            unres->_has_explicit_template_args = true;
+        } else if (ident->has_explicit_template_args) {
+            // Empty <> — no args but explicit template usage (all defaults)
+            unres->_has_explicit_template_args = true;
         }
         return unres;
     } else if(auto kw = dynamic_cast<const k::parse::ast::keyword_type_specifier*>(&type_spec)) {

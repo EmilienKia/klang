@@ -1146,12 +1146,20 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     auto* ti = tpl_agg->get_tpl_info();
     if (!ti) return {};
 
-    // 2. Validate argument count
-    if (ast_args.size() != ti->params.size()) return {};
+    // 2. Validate argument count (allow fewer args if trailing params have defaults)
+    if (ast_args.size() > ti->params.size()) return {};
+    if (ast_args.size() < ti->params.size()) {
+        // Check that all missing params have defaults
+        for (size_t i = ast_args.size(); i < ti->params.size(); ++i) {
+            auto& param = ti->params[i];
+            if (param.is_type_param() && !param.default_type) return {};
+            if (param.is_value_param() && !param.default_value.has_value()) return {};
+        }
+    }
 
     // 3. Convert AST template args to model template_arguments
     std::vector<template_argument> model_args;
-    model_args.reserve(ast_args.size());
+    model_args.reserve(ti->params.size());
     for (size_t i = 0; i < ast_args.size(); ++i) {
         const auto& ast_arg = ast_args[i];
         if (ast_arg->is_type()) {
@@ -1168,6 +1176,29 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             model_args.push_back(template_argument::make_type(arg_type));
         } else {
             return {}; // Value template args not yet supported
+        }
+    }
+    // 3b. Fill in default arguments for missing trailing parameters
+    for (size_t i = ast_args.size(); i < ti->params.size(); ++i) {
+        auto& param = ti->params[i];
+        if (param.is_type_param() && param.default_type) {
+            // Resolve the default type if needed
+            auto def_type = param.default_type;
+            if (!type::is_resolved(def_type)) {
+                def_type = _context->resolve_type(def_type);
+                if (!def_type || !type::is_resolved(def_type)) {
+                    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(param.default_type)) {
+                        auto resolved = resolve_type_by_name(unres->type_id(), context_elem);
+                        if (resolved && type::is_resolved(resolved)) def_type = resolved;
+                    }
+                }
+            }
+            if (!def_type || !type::is_resolved(def_type)) return {};
+            model_args.push_back(template_argument::make_type(def_type));
+        } else if (param.is_value_param() && param.default_value.has_value()) {
+            model_args.push_back(template_argument::make_value(*param.default_value));
+        } else {
+            return {};
         }
     }
 
@@ -2563,15 +2594,19 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     auto* ti = tpl_agg->get_tpl_info();
     if (!ti) return {};
 
-    // 2. Validate argument count
-    if (ast_args.size() != ti->params.size()) {
-        // TODO: handle default template arguments
-        return {};
+    // 2. Validate argument count (allow fewer args if trailing params have defaults)
+    if (ast_args.size() > ti->params.size()) return {};
+    if (ast_args.size() < ti->params.size()) {
+        for (size_t i = ast_args.size(); i < ti->params.size(); ++i) {
+            auto& param = ti->params[i];
+            if (param.is_type_param() && !param.default_type) return {};
+            if (param.is_value_param() && !param.default_value.has_value()) return {};
+        }
     }
 
     // 3. Convert AST template args to model template_arguments
     std::vector<template_argument> model_args;
-    model_args.reserve(ast_args.size());
+    model_args.reserve(ti->params.size());
     for (size_t i = 0; i < ast_args.size(); ++i) {
         const auto& ast_arg = ast_args[i];
         if (ast_arg->is_type()) {
@@ -2594,6 +2629,28 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             // TODO: evaluate value expressions at compile time
             // For now, only integer literals are supported
             return {};
+        } else {
+            return {};
+        }
+    }
+    // 3b. Fill in default arguments for missing trailing parameters
+    for (size_t i = ast_args.size(); i < ti->params.size(); ++i) {
+        auto& param = ti->params[i];
+        if (param.is_type_param() && param.default_type) {
+            auto def_type = param.default_type;
+            if (!type::is_resolved(def_type)) {
+                def_type = _context->resolve_type(def_type);
+                if (!def_type || !type::is_resolved(def_type)) {
+                    if (auto unres_def = std::dynamic_pointer_cast<unresolved_type>(param.default_type)) {
+                        auto resolved = resolve_type_by_name(unres_def->type_id(), context_elem);
+                        if (resolved && type::is_resolved(resolved)) def_type = resolved;
+                    }
+                }
+            }
+            if (!def_type || !type::is_resolved(def_type)) return {};
+            model_args.push_back(template_argument::make_type(def_type));
+        } else if (param.is_value_param() && param.default_value.has_value()) {
+            model_args.push_back(template_argument::make_value(*param.default_value));
         } else {
             return {};
         }

@@ -168,7 +168,7 @@ public:
      * template vs comparison operator.
      * Returns empty list if no template arguments are present.
      */
-    ast::template_arg_list parse_template_arg_list();
+    ast::template_arg_list parse_template_arg_list(bool* was_explicit = nullptr);
 
     /**
      * AggregateDecl = { AnnotationDef } , { Specifier } ,

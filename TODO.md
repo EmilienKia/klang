@@ -49,7 +49,7 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [x] Suppress cosmetic "cannot resolve type: T" messages for template param unresolved_type entries (Milestone 6)
 - [ ] Value parameter support: compile-time constant expression evaluation for value parameters
 - [ ] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint
-- [ ] Default template parameters: apply defaults when trailing arguments are omitted
+- [x] Default template parameters: apply defaults when trailing arguments are omitted (incl. `<>` syntax)
 - [ ] Name mangling: encode template arguments (`I…E` markers) in mangled names
 - [ ] Declaration generator: emit LLVM declarations for each concrete instantiation (with weak/COMDAT linkage)
 - [ ] Implementation generator: emit LLVM IR bodies for each concrete instantiation
@@ -63,7 +63,7 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [ ] Tests: gen-jit tests for template aggregates (struct, class, interface)
 - [ ] Tests: gen-jit tests for template value parameters
 - [ ] Tests: gen-jit tests for template type constraints
-- [ ] Tests: gen-jit tests for template default parameters
+- [x] Tests: gen-jit tests for template default parameters (Milestone 7)
 - [ ] Tests: error tests for invalid instantiations (wrong kind, missing args, etc.)
 - [ ] Tests: import tests for template instantiations across modules
 - [ ] Tests: name mangling tests for template entities
