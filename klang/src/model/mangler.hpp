@@ -19,6 +19,7 @@
 #define KLANG_MANGLER_HPP
 
 #include <memory>
+#include <vector>
 
 #include "../common/common.hpp"
 
@@ -85,6 +86,8 @@ class constructor;
 class destructor;
 class static_constructor;
 class static_destructor;
+class aggregate;
+struct template_argument;
 
 class mangler {
 protected:
@@ -177,9 +180,49 @@ public:
     static std::string mangle_fq_name(const name& name, bool with_k_prefix = false);
     static std::string mangle_fq_name_with_raw_last_part(const name& name, const std::string& last_part, bool with_k_prefix = false);
 
+    /**
+     * Template-aware: mangle FQ name with raw last part, replacing
+     * template-instantiation parts with I…E encoding.
+     */
+    std::string mangle_fq_name_with_raw_last_part_templated(
+        const name& name, const std::string& last_part,
+        const std::string& tpl_inst_name,
+        const std::string& tpl_base_name,
+        const std::vector<template_argument>& tpl_args,
+        bool with_k_prefix = false) const;
+
+    /**
+     * Mangle a fully qualified name, replacing any occurrence of tpl_inst_name
+     * (e.g. "Box__int") with the template-encoded form: <len><base>I<args>E.
+     * Non-static because template arg mangling requires mangle_type().
+     */
+    std::string mangle_fq_name_templated(
+        const name& n,
+        const std::string& tpl_inst_name,
+        const std::string& tpl_base_name,
+        const std::vector<template_argument>& tpl_args,
+        bool with_k_prefix = false) const;
+
+    /**
+     * Mangle template arguments: "I" + mangled_args + "E".
+     * Type arguments use mangle_type(); value arguments use "L<type><value>E".
+     */
+    std::string mangle_template_args(const std::vector<template_argument>& args) const;
+
+    /**
+     * Mangle a short name with template args: "<len><base>I<args>E".
+     */
+    std::string mangle_template_short_name(const std::string& base_name, const std::vector<template_argument>& args) const;
+
     static std::string mangle_namespace(const name& ns_name);
     static std::string mangle_global_variable(const name& ns_name);
     static std::string mangle_structure(const name& ns_name);
+
+    /**
+     * Non-static: mangle a structure name with template awareness.
+     * If the aggregate is a template instantiation, uses I…E encoding.
+     */
+    std::string mangle_structure(const aggregate& agg) const;
 
 
 };

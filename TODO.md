@@ -50,7 +50,7 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [ ] Value parameter support: compile-time constant expression evaluation for value parameters
 - [ ] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint
 - [x] Default template parameters: apply defaults when trailing arguments are omitted (incl. `<>` syntax)
-- [ ] Name mangling: encode template arguments (`I…E` markers) in mangled names
+- [x] Name mangling: encode template arguments (`I…E` markers) in mangled names
 - [ ] Declaration generator: emit LLVM declarations for each concrete instantiation (with weak/COMDAT linkage)
 - [ ] Implementation generator: emit LLVM IR bodies for each concrete instantiation
 - [ ] KDI exporter: export concrete instantiations as regular entities with `template_origin` metadata
@@ -66,7 +66,7 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [x] Tests: gen-jit tests for template default parameters (Milestone 7)
 - [ ] Tests: error tests for invalid instantiations (wrong kind, missing args, etc.)
 - [ ] Tests: import tests for template instantiations across modules
-- [ ] Tests: name mangling tests for template entities
+- [x] Tests: name mangling tests for template entities
 
 **Deferred — Phase 2+ (not in scope):**
 - [ ] Template argument deduction for function templates

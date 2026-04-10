@@ -674,8 +674,15 @@ void member_variable_definition::accept(model_visitor &visitor) {
 //
 
 void aggregate::update_mangled_name() {
-    // Useless but for information
-    _mangled_name = _name.has_root_prefix() ? mangler::mangle_structure(_name) : "";
+    if (!_name.has_root_prefix()) {
+        _mangled_name = "";
+        return;
+    }
+    if (has_tpl_args()) {
+        _mangled_name = mangler(get_context()).mangle_structure(*this);
+    } else {
+        _mangled_name = mangler::mangle_structure(_name);
+    }
 }
 
 void aggregate::accept(model_visitor& visitor) {

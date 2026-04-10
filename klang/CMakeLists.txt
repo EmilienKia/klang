@@ -152,6 +152,7 @@ add_executable(klang-tests
         tests/test-gen-template-aggregates.cpp
         tests/test-gen-template-functions.cpp
         tests/test-gen-template-instantiation.cpp
+        tests/test-gen-template-mangling.cpp
         tests/test-template-instantiator.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)

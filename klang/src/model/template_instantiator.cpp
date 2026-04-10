@@ -533,6 +533,9 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     // Copy AST reference (optional, for diagnostics)
     concrete->_ast_node = tpl_def.get_ast_node();
 
+    // Store template instantiation info for mangling (I…E encoding)
+    concrete->set_tpl_instantiation_info(base_name, args);
+
     // Copy bases
     for (auto& bs : tpl_def.get_bases()) {
         concrete->add_base(bs.raw_name, bs.vis);
@@ -638,6 +641,9 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
     // 2. Populate from template (params, return type, body)
     populate_function_from_template(concrete, tpl_def, subst);
 
+    // Store template instantiation info for mangling (I…E encoding)
+    concrete->set_tpl_instantiation_info(base_name, args);
+
     // 3. Register in the instantiation cache
     ti->instantiations[key] = concrete;
 
@@ -645,6 +651,7 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
 }
 
 } // namespace k::model
+
 
 
 

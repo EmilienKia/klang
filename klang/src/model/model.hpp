@@ -996,6 +996,13 @@ protected:
      */
     std::unique_ptr<tpl_info> _tpl_info;
 
+    /**
+     * Template instantiation metadata (set only on concrete instantiations, NOT on template definitions).
+     * _tpl_base_name is the original template name (e.g. "Box"), _tpl_args are the concrete arguments.
+     * These are used by the mangler to produce the correct I…E encoding.
+     */
+    std::string _tpl_base_name;
+    std::vector<template_argument> _tpl_args;
 
     aggregate(std::shared_ptr<element> parent) :
         element(parent) {}
@@ -1192,6 +1199,21 @@ public:
 
     /** Set the template info (takes ownership). */
     void set_tpl_info(std::unique_ptr<tpl_info> ti) { _tpl_info = std::move(ti); }
+
+    /** True if this aggregate is a concrete template instantiation (has template args). */
+    bool has_tpl_args() const { return !_tpl_base_name.empty(); }
+
+    /** Returns the original template base name (e.g. "Box" for Box<int>). Empty if not an instantiation. */
+    const std::string& get_tpl_base_name() const { return _tpl_base_name; }
+
+    /** Returns the concrete template arguments used to instantiate this aggregate. */
+    const std::vector<template_argument>& get_tpl_args() const { return _tpl_args; }
+
+    /** Set the template instantiation metadata (base name + concrete args). */
+    void set_tpl_instantiation_info(const std::string& base_name, std::vector<template_argument> args) {
+        _tpl_base_name = base_name;
+        _tpl_args = std::move(args);
+    }
 };
 
 /**
@@ -1578,6 +1600,14 @@ protected:
      */
     std::unique_ptr<tpl_info> _tpl_info;
 
+    /**
+     * Template instantiation metadata (set only on concrete instantiations, NOT on template definitions).
+     * _tpl_base_name is the original template name (e.g. "identity"), _tpl_args are the concrete arguments.
+     * These are used by the mangler to produce the correct I…E encoding.
+     */
+    std::string _tpl_base_name;
+    std::vector<template_argument> _tpl_args;
+
     function(std::shared_ptr<element> parent, bool is_static = false) :
         element(parent), _is_static(is_static) {}
 
@@ -1760,6 +1790,21 @@ public:
 
     /** Set the template info (takes ownership). */
     void set_tpl_info(std::unique_ptr<tpl_info> ti) { _tpl_info = std::move(ti); }
+
+    /** True if this function is a concrete template instantiation (has template args). */
+    bool has_tpl_args() const { return !_tpl_base_name.empty(); }
+
+    /** Returns the original template base name (e.g. "identity" for identity<int>). Empty if not an instantiation. */
+    const std::string& get_tpl_base_name() const { return _tpl_base_name; }
+
+    /** Returns the concrete template arguments used to instantiate this function. */
+    const std::vector<template_argument>& get_tpl_args() const { return _tpl_args; }
+
+    /** Set the template instantiation metadata (base name + concrete args). */
+    void set_tpl_instantiation_info(const std::string& base_name, std::vector<template_argument> args) {
+        _tpl_base_name = base_name;
+        _tpl_args = std::move(args);
+    }
 
 };
 
