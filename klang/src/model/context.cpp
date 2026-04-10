@@ -501,14 +501,43 @@ llvm::Constant* context::get_or_create_string_literal(const std::string& content
 
 std::shared_ptr<unresolved_type> context::create_unresolved(const name& type_id) {
     std::shared_ptr<unresolved_type> res{new unresolved_type(type_id)};
+    // Mark as template parameter placeholder if the name matches any active scope
+    if (!_template_param_scopes.empty()) {
+        auto id_str = type_id.to_string();
+        for (auto it = _template_param_scopes.rbegin(); it != _template_param_scopes.rend(); ++it) {
+            if (it->count(id_str)) {
+                res->_is_template_param_placeholder = true;
+                break;
+            }
+        }
+    }
     _unresolved.push_back(res);
     return res;
 }
 
 std::shared_ptr<unresolved_type> context::create_unresolved(name&& type_id) {
     std::shared_ptr<unresolved_type> res{new unresolved_type(type_id)};
+    if (!_template_param_scopes.empty()) {
+        auto id_str = type_id.to_string();
+        for (auto it = _template_param_scopes.rbegin(); it != _template_param_scopes.rend(); ++it) {
+            if (it->count(id_str)) {
+                res->_is_template_param_placeholder = true;
+                break;
+            }
+        }
+    }
     _unresolved.push_back(res);
     return res;
+}
+
+void context::push_template_param_scope(const std::unordered_set<std::string>& param_names) {
+    _template_param_scopes.push_back(param_names);
+}
+
+void context::pop_template_param_scope() {
+    if (!_template_param_scopes.empty()) {
+        _template_param_scopes.pop_back();
+    }
 }
 
 void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
@@ -789,7 +818,6 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
         // const_type wrapping an unresolved inner type (e.g. const(unresolved(Point)))
         auto res = resolve_type(type->get_subtype());
         if (!res) {
-            std::cerr << "Error: cannot resolve const subtype." << std::endl;
             return nullptr;
         } else {
             return res->get_const();
@@ -797,9 +825,6 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     } else if (type::is_pointer(type)) {
         auto res = resolve_type(type->get_subtype());
         if (!res) {
-            // Not resolvable
-            // TODO throw an exception
-            std::cerr << "Error: cannot resolve pointer subtype." << std::endl;
             return nullptr;
         } else {
             // Unsized arrays are canonicalised to ref<array<T>> by the array branch
@@ -817,7 +842,6 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     } else if (type::is_reference(type)) {
         auto res = resolve_type(type->get_subtype());
         if (!res) {
-            std::cerr << "Error: cannot resolve reference subtype." << std::endl;
             return nullptr;
         } else {
             // Unsized arrays are canonicalised to ref<array<T>> by the array branch
@@ -836,7 +860,6 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     } else if (type::is_link(type)) {
         auto res = resolve_type(type->get_subtype());
         if (!res) {
-            std::cerr << "Error: cannot resolve link subtype." << std::endl;
             return nullptr;
         } else {
             // Unsized arrays are canonicalised to ref<array<T>> by the array branch
@@ -854,7 +877,6 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     } else if (type::is_view(type)) {
         auto res = resolve_type(type->get_subtype());
         if (!res) {
-            std::cerr << "Error: cannot resolve view subtype." << std::endl;
             return nullptr;
         } else {
             // Unsized arrays are canonicalised to ref<array<T>> by the array branch
@@ -872,7 +894,6 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     } else if (type::is_owner(type)) {
         auto res = resolve_type(type->get_subtype());
         if (!res) {
-            std::cerr << "Error: cannot resolve owner subtype." << std::endl;
             return nullptr;
         } else {
             // Unsized arrays are canonicalised to ref<array<T>> by the array branch
@@ -890,7 +911,6 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     } else if (type::is_drain(type)) {
         auto res = resolve_type(type->get_subtype());
         if (!res) {
-            std::cerr << "Error: cannot resolve drain subtype." << std::endl;
             return nullptr;
         } else {
             return res->get_drain();
@@ -898,9 +918,6 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
     } else if (type::is_array(type)) {
         auto res = resolve_type(type->get_subtype());
         if (!res) {
-            // Not resolvable
-            // TODO throw an exception
-            std::cerr << "Error: cannot resolve array subtype." << std::endl;
             return nullptr;
         } else {
             if (type::is_sized_array(type)) {
@@ -916,6 +933,16 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
         if (res) {
             return res;
         } else {
+            // Template parameter placeholders (e.g. "T" inside a template definition)
+            // are expected to remain unresolved until instantiation — no diagnostic.
+            if (unres->is_template_param_placeholder()) {
+                return nullptr;
+            }
+            // Types with AST template args (e.g. "Box<int>") are handled by the
+            // resolver's template instantiation path — no diagnostic here.
+            if (unres->has_template_args()) {
+                return nullptr;
+            }
             auto resolved_type = from_string(unres->type_id().to_string());
             // If from_string returned a struct_type, accept it even if its LLVM type is not
             // yet generated: resolve_struct_type will handle the LLVM materialisation
@@ -930,8 +957,8 @@ std::shared_ptr<type> context::resolve_type(const std::shared_ptr<type>& type) {
                 return resolved_type;
             }
             if (!resolved_type->is_resolved()) {
-                // TODO throw an exception
-                std::cerr << "Error: cannot resolve type: " << unres->type_id().to_string() << std::endl;
+                // The type name is truly unknown — return nullptr.
+                // Proper error diagnostics are emitted by the resolver passes.
                 return nullptr;
             } else {
                 unres->resolve(resolved_type);

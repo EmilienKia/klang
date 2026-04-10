@@ -30,6 +30,7 @@
  */
 
 #include <catch2/catch_all.hpp>
+#include <sstream>
 
 #include "helpers.hpp"
 #include "../src/model/template.hpp"
@@ -210,6 +211,39 @@ TEST_CASE("[F] M5: template struct with multiple type params",
     auto test_pair = jit->lookup_symbol<int(*)()>("_KFN13__m5_inst_f__9test_pairEv");
     REQUIRE(test_pair != nullptr);
     CHECK(test_pair() == 30);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [G] No cosmetic "cannot resolve type" messages during template compilation
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[G] M6: no cosmetic error messages on stderr",
+          "[milestone6][template][diagnostics]") {
+    // Capture stderr
+    std::ostringstream captured;
+    auto* old_buf = std::cerr.rdbuf(captured.rdbuf());
+
+    auto jit = gen_jit(R"SRC(
+        module __m6_diag__;
+        template<typename T>
+        struct Box {
+            public value : T;
+        }
+        get_value() : int {
+            b : Box<int>;
+            b.value = 42;
+            return b.value;
+        }
+    )SRC");
+
+    // Restore stderr
+    std::cerr.rdbuf(old_buf);
+
+    REQUIRE(jit != nullptr);
+    std::string stderr_output = captured.str();
+    // Should not contain "cannot resolve type"
+    CHECK(stderr_output.find("cannot resolve type") == std::string::npos);
+    CHECK(stderr_output.find("cannot resolve reference subtype") == std::string::npos);
 }
 
 

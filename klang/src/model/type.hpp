@@ -184,6 +184,14 @@ protected:
      */
     std::vector<std::shared_ptr<k::parse::ast::template_arg>> _ast_template_args;
 
+    /**
+     * True when this unresolved type represents a template parameter placeholder
+     * (e.g. "T" inside a template definition).  Such types are expected to remain
+     * unresolved until instantiation substitutes them with concrete types.
+     * Used to suppress cosmetic "cannot resolve type" diagnostics.
+     */
+    bool _is_template_param_placeholder = false;
+
     friend class context;
 
     unresolved_type(const name& type_id): _type_id(type_id) {}
@@ -198,6 +206,10 @@ public:
 
     bool is_resolved()const {return !!_resolved;}
     std::shared_ptr<type> get_resolved()const {return _resolved;}
+
+    /** True if this unresolved type is a template parameter placeholder (e.g. "T"). */
+    bool is_template_param_placeholder() const { return _is_template_param_placeholder; }
+    void set_template_param_placeholder(bool v = true) { _is_template_param_placeholder = v; }
 
     /** True if this unresolved type carries template arguments (e.g. Box<int>). */
     bool has_template_args() const { return !_ast_template_args.empty(); }

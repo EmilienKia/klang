@@ -35,16 +35,22 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [x] Name generation: `build_instantiation_key` and `build_instantiated_name` helpers (Milestone 4)
 - [x] Instantiation cache: same args return same instance, different args produce different instances (Milestone 4)
 - [x] Tests: template instantiator model-level tests (aggregate + function + cache + names + member type verification + body cloning) (Milestone 4)
+- [x] Symbol resolver: resolve template names, trigger monomorphization on `Name<Args>` usage (Milestone 5)
+- [x] Aggregate type resolver: handle template type parameter substitution (Milestone 5)
+- [x] Type reference resolver: resolve template type arguments in expressions (Milestone 5)
+- [x] Tests: gen-jit integration tests for template struct instantiation (basic, member type, distinct types, caching, function params/returns, multi-params) (Milestone 5)
+- [x] Suppress cosmetic "cannot resolve type: T" messages: mark template param unresolved_type as placeholder, suppress diagnostics in context::resolve_type, reorder resolve_one_type for template-arg types (Milestone 6)
+- [x] Tests: stderr capture test verifying no cosmetic error messages during template compilation (Milestone 6)
 
 **To do — Phase 1:**
-- [ ] Symbol resolver: resolve template names, trigger monomorphization on `Name<Args>` usage (Milestone 5)
-- [ ] Aggregate type resolver: handle template type parameter substitution (Milestone 5)
-- [ ] Type reference resolver: resolve template type arguments in expressions (Milestone 5)
+- [x] Symbol resolver: resolve template names, trigger monomorphization on `Name<Args>` usage (Milestone 5)
+- [x] Aggregate type resolver: handle template type parameter substitution (Milestone 5)
+- [x] Type reference resolver: resolve template type arguments in expressions (Milestone 5)
+- [x] Suppress cosmetic "cannot resolve type: T" messages for template param unresolved_type entries (Milestone 6)
 - [ ] Value parameter support: compile-time constant expression evaluation for value parameters
-- [ ] Suppress cosmetic "cannot resolve type: T" messages for template param unresolved_type entries
 - [ ] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint
 - [ ] Default template parameters: apply defaults when trailing arguments are omitted
-- [ ] Name mangling: encode template arguments (`I…E` markers) in mangled names (Milestone 5)
+- [ ] Name mangling: encode template arguments (`I…E` markers) in mangled names
 - [ ] Declaration generator: emit LLVM declarations for each concrete instantiation (with weak/COMDAT linkage)
 - [ ] Implementation generator: emit LLVM IR bodies for each concrete instantiation
 - [ ] KDI exporter: export concrete instantiations as regular entities with `template_origin` metadata

@@ -402,6 +402,13 @@ namespace k::model {
                 ti->params.push_back(std::move(desc));
             }
             agg->set_tpl_info(std::move(ti));
+            // Push template parameter names so that create_unresolved() marks them
+            // as placeholders — suppresses spurious "cannot resolve type: T" messages.
+            std::unordered_set<std::string> param_names;
+            for (auto& p : agg->get_tpl_info()->params) {
+                param_names.insert(p.name);
+            }
+            _context->push_template_param_scope(param_names);
             // Continue processing member declarations: they will have unresolved_type
             // for template parameter references (e.g. "T"), which is fine because
             // resolution passes skip template definitions. The populated model members
@@ -421,6 +428,11 @@ namespace k::model {
             _current_ast_decl = decl;
             decl->visit(*this);
             _current_ast_decl.reset();
+        }
+
+        // Pop template parameter scope if this was a template aggregate
+        if (st.is_template()) {
+            _context->pop_template_param_scope();
         }
     }
 
@@ -787,6 +799,13 @@ namespace k::model {
                 ti->params.push_back(std::move(desc));
             }
             function->set_tpl_info(std::move(ti));
+            // Push template parameter names so that create_unresolved() marks them
+            // as placeholders — suppresses spurious "cannot resolve type: T" messages.
+            std::unordered_set<std::string> param_names;
+            for (auto& p : function->get_tpl_info()->params) {
+                param_names.insert(p.name);
+            }
+            _context->push_template_param_scope(param_names);
             // Continue processing parameters, body, and other details: they will
             // have unresolved_type for template parameter references, which is fine
             // because resolution passes skip template definitions. The populated
@@ -1157,6 +1176,11 @@ namespace k::model {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::WARN_IFACE_NON_VIRTUAL_FUNC), func.name,
                 "Function '{}' has no body; a function body is required unless the function is abstract or declared inside an interface",
                 {func_name});
+        }
+
+        // Pop template parameter scope if this was a template function
+        if (func.is_template()) {
+            _context->pop_template_param_scope();
         }
     }
 

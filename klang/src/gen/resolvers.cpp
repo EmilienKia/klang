@@ -1396,18 +1396,23 @@ resolve_one_type(const std::shared_ptr<type>& t,
                  std::shared_ptr<context> ctx) {
     if (type::is_resolved(t)) return t;
 
+    // ── Template instantiation path (try FIRST for template types) ───────
+    // If the type is an unresolved_type carrying AST template arguments
+    // (e.g. Box<int>), try template instantiation before calling resolve_type,
+    // which would emit a spurious "cannot resolve type" for the base name.
+    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (unres->has_template_args()) {
+            auto tpl_resolved = resolver.try_instantiate_template_type(unres, context_elem);
+            if (tpl_resolved && type::is_resolved(tpl_resolved)) return tpl_resolved;
+        }
+    }
+
     // Composite type (reference_type, pointer_type, etc. wrapping an unresolved subtype)
     auto resolved_composite = ctx->resolve_type(t);
     if (type::is_resolved(resolved_composite)) return resolved_composite;
 
     auto unres = std::dynamic_pointer_cast<unresolved_type>(t);
     if (!unres) return t; // cannot resolve further
-
-    // ── Template instantiation path ──────────────────────────────────
-    if (unres->has_template_args()) {
-        auto tpl_resolved = resolver.try_instantiate_template_type(unres, context_elem);
-        if (tpl_resolved && type::is_resolved(tpl_resolved)) return tpl_resolved;
-    }
 
     auto resolved = resolver.resolve_type_by_name(unres->type_id(), context_elem);
     if (!resolved || !type::is_resolved(resolved)) {

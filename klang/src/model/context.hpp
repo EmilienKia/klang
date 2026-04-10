@@ -90,6 +90,14 @@ protected:
     // String literal deduplication pool: maps string content → LLVM global constant
     std::map<std::string, llvm::GlobalVariable*> _string_pool;
 
+    /**
+     * Stack of template parameter name sets.
+     * Pushed by model_builder when entering a template declaration,
+     * popped when leaving. Used by create_unresolved() to automatically
+     * mark unresolved types that are template parameter placeholders.
+     */
+    std::vector<std::unordered_set<std::string>> _template_param_scopes;
+
     context();
 
 public:
@@ -148,6 +156,16 @@ public:
     void resolve_types();
 
     std::shared_ptr<type> resolve_type(const std::shared_ptr<type>& type);
+
+    /**
+     * Push a set of template parameter names onto the scope stack.
+     * While a scope is active, create_unresolved() will mark matching
+     * unresolved types as template parameter placeholders.
+     */
+    void push_template_param_scope(const std::unordered_set<std::string>& param_names);
+
+    /** Pop the most recent template parameter scope. */
+    void pop_template_param_scope();
 
 
     void init_module(const std::string& module_name);
