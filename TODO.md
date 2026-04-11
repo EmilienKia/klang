@@ -48,7 +48,7 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [x] Type reference resolver: resolve template type arguments in expressions (Milestone 5)
 - [x] Suppress cosmetic "cannot resolve type: T" messages for template param unresolved_type entries (Milestone 6)
 - [ ] Value parameter support: compile-time constant expression evaluation for value parameters
-- [ ] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint
+- [x] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint (Milestone 10)
 - [x] Default template parameters: apply defaults when trailing arguments are omitted (incl. `<>` syntax)
 - [x] Name mangling: encode template arguments (`I…E` markers) in mangled names
 - [x] Template function call syntax: `func<type_args>(args)` disambiguation and instantiation (Milestone 9)

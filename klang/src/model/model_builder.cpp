@@ -392,6 +392,10 @@ namespace k::model {
                     } else {
                         desc.kind = template_param_kind::TYPENAME;
                     }
+                    // Store constraint type if present (e.g. class T : Base)
+                    if (tp->constraint_type) {
+                        desc.constraint_type = _context->from_type_specifier(*tp->constraint_type);
+                    }
                     // Store default type if present (e.g. typename T = int)
                     if (tp->default_type_spec) {
                         desc.default_type = _context->from_type_specifier(*tp->default_type_spec);
@@ -797,6 +801,10 @@ namespace k::model {
                         desc.kind = template_param_kind::INTERFACE;
                     } else {
                         desc.kind = template_param_kind::TYPENAME;
+                    }
+                    // Store constraint type if present (e.g. class T : Base)
+                    if (tp->constraint_type) {
+                        desc.constraint_type = _context->from_type_specifier(*tp->constraint_type);
                     }
                     // Store default type if present (e.g. typename T = int)
                     if (tp->default_type_spec) {

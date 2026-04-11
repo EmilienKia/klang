@@ -55,6 +55,7 @@ add_library(klangcomp
         src/model/tools/kdi_type_converter.hpp
         src/model/tools/kdi_type_converter.cpp
         src/model/template_instantiator.cpp
+        src/model/template.cpp
 )
 
 target_include_directories(klangcomp PRIVATE
@@ -154,6 +155,7 @@ add_executable(klang-tests
         tests/test-gen-template-instantiation.cpp
         tests/test-gen-template-mangling.cpp
         tests/test-gen-template-func-calls.cpp
+        tests/test-gen-template-constraints.cpp
         tests/test-template-instantiator.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)

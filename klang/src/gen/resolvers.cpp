@@ -1202,6 +1202,28 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         }
     }
 
+    // 3c. Resolve constraint types in template params if still unresolved
+    for (auto& param : ti->params) {
+        if (param.is_type_param() && param.constraint_type && !type::is_resolved(param.constraint_type)) {
+            auto resolved = _context->resolve_type(param.constraint_type);
+            if (resolved && type::is_resolved(resolved)) {
+                param.constraint_type = resolved;
+            } else if (auto unres = std::dynamic_pointer_cast<unresolved_type>(param.constraint_type)) {
+                auto r = resolve_type_by_name(unres->type_id(), *tpl_agg);
+                if (r && type::is_resolved(r)) param.constraint_type = r;
+            }
+        }
+    }
+
+    // 3d. Validate type constraints (kind filter + base-type constraint)
+    {
+        size_t err_idx;
+        std::string err_reason;
+        if (!validate_template_arg_constraints(ti->params, model_args, err_idx, err_reason)) {
+            return {};  // Constraint violated — silently fail (error reporting TODO)
+        }
+    }
+
     // 4. Instantiate the template aggregate
     auto parent_ns = scope_lookup::enclosing_namespace(*tpl_agg);
     if (!parent_ns) return {};
@@ -1477,7 +1499,33 @@ void aggregate_type_resolver::visit_namespace(ns& ns) {
 
 void aggregate_type_resolver::visit_aggregate(aggregate& st) {
     // Skip template definitions — they are not instantiated yet.
-    if (st.is_template()) return;
+    // But first resolve constraint_type and default_type in their tpl_info
+    // so that constraint validation works correctly.
+    if (st.is_template()) {
+        if (auto* ti = st.get_tpl_info()) {
+            for (auto& param : ti->params) {
+                if (param.constraint_type && !type::is_resolved(param.constraint_type)) {
+                    auto resolved = _context->resolve_type(param.constraint_type);
+                    if (resolved && type::is_resolved(resolved)) {
+                        param.constraint_type = resolved;
+                    } else if (auto unres = std::dynamic_pointer_cast<unresolved_type>(param.constraint_type)) {
+                        auto r = resolve_type_by_name(unres->type_id(), st);
+                        if (r && type::is_resolved(r)) param.constraint_type = r;
+                    }
+                }
+                if (param.default_type && !type::is_resolved(param.default_type)) {
+                    auto resolved = _context->resolve_type(param.default_type);
+                    if (resolved && type::is_resolved(resolved)) {
+                        param.default_type = resolved;
+                    } else if (auto unres = std::dynamic_pointer_cast<unresolved_type>(param.default_type)) {
+                        auto r = resolve_type_by_name(unres->type_id(), st);
+                        if (r && type::is_resolved(r)) param.default_type = r;
+                    }
+                }
+            }
+        }
+        return;
+    }
 
     // Visit nested aggregate children first (depth-first), so their types are available
     // before we process members of the outer aggregate.
@@ -2653,6 +2701,28 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             model_args.push_back(template_argument::make_value(*param.default_value));
         } else {
             return {};
+        }
+    }
+
+    // 3c. Resolve constraint types in template params if still unresolved
+    for (auto& param : ti->params) {
+        if (param.is_type_param() && param.constraint_type && !type::is_resolved(param.constraint_type)) {
+            auto resolved = _context->resolve_type(param.constraint_type);
+            if (resolved && type::is_resolved(resolved)) {
+                param.constraint_type = resolved;
+            } else if (auto unres = std::dynamic_pointer_cast<unresolved_type>(param.constraint_type)) {
+                auto r = resolve_type_by_name(unres->type_id(), *tpl_agg);
+                if (r && type::is_resolved(r)) param.constraint_type = r;
+            }
+        }
+    }
+
+    // 3d. Validate type constraints (kind filter + base-type constraint)
+    {
+        size_t err_idx;
+        std::string err_reason;
+        if (!validate_template_arg_constraints(ti->params, model_args, err_idx, err_reason)) {
+            return {};  // Constraint violated — silently fail (error reporting TODO)
         }
     }
 

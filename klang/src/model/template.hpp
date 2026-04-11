@@ -176,6 +176,29 @@ struct tpl_info {
     size_t param_count() const { return params.size(); }
 };
 
+/**
+ * Validate that a vector of concrete template arguments satisfies the
+ * constraints declared on the template parameters (kind filter and
+ * base-type constraint).
+ *
+ * @param params  Template parameter descriptors (from tpl_info).
+ * @param args    Concrete template arguments to validate.
+ * @param[out] error_index  Set to the 0-based index of the first argument
+ *                          that violates a constraint, or (size_t)-1 if
+ *                          all arguments pass.
+ * @param[out] error_kind   A human-readable reason for the failure:
+ *                          "kind" for kind-filter mismatch,
+ *                          "constraint" for base-type constraint violation,
+ *                          "not_aggregate" if a kind-filtered param receives
+ *                          a non-aggregate type.
+ * @return true if all arguments pass, false otherwise.
+ */
+bool validate_template_arg_constraints(
+    const std::vector<template_param_descriptor>& params,
+    const std::vector<template_argument>& args,
+    size_t& error_index,
+    std::string& error_kind);
+
 } // namespace k::model
 #endif // KLANG_TEMPLATE_HPP
 

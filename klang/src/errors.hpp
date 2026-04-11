@@ -575,6 +575,19 @@ enum class codegen_diag : unsigned int {
     INTERNAL_ERR_F054                             = 0xF054,
 };
 
+// ────────────────────────────────────────────────────────────────────────────
+// Template diagnostics (instantiation, constraints, argument validation)
+// ────────────────────────────────────────────────────────────────────────────
+enum class template_diag : unsigned int {
+    ERR_TPL_TOO_MANY_ARGS                         = 0x0180,
+    ERR_TPL_TOO_FEW_ARGS                          = 0x0181,
+    ERR_TPL_ARG_WRONG_KIND                        = 0x0182,
+    ERR_TPL_ARG_CONSTRAINT_VIOLATED               = 0x0183,
+    ERR_TPL_ARG_NOT_AGGREGATE                     = 0x0184,
+    ERR_TPL_VALUE_ARG_NOT_CONSTANT                = 0x0185,
+    ERR_TPL_VALUE_ARG_TYPE_MISMATCH               = 0x0186,
+};
+
 } // namespace k::diag
 
 #endif // KLANG_ERRORS_HPP

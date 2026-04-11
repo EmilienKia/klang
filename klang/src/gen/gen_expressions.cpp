@@ -2583,6 +2583,25 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             model_args.push_back(template_argument::make_value(*param.default_value));
                         } else { args_ok = false; }
                     }
+                    // Resolve constraint types in template params if still unresolved
+                    if (args_ok) {
+                        for (auto& param : ti->params) {
+                            if (param.is_type_param() && param.constraint_type && !type::is_resolved(param.constraint_type)) {
+                                auto resolved = _context->resolve_type(param.constraint_type);
+                                if (resolved && type::is_resolved(resolved)) {
+                                    param.constraint_type = resolved;
+                                }
+                            }
+                        }
+                    }
+                    // Validate type constraints (kind filter + base-type constraint)
+                    if (args_ok) {
+                        size_t err_idx;
+                        std::string err_reason;
+                        if (!validate_template_arg_constraints(ti->params, model_args, err_idx, err_reason)) {
+                            args_ok = false;
+                        }
+                    }
                     if (args_ok) {
                         auto root_ns = _unit.get_root_namespace();
                         auto concrete = template_instantiator::instantiate_function(
