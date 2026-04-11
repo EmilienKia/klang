@@ -26,8 +26,67 @@ namespace k::lex {
 // Integer literal
 //
 k::value_type integer::value()const {
-    // TODO
-    return {};
+    auto view = int_content();
+    const char* first = view.data();
+    const char* last  = first + view.size();
+
+    switch (size) {
+        case BYTE: {
+            // std::from_chars doesn't support char types directly; parse as int then cast.
+            int tmp = 0;
+            std::from_chars(first, last, tmp, base);
+            if (unsigned_num)
+                return static_cast<unsigned char>(tmp);
+            else
+                return static_cast<char>(tmp);
+        }
+        case SHORT: {
+            if (unsigned_num) {
+                unsigned short res = 0;
+                std::from_chars(first, last, res, base);
+                return res;
+            } else {
+                short res = 0;
+                std::from_chars(first, last, res, base);
+                return res;
+            }
+        }
+        case INT: {
+            if (unsigned_num) {
+                unsigned int res = 0;
+                std::from_chars(first, last, res, base);
+                return res;
+            } else {
+                int res = 0;
+                std::from_chars(first, last, res, base);
+                return res;
+            }
+        }
+        case LONG: {
+            if (unsigned_num) {
+                unsigned long res = 0;
+                std::from_chars(first, last, res, base);
+                return res;
+            } else {
+                long res = 0;
+                std::from_chars(first, last, res, base);
+                return res;
+            }
+        }
+        case LONGLONG: {
+            if (unsigned_num) {
+                unsigned long long res = 0;
+                std::from_chars(first, last, res, base);
+                return res;
+            } else {
+                long long res = 0;
+                std::from_chars(first, last, res, base);
+                return res;
+            }
+        }
+        default:
+            return {};
+    }
 }
 
 unsigned int integer::to_unsigned_int() const {
@@ -41,7 +100,16 @@ unsigned int integer::to_unsigned_int() const {
 // Floating point number litteral
 //
 k::value_type float_num::value() const {
-    return {};
+    auto view = float_content();
+    if (size == DOUBLE) {
+        double res = 0.0;
+        std::from_chars(view.data(), view.data() + view.size(), res);
+        return res;
+    } else {
+        float res = 0.0f;
+        std::from_chars(view.data(), view.data() + view.size(), res);
+        return res;
+    }
 }
 
 //

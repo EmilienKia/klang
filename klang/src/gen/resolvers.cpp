@@ -1175,7 +1175,21 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             if (!arg_type || !type::is_resolved(arg_type)) return {};
             model_args.push_back(template_argument::make_type(arg_type));
         } else {
-            return {}; // Value template args not yet supported
+            // Value template argument — extract integer literal
+            auto lit = dynamic_cast<parse::ast::literal_expr*>(ast_arg->value_arg.get());
+            if (!lit) return {};
+            auto val = lit->literal.value().value();
+            int64_t int_val = 0;
+            bool ok = std::visit([&int_val](auto&& v) -> bool {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, std::nullptr_t>) {
+                    int_val = static_cast<int64_t>(v);
+                    return true;
+                }
+                return false;
+            }, val);
+            if (!ok) return {};
+            model_args.push_back(template_argument::make_value(int_val));
         }
     }
     // 3b. Fill in default arguments for missing trailing parameters
@@ -2674,9 +2688,21 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             if (!arg_type || !type::is_resolved(arg_type)) return {};
             model_args.push_back(template_argument::make_type(arg_type));
         } else if (ast_arg->is_value()) {
-            // TODO: evaluate value expressions at compile time
-            // For now, only integer literals are supported
-            return {};
+            // Value template argument — extract integer literal
+            auto lit = dynamic_cast<parse::ast::literal_expr*>(ast_arg->value_arg.get());
+            if (!lit) return {};
+            auto val = lit->literal.value().value();
+            int64_t int_val = 0;
+            bool ok = std::visit([&int_val](auto&& v) -> bool {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, std::nullptr_t>) {
+                    int_val = static_cast<int64_t>(v);
+                    return true;
+                }
+                return false;
+            }, val);
+            if (!ok) return {};
+            model_args.push_back(template_argument::make_value(int_val));
         } else {
             return {};
         }

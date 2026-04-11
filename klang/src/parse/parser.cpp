@@ -615,8 +615,11 @@ ast::template_arg_list parser::parse_template_arg_list(bool* was_explicit)
         if (type_spec) {
             args.push_back(std::make_shared<ast::template_arg>(std::move(type_spec)));
         } else {
-            // Try as expression
-            auto expr = parse_conditional_expr();
+            // Try as a value expression.
+            // Use parse_primary_expr() to avoid consuming '>' or ',' as
+            // binary operators — template value args are restricted to simple
+            // expressions (literals, identifiers, parenthesised expressions).
+            auto expr = parse_primary_expr();
             if (expr) {
                 args.push_back(std::make_shared<ast::template_arg>(std::move(expr)));
             } else {
@@ -636,7 +639,7 @@ ast::template_arg_list parser::parse_template_arg_list(bool* was_explicit)
                 if (type_spec2) {
                     args.push_back(std::make_shared<ast::template_arg>(std::move(type_spec2)));
                 } else {
-                    auto expr2 = parse_conditional_expr();
+                    auto expr2 = parse_primary_expr();
                     if (expr2) {
                         args.push_back(std::make_shared<ast::template_arg>(std::move(expr2)));
                     } else {
@@ -2904,6 +2907,7 @@ ast::expr_ptr parser::parse_postfix_expr()
                 if (peek_paren == lex::punctuator::PARENTHESIS_OPEN) {
                     _lexer.unget(); // put '(' back for the postfix loop below
                     ident_expr->template_args = std::move(tpl_args);
+                    ident_expr->explicit_template_args = true;
                     // Continue — the postfix loop will pick up the '(' and create
                     // a parenthesis_postfix_expr (function call).
                 } else {
@@ -2917,8 +2921,7 @@ ast::expr_ptr parser::parse_postfix_expr()
                 if (peek_paren == lex::punctuator::PARENTHESIS_OPEN) {
                     _lexer.unget();
                     ident_expr->template_args = {};
-                    // Mark that we had explicit <> — but template_args is empty
-                    // The resolver will need to apply defaults.
+                    ident_expr->explicit_template_args = true;
                 } else {
                     _lexer.seek(save_tpl);
                     tpl_holder.rollback();

@@ -72,8 +72,32 @@ void symbol_resolver::visit_value_expression(value_expression& expr)
 
 void type_reference_resolver::visit_value_expression(value_expression& expr)
 {
-    auto type = _context->from_literal(expr.any_literal());
-    expr.set_type(type);
+    if (expr.is_literal()) {
+        auto type = _context->from_literal(expr.any_literal());
+        expr.set_type(type);
+    } else {
+        // Non-literal value expression (e.g. template value parameter substitution).
+        // Infer type from the k::value_type variant.
+        auto& val = expr.get_value();
+        std::shared_ptr<type> inferred = std::visit([this](auto&& v) -> std::shared_ptr<type> {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, bool>)           return _context->from_type(primitive_type::BOOL);
+            else if constexpr (std::is_same_v<T, char>)      return _context->from_type(primitive_type::CHAR);
+            else if constexpr (std::is_same_v<T, unsigned char>)  return _context->from_type(primitive_type::BYTE);
+            else if constexpr (std::is_same_v<T, short>)     return _context->from_type(primitive_type::SHORT);
+            else if constexpr (std::is_same_v<T, unsigned short>) return _context->from_type(primitive_type::UNSIGNED_SHORT);
+            else if constexpr (std::is_same_v<T, int>)       return _context->from_type(primitive_type::INT);
+            else if constexpr (std::is_same_v<T, unsigned int>)   return _context->from_type(primitive_type::UNSIGNED_INT);
+            else if constexpr (std::is_same_v<T, long>)      return _context->from_type(primitive_type::LONG);
+            else if constexpr (std::is_same_v<T, unsigned long>)  return _context->from_type(primitive_type::UNSIGNED_LONG);
+            else if constexpr (std::is_same_v<T, long long>)     return _context->from_type(primitive_type::LONG);
+            else if constexpr (std::is_same_v<T, unsigned long long>) return _context->from_type(primitive_type::UNSIGNED_LONG);
+            else if constexpr (std::is_same_v<T, float>)     return _context->from_type(primitive_type::FLOAT);
+            else if constexpr (std::is_same_v<T, double>)    return _context->from_type(primitive_type::DOUBLE);
+            else return {};
+        }, val);
+        expr.set_type(inferred);
+    }
 }
 
 llvm::Constant* implementation_generator::get_llvm_constant_from_value_expr(const value_expression& expr) const {
@@ -2566,6 +2590,22 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             }
                             if (!arg_type || !type::is_resolved(arg_type)) { args_ok = false; break; }
                             model_args.push_back(template_argument::make_type(arg_type));
+                        } else if (ast_arg->is_value()) {
+                            // Value template argument — extract integer literal
+                            auto lit = dynamic_cast<parse::ast::literal_expr*>(ast_arg->value_arg.get());
+                            if (!lit) { args_ok = false; break; }
+                            auto val = lit->literal.value().value();
+                            int64_t int_val = 0;
+                            bool ok = std::visit([&int_val](auto&& v) -> bool {
+                                using T = std::decay_t<decltype(v)>;
+                                if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, std::nullptr_t>) {
+                                    int_val = static_cast<int64_t>(v);
+                                    return true;
+                                }
+                                return false;
+                            }, val);
+                            if (!ok) { args_ok = false; break; }
+                            model_args.push_back(template_argument::make_value(int_val));
                         } else {
                             args_ok = false; break;
                         }

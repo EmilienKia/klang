@@ -233,6 +233,9 @@ protected:
      */
     k::parse::ast::template_arg_list _ast_template_args;
 
+    /** True when '<>' or '<args>' was explicitly written (even if args is empty). */
+    bool _has_explicit_template_args = false;
+
     symbol_expression(const name &name);
 
     symbol_expression(const std::shared_ptr<variable_definition> &var);
@@ -240,7 +243,9 @@ protected:
     symbol_expression(const std::shared_ptr<function> &func);
 
     // Copy constructor
-    symbol_expression(const symbol_expression& other) : expression(other), _name(other._name), _target(other._target) {}
+    symbol_expression(const symbol_expression& other)
+        : expression(other), _name(other._name), _target(other._target),
+          _has_explicit_template_args(other._has_explicit_template_args) {}
 
 public:
     void accept(model_visitor &visitor) override;
@@ -310,17 +315,24 @@ public:
     void set_target(annotation_type_rtti_target target) { _target = std::move(target); }
 
     /** True if this symbol carries explicit template arguments (from func<args>() syntax). */
-    bool has_ast_template_args() const { return !_ast_template_args.empty(); }
+    bool has_ast_template_args() const { return _has_explicit_template_args || !_ast_template_args.empty(); }
 
     /** Returns the AST template arguments. */
     const k::parse::ast::template_arg_list& get_ast_template_args() const { return _ast_template_args; }
 
     /** Set the AST template arguments. */
-    void set_ast_template_args(k::parse::ast::template_arg_list args) { _ast_template_args = std::move(args); }
+    void set_ast_template_args(k::parse::ast::template_arg_list args) {
+        _ast_template_args = std::move(args);
+        _has_explicit_template_args = true;
+    }
+
+    /** Mark that explicit template args were provided (even if list is empty). */
+    void set_has_explicit_template_args(bool v = true) { _has_explicit_template_args = v; }
 
     std::shared_ptr<expression> clone() const override {
         auto c = std::shared_ptr<symbol_expression>(new symbol_expression(*this));
         c->_ast_template_args = _ast_template_args;
+        c->_has_explicit_template_args = _has_explicit_template_args;
         return c;
     }
 };
@@ -352,6 +364,7 @@ protected:
 
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
+    friend class template_instantiator;
 
     void assign(const std::shared_ptr<expression> &sub_expr) {
         _sub_expr = sub_expr;
@@ -434,6 +447,7 @@ protected:
     }
 
     friend class gen::type_reference_resolver;
+    friend class template_instantiator;
 
     void assign_right(const std::shared_ptr<expression> &right_expr) {
         _right_expr = right_expr;

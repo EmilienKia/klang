@@ -560,14 +560,18 @@ namespace k::parse {
             /** Optional template arguments — set when parsing func<T>(args). */
             template_arg_list template_args;
 
+            /** True when '<>' or '<args>' was explicitly written (even if template_args is empty). */
+            bool explicit_template_args = false;
+
             identifier_expr(const ast::qualified_identifier& qident) :
                     qident(qident) {}
 
             identifier_expr(const ast::qualified_identifier& qident, template_arg_list tpl_args) :
-                    qident(qident), template_args(std::move(tpl_args)) {}
+                    qident(qident), template_args(std::move(tpl_args)),
+                    explicit_template_args(!tpl_args.empty()) {}
 
-            /** True if this identifier carries explicit template arguments. */
-            bool has_template_args() const { return !template_args.empty(); }
+            /** True if this identifier carries explicit template arguments (including empty <>). */
+            bool has_template_args() const { return explicit_template_args || !template_args.empty(); }
 
             virtual void visit(ast_visitor &visitor) override;
         };

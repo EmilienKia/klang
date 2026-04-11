@@ -407,6 +407,18 @@ namespace k::model {
                     if (tp->value_type) {
                         desc.value_type = _context->from_type_specifier(*tp->value_type);
                     }
+                    // Extract default value from literal expression if present
+                    if (tp->default_expr) {
+                        if (auto lit = dynamic_cast<parse::ast::literal_expr*>(tp->default_expr.get())) {
+                            auto val = lit->literal.value().value();
+                            std::visit([&desc](auto&& v) {
+                                using T = std::decay_t<decltype(v)>;
+                                if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, std::nullptr_t>) {
+                                    desc.default_value = static_cast<int64_t>(v);
+                                }
+                            }, val);
+                        }
+                    }
                 }
                 ti->params.push_back(std::move(desc));
             }
@@ -815,6 +827,18 @@ namespace k::model {
                     // Store value type (e.g. N : unsigned int)
                     if (tp->value_type) {
                         desc.value_type = _context->from_type_specifier(*tp->value_type);
+                    }
+                    // Extract default value from literal expression if present
+                    if (tp->default_expr) {
+                        if (auto lit = dynamic_cast<parse::ast::literal_expr*>(tp->default_expr.get())) {
+                            auto val = lit->literal.value().value();
+                            std::visit([&desc](auto&& v) {
+                                using T = std::decay_t<decltype(v)>;
+                                if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, std::nullptr_t>) {
+                                    desc.default_value = static_cast<int64_t>(v);
+                                }
+                            }, val);
+                        }
                     }
                 }
                 ti->params.push_back(std::move(desc));

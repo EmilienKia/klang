@@ -121,13 +121,22 @@ private:
         const std::vector<template_argument>& args);
 
     /**
+     * Build the value substitution map from template params and concrete args.
+     * Maps value parameter names to their concrete integer values.
+     */
+    static value_substitution_map build_value_substitution_map(
+        const tpl_info& ti,
+        const std::vector<template_argument>& args);
+
+    /**
      * Clone a member variable from a template aggregate into a concrete aggregate,
      * substituting types.
      */
     static void clone_member_variable(
         const member_variable_definition& src,
         std::shared_ptr<aggregate> target,
-        const type_substitution_map& subst);
+        const type_substitution_map& subst,
+        const value_substitution_map& val_subst);
 
     /**
      * Clone a function (method) from a template aggregate into a concrete aggregate,
@@ -136,7 +145,8 @@ private:
     static void clone_method(
         const function& src,
         std::shared_ptr<aggregate> target,
-        const type_substitution_map& subst);
+        const type_substitution_map& subst,
+        const value_substitution_map& val_subst);
 
     /**
      * Clone a constructor from a template aggregate into a concrete aggregate.
@@ -144,7 +154,8 @@ private:
     static void clone_constructor(
         const constructor& src,
         std::shared_ptr<aggregate> target,
-        const type_substitution_map& subst);
+        const type_substitution_map& subst,
+        const value_substitution_map& val_subst);
 
     /**
      * Clone a destructor from a template aggregate into a concrete aggregate.
@@ -152,7 +163,8 @@ private:
     static void clone_destructor(
         const destructor& src,
         std::shared_ptr<aggregate> target,
-        const type_substitution_map& subst);
+        const type_substitution_map& subst,
+        const value_substitution_map& val_subst);
 
     /**
      * Populate a function's parameters and body from a template source.
@@ -160,7 +172,8 @@ private:
     static void populate_function_from_template(
         std::shared_ptr<function> dst,
         const function& src,
-        const type_substitution_map& subst);
+        const type_substitution_map& subst,
+        const value_substitution_map& val_subst);
 
     /**
      * Clone the contents of a block (statements) from source to destination,
@@ -169,7 +182,8 @@ private:
     static void clone_block_contents(
         const block& src,
         std::shared_ptr<block> dst,
-        const type_substitution_map& subst);
+        const type_substitution_map& subst,
+        const value_substitution_map& val_subst);
 
     /**
      * Clone a single statement, substituting types.
@@ -178,14 +192,16 @@ private:
     static std::shared_ptr<statement> clone_statement(
         const statement& src,
         std::shared_ptr<statement> parent_stmt,
-        const type_substitution_map& subst);
+        const type_substitution_map& subst,
+        const value_substitution_map& val_subst);
 
     /**
-     * Clone an expression and substitute all types within it.
+     * Clone an expression and substitute all types and value params within it.
      */
     static std::shared_ptr<expression> clone_and_substitute_expr(
         const std::shared_ptr<expression>& src,
-        const type_substitution_map& subst);
+        const type_substitution_map& subst,
+        const value_substitution_map& val_subst);
 
     /**
      * Walk a cloned expression tree and substitute types in-place.
@@ -193,6 +209,15 @@ private:
     static void substitute_expr_types(
         std::shared_ptr<expression> expr,
         const type_substitution_map& subst);
+
+    /**
+     * Walk a cloned expression tree and replace symbol_expression nodes
+     * that match value parameter names with concrete value_expressions.
+     * Modifies the expression in-place (may replace the root via reference).
+     */
+    static void substitute_value_params(
+        std::shared_ptr<expression>& expr,
+        const value_substitution_map& val_subst);
 
     /**
      * Retarget the _constructed_symbol in a cloned init expression to point

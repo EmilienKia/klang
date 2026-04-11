@@ -438,6 +438,10 @@ llvm::Constant* context::get_llvm_constant_from_value(const k::value_type &value
         return llvm::ConstantInt::get(**this, llvm::APInt(32, std::get<int>(value), true));
     } else if (std::holds_alternative<unsigned int>(value)) {
         return llvm::ConstantInt::get(**this, llvm::APInt(32, std::get<unsigned int>(value), false));
+    } else if (std::holds_alternative<long>(value)) {
+        return llvm::ConstantInt::get(**this, llvm::APInt(64, std::get<long>(value), true));
+    } else if (std::holds_alternative<unsigned long>(value)) {
+        return llvm::ConstantInt::get(**this, llvm::APInt(64, std::get<unsigned long>(value), false));
     } else if (std::holds_alternative<long long>(value)) {
         return llvm::ConstantInt::get(**this, llvm::APInt(64, std::get<long long>(value), true));
     } else if (std::holds_alternative<unsigned long long>(value)) {
