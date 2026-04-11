@@ -47,7 +47,7 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [x] Aggregate type resolver: handle template type parameter substitution (Milestone 5)
 - [x] Type reference resolver: resolve template type arguments in expressions (Milestone 5)
 - [x] Suppress cosmetic "cannot resolve type: T" messages for template param unresolved_type entries (Milestone 6)
-- [ ] Value parameter support: compile-time constant expression evaluation for value parameters
+- [x] Value parameter support: compile-time constant expression evaluation for value parameters (Milestone 11)
 - [x] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint (Milestone 10)
 - [x] Default template parameters: apply defaults when trailing arguments are omitted (incl. `<>` syntax)
 - [x] Name mangling: encode template arguments (`I…E` markers) in mangled names
@@ -62,7 +62,7 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [ ] Spec: update `summary.md` with §25 Templates
 - [x] Tests: gen-jit tests for template functions (primitives, multi-type-params, cache) (Milestone 9)
 - [ ] Tests: gen-jit tests for template aggregates (struct, class, interface)
-- [ ] Tests: gen-jit tests for template value parameters
+- [x] Tests: gen-jit tests for template value parameters (Milestone 11)
 - [ ] Tests: gen-jit tests for template type constraints
 - [x] Tests: gen-jit tests for template default parameters (Milestone 7)
 - [ ] Tests: error tests for invalid instantiations (wrong kind, missing args, etc.)
