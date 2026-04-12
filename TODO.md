@@ -1,17 +1,6 @@
 ## TODO and wish list
 
-### K Language
-
-- Review casting algorithm and implicit casting strategy (char[]! -> const char[]?  ou  char[]! -> const char[], etc.)
-- Add temporary object explicit construction (incl in return expr) — **struct form done**, **struct designated init done** (`S{.x=val}`), array temporary `T[]{init}` pending
-- Add return type covariance
-- Add "virtual" symbols (parent, self, etc.)
-- Add typed enums
-- Add unions, typed unions
-- Add state classes
-- Add templates (Phase 1 — full instantiation — in progress, see below)
-
-### Templates — Phase 1 (Full Instantiation Only)
+### Current task : Add templates (Phase 1 — full instantiation only — in progress, see below)
 
 Phase 1 implements the core template infrastructure with explicit-only instantiation.
 See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templates.md) for the full specification.
@@ -47,11 +36,10 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [x] Aggregate type resolver: handle template type parameter substitution (Milestone 5)
 - [x] Type reference resolver: resolve template type arguments in expressions (Milestone 5)
 - [x] Suppress cosmetic "cannot resolve type: T" messages for template param unresolved_type entries (Milestone 6)
-- [x] Value parameter support: compile-time constant expression evaluation for value parameters (Milestone 11)
-- [x] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint (Milestone 10)
+- [ ] Value parameter support: compile-time constant expression evaluation for value parameters
+- [ ] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint
 - [x] Default template parameters: apply defaults when trailing arguments are omitted (incl. `<>` syntax)
-- [x] Name mangling: encode template arguments (`I…E` markers) in mangled names
-- [x] Template function call syntax: `func<type_args>(args)` disambiguation and instantiation (Milestone 9)
+- [ ] Name mangling: encode template arguments (`I…E` markers) in mangled names
 - [ ] Declaration generator: emit LLVM declarations for each concrete instantiation (with weak/COMDAT linkage)
 - [ ] Implementation generator: emit LLVM IR bodies for each concrete instantiation
 - [ ] KDI exporter: export concrete instantiations as regular entities with `template_origin` metadata
@@ -61,8 +49,8 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [ ] Grammar: update `grammar.ebnf` with `TemplateDeclaration`, `TemplateArgList`, updated `QualifiedIdentifier`
 - [ ] Spec: update `summary.md` with §25 Templates
 - [x] Tests: gen-jit tests for template functions (primitives, multi-type-params, cache) (Milestone 9)
-- [ ] Tests: gen-jit tests for template aggregates (struct, class, interface)
-- [x] Tests: gen-jit tests for template value parameters (Milestone 11)
+- [ ] Tests: gen-jit tests for template functions (primitives, structs)
+- [ ] Tests: gen-jit tests for template value parameters
 - [ ] Tests: gen-jit tests for template type constraints
 - [x] Tests: gen-jit tests for template default parameters (Milestone 7)
 - [ ] Tests: error tests for invalid instantiations (wrong kind, missing args, etc.)
@@ -70,7 +58,7 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [x] Tests: name mangling tests for template entities
 
 **Deferred — Phase 2+ (not in scope):**
-- [ ] Template argument deduction for function templates
+- [ ] Tests: name mangling tests for template entities
 - [ ] Partial and full template specialization
 - [ ] Template template parameters (`template<template<typename> class C>`)
 - [ ] Variadic template parameters (parameter packs, fold expressions)
@@ -81,13 +69,36 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [ ] Template constructors (independent of aggregate template)
 - [ ] SFINAE-like overload filtering based on template constraints
 
-### K Language (continued)
+
+
+
+
+### K Language
+
+- Add templates (Phase 1 — full instantiation — in progress, see above)
+- Add templates (Phase 2+ — partial specialization, variadic templates, template template parameters, etc.)
+- Review casting algorithm and implicit casting strategy (char[]! -> const char[]?  ou  char[]! -> const char[], etc.)
+- Add temporary object explicit construction (incl in return expr) — **struct form done**, **struct designated init done** (`S{.x=val}`), array temporary `T[]{init}` pending
+- Add return type covariance
+- Add "virtual" symbols (parent, self, etc.)
+- Add typed enums
+- Add unions, typed unions
+- Add state classes
 - Better private visibility support
 - Improve log and debug messages
 - Add in-comment documentation support (e.g. for doc generation)
 - Varargs
 - Add constant values expression computation at compile time, enhance compile-time evaluation capabilities
 - Add static conditional statements and static compiler value definitions
+- Add traits and compile-time type introspection capabilities
+- Add support for separate compilation and module interfaces (e.g. `export` keyword, module partitions)
+
+### K compiler and language specifics for compiler capabilities
+- Add support for producing inline documentation (e.g. via `///` comments) and generating API reference docs from it
+- Add support for generating language bindings (e.g. C header generation) from K code
+- Add iterative compilation mode for faster edit-compile-test cycles (e.g. via an interactive REPL or watch mode)
+- Add support for incremental compilation and caching of intermediate results to speed up subsequent builds
+- Add support for cross-compilation to different target architectures and platforms
 
 ### libk
 - Refactor libk C functions wrapping to reduce intermediate method counts
