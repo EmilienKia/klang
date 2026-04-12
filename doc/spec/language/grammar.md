@@ -35,13 +35,14 @@ Grammar notation used here:
     *(one of)*
     `bool` `byte` `char` `short` `int` `long`
     `float` `double` `unsigned`
-    `struct` `namespace` `module` `import` `using`
+    `struct` `class` `interface` `namespace` `module` `import` `using` `friend`
     `static` `const` `abstract` `final` `override`
     `public` `protected` `private`
     `this` `return`
     `if` `else` `while` `for`
     `new` `delete` `default` `enum`
     `operator` `annotation`
+    `template` `typename`
 ### Literals
 *Full description:* [Literals](expressions/literals.md)
 <a id="literal"></a>**Literal:**
@@ -93,7 +94,53 @@ Grammar notation used here:
 <a id="importdeclaration"></a>**ImportDeclaration:**
     `'import'` [Identifier](#identifier) `';'`
 <a id="qualifiedidentifier"></a>**QualifiedIdentifier:**
-    `[` `'::'` `]` [Identifier](#identifier) {{ `'::'` [Identifier](#identifier) }}
+    `[` `'::'` `]` [IdentifierSegment](#identifiersegment) {{ `'::'` [IdentifierSegment](#identifiersegment) }}
+
+<a id="identifiersegment"></a>**IdentifierSegment:**
+    [Identifier](#identifier) `[` [TemplateArgList](#templatearglist) `]`
+
+### Templates
+
+*Full description:* [Templates](templates/templates.md)
+
+<a id="templatedeclaration"></a>**TemplateDeclaration:**
+    `'template'` `'<'` [TemplateParameterList](#templateparameterlist) `'>'`
+
+<a id="templateparameterlist"></a>**TemplateParameterList:**
+    [TemplateParameter](#templateparameter) {{ `','` [TemplateParameter](#templateparameter) }}
+
+<a id="templateparameter"></a>**TemplateParameter:**
+    [TemplateParameterKind](#templateparameterkind) [Identifier](#identifier) `[` `':'` [TypeSpec](#typespec) `]` `[` `'='` [ConditionalExpr](#conditionalexpr) `]`
+
+    *A **type parameter** is introduced by one of the keywords `typename`, `struct`, `class`, `interface`.
+    The optional `: TypeSpec` after the identifier specifies a **base-type constraint**.
+    The optional `= ConditionalExpr` specifies a default type.*
+
+    *A **value parameter** has a type identifier or TypeSpec as its kind (instead of a keyword).
+    The optional `= ConditionalExpr` specifies a default value.
+    Value parameter types must be compile-time-evaluable (primitive integers, `bool`, `char`, enums).*
+
+<a id="templateparameterkind"></a>**TemplateParameterKind:**
+    `'typename'` | `'struct'` | `'class'` | `'interface'`
+    | [Identifier](#identifier)
+    | [TypeSpec](#typespec)
+
+    *The first four are type parameter keywords. An identifier or type specifier denotes a
+    value parameter — the identifier/type names the type of the expected compile-time constant value.*
+
+<a id="templatearglist"></a>**TemplateArgList:**
+    `'<'` [TemplateArg](#templatearg) {{ `','` [TemplateArg](#templatearg) }} `'>'`
+
+<a id="templatearg"></a>**TemplateArg:**
+    [TypeSpec](#typespec)
+    | [ConditionalExpr](#conditionalexpr)
+
+    *A type argument is a type specifier. A value argument is a constant expression.
+    The parser disambiguates based on whether the template parameter at that position
+    is a type or value parameter. When the name being instantiated is followed by `<`,
+    the parser checks whether a template declaration exists with that name to distinguish
+    from the less-than comparison operator.*
+
 ### Declarations
 *Full description:* [Functions](functions/functions.md) - [Structures](structs/structs.md) - [Names and Lookup](basic/names.md) - [Using Directives](basic/using.md)
 <a id="declaration"></a>**Declaration:**
@@ -116,7 +163,7 @@ Grammar notation used here:
 <a id="usingfilter"></a>**UsingFilter:**
     `(` `'namespace'` | `'struct'` | `'interface'` | `'class'` `)`
 <a id="aggregatedecl"></a>**AggregateDecl:**
-    {{ [AnnotationDef](#annotationdef) }} {{ [Specifier](#specifier) }} `(` `'struct'` | `'class'` | `'interface'` | `'annotation'` `)` [Identifier](#identifier) `[` `':'` [BaseClause](#baseclause) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
+    {{ [AnnotationDef](#annotationdef) }} `[` [TemplateDeclaration](#templatedeclaration) `]` {{ [Specifier](#specifier) }} `(` `'struct'` | `'class'` | `'interface'` | `'annotation'` `)` [Identifier](#identifier) `[` `':'` [BaseClause](#baseclause) `]` `'{{' {{ [Declaration](#declaration) }} '}}'`
 
     *Notes:*
     - *`'abstract'` in [Specifier](#specifier) is only valid with `'class'`, not `'struct'`. For `'interface'` it is accepted but redundant (warning `0x2002A`).*
@@ -139,7 +186,7 @@ Grammar notation used here:
 <a id="basespec"></a>**BaseSpec:**
     `[` `(` `'public'` | `'protected'` | `'private'` `)` `]` [Identifier](#identifier)
 <a id="functiondecl"></a>**FunctionDecl:**
-    {{ [Specifier](#specifier) }} `[` `'+'` `]` [Identifier](#identifier) `'('` `[` [ParameterList](#parameterlist) `]` `')'`
+    {{ [AnnotationDef](#annotationdef) }} `[` [TemplateDeclaration](#templatedeclaration) `]` {{ [Specifier](#specifier) }} `[` `'+'` `]` [Identifier](#identifier) `'('` `[` [ParameterList](#parameterlist) `]` `')'`
     `[` [Identifier](#identifier) `]`
     `[` `':'` [TypeSpec](#typespec) `[` [Initialiser](#initialiser) `]` `]`
     `[` `':'` `(` [MemberInitList](#memberinitlist) | [StaticDepList](#staticdeplist) `)` `]`

@@ -30,32 +30,33 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [x] Tests: gen-jit integration tests for template struct instantiation (basic, member type, distinct types, caching, function params/returns, multi-params) (Milestone 5)
 - [x] Suppress cosmetic "cannot resolve type: T" messages: mark template param unresolved_type as placeholder, suppress diagnostics in context::resolve_type, reorder resolve_one_type for template-arg types (Milestone 6)
 - [x] Tests: stderr capture test verifying no cosmetic error messages during template compilation (Milestone 6)
-
-**To do — Phase 1:**
-- [x] Symbol resolver: resolve template names, trigger monomorphization on `Name<Args>` usage (Milestone 5)
-- [x] Aggregate type resolver: handle template type parameter substitution (Milestone 5)
-- [x] Type reference resolver: resolve template type arguments in expressions (Milestone 5)
-- [x] Suppress cosmetic "cannot resolve type: T" messages for template param unresolved_type entries (Milestone 6)
-- [x] Value parameter support: compile-time constant expression evaluation for value parameters
-- [x] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint, with proper error diagnostics
-- [x] Default template parameters: apply defaults when trailing arguments are omitted (incl. `<>` syntax)
-- [ ] Name mangling: encode template arguments (`I…E` markers) in mangled names
-- [ ] Declaration generator: emit LLVM declarations for each concrete instantiation (with weak/COMDAT linkage)
-- [ ] Implementation generator: emit LLVM IR bodies for each concrete instantiation
-- [ ] KDI exporter: export concrete instantiations as regular entities with `template_origin` metadata
-- [ ] KDI importer: import concrete instantiations (recognise `template_origin`)
-- [ ] libkdi: extend KDI DTOs/CBOR/JSON for `template_origin` field, bump schema version
-- [ ] kdi-tool: display template origin info in `dump` and `json-dump` commands
-- [ ] Grammar: update `grammar.ebnf` with `TemplateDeclaration`, `TemplateArgList`, updated `QualifiedIdentifier`
-- [ ] Spec: update `summary.md` with §25 Templates
+- [x] Default template parameters: apply defaults when trailing arguments are omitted (incl. `<>` syntax) (Milestone 7)
+- [x] Name mangling: encode template arguments (`I…E` markers) in mangled names (Milestone 8)
+- [x] Function template call syntax and resolver integration (Milestone 9)
+- [x] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint, with proper error diagnostics (Milestone 10)
+- [x] Value parameter support: compile-time constant expression evaluation for value parameters, all primitive types (Milestone 11)
+- [x] Declaration generator: template definitions skipped, concrete instantiations emitted as regular entities (Milestone 3+5)
+- [x] Implementation generator: template definitions skipped, concrete instantiations emitted as regular entities (Milestone 3+5)
 - [x] Tests: gen-jit tests for template functions (primitives, multi-type-params, cache) (Milestone 9)
 - [x] Tests: gen-jit tests for template functions (primitives, structs)
 - [x] Tests: gen-jit tests for template value parameters
 - [x] Tests: gen-jit tests for template type constraints
 - [x] Tests: gen-jit tests for template default parameters (Milestone 7)
 - [x] Tests: error tests for invalid instantiations (wrong kind, missing args, etc.)
-- [ ] Tests: import tests for template instantiations across modules
 - [x] Tests: name mangling tests for template entities
+- [x] Tests: comprehensive template tests (functions, structs, classes, interfaces, derived classes, member methods, primitive/aggregate type arguments, indirections)
+- [x] Grammar: `grammar.ebnf` updated with `TemplateDeclaration`, `TemplateArgList`, updated `QualifiedIdentifier` (Milestone 1)
+- [x] Spec: template specification in `doc/spec/language/templates/templates.md`
+- [x] Spec: update `summary.md` with §25 Templates
+- [x] Spec: update `grammar.md` with template rules
+- [x] Spec: update `index.md` with Templates section
+
+**To do — Phase 1 (remaining):**
+- [ ] KDI exporter: export concrete instantiations as regular entities with `template_origin` metadata
+- [ ] KDI importer: import concrete instantiations (recognise `template_origin`)
+- [ ] libkdi: extend KDI DTOs/CBOR/JSON for `template_origin` field, bump schema version
+- [ ] kdi-tool: display template origin info in `dump` and `json-dump` commands
+- [ ] Tests: import tests for template instantiations across modules
 
 **Deferred — Phase 2+ (not in scope):**
 - [ ] Tests: name mangling tests for template entities

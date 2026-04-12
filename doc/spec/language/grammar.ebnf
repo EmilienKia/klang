@@ -190,6 +190,29 @@ IdentifierSegment
     ;
 
 (* ---------- Templates ---------------------------------------------------- *)
+(*                                                                           *)
+(* A TemplateDeclaration prefixes an aggregate or function declaration to     *)
+(* introduce compile-time parameters.  Templates follow a monomorphization   *)
+(* model: each unique set of arguments produces a distinct concrete entity.  *)
+(*                                                                           *)
+(* Template parameters are either type parameters (introduced by 'typename', *)
+(* 'struct', 'class', or 'interface') or value parameters (introduced by     *)
+(* a type identifier or TypeSpec).                                           *)
+(*                                                                           *)
+(* Type parameters may have an optional base-type constraint (':' TypeSpec)   *)
+(* and a default type ('=' TypeSpec).  Value parameters must have a          *)
+(* compile-time-evaluable type and may have a default value.                 *)
+(*                                                                           *)
+(* Disambiguation rules:                                                     *)
+(*   - When the parser encounters '<' after an Identifier, it checks         *)
+(*     whether a template declaration with that name exists in scope.        *)
+(*     If yes, '<' opens a TemplateArgList; otherwise it is the less-than    *)
+(*     comparison operator.                                                  *)
+(*   - Inside a TemplateArgList, '>' closes the list.  Nested '<'/'>' for    *)
+(*     nested template arguments are balanced by counting.                   *)
+(*   - '>>' is split into two '>' tokens when inside nested template         *)
+(*     argument lists (e.g., Pair<Pair<int>>).                               *)
+(* ========================================================================= *)
 
 TemplateDeclaration
     = 'template' , '<' , TemplateParameterList , '>'
@@ -202,12 +225,16 @@ TemplateParameterList
 TemplateParameter
     = TemplateParameterKind , Identifier , [ ':' , TypeSpec ] , [ '=' , ConditionalExpr ]
     ;
+    (* For type parameters: the optional ':' TypeSpec is a base-type constraint.     *)
+    (* For type parameters: the optional '=' ConditionalExpr is a default type.      *)
+    (* For value parameters: the optional '=' ConditionalExpr is a default value.    *)
+    (* Once a parameter has a default, all subsequent parameters must also have one.  *)
 
 TemplateParameterKind
-    = 'typename'
-    | 'struct'
-    | 'class'
-    | 'interface'
+    = 'typename'                                                 (* any type *)
+    | 'struct'                                                   (* must be a struct type *)
+    | 'class'                                                    (* must be a class type *)
+    | 'interface'                                                (* must be an interface type *)
     | Identifier                                                 (* value parameter — identifier names the type *)
     | TypeSpec                                                   (* value parameter — explicit type *)
     ;
@@ -215,10 +242,11 @@ TemplateParameterKind
 TemplateArgList
     = '<' , TemplateArg , { ',' , TemplateArg } , '>'
     ;
+    (* An empty argument list '<>' is valid when all parameters have defaults. *)
 
 TemplateArg
     = TypeSpec                                                   (* type argument *)
-    | ConditionalExpr                                            (* value argument *)
+    | ConditionalExpr                                            (* value argument — must be a compile-time constant *)
     ;
 
 (* ---------- Declarations ------------------------------------------------- *)

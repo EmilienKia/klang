@@ -33,6 +33,7 @@
 22. [Uniform Array Initialization](#22-uniform-array-initialization)
 23. [FFI (Foreign Function Interface)](#23-ffi-foreign-function-interface)
 24. [`main` Function](#24-main-function)
+25. [Templates](#25-templates)
 
 ---
 
@@ -59,13 +60,14 @@
 ```
 bool     byte     char     short    int      long
 float    double   unsigned
-struct   class    interface   annotation   namespace   module   import   using
+struct   class    interface   annotation   namespace   module   import   using   friend
 static   const    abstract   final   override
 public   protected   private
 this     return
 if       else     while    for
 new      delete   default  enum
 operator
+template typename
 ```
 
 All keywords are reserved and cannot be used as identifiers.
@@ -242,10 +244,15 @@ TypeSuffix:
 
 ```
 QualifiedIdentifier:
-    [ '::' ] Identifier { '::' Identifier }
+    [ '::' ] IdentifierSegment { '::' IdentifierSegment }
+
+IdentifierSegment:
+    Identifier [ TemplateArgList ]
 ```
 
 Leading `::` = resolution from the root namespace (absolute).
+
+Each segment of a qualified name may optionally include a template argument list (e.g., `Container<int>::Iterator`).
 
 ### 4.2 Namespaces
 
@@ -325,6 +332,13 @@ ImportDeclaration:
 ### 5.4 Name Mangling
 
 Scheme: `_K` + `F` (function) + `M` (member) + `N` (namespace sequence, each name prefixed by its length) + `E` (end) + parameter types.
+
+Template arguments are encoded between `I` and `E` markers after the template entity name:
+- Type argument: the mangled type (same encoding as parameter types).
+- Value argument: `L` + type code + decimal value + `E` (negative with `n` prefix).
+- Boolean value: `Lb0E` or `Lb1E`.
+
+Examples: `Pair<int>` → `N4PairIiEE`, `Array<int, 10>` → `N5ArrayIiLi10EEE`.
 
 ---
 
@@ -1165,6 +1179,173 @@ main() { /* void, exit code = 0 */ }
   2. Calls the K `main()`.
   3. Calls global destructors.
   4. Returns the exit code.
+
+---
+
+## 25. Templates
+
+> Details: [templates.md](templates/templates.md)
+
+Templates provide compile-time parametric polymorphism. A template declaration introduces
+one or more compile-time parameters — type or value — that are substituted when the
+template is instantiated with concrete arguments.
+
+K templates follow a **monomorphization** model: each unique set of template arguments
+produces a distinct, fully-independent concrete entity. There is no type erasure or runtime
+dispatch on template parameters.
+
+### 25.1 Template Declaration
+
+```
+TemplateDeclaration:
+    'template' '<' TemplateParameterList '>'
+
+TemplateParameterList:
+    TemplateParameter { ',' TemplateParameter }
+
+TemplateParameter:
+    TemplateParameterKind Identifier [ ':' TypeSpec ] [ '=' ConditionalExpr ]
+
+TemplateParameterKind:
+    'typename' | 'struct' | 'class' | 'interface'
+    | Identifier | TypeSpec                            (* value parameter *)
+```
+
+The `TemplateDeclaration` is placed **after** annotations and **before** specifiers:
+
+```k
+template<typename T>
+struct Pair {
+    first  : T;
+    second : T;
+}
+
+template<typename T>
+max(a: T&, b: T&) : T {
+    if(a > b) return a;
+    return b;
+}
+```
+
+### 25.2 Template Parameters
+
+#### Type Parameters
+
+| Keyword     | Constraint                                     |
+|-------------|------------------------------------------------|
+| `typename`  | Any type                                       |
+| `struct`    | Must be a `struct` type                        |
+| `class`     | Must be a `class` type                         |
+| `interface` | Must be an `interface` type                    |
+
+Optional base-type constraint: `class T : Animal` — T must be or derive from `Animal`.
+
+Optional default type: `typename T = int`.
+
+#### Value Parameters
+
+No keyword prefix. A mandatory `: TypeSpec` specifies the type of the compile-time constant.
+
+```k
+template<typename T, N : unsigned int = 16>
+struct FixedArray {
+    data : T[N];
+}
+```
+
+Value parameter types must be compile-time-evaluable: primitive integers, `bool`, `char`, enums.
+All primitive types (`bool`, `char`, `byte`, `short`, `int`, `long`, `float`, `double`, and
+their unsigned variants) are supported as value parameter types.
+
+#### Parameter Ordering
+
+Type and value parameters may be mixed freely. Once a parameter has a default, all subsequent
+parameters must also have defaults.
+
+### 25.3 Template Instantiation
+
+Templates are instantiated by supplying concrete arguments in angle brackets:
+
+```
+TemplateArgList:
+    '<' TemplateArg { ',' TemplateArg } '>'
+
+TemplateArg:
+    TypeSpec | ConditionalExpr
+```
+
+```k
+p : Pair<int>;
+result : int = max<int>(x, y);
+arr : FixedArray<float, 10>;
+```
+
+In Phase 1, all template arguments must be supplied explicitly (no deduction). Trailing
+arguments with defaults may be omitted, including the `<>` syntax for all-defaulted templates.
+
+### 25.4 Instantiation Semantics
+
+1. Look up the template declaration.
+2. Match each argument to the corresponding parameter (kind filter, constraint, type).
+3. Apply defaults for trailing omitted parameters.
+4. Check the instantiation cache — reuse if already instantiated.
+5. Perform monomorphization: clone model members, substitute types/values.
+6. Register the concrete entity for future reuse.
+
+Instantiation occurs lazily (on first use). Concrete entities are placed in the same scope
+as the template definition.
+
+### 25.5 Type Constraints
+
+The `TemplateParameterKind` acts as a **kind filter**: `struct`, `class`, or `interface`
+restricts the type argument to that specific aggregate kind.
+
+The optional `: BaseType` constraint requires the argument to be or derive from `BaseType`.
+
+Both are validated at instantiation time. Violations produce diagnostic errors:
+- `0x0184` — type argument is not an aggregate (for `struct`/`class`/`interface` kind filter)
+- `0x0182` — type argument is wrong aggregate kind
+- `0x0183` — type argument does not satisfy base-type constraint
+
+### 25.6 Name Mangling
+
+Template instantiations are mangled with `I…E` markers after the entity name:
+
+| Template Use | Mangled Form |
+|---|---|
+| `Pair<int>` | `N4PairIiEE` |
+| `Pair<unsigned long>` | `N4PairIyEE` |
+| `Array<int, 10>` | `N5ArrayIiLi10EEE` |
+| `swap<float>` | `_KFN4swapIfEE…` |
+
+### 25.7 Interaction with Other Features
+
+- **Inheritance**: template aggregates may inherit from non-template or instantiated template types.
+- **Virtual dispatch**: template classes have their own vtable per instantiation.
+- **Annotations**: propagated to each instantiation.
+- **Visibility**: specifiers on the template definition apply to all instantiations.
+- **Constructors/Destructors**: instantiated with the aggregate; no independent template params.
+- **Operator overloading**: template functions may be operator overloads.
+- **`using` directives**: `using IntPair = Pair<int>;` works. Parameterized `using` aliases are Phase 2.
+
+### 25.8 Parsing Ambiguity
+
+The `<` token is both the less-than operator and the template argument list opener. The parser
+resolves this by checking whether the preceding identifier names a template declaration. Inside
+a template argument list, nested `<`/`>` are balanced. `>>` is split into two `>` when inside
+nested template arguments (e.g., `Pair<Pair<int>>`).
+
+### 25.9 Phase 1 Limitations
+
+Phase 1 does **not** support:
+- Partial or full specialization.
+- Template template parameters.
+- Variadic template parameters (parameter packs).
+- Template argument deduction from function arguments.
+- Concepts or type traits beyond base-type constraints.
+- Templates on constructors, destructors, operators, or enums independently.
+- `extern template` declarations.
+- Template aliases (`template<typename T> using Vec = Array<T, 16>`).
 
 ---
 

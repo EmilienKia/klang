@@ -1,8 +1,10 @@
 # K Language — Templates
 
 > **Version:** Working Draft — 2026  
-> **Status:** Phase 1 — Full instantiation only (no partial specialization)  
-> **Formal grammar:** see [`../grammar.ebnf`](../grammar.ebnf)
+> **Status:** Phase 1 — Full instantiation only (no partial specialization). Core implementation complete; KDI export/import pending.  
+> **Formal grammar:** see [`../grammar.ebnf`](../grammar.ebnf)  
+> **Architecture:** see [`architecture.md`](architecture.md)  
+> **Implementation plan:** see [`implementation-plan.md`](implementation-plan.md)
 
 ---
 
@@ -157,12 +159,16 @@ A value parameter has **no** `TemplateParameterKind` keyword prefix. Instead, a 
 count : unsigned int = 16
 ```
 
-- The type must be a **compile-time-evaluable type**: a primitive integer type, `bool`,
-  `char`, or an `enum` type. Floating-point types, aggregates, indirections, arrays, and
-  function references are not permitted as value parameter types.
+- The type must be a **compile-time-evaluable type**: any primitive type (`bool`, `char`,
+  `byte`, `short`, `int`, `long`, `float`, `double`, and their `unsigned` variants), or
+  an `enum` type. Aggregates, indirections, arrays, and function references are not
+  permitted as value parameter types.
 - The supplied value expression (at instantiation) must be a **constant expression**
-  resolvable at compile time.
+  resolvable at compile time (literal values).
 - An optional `= Expression` provides a default value.
+- All primitive types are stored as `k::value_type`, a variant covering `bool`, `char`,
+  `unsigned char`, `short`, `unsigned short`, `int`, `unsigned int`, `long`,
+  `unsigned long`, `long long`, `unsigned long long`, `float`, `double`.
 
 ### 3.3 Parameter Ordering
 
@@ -257,11 +263,14 @@ When the compiler encounters a template instantiation `Name<Args...>`:
    - For value parameters: the argument must be a constant expression of the declared
      type (or implicitly convertible to it).
 3. Apply defaults for any trailing parameters not explicitly supplied.
-4. Check whether this exact combination has already been instantiated.
-5. If not, perform **monomorphization**: clone the template's AST/model, substitute all
-   parameters with the concrete arguments, and proceed through the full compilation
-   pipeline (type resolution, code generation, etc.).
-6. Register the resulting concrete entity so that future uses of the same arguments
+4. Validate type constraints (kind filter and base-type constraint).
+5. Check whether this exact combination has already been instantiated (cache lookup).
+6. If not, perform **monomorphization**: clone the template's model-level members
+   (fields, methods, parameters, expressions, statements), substitute all type
+   placeholders with concrete types and value placeholders with concrete values,
+   then proceed through the full compilation pipeline (type resolution, code
+   generation, etc.). No AST cloning or re-parsing is involved.
+7. Register the resulting concrete entity so that future uses of the same arguments
    reuse it.
 
 ### 5.3 Instantiation Context
@@ -421,30 +430,37 @@ Template aliases (parameterized `using`) are not supported in Phase 1.
 
 ## 9. Error Model
 
-### 9.1 Declaration Errors
+### 9.1 Instantiation Errors (Implemented)
 
-| Code     | Description                                                              |
-|----------|--------------------------------------------------------------------------|
-| `0x7001` | Template parameter list is empty                                         |
-| `0x7002` | Duplicate template parameter name                                        |
-| `0x7003` | Non-trailing parameter has a default but a later parameter does not       |
-| `0x7004` | Value parameter type is not a compile-time-evaluable type                |
-| `0x7005` | Template declaration on unsupported entity (namespace, enum, etc.)       |
+| Code     | Name                               | Description                                                   |
+|----------|------------------------------------|---------------------------------------------------------------|
+| `0x0180` | `ERR_TPL_NO_MATCHING`              | No matching template found                                    |
+| `0x0181` | `ERR_TPL_ARG_COUNT_MISMATCH`       | Wrong number of template arguments                            |
+| `0x0182` | `ERR_TPL_ARG_WRONG_KIND`           | Type argument is wrong aggregate kind (e.g., class instead of struct) |
+| `0x0183` | `ERR_TPL_ARG_CONSTRAINT_VIOLATED`  | Type argument does not satisfy base-type constraint            |
+| `0x0184` | `ERR_TPL_ARG_NOT_AGGREGATE`        | Type argument is not an aggregate (for struct/class/interface filter) |
+| `0x0185` | `ERR_TPL_VALUE_ARG_TYPE_MISMATCH`  | Value argument type mismatch                                  |
+| `0x0186` | `ERR_TPL_VALUE_ARG_NOT_CONST`      | Value argument is not a compile-time constant                 |
 
-### 9.2 Instantiation Errors
+### 9.2 Error Propagation
 
-| Code     | Description                                                              |
-|----------|--------------------------------------------------------------------------|
-| `0x7010` | Too many template arguments                                              |
-| `0x7011` | Too few template arguments (and no default available)                    |
-| `0x7012` | Type argument does not satisfy kind constraint                           |
-| `0x7013` | Type argument does not satisfy base-type constraint                      |
-| `0x7014` | Value argument is not a compile-time constant                            |
-| `0x7015` | Value argument type mismatch                                             |
-| `0x7016` | Template not found                                                       |
-| `0x7017` | Ambiguous template lookup (multiple templates with the same name)        |
+- **Aggregate template constraint violations**: throw `resolution_error` (fatal) via
+  `throw_error()` in `aggregate_type_resolver` and `type_reference_resolver`.
+- **Function template constraint violations**: log error via `logger_relay::error()` and
+  set `args_ok = false` (non-fatal) in `gen_expressions`, allowing overload resolution
+  to continue and produce a "no matching overload" diagnostic.
 
-### 9.3 Body Errors
+### 9.3 Error Message Format
+
+Error messages include:
+- The template name (e.g., `"Container"`)
+- The parameter name and index (e.g., `"parameter 'T' (index 0)"`)
+- The expected kind or constraint type
+- The actual type provided
+
+Example: `"template 'Container' parameter 'T' (index 0): expected a struct, but got class 'MyClass'"`
+
+### 9.4 Body Errors
 
 Errors inside a template body are reported **at instantiation time** against the
 concrete types. The error message includes the template name and the arguments that

@@ -81,6 +81,14 @@ Examples are included where they clarify the normative text.
 |------|-------------|
 | [Annotations](annotations/annotations.md) | The `annotation` keyword, declaring annotation types, inner enums, applying `@Annotation` to aggregates, meta-annotations (`@Target`, `@Inherited`, `@Retention`), reading annotations at runtime via RTTI |
 
+### Templates
+
+| Page | Description |
+|------|-------------|
+| [Templates](templates/templates.md) | Template declarations, type and value parameters, kind constraints, base-type constraints, default parameters, explicit instantiation, monomorphization, name mangling |
+| [Template Architecture](templates/architecture.md) | Internal architecture of the template subsystem: model-level instantiation, type/value substitution, caching, pipeline integration |
+| [Template Implementation Plan](templates/implementation-plan.md) | Milestone-based implementation plan with status tracking |
+
 ### Dynamic Memory
 
 | Page | Description |
@@ -124,6 +132,7 @@ K is a statically-typed, compiled programming language with syntax inspired by C
 - **Manual memory management** — five indirection types: references (`&`), links (`+`), view (`?`), pointers (`*`), and owners (`!`). Dynamic allocation via `new`/`delete`; owners enforce single-ownership and automatic destruction at scope exit.
 - **Function references** — free and member function reference types (`*(P)`, `T::*(P)`) allow storing and invoking function addresses; member function pointers use `.*` and `->*`.
 - **Operator overloading** — user-defined types can define custom behaviour for built-in operators (`+`, `-`, `==`, etc.) via member or non-member `operator` functions, with const-correctness, inheritance, and virtual dispatch support.
+- **Templates** — compile-time parametric polymorphism via monomorphization. Template functions and aggregates (`struct`, `class`, `interface`) with type and value parameters, kind constraints, base-type constraints, and default parameters.
 - **Compiled to native code** — the compiler emits LLVM IR and produces native executables or libraries.
 
 ### Hello, World equivalent
