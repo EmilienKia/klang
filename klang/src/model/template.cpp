@@ -20,8 +20,64 @@
 #include "model.hpp"
 #include "type.hpp"
 #include "../parse/ast.hpp"
+#include "../errors.hpp"
 
 namespace k::model {
+
+// ── Helper: determine the actual kind string of a type argument ─────────
+static std::string actual_kind_str(const std::shared_ptr<type>& t) {
+    auto st = std::dynamic_pointer_cast<struct_type>(type::remove_const(t));
+    if (!st) return "non-aggregate";
+    auto agg = st->get_struct();
+    if (!agg) return "non-aggregate";
+    if (dynamic_cast<interface*>(agg.get())) return "interface";
+    if (agg->is_class()) return "class";
+    return "struct";
+}
+
+std::pair<unsigned int, std::string> format_constraint_error(
+    const std::string& template_name,
+    const std::vector<template_param_descriptor>& params,
+    const std::vector<template_argument>& args,
+    size_t error_index,
+    const std::string& error_kind)
+{
+    const auto& param = params[error_index];
+    const auto& arg = args[error_index];
+    std::string arg_type_str = arg.type_arg ? arg.type_arg->to_string() : "?";
+
+    if (error_kind == "not_aggregate") {
+        return {
+            static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_NOT_AGGREGATE),
+            "template '" + template_name + "': argument " + std::to_string(error_index + 1)
+                + " ('" + arg_type_str + "') for parameter '" + param.name
+                + "' must be an aggregate type (" + to_string(param.kind)
+                + "), but is not"
+        };
+    } else if (error_kind == "kind") {
+        return {
+            static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_WRONG_KIND),
+            "template '" + template_name + "': argument " + std::to_string(error_index + 1)
+                + " ('" + arg_type_str + "') for parameter '" + param.name
+                + "' must be a " + to_string(param.kind)
+                + ", but is a " + actual_kind_str(arg.type_arg)
+        };
+    } else if (error_kind == "constraint") {
+        std::string constraint_str = param.constraint_type ? param.constraint_type->to_string() : "?";
+        return {
+            static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_CONSTRAINT_VIOLATED),
+            "template '" + template_name + "': argument " + std::to_string(error_index + 1)
+                + " ('" + arg_type_str + "') for parameter '" + param.name
+                + "' does not derive from constraint type '" + constraint_str + "'"
+        };
+    }
+    // Fallback
+    return {
+        static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_WRONG_KIND),
+        "template '" + template_name + "': argument " + std::to_string(error_index + 1)
+            + " for parameter '" + param.name + "' violates constraint"
+    };
+}
 
 bool validate_template_arg_constraints(
     const std::vector<template_param_descriptor>& params,

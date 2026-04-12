@@ -36,8 +36,8 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [x] Aggregate type resolver: handle template type parameter substitution (Milestone 5)
 - [x] Type reference resolver: resolve template type arguments in expressions (Milestone 5)
 - [x] Suppress cosmetic "cannot resolve type: T" messages for template param unresolved_type entries (Milestone 6)
-- [ ] Value parameter support: compile-time constant expression evaluation for value parameters
-- [ ] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint
+- [x] Value parameter support: compile-time constant expression evaluation for value parameters
+- [x] Type constraint checking: validate kind filter (`struct`/`class`/`interface`) and base-type constraint, with proper error diagnostics
 - [x] Default template parameters: apply defaults when trailing arguments are omitted (incl. `<>` syntax)
 - [ ] Name mangling: encode template arguments (`I…E` markers) in mangled names
 - [ ] Declaration generator: emit LLVM declarations for each concrete instantiation (with weak/COMDAT linkage)
@@ -49,11 +49,11 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [ ] Grammar: update `grammar.ebnf` with `TemplateDeclaration`, `TemplateArgList`, updated `QualifiedIdentifier`
 - [ ] Spec: update `summary.md` with §25 Templates
 - [x] Tests: gen-jit tests for template functions (primitives, multi-type-params, cache) (Milestone 9)
-- [ ] Tests: gen-jit tests for template functions (primitives, structs)
-- [ ] Tests: gen-jit tests for template value parameters
-- [ ] Tests: gen-jit tests for template type constraints
+- [x] Tests: gen-jit tests for template functions (primitives, structs)
+- [x] Tests: gen-jit tests for template value parameters
+- [x] Tests: gen-jit tests for template type constraints
 - [x] Tests: gen-jit tests for template default parameters (Milestone 7)
-- [ ] Tests: error tests for invalid instantiations (wrong kind, missing args, etc.)
+- [x] Tests: error tests for invalid instantiations (wrong kind, missing args, etc.)
 - [ ] Tests: import tests for template instantiations across modules
 - [x] Tests: name mangling tests for template entities
 

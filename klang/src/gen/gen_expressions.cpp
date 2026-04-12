@@ -2658,6 +2658,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         size_t err_idx;
                         std::string err_reason;
                         if (!validate_template_arg_constraints(ti->params, model_args, err_idx, err_reason)) {
+                            auto [code, msg] = format_constraint_error(
+                                tpl_func->get_short_name(), ti->params, model_args, err_idx, err_reason);
+                            logger_relay::error(code, lex::opt_any_lexeme{}, msg);
                             args_ok = false;
                         }
                     }

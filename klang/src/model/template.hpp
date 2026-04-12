@@ -217,6 +217,20 @@ struct tpl_info {
 };
 
 /**
+ * Human-readable string for a template_param_kind.
+ */
+inline const char* to_string(template_param_kind kind) {
+    switch (kind) {
+        case template_param_kind::TYPENAME:  return "typename";
+        case template_param_kind::STRUCT:    return "struct";
+        case template_param_kind::CLASS:     return "class";
+        case template_param_kind::INTERFACE: return "interface";
+        case template_param_kind::VALUE:     return "value";
+    }
+    return "unknown";
+}
+
+/**
  * Validate that a vector of concrete template arguments satisfies the
  * constraints declared on the template parameters (kind filter and
  * base-type constraint).
@@ -238,6 +252,24 @@ bool validate_template_arg_constraints(
     const std::vector<template_argument>& args,
     size_t& error_index,
     std::string& error_kind);
+
+/**
+ * Build a pair { diagnostic_code, formatted_message } for a template
+ * constraint violation identified by validate_template_arg_constraints.
+ *
+ * @param template_name  The short name of the template being instantiated.
+ * @param params         Template parameter descriptors.
+ * @param args           Concrete template arguments.
+ * @param error_index    The 0-based index of the violating argument.
+ * @param error_kind     The kind of violation ("kind", "not_aggregate", "constraint").
+ * @return { error_code (from template_diag), formatted message string }
+ */
+std::pair<unsigned int, std::string> format_constraint_error(
+    const std::string& template_name,
+    const std::vector<template_param_descriptor>& params,
+    const std::vector<template_argument>& args,
+    size_t error_index,
+    const std::string& error_kind);
 
 } // namespace k::model
 #endif // KLANG_TEMPLATE_HPP

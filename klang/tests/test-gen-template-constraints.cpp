@@ -38,6 +38,7 @@
 #include "helpers.hpp"
 #include "../src/model/template.hpp"
 #include "../src/model/template_instantiator.hpp"
+#include "../src/errors.hpp"
 
 using namespace k::model;
 
@@ -379,26 +380,23 @@ TEST_CASE("[I] M10: value parameter is skipped by constraint validation",
 TEST_CASE("[J] M10: struct-constrained template rejects int in resolver",
           "[milestone10][template][constraints][integration]") {
     // Attempting to instantiate Holder<int> where Holder has `struct S` param
-    // should fail — the resolver returns {} and the type is not instantiated.
-    auto comp = compile_model(R"SRC(
-        module __m10_j__;
-        template<struct S>
-        struct Holder {
-            public val : int;
-        }
-        struct User {
-            public h : Holder<int>;
-        }
-    )SRC");
-    // Compilation may succeed but the Holder<int> type is NOT instantiated
-    // (the resolver silently fails), so User::h remains unresolved.
-    // The model should show that no Holder__int exists.
-    if (comp) {
-        auto root_ns = comp->get_unit()->get_root_namespace();
-        auto holder_int = root_ns->get_aggregate("Holder__int");
-        CHECK(holder_int == nullptr);  // Constraint prevented instantiation
+    // should throw a resolution_error with ERR_TPL_ARG_NOT_AGGREGATE.
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_j__;
+            template<struct S>
+            struct Holder {
+                public val : int;
+            }
+            struct User {
+                public h : Holder<int>;
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_NOT_AGGREGATE));
     }
-    // If comp == nullptr, compilation failed entirely, which is also acceptable
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -425,7 +423,369 @@ TEST_CASE("[K] M10: typename-constrained template accepts int in resolver",
     CHECK(get_value() == 42);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [L] Integration: class-constrained template rejects struct
+// ════════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("[L] M10: class-constrained template rejects struct in resolver",
+          "[milestone10][template][constraints][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_l__;
+            struct Foo {
+                public x : int;
+            }
+            template<class C>
+            struct Wrapper {
+                public val : int;
+            }
+            struct User {
+                public w : Wrapper<Foo>;
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_WRONG_KIND));
+    }
+}
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [M] Integration: interface-constrained template rejects class
+// ════════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("[M] M10: interface-constrained template rejects class in resolver",
+          "[milestone10][template][constraints][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_m__;
+            class Animal {
+                public age : int;
+            }
+            template<interface I>
+            struct Wrapper {
+                public val : int;
+            }
+            struct User {
+                public w : Wrapper<Animal>;
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_WRONG_KIND));
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [N] Integration: base-type constraint rejects unrelated class
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[N] M10: base-type constraint rejects unrelated class in resolver",
+          "[milestone10][template][constraints][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_n__;
+            class Animal {
+                public age : int;
+            }
+            class Car {
+                public speed : int;
+            }
+            template<class T : Animal>
+            struct Cage {
+                public val : int;
+            }
+            struct User {
+                public c : Cage<Car>;
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_CONSTRAINT_VIOLATED));
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [O] Integration: base-type constraint accepts derived class
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[O] M10: base-type constraint accepts derived class in resolver",
+          "[milestone10][template][constraints][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m10_o__;
+        class Animal {
+            public age : int;
+        }
+        class Dog : Animal {
+            public name : int;
+        }
+        template<class T : Animal>
+        struct Cage {
+            public val : int;
+        }
+        test() : int {
+            c : Cage<Dog>;
+            c.val = 99;
+            return c.val;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_o__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 99);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [P] Integration: struct-constrained template accepts struct
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[P] M10: struct-constrained template accepts struct in resolver",
+          "[milestone10][template][constraints][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m10_p__;
+        struct Vec2 {
+            public x : int;
+            public y : int;
+        }
+        template<struct S>
+        struct Holder {
+            public val : S;
+        }
+        test() : int {
+            h : Holder<Vec2>;
+            h.val.x = 10;
+            h.val.y = 32;
+            return h.val.x + h.val.y;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_p__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 42);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [Q] Integration: class-constrained template accepts class
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[Q] M10: class-constrained template accepts class in resolver",
+          "[milestone10][template][constraints][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m10_q__;
+        class Widget {
+            public id : int;
+        }
+        template<class C>
+        struct Container {
+            public data : int;
+        }
+        test() : int {
+            c : Container<Widget>;
+            c.data = 55;
+            return c.data;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_q__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 55);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [R] Integration: interface-constrained template accepts interface
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[R] M10: interface-constrained template accepts interface in resolver",
+          "[milestone10][template][constraints][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m10_r__;
+        interface Countable {
+            count() : int;
+        }
+        template<interface I>
+        struct Adapter {
+            public tag : int;
+        }
+        test() : int {
+            a : Adapter<Countable>;
+            a.tag = 77;
+            return a.tag;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_r__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 77);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [S] Integration: function template with struct constraint — rejects int
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[S] M10: function template with struct constraint rejects int",
+          "[milestone10][template][constraints][integration]") {
+    // For function templates, constraint violations don't throw from the
+    // resolver — they prevent instantiation, leading to further errors.
+    REQUIRE_THROWS_AS(
+        gen_jit_throws(R"SRC(
+            module __m10_s__;
+            template<struct S>
+            process() : int { return 0; }
+
+            test() : int {
+                return process<int>();
+            }
+        )SRC"),
+        k::log::compiler_error
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [T] Integration: function template with class constraint — accepts class
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[T] M10: function template with class constraint accepts class",
+          "[milestone10][template][constraints][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m10_t__;
+        class Widget {
+            public id : int;
+        }
+        template<class C>
+        get_zero() : int { return 0; }
+
+        test() : int {
+            return get_zero<Widget>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_t__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 0);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [U] Integration: function template with base-type constraint — rejects
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[U] M10: function template with base-type constraint rejects unrelated",
+          "[milestone10][template][constraints][integration]") {
+    REQUIRE_THROWS_AS(
+        gen_jit_throws(R"SRC(
+            module __m10_u__;
+            class Animal {
+                public age : int;
+            }
+            class Car {
+                public speed : int;
+            }
+            template<class T : Animal>
+            feed() : int { return 0; }
+
+            test() : int {
+                return feed<Car>();
+            }
+        )SRC"),
+        k::log::compiler_error
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [V] Integration: function template with base-type constraint — accepts derived
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[V] M10: function template with base-type constraint accepts derived",
+          "[milestone10][template][constraints][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m10_v__;
+        class Animal {
+            public age : int;
+        }
+        class Dog : Animal {
+            public name : int;
+        }
+        template<class T : Animal>
+        feed() : int { return 42; }
+
+        test() : int {
+            return feed<Dog>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m10_v__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 42);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [W] Error message content: "not_aggregate" includes param name and type
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[W] M10: error message for not_aggregate includes param name",
+          "[milestone10][template][constraints][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_w__;
+            template<struct MyParam>
+            struct Box { public val : int; }
+            struct User { public b : Box<int>; }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_NOT_AGGREGATE));
+        // Message should contain param name and template name
+        CHECK(e.get_diagnostic().message.find("MyParam") != std::string::npos);
+        CHECK(e.get_diagnostic().message.find("Box") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [X] Error message content: "kind" includes expected and actual kind
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[X] M10: error message for kind mismatch includes kinds",
+          "[milestone10][template][constraints][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_x__;
+            struct Foo { public x : int; }
+            template<class C>
+            struct Wrapper { public val : int; }
+            struct User { public w : Wrapper<Foo>; }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_WRONG_KIND));
+        CHECK(e.get_diagnostic().message.find("class") != std::string::npos);
+        CHECK(e.get_diagnostic().message.find("struct") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [Y] Error message content: "constraint" includes constraint type name
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[Y] M10: error message for constraint violation includes constraint type",
+          "[milestone10][template][constraints][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_y__;
+            class Animal { public age : int; }
+            class Car { public speed : int; }
+            template<class T : Animal>
+            struct Cage { public val : int; }
+            struct User { public c : Cage<Car>; }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::template_diag::ERR_TPL_ARG_CONSTRAINT_VIOLATED));
+        CHECK(e.get_diagnostic().message.find("Animal") != std::string::npos);
+        CHECK(e.get_diagnostic().message.find("Car") != std::string::npos);
+    }
+}
 
