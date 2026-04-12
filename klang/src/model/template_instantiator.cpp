@@ -41,8 +41,23 @@ std::string build_instantiation_key(const std::vector<template_argument>& args) 
         if (i > 0) oss << ",";
         if (args[i].is_type()) {
             oss << type_display_name(args[i].type_arg);
+        } else if (args[i].value_arg.has_value()) {
+            std::visit([&oss](auto&& v) {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, std::monostate>) {
+                    oss << "void";
+                } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
+                    oss << "null";
+                } else if constexpr (std::is_same_v<T, bool>) {
+                    oss << (v ? "true" : "false");
+                } else if constexpr (std::is_same_v<T, std::string>) {
+                    oss << "\"" << v << "\"";
+                } else {
+                    oss << v;
+                }
+            }, *args[i].value_arg);
         } else {
-            oss << args[i].value_arg.value_or(0);
+            oss << "?";
         }
     }
     oss << ">";
@@ -61,8 +76,34 @@ std::string build_instantiated_name(const std::string& base_name,
                 if (!std::isalnum(c)) c = '_';
             }
             oss << tn;
+        } else if (args[i].value_arg.has_value()) {
+            std::visit([&oss](auto&& v) {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, std::monostate>) {
+                    oss << "void";
+                } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
+                    oss << "null";
+                } else if constexpr (std::is_same_v<T, bool>) {
+                    oss << (v ? "true" : "false");
+                } else if constexpr (std::is_same_v<T, std::string>) {
+                    std::string s = v;
+                    for (char& c : s) {
+                        if (!std::isalnum(c)) c = '_';
+                    }
+                    oss << s;
+                } else if constexpr (std::is_floating_point_v<T>) {
+                    // Use a sanitized representation for floats in names
+                    std::string s = std::to_string(v);
+                    for (char& c : s) {
+                        if (c == '.' || c == '-') c = '_';
+                    }
+                    oss << s;
+                } else {
+                    oss << v;
+                }
+            }, *args[i].value_arg);
         } else {
-            oss << args[i].value_arg.value_or(0);
+            oss << "0";
         }
     }
     return oss.str();
@@ -95,7 +136,7 @@ value_substitution_map template_instantiator::build_value_substitution_map(
     size_t count = std::min(ti.params.size(), args.size());
     for (size_t i = 0; i < count; ++i) {
         if (args[i].is_value() && args[i].value_arg.has_value()) {
-            result[ti.params[i].name] = args[i].value_arg.value();
+            result[ti.params[i].name] = *args[i].value_arg;
         }
     }
     return result;
@@ -195,7 +236,19 @@ void template_instantiator::substitute_value_params(
                 auto it = val_subst.find(nm.front());
                 if (it != val_subst.end()) {
                     // Replace with a value_expression holding the concrete value
-                    expr = value_expression::from_value<int>(static_cast<int>(it->second));
+                    // using the actual type from the value_type variant.
+                    expr = std::visit([](auto&& v) -> std::shared_ptr<expression> {
+                        using T = std::decay_t<decltype(v)>;
+                        if constexpr (std::is_same_v<T, std::monostate>) {
+                            return value_expression::from_value<int>(0);
+                        } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
+                            return value_expression::from_value<int>(0);
+                        } else if constexpr (std::is_same_v<T, std::string>) {
+                            return value_expression::from_value(v);
+                        } else {
+                            return value_expression::from_value<T>(v);
+                        }
+                    }, it->second);
                     return;
                 }
             }

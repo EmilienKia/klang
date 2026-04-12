@@ -36,6 +36,34 @@
 #include "../errors.hpp"
 
 namespace k::model::gen {
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Template value argument extraction helper
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Extract a concrete k::value_type from an AST expression node.
+ * Only literal expressions are supported (compile-time constants).
+ * Returns true on success, false if the expression is not a supported literal.
+ */
+static bool extract_value_from_ast_expr(
+    const k::parse::ast::expression* expr,
+    k::value_type& out_value)
+{
+    auto lit = dynamic_cast<const k::parse::ast::literal_expr*>(expr);
+    if (!lit) return false;
+    auto val = lit->literal.value().value();
+    return std::visit([&out_value](auto&& v) -> bool {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>) {
+            return false;
+        } else {
+            out_value = k::value_type{v};
+            return true;
+        }
+    }, val);
+}
+
 // Forward declarations for class-related helpers defined in gen_class.cpp
 void emit_vptr_store(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr, std::shared_ptr<context> ctx);
 llvm::Value* emit_virtual_dispatch_call(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr,
@@ -2591,21 +2619,12 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             if (!arg_type || !type::is_resolved(arg_type)) { args_ok = false; break; }
                             model_args.push_back(template_argument::make_type(arg_type));
                         } else if (ast_arg->is_value()) {
-                            // Value template argument — extract integer literal
-                            auto lit = dynamic_cast<parse::ast::literal_expr*>(ast_arg->value_arg.get());
-                            if (!lit) { args_ok = false; break; }
-                            auto val = lit->literal.value().value();
-                            int64_t int_val = 0;
-                            bool ok = std::visit([&int_val](auto&& v) -> bool {
-                                using T = std::decay_t<decltype(v)>;
-                                if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, std::nullptr_t>) {
-                                    int_val = static_cast<int64_t>(v);
-                                    return true;
-                                }
-                                return false;
-                            }, val);
-                            if (!ok) { args_ok = false; break; }
-                            model_args.push_back(template_argument::make_value(int_val));
+                            // Value template argument — extract compile-time constant literal
+                            k::value_type val;
+                            if (!extract_value_from_ast_expr(ast_arg->value_arg.get(), val)) {
+                                args_ok = false; break;
+                            }
+                            model_args.push_back(template_argument::make_value(val));
                         } else {
                             args_ok = false; break;
                         }

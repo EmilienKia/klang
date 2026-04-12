@@ -269,3 +269,189 @@ TEST_CASE("[J] M11: mangling of value template argument",
     CHECK(mangled.find("ILi42EE") != std::string::npos);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [K] Template function with long value param
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[K] M11: template function with long value param",
+          "[milestone11][template][value-param][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_k__;
+        template<long N>
+        get_n() : long { return N; }
+
+        test() : long {
+            return get_n<100000L>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<long(*)()>("_KFN9__m11_k__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 100000L);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [L] Template function with short value param
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[L] M11: template function with short value param",
+          "[milestone11][template][value-param][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_l__;
+        template<short N>
+        get_n() : short { return N; }
+
+        test() : short {
+            return get_n<7S>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<short(*)()>("_KFN9__m11_l__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 7);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [M] Template function with bool value param
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[M] M11: template function with bool value param",
+          "[milestone11][template][value-param][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_m__;
+        template<bool B>
+        get_b() : bool { return B; }
+
+        test() : int {
+            a : bool = get_b<true>();
+            b : bool = get_b<false>();
+            r : int = 0;
+            if(a) { r = r + 1; }
+            if(b) { r = r + 10; }
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_m__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 1);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [N] Multiple value params with different primitive types
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[N] M11: multiple value params with different types",
+          "[milestone11][template][value-param][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_n__;
+        template<int A, int B>
+        sum() : int { return A + B; }
+
+        test() : int {
+            return sum<17, 25>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_n__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 42);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [O] Template function with value param and default (long)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[O] M11: template function with long value param default",
+          "[milestone11][template][value-param][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_o__;
+        template<long N = 999L>
+        get_n() : long { return N; }
+
+        test() : long {
+            return get_n<>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<long(*)()>("_KFN9__m11_o__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 999L);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [P] Template struct with bool value param in method
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[P] M11: template struct with bool value param",
+          "[milestone11][template][value-param][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_p__;
+        template<typename T, bool Signed>
+        struct Config {
+            public data : T;
+            public is_signed() : bool { return Signed; }
+        }
+
+        test() : int {
+            c : Config<int, true>;
+            d : Config<int, false>;
+            r : int = 0;
+            if(c.is_signed()) { r = r + 1; }
+            if(d.is_signed()) { r = r + 10; }
+            return r;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_p__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 1);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [Q] Large int value param
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[Q] M11: large int value param",
+          "[milestone11][template][value-param][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_q__;
+        template<int N>
+        get_n() : int { return N; }
+
+        test() : int {
+            return get_n<2000000>();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_q__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 2000000);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [R] Value param used in conditional expression
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[R] M11: value param used in conditional",
+          "[milestone11][template][value-param][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m11_r__;
+        template<int N>
+        check() : int {
+            if(N > 10) { return 1; }
+            return 0;
+        }
+
+        test() : int {
+            a : int = check<20>();
+            b : int = check<5>();
+            return a * 10 + b;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("_KFN9__m11_r__4testEv");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 10);
+}
+

@@ -72,6 +72,33 @@
 
 namespace k::model::gen {
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Template value argument extraction helper
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Extract a concrete k::value_type from an AST expression node.
+ * Only literal expressions are supported (compile-time constants).
+ * Returns true on success, false if the expression is not a supported literal.
+ */
+static bool extract_value_from_ast_expr(
+    const k::parse::ast::expression* expr,
+    k::value_type& out_value)
+{
+    auto lit = dynamic_cast<const k::parse::ast::literal_expr*>(expr);
+    if (!lit) return false;
+    auto val = lit->literal.value().value();
+    return std::visit([&out_value](auto&& v) -> bool {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>) {
+            return false;
+        } else {
+            out_value = k::value_type{v};
+            return true;
+        }
+    }, val);
+}
+
 //
 // Visibility helpers — implemented as scope_lookup static methods
 //
@@ -1175,21 +1202,10 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             if (!arg_type || !type::is_resolved(arg_type)) return {};
             model_args.push_back(template_argument::make_type(arg_type));
         } else {
-            // Value template argument — extract integer literal
-            auto lit = dynamic_cast<parse::ast::literal_expr*>(ast_arg->value_arg.get());
-            if (!lit) return {};
-            auto val = lit->literal.value().value();
-            int64_t int_val = 0;
-            bool ok = std::visit([&int_val](auto&& v) -> bool {
-                using T = std::decay_t<decltype(v)>;
-                if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, std::nullptr_t>) {
-                    int_val = static_cast<int64_t>(v);
-                    return true;
-                }
-                return false;
-            }, val);
-            if (!ok) return {};
-            model_args.push_back(template_argument::make_value(int_val));
+            // Value template argument — extract compile-time constant literal
+            k::value_type val;
+            if (!extract_value_from_ast_expr(ast_arg->value_arg.get(), val)) return {};
+            model_args.push_back(template_argument::make_value(val));
         }
     }
     // 3b. Fill in default arguments for missing trailing parameters
@@ -2688,21 +2704,10 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             if (!arg_type || !type::is_resolved(arg_type)) return {};
             model_args.push_back(template_argument::make_type(arg_type));
         } else if (ast_arg->is_value()) {
-            // Value template argument — extract integer literal
-            auto lit = dynamic_cast<parse::ast::literal_expr*>(ast_arg->value_arg.get());
-            if (!lit) return {};
-            auto val = lit->literal.value().value();
-            int64_t int_val = 0;
-            bool ok = std::visit([&int_val](auto&& v) -> bool {
-                using T = std::decay_t<decltype(v)>;
-                if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, std::nullptr_t>) {
-                    int_val = static_cast<int64_t>(v);
-                    return true;
-                }
-                return false;
-            }, val);
-            if (!ok) return {};
-            model_args.push_back(template_argument::make_value(int_val));
+            // Value template argument — extract compile-time constant literal
+            k::value_type val;
+            if (!extract_value_from_ast_expr(ast_arg->value_arg.get(), val)) return {};
+            model_args.push_back(template_argument::make_value(val));
         } else {
             return {};
         }

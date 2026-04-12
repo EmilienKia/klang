@@ -1062,8 +1062,8 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
 /** Map from template parameter name to concrete type. */
 using type_substitution_map = std::unordered_map<std::string, std::shared_ptr<type>>;
 
-/** Map from template value parameter name to concrete integer value. */
-using value_substitution_map = std::unordered_map<std::string, int64_t>;
+/** Map from template value parameter name to concrete primitive value. */
+using value_substitution_map = std::unordered_map<std::string, k::value_type>;
 
 /**
  * Recursively substitute types through wrapper chains.

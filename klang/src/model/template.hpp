@@ -19,6 +19,9 @@
 #ifndef KLANG_TEMPLATE_HPP
 #define KLANG_TEMPLATE_HPP
 
+#include "../common/common.hpp"
+
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -84,9 +87,10 @@ struct template_param_descriptor {
 
     /**
      * For value parameters: optional default value as a compile-time constant.
-     * 0 if no default. Only meaningful when kind == VALUE.
+     * Holds the concrete primitive value (int, long, float, double, bool, char, …).
+     * Only meaningful when kind == VALUE.
      */
-    std::optional<int64_t> default_value;
+    std::optional<k::value_type> default_value;
 
     /** True if this is a type parameter. */
     bool is_type_param() const {
@@ -110,8 +114,9 @@ struct template_argument {
     /** Type argument (nullptr if this is a value argument). */
     std::shared_ptr<type> type_arg;
 
-    /** Value argument (nullopt if this is a type argument). */
-    std::optional<int64_t> value_arg;
+    /** Value argument (nullopt if this is a type argument).
+     *  Holds the concrete primitive value (int, long, float, double, bool, char, …). */
+    std::optional<k::value_type> value_arg;
 
     /** True if this is a type argument. */
     bool is_type() const { return type_arg != nullptr; }
@@ -124,9 +129,44 @@ struct template_argument {
         return {std::move(t), std::nullopt};
     }
 
-    /** Create a value argument. */
+    /** Create a value argument from any primitive value. */
+    static template_argument make_value(k::value_type v) {
+        return {nullptr, std::move(v)};
+    }
+
+    /** Create a value argument from an integer (convenience overload, stores as int). */
     static template_argument make_value(int64_t v) {
-        return {nullptr, v};
+        return {nullptr, k::value_type{static_cast<int>(v)}};
+    }
+
+    /**
+     * Return the value argument as an int64_t (for instantiation key generation
+     * and other contexts that need a single integer representation).
+     * For integral types, returns the value cast to int64_t.
+     * For floating types, returns the bit representation.
+     * For other types, returns 0.
+     */
+    int64_t value_as_int64() const {
+        if (!value_arg.has_value()) return 0;
+        return std::visit([](auto&& v) -> int64_t {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_integral_v<T>) {
+                return static_cast<int64_t>(v);
+            } else if constexpr (std::is_floating_point_v<T>) {
+                // Bit-cast for unique key generation
+                if constexpr (std::is_same_v<T, float>) {
+                    int32_t bits;
+                    std::memcpy(&bits, &v, sizeof(bits));
+                    return static_cast<int64_t>(bits);
+                } else {
+                    int64_t bits;
+                    std::memcpy(&bits, &v, sizeof(bits));
+                    return bits;
+                }
+            } else {
+                return 0;
+            }
+        }, *value_arg);
     }
 };
 

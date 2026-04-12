@@ -413,8 +413,12 @@ namespace k::model {
                             auto val = lit->literal.value().value();
                             std::visit([&desc](auto&& v) {
                                 using T = std::decay_t<decltype(v)>;
-                                if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, std::nullptr_t>) {
-                                    desc.default_value = static_cast<int64_t>(v);
+                                if constexpr (std::is_same_v<T, std::monostate>) {
+                                    // no-op: monostate is not a valid default
+                                } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
+                                    // no-op: nullptr is not a valid default for value params
+                                } else {
+                                    desc.default_value = k::value_type{v};
                                 }
                             }, val);
                         }
@@ -834,8 +838,12 @@ namespace k::model {
                             auto val = lit->literal.value().value();
                             std::visit([&desc](auto&& v) {
                                 using T = std::decay_t<decltype(v)>;
-                                if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, std::nullptr_t>) {
-                                    desc.default_value = static_cast<int64_t>(v);
+                                if constexpr (std::is_same_v<T, std::monostate>) {
+                                    // no-op
+                                } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
+                                    // no-op
+                                } else {
+                                    desc.default_value = k::value_type{v};
                                 }
                             }, val);
                         }

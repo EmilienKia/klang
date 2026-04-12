@@ -25,6 +25,8 @@
 
 #include "../common/operator_names.hpp"
 
+#include <cstring>
+
 #include <iosfwd>
 #include <sstream>
 
@@ -148,16 +150,55 @@ std::string mangler::mangle_template_args(const std::vector<template_argument>& 
     for (const auto& arg : args) {
         if (arg.is_type() && arg.type_arg) {
             s << mangle_type(*arg.type_arg);
-        } else if (arg.is_value()) {
-            // L<type><value>E — assume int value params for now
-            s << "Li";
-            int64_t val = arg.value_arg.value_or(0);
-            if (val < 0) {
-                s << "n" << (-val);
-            } else {
-                s << val;
-            }
-            s << "E";
+        } else if (arg.is_value() && arg.value_arg.has_value()) {
+            // L<type><value>E encoding
+            std::visit([&s](auto&& v) {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, bool>) {
+                    s << "Lb" << (v ? "1" : "0") << "E";
+                } else if constexpr (std::is_same_v<T, char>) {
+                    s << "Lc" << static_cast<int>(v) << "E";
+                } else if constexpr (std::is_same_v<T, unsigned char>) {
+                    s << "Lh" << static_cast<unsigned>(v) << "E";
+                } else if constexpr (std::is_same_v<T, short>) {
+                    s << "Ls";
+                    if (v < 0) s << "n" << (-v); else s << v;
+                    s << "E";
+                } else if constexpr (std::is_same_v<T, unsigned short>) {
+                    s << "Lt" << v << "E";
+                } else if constexpr (std::is_same_v<T, int>) {
+                    s << "Li";
+                    if (v < 0) s << "n" << (-v); else s << v;
+                    s << "E";
+                } else if constexpr (std::is_same_v<T, unsigned int>) {
+                    s << "Lj" << v << "E";
+                } else if constexpr (std::is_same_v<T, long>) {
+                    s << "Ll";
+                    if (v < 0) s << "n" << (-v); else s << v;
+                    s << "E";
+                } else if constexpr (std::is_same_v<T, unsigned long>) {
+                    s << "Lm" << v << "E";
+                } else if constexpr (std::is_same_v<T, long long>) {
+                    s << "Lx";
+                    if (v < 0) s << "n" << (-v); else s << v;
+                    s << "E";
+                } else if constexpr (std::is_same_v<T, unsigned long long>) {
+                    s << "Ly" << v << "E";
+                } else if constexpr (std::is_same_v<T, float>) {
+                    // Mangle float as hex bit pattern
+                    uint32_t bits;
+                    std::memcpy(&bits, &v, sizeof(bits));
+                    s << "Lf" << std::hex << bits << std::dec << "E";
+                } else if constexpr (std::is_same_v<T, double>) {
+                    // Mangle double as hex bit pattern
+                    uint64_t bits;
+                    std::memcpy(&bits, &v, sizeof(bits));
+                    s << "Ld" << std::hex << bits << std::dec << "E";
+                } else {
+                    // Fallback: treat as int 0
+                    s << "Li0E";
+                }
+            }, *arg.value_arg);
         }
     }
     s << "E";
