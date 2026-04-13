@@ -128,6 +128,7 @@ std::string get_binary_operator_name(const binary_expression& expr) {
     if (dynamic_cast<const bitwise_xor_assignation_expression*>(&expr)) return "__operator_eO_";
     if (dynamic_cast<const left_shift_assignation_expression*>(&expr)) return "__operator_lS_";
     if (dynamic_cast<const right_shift_assignation_expression*>(&expr)) return "__operator_rS_";
+    if (dynamic_cast<const subscript_expression*>(&expr)) return "__operator_ix_";
     return "";
 }
 
@@ -242,6 +243,11 @@ type_reference_resolver::resolve_binary_operator_overload(
             [](const std::shared_ptr<function>& f) { return f->is_member(); }),
         non_member_funcs.end());
 
+    // Subscript operator[] is member-only: discard non-member candidates.
+    if (k::op::is_subscript_operator(op_name)) {
+        non_member_funcs.clear();
+    }
+
     // Filter member operators by constness: on a const object, only const member operators are callable.
     if (is_const_this && !member_funcs.empty()) {
         bool had_mutable = false;
@@ -271,6 +277,7 @@ type_reference_resolver::resolve_binary_operator_overload(
         std::shared_ptr<function> func;
         cast_weight score;
         bool is_member;
+        bool is_const_func;
         std::shared_ptr<expression> adapted_right;
     };
 
@@ -285,7 +292,7 @@ type_reference_resolver::resolve_binary_operator_overload(
         auto w = compute_cast_weight(right_expr, right_param_type);
         if (w != CAST_IMPOSSIBLE) {
             auto adapted = adapt_type(right_expr, right_param_type);
-            valid.push_back({func, w, true, adapted ? adapted : right_expr});
+            valid.push_back({func, w, true, func->is_const_member(), adapted ? adapted : right_expr});
         }
     }
 
@@ -310,14 +317,16 @@ type_reference_resolver::resolve_binary_operator_overload(
         // Overall score = worst of left and right
         cast_weight w = std::max(wl, wr);
         auto adapted = adapt_type(right_expr, right_param_type);
-        valid.push_back({func, w, false, adapted ? adapted : right_expr});
+        valid.push_back({func, w, false, false, adapted ? adapted : right_expr});
     }
 
     // Step 4: Prefer member operators over non-member when scores are equal
     if (valid.empty()) return {nullptr, nullptr};
 
-    // Step 5: Filter by const-this if the left operand is const
-    // Best = lowest score; among equal scores, prefer member over non-member
+    // Step 5: Select best candidate.
+    // Best = lowest score; among equal scores, prefer member over non-member.
+    // Among equal-score members on a mutable object, prefer mutable over const
+    // (spec §9: "On a mutable object, the mutable version is preferred").
     cast_weight best_score = CAST_IMPOSSIBLE;
     bool best_is_member = false;
 
@@ -333,6 +342,18 @@ type_reference_resolver::resolve_binary_operator_overload(
     for (auto& c : valid) {
         if (c.score == best_score && c.is_member == best_is_member)
             best.push_back(&c);
+    }
+
+    // When multiple member candidates tie, prefer mutable over const on a mutable object.
+    if (best.size() > 1 && !is_const_this && best_is_member) {
+        std::vector<CandInfo*> mutable_best;
+        for (auto* c : best) {
+            if (!c->is_const_func)
+                mutable_best.push_back(c);
+        }
+        if (!mutable_best.empty()) {
+            best = std::move(mutable_best);
+        }
     }
 
     if (best.size() > 1) {
@@ -423,6 +444,7 @@ type_reference_resolver::resolve_unary_operator_overload(
         std::shared_ptr<function> func;
         cast_weight score;
         bool is_member;
+        bool is_const_func;
     };
 
     std::vector<CandInfo> valid;
@@ -432,7 +454,7 @@ type_reference_resolver::resolve_unary_operator_overload(
     for (auto& func : member_funcs) {
         const auto& params = func->parameters();
         if (!params.empty()) continue; // Unary member operator should have no explicit param
-        valid.push_back({func, CAST_NONE, true});
+        valid.push_back({func, CAST_NONE, true, func->is_const_member()});
     }
 
     // Step 2: Collect non-member operator candidates from enclosing scopes
@@ -445,14 +467,16 @@ type_reference_resolver::resolve_unary_operator_overload(
         auto operand_param_type = params[0]->get_type();
         auto w = compute_cast_weight(operand_expr, operand_param_type);
         if (w != CAST_IMPOSSIBLE) {
-            valid.push_back({func, w, false});
+            valid.push_back({func, w, false, false});
         }
     }
 
     // Step 4: Prefer member operators over non-member when scores are equal
     if (valid.empty()) return nullptr;
 
-    // Best = lowest score; among equal scores, prefer member over non-member
+    // Best = lowest score; among equal scores, prefer member over non-member.
+    // Among equal-score members on a mutable object, prefer mutable over const
+    // (spec §9: "On a mutable object, the mutable version is preferred").
     cast_weight best_score = CAST_IMPOSSIBLE;
     bool best_is_member = false;
 
@@ -468,6 +492,18 @@ type_reference_resolver::resolve_unary_operator_overload(
     for (auto& c : valid) {
         if (c.score == best_score && c.is_member == best_is_member)
             best.push_back(&c);
+    }
+
+    // When multiple member candidates tie, prefer mutable over const on a mutable object.
+    if (best.size() > 1 && !is_const_this && best_is_member) {
+        std::vector<CandInfo*> mutable_best;
+        for (auto* c : best) {
+            if (!c->is_const_func)
+                mutable_best.push_back(c);
+        }
+        if (!mutable_best.empty()) {
+            best = std::move(mutable_best);
+        }
     }
 
     if (best.size() > 1) {

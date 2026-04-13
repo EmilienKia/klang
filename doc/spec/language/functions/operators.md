@@ -64,6 +64,7 @@ OperatorSymbol: (one of)
     =   +=  -=  *=  /=  %=  &=  |=  ^=  <<=  >>=    // assignment
     ++_   --_                                  // prefix increment / decrement
     _++   _--                                  // postfix increment / decrement
+    []                                         // subscript (member-only — see § 7b)
     ()                                         // cast (empty parentheses — see § 7)
 ```
 
@@ -351,6 +352,69 @@ d : double = (double) n;  // calls operator() : double → 42.0
 
 ---
 
+## 7b. Subscript operator (`operator []`)
+
+The **subscript operator** allows a struct, class, or interface to define custom indexing
+behaviour via the `obj[index]` syntax.
+
+### Declaration
+
+The subscript operator uses empty brackets after `operator` and takes a single index
+parameter:
+
+```k
+struct Vec {
+    data : int[4];
+    Vec() {}
+
+    operator [](i: int) : int& { return data[i]; }         // mutable access
+    const operator [](i: int) : int { return data[i]; }    // const access
+}
+```
+
+### Grammar
+
+```
+SubscriptOperatorDecl:
+    { Specifier } 'operator' '[' ']' '(' ParameterList ')' [ ':' TypeSpec ] BlockStatement
+```
+
+### Rules
+
+- **Member-only:** `operator []` can only be declared as a member function. Non-member
+  subscript operators are not allowed.
+- **Single index parameter:** currently, exactly one index parameter is required (the
+  right-hand operand inside the brackets). Multi-argument subscripts may be added later.
+- **Return type freedom:** the operator may return any type. Returning `T&` enables
+  write-through (`v[i] = val`), returning `T` provides read-only value access.
+- **Const overloads:** a `const operator []` is callable on const objects. When both
+  mutable and const overloads exist with the same parameter type, the standard
+  const/mutable overload resolution applies (see §9): mutable objects prefer the
+  mutable version, const objects use the const version.
+- **Virtual dispatch:** `operator []` supports virtual dispatch on classes, just like
+  other operator overloads.
+- **Indirection precedence:** `operator []` is only triggered when the left operand
+  (after reference deref) is directly a struct/class type. For pointer, owner, link, or
+  view wrapping a struct, `p[i]` remains pointer/array arithmetic — dereference first
+  with `(*p)[i]`.
+
+### Invocation
+
+```k
+v : Vec;
+v[0] = 42;            // calls mutable operator[] → returns int& → stores 42
+x : int = v[0];       // calls operator[] → loads through returned int&
+v[1] += 10;           // compound assignment through ref works naturally
+```
+
+### Fallback
+
+If the left operand is a struct/class type and no `operator []` is defined, the compiler
+falls through to the built-in array subscript path. If the type is not an array either,
+a compile-time error is emitted.
+
+---
+
 ## 8. Overload resolution
 
 When multiple candidate operator functions exist (from the aggregate, its base classes, and non-member declarations), the compiler selects the best match using a scoring system.
@@ -626,7 +690,8 @@ test() : int {
 - **No new operators:** only existing K operators can be overloaded. No new operator symbols can be introduced.
 - **No arity change:** a binary operator must remain binary; a unary operator must remain unary.
 - **Return type freedom:** operator functions may return any type — there is no constraint that `operator +` must return the same type as its operands.
-- **No `operator []` or `operator ()`** (function call): subscript and call operators are not currently overloadable. Subscript accesses and function calls always use the built-in semantics.
+- **`operator []` is member-only:** the subscript operator can only be declared as a member function of a struct, class, or interface. Non-member `operator []` declarations are not allowed. Currently only a single index parameter is supported.
+- **No `operator ()`** (function call): the function-call operator is not currently overloadable. Function calls always use the built-in semantics.
 
 ---
 
@@ -671,6 +736,7 @@ The compiler maps each operator declaration to an internal canonical function na
 | `--` (prefix) | `operator --_` | `__operator_mm_` |
 | `++` (postfix) | `operator _++` | `__operator_PP_` |
 | `--` (postfix) | `operator _--` | `__operator_MM_` |
+| `[]` (subscript) | `operator []` | `__operator_ix_` |
 | cast | `operator() : T` | `__operator_cv_T` |
 
 ---

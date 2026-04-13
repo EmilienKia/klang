@@ -1089,10 +1089,25 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
             }
         }
 
+        // Check for subscript operator: operator[] (index)
+        bool is_subscript_operator = false;
+        if(!is_cast_operator && lop == lex::punctuator::BRACKET_OPEN) {
+            auto lclose = _lexer.get();
+            if(lclose == lex::punctuator::BRACKET_CLOSE) {
+                is_subscript_operator = true;
+                canonical_name = "__operator_ix_";
+            } else {
+                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CAST_OPERATOR_EMPTY_PARAMS), _lexer.pick_current(), "Subscript operator must use empty brackets: operator[]");
+            }
+        }
+
         if(is_cast_operator) {
             // Casting operator: the return type will be parsed later and injected into the canonical name.
             // For now, use a placeholder name that will be updated after return type is parsed.
             canonical_name = "__operator_cv_";
+        } else if(is_subscript_operator) {
+            // Subscript operator: canonical_name already set to "__operator_ix_"
+            // Parameters will be parsed normally below (single index parameter).
         } else if(lex::is<lex::operator_>(lop)) {
             auto& op = lex::as<lex::operator_>(lop);
             switch(op.type) {

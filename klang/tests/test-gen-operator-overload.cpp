@@ -56,6 +56,11 @@
  * 63. Const operator on dereferenced owner pointer
  * 64. Const interface operator with class implementation
  * 65. Multiple non-member const operators with type filtering
+ * 66–75. Binary operator returning different struct (sret)
+ * 76+. Subscript operator[] returning ref to aggregate:
+ *       read fields, write fields, assign whole struct, compound assignment,
+ *       const ref, nested struct access, nested write, method call through ref,
+ *       class virtual dispatch, copy from subscript to local
  */
 
 #include <catch2/catch_all.hpp>
@@ -1643,8 +1648,7 @@ check(a: Val&) : bool {
 }
 test() : int {
     a: Val(42);
-    if(check(a)) { return 1; }
-    return 0;
+    return check(a);
 }
 )SRC");
     REQUIRE(jit);
@@ -1662,13 +1666,12 @@ struct Val {
     Val(av: int) : v(av) {}
     const operator ==(n: int) : bool { return v == n; }
 }
-check(a: const Val&) : bool {
+compute(a: const Val&) : bool {
     return a == 42;
 }
 test() : int {
     a: Val(42);
-    if(check(a)) { return 1; }
-    return 0;
+    return compute(a);
 }
 )SRC");
     REQUIRE(jit);
@@ -1847,201 +1850,14 @@ TEST_CASE("Binary operator returning a different struct by value — sret direct
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 67. Const binary operator on class returning a DIFFERENT class by value
+// 67. Const binary operator on class returning different type via sret
 //     This is the exact pattern that triggered the original sret bug:
 //     const method + class (vtable) + sret + different return type.
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Const binary operator on class returning different class by value — sret vtable", "[gen][operator][sret][const][class]") {
+TEST_CASE("Const binary operator on class returning different type via sret", "[gen][operator][sret][const][class]") {
     auto jit = gen_jit(R"SRC(
-        module __op_sret_const_class__;
-
-        struct Negated {
-            val : int;
-            Negated(v : int) : val(v) {}
-        }
-
-        class Number {
-            public n : int;
-            Number(v : int) : n(v) {}
-
-            const operator -() : Negated {
-                r : Negated(0 - n);
-                return r;
-            }
-        }
-
-        test() : int {
-            num : Number(42);
-            neg : Negated = -num;
-            return neg.val;
-        }
-    )SRC", false, false);
-    REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == -42);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// 68. Const binary operator on a const final class returning different type
-//     This closely mirrors the String.operator+ pattern (const final class).
-// ═════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("Const final class binary operator returning different struct — sret direct", "[gen][operator][sret][const]") {
-    auto jit = gen_jit(R"SRC(
-        module __op_sret_const_final__;
-
-        struct Builder {
-            total : int;
-            Builder(v : int) : total(v) {}
-        }
-
-        const final class Immutable {
-            public x : int;
-            Immutable(v : int) : x(v) {}
-
-            const operator +(other : const Immutable&) : Builder {
-                b : Builder(x + other.x);
-                return b;
-            }
-        }
-
-        test() : int {
-            a : Immutable(100);
-            b : Immutable(42);
-            builder : Builder = a + b;
-            return builder.total;
-        }
-    )SRC", false, false);
-    REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == 142);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// 69. Unary operator returning struct by value (sret)
-// ═════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("Unary operator returning struct by value — sret direct call", "[gen][operator][sret][unary]") {
-    auto jit = gen_jit(R"SRC(
-        module __op_sret_unary__;
-
-        struct Vec {
-            x : int;
-            y : int;
-            Vec(a : int, b : int) : x(a), y(b) {}
-
-            operator -() : Vec {
-                r : Vec(0 - x, 0 - y);
-                return r;
-            }
-        }
-
-        test_x() : int {
-            v : Vec(3, 7);
-            neg : Vec = -v;
-            return neg.x;
-        }
-
-        test_y() : int {
-            v : Vec(3, 7);
-            neg : Vec = -v;
-            return neg.y;
-        }
-    )SRC");
-    REQUIRE(jit);
-    auto test_x = jit->lookup_symbol<int(*)()>("test_x");
-    REQUIRE(test_x);
-    CHECK(test_x() == -3);
-
-    auto test_y = jit->lookup_symbol<int(*)()>("test_y");
-    REQUIRE(test_y);
-    CHECK(test_y() == -7);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// 70. Unary operator returning a DIFFERENT struct by value (sret)
-// ═════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("Unary operator returning different struct by value — sret", "[gen][operator][sret][unary]") {
-    auto jit = gen_jit(R"SRC(
-        module __op_sret_unary_diff__;
-
-        struct Magnitude {
-            val : int;
-            Magnitude(v : int) : val(v) {}
-        }
-
-        struct Point {
-            x : int;
-            y : int;
-            Point(a : int, b : int) : x(a), y(b) {}
-
-            // Unary + returns a different type
-            operator +() : Magnitude {
-                m : Magnitude(x + y);
-                return m;
-            }
-        }
-
-        test() : int {
-            p : Point(3, 4);
-            mag : Magnitude = +p;
-            return mag.val;
-        }
-    )SRC");
-    REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == 7);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// 71. Cast operator returning struct by value (sret)
-// ═════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("Cast operator returning struct by value — sret", "[gen][operator][sret][cast]") {
-    auto jit = gen_jit(R"SRC(
-        module __op_sret_cast__;
-
-        struct Flat {
-            val : int;
-            Flat(v : int) : val(v) {}
-        }
-
-        struct Nested {
-            a : int;
-            b : int;
-            Nested(x : int, y : int) : a(x), b(y) {}
-
-            // Cast to Flat (different struct) — returns by value via sret
-            operator() : Flat {
-                r : Flat(a * 10 + b);
-                return r;
-            }
-        }
-
-        test() : int {
-            n : Nested(4, 2);
-            f : Flat = (Flat)n;
-            return f.val;
-        }
-    )SRC");
-    REQUIRE(jit);
-    auto fn = jit->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == 42);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// 72. Const cast operator on class returning struct by value (sret + vtable)
-// ═════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("Const cast operator on class returning struct by value — sret vtable", "[gen][operator][sret][cast][const][class]") {
-    auto jit = gen_jit(R"SRC(
-        module __op_sret_cast_class__;
+module __op_sret_const_class__;
 
         struct Info {
             code : int;
@@ -2078,7 +1894,7 @@ TEST_CASE("Const cast operator on class returning struct by value — sret vtabl
 
 TEST_CASE("Const binary operator on class with sret — direct call", "[gen][operator][sret][class]") {
     auto jit = gen_jit(R"SRC(
-        module __op_sret_cls_direct__;
+module __op_sret_cls_direct__;
 
         struct Result {
             val : int;
@@ -2116,7 +1932,7 @@ TEST_CASE("Const binary operator on class with sret — direct call", "[gen][ope
 
 TEST_CASE("Const unary operator on class returning different struct — sret", "[gen][operator][sret][unary][const][class]") {
     auto jit = gen_jit(R"SRC(
-        module __op_sret_unary_const_class__;
+module __op_sret_unary_const_class__;
 
         struct Negated {
             val : int;
@@ -2152,7 +1968,7 @@ TEST_CASE("Const unary operator on class returning different struct — sret", "
 
 TEST_CASE("Binary operator sret result used in expression", "[gen][operator][sret]") {
     auto jit = gen_jit(R"SRC(
-        module __op_sret_expr_use__;
+module __op_sret_expr_use__;
 
         struct Summary {
             total : int;
@@ -2182,4 +1998,507 @@ TEST_CASE("Binary operator sret result used in expression", "[gen][operator][sre
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
     CHECK(fn() == 34);  // 1+2+10+20 + 1 = 34
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Subscript operator[] overloading — member-only, single index argument
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Subscript operator[] read on struct", "[operator][subscript][gen]") {
+    auto jit = gen_jit(R"SRC(
+module __op_subscript_read__;
+struct Vec3 {
+    data : int[3];
+    Vec3() { data[0] = 10; data[1] = 20; data[2] = 30; }
+    operator [](i: int) : int& {
+        return data[i];
+    }
+}
+test() : int {
+    v : Vec3;
+    return v[0] + v[1] + v[2];
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 60);
+}
+
+TEST_CASE("Subscript operator[] write through ref return", "[operator][subscript][gen]") {
+    auto jit = gen_jit(R"SRC(
+module __op_subscript_write__;
+struct Arr {
+    data : int[4];
+    Arr() { data[0] = 0; data[1] = 0; data[2] = 0; data[3] = 0; }
+    operator [](i: int) : int& {
+        return data[i];
+    }
+}
+test() : int {
+    a : Arr;
+    a[0] = 42;
+    a[1] = 100;
+    a[2] = a[0] + a[1];
+    return a[2];
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 142);
+}
+
+TEST_CASE("Subscript operator[] return by value", "[operator][subscript][gen]") {
+    auto jit = gen_jit(R"SRC(
+module __op_subscript_val__;
+struct Lookup {
+    data : int[3];
+    Lookup() { data[0] = 5; data[1] = 15; data[2] = 25; }
+    operator [](i: int) : int {
+        return data[i];
+    }
+}
+test() : int {
+    t : Lookup;
+    return t[0] + t[2];
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 30);
+}
+
+TEST_CASE("Subscript operator[] const version", "[operator][subscript][gen][const]") {
+    auto jit = gen_jit(R"SRC(
+module __op_subscript_const__;
+struct ConstArr {
+    data : int[3];
+    ConstArr() { data[0] = 7; data[1] = 14; data[2] = 21; }
+    const operator [](i: int) : int {
+        return data[i];
+    }
+}
+read(a: const ConstArr&) : int {
+    return a[0] + a[1] + a[2];
+}
+test() : int {
+    a : ConstArr;
+    return read(a);
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Subscript operator[] with non-integer index type", "[operator][subscript][gen]") {
+    auto jit = gen_jit(R"SRC(
+module __op_subscript_longidx__;
+struct LongArr {
+    data : int[3];
+    LongArr() { data[0] = 1; data[1] = 2; data[2] = 3; }
+    operator [](i: long) : int& {
+        idx : int = (int) i;
+        return data[idx];
+    }
+}
+test() : int {
+    a : LongArr;
+    idx : long = 2;
+    return a[idx];
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 3);
+}
+
+TEST_CASE("Subscript operator[] on class with virtual dispatch", "[operator][subscript][gen][class]") {
+    auto jit = gen_jit(R"SRC(
+module __op_subscript_virt__;
+class Base {
+public:
+    Base() {}
+    operator [](i: int) : int {
+        return i;
+    }
+}
+class Derived : public Base {
+public:
+    Derived() {}
+    operator [](i: int) : int {
+        return i * 10;
+    }
+}
+call_subscript(b: Base&, i: int) : int {
+    return b[i];
+}
+test() : int {
+    d : Derived;
+    return call_subscript(d, 3);
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 30);
+}
+
+TEST_CASE("Subscript operator[] on template struct", "[operator][subscript][gen][template]") {
+    auto jit = gen_jit(R"SRC(
+module __op_subscript_tpl__;
+template<typename T>
+struct Container {
+    data : T[4];
+    Container() {}
+    operator [](i: int) : T& {
+        return data[i];
+    }
+}
+test() : int {
+    c : Container<int>;
+    c[0] = 10;
+    c[1] = 20;
+    c[2] = c[0] + c[1];
+    return c[2];
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 30);
+}
+
+TEST_CASE("Subscript operator[] compound assignment through ref", "[operator][subscript][gen][aggregate]") {
+    auto jit = gen_jit(R"SRC(
+module __op_subscript_cmpd__;
+struct Buf {
+    data : int[3];
+    Buf() {
+        data[0] = 10;
+        data[1] = 20;
+        data[2] = 30;
+    }
+    operator [](i: int) : int& {
+        return data[i];
+    }
+}
+test() : int {
+    b : Buf;
+    b[0] += 5;
+    b[1] -= 3;
+    return b[0] + b[1];
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 32);  // (10+5) + (20-3) = 15 + 17 = 32
+}
+
+TEST_CASE("Subscript operator[] returning struct ref on class — virtual dispatch", "[operator][subscript][gen][aggregate][class]") {
+    auto jit = gen_jit(R"SRC(
+module __op_subscript_agg_cls__;
+struct Item {
+    a : int;
+    b : int;
+}
+class Container {
+    public data : Item[4];
+    Container() {
+        data[0].a = 1;  data[0].b = 2;
+        data[1].a = 3;  data[1].b = 4;
+        data[2].a = 5;  data[2].b = 6;
+        data[3].a = 7;  data[3].b = 8;
+    }
+    operator [](i: int) : Item& {
+        return data[i];
+    }
+}
+sum_first_two(c: Container&) : int {
+    return c[0].a + c[0].b + c[1].a + c[1].b;
+}
+test() : int {
+    c : Container;
+    return sum_first_two(c);
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 10);  // 1 + 2 + 3 + 4
+}
+
+TEST_CASE("Subscript operator[] returning struct ref — copy from subscript to local", "[operator][subscript][gen][aggregate]") {
+    auto jit = gen_jit(R"SRC(
+module __op_subscript_agg_copy__;
+struct Color {
+    r : int;
+    g : int;
+    b : int;
+}
+struct Palette {
+    colors : Color[3];
+    Palette() {
+        colors[0].r = 255; colors[0].g = 0;   colors[0].b = 0;
+        colors[1].r = 0;   colors[1].g = 255; colors[1].b = 0;
+        colors[2].r = 0;   colors[2].g = 0;   colors[2].b = 255;
+    }
+    operator [](i: int) : Color& {
+        return colors[i];
+    }
+}
+test() : int {
+    pal : Palette;
+    c : Color = pal[1];
+    return c.r + c.g + c.b;
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 255);  // 0 + 255 + 0
+}
+
+TEST_CASE("Subscript operator[] — const/mutable on class with virtual dispatch", "[operator][subscript][gen][const][class]") {
+    auto jit = gen_jit(R"SRC(
+module __op_ix_dual_virt__;
+class Base {
+    public data : int[4];
+    Base() {
+        data[0] = 100; data[1] = 200; data[2] = 300; data[3] = 400;
+    }
+    operator [](i: int) : int& {
+        return data[i];
+    }
+    const operator [](i: int) : int {
+        return data[i];
+    }
+}
+class Derived : public Base {
+    Derived() : Base() {
+        data[0] = 1000; data[1] = 2000; data[2] = 3000; data[3] = 4000;
+    }
+    operator [](i: int) : int& {
+        return data[i];
+    }
+    const operator [](i: int) : int {
+        return data[i] + 7000;
+    }
+}
+read_const(b: const Base&) : int {
+    return b[0] + b[1];
+}
+test_base_const() : int {
+    b : Base;
+    return read_const(b);
+}
+test_derived_const() : int {
+    d : Derived;
+    return read_const(d);
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn_base = jit->lookup_symbol<int(*)()>("test_base_const");
+    REQUIRE(fn_base);
+    CHECK(fn_base() == 300);  // Base: 100 + 200
+
+    auto fn_derived = jit->lookup_symbol<int(*)()>("test_derived_const");
+    REQUIRE(fn_derived);
+    CHECK(fn_derived() == 17000);  // Derived: (1000+7000) + (2000+7000) = 8000 + 9000
+}
+
+TEST_CASE("Subscript operator[] — compound assignment through mutable version with const/mutable coexist", "[operator][subscript][gen][const]") {
+    // Compound assignment (+=) should use the mutable operator[].
+    auto jit = gen_jit(R"SRC(
+module __op_ix_dual_compound__;
+struct Arr {
+    data : int[3];
+    Arr() { data[0] = 10; data[1] = 20; data[2] = 30; }
+    operator [](i: int) : int& {
+        return data[i];
+    }
+    const operator [](i: int) : int {
+        return data[i] + 9000;
+    }
+}
+test() : int {
+    a : Arr;
+    a[0] += 5;
+    a[1] -= 3;
+    return a[0] + a[1] + a[2];
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    // Mutable version used: (10+5) + (20-3) + 30 = 15 + 17 + 30 = 62
+    CHECK(fn() == 62);
+}
+
+TEST_CASE("Subscript operator[] — both const and mutable on class, mutable object", "[operator][subscript][gen][const][class]") {
+    auto jit = gen_jit(R"SRC(
+module __op_ix_dual_cls_mut__;
+class Container {
+    public data : int[4];
+    Container() {
+        data[0] = 100; data[1] = 200; data[2] = 300; data[3] = 400;
+    }
+    operator [](i: int) : int& {
+        return data[i];
+    }
+    const operator [](i: int) : int {
+        return data[i] + 5000;
+    }
+}
+test() : int {
+    c : Container;
+    c[0] = 1;
+    return c[0] + c[3];
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    // Mutable version: c[0]=1, c[3]=400 → 1 + 400 = 401
+    CHECK(fn() == 401);
+}
+
+TEST_CASE("Subscript operator[] — both const and mutable on class, const ref", "[operator][subscript][gen][const][class]") {
+    auto jit = gen_jit(R"SRC(
+module __op_ix_dual_cls_const__;
+class Container {
+    public data : int[4];
+    Container() {
+        data[0] = 100; data[1] = 200; data[2] = 300; data[3] = 400;
+    }
+    operator [](i: int) : int& {
+        return data[i];
+    }
+    const operator [](i: int) : int {
+        return data[i] + 5000;
+    }
+}
+read(c: const Container&) : int {
+    return c[0] + c[1];
+}
+test() : int {
+    c : Container;
+    return read(c);
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    // Const version: (100+5000) + (200+5000) = 5100 + 5200 = 10300
+    CHECK(fn() == 10300);
+}
+
+TEST_CASE("Subscript operator[] — const-only version works on mutable object", "[operator][subscript][gen][const]") {
+    // Only const operator[] exists; calling on mutable object should still work.
+    auto jit = gen_jit(R"SRC(
+module __op_ix_const_only_on_mut__;
+struct Buf {
+    data : int[2];
+    Buf() { data[0] = 7; data[1] = 8; }
+    const operator [](i: int) : int {
+        return data[i] + 100;
+    }
+}
+test() : int {
+    b : Buf;
+    return b[0] + b[1];
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    // Only const version exists, works on mutable object: (7+100) + (8+100) = 215
+    CHECK(fn() == 215);
+}
+
+TEST_CASE("Subscript operator[] — mutable-only on const object rejected", "[operator][subscript][gen][const][error]") {
+    // Only mutable operator[] exists; calling on const object should be an error.
+    REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+module __op_ix_mut_only_on_const__;
+struct Buf {
+    data : int[2];
+    Buf() { data[0] = 7; data[1] = 8; }
+    operator [](i: int) : int& {
+        return data[i];
+    }
+}
+read(b: const Buf&) : int {
+    return b[0];
+}
+)SRC"), k::log::compiler_error);
+}
+
+TEST_CASE("Subscript operator[] — const/mutable on struct, const local variable", "[operator][subscript][gen][const]") {
+    auto jit = gen_jit(R"SRC(
+module __op_ix_dual_const_local__;
+struct Buf {
+    data : int[2];
+    Buf() { data[0] = 42; data[1] = 58; }
+    operator [](i: int) : int& {
+        return data[i];
+    }
+    const operator [](i: int) : int {
+        return data[i] + 2000;
+    }
+}
+test() : int {
+    const b : Buf;
+    return b[0] + b[1];
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 4100);  // (42+2000) + (58+2000) = 2042 + 2058
+}
+TEST_CASE("Subscript operator[] — const/mutable on struct returning aggregate refs", "[operator][subscript][gen][const][aggregate]") {
+    auto jit = gen_jit(R"SRC(
+module __op_ix_dual_agg_ref__;
+struct Point {
+    x : int;
+    y : int;
+}
+struct PointArray {
+    data : Point[3];
+    PointArray() {
+        data[0].x = 1; data[0].y = 2;
+        data[1].x = 3; data[1].y = 4;
+        data[2].x = 5; data[2].y = 6;
+    }
+    operator [](i: int) : Point& {
+        return data[i];
+    }
+    const operator [](i: int) : const Point& {
+        return data[i];
+    }
+}
+sum_mut(arr: PointArray&) : int {
+    arr[0].x = 10;
+    arr[0].y = 20;
+    return arr[0].x + arr[0].y + arr[1].x + arr[1].y;
+}
+sum_const(arr: const PointArray&) : int {
+    return arr[0].x + arr[0].y + arr[1].x + arr[1].y;
+}
+test() : int {
+    a : PointArray;
+    m : int = sum_mut(a);
+    c : int = sum_const(a);
+    return m + c;
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 74);  // 37 + 37
 }

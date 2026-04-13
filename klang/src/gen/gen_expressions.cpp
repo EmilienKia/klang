@@ -1812,42 +1812,85 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
         // Deref first ref
         left_type = left_type->get_subtype();
     }
-    left_type = std::dynamic_pointer_cast<reference_type>(left_type)->get_subtype();
+    auto inner_type = std::dynamic_pointer_cast<reference_type>(left_type)->get_subtype();
 
-    // Strip const qualifier before checking for indirection / array
-    left_type = type::remove_const(left_type);
+    // Detect constness before stripping const qualifier
+    bool is_const_left = type::is_const(inner_type);
+    // Strip const qualifier for type checks
+    auto bare_inner = type::remove_const(inner_type);
 
+    // ── Operator[] overload for aggregate (struct/class/interface) ──
+    // Only triggered when the inner type is directly a struct type (not through
+    // an indirection like pointer/owner/link/view — those remain array indexing).
+    if (type::is_struct(bare_inner)) {
+        auto st_type = std::dynamic_pointer_cast<struct_type>(bare_inner);
+        if (st_type) {
+            auto agg = st_type->get_struct();
+            if (agg) {
+                auto [op_func, adapted_right] = resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
+                if (op_func) {
+                    // Store the resolved operator function on the expression
+                    expr.set_operator_func(op_func);
+                    // Apply the adapted right operand (implicit cast if needed)
+                    if (adapted_right && adapted_right != right) {
+                        expr.assign_right(adapted_right);
+                    }
+                    // Set the expression type to the return type of the operator function
+                    if (op_func->has_return_type()) {
+                        expr.set_type(op_func->get_return_type());
+                    } else {
+                        expr.set_type(bare_inner);
+                    }
+                    // Compute dispatch info for virtual calls
+                    if (op_func->is_member()) {
+                        auto di = compute_operator_dispatch_info(op_func, left_type);
+                        expr.set_operator_dispatch_info(std::move(di));
+                    } else {
+                        virtual_dispatch_info di;
+                        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                        expr.set_operator_dispatch_info(std::move(di));
+                    }
+                    return;
+                }
+                // No operator[] found on this aggregate — fall through to array path
+                // (the aggregate might wrap an array, or this will error below)
+            }
+        }
+    }
+
+    // ── Array subscript path (original logic) ──
     // Unwrap any indirection type (owner, pointer, link, view) to reach the inner array
-    if (type::is_owner(left_type)) {
-        left_type = std::dynamic_pointer_cast<owner_type>(left_type)->get_owned_type();
-    } else if (type::is_pointer(left_type)) {
-        left_type = std::dynamic_pointer_cast<pointer_type>(left_type)->get_pointed_type();
-    } else if (type::is_link(left_type)) {
-        left_type = std::dynamic_pointer_cast<link_type>(left_type)->get_linked_type();
-    } else if (type::is_view(left_type)) {
-        left_type = std::dynamic_pointer_cast<view_type>(left_type)->get_viewed_type();
+    auto arr_type_inner = bare_inner;
+    if (type::is_owner(arr_type_inner)) {
+        arr_type_inner = std::dynamic_pointer_cast<owner_type>(arr_type_inner)->get_owned_type();
+    } else if (type::is_pointer(arr_type_inner)) {
+        arr_type_inner = std::dynamic_pointer_cast<pointer_type>(arr_type_inner)->get_pointed_type();
+    } else if (type::is_link(arr_type_inner)) {
+        arr_type_inner = std::dynamic_pointer_cast<link_type>(arr_type_inner)->get_linked_type();
+    } else if (type::is_view(arr_type_inner)) {
+        arr_type_inner = std::dynamic_pointer_cast<view_type>(arr_type_inner)->get_viewed_type();
     }
 
     // Step 3: If LHS is an array (sized or unsized): validate index type, set element type
     // Unsized arrays (e.g. char[]) are canonicalized to ref<array<T>>.
     // After unwrapping an indirection such as pointer<ref<array<T>>> we
     // may still have a reference wrapper — strip it to reach the array.
-    if (type::is_reference(left_type)) {
-        left_type = std::dynamic_pointer_cast<reference_type>(left_type)->get_subtype();
+    if (type::is_reference(arr_type_inner)) {
+        arr_type_inner = std::dynamic_pointer_cast<reference_type>(arr_type_inner)->get_subtype();
     }
 
     // Step 4: If LHS is a pointer/link/view/owner: perform pointer arithmetic + deref
     // Strip any remaining const wrapper (e.g. pointer<const<array<T>>> → const<array<T>>)
-    left_type = type::remove_const(left_type);
+    arr_type_inner = type::remove_const(arr_type_inner);
 
     // Step 5: Set result type as reference to element type
-    if(!type::is_array(left_type)) {
+    if(!type::is_array(arr_type_inner)) {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_SUBSCRIPT_NOT_ARRAY), expr.first_lexeme(),
             "Subscript operator '[]' can only be applied to an array type, "
             "but the dereferenced left operand has type '{}' which is not an array",
-            {left_type ? left_type->to_string() : "?"});
+            {arr_type_inner ? arr_type_inner->to_string() : "?"});
     }
-    auto arr_type = std::dynamic_pointer_cast<array_type>(left_type);
+    auto arr_type = std::dynamic_pointer_cast<array_type>(arr_type_inner);
     expr.set_type(arr_type->get_subtype()->get_reference());
 
     // Check the right hand can be cast to unsigned integer
@@ -1877,6 +1920,10 @@ void type_reference_resolver::visit_subscript_expression(subscript_expression& e
  */
 void implementation_generator::visit_subscript_expression(subscript_expression& expr) {
     // Step 1: If operator overload: delegate to generate_binary_operator_overload
+    if (expr.has_operator_overload()) {
+        if (generate_binary_operator_overload(expr)) return;
+    }
+
     auto [left, right] = process_binary_expression(expr);
     if(!left || !right) {
         _value = nullptr;
