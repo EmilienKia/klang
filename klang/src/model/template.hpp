@@ -196,6 +196,14 @@ struct tpl_info {
     std::vector<template_param_descriptor> params;
 
     /**
+     * Raw K source text of the complete template declaration + entity body.
+     * Captured during parsing for KDI export, so that importing compilers can
+     * re-parse and re-instantiate the template locally with new arguments.
+     * Empty if not captured (e.g. for imported or synthetic templates).
+     */
+    std::string source_text;
+
+    /**
      * Cache of concrete instantiations keyed by a canonical string
      * encoding of the template arguments.
      *

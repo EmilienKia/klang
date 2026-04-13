@@ -393,3 +393,107 @@ TEST_CASE("JSON: CBOR → JSON → CBOR round-trip preserves content", "[json][c
     fs::remove(json_path);
 }
 
+TEST_CASE("JSON: template_origin round-trips on function", "[json][template]") {
+    kdi_file f = make_minimal_file();
+
+    kdi_function fn;
+    fn.name         = "identity__int__";
+    fn.fq_name      = "test::json::identity__int__";
+    fn.return_type  = kdi_type::make_int(32);
+    fn.mangled_name = "_KFN8identityIiEi";
+    fn.llvm_def     = "declare i32 @_KFN8identityIiEi(i32)";
+    fn.params.push_back({"x", kdi_type::make_int(32)});
+
+    kdi_template_origin origin;
+    origin.base_name    = "identity";
+    origin.base_fq_name = "test::json::identity";
+    kdi_template_arg arg1;
+    arg1.type_arg = kdi_type::make_int(32);
+    origin.args.push_back(arg1);
+    fn.template_origin = origin;
+
+    f.unit.root_ns.functions.push_back(fn);
+
+    auto restored = json_round_trip(f);
+    REQUIRE(restored.unit.root_ns.functions.size() == 1);
+    auto& rfn = restored.unit.root_ns.functions[0];
+    REQUIRE(rfn.template_origin.has_value());
+    REQUIRE(rfn.template_origin->base_name == "identity");
+    REQUIRE(rfn.template_origin->base_fq_name == "test::json::identity");
+    REQUIRE(rfn.template_origin->args.size() == 1);
+    REQUIRE(rfn.template_origin->args[0].type_arg.has_value());
+    auto& targ = std::get<kdi_int_type>(rfn.template_origin->args[0].type_arg->value);
+    REQUIRE(targ.bits == 32);
+    REQUIRE(targ.is_signed);
+}
+
+TEST_CASE("JSON: template_origin round-trips on aggregate", "[json][template]") {
+    kdi_file f = make_minimal_file();
+
+    kdi_aggregate agg;
+    agg.kind         = kdi_aggregate_kind::struct_;
+    agg.name         = "Box__int__";
+    agg.fq_name      = "test::json::Box__int__";
+    agg.mangled_name = "_KS3BoxIiE";
+    agg.llvm_def     = "%struct.Box__int__ = type { i32 }";
+
+    kdi_template_origin origin;
+    origin.base_name    = "Box";
+    origin.base_fq_name = "test::json::Box";
+    kdi_template_arg arg1;
+    arg1.type_arg = kdi_type::make_int(32);
+    origin.args.push_back(arg1);
+    kdi_template_arg arg2;
+    arg2.value_arg  = "42";
+    arg2.value_type = kdi_type::make_int(32, true);
+    origin.args.push_back(arg2);
+    agg.template_origin = origin;
+
+    f.unit.root_ns.aggregates.push_back(agg);
+
+    auto restored = json_round_trip(f);
+    REQUIRE(restored.unit.root_ns.aggregates.size() == 1);
+    auto& ragg = restored.unit.root_ns.aggregates[0];
+    REQUIRE(ragg.template_origin.has_value());
+    REQUIRE(ragg.template_origin->base_name == "Box");
+    REQUIRE(ragg.template_origin->base_fq_name == "test::json::Box");
+    REQUIRE(ragg.template_origin->args.size() == 2);
+    REQUIRE(ragg.template_origin->args[0].type_arg.has_value());
+    REQUIRE(ragg.template_origin->args[1].value_arg.has_value());
+    REQUIRE(*ragg.template_origin->args[1].value_arg == "42");
+    REQUIRE(ragg.template_origin->args[1].value_type.has_value());
+}
+
+TEST_CASE("JSON: template_def round-trips in namespace", "[json][template]") {
+    kdi_file f = make_minimal_file();
+
+    kdi_template_def td;
+    td.name        = "Pair";
+    td.fq_name     = "test::json::Pair";
+    td.entity_kind = "struct";
+    td.visibility  = "public";
+    kdi_template_param tp1;
+    tp1.kind = "typename";
+    tp1.name = "A";
+    td.params.push_back(tp1);
+    kdi_template_param tp2;
+    tp2.kind = "typename";
+    tp2.name = "B";
+    tp2.default_type = kdi_type::make_int(32);
+    td.params.push_back(tp2);
+    td.source = "template<typename A, typename B = int> struct Pair { first: A; second: B; }";
+    f.unit.root_ns.template_defs.push_back(td);
+
+    auto restored = json_round_trip(f);
+    REQUIRE(restored.unit.root_ns.template_defs.size() == 1);
+    auto& rtd = restored.unit.root_ns.template_defs[0];
+    REQUIRE(rtd.name == "Pair");
+    REQUIRE(rtd.fq_name == "test::json::Pair");
+    REQUIRE(rtd.entity_kind == "struct");
+    REQUIRE(rtd.params.size() == 2);
+    REQUIRE(rtd.params[0].name == "A");
+    REQUIRE(rtd.params[1].name == "B");
+    REQUIRE(rtd.params[1].default_type.has_value());
+    REQUIRE(rtd.source.find("Pair") != std::string::npos);
+}
+

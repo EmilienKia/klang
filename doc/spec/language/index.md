@@ -86,8 +86,6 @@ Examples are included where they clarify the normative text.
 | Page | Description |
 |------|-------------|
 | [Templates](templates/templates.md) | Template declarations, type and value parameters, kind constraints, base-type constraints, default parameters, explicit instantiation, monomorphization, name mangling |
-| [Template Architecture](templates/architecture.md) | Internal architecture of the template subsystem: model-level instantiation, type/value substitution, caching, pipeline integration |
-| [Template Implementation Plan](templates/implementation-plan.md) | Milestone-based implementation plan with status tracking |
 
 ### Dynamic Memory
 

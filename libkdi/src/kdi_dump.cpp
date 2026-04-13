@@ -159,6 +159,16 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
     if (agg.is_static_nested) out << " static";
     if (!agg.enclosing_fq_name.empty())
         out << " [enclosing=" << agg.enclosing_fq_name << "]";
+    if (agg.template_origin) {
+        out << " /* template: " << agg.template_origin->base_name << "<";
+        for (size_t i = 0; i < agg.template_origin->args.size(); ++i) {
+            if (i) out << ", ";
+            auto& a = agg.template_origin->args[i];
+            if (a.type_arg) out << type_str(*a.type_arg);
+            else if (a.value_arg) out << *a.value_arg;
+        }
+        out << "> */";
+    }
 
     // bases
     if (!agg.bases.empty()) {
@@ -209,6 +219,16 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
         if (m.is_final)        out << "final ";
         if (m.is_const_member) out << "const ";
         out << m.name << params_str(m.params) << " : " << type_str(m.return_type);
+        if (m.template_origin) {
+            out << " /* template: " << m.template_origin->base_name << "<";
+            for (size_t i = 0; i < m.template_origin->args.size(); ++i) {
+                if (i) out << ", ";
+                auto& a = m.template_origin->args[i];
+                if (a.type_arg) out << type_str(*a.type_arg);
+                else if (a.value_arg) out << *a.value_arg;
+            }
+            out << "> */";
+        }
         if (m.vtable_slot >= 0) out << "  // slot=" << m.vtable_slot;
         out << "  // " << m.mangled_name << "\n";
         if (!m.llvm_def.empty())
@@ -251,8 +271,18 @@ void dump_namespace(const kdi_namespace& ns, std::ostream& out, int depth) {
         int d = depth + (ns.name.empty() ? 0 : 1);
         out << indent(d) << vis_str(f.visibility) << " ";
         if (f.is_static) out << "static ";
-        out << f.name << params_str(f.params) << " : " << type_str(f.return_type)
-            << "  // " << f.mangled_name << "\n";
+        out << f.name << params_str(f.params) << " : " << type_str(f.return_type);
+        if (f.template_origin) {
+            out << " /* template: " << f.template_origin->base_name << "<";
+            for (size_t i = 0; i < f.template_origin->args.size(); ++i) {
+                if (i) out << ", ";
+                auto& a = f.template_origin->args[i];
+                if (a.type_arg) out << type_str(*a.type_arg);
+                else if (a.value_arg) out << *a.value_arg;
+            }
+            out << "> */";
+        }
+        out << "  // " << f.mangled_name << "\n";
         if (!f.llvm_def.empty())
             out << indent(d + 1) << "// llvm: " << f.llvm_def << "\n";
     }
@@ -262,6 +292,23 @@ void dump_namespace(const kdi_namespace& ns, std::ostream& out, int depth) {
         out << indent(d) << vis_str(v.visibility) << " ";
         if (v.is_const) out << "const ";
         out << type_str(v.type) << " " << v.name << ";  // " << v.mangled_name << "\n";
+    }
+
+    // Template definitions
+    for (auto& td : ns.template_defs) {
+        int d = depth + (ns.name.empty() ? 0 : 1);
+        out << indent(d) << td.visibility << " template<";
+        for (size_t i = 0; i < td.params.size(); ++i) {
+            if (i) out << ", ";
+            out << td.params[i].kind << " " << td.params[i].name;
+        }
+        out << "> " << td.entity_kind << " " << td.name << "  // " << td.fq_name << "\n";
+        if (!td.source.empty()) {
+            // Show first line of source
+            auto nl = td.source.find('\n');
+            std::string first_line = (nl != std::string::npos) ? td.source.substr(0, nl) : td.source;
+            out << indent(d + 1) << "// source: " << first_line << " ...\n";
+        }
     }
 
     for (auto& child : ns.namespaces) dump_namespace(child, out, depth + (ns.name.empty() ? 0 : 1));

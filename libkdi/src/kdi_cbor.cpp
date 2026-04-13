@@ -55,6 +55,10 @@ namespace {
 
 cbor_item_t* encode_file(const kdi_file& file);
 
+// Forward declarations for template DTOs (used in function/method/aggregate encode)
+cbor_item_t*         encode_template_origin(const kdi_template_origin& o);
+kdi_template_origin  decode_template_origin(cbor_item_t* item, const std::string& path);
+
 // ── Deserialisation helpers ──────────────────────────────────────────────────
 
 kdi_file decode_file(cbor_item_t* item);
@@ -479,6 +483,8 @@ cbor_item_t* encode_function(const kdi_function& f) {
     map_push(m, "params",       encode_params(f.params));
     map_push(m, "mangled_name", cbor_str(f.mangled_name));
     map_push(m, "llvm_def",     cbor_str(f.llvm_def));
+    if (f.template_origin)
+        map_push(m, "template_origin", encode_template_origin(*f.template_origin));
     return m;
 }
 
@@ -495,6 +501,8 @@ kdi_function decode_function(cbor_item_t* item, const std::string& path) {
     f.params       = decode_params(item, "params", path);
     f.mangled_name = req_string(item, "mangled_name", path);
     f.llvm_def     = req_string(item, "llvm_def", path);
+    if (auto* to = map_get(item, "template_origin"))
+        f.template_origin = decode_template_origin(to, path + ".template_origin");
     return f;
 }
 
@@ -514,6 +522,8 @@ cbor_item_t* encode_method(const kdi_method& m) {
     map_push(map, "params",       encode_params(m.params));
     map_push(map, "mangled_name", cbor_str(m.mangled_name));
     map_push(map, "llvm_def",     cbor_str(m.llvm_def));
+    if (m.template_origin)
+        map_push(map, "template_origin", encode_template_origin(*m.template_origin));
     return map;
 }
 
@@ -535,6 +545,8 @@ kdi_method decode_method(cbor_item_t* item, const std::string& path) {
     m.params         = decode_params(item, "params", path);
     m.mangled_name   = req_string(item, "mangled_name", path);
     m.llvm_def       = req_string(item, "llvm_def", path);
+    if (auto* to = map_get(item, "template_origin"))
+        m.template_origin = decode_template_origin(to, path + ".template_origin");
     return m;
 }
 
@@ -883,6 +895,10 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     if (!agg.default_constructor_mangled_name.empty())
         map_push(m, "default_constructor_mangled_name", cbor_str(agg.default_constructor_mangled_name));
 
+    // template_origin
+    if (agg.template_origin)
+        map_push(m, "template_origin", encode_template_origin(*agg.template_origin));
+
     return m;
 }
 
@@ -954,6 +970,8 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
     }
     agg.llvm_def = req_string(item, "llvm_def", path);
     agg.default_constructor_mangled_name = opt_string(item, "default_constructor_mangled_name");
+    if (auto* to = map_get(item, "template_origin"))
+        agg.template_origin = decode_template_origin(to, path + ".template_origin");
     return agg;
 }
 
@@ -1020,6 +1038,104 @@ kdi_enum decode_enum(cbor_item_t* item, const std::string& path) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Template DTOs
+// ─────────────────────────────────────────────────────────────────────────────
+
+cbor_item_t* encode_template_param(const kdi_template_param& p) {
+    cbor_item_t* m = cbor_new_indefinite_map();
+    map_push(m, "kind", cbor_str(p.kind));
+    map_push(m, "name", cbor_str(p.name));
+    if (p.constraint_type) map_push(m, "constraint_type", encode_type(*p.constraint_type));
+    if (p.default_type)    map_push(m, "default_type", encode_type(*p.default_type));
+    if (p.value_type)      map_push(m, "value_type", encode_type(*p.value_type));
+    if (p.default_value)   map_push(m, "default_value", cbor_str(*p.default_value));
+    return m;
+}
+
+kdi_template_param decode_template_param(cbor_item_t* item, const std::string& path) {
+    kdi_template_param p;
+    p.kind = req_string(item, "kind", path);
+    p.name = req_string(item, "name", path);
+    if (auto* ct = map_get(item, "constraint_type")) p.constraint_type = decode_type(ct, path + ".constraint_type");
+    if (auto* dt = map_get(item, "default_type"))     p.default_type = decode_type(dt, path + ".default_type");
+    if (auto* vt = map_get(item, "value_type"))        p.value_type = decode_type(vt, path + ".value_type");
+    auto dv = opt_string(item, "default_value");
+    if (!dv.empty()) p.default_value = dv;
+    return p;
+}
+
+cbor_item_t* encode_template_arg(const kdi_template_arg& a) {
+    cbor_item_t* m = cbor_new_indefinite_map();
+    if (a.type_arg)  map_push(m, "type_arg", encode_type(*a.type_arg));
+    if (a.value_arg) map_push(m, "value_arg", cbor_str(*a.value_arg));
+    if (a.value_type) map_push(m, "value_type", encode_type(*a.value_type));
+    return m;
+}
+
+kdi_template_arg decode_template_arg(cbor_item_t* item, const std::string& path) {
+    kdi_template_arg a;
+    if (auto* ta = map_get(item, "type_arg")) a.type_arg = decode_type(ta, path + ".type_arg");
+    auto va = opt_string(item, "value_arg");
+    if (!va.empty()) a.value_arg = va;
+    if (auto* vt = map_get(item, "value_type")) a.value_type = decode_type(vt, path + ".value_type");
+    return a;
+}
+
+cbor_item_t* encode_template_origin(const kdi_template_origin& o) {
+    cbor_item_t* m = cbor_new_indefinite_map();
+    map_push(m, "base_name", cbor_str(o.base_name));
+    map_push(m, "base_fq_name", cbor_str(o.base_fq_name));
+    cbor_item_t* args = cbor_new_indefinite_array();
+    for (auto& a : o.args) cbor_array_push(args, cbor_move(encode_template_arg(a)));
+    map_push(m, "args", args);
+    return m;
+}
+
+kdi_template_origin decode_template_origin(cbor_item_t* item, const std::string& path) {
+    kdi_template_origin o;
+    o.base_name    = req_string(item, "base_name", path);
+    o.base_fq_name = req_string(item, "base_fq_name", path);
+    auto* aa = map_get(item, "args");
+    if (aa && cbor_isa_array(aa)) {
+        size_t n = cbor_array_size(aa);
+        for (size_t i = 0; i < n; ++i)
+            o.args.push_back(decode_template_arg(cbor_array_get(aa, i),
+                                                  path + ".args[" + std::to_string(i) + "]"));
+    }
+    return o;
+}
+
+cbor_item_t* encode_template_def(const kdi_template_def& d) {
+    cbor_item_t* m = cbor_new_indefinite_map();
+    map_push(m, "name", cbor_str(d.name));
+    map_push(m, "fq_name", cbor_str(d.fq_name));
+    map_push(m, "entity_kind", cbor_str(d.entity_kind));
+    map_push(m, "visibility", cbor_str(d.visibility));
+    cbor_item_t* params = cbor_new_indefinite_array();
+    for (auto& p : d.params) cbor_array_push(params, cbor_move(encode_template_param(p)));
+    map_push(m, "params", params);
+    map_push(m, "source", cbor_str(d.source));
+    return m;
+}
+
+kdi_template_def decode_template_def(cbor_item_t* item, const std::string& path) {
+    kdi_template_def d;
+    d.name        = req_string(item, "name", path);
+    d.fq_name     = req_string(item, "fq_name", path);
+    d.entity_kind = req_string(item, "entity_kind", path);
+    d.visibility  = opt_string(item, "visibility");
+    auto* pa = map_get(item, "params");
+    if (pa && cbor_isa_array(pa)) {
+        size_t n = cbor_array_size(pa);
+        for (size_t i = 0; i < n; ++i)
+            d.params.push_back(decode_template_param(cbor_array_get(pa, i),
+                                                      path + ".params[" + std::to_string(i) + "]"));
+    }
+    d.source = opt_string(item, "source");
+    return d;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Namespace
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1050,6 +1166,12 @@ cbor_item_t* encode_namespace(const kdi_namespace& ns) {
     cbor_item_t* nss = cbor_new_indefinite_array();
     for (auto& n : ns.namespaces) cbor_array_push(nss, cbor_move(encode_namespace(n)));
     map_push(m, "namespaces", nss);
+
+    if (!ns.template_defs.empty()) {
+        cbor_item_t* tdefs = cbor_new_indefinite_array();
+        for (auto& td : ns.template_defs) cbor_array_push(tdefs, cbor_move(encode_template_def(td)));
+        map_push(m, "template_defs", tdefs);
+    }
 
     return m;
 }
@@ -1092,7 +1214,14 @@ kdi_namespace decode_namespace(cbor_item_t* item, const std::string& path) {
         size_t n = cbor_array_size(na);
         for (size_t i = 0; i < n; ++i)
             ns.namespaces.push_back(decode_namespace(cbor_array_get(na, i),
-                                                     path + ".namespaces[" + std::to_string(i) + "]"));
+                                                      path + ".namespaces[" + std::to_string(i) + "]"));
+    }
+    auto* tda = map_get(item, "template_defs");
+    if (tda && cbor_isa_array(tda)) {
+        size_t n = cbor_array_size(tda);
+        for (size_t i = 0; i < n; ++i)
+            ns.template_defs.push_back(decode_template_def(cbor_array_get(tda, i),
+                                                            path + ".template_defs[" + std::to_string(i) + "]"));
     }
     return ns;
 }

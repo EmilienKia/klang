@@ -52,11 +52,17 @@ See [doc/spec/language/templates/templates.md](doc/spec/language/templates/templ
 - [x] Spec: update `index.md` with Templates section
 
 **To do — Phase 1 (remaining):**
-- [ ] KDI exporter: export concrete instantiations as regular entities with `template_origin` metadata
-- [ ] KDI importer: import concrete instantiations (recognise `template_origin`)
-- [ ] libkdi: extend KDI DTOs/CBOR/JSON for `template_origin` field, bump schema version
-- [ ] kdi-tool: display template origin info in `dump` and `json-dump` commands
-- [ ] Tests: import tests for template instantiations across modules
+- [x] KDI exporter: export concrete instantiations as regular entities with `template_origin` metadata
+- [x] KDI importer: import concrete instantiations (recognise `template_origin`)
+- [x] libkdi: extend KDI DTOs/CBOR/JSON for `template_origin` field (schema remains 0.1)
+- [x] kdi-tool: display template origin info in `dump` and `json-dump` commands
+- [x] Tests: import tests for template instantiations across modules
+- [x] KDI exporter: emit `public` visibility for class/constructor members in reconstructed source
+- [x] KDI exporter: skip implicit `k::Object` base in reconstructed source
+- [x] KDI exporter: skip `virtual` keyword (not valid K syntax) in reconstructed source
+- [x] KDI exporter: fix duplicate constructor emission in reconstructed source
+- [x] Template instantiator: inject constructor member-initializer expressions into concrete constructor blocks (with parameter re-targeting)
+- [x] Tests: cross-module class template, default params, direct function calls, constructors, value params, multiple instantiations
 
 **Deferred — Phase 2+ (not in scope):**
 - [ ] Tests: name mangling tests for template entities

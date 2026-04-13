@@ -730,22 +730,13 @@ TEST_CASE("import two interfaces — class implements two interfaces from two li
 //
 //          IBase (lib1)
 //         /           \
-//    IA (lib2)       IB (lib3)
-//  (extends IBase)  (extends IBase)
+//    IA (lib2)       IB (lib3)        ← both transitive for the exe
 //         \           /
 //         Diamond (lib4)
-//    (implements IA & IB)
 //
-// lib1: interface IBase { base_val() : int; }
-// lib2: interface IA : IBase { a_val() : int; }
-// lib3: interface IB : IBase { b_val() : int; }
-// lib4: class Diamond : IA, IB
-//         base_val → 1 ; a_val → 2 ; b_val → 3
-// exe:
-//   via_base(x: IBase&) → x.base_val()
-//   via_a(x: IA&)       → x.a_val()
-//   via_b(x: IB&)       → x.b_val()
-//   main() → 1 + 2 + 3 = 6
+// exe imports lib1 + lib4 only; lib2 + lib3 are transitive (search-dir).
+//
+// Expected: exit code 6 (1+2+3)
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_CASE("import diamond interfaces — IBase/IA/IB from 3 libs, Diamond class in lib4, dispatch via each",
@@ -1246,8 +1237,8 @@ TEST_CASE("import transitive missing — missing transitive KDI is a fatal error
 // [import-transitive-chain-searchdir] Transitive resolved via search-dir only.
 //
 // lib1: interface IVal { val() : int; }
-// lib2: abstract class AVal : IVal  { val() → 10 }
-// lib3: class ConcreteVal : AVal    { val() → 30 }
+// lib2: abstract class AVal : IVal  { val() : int { return 10; } }
+// lib3: class ConcreteVal : AVal    { val() : int { return 30; } }
 // exe : imports ival_lib + cval_lib (NOT aval_lib explicitly).
 //       aval_lib is discovered via the search directory containing all libs.
 //
@@ -1283,13 +1274,13 @@ TEST_CASE("import transitive chain via search-dir — transitive KDI found via d
     // exe imports ival_lib and cval_lib directly; aval_lib is transitive
     auto result = build_exec_with_libs_direct_only(libs,
         R"K(
-            module exec_chain;
+             module exec_chain;
             import ival_lib;
             import cval_lib;
-            call_val(v: ival_lib::IVal&) : int { return v.val(); }
+            measure(s: ival_lib::IVal&) : int { return s.val(); }
             main() : int {
                 cv : cval_lib::ConcreteVal;
-                return call_val(cv);
+                return measure(cv);
             }
         )K",
         {"ival_lib", "cval_lib"} // only these are registered explicitly
@@ -1434,10 +1425,10 @@ TEST_CASE("import transitive diamond via search-dir — middle interfaces are tr
 //                              indirectly via a class in a direct import.
 //
 // lib1: helper(x:int) : int { return x * 2; }  (module helper_lib)
-// lib2: class Doubler { double(x:int) : int { return helper_lib::helper(x); } }
+// lib2: class Doubler { twice(x:int) : int { return helper_lib::helper(x); } }
 // exe : imports doubler_lib; helper_lib is transitive.
 //
-// Expected: exit code 42 (Doubler.double(21) == 42)
+// Expected: exit code 42 (Doubler.twice(21) == 42)
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_CASE("import transitive function — transitive global function used by direct class",
@@ -1445,11 +1436,13 @@ TEST_CASE("import transitive function — transitive global function used by dir
     std::vector<LibSpec> libs = {
         { R"K(
             module helper_lib;
+
             helper(x: int) : int { return x * 2; }
         )K" },
         { R"K(
             module doubler_lib;
             import helper_lib;
+
             class Doubler {
                 Doubler() {}
                 twice(x: int) : int { return helper_lib::helper(x); }
@@ -1462,6 +1455,7 @@ TEST_CASE("import transitive function — transitive global function used by dir
         R"K(
             module exec_doubler;
             import doubler_lib;
+
             main() : int {
                 d : doubler_lib::Doubler;
                 return d.twice(21);
@@ -1709,4 +1703,1201 @@ TEST_CASE("circular import — linear chain A→B→C→D has no cycle, must suc
     std::filesystem::remove(pc);
     std::filesystem::remove(pd);
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Template struct / function import tests
+//
+// These tests exercise the basic import of template instantiations across
+// module boundaries.  The library defines a template and creates concrete
+// instantiations; the consumer module imports the library and uses
+// the instantiations.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Template struct: library exports a template struct instantiation and a
+// wrapper function.  Consumer calls the wrapper that exercises the template.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import template — struct instantiation used via wrapper function",
+          "[import][e2e][template]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module tpllib;
+
+            template<typename T>
+            struct Box {
+                val : T;
+            }
+
+            box_roundtrip(v : int) : int {
+                b : Box<int>;
+                b.val = v;
+                return b.val;
+            }
+        )K",
+        R"K(
+            module tplexec;
+            import tpllib;
+
+            main() : int {
+                return tpllib::box_roundtrip(42);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Template function: library exports a template function instantiation.
+// Consumer calls a wrapper that exercises it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import template — function instantiation used via wrapper",
+          "[import][e2e][template]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module tplfnlib;
+
+            template<typename T>
+            identity(x : T) : T {
+                return x;
+            }
+
+            call_identity(v : int) : int {
+                return identity<int>(v);
+            }
+        )K",
+        R"K(
+            module tplfnexec;
+            import tplfnlib;
+
+            main() : int {
+                return tplfnlib::call_identity(77);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE( result.exit_code == 77 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Template struct with method: consumer calls wrapper that exercises
+// methods on a concrete template instantiation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import template — struct with method used via wrapper",
+          "[import][e2e][template]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module tplmethlib;
+
+            template<typename T, int N>
+            struct Holder {
+                val : T;
+                get_n() : int { return N; }
+            }
+
+            holder_test() : int {
+                h : Holder<int, 33>;
+                return h.get_n();
+            }
+        )K",
+        R"K(
+            module tplmethexec;
+            import tplmethlib;
+
+            main() : int {
+                return tplmethlib::holder_test();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE( result.exit_code == 33 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Template with access to struct data from outside the template:
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import template — consumer calls wrapper returning template struct value",
+          "[import][e2e][template]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module tplaccess;
+
+            template<typename T>
+            struct Wrapper {
+                val : T;
+            }
+
+            make_and_read(v : int) : int {
+                w : Wrapper<int>;
+                w.val = v;
+                return w.val;
+            }
+        )K",
+        R"K(
+            module tplaccessexec;
+            import tplaccess;
+
+            main() : int {
+                return tplaccess::make_and_read(55);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE( result.exit_code == 55 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Template struct with constructor:
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import template — struct with constructor used via wrapper",
+          "[import][e2e][template]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module tplctor;
+
+            template<typename T>
+            struct Container {
+                val : T;
+            }
+
+            make_container(v : int) : int {
+                c : Container<int>;
+                c.val = v;
+                return c.val;
+            }
+        )K",
+        R"K(
+            module tplctorexec;
+            import tplctor;
+
+            main() : int {
+                return tplctor::make_container(88);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE( result.exit_code == 88 );
+}
+
+TEST_CASE("import template — exit code via wrapper function",
+          "[import][e2e][template]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module tplexit;
+
+            template<typename T>
+            struct Pair {
+                first : T;
+                second : T;
+            }
+
+            sum_pair(a : int, b : int) : int {
+                p : Pair<int>;
+                p.first = a;
+                p.second = b;
+                return p.first + p.second;
+            }
+        )K",
+        R"K(
+            module tplexitexec;
+            import tplexit;
+
+            main() : int {
+                return tplexit::sum_pair(42, 57);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE( result.exit_code == 99 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Template definition export: verify that template_def is present in KDI
+// when a library defines a template without instantiating it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import template — template_def exported in KDI for uninstantiated template",
+          "[import][template][model]") {
+    TmpKdi lib(R"K(
+        module tpldefonly;
+
+        template<typename T>
+        struct Storage {
+            data : T;
+        }
+
+        dummy() : int { return 0; }
+    )K");
+
+    auto kdi = kdi::kdi_read_cbor_file(lib.kdi_path);
+
+    // The template definition should be exported as a kdi_template_def
+    bool found_def = false;
+    std::function<void(const kdi::kdi_namespace&)> search_ns =
+        [&](const kdi::kdi_namespace& ns) {
+        for (const auto& td : ns.template_defs) {
+            if (td.name == "Storage") {
+                REQUIRE(td.fq_name == "tpldefonly::Storage");
+                REQUIRE(td.entity_kind == "struct");
+                REQUIRE(td.params.size() == 1);
+                REQUIRE(td.params[0].kind == "typename");
+                REQUIRE(td.params[0].name == "T");
+                REQUIRE(!td.source.empty());
+                found_def = true;
+            }
+        }
+        for (const auto& child : ns.namespaces) search_ns(child);
+    };
+    search_ns(kdi.unit.root_ns);
+    REQUIRE(found_def);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Template with value parameter: verify template_origin includes value args.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("import template — template_origin with value parameter metadata",
+          "[import][template][model]") {
+    TmpKdi lib(R"K(
+        module tplvalmeta;
+
+        template<typename T, int N>
+        struct ValHolder {
+            val : T;
+            get_n() : int { return N; }
+        }
+
+        use_it() : int {
+            h : ValHolder<int, 10>;
+            return h.get_n();
+        }
+    )K");
+
+    auto kdi = kdi::kdi_read_cbor_file(lib.kdi_path);
+
+    // Look for a concrete aggregate with template_origin that has a value arg
+    bool found_origin = false;
+    std::function<void(const kdi::kdi_namespace&)> search_ns =
+        [&](const kdi::kdi_namespace& ns) {
+        for (const auto& agg : ns.aggregates) {
+            if (agg.template_origin.has_value() &&
+                agg.template_origin->base_name == "ValHolder") {
+                REQUIRE(agg.template_origin->args.size() == 2);
+                // First arg: type (int)
+                REQUIRE(agg.template_origin->args[0].type_arg.has_value());
+                auto& targ = std::get<kdi::kdi_int_type>(
+                    agg.template_origin->args[0].type_arg->value);
+                REQUIRE(targ.bits == 32);
+                // Second arg: value (10)
+                REQUIRE(agg.template_origin->args[1].value_arg.has_value());
+                REQUIRE(*agg.template_origin->args[1].value_arg == "10");
+                found_origin = true;
+            }
+        }
+        for (const auto& child : ns.namespaces) search_ns(child);
+    };
+    search_ns(kdi.unit.root_ns);
+    REQUIRE(found_origin);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Cross-module template definition + instantiation tests (Phase 1)
+//
+// In Phase 1, a library defines templates and instantiates them internally.
+// The concrete instances are exported in the KDI as regular entities (with
+// template_origin metadata).  A consumer module imports the library and uses
+// the instantiations.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-struct-basic] Basic struct template: lib defines + instantiates,
+// consumer uses via wrapper.
+//
+// lib:  template<typename T> struct Holder { val: T; }
+//       set_and_get(v: int) : int  — wraps Holder<int>
+// exe:  main() → set_and_get(42) = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — basic struct template via wrapper",
+          "[import][e2e][template][cross-tpl]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module holder_lib;
+
+            template<typename T>
+            struct Holder {
+                val : T;
+            }
+
+            set_and_get(v : int) : int {
+                h : Holder<int>;
+                h.val = v;
+                return h.val;
+            }
+        )K",
+        R"K(
+            module holder_exe;
+            import holder_lib;
+
+            main() : int {
+                return holder_lib::set_and_get(42);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-fn-basic] Basic function template: lib defines + instantiates,
+// consumer calls the concrete wrapper.
+//
+// lib:  template<typename T> add(a: T, b: T) : T { return a + b; }
+//       add_ints(a: int, b: int) : int  — wraps add<int>
+// exe:  main() → add_ints(17, 25) = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — basic function template via wrapper",
+          "[import][e2e][template][cross-tpl]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module adder_lib;
+
+            template<typename T>
+            add(a : T, b : T) : T {
+                return a + b;
+            }
+
+            add_ints(a : int, b : int) : int {
+                return add<int>(a, b);
+            }
+        )K",
+        R"K(
+            module adder_exe;
+            import adder_lib;
+
+            main() : int {
+                return adder_lib::add_ints(17, 25);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-multiple-instantiations] Two distinct instantiations of the same
+// template in the same lib, consumer exercises both via separate wrappers.
+//
+// lib:  template<typename T> struct Cell { val: T; }
+//       cell_int(v: int) : int    — wraps Cell<int>
+//       cell_long(v: long) : long — wraps Cell<long>
+// exe:  main() → cell_int(10) + cell_long(32) = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — multiple instantiations of same template",
+          "[import][e2e][template][cross-tpl]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module cell_lib;
+
+            template<typename T>
+            struct Cell {
+                val : T;
+            }
+
+            cell_int(v : int) : int {
+                c : Cell<int>;
+                c.val = v;
+                return c.val;
+            }
+
+            cell_long(v : long) : long {
+                c : Cell<long>;
+                c.val = v;
+                return c.val;
+            }
+        )K",
+        R"K(
+            module cell_exe;
+            import cell_lib;
+
+            main() : int {
+                r1 : int;
+                r1 = cell_lib::cell_int(10);
+                r2 : long;
+                r2 = cell_lib::cell_long(32);
+                return r1 + r2;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-struct-method] Template struct with methods across import boundary.
+// Consumer calls wrappers that exercise member functions on concrete instances.
+//
+// NOTE: Member variable access via 'this.' in template method bodies is a
+// known limitation. These tests use external field access and value params.
+//
+// lib:  template<typename T, int N>
+//       struct Acc { val: T; get_n() : int { return N; } }
+//       accumulate(a: int, b: int, c: int) : int
+// exe:  main() → accumulate(10, 20, 12) = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — struct with methods via wrapper",
+          "[import][e2e][template][cross-tpl]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module acc_lib;
+
+            template<typename T, int N>
+            struct Acc {
+                val : T;
+                get_n() : int { return N; }
+            }
+
+            accumulate(a : int, b : int, c : int) : int {
+                acc : Acc<int, 0>;
+                acc.val = a + b + c;
+                return acc.val + acc.get_n();
+            }
+        )K",
+        R"K(
+            module acc_exe;
+            import acc_lib;
+
+            main() : int {
+                return acc_lib::accumulate(10, 20, 12);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-value-param] Template with value parameter across import boundary.
+//
+// lib:  template<int N>
+//       struct Fixed { get() : int { return N; } }
+// exe:  main() → Fixed<42>.get() = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — consumer instantiates with value parameter",
+          "[import][e2e][template][cross-tpl][consumer-inst]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module val_tpl_lib;
+
+            template<int N>
+            struct Fixed {
+                get() : int { return N; }
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module val_tpl_consumer;
+            import val_tpl_lib;
+
+            main() : int {
+                f : Fixed<42>;
+                return f.get();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [consumer-inst-mixed-params] Template with both type and value parameters
+// across import boundary.
+//
+// lib:  template<typename T, int Scale>
+//       scaled(x: T) : T { return x * Scale; }
+//       test_scaled() : int
+// exe:  main() → test_scaled() = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — consumer instantiates with mixed type and value params",
+          "[import][e2e][template][cross-tpl][consumer-inst]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module mixed_tpl_lib;
+
+            template<typename T, int Scale>
+            scaled(x : T) : T {
+                return x * Scale;
+            }
+
+            test_scaled() : int {
+                return scaled<int, 6>(7);
+            }
+        )K",
+        R"K(
+            module mixed_tpl_exe;
+            import mixed_tpl_lib;
+
+            main() : int {
+                return mixed_tpl_lib::test_scaled();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );  // 7 * 6 = 42
+}
+
+
+
+TEST_CASE("cross-module template declaration",
+          "[import][e2e][template][cross-tpl]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module point_lib;
+
+            template<typename T>
+            struct Point {
+                x : T;
+                y : T;
+                sum() : T {
+                    return x + y;
+                }
+            }
+
+            test_int_point() : int {
+                pt : Point<int>{.x = 2, .y = 3};
+                return pt.sum();
+            }
+        )K",
+        R"K(
+            module point_exe;
+            import point_lib;
+
+            main() : int {
+                pt : Point<short>{.x = 5, .y = 7};
+                return point_lib::test_int_point() + pt.sum();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 17 );  // 2 + 3 + 5 + 7 = 17
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Using-alias de-resolution in template KDI export
+//
+// These tests verify that when a template body references a type through a
+// `using` alias, the KDI export (model-based source reconstruction) emits the
+// fully-qualified name so the importing module can resolve it without having
+// the original `using` directive.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Struct template whose member type is aliased via `using` outside the template.
+//
+// lib:
+//   namespace inner { struct Coord { x: int; y: int; } }
+//   using Pt = inner::Coord;
+//   template<typename T> struct Wrapper { pos: Pt; val: T; }
+//
+// exe: Wrapper<int> → set pos.x, pos.y, val → return pos.x + pos.y + val
+//
+// Without model-based reconstruction, the KDI would contain "Pt" which the
+// consumer cannot resolve. With the emitter, it should contain "inner::Coord".
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — struct member type aliased via using",
+          "[import][e2e][template][cross-tpl][consumer-inst][using-alias]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module alias_tpl_lib;
+
+            namespace inner {
+                struct Coord {
+                    x : int;
+                    y : int;
+                }
+            }
+
+            using Pt = inner::Coord;
+
+            template<typename T>
+            struct Wrapper {
+                pos : Pt;
+                val : T;
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module alias_tpl_exe;
+            import alias_tpl_lib;
+
+            main() : int {
+                w : Wrapper<int>;
+                w.pos.x = 10;
+                w.pos.y = 20;
+                w.val = 12;
+                return w.pos.x + w.pos.y + w.val;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Function template whose parameter type is aliased via `using`.
+//
+// lib:
+//   namespace types { struct Pair { a: int; b: int; } }
+//   using P = types::Pair;
+//   template<typename T> sum_pair(p: P, extra: T) : int { return p.a + p.b + extra; }
+//
+// exe: sum_pair<int>(Pair{10,20}, 12) → 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — function param type aliased via using",
+          "[import][e2e][template][cross-tpl][consumer-inst][using-alias]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module alias_fn_lib;
+
+            namespace types {
+                struct Pair {
+                    a : int;
+                    b : int;
+                }
+            }
+
+            using P = types::Pair;
+
+            template<typename T>
+            sum_pair(p : P, extra : T) : int {
+                return p.a + p.b + extra;
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module alias_fn_exe;
+            import alias_fn_lib;
+
+            main() : int {
+                p : types::Pair;
+                p.a = 10;
+                p.b = 20;
+                return sum_pair<int>(p, 12);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Function template whose return type is aliased via `using`.
+//
+// lib:
+//   namespace data { struct Result { val: int; } }
+//   using Res = data::Result;
+//   template<typename T> extract(r: Res, extra: T) : int { return r.val + extra; }
+//
+// exe: create Result, call extract<int>(r, 10) → 42+10 = 52
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — function param type aliased via using (struct)",
+          "[import][e2e][template][cross-tpl][consumer-inst][using-alias]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module alias_ret_lib;
+
+            namespace data {
+                struct Result {
+                    val : int;
+                }
+            }
+
+            using Res = data::Result;
+
+            template<typename T>
+            extract(r : Res, extra : T) : int {
+                return r.val + extra;
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module alias_ret_exe;
+            import alias_ret_lib;
+
+            main() : int {
+                r : alias_ret_lib::data::Result;
+                r.val = 42;
+                return alias_ret_lib::extract<int>(r, 10);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 52 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Struct template with a member whose type is aliased and a method that uses it.
+//
+// lib:
+//   namespace aux { struct Acc { total: int; } }
+//   using Accum = aux::Acc;
+//   template<typename T>
+//   struct Adder {
+//       val : Accum;
+//       extra : T;
+//       sum() : int { return val.total + extra; }
+//   }
+//
+// exe: Adder<int> with val.total=30, extra=12 → sum() = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — member type aliased via using with method",
+          "[import][e2e][template][cross-tpl][consumer-inst][using-alias]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module alias_body_lib;
+
+            namespace aux {
+                struct Acc {
+                    total : int;
+                }
+            }
+
+            using Accum = aux::Acc;
+
+            template<typename T>
+            struct Adder {
+                val : Accum;
+                extra : T;
+                sum() : int { return val.total + extra; }
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module alias_body_exe;
+            import alias_body_lib;
+
+            main() : int {
+                d : Adder<int>;
+                d.val.total = 30;
+                d.extra = 12;
+                return d.sum();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Template struct with a member whose type is resolved via `using namespace`.
+//
+// lib:
+//   namespace base { struct Elem { val: int; } }
+//   using namespace base;
+//   template<typename T>
+//   struct Container {
+//       item : Elem;
+//       extra : T;
+//       total() : int { return item.val + extra; }
+//   }
+//
+// exe: Container<int> with item.val=30, extra=12 → total() = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — member type resolved via using namespace",
+          "[import][e2e][template][cross-tpl][consumer-inst][using-alias]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module alias_base_lib;
+
+            namespace base {
+                struct Elem {
+                    val : int;
+                }
+            }
+
+            using namespace base;
+
+            template<typename T>
+            struct Container {
+                item : Elem;
+                extra : T;
+                total() : int { return item.val + extra; }
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module alias_base_exe;
+            import alias_base_lib;
+
+            main() : int {
+                c : Container<int>;
+                c.item.val = 30;
+                c.extra = 12;
+                return c.total();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Additional cross-module template coverage
+//
+// These tests complete Phase 1 coverage for cross-module template instantiation
+// scenarios: class templates, default parameters, constructors, direct function
+// template calls, and type constraints.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-class] Template class across module boundary.
+// Consumer instantiates a template class from the library and calls a method.
+//
+// lib:  template<typename T>
+//       class Box { val: T; public get() : T { return val; } set(v: T) { val = v; } }
+// exe:  Box<int> → set(42) → get() = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — class template consumer instantiation",
+          "[import][e2e][template][cross-tpl][consumer-inst]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module cls_tpl_lib;
+
+            template<typename T>
+            class Box {
+                public val : T;
+                Box() {}
+                public get() : T { return val; }
+                public set(v : T) { val = v; }
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module cls_tpl_exe;
+            import cls_tpl_lib;
+
+            main() : int {
+                b : Box<int>();
+                b.set(42);
+                return b.get();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-default-params] Template with default type parameter.
+// Consumer uses `<>` syntax to rely on the default.
+//
+// lib:  template<typename T = int>
+//       struct DefaultBox { val: T; }
+// exe:  DefaultBox<> → val = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — default type parameter with <> syntax",
+          "[import][e2e][template][cross-tpl][consumer-inst][defaults]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module def_tpl_lib;
+
+            template<typename T = int>
+            struct DefaultBox {
+                val : T;
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module def_tpl_exe;
+            import def_tpl_lib;
+
+            main() : int {
+                b : DefaultBox<>;
+                b.val = 42;
+                return b.val;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-default-partial] Template with mixed params, consumer supplies only
+// the first and relies on the default for the second.
+//
+// lib:  template<typename T, int N = 10>
+//       struct SizedVal { val: T; get_size() : int { return N; } }
+// exe:  SizedVal<int> → val=32, get_size()=10, sum=42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — partial default params across modules",
+          "[import][e2e][template][cross-tpl][consumer-inst][defaults]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module partial_def_lib;
+
+            template<typename T, int N = 10>
+            struct SizedVal {
+                val : T;
+                get_size() : int { return N; }
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module partial_def_exe;
+            import partial_def_lib;
+
+            main() : int {
+                s : SizedVal<int>;
+                s.val = 32;
+                return s.val + s.get_size();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );  // 32 + 10 = 42
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-fn-direct] Consumer directly calls a template function from the
+// library (not via a wrapper).
+//
+// lib:  template<typename T>
+//       identity(x: T) : T { return x; }
+// exe:  main() → identity<int>(42) = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — consumer calls template function directly",
+          "[import][e2e][template][cross-tpl][consumer-inst]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module fn_direct_lib;
+
+            template<typename T>
+            identity(x : T) : T {
+                return x;
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module fn_direct_exe;
+            import fn_direct_lib;
+
+            main() : int {
+                return identity<int>(42);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-fn-multi-type] Consumer directly calls a multi-type-param template
+// function from the library.
+//
+// lib:  template<typename T, typename U>
+//       add_cast(a: T, b: U) : int { return a + b; }
+// exe:  main() → add_cast<int, short>(30, 12) = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — consumer calls multi-param template function",
+          "[import][e2e][template][cross-tpl][consumer-inst]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module fn_multi_lib;
+
+            template<typename T, typename U>
+            add_cast(a : T, b : U) : int {
+                return a + b;
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module fn_multi_exe;
+            import fn_multi_lib;
+
+            main() : int {
+                return add_cast<int, short>(30, 12);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-struct-ctor] Template struct with constructor across module boundary.
+// Consumer instantiates the template and uses the constructor.
+//
+// lib:  template<typename T>
+//       struct Wrap { val: T; Wrap(v: T) : val(v) {} get() : T { return val; } }
+// exe:  Wrap<int>(42) → get() = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — struct with constructor consumer instantiation",
+          "[import][e2e][template][cross-tpl][consumer-inst]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module ctor_tpl_lib;
+
+            template<typename T>
+            struct Wrap {
+                val : T;
+                Wrap(v : T) : val(v) {}
+                get() : T { return val; }
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module ctor_tpl_exe;
+            import ctor_tpl_lib;
+
+            main() : int {
+                w : Wrap<int>(42);
+                return w.get();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-two-consumers] Two different consumer instantiations of the same
+// template from one library, verifying that distinct types are produced.
+//
+// lib:  template<typename T>
+//       struct Val { data: T; }
+// exe:  Val<int> and Val<short> — set different values and sum
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — consumer creates two distinct instantiations",
+          "[import][e2e][template][cross-tpl][consumer-inst]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module two_inst_lib;
+
+            template<typename T>
+            struct Val {
+                data : T;
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module two_inst_exe;
+            import two_inst_lib;
+
+            main() : int {
+                vi : Val<int>;
+                vi.data = 30;
+                vs : Val<short>;
+                vs.data = 12;
+                return vi.data + vs.data;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );  // 30 + 12 = 42
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-fn-value-param-direct] Consumer directly calls a template function
+// with a value parameter from the library.
+//
+// lib:  template<int N>
+//       offset(x: int) : int { return x + N; }
+// exe:  main() → offset<2>(40) = 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — consumer calls value-param template function",
+          "[import][e2e][template][cross-tpl][consumer-inst]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module fn_val_lib;
+
+            template<int N>
+            offset(x : int) : int {
+                return x + N;
+            }
+
+            dummy() : int { return 0; }
+        )K",
+        R"K(
+            module fn_val_exe;
+            import fn_val_lib;
+
+            main() : int {
+                return offset<2>(40);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+
 

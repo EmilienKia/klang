@@ -1,10 +1,7 @@
 # K Language — Templates
 
 > **Version:** Working Draft — 2026  
-> **Status:** Phase 1 — Full instantiation only (no partial specialization). Core implementation complete; KDI export/import pending.  
-> **Formal grammar:** see [`../grammar.ebnf`](../grammar.ebnf)  
-> **Architecture:** see [`architecture.md`](architecture.md)  
-> **Implementation plan:** see [`implementation-plan.md`](implementation-plan.md)
+> **Formal grammar:** see [`../grammar.ebnf`](../grammar.ebnf)
 
 ---
 
@@ -34,9 +31,9 @@ K templates follow a **monomorphization** model: each unique set of template arg
 produces a distinct, fully-independent concrete entity (function or aggregate). There is
 no type erasure or runtime dispatch on template parameters.
 
-### 1.1 Scope of Phase 1
+### 1.1 Currently Implemented
 
-Phase 1 supports:
+The following template features are fully implemented, tested, and usable:
 - Template function declarations (free and member functions).
 - Template aggregate declarations (`struct`, `class`, `interface`).
 - Type parameters (`typename`, `struct`, `class`, `interface`).
@@ -44,8 +41,14 @@ Phase 1 supports:
 - Type constraints (base-type requirement).
 - Default parameter values and default types.
 - Full explicit instantiation: `MyTemplate<int, 42>`.
+- Cross-module templates: define a template in one module, import and instantiate it in
+  another (via KDI export/import with reconstructed source fragments).
+- Name mangling of template instantiations.
+- Constructor member-initializer lists in template aggregates.
 
-Phase 1 does **not** support:
+### 1.2 Planned (Not Yet Implemented)
+
+The following features are planned for future development:
 - Template specialization (partial or full).
 - Template template parameters.
 - Variadic template parameters (parameter packs).
@@ -399,11 +402,26 @@ They cannot have independent template parameter lists in Phase 1.
 
 ### 8.6 KDI Export
 
-Template definitions are **not** exported in `.kdi` files (they cannot be instantiated
-from KDI alone without source). However, **concrete instantiations** that are part of
-the module's public/protected API are exported as regular aggregates or functions with
-their mangled names. A `template_origin` metadata field in the KDI records that the
-entity was produced by template instantiation.
+Template definitions are exported in `.kdi` files as `kdi_template_def` entries, which
+contain the template parameter descriptors and a reconstructed K source fragment.  The
+source is emitted from the semantic model (using `k_source_emitter`) with all
+`using`-aliases resolved to fully-qualified names so that the importing module can
+re-parse and re-instantiate the template locally with new type arguments.
+
+**Concrete instantiations** that are part of the module's public/protected API are also
+exported as regular aggregates or functions with their mangled names. A `template_origin`
+metadata field in the KDI records that the entity was produced by template instantiation,
+including the base template name, its fully-qualified name, and the concrete arguments
+used.
+
+This enables two cross-module usage patterns:
+1. **Consumer calls a wrapper:** The library instantiates the template internally and
+   exports the concrete entity.  The consumer calls the wrapper function that exercises
+   the concrete entity.
+2. **Consumer instantiates directly:** The library exports the template definition. The
+   consumer imports the library and instantiates the template with its own arguments.
+   The KDI importer re-parses the template source fragment and builds the template in
+   the consumer's model, enabling local instantiation.
 
 ### 8.7 Operator Overloading
 

@@ -22,6 +22,7 @@
 #include "expressions.hpp"
 
 #include <sstream>
+#include <queue>
 
 namespace k::model {
 
@@ -783,8 +784,308 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
     return concrete;
 }
 
-} // namespace k::model
+// ═══════════════════════════════════════════════════════════════════════════
+// Post-instantiation symbol resolution for method bodies
+// ═══════════════════════════════════════════════════════════════════════════
 
+// Walk an expression tree and resolve unresolved symbol_expression nodes
+// by climbing the element parent chain (block → function → aggregate).
+// This mimics what symbol_resolver::resolve_symbol does for simple names.
+static void resolve_symbols_in_expr(const std::shared_ptr<expression>& expr) {
+    if (!expr) return;
+
+    if (auto sym = std::dynamic_pointer_cast<symbol_expression>(expr)) {
+        if (!sym->is_resolved() && sym->get_name().size() == 1
+            && !sym->get_name().has_root_prefix()) {
+            const std::string& var_name = sym->get_name().front();
+            // Walk up the element parent chain
+            for (auto cur = sym->template parent<element>(); cur;
+                 cur = cur->template parent<element>()) {
+                // Check variable holders (block locals, aggregate members)
+                if (auto* vh = dynamic_cast<variable_holder*>(cur.get())) {
+                    if (auto var = vh->get_variable(var_name)) {
+                        sym->set_target(var);
+                        break;
+                    }
+                }
+                // Check function parameters
+                if (auto blk = std::dynamic_pointer_cast<block>(cur)) {
+                    if (auto fn = blk->get_direct_function()) {
+                        if (auto param = fn->get_parameter(var_name)) {
+                            sym->set_target(
+                                std::const_pointer_cast<parameter>(param));
+                            break;
+                        }
+                    }
+                }
+                // Also check inherited members when reaching an aggregate
+                if (auto agg = std::dynamic_pointer_cast<aggregate>(cur)) {
+                    std::queue<std::shared_ptr<aggregate>> base_queue;
+                    for (auto& bs : agg->get_bases()) {
+                        if (bs.base) base_queue.push(bs.base);
+                    }
+                    bool found = false;
+                    while (!base_queue.empty()) {
+                        auto base = base_queue.front();
+                        base_queue.pop();
+                        if (auto var = base->get_variable(var_name)) {
+                            sym->set_target(var);
+                            found = true;
+                            break;
+                        }
+                        for (auto& bs : base->get_bases()) {
+                            if (bs.base) base_queue.push(bs.base);
+                        }
+                    }
+                    if (found) break;
+                }
+            }
+        }
+    }
+
+    // Recurse into sub-expressions
+    if (auto be = std::dynamic_pointer_cast<binary_expression>(expr)) {
+        resolve_symbols_in_expr(be->left());
+        resolve_symbols_in_expr(be->right());
+    } else if (auto ue = std::dynamic_pointer_cast<unary_expression>(expr)) {
+        resolve_symbols_in_expr(
+            std::const_pointer_cast<expression>(ue->sub_expr()));
+    } else if (auto fie =
+                   std::dynamic_pointer_cast<function_invocation_expression>(
+                       expr)) {
+        resolve_symbols_in_expr(
+            std::const_pointer_cast<expression>(fie->callee_expr()));
+        for (auto& arg : fie->arguments()) {
+            resolve_symbols_in_expr(
+                std::const_pointer_cast<expression>(arg));
+        }
+    } else if (auto cie =
+                   std::dynamic_pointer_cast<constructor_invocation_expression>(
+                       expr)) {
+        for (auto& arg : cie->arguments()) {
+            resolve_symbols_in_expr(
+                std::const_pointer_cast<expression>(arg));
+        }
+    } else if (auto dsie =
+                   std::dynamic_pointer_cast<designated_struct_init_expression>(
+                       expr)) {
+        for (auto& mi : dsie->members_mutable()) {
+            if (mi.value) resolve_symbols_in_expr(mi.value);
+            for (auto& a : mi.args) resolve_symbols_in_expr(a);
+        }
+    } else if (auto tce =
+                   std::dynamic_pointer_cast<temporary_construction_expression>(
+                       expr)) {
+        for (auto& arg : tce->arguments()) {
+            resolve_symbols_in_expr(
+                std::const_pointer_cast<expression>(arg));
+        }
+    } else if (auto ne = std::dynamic_pointer_cast<new_expression>(expr)) {
+        for (auto& arg : ne->arguments()) {
+            resolve_symbols_in_expr(
+                std::const_pointer_cast<expression>(arg));
+        }
+        resolve_symbols_in_expr(
+            std::const_pointer_cast<expression>(ne->array_size_expr()));
+    } else if (auto de = std::dynamic_pointer_cast<delete_expression>(expr)) {
+        resolve_symbols_in_expr(
+            std::const_pointer_cast<expression>(de->sub_expr()));
+    } else if (auto ce = std::dynamic_pointer_cast<cast_expression>(expr)) {
+        resolve_symbols_in_expr(
+            std::const_pointer_cast<expression>(ce->sub_expr()));
+    } else if (auto aie =
+                   std::dynamic_pointer_cast<array_init_expression>(expr)) {
+        for (auto& elem : aie->elements()) {
+            resolve_symbols_in_expr(
+                std::const_pointer_cast<expression>(elem));
+        }
+    }
+}
+
+// Walk a statement tree and resolve unresolved symbols in all expressions.
+static void resolve_symbols_in_stmt(const std::shared_ptr<statement>& stmt) {
+    if (!stmt) return;
+
+    if (auto rs = std::dynamic_pointer_cast<return_statement>(stmt)) {
+        if (rs->get_expression())
+            resolve_symbols_in_expr(rs->get_expression());
+    } else if (auto es = std::dynamic_pointer_cast<expression_statement>(stmt)) {
+        if (es->get_expression())
+            resolve_symbols_in_expr(es->get_expression());
+    } else if (auto vs = std::dynamic_pointer_cast<variable_statement>(stmt)) {
+        if (vs->get_init_expr())
+            resolve_symbols_in_expr(
+                std::const_pointer_cast<expression>(vs->get_init_expr()));
+    } else if (auto ies = std::dynamic_pointer_cast<if_else_statement>(stmt)) {
+        if (ies->get_test_expr())
+            resolve_symbols_in_expr(
+                std::const_pointer_cast<expression>(ies->get_test_expr()));
+        resolve_symbols_in_stmt(ies->get_then_stmt());
+        resolve_symbols_in_stmt(ies->get_else_stmt());
+    } else if (auto ws = std::dynamic_pointer_cast<while_statement>(stmt)) {
+        if (ws->get_test_expr())
+            resolve_symbols_in_expr(
+                std::const_pointer_cast<expression>(ws->get_test_expr()));
+        resolve_symbols_in_stmt(ws->get_nested_stmt());
+    } else if (auto fs = std::dynamic_pointer_cast<for_statement>(stmt)) {
+        if (fs->get_decl_stmt())
+            resolve_symbols_in_stmt(fs->get_decl_stmt());
+        if (fs->get_test_expr())
+            resolve_symbols_in_expr(
+                std::const_pointer_cast<expression>(fs->get_test_expr()));
+        if (fs->get_step_expr())
+            resolve_symbols_in_expr(
+                std::const_pointer_cast<expression>(fs->get_step_expr()));
+        resolve_symbols_in_stmt(fs->get_nested_stmt());
+    } else if (auto blk = std::dynamic_pointer_cast<block>(stmt)) {
+        for (auto& s : blk->get_statements()) {
+            resolve_symbols_in_stmt(s);
+        }
+    }
+}
+
+void template_instantiator::resolve_body_symbols(
+    std::shared_ptr<aggregate> concrete)
+{
+    if (!concrete) return;
+    for (auto& child : concrete->get_children()) {
+        if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+            auto blk = fn->get_block();
+            if (blk) {
+                for (auto& stmt : blk->get_statements()) {
+                    resolve_symbols_in_stmt(stmt);
+                }
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Post-instantiation: inject constructor member-initializer expressions
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Recursively walk an expression tree and re-target any symbol_expression that
+ * references a parameter definition to point at the matching parameter in
+ * @p param_by_name (by short name).  This is needed because cloned member-init
+ * arg expressions still point at the template constructor's parameters.
+ */
+static void retarget_param_refs(
+    std::shared_ptr<expression>& expr,
+    const std::unordered_map<std::string, std::shared_ptr<parameter>>& param_by_name)
+{
+    if (!expr) return;
+
+    if (auto sym = std::dynamic_pointer_cast<symbol_expression>(expr)) {
+        if (sym->is_variable_def()) {
+            auto vd = sym->get_variable_def();
+            if (auto pd = std::dynamic_pointer_cast<parameter>(vd)) {
+                auto it = param_by_name.find(pd->get_short_name());
+                if (it != param_by_name.end()) {
+                    expr = symbol_expression::from_variable(it->second);
+                }
+            }
+        } else if (!sym->is_resolved()) {
+            // Unresolved name — try to match against a concrete param
+            const auto& nm = sym->get_name();
+            if (nm.size() == 1 && !nm.has_root_prefix()) {
+                auto it = param_by_name.find(nm.front());
+                if (it != param_by_name.end()) {
+                    expr = symbol_expression::from_variable(it->second);
+                }
+            }
+        }
+        return;
+    }
+
+    // Recurse into sub-expressions
+    if (auto be = std::dynamic_pointer_cast<binary_expression>(expr)) {
+        retarget_param_refs(be->left(), param_by_name);
+        retarget_param_refs(be->right(), param_by_name);
+    } else if (auto ue = std::dynamic_pointer_cast<unary_expression>(expr)) {
+        auto sub = std::const_pointer_cast<expression>(ue->sub_expr());
+        retarget_param_refs(sub, param_by_name);
+    } else if (auto fie = std::dynamic_pointer_cast<function_invocation_expression>(expr)) {
+        for (auto& a : fie->arguments()) {
+            auto mut = std::const_pointer_cast<expression>(a);
+            retarget_param_refs(mut, param_by_name);
+        }
+    } else if (auto cie = std::dynamic_pointer_cast<constructor_invocation_expression>(expr)) {
+        for (auto& a : cie->arguments()) {
+            auto mut = std::const_pointer_cast<expression>(a);
+            retarget_param_refs(mut, param_by_name);
+        }
+    }
+}
+
+void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggregate> concrete) {
+    if (!concrete) return;
+
+    for (auto& ctor : concrete->constructors()) {
+        if (!ctor || ctor->is_compiler_generated()) continue;
+        if (ctor->member_inits().empty()) continue;
+
+        auto blck = ctor->get_block();
+        if (!blck) continue;
+
+        // Build a lookup map from member name to mem_init_spec
+        std::unordered_map<std::string, const constructor::member_init_spec*> init_by_name;
+        for (auto& mi : ctor->member_inits()) {
+            if (!mi.is_base_init) init_by_name[mi.member_name] = &mi;
+        }
+
+        // Build a map from old parameter names to new concrete parameters for re-targeting.
+        std::unordered_map<std::string, std::shared_ptr<parameter>> param_by_name;
+        for (auto& p : ctor->parameters()) {
+            if (p == ctor->get_this_parameter()) continue;
+            param_by_name[p->get_short_name()] = p;
+        }
+
+        // Insert member-init statements at the front of the block, in member
+        // declaration order (same logic as symbol_resolver::visit_constructor step 2).
+        size_t insert_idx = 0;
+        for (auto& var_entry : concrete->variables()) {
+            if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
+                // Skip synthetic fields
+                if (var->get_short_name() == "__parent__") continue;
+                if (var->get_short_name().rfind("__base_", 0) == 0) continue;
+                if (var->get_short_name().rfind("__vbptr_", 0) == 0) continue;
+                if (var->get_short_name().rfind("__vbase_", 0) == 0) continue;
+                if (var->get_short_name().rfind("__vptr", 0) == 0) continue;
+
+                auto it = init_by_name.find(var->get_short_name());
+                if (it == init_by_name.end()) continue;
+                const auto& mi = *it->second;
+
+                // Build argument expressions by re-creating them from the
+                // concrete constructor's parameter list.  The cloned member_init
+                // args reference the template constructor's parameter definitions
+                // which are not visible in the concrete context.
+                //
+                // For each arg that is a symbol_expression referencing a parameter,
+                // create a fresh symbol_expression pointing to the concrete ctor's
+                // parameter.  For other expressions (literals, binary ops, etc.),
+                // clone normally.
+                std::vector<std::shared_ptr<expression>> args;
+                args.reserve(mi.args.size());
+                for (auto& arg : mi.args) {
+                    auto cloned = arg->clone();
+                    retarget_param_refs(cloned, param_by_name);
+                    args.push_back(cloned);
+                }
+                auto init_expr = constructor_invocation_expression::make_shared(var, args);
+                auto stmt = std::make_shared<expression_statement>(blck);
+                stmt->set_expression(init_expr);
+                auto pos = blck->begin();
+                std::advance(pos, insert_idx);
+                blck->insert_statement(pos, stmt);
+                ++insert_idx;
+            }
+        }
+    }
+}
+
+} // namespace k::model
 
 
 

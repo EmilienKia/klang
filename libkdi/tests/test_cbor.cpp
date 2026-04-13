@@ -338,3 +338,131 @@ TEST_CASE("CBOR: file/path helpers work", "[cbor]") {
     std::remove(path.c_str());
 }
 
+TEST_CASE("CBOR: template_origin round-trips on function", "[cbor][template]") {
+    kdi_file f;
+    f.header.module_name = "tpl";
+    f.header.lib_base    = "tpl";
+    f.unit.name          = "tpl";
+
+    kdi_function fn;
+    fn.name         = "identity__int__";
+    fn.fq_name      = "tpl::identity__int__";
+    fn.return_type  = kdi_type::make_int(32);
+    fn.mangled_name = "_KFN3tpl8identityIiEi";
+    fn.llvm_def     = "declare i32 @_KFN3tpl8identityIiEi(i32)";
+    fn.params.push_back({"x", kdi_type::make_int(32)});
+
+    kdi_template_origin origin;
+    origin.base_name    = "identity";
+    origin.base_fq_name = "tpl::identity";
+    kdi_template_arg arg1;
+    arg1.type_arg = kdi_type::make_int(32);
+    origin.args.push_back(arg1);
+    fn.template_origin = origin;
+
+    f.unit.root_ns.functions.push_back(fn);
+
+    std::ostringstream oss(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(f, oss));
+    std::istringstream iss(oss.str(), std::ios::binary);
+    kdi_file restored;
+    REQUIRE_NOTHROW(restored = kdi_read_cbor(iss));
+
+    REQUIRE(restored.unit.root_ns.functions.size() == 1);
+    auto& rfn = restored.unit.root_ns.functions[0];
+    REQUIRE(rfn.template_origin.has_value());
+    REQUIRE(rfn.template_origin->base_name == "identity");
+    REQUIRE(rfn.template_origin->base_fq_name == "tpl::identity");
+    REQUIRE(rfn.template_origin->args.size() == 1);
+    REQUIRE(rfn.template_origin->args[0].type_arg.has_value());
+    auto& targ = std::get<kdi_int_type>(rfn.template_origin->args[0].type_arg->value);
+    REQUIRE(targ.bits == 32);
+    REQUIRE(targ.is_signed);
+}
+
+TEST_CASE("CBOR: template_origin round-trips on aggregate", "[cbor][template]") {
+    kdi_file f;
+    f.header.module_name = "tpl";
+    f.header.lib_base    = "tpl";
+    f.unit.name          = "tpl";
+
+    kdi_aggregate agg;
+    agg.kind         = kdi_aggregate_kind::struct_;
+    agg.name         = "Box__int__";
+    agg.fq_name      = "tpl::Box__int__";
+    agg.mangled_name = "_KS3tpl3BoxIiE";
+    agg.llvm_def     = "%struct.tpl.Box__int__ = type { i32 }";
+
+    kdi_template_origin origin;
+    origin.base_name    = "Box";
+    origin.base_fq_name = "tpl::Box";
+    kdi_template_arg arg1;
+    arg1.type_arg = kdi_type::make_int(32);
+    origin.args.push_back(arg1);
+    // Also test value arg with value_type
+    kdi_template_arg arg2;
+    arg2.value_arg  = "10";
+    arg2.value_type = kdi_type::make_int(32, true);
+    origin.args.push_back(arg2);
+    agg.template_origin = origin;
+
+    f.unit.root_ns.aggregates.push_back(agg);
+
+    std::ostringstream oss(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(f, oss));
+    std::istringstream iss(oss.str(), std::ios::binary);
+    kdi_file restored;
+    REQUIRE_NOTHROW(restored = kdi_read_cbor(iss));
+
+    REQUIRE(restored.unit.root_ns.aggregates.size() == 1);
+    auto& ragg = restored.unit.root_ns.aggregates[0];
+    REQUIRE(ragg.template_origin.has_value());
+    REQUIRE(ragg.template_origin->base_name == "Box");
+    REQUIRE(ragg.template_origin->base_fq_name == "tpl::Box");
+    REQUIRE(ragg.template_origin->args.size() == 2);
+    // First arg: type
+    REQUIRE(ragg.template_origin->args[0].type_arg.has_value());
+    // Second arg: value with type
+    REQUIRE(ragg.template_origin->args[1].value_arg.has_value());
+    REQUIRE(*ragg.template_origin->args[1].value_arg == "10");
+    REQUIRE(ragg.template_origin->args[1].value_type.has_value());
+    auto& vt = std::get<kdi_int_type>(ragg.template_origin->args[1].value_type->value);
+    REQUIRE(vt.bits == 32);
+    REQUIRE(vt.is_signed);
+}
+
+TEST_CASE("CBOR: template_def round-trips in namespace", "[cbor][template]") {
+    kdi_file f;
+    f.header.module_name = "tpl";
+    f.header.lib_base    = "tpl";
+    f.unit.name          = "tpl";
+
+    kdi_template_def td;
+    td.name        = "Box";
+    td.fq_name     = "tpl::Box";
+    td.entity_kind = "struct";
+    td.visibility  = "public";
+    kdi_template_param tp;
+    tp.kind = "typename";
+    tp.name = "T";
+    td.params.push_back(tp);
+    td.source = "template<typename T> struct Box { val: T; }";
+    f.unit.root_ns.template_defs.push_back(td);
+
+    std::ostringstream oss(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(f, oss));
+    std::istringstream iss(oss.str(), std::ios::binary);
+    kdi_file restored;
+    REQUIRE_NOTHROW(restored = kdi_read_cbor(iss));
+
+    REQUIRE(restored.unit.root_ns.template_defs.size() == 1);
+    auto& rtd = restored.unit.root_ns.template_defs[0];
+    REQUIRE(rtd.name == "Box");
+    REQUIRE(rtd.fq_name == "tpl::Box");
+    REQUIRE(rtd.entity_kind == "struct");
+    REQUIRE(rtd.params.size() == 1);
+    REQUIRE(rtd.params[0].kind == "typename");
+    REQUIRE(rtd.params[0].name == "T");
+    REQUIRE(rtd.source == "template<typename T> struct Box { val: T; }");
+}
+

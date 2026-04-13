@@ -50,6 +50,8 @@ add_library(klangcomp
         src/common/path_lookup_file_resolver.cpp
         src/model/tools/kdi_exporter.hpp
         src/model/tools/kdi_exporter.cpp
+        src/model/tools/k_source_emitter.hpp
+        src/model/tools/k_source_emitter.cpp
         src/model/tools/kdi_importer.hpp
         src/model/tools/kdi_importer.cpp
         src/model/tools/kdi_type_converter.hpp

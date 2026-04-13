@@ -41,6 +41,66 @@
 namespace kdi {
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Template data DTOs
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A single template parameter descriptor (for KDI export of template definitions).
+ *
+ * For type parameters:  kind is "typename"/"struct"/"class"/"interface".
+ * For value parameters: kind is "value", and value_type holds the explicit type.
+ */
+struct kdi_template_param {
+    std::string kind;          ///< "typename", "struct", "class", "interface", "value"
+    std::string name;          ///< parameter name (e.g. "T", "N")
+    std::optional<kdi_type> constraint_type;  ///< base-type constraint (type params)
+    std::optional<kdi_type> default_type;     ///< default type (type params)
+    std::optional<kdi_type> value_type;       ///< explicit type for value params
+    // Note: default_value for value params is stored as a string representation
+    // to avoid complex variant serialization.  The importing compiler re-parses it.
+    std::optional<std::string> default_value; ///< default value literal (value params)
+};
+
+/**
+ * A concrete template argument used at an instantiation site.
+ *
+ * Exactly one of type_arg / value_arg is set:
+ * - type_arg for type arguments (e.g. "int" in Pair<int>)
+ * - value_arg for value arguments (e.g. "10" in Array<int, 10>), stored as string
+ */
+struct kdi_template_arg {
+    std::optional<kdi_type>   type_arg;   ///< type argument (if type param)
+    std::optional<std::string> value_arg;  ///< value argument as string (if value param)
+    std::optional<kdi_type>   value_type;  ///< type of the value argument (if value param)
+};
+
+/**
+ * Template origin metadata for a concrete instantiation.
+ * Records which template definition produced this entity and with which arguments.
+ */
+struct kdi_template_origin {
+    std::string base_name;    ///< original template short name (e.g. "Pair")
+    std::string base_fq_name; ///< original template fully-qualified name (e.g. "containers::Pair")
+    std::vector<kdi_template_arg> args; ///< concrete arguments used for this instantiation
+};
+
+/**
+ * A complete template definition exported for cross-module re-instantiation.
+ *
+ * Contains the template parameter descriptors and the raw K source text of the
+ * declaration so that an importing compiler can re-parse and re-instantiate it
+ * locally with new type arguments.
+ */
+struct kdi_template_def {
+    std::string name;          ///< short name (e.g. "Pair")
+    std::string fq_name;       ///< fully-qualified name (e.g. "containers::Pair")
+    std::string entity_kind;   ///< "struct", "class", "interface", "function"
+    std::string visibility;    ///< "public" or "protected"
+    std::vector<kdi_template_param> params; ///< template parameter descriptors
+    std::string source;        ///< raw K source text (full declaration + body)
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Visibility
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -85,6 +145,8 @@ struct kdi_function {
     /// Used by importing compilers to reconstruct the exact LLVM Function declaration
     /// without re-deriving the ABI from the KDI type descriptors.
     std::string              llvm_def;
+    /// Template origin metadata (set only for concrete template instantiations).
+    std::optional<kdi_template_origin> template_origin;
 };
 
 /** Member method. */
@@ -105,6 +167,8 @@ struct kdi_method {
     /// LLVM IR prototype (with implicit 'this' pointer as first arg), e.g.
     /// "declare i32 @_ZN3ns5Adder3addEi(%struct.ns.Adder* %this, i32)".
     std::string              llvm_def;
+    /// Template origin metadata (set only for methods of template instantiations).
+    std::optional<kdi_template_origin> template_origin;
 };
 
 struct kdi_constructor {
@@ -311,6 +375,9 @@ struct kdi_aggregate {
     /// Used by importing compilers to reconstruct the exact LLVM StructType
     /// without re-deriving the layout from the KDI layout fields.
     std::string                   llvm_def;
+
+    /// Template origin metadata (set only for concrete template instantiations).
+    std::optional<kdi_template_origin> template_origin;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

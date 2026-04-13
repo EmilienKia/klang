@@ -427,7 +427,7 @@ ast::annotation_def_list parser::parse_annotation_defs()
     return annotations;
 }
 
-ast::template_param_list parser::parse_template_declaration()
+ast::template_param_list parser::parse_template_declaration(const char** out_template_kw_start)
 {
     lex::lex_holder holder(_lexer);
 
@@ -435,7 +435,13 @@ ast::template_param_list parser::parse_template_declaration()
     auto ltemplate = _lexer.get();
     if (ltemplate != lex::keyword::TEMPLATE) {
         holder.rollback();
+        if (out_template_kw_start) *out_template_kw_start = nullptr;
         return {};
+    }
+
+    // Save the start of the 'template' keyword in the source buffer
+    if (out_template_kw_start) {
+        *out_template_kw_start = lex::as_lexeme(ltemplate).content.data();
     }
 
     // Expect '<'
@@ -693,7 +699,8 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
     ast::annotation_def_list annotations = parse_annotation_defs();
 
     // Parse optional template declaration
-    ast::template_param_list template_params = parse_template_declaration();
+    const char* tpl_kw_start = nullptr;
+    ast::template_param_list template_params = parse_template_declaration(&tpl_kw_start);
 
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
@@ -794,6 +801,15 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
 
     auto result = std::make_shared<ast::aggregate_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations, annotations);
     result->template_params = std::move(template_params);
+
+    // Capture template source text for KDI export: from 'template' keyword through closing '}'
+    if (result->is_template() && tpl_kw_start) {
+        const char* src_end = close_brace->content.data() + close_brace->content.size();
+        if (src_end > tpl_kw_start) {
+            result->template_source_text = std::string(tpl_kw_start, static_cast<size_t>(src_end - tpl_kw_start));
+        }
+    }
+
     return result;
 }
 
@@ -1032,7 +1048,8 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     ast::annotation_def_list annotations = parse_annotation_defs();
 
     // Parse optional template declaration
-    ast::template_param_list template_params = parse_template_declaration();
+    const char* tpl_kw_start = nullptr;
+    ast::template_param_list template_params = parse_template_declaration(&tpl_kw_start);
 
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
@@ -1650,6 +1667,15 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         decl->return_var_init_expr = return_var_init_expr;
         decl->return_var_is_ctor_init = return_var_is_ctor_init;
     }
+
+    // Capture template source text for KDI export: from 'template' keyword through closing '}'
+    if (decl->is_template() && tpl_kw_start && statements) {
+        const char* src_end = statements->close_brace.content.data() + statements->close_brace.content.size();
+        if (src_end > tpl_kw_start) {
+            decl->template_source_text = std::string(tpl_kw_start, static_cast<size_t>(src_end - tpl_kw_start));
+        }
+    }
+
     return decl;
 }
 

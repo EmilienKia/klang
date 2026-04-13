@@ -21,6 +21,8 @@
 #include "../../common/logger.hpp"
 #include "../context.hpp"
 #include "../imported.hpp"
+#include "../model_builder.hpp"
+#include "../../parse/parser.hpp"
 
 #include <kdi.hpp>  // kdi_read_cbor_file, kdi_file, kdi_namespace, kdi_aggregate, …
 
@@ -368,6 +370,11 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
         materialise_variable(var, ctx);
     }
 
+    // Pass 5 — template definitions (for cross-module re-instantiation)
+    for (const auto& tdef : ns.template_defs) {
+        materialise_template_def(tdef, ns, ctx);
+    }
+
     // Recurse into nested namespaces (same two-pass order)
     for (const auto& child_ns : ns.namespaces) {
         materialise_namespace(child_ns, ctx);
@@ -433,6 +440,74 @@ void kdi_importer::materialise_variable(const kdi::kdi_variable& var,
                                          std::shared_ptr<context> ctx)
 {
     _unit.get_or_create_imported_variable(&var, ctx);
+}
+
+void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
+                                             const kdi::kdi_namespace& parent_kdi_ns,
+                                             std::shared_ptr<context> ctx)
+{
+    if (tdef.source.empty()) return;
+
+    // ── 1. Navigate to (or create) the target namespace in the model ────────
+    //    Use the parent KDI namespace's fq_name to place the template.
+    std::shared_ptr<ns> target_ns = _unit.get_root_namespace();
+    {
+        const std::string& ns_fq = parent_kdi_ns.fq_name;
+        if (!ns_fq.empty()) {
+            std::size_t pos = 0;
+            while (true) {
+                auto sep = ns_fq.find("::", pos);
+                std::string part;
+                if (sep == std::string::npos) {
+                    part = ns_fq.substr(pos);
+                } else {
+                    part = ns_fq.substr(pos, sep - pos);
+                }
+                if (!part.empty()) {
+                    target_ns = target_ns->get_child_namespace(part);
+                }
+                if (sep == std::string::npos) break;
+                pos = sep + 2;
+            }
+        }
+    }
+
+    // ── 2. Check if a template with this name already exists ────────────────
+    if (auto existing = target_ns->get_aggregate(tdef.name)) {
+        if (existing->is_template()) return;
+    }
+
+    // ── 3. Parse the template source text ───────────────────────────────────
+    try {
+        // The source is a complete template declaration.  Wrap in a module
+        // declaration matching the parent namespace so model_builder places
+        // the template in the correct namespace.
+        std::string wrapped_src;
+        const std::string& ns_fq = parent_kdi_ns.fq_name;
+        if (!ns_fq.empty()) {
+            wrapped_src = "module " + ns_fq + ";\n" + tdef.source;
+        } else {
+            wrapped_src = tdef.source;
+        }
+
+        // Keep wrapped_src alive — k::source copies the content.
+        k::source ksrc(std::string_view("lib.k"), std::string_view(wrapped_src));
+        k::parse::parser parser(_logger, ksrc);
+        auto ast_unit = parser.parse_unit();
+
+        if (!ast_unit || ast_unit->declarations.empty()) return;
+
+        // ── 4. Build the parsed declaration into the model ──────────────────
+        //    Save and restore the unit name because model_builder::visit will
+        //    set it from the module declaration in the wrapped source.
+        auto saved_name = _unit.get_unit_name();
+        k::model::model_builder::visit(_logger, ctx, *ast_unit, _unit);
+        _unit.set_unit_name(saved_name);
+
+    } catch (const std::exception&) {
+        // If parsing/building fails, silently skip this template definition.
+        // The template simply won't be available for cross-module instantiation.
+    }
 }
 
 void kdi_importer::check_unused_imports() const {

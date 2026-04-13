@@ -1264,6 +1264,16 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         *tpl_agg, model_args, parent_ns, _unit, _context, *this);
     if (!concrete) return {};
 
+    // 4b. Resolve unresolved member-variable references in method bodies.
+    //     The symbol_resolver skipped the template aggregate, so bare names
+    //     like 'x' (meaning 'this.x') are still unresolved in the cloned body.
+    template_instantiator::resolve_body_symbols(concrete);
+
+    // 4c. Inject member-initializer expressions into concrete constructor blocks.
+    //     symbol_resolver::visit_constructor normally does this, but template
+    //     definitions are skipped and the concrete ctors are created after that pass.
+    template_instantiator::inject_constructor_member_inits(concrete);
+
     // 5. Return existing struct_type or create a new one
     if (concrete->get_struct_type()) return concrete->get_struct_type();
 
@@ -1556,6 +1566,39 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
                 }
             }
         }
+
+        // Also resolve non-placeholder types inside the template body so that
+        // using aliases are resolved before KDI export.  Template parameter
+        // placeholders (is_template_param_placeholder) remain unresolved by
+        // design — resolve_one_type / resolve_type_by_name will simply return
+        // nullptr for those, leaving them as-is.
+
+        // Member variables and static members
+        for (auto& child : st.get_children()) {
+            if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
+                mv->accept(*this);
+            } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
+                gv->accept(*this);
+            } else if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+                // Resolve function signatures (parameters + return type) but
+                // NOT bodies — those are handled during instantiation.
+                if (!fn->is_compiler_generated())
+                    visit_function(*fn);
+            }
+        }
+
+        // Constructors
+        for (auto& ctor : st.constructors()) {
+            if (ctor && !ctor->is_compiler_generated())
+                visit_function(*ctor);
+        }
+
+        // Destructor
+        if (auto dtor = st.get_destructor()) {
+            if (!dtor->is_compiler_generated())
+                visit_function(*dtor);
+        }
+
         return;
     }
 
@@ -2768,6 +2811,16 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     auto concrete_agg = template_instantiator::instantiate_aggregate(
         *tpl_agg, model_args, parent_ns_ptr, _unit, _context, *this);
     if (!concrete_agg) return {};
+
+    // 4b. Resolve unresolved member-variable references in method bodies.
+    //     The symbol_resolver skipped the template aggregate, so bare names
+    //     like 'x' (meaning 'this.x') are still unresolved in the cloned body.
+    template_instantiator::resolve_body_symbols(concrete_agg);
+
+    // 4c. Inject member-initializer expressions into concrete constructor blocks.
+    //     symbol_resolver::visit_constructor normally does this, but template
+    //     definitions are skipped and the concrete ctors are created after that pass.
+    template_instantiator::inject_constructor_member_inits(concrete_agg);
 
     // 5. If the concrete aggregate already has a struct_type, return it
     if (concrete_agg->get_struct_type()) {

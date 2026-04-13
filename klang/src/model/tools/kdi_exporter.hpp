@@ -151,6 +151,22 @@ private:
 
     /** Dispatch aggregate visit body (shared between structure/klass/interface). */
     void visit_aggregate_body(aggregate& agg, kdi::kdi_aggregate& kagg);
+
+    /** Build a kdi_template_origin from an entity's tpl_base_name and tpl_args. */
+    kdi::kdi_template_origin build_template_origin(const std::string& base_name,
+                                                    const std::string& fq_name,
+                                                    const std::vector<template_argument>& args) const;
+
+    /** Build a kdi_template_def from a template definition (aggregate or function).
+     *  Uses k_source_emitter to reconstruct the source with resolved types,
+     *  falling back to ti.source_text if the emitter produces empty output.
+     *  @param entity  The model element (aggregate or function) to emit source for. May be null for fallback-only. */
+    kdi::kdi_template_def build_template_def(const std::string& name,
+                                              const std::string& fq_name,
+                                              const std::string& entity_kind,
+                                              visibility vis,
+                                              const tpl_info& ti,
+                                              const element* entity) const;
 };
 
 /**

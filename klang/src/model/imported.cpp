@@ -35,6 +35,7 @@
 #include "model.hpp"
 #include "context.hpp"
 #include "model_visitor.hpp"
+#include "template.hpp"
 #include "tools/kdi_type_converter.hpp"
 
 #include <kdi.hpp>
@@ -500,6 +501,80 @@ static void attach_params(function& fn,
     }
 }
 
+/**
+ * Parse a kdi_template_arg value string back to a k::value_type, guided by
+ * the optional kdi_type discriminator.
+ *
+ * The exporter stores:
+ *   - bools as "true"/"false"
+ *   - strings as "\"...\""
+ *   - integers/floats via std::to_string()
+ */
+static k::value_type parse_value_arg_string(const std::string& val_str,
+                                             const std::optional<kdi::kdi_type>& vtype)
+{
+    // Check for bool
+    if (val_str == "true")  return k::value_type{true};
+    if (val_str == "false") return k::value_type{false};
+
+    // Check for quoted string
+    if (val_str.size() >= 2 && val_str.front() == '"' && val_str.back() == '"')
+        return k::value_type{val_str.substr(1, val_str.size() - 2)};
+
+    // Use the value_type kdi_type hint if available
+    if (vtype) {
+        if (auto* ft = std::get_if<kdi::kdi_float_type>(&vtype->value)) {
+            try {
+                if (ft->bits <= 32) return k::value_type{std::stof(val_str)};
+                return k::value_type{std::stod(val_str)};
+            } catch (...) {}
+        }
+        if (auto* bt = std::get_if<kdi::kdi_bool_type>(&vtype->value)) {
+            return k::value_type{val_str == "1" || val_str == "true"};
+        }
+        if (auto* ct = std::get_if<kdi::kdi_char_type>(&vtype->value)) {
+            if (!val_str.empty()) return k::value_type{static_cast<char>(std::stoi(val_str))};
+        }
+        if (auto* it = std::get_if<kdi::kdi_int_type>(&vtype->value)) {
+            try {
+                long long v = std::stoll(val_str);
+                if (it->bits <= 32 && it->is_signed)   return k::value_type{static_cast<int>(v)};
+                if (it->bits <= 32 && !it->is_signed)  return k::value_type{static_cast<unsigned int>(v)};
+                if (it->is_signed)                      return k::value_type{static_cast<long>(v)};
+                return k::value_type{static_cast<unsigned long>(static_cast<unsigned long long>(v))};
+            } catch (...) {}
+        }
+    }
+
+    // Fallback: try integer, then float
+    try { return k::value_type{static_cast<int>(std::stoll(val_str))}; } catch (...) {}
+    try { return k::value_type{std::stod(val_str)}; } catch (...) {}
+    return k::value_type{0};
+}
+
+/**
+ * Convert a kdi_template_origin's argument list into model template_argument vector.
+ * Used by the importer to populate set_tpl_instantiation_info() on imported entities.
+ */
+static std::vector<template_argument>
+convert_template_origin_args(const kdi::kdi_template_origin& origin,
+                             unit& owner,
+                             std::shared_ptr<context> ctx)
+{
+    std::vector<template_argument> model_args;
+    model_args.reserve(origin.args.size());
+    for (const auto& karg : origin.args) {
+        if (karg.type_arg) {
+            auto model_type = kdi_type_to_model_type(*karg.type_arg, owner, ctx);
+            model_args.push_back(template_argument::make_type(model_type));
+        } else if (karg.value_arg) {
+            auto val = parse_value_arg_string(*karg.value_arg, karg.value_type);
+            model_args.push_back(template_argument::make_value(std::move(val)));
+        }
+    }
+    return model_args;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // unit::get_or_create_imported_function
 // ─────────────────────────────────────────────────────────────────────────────
@@ -535,6 +610,12 @@ unit::get_or_create_imported_function(const kdi::kdi_function* kdi_fn,
 
     // Visibility
     fn->set_visibility(kdi_fn->visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED);
+
+    // Template origin — mark as a concrete template instantiation if applicable
+    if (kdi_fn->template_origin) {
+        auto model_args = convert_template_origin_args(*kdi_fn->template_origin, *this, ctx);
+        fn->set_tpl_instantiation_info(kdi_fn->template_origin->base_name, std::move(model_args));
+    }
 
     _imported_functions[kdi_fn->mangled_name] = fn;
     return fn;
@@ -845,6 +926,11 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         if (km.is_abstract)    { im->set_abstract_func(true); }
         if (km.is_final)       { im->set_final_func(true); }
         if (km.is_const_member){ im->set_const_member(true); }
+        // Template origin for method instantiations
+        if (km.template_origin) {
+            auto method_args = convert_template_origin_args(*km.template_origin, *this, ctx);
+            im->set_tpl_instantiation_info(km.template_origin->base_name, std::move(method_args));
+        }
         im->create_this_parameter();
         agg->_children.push_back(im);
         agg->_functions.push_back(im);
@@ -874,6 +960,15 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         } else if (auto ii = std::dynamic_pointer_cast<imported_interface>(agg)) {
             ii->_vtable = vt_layout;
         }
+    }
+
+    // ── Template origin metadata ────────────────────────────────────────────
+    // If this aggregate is a concrete template instantiation, populate the
+    // model-level template metadata so that has_tpl_args() returns true and
+    // the base name / arguments are available for introspection.
+    if (kdi_agg->template_origin) {
+        auto model_args = convert_template_origin_args(*kdi_agg->template_origin, *this, ctx);
+        agg->set_tpl_instantiation_info(kdi_agg->template_origin->base_name, std::move(model_args));
     }
 
     return agg;

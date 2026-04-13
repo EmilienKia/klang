@@ -112,6 +112,36 @@ public:
         std::shared_ptr<context> ctx,
         k::log::logger& logger);
 
+    /**
+     * Resolve unresolved symbol_expression nodes in the method bodies of a
+     * freshly instantiated concrete aggregate.
+     *
+     * The symbol_resolver skips template aggregates, so member-variable
+     * references (e.g. bare 'x' for 'this.x') inside method bodies remain
+     * unresolved after cloning.  This helper walks every method's body and
+     * resolves each unresolved symbol by climbing the element parent chain
+     * (block → function → aggregate) to find the matching variable or
+     * parameter definition — exactly as the symbol_resolver would do if it
+     * visited the concrete aggregate.
+     *
+     * Must be called after the concrete aggregate's children, parent chain,
+     * and block contents are fully set up (i.e. after instantiate_aggregate).
+     */
+    static void resolve_body_symbols(std::shared_ptr<aggregate> concrete);
+
+    /**
+     * Inject member-initializer expressions into concrete constructors' blocks.
+     *
+     * The symbol_resolver::visit_constructor normally injects member_init
+     * expressions as statements at the start of the constructor body.  But
+     * template definitions are skipped by the symbol_resolver, and concrete
+     * constructors are created after that pass.  This helper performs the
+     * same injection for all constructors of a freshly instantiated aggregate.
+     *
+     * Must be called after instantiate_aggregate and resolve_body_symbols.
+     */
+    static void inject_constructor_member_inits(std::shared_ptr<aggregate> concrete);
+
 private:
     /**
      * Build the type substitution map from template params and concrete args.

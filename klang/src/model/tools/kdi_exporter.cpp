@@ -17,9 +17,13 @@
  */
 
 #include "../tools/kdi_exporter.hpp"
+#include "../tools/k_source_emitter.hpp"
 
 #include "../model.hpp"
 #include "../type.hpp"
+
+#include <unordered_map>
+#include "../template.hpp"
 #include "../mangler.hpp"
 #include "../context.hpp"
 
@@ -576,7 +580,39 @@ void kdi_builder::visit_namespace(ns& n) {
 void kdi_builder::visit_structure(structure& s) {
     if (!is_exported(s.get_visibility())) return;
 
+    // Template definition: export as kdi_template_def, not as a regular aggregate
+    if (s.is_template()) {
+        if (!_ns_stack.empty() && s.get_tpl_info()) {
+            std::string fq = s.get_fq_name();
+            if (fq.empty() || fq == "::") {
+                // Template definitions may not have their fq_name computed yet
+                // (resolution passes skip them).  Reconstruct from namespace stack.
+                fq = _ns_stack.back()->fq_name.empty()
+                     ? s.get_short_name()
+                     : _ns_stack.back()->fq_name + "::" + s.get_short_name();
+            }
+            _ns_stack.back()->template_defs.push_back(
+                build_template_def(s.get_short_name(), fq, "struct",
+                                   s.get_visibility(), *s.get_tpl_info(), &s));
+        }
+        return;
+    }
+
     kdi::kdi_aggregate kagg = begin_aggregate(s);
+
+    // Template origin for concrete instantiations
+    if (s.has_tpl_args()) {
+        // Derive the base fq_name: replace the instantiated name (e.g. "Box__int") with base_name in the fq path
+        std::string inst_fq = s.get_fq_name();
+        std::string inst_name = s.get_short_name();
+        std::string base_fq = inst_fq;
+        auto pos = base_fq.rfind(inst_name);
+        if (pos != std::string::npos) {
+            base_fq.replace(pos, inst_name.size(), s.get_tpl_base_name());
+        }
+        kagg.template_origin = build_template_origin(s.get_tpl_base_name(), base_fq, s.get_tpl_args());
+    }
+
     visit_aggregate_body(s, kagg);
 
     // Deposit into parent namespace or enclosing aggregate
@@ -589,7 +625,36 @@ void kdi_builder::visit_structure(structure& s) {
 void kdi_builder::visit_klass(klass& k) {
     if (!is_exported(k.get_visibility())) return;
 
+    // Template definition: export as kdi_template_def
+    if (k.is_template()) {
+        if (!_ns_stack.empty() && k.get_tpl_info()) {
+            std::string fq = k.get_fq_name();
+            if (fq.empty() || fq == "::") {
+                fq = _ns_stack.back()->fq_name.empty()
+                     ? k.get_short_name()
+                     : _ns_stack.back()->fq_name + "::" + k.get_short_name();
+            }
+            _ns_stack.back()->template_defs.push_back(
+                build_template_def(k.get_short_name(), fq, "class",
+                                   k.get_visibility(), *k.get_tpl_info(), &k));
+        }
+        return;
+    }
+
     kdi::kdi_aggregate kagg = begin_aggregate(k);
+
+    // Template origin for concrete instantiations
+    if (k.has_tpl_args()) {
+        std::string inst_fq = k.get_fq_name();
+        std::string inst_name = k.get_short_name();
+        std::string base_fq = inst_fq;
+        auto pos = base_fq.rfind(inst_name);
+        if (pos != std::string::npos) {
+            base_fq.replace(pos, inst_name.size(), k.get_tpl_base_name());
+        }
+        kagg.template_origin = build_template_origin(k.get_tpl_base_name(), base_fq, k.get_tpl_args());
+    }
+
     visit_aggregate_body(k, kagg);
 
     if (!_agg_stack.empty())
@@ -601,7 +666,36 @@ void kdi_builder::visit_klass(klass& k) {
 void kdi_builder::visit_interface(interface& i) {
     if (!is_exported(i.get_visibility())) return;
 
+    // Template definition: export as kdi_template_def
+    if (i.is_template()) {
+        if (!_ns_stack.empty() && i.get_tpl_info()) {
+            std::string fq = i.get_fq_name();
+            if (fq.empty() || fq == "::") {
+                fq = _ns_stack.back()->fq_name.empty()
+                     ? i.get_short_name()
+                     : _ns_stack.back()->fq_name + "::" + i.get_short_name();
+            }
+            _ns_stack.back()->template_defs.push_back(
+                build_template_def(i.get_short_name(), fq, "interface",
+                                   i.get_visibility(), *i.get_tpl_info(), &i));
+        }
+        return;
+    }
+
     kdi::kdi_aggregate kagg = begin_aggregate(i);
+
+    // Template origin for concrete instantiations
+    if (i.has_tpl_args()) {
+        std::string inst_fq = i.get_fq_name();
+        std::string inst_name = i.get_short_name();
+        std::string base_fq = inst_fq;
+        auto pos = base_fq.rfind(inst_name);
+        if (pos != std::string::npos) {
+            base_fq.replace(pos, inst_name.size(), i.get_tpl_base_name());
+        }
+        kagg.template_origin = build_template_origin(i.get_tpl_base_name(), base_fq, i.get_tpl_args());
+    }
+
     visit_aggregate_body(i, kagg);
 
     if (!_agg_stack.empty())
@@ -675,11 +769,40 @@ void kdi_builder::visit_function(function& fn) {
     if (fn.is_compiler_generated()) return;
     if (!is_exported(fn.get_visibility())) return;
 
+    // Template definition: export as kdi_template_def, not as a regular function
+    if (fn.is_template()) {
+        if (!_ns_stack.empty() && fn.get_tpl_info()) {
+            std::string fq = fn.get_fq_name();
+            if (fq.empty() || fq == "::") {
+                fq = _ns_stack.back()->fq_name.empty()
+                     ? fn.get_short_name()
+                     : _ns_stack.back()->fq_name + "::" + fn.get_short_name();
+            }
+            _ns_stack.back()->template_defs.push_back(
+                build_template_def(fn.get_short_name(), fq, "function",
+                                   fn.get_visibility(), *fn.get_tpl_info(), &fn));
+        }
+        return;
+    }
+
     // For redirected functions, resolve the LLVM function via the redirect target's mangled name
     // (since the redirector is emitted as a GlobalAlias, not an llvm::Function).
     std::string llvm_lookup_name = fn.get_mangled_name();
     if (fn.is_redirected() && fn.get_redirect_target()) {
         llvm_lookup_name = fn.get_redirect_target()->get_mangled_name();
+    }
+
+    // Build template origin for concrete instantiations
+    std::optional<kdi::kdi_template_origin> tpl_origin;
+    if (fn.has_tpl_args()) {
+        std::string inst_fq = fn.get_fq_name();
+        std::string inst_name = fn.get_short_name();
+        std::string base_fq = inst_fq;
+        auto pos = base_fq.rfind(inst_name);
+        if (pos != std::string::npos) {
+            base_fq.replace(pos, inst_name.size(), fn.get_tpl_base_name());
+        }
+        tpl_origin = build_template_origin(fn.get_tpl_base_name(), base_fq, fn.get_tpl_args());
     }
 
     if (in_aggregate()) {
@@ -702,6 +825,7 @@ void kdi_builder::visit_function(function& fn) {
             auto* llvm_fn = _ctx.module().getFunction(llvm_lookup_name);
             km.llvm_def = llvm_fn_prototype(llvm_fn);
         }
+        km.template_origin = tpl_origin;
         _agg_stack.back()->methods.push_back(std::move(km));
     } else {
         // Global function — deposit into current namespace
@@ -719,6 +843,7 @@ void kdi_builder::visit_function(function& fn) {
             auto* llvm_fn = _ctx.module().getFunction(llvm_lookup_name);
             kf.llvm_def = llvm_fn_prototype(llvm_fn);
         }
+        kf.template_origin = tpl_origin;
         _ns_stack.back()->functions.push_back(std::move(kf));
     }
 }
@@ -791,6 +916,279 @@ void kdi_builder::visit_member_variable_definition(member_variable_definition& /
     // Member variables are handled by build_layout() via the LLVM struct field
     // order, not by direct visit, to preserve the physical layout and opaque
     // block grouping.  Nothing to do here.
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Template export helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+kdi::kdi_template_origin kdi_builder::build_template_origin(
+    const std::string& base_name,
+    const std::string& fq_name,
+    const std::vector<template_argument>& args) const
+{
+    kdi::kdi_template_origin origin;
+    origin.base_name = base_name;
+
+    // Strip leading "::" from fq_name for KDI convention
+    if (fq_name.size() >= 2 && fq_name[0] == ':' && fq_name[1] == ':')
+        origin.base_fq_name = fq_name.substr(2);
+    else
+        origin.base_fq_name = fq_name;
+
+    for (auto& arg : args) {
+        kdi::kdi_template_arg karg;
+        if (arg.is_type()) {
+            karg.type_arg = to_kdi_type(arg.type_arg);
+        } else if (arg.is_value()) {
+            // Serialize value as string representation
+            karg.value_arg = std::visit([](auto&& v) -> std::string {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>) {
+                    return "0";
+                } else if constexpr (std::is_same_v<T, bool>) {
+                    return v ? "true" : "false";
+                } else if constexpr (std::is_same_v<T, std::string>) {
+                    return "\"" + v + "\"";
+                } else {
+                    return std::to_string(v);
+                }
+            }, *arg.value_arg);
+            // Also export the type of the value argument so the importer can
+            // reconstruct the correct k::value_type variant.
+            karg.value_type = std::visit([](auto&& v) -> kdi::kdi_type {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, bool>)
+                    return {kdi::kdi_bool_type{}};
+                else if constexpr (std::is_same_v<T, char>)
+                    return {kdi::kdi_char_type{}};
+                else if constexpr (std::is_same_v<T, unsigned char>)
+                    return kdi::kdi_type::make_int(8, false);
+                else if constexpr (std::is_same_v<T, short>)
+                    return kdi::kdi_type::make_int(16, true);
+                else if constexpr (std::is_same_v<T, unsigned short>)
+                    return kdi::kdi_type::make_int(16, false);
+                else if constexpr (std::is_same_v<T, int>)
+                    return kdi::kdi_type::make_int(32, true);
+                else if constexpr (std::is_same_v<T, unsigned int>)
+                    return kdi::kdi_type::make_int(32, false);
+                else if constexpr (std::is_same_v<T, long>)
+                    return kdi::kdi_type::make_int(64, true);
+                else if constexpr (std::is_same_v<T, unsigned long>)
+                    return kdi::kdi_type::make_int(64, false);
+                else if constexpr (std::is_same_v<T, long long>)
+                    return kdi::kdi_type::make_int(64, true);
+                else if constexpr (std::is_same_v<T, unsigned long long>)
+                    return kdi::kdi_type::make_int(64, false);
+                else if constexpr (std::is_same_v<T, float>)
+                    return kdi::kdi_type::make_float(32);
+                else if constexpr (std::is_same_v<T, double>)
+                    return kdi::kdi_type::make_float(64);
+                else
+                    return kdi::kdi_type::make_int(32, true);
+            }, *arg.value_arg);
+        }
+        origin.args.push_back(std::move(karg));
+    }
+    return origin;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: resolve a relative k::name to a FQ name by walking the model tree
+// starting from a given scope element.
+// ─────────────────────────────────────────────────────────────────────────────
+
+static std::string resolve_target_fq_name(const k::name& target_name,
+                                           const element* scope) {
+    if (target_name.empty()) return {};
+
+    // Walk up the scope chain to find a namespace or aggregate that contains
+    // the first component of target_name.
+    for (auto current = scope; current; ) {
+        // Try namespace scope
+        if (auto ns_ptr = dynamic_cast<const ns*>(current)) {
+            // Try to walk down through target_name components
+            auto child_ns = ns_ptr->get_child_namespace(target_name.front());
+            if (child_ns) {
+                if (target_name.size() == 1) {
+                    // target is a namespace itself
+                    return k_source_emitter::fq_name_for_source(child_ns->get_fq_name());
+                }
+                // Walk deeper
+                std::shared_ptr<const element> elem = child_ns;
+                for (size_t i = 1; i < target_name.size(); ++i) {
+                    if (auto ns_e = std::dynamic_pointer_cast<const ns>(elem)) {
+                        auto deeper_ns = ns_e->get_child_namespace(target_name[i]);
+                        if (deeper_ns) {
+                            elem = deeper_ns;
+                            if (i == target_name.size() - 1) {
+                                return k_source_emitter::fq_name_for_source(deeper_ns->get_fq_name());
+                            }
+                            continue;
+                        }
+                    }
+                    if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(elem)) {
+                        if (auto agg = ah->get_aggregate(target_name[i])) {
+                            return k_source_emitter::fq_name_for_source(agg->get_fq_name());
+                        }
+                    }
+                    break;
+                }
+            }
+            // Try aggregate directly in this namespace
+            if (auto ah = dynamic_cast<const aggregate_holder*>(current)) {
+                if (auto agg = ah->get_aggregate(target_name.front())) {
+                    if (target_name.size() == 1) {
+                        return k_source_emitter::fq_name_for_source(agg->get_fq_name());
+                    }
+                }
+            }
+        }
+
+        // Try aggregate scope
+        if (auto ah = dynamic_cast<const aggregate_holder*>(current)) {
+            if (auto agg = ah->get_aggregate(target_name.front())) {
+                if (target_name.size() == 1) {
+                    return k_source_emitter::fq_name_for_source(agg->get_fq_name());
+                }
+            }
+        }
+
+        // Move up to parent
+        auto parent = dynamic_cast<const element*>(current)->parent<const element>();
+        current = parent.get();
+    }
+    return {};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: build a map of using-alias names → FQ type names from the scope chain
+// of a template entity.  This map allows the emitter to de-alias unresolved
+// types that appear in template bodies (function bodies are not visited by the
+// type resolver and thus may still contain alias names).
+// ─────────────────────────────────────────────────────────────────────────────
+
+static std::unordered_map<std::string, std::string>
+build_using_alias_map(const element* entity) {
+    std::unordered_map<std::string, std::string> map;
+    if (!entity) return map;
+
+    for (auto current = entity->parent<const element>(); current;
+         current = current->parent<const element>()) {
+        auto uh = dynamic_cast<const using_holder*>(current.get());
+        if (!uh) continue;
+        for (const auto& dir : uh->get_using_directives()) {
+            if (dir.has_alias() && !dir.is_namespace()) {
+                // Aliased using: using Alias = X::Y::Z;
+                auto fq = resolve_target_fq_name(dir.target_name, current.get());
+                if (!fq.empty()) {
+                    map[*dir.alias_name] = fq;
+                }
+            } else if (dir.is_namespace() && !dir.has_alias()) {
+                // Anonymous namespace using: using namespace X;
+                // Find the target namespace and add all its types to the map
+                auto fq = resolve_target_fq_name(dir.target_name, current.get());
+                if (fq.empty()) continue;
+
+                // Find the actual namespace element
+                auto ns_ptr = dynamic_cast<const ns*>(current.get());
+                if (!ns_ptr) continue;
+                auto target_ns = ns_ptr->get_child_namespace(dir.target_name.front());
+                // Walk deeper for multi-component target names
+                for (size_t i = 1; target_ns && i < dir.target_name.size(); ++i) {
+                    target_ns = target_ns->get_child_namespace(dir.target_name[i]);
+                }
+                if (!target_ns) continue;
+
+                // Add all aggregates in the target namespace to the map
+                if (auto ah = dynamic_cast<const aggregate_holder*>(target_ns.get())) {
+                    for (auto& child : target_ns->get_children()) {
+                        if (auto agg = std::dynamic_pointer_cast<const aggregate>(child)) {
+                            map[agg->get_short_name()] =
+                                k_source_emitter::fq_name_for_source(agg->get_fq_name());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return map;
+}
+
+kdi::kdi_template_def kdi_builder::build_template_def(
+    const std::string& name,
+    const std::string& fq_name,
+    const std::string& entity_kind,
+    visibility vis,
+    const tpl_info& ti,
+    const element* entity) const
+{
+    kdi::kdi_template_def def;
+    def.name = name;
+    // Strip leading "::"
+    if (fq_name.size() >= 2 && fq_name[0] == ':' && fq_name[1] == ':')
+        def.fq_name = fq_name.substr(2);
+    else
+        def.fq_name = fq_name;
+    def.entity_kind = entity_kind;
+    def.visibility = (vis == PROTECTED) ? "protected" : "public";
+
+    // Use model-based source reconstruction with fallback to raw source_text
+    std::string emitted;
+    if (entity) {
+        k_source_emitter emitter;
+        auto alias_map = build_using_alias_map(entity);
+        if (!alias_map.empty()) {
+            emitter.set_alias_map(std::move(alias_map));
+        }
+        if (auto agg_ptr = dynamic_cast<const aggregate*>(entity)) {
+            emitted = emitter.emit_template_aggregate(*agg_ptr);
+        } else if (auto fn_ptr = dynamic_cast<const function*>(entity)) {
+            emitted = emitter.emit_template_function(*fn_ptr);
+        }
+    }
+    if (!emitted.empty()) {
+        def.source = std::move(emitted);
+    } else {
+        def.source = ti.source_text;
+    }
+
+    for (auto& param : ti.params) {
+        kdi::kdi_template_param kparam;
+        kparam.name = param.name;
+
+        switch (param.kind) {
+            case template_param_kind::TYPENAME:  kparam.kind = "typename";  break;
+            case template_param_kind::STRUCT:    kparam.kind = "struct";    break;
+            case template_param_kind::CLASS:     kparam.kind = "class";     break;
+            case template_param_kind::INTERFACE: kparam.kind = "interface"; break;
+            case template_param_kind::VALUE:     kparam.kind = "value";     break;
+        }
+
+        if (param.constraint_type)
+            kparam.constraint_type = to_kdi_type(param.constraint_type);
+        if (param.default_type)
+            kparam.default_type = to_kdi_type(param.default_type);
+        if (param.value_type)
+            kparam.value_type = to_kdi_type(param.value_type);
+        if (param.default_value.has_value()) {
+            kparam.default_value = std::visit([](auto&& v) -> std::string {
+                using T = std::decay_t<decltype(v)>;
+                if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>) {
+                    return "0";
+                } else if constexpr (std::is_same_v<T, bool>) {
+                    return v ? "true" : "false";
+                } else if constexpr (std::is_same_v<T, std::string>) {
+                    return "\"" + v + "\"";
+                } else {
+                    return std::to_string(v);
+                }
+            }, *param.default_value);
+        }
+
+        def.params.push_back(std::move(kparam));
+    }
+    return def;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

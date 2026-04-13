@@ -229,6 +229,76 @@ static kdi_variable from_json_variable(const json& j) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Template DTOs
+// ─────────────────────────────────────────────────────────────────────────────
+
+static json to_json(const kdi_template_param& p) {
+    json j = {{"kind", p.kind}, {"name", p.name}};
+    if (p.constraint_type) j["constraint_type"] = to_json(*p.constraint_type);
+    if (p.default_type)    j["default_type"] = to_json(*p.default_type);
+    if (p.value_type)      j["value_type"] = to_json(*p.value_type);
+    if (p.default_value)   j["default_value"] = *p.default_value;
+    return j;
+}
+static kdi_template_param from_json_template_param(const json& j) {
+    kdi_template_param p;
+    p.kind = j.at("kind");
+    p.name = j.at("name");
+    if (j.contains("constraint_type")) p.constraint_type = from_json_type(j.at("constraint_type"));
+    if (j.contains("default_type"))    p.default_type = from_json_type(j.at("default_type"));
+    if (j.contains("value_type"))      p.value_type = from_json_type(j.at("value_type"));
+    if (j.contains("default_value"))   p.default_value = j.at("default_value").get<std::string>();
+    return p;
+}
+
+static json to_json(const kdi_template_arg& a) {
+    json j = json::object();
+    if (a.type_arg)  j["type_arg"] = to_json(*a.type_arg);
+    if (a.value_arg) j["value_arg"] = *a.value_arg;
+    if (a.value_type) j["value_type"] = to_json(*a.value_type);
+    return j;
+}
+static kdi_template_arg from_json_template_arg(const json& j) {
+    kdi_template_arg a;
+    if (j.contains("type_arg"))  a.type_arg = from_json_type(j.at("type_arg"));
+    if (j.contains("value_arg")) a.value_arg = j.at("value_arg").get<std::string>();
+    if (j.contains("value_type")) a.value_type = from_json_type(j.at("value_type"));
+    return a;
+}
+
+static json to_json(const kdi_template_origin& o) {
+    json args = json::array();
+    for (auto& a : o.args) args.push_back(to_json(a));
+    return {{"base_name", o.base_name}, {"base_fq_name", o.base_fq_name}, {"args", args}};
+}
+static kdi_template_origin from_json_template_origin(const json& j) {
+    kdi_template_origin o;
+    o.base_name    = j.at("base_name");
+    o.base_fq_name = j.at("base_fq_name");
+    for (auto& a : j.value("args", json::array()))
+        o.args.push_back(from_json_template_arg(a));
+    return o;
+}
+
+static json to_json(const kdi_template_def& d) {
+    json params = json::array();
+    for (auto& p : d.params) params.push_back(to_json(p));
+    return {{"name", d.name}, {"fq_name", d.fq_name}, {"entity_kind", d.entity_kind},
+            {"visibility", d.visibility}, {"params", params}, {"source", d.source}};
+}
+static kdi_template_def from_json_template_def(const json& j) {
+    kdi_template_def d;
+    d.name        = j.at("name");
+    d.fq_name     = j.at("fq_name");
+    d.entity_kind = j.at("entity_kind");
+    d.visibility  = j.value("visibility", "public");
+    for (auto& p : j.value("params", json::array()))
+        d.params.push_back(from_json_template_param(p));
+    d.source = j.value("source", "");
+    return d;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // kdi_function / kdi_method
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -255,6 +325,7 @@ static json to_json(const kdi_function& f) {
         {"llvm_def",     f.llvm_def},
     };
     if (f.is_operator) j["is_operator"] = true;
+    if (f.template_origin) j["template_origin"] = to_json(*f.template_origin);
     return j;
 }
 static kdi_function from_json_function(const json& j) {
@@ -268,6 +339,7 @@ static kdi_function from_json_function(const json& j) {
     f.params       = params_from_json(j.value("params", json::array()));
     f.mangled_name = j.value("mangled_name", "");
     f.llvm_def     = j.at("llvm_def");
+    if (j.contains("template_origin")) f.template_origin = from_json_template_origin(j.at("template_origin"));
     return f;
 }
 
@@ -288,6 +360,7 @@ static json to_json(const kdi_method& m) {
         {"llvm_def",        m.llvm_def},
     };
     if (m.is_operator) j["is_operator"] = true;
+    if (m.template_origin) j["template_origin"] = to_json(*m.template_origin);
     return j;
 }
 static kdi_method from_json_method(const json& j) {
@@ -306,6 +379,7 @@ static kdi_method from_json_method(const json& j) {
     m.params          = params_from_json(j.value("params", json::array()));
     m.mangled_name    = j.value("mangled_name", "");
     m.llvm_def        = j.at("llvm_def");
+    if (j.contains("template_origin")) m.template_origin = from_json_template_origin(j.at("template_origin"));
     return m;
 }
 
@@ -569,6 +643,7 @@ static json to_json(const kdi_aggregate& a) {
         obj["enclosing_fq_name"] = a.enclosing_fq_name;
     if (a.destructor) obj["destructor"] = to_json(*a.destructor);
     if (a.vtable)     obj["vtable"]     = to_json(*a.vtable);
+    if (a.template_origin) obj["template_origin"] = to_json(*a.template_origin);
     return obj;
 }
 
@@ -610,6 +685,7 @@ static kdi_aggregate from_json_aggregate(const json& j) {
         a.nested.push_back(from_json_aggregate(n));
     a.llvm_def = j.at("llvm_def");
     a.default_constructor_mangled_name = j.value("default_constructor_mangled_name", "");
+    if (j.contains("template_origin")) a.template_origin = from_json_template_origin(j.at("template_origin"));
     return a;
 }
 
@@ -666,9 +742,13 @@ static json to_json(const kdi_namespace& ns) {
     for (auto& f : ns.functions) fns.push_back(to_json(f));
     json vars = json::array();
     for (auto& v : ns.variables) vars.push_back(to_json(v));
-    return {{"name",ns.name},{"fq_name",ns.fq_name},
+    json tdefs = json::array();
+    for (auto& td : ns.template_defs) tdefs.push_back(to_json(td));
+    json obj = {{"name",ns.name},{"fq_name",ns.fq_name},
             {"namespaces",sub},{"aggregates",aggs},{"enums",enums},
             {"functions",fns},{"variables",vars}};
+    if (!tdefs.empty()) obj["template_defs"] = tdefs;
+    return obj;
 }
 static kdi_namespace from_json_namespace(const json& j) {
     kdi_namespace ns;
@@ -684,6 +764,8 @@ static kdi_namespace from_json_namespace(const json& j) {
         ns.functions.push_back(from_json_function(f));
     for (auto& v : j.value("variables", json::array()))
         ns.variables.push_back(from_json_variable(v));
+    for (auto& td : j.value("template_defs", json::array()))
+        ns.template_defs.push_back(from_json_template_def(td));
     return ns;
 }
 

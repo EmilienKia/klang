@@ -225,9 +225,9 @@ TEST_CASE("KDI: .kdi file generated alongside shared library", "[prod-lib][kdi][
     kdi::kdi_file kdi_file;
     REQUIRE_NOTHROW( kdi_file = kdi::kdi_read_cbor_file(kdi_p.string()) );
 
-    // Schema version must be 0.1
-    REQUIRE( kdi_file.header.schema_major == 0 );
-    REQUIRE( kdi_file.header.schema_minor == 1 );
+    // Schema version must match current KDI_SCHEMA constants
+    REQUIRE( kdi_file.header.schema_major == kdi::KDI_SCHEMA_MAJOR );
+    REQUIRE( kdi_file.header.schema_minor == kdi::KDI_SCHEMA_MINOR );
 
     // Module name must match
     REQUIRE( kdi_file.header.module_name == "kdi::test::sharedlib" );
@@ -296,8 +296,8 @@ TEST_CASE("KDI: .kdi file generated alongside static library", "[prod-lib][kdi][
     kdi::kdi_file kdi_file2;
     REQUIRE_NOTHROW( kdi_file2 = kdi::kdi_read_cbor_file(kdi_p.string()) );
     REQUIRE( kdi_file2.header.module_name == "kdi::test::staticlib" );
-    REQUIRE( kdi_file2.header.schema_major == 0 );
-    REQUIRE( kdi_file2.header.schema_minor == 1 );
+    REQUIRE( kdi_file2.header.schema_major == kdi::KDI_SCHEMA_MAJOR );
+    REQUIRE( kdi_file2.header.schema_minor == kdi::KDI_SCHEMA_MINOR );
 
     // Find 'triple'
     bool found = false;

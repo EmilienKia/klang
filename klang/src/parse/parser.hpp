@@ -153,7 +153,7 @@ public:
      * TemplateDeclaration = 'template' , '<' , TemplateParameterList , '>' ;
      * Returns empty list if no 'template' keyword is present.
      */
-    ast::template_param_list parse_template_declaration();
+    ast::template_param_list parse_template_declaration(const char** out_template_kw_start = nullptr);
 
     /**
      * TemplateParameter = TemplateParameterKind , Identifier ,

@@ -920,6 +920,9 @@ namespace k::parse {
             annotation_def_list annotations;
             /** Template parameters, empty if not a template. */
             template_param_list template_params;
+            /** Raw K source text of the complete template declaration (from 'template' keyword
+             *  through closing '}'), captured for KDI export. Empty if not a template. */
+            std::string template_source_text;
             std::vector <lex::keyword> specifiers;
             lex::keyword kw_aggregate_type;
             lex::punctuator open_brace, close_brace;
@@ -1115,6 +1118,9 @@ namespace k::parse {
             annotation_def_list annotations;
             /** Template parameters, empty if not a template function. */
             template_param_list template_params;
+            /** Raw K source text of the complete template function declaration (from 'template' keyword
+             *  through closing '}'), captured for KDI export. Empty if not a template. */
+            std::string template_source_text;
             std::vector<lex::keyword> specifiers;
             lex::identifier name;
             std::shared_ptr<ast::type_specifier> type;

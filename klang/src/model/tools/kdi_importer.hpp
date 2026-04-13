@@ -36,6 +36,7 @@ namespace kdi {
     struct kdi_aggregate;
     struct kdi_function;
     struct kdi_variable;
+    struct kdi_template_def;
 }
 
 namespace k::model {
@@ -201,6 +202,15 @@ private:
      */
     void materialise_variable(const kdi::kdi_variable& var,
                               std::shared_ptr<context> ctx);
+
+    /**
+     * Materialise a template definition by re-parsing its source text and
+     * building it into the unit's model as a template aggregate or function.
+     * This makes the template available for re-instantiation by the consumer.
+     */
+    void materialise_template_def(const kdi::kdi_template_def& tdef,
+                                  const kdi::kdi_namespace& parent_kdi_ns,
+                                  std::shared_ptr<context> ctx);
 
     // ── Shared utilities ─────────────────────────────────────────────────────
 

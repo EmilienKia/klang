@@ -426,6 +426,8 @@ namespace k::model {
                 }
                 ti->params.push_back(std::move(desc));
             }
+            // Capture the template source text from the AST (for KDI export)
+            ti->source_text = st.template_source_text;
             agg->set_tpl_info(std::move(ti));
             // Push template parameter names so that create_unresolved() marks them
             // as placeholders — suppresses spurious "cannot resolve type: T" messages.
@@ -851,6 +853,8 @@ namespace k::model {
                 }
                 ti->params.push_back(std::move(desc));
             }
+            // Capture the template source text from the AST (for KDI export)
+            ti->source_text = func.template_source_text;
             function->set_tpl_info(std::move(ti));
             // Push template parameter names so that create_unresolved() marks them
             // as placeholders — suppresses spurious "cannot resolve type: T" messages.
