@@ -98,6 +98,29 @@ public:
 };
 
 /**
+ * Break statement — exits the innermost enclosing loop.
+ */
+class break_statement : public statement
+{
+public:
+    break_statement() = delete;
+    break_statement(const std::shared_ptr<statement>& parent) :
+            statement(parent) {}
+    break_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::break_statement>& ast) :
+            statement(parent) { _ast_node = ast; }
+
+    void accept(model_visitor& visitor) override;
+
+    void set_ast_break_statement(std::shared_ptr<k::parse::ast::break_statement> ast) {
+        _ast_node = std::move(ast);
+    }
+
+    std::shared_ptr<const k::parse::ast::break_statement> get_ast_break_statement() const {
+        return get_ast_node_as<k::parse::ast::break_statement>();
+    }
+};
+
+/**
  * If then else statement
  */
 class if_else_statement : public statement

@@ -1291,6 +1291,33 @@ namespace k::model {
         _stmt = ret_stmt;
     }
 
+    void model_builder::visit_break_statement(parse::ast::break_statement &stmt) {
+        auto parent_scope = current_context_content<statement>();
+        if(!parent_scope) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_BREAK_NOT_IN_LOOP), stmt.break_kw, "'break' statement cannot appear here; it must be inside a function or block body");
+        }
+
+        // Verify that the break statement is inside a loop (while or for)
+        bool in_loop = false;
+        for (auto it = _contexts.rbegin(); it != _contexts.rend(); ++it) {
+            if (std::dynamic_pointer_cast<while_context>(*it) && std::dynamic_pointer_cast<model::while_statement>((*it)->content)) {
+                in_loop = true;
+                break;
+            }
+            if (std::dynamic_pointer_cast<for_context>(*it) && std::dynamic_pointer_cast<model::for_statement>((*it)->content)) {
+                in_loop = true;
+                break;
+            }
+        }
+        if (!in_loop) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_BREAK_NOT_IN_LOOP), stmt.break_kw, "'break' statement can only appear inside a loop body (while or for)");
+        }
+
+        std::shared_ptr<model::break_statement> break_stmt = std::make_shared<model::break_statement>(parent_scope, stmt.shared_as<parse::ast::break_statement>());
+
+        _stmt = break_stmt;
+    }
+
     void model_builder::visit_if_else_statement(parse::ast::if_else_statement &stmt) {
         auto parent_scope = current_context_content<statement>();
         if(!parent_scope) {

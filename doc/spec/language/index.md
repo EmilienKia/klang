@@ -49,6 +49,7 @@ Examples are included where they clarify the normative text.
 | [While Statement](statements/while.md) | Condition-controlled loop |
 | [For Statement](statements/for.md) | Counter-controlled loop |
 | [Return Statement](statements/return.md) | Function return |
+| [Break Statement](statements/break.md) | Exit the innermost loop |
 
 ### Functions
 

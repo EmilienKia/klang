@@ -42,6 +42,7 @@ They may **not** be used as ordinary identifiers.
 | `else`      | Alternative branch of an `if` statement |
 | `while`     | Condition-controlled loop |
 | `for`       | Counter-controlled loop |
+| `break`     | Exit the innermost enclosing loop |
 | `new`       | Dynamic allocation operator — allocates and constructs an object, returns a `T!` owner |
 | `delete`    | Dynamic deallocation operator — destroys and frees the object owned by a `T!` variable |
 | `operator`  | Declares an operator overload function (member or non-member) |
@@ -56,7 +57,7 @@ Keyword: (one of)
     static   const    abstract   final   override
     public   protected   private
     this     return
-    if       else     while    for
+    if       else     while    for      break
     new      delete   default  enum
     operator
 ```

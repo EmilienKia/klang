@@ -119,6 +119,10 @@ void default_model_visitor::visit_return_statement(return_statement &stmt) {
     visit_statement(stmt);
 }
 
+void default_model_visitor::visit_break_statement(break_statement &stmt) {
+    visit_statement(stmt);
+}
+
 void default_model_visitor::visit_if_else_statement(if_else_statement &stmt) {
     visit_statement(stmt);
 }

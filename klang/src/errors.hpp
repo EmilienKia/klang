@@ -181,6 +181,7 @@ enum class parser_diag : unsigned int {
     ERR_ANNOTATION_EXPECT_NAME_EXPR               = 0x007B,
     ERR_BRACE_INIT_NESTED_ERROR                   = 0x007C,
     ERR_BRACE_INIT_SEP_ERROR                      = 0x007D,
+    ERR_BREAK_MISSING_SEMICOLON                   = 0x0190,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -246,6 +247,7 @@ enum class model_diag : unsigned int {
     ERR_OVERRIDE_ON_ABSTRACT                      = 0x0179,
     ERR_OVERRIDE_ON_CTOR_DTOR                     = 0x017A,
     ERR_OVERRIDE_ON_STRUCT                        = 0x017B,
+    ERR_BREAK_NOT_IN_LOOP                         = 0x017C,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

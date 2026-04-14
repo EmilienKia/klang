@@ -278,6 +278,11 @@ public:
      std::shared_ptr<ast::return_statement> parse_return_statement();
 
      /**
+      * BreakStatement = 'break' , ';' ;
+      */
+     std::shared_ptr<ast::break_statement> parse_break_statement();
+
+     /**
       * IfElseStatement = 'if' , '(' , Expression , ')' , Statement ,
       *                   [ 'else' , Statement ] ;
       */

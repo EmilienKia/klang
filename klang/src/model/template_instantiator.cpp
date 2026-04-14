@@ -341,6 +341,13 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
         return new_rs;
     }
 
+    // Break statement
+    if (auto bs = dynamic_cast<const break_statement*>(&src)) {
+        auto new_bs = std::make_shared<break_statement>(parent_stmt);
+        new_bs->_ast_node = bs->get_ast_node();
+        return new_bs;
+    }
+
     // If-else statement
     if (auto ies = dynamic_cast<const if_else_statement*>(&src)) {
         auto new_ies = std::make_shared<if_else_statement>(parent_stmt);

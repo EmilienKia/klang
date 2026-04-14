@@ -71,7 +71,7 @@ Keyword
     | 'static' | 'const'   | 'abstract'  | 'final'  | 'override'
     | 'public' | 'protected' | 'private'
     | 'this'   | 'return'
-    | 'if'     | 'else'    | 'while'     | 'for'
+    | 'if'     | 'else'    | 'while'     | 'for'    | 'break'
     | 'new'    | 'delete'  | 'default'   | 'enum'
     | 'operator'
     | 'template' | 'typename'
@@ -478,6 +478,7 @@ TypeSuffix
 Statement
     = BlockStatement
     | ReturnStatement
+    | BreakStatement
     | IfElseStatement
     | WhileStatement
     | ForStatement
@@ -492,6 +493,10 @@ BlockStatement
 
 ReturnStatement
     = 'return' , [ Expression ] , ';'
+    ;
+
+BreakStatement
+    = 'break' , ';'
     ;
 
 IfElseStatement

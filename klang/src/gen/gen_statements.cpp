@@ -485,6 +485,85 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
 }
 
 //
+// Break
+//
+
+void symbol_resolver::visit_break_statement(break_statement& stmt)
+{
+    // Nothing to resolve
+}
+
+void type_reference_resolver::visit_break_statement(break_statement& stmt)
+{
+    // Nothing to resolve
+}
+
+void declaration_generator::visit_break_statement(break_statement& stmt) {
+    // Nothing to do here
+}
+
+/**
+ * Generate LLVM IR for a break statement.
+ *
+ * Steps:
+ *   1. Emit cleanup for all block-scoped variables between the break and the loop boundary.
+ *   2. Branch to the loop exit block.
+ *   3. Create a new unreachable basic block for any code following the break.
+ */
+void implementation_generator::visit_break_statement(break_statement& stmt) {
+    // Emit cleanup for all scopes between the break and the loop boundary.
+    // _loop_cleanup_depth.top() tells us how many cleanup scopes existed when
+    // the loop was entered; anything above that is inside the loop.
+    size_t loop_depth = _loop_cleanup_depth.top();
+    size_t current_depth = _cleanup_vars_stack.size();
+
+    if (current_depth > loop_depth) {
+        // Collect scope variable lists from innermost to the loop boundary
+        std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
+        std::vector<std::vector<std::shared_ptr<variable_statement>>> loop_scopes;
+        size_t count = current_depth - loop_depth;
+        for (size_t i = 0; i < count && !tmp.empty(); ++i) {
+            loop_scopes.push_back(tmp.top());
+            tmp.pop();
+        }
+        // Emit destructor calls in reverse declaration order for each scope
+        for (auto& scope_vars : loop_scopes) {
+            for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
+                auto& var_stmt = *it;
+
+                // NRVO: do NOT destroy the NRVO candidate
+                if (_nrvo_candidate && var_stmt == _nrvo_candidate) continue;
+
+                auto vt = var_stmt->get_type();
+                auto var_it = _context->_variables.find(var_stmt);
+                if (var_it == _context->_variables.end()) continue;
+                llvm::AllocaInst* alloca = var_it->second;
+
+                if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
+                    auto dtor = st_type->get_struct()->get_destructor();
+                    if (!dtor) continue;
+                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                    if (dtor_it == _context->_functions.end()) continue;
+                    _builder->CreateCall(dtor_it->second, {alloca});
+                } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
+                    emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                        alloca, own_type->get_owned_type(), "break_owner");
+                }
+            }
+        }
+    }
+
+    // Branch to loop exit block
+    _builder->CreateBr(_loop_exit_blocks.top());
+
+    // Create unreachable basic block for any code following the break
+    llvm::Function* func = _builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* after_break = llvm::BasicBlock::Create(**_context, "after-break");
+    func->insert(func->end(), after_break);
+    _builder->SetInsertPoint(after_break);
+}
+
+//
 // If-then-else
 //
 
@@ -670,7 +749,16 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
     // Nest block
     func->insert(func->end(), nested_block);
     _builder->SetInsertPoint(nested_block);
+
+    // Push loop exit context for break statements
+    _loop_exit_blocks.push(cont_block);
+    _loop_cleanup_depth.push(_cleanup_vars_stack.size());
+
     stmt.get_nested_stmt()->accept(*this);
+
+    // Pop loop exit context
+    _loop_cleanup_depth.pop();
+    _loop_exit_blocks.pop();
 
     // Go back to test
     _builder->CreateBr(while_block);
@@ -789,7 +877,16 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     // Nest block
     func->insert(func->end(), nested_block);
     _builder->SetInsertPoint(nested_block);
+
+    // Push loop exit context for break statements
+    _loop_exit_blocks.push(cont_block);
+    _loop_cleanup_depth.push(_cleanup_vars_stack.size());
+
     stmt.get_nested_stmt()->accept(*this);
+
+    // Pop loop exit context
+    _loop_cleanup_depth.pop();
+    _loop_exit_blocks.pop();
 
     // Step 2: Create cond/body/step/after basic blocks
     // Step, if any

@@ -293,6 +293,7 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
 <a id="statement"></a>**Statement:**
     [BlockStatement](#blockstatement)
     | [ReturnStatement](#returnstatement)
+    | [BreakStatement](#breakstatement)
     | [IfElseStatement](#ifelsestatement)
     | [WhileStatement](#whilestatement)
     | [ForStatement](#forstatement)
@@ -303,6 +304,8 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     `'{{'` {{ [Statement](#statement) }} `'}}'`
 <a id="returnstatement"></a>**ReturnStatement:**
     `'return'` `[` [Expression](#expression) `]` `';'`
+<a id="breakstatement"></a>**BreakStatement:**
+    `'break'` `';'`
 <a id="ifelsestatement"></a>**IfElseStatement:**
     `'if'` `'('` [Expression](#expression) `')'` [Statement](#statement) `[` `'else'` [Statement](#statement) `]`
 <a id="whilestatement"></a>**WhileStatement:**
@@ -313,7 +316,7 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     {{ [Specifier](#specifier) }} [Identifier](#identifier) `':'` [TypeSpec](#typespec) `[` [Initialiser](#initialiser) `]`
 <a id="expressionstatement"></a>**ExpressionStatement:**
     `[` [Expression](#expression) `]` `';'`
-*Full description of each:* [If](statements/if.md) - [While](statements/while.md) - [For](statements/for.md) - [Return](statements/return.md)
+*Full description of each:* [If](statements/if.md) - [While](statements/while.md) - [For](statements/for.md) - [Return](statements/return.md) - [Break](statements/break.md)
 ### Expressions
 *Full description:* [Expressions](expressions/expressions.md)
 <a id="expression"></a>**Expression:**

@@ -19,6 +19,7 @@ Statements are executed sequentially within a block.
 Statement:
     BlockStatement
     | ReturnStatement
+    | BreakStatement
     | IfElseStatement
     | WhileStatement
     | ForStatement
@@ -28,6 +29,8 @@ BlockStatement:
     '{' { Statement } '}'
 ExpressionStatement:
     [ Expression ] ';'
+BreakStatement:
+    'break' ';'
 ```
 ---
 ## 2. Block statement
@@ -166,7 +169,7 @@ test_static() : int {
 ### Variable lifetime and destruction
 For struct-typed local variables:
 - The constructor is called when the declaration is reached.
-- The destructor is called when the enclosing block exits (or a `return` is reached), in reverse declaration order.
+- The destructor is called when the enclosing block exits (or a `return` or `break` is reached), in reverse declaration order.
 ```k
 test_local_dtor() : int {
     c : counter;           // constructor called here
@@ -199,5 +202,6 @@ For owner-typed local variables (`T!`, `T[N]!`):
 | `while`   | [While Statement](while.md) |
 | `for`     | [For Statement](for.md) |
 | `return`  | [Return Statement](return.md) |
+| `break`   | [Break Statement](break.md) |
 ---
 *See also:* [Expressions](../expressions/expressions.md) · [Functions](../functions/functions.md) · [Types](../basic/types.md) · [Dynamic Allocation](../memory/new-delete.md)

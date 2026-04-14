@@ -134,3 +134,143 @@ TEST_CASE("For", "[gen][for]") {
         REQUIRE(sum(5) == 10);
     }
 }
+
+//
+// Break
+//
+
+TEST_CASE("Break in while loop", "[gen][break]") {
+    auto jit = gen_jit(R"SRC(
+        module __break_while__;
+        find_first_ge(limit : int) : int {
+            i : int = 0;
+            while(i < 100) {
+                if(i >= limit) {
+                    break;
+                }
+                i = i + 1;
+            }
+            return i;
+        }
+        sum_until(limit : int) : int {
+            r : int = 0;
+            i : int = 0;
+            while(i < 100) {
+                if(i >= limit) {
+                    break;
+                }
+                r = r + i;
+                i = i + 1;
+            }
+            return r;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    SECTION("break exits while loop early") {
+        auto find_first_ge = jit->lookup_symbol<int(*)(int)>("find_first_ge");
+        REQUIRE(find_first_ge != nullptr);
+        REQUIRE(find_first_ge(0) == 0);
+        REQUIRE(find_first_ge(5) == 5);
+        REQUIRE(find_first_ge(10) == 10);
+        REQUIRE(find_first_ge(200) == 100);
+    }
+
+    SECTION("break in while loop with accumulator") {
+        auto sum_until = jit->lookup_symbol<int(*)(int)>("sum_until");
+        REQUIRE(sum_until != nullptr);
+        REQUIRE(sum_until(0) == 0);
+        REQUIRE(sum_until(1) == 0);
+        REQUIRE(sum_until(3) == 3);
+        REQUIRE(sum_until(5) == 10);
+    }
+}
+
+TEST_CASE("Break in for loop", "[gen][break]") {
+    auto jit = gen_jit(R"SRC(
+        module __break_for__;
+        sum_until_for(limit : int) : int {
+            r : int = 0;
+            for(i : int = 0; i < 100; i += 1) {
+                if(i >= limit) {
+                    break;
+                }
+                r = r + i;
+            }
+            return r;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    SECTION("break exits for loop early") {
+        auto sum_until_for = jit->lookup_symbol<int(*)(int)>("sum_until_for");
+        REQUIRE(sum_until_for != nullptr);
+        REQUIRE(sum_until_for(0) == 0);
+        REQUIRE(sum_until_for(1) == 0);
+        REQUIRE(sum_until_for(3) == 3);
+        REQUIRE(sum_until_for(5) == 10);
+    }
+}
+
+TEST_CASE("Break in nested loops", "[gen][break]") {
+    auto jit = gen_jit(R"SRC(
+        module __break_nested__;
+        nested_break(n : int) : int {
+            total : int = 0;
+            i : int = 0;
+            while(i < n) {
+                j : int = 0;
+                while(j < n) {
+                    if(j >= 3) {
+                        break;
+                    }
+                    total = total + 1;
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+            return total;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    SECTION("break only exits innermost loop") {
+        auto nested_break = jit->lookup_symbol<int(*)(int)>("nested_break");
+        REQUIRE(nested_break != nullptr);
+        // n=1: outer runs 1 time, inner runs min(1,3)=1 -> total=1
+        REQUIRE(nested_break(1) == 1);
+        // n=2: outer runs 2 times, inner runs min(2,3)=2 each -> total=4
+        REQUIRE(nested_break(2) == 4);
+        // n=3: outer runs 3 times, inner runs min(3,3)=3 each -> total=9
+        REQUIRE(nested_break(3) == 9);
+        // n=5: outer runs 5 times, inner breaks at 3 each -> total=15
+        REQUIRE(nested_break(5) == 15);
+        // n=10: outer runs 10 times, inner breaks at 3 each -> total=30
+        REQUIRE(nested_break(10) == 30);
+    }
+}
+
+TEST_CASE("Break outside loop is an error", "[gen][break]") {
+    SECTION("break in function body (not in loop)") {
+        REQUIRE_THROWS(gen_jit_throws(R"SRC(
+            module __break_error__;
+            bad() : int {
+                break;
+                return 0;
+            }
+        )SRC"));
+    }
+
+    SECTION("break in if (not in loop)") {
+        REQUIRE_THROWS(gen_jit_throws(R"SRC(
+            module __break_error2__;
+            bad(x : int) : int {
+                if(x > 0) {
+                    break;
+                }
+                return 0;
+            }
+        )SRC"));
+    }
+}
+

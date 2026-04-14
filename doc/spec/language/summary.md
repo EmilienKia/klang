@@ -64,7 +64,7 @@ struct   class    interface   annotation   namespace   module   import   using  
 static   const    abstract   final   override
 public   protected   private
 this     return
-if       else     while    for
+if       else     while    for      break
 new      delete   default  enum
 operator
 template typename
@@ -558,6 +558,18 @@ Init variable scoped to the loop. Omitted condition = infinite loop.
 - The return expression is evaluated **before** local variable destruction.
 - With a [named return variable](#104-named-return-variables): `return;` returns the named variable; reaching `}` also does.
 
+### 9.8 Break
+
+> Details: [break.md](statements/break.md)
+
+```
+'break' ';'
+```
+
+- Exits the **innermost** enclosing `while` or `for` loop.
+- Local variables scoped inside the loop are destroyed in reverse declaration order before the loop exits.
+- Using `break` outside a loop is a compile-time error.
+
 ---
 
 ## 10. Functions
@@ -904,6 +916,7 @@ static StructName() { /* called at program startup */ }
 
 - **Local variables**: on block exit, reverse declaration order.
 - **`return`**: expression evaluated first, then destructors in reverse order.
+- **`break`**: loop-scoped destructors in reverse order, then loop exits.
 - **Global variables**: after `main`, reverse initialization order.
 - **Owner variables (`T!`)**: on explicit `delete` or on scope exit.
 - **Dynamic arrays**: destructors in reverse order (last → first), then `free`.

@@ -26,6 +26,8 @@ The body may be a single statement or a block.
 3. After the body executes, control returns to step 1.
 4. If the condition is false, execution continues after the `while` statement.
 If the condition is false on the first evaluation, the body is never executed.
+
+A [`break`](break.md) statement inside the body immediately exits the loop.
 ---
 ## 3. Examples
 ### Basic while loop
@@ -51,4 +53,4 @@ process(p : int*) {
 }
 ```
 ---
-*See also:* [Statements](statements.md) · [If Statement](if.md) · [For Statement](for.md)
+*See also:* [Statements](statements.md) · [If Statement](if.md) · [For Statement](for.md) · [Break Statement](break.md)

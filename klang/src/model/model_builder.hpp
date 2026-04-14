@@ -68,6 +68,7 @@ protected:
     typedef context if_else_context;
     typedef context while_context;
     typedef context for_context;
+    typedef context break_context;
     typedef context expr_stmt_context;
 
     template<typename T>
@@ -146,6 +147,7 @@ protected:
 
     void visit_block_statement(parse::ast::block_statement &) override;
     void visit_return_statement(parse::ast::return_statement &) override;
+    void visit_break_statement(parse::ast::break_statement &) override;
     void visit_if_else_statement(parse::ast::if_else_statement &) override;
     void visit_while_statement(parse::ast::while_statement &) override;
     void visit_for_statement(parse::ast::for_statement &) override;

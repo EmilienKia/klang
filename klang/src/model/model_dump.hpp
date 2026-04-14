@@ -364,6 +364,10 @@ public:
         _stm << ";" << std::endl;
     }
 
+    void visit_break_statement(break_statement& stmt) override {
+        prefix() << "break;" << std::endl;
+    }
+
     void visit_if_else_statement(if_else_statement& stmt) override {
         prefix() << "if ( ";
         if(auto test_expr = stmt.get_test_expr()) {

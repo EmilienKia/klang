@@ -68,6 +68,7 @@ public:
     virtual void visit_statement(statement&) =0;
     virtual void visit_block(block&) =0;
     virtual void visit_return_statement(return_statement&) =0;
+    virtual void visit_break_statement(break_statement&) =0;
     virtual void visit_if_else_statement(if_else_statement&) =0;
     virtual void visit_while_statement(while_statement&) =0;
     virtual void visit_for_statement(for_statement&) =0;
@@ -180,6 +181,7 @@ public:
     void visit_statement(statement&) override;
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;
+    void visit_break_statement(break_statement&) override;
     void visit_if_else_statement(if_else_statement&) override;
     void visit_while_statement(while_statement&) override;
     void visit_for_statement(for_statement&) override;
