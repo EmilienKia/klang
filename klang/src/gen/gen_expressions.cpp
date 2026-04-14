@@ -7019,6 +7019,40 @@ void implementation_generator::emit_dynamic_cast(
         }
     }
 
+    // ── 1b. Null-source guard for nullable indirections ─────────────────────
+    // If the source is a nullable indirection (ptr, view, owner), the raw
+    // pointer may be null.  Loading the vptr from null would segfault, so we
+    // must check before proceeding with the RTTI comparison.
+    {
+        bool src_nullable = type::is_nullable_indirection(source_type);
+        if (!src_nullable) {
+            if (auto ref_t = std::dynamic_pointer_cast<reference_type>(source_type)) {
+                src_nullable = type::is_nullable_indirection(ref_t->get_referenced_type());
+            }
+        }
+        if (src_nullable) {
+            auto target_type = expr.get_cast_type();
+            if (_null_failure_bb && type::is_link(target_type)) {
+                // Soft-fail: branch to else/continue if source is null.
+                auto* cur_fn = _builder->GetInsertBlock()->getParent();
+                auto* ok_bb = llvm::BasicBlock::Create(llvm_ctx, "dyncast_src_ok", cur_fn);
+                auto* is_null = _builder->CreateICmpEQ(
+                    base_raw,
+                    llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty)),
+                    "dyncast_src_null");
+                _builder->CreateCondBr(is_null, _null_failure_bb, ok_bb);
+                _builder->SetInsertPoint(ok_bb);
+            } else if (expr.null_is_fatal()) {
+                // Fatal: trap if source is null.
+                auto* fatal_fn = get_or_declare_fatal_null_function("__k_fatal_null_dyncast");
+                emit_null_check(base_raw, fatal_fn, "dyncast_src");
+            }
+            // For non-fatal targets (ptr/view) with null source, the vptr load
+            // would still segfault.  This is a known limitation.
+            // TODO: guard the vptr load for non-fatal nullable targets too.
+        }
+    }
+
     // ── 2. Find the RTTI global for the target class/annotation ─────────────
     std::string rtti_name = mangler::mangle_rtti(tgt_st->get_name());
     llvm::GlobalVariable* tgt_rtti_gv = _context->module().getNamedGlobal(rtti_name);
@@ -7135,7 +7169,12 @@ void implementation_generator::emit_dynamic_cast(
     // ── 8. Fatal-null check for lnk/ref targets ───────────────────────────────
     if (expr.null_is_fatal()) {
         auto* fatal_fn = get_or_declare_fatal_null_function("__k_fatal_null_dyncast");
-        emit_null_check(result, fatal_fn, "dyncast");
+        // For link targets inside an if-condition, soft-fail to _null_failure_bb
+        // instead of trapping.  Ref targets remain unconditionally fatal.
+        auto target_type = expr.get_cast_type();
+        llvm::BasicBlock* soft_bb = (_null_failure_bb && type::is_link(target_type))
+                                     ? _null_failure_bb : nullptr;
+        emit_null_check(result, fatal_fn, "dyncast", soft_bb);
     }
 
     // Step 5: Set _value to the cast result pointer
@@ -7162,18 +7201,26 @@ llvm::Function* implementation_generator::get_or_declare_fatal_null_function(con
     return fn;
 }
 
-void implementation_generator::emit_null_check(llvm::Value* ptr_value, llvm::Function* fatal_fn, const std::string& label) {
+void implementation_generator::emit_null_check(llvm::Value* ptr_value, llvm::Function* fatal_fn, const std::string& label,
+                                               llvm::BasicBlock* soft_fail_bb) {
     auto* fn   = _builder->GetInsertBlock()->getParent();
     auto& ctx  = _builder->getContext();
     auto* ptr_ty = llvm::PointerType::get(ctx, 0);
-    auto* null_bb = llvm::BasicBlock::Create(ctx, label + "_null", fn);
     auto* ok_bb   = llvm::BasicBlock::Create(ctx, label + "_ok",   fn);
     auto* is_null = _builder->CreateICmpEQ(
         ptr_value, llvm::ConstantPointerNull::get(ptr_ty), label + "_is_null");
-    _builder->CreateCondBr(is_null, null_bb, ok_bb);
-    _builder->SetInsertPoint(null_bb);
-    _builder->CreateCall(fatal_fn, {});
-    _builder->CreateUnreachable();
+    if (soft_fail_bb) {
+        // Soft-fail mode: branch to the provided block (e.g. if-else or if-continue)
+        // instead of trapping. Used for link assignments in if-conditions.
+        _builder->CreateCondBr(is_null, soft_fail_bb, ok_bb);
+    } else {
+        // Normal mode: fatal trap on null.
+        auto* null_bb = llvm::BasicBlock::Create(ctx, label + "_null", fn);
+        _builder->CreateCondBr(is_null, null_bb, ok_bb);
+        _builder->SetInsertPoint(null_bb);
+        _builder->CreateCall(fatal_fn, {});
+        _builder->CreateUnreachable();
+    }
     _builder->SetInsertPoint(ok_bb);
 }
 

@@ -213,6 +213,13 @@ protected:
      *  visit_return_statement. */
     llvm::Value* _sret_destination = nullptr;
 
+    /** When non-null, link-related null-checks (link rebind from nullable source, dynamic cast
+     *  to link with null_is_fatal) branch to this block on null instead of calling a fatal trap.
+     *  Set by visit_if_else_statement to the else-block (or continue-block when there is no else)
+     *  so that a failing link assignment in an if-condition acts as a false value.
+     *  Saved/restored for nested if-statements. */
+    llvm::BasicBlock* _null_failure_bb = nullptr;
+
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(code, message, args);
         if (lexeme) diag.at(*lexeme);
@@ -442,8 +449,10 @@ protected:
     /**
      * Emit a runtime null-check for `ptr_value`. If null, calls fatal_fn and then unreachable.
      * `ok_bb` is the block to continue in if not null. The function creates the check+branch.
+     * If `soft_fail_bb` is non-null, branch there on null instead of calling the fatal function.
      */
-    void emit_null_check(llvm::Value* ptr_value, llvm::Function* fatal_fn, const std::string& label = "");
+    void emit_null_check(llvm::Value* ptr_value, llvm::Function* fatal_fn, const std::string& label = "",
+                         llvm::BasicBlock* soft_fail_bb = nullptr);
 };
 
 

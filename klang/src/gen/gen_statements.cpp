@@ -693,50 +693,63 @@ void declaration_generator::visit_if_else_statement(if_else_statement& stmt) {
  * Generate LLVM IR for an if-else statement.
  *
  * Steps:
- *   1. Evaluate the condition expression.
- *   2. Create then/else/merge basic blocks.
- *   3. Emit conditional branch.
- *   4. Visit then-block, emit branch to merge.
- *   5. Visit else-block (if present), emit branch to merge.
- *   6. Set insertion point to merge block.
+ *   1. Create then/else/merge basic blocks (before condition evaluation).
+ *   2. Set up _null_failure_bb so that link null-checks in the condition
+ *      soft-fail to else (or continue) instead of trapping.
+ *   3. Evaluate the condition expression.
+ *   4. Restore _null_failure_bb (supports nesting).
+ *   5. Emit conditional branch.
+ *   6. Visit then-block, emit branch to merge.
+ *   7. Visit else-block (if present), emit branch to merge.
+ *   8. Set insertion point to merge block.
  */
 void implementation_generator::visit_if_else_statement(if_else_statement& stmt) {
 
-    // Step 1: Evaluate the condition expression
-    // Condition expression
-    _value = nullptr;
-    stmt.get_test_expr()->accept(*this);
-    auto test_value = _value;
-    _value = nullptr;
-
-    // Destroy any struct temporaries created during condition evaluation
-    emit_expression_temporaries_cleanup();
-
     bool has_else = (bool)stmt.get_else_stmt();
 
-    // Step 2: Create then/else/merge basic blocks
-    // Retrieve current block and create then, else and continue blocks
+    // Step 1: Create then/else/merge basic blocks BEFORE evaluating the condition,
+    // so that _null_failure_bb can reference them during condition codegen.
     llvm::Function* func = _builder->GetInsertBlock()->getParent();
     llvm::BasicBlock* then_block = llvm::BasicBlock::Create(**_context, "if-then", func);
     llvm::BasicBlock* else_block = has_else ? llvm::BasicBlock::Create(**_context, "if-else") : nullptr;
     llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(**_context, "if-continue");
 
-    // Step 3: Emit conditional branch
-    // Do branching
+    // Step 2: Set up soft-fail destination for link null-checks in the condition.
+    // If the condition contains a link assignment from a nullable source (or a dynamic
+    // cast to link), the null-check will branch here instead of calling a fatal trap.
+    auto* saved_null_failure_bb = _null_failure_bb;
+    _null_failure_bb = has_else ? else_block : cont_block;
+
+    // Step 3: Evaluate the condition expression
+    _value = nullptr;
+    stmt.get_test_expr()->accept(*this);
+    auto test_value = _value;
+    _value = nullptr;
+
+    // Step 4: Restore previous _null_failure_bb (supports nested if-statements)
+    _null_failure_bb = saved_null_failure_bb;
+
+    // Destroy any struct temporaries created during condition evaluation.
+    // NOTE: if a link null-check soft-failed during condition evaluation,
+    // temporaries created before the soft-fail branch are not cleaned up on
+    // that path.  In practice, link assignment conditions do not create struct
+    // temporaries, so this is acceptable for now.
+    // TODO: emit expression-temporary cleanup on the soft-fail path if needed.
+    emit_expression_temporaries_cleanup();
+
+    // Step 5: Emit conditional branch
     if(has_else) {
         _builder->CreateCondBr(test_value, then_block, else_block);
     } else {
         _builder->CreateCondBr(test_value, then_block, cont_block);
     }
 
-    // Step 4: Visit then-block, emit branch to merge
-    // Generate "then" branch
+    // Step 6: Visit then-block, emit branch to merge
     _builder->SetInsertPoint(then_block);
     stmt.get_then_stmt()->accept(*this);
     _builder->CreateBr(cont_block);
 
-    // Step 5: Visit else-block (if present), emit branch to merge
-    // Generate "else" branch, if any
+    // Step 7: Visit else-block (if present), emit branch to merge
     if(has_else) {
         func->insert(func->end(), else_block);
         _builder->SetInsertPoint(else_block);
@@ -744,8 +757,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         _builder->CreateBr(cont_block);
     }
 
-    // Step 6: Set insertion point to merge block
-    // Generate "continuation" block
+    // Step 8: Set insertion point to merge block
     func->insert(func->end(), cont_block);
     _builder->SetInsertPoint(cont_block);
 }
