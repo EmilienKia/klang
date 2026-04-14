@@ -368,6 +368,10 @@ public:
         prefix() << "break;" << std::endl;
     }
 
+    void visit_continue_statement(continue_statement& stmt) override {
+        prefix() << "continue;" << std::endl;
+    }
+
     void visit_if_else_statement(if_else_statement& stmt) override {
         prefix() << "if ( ";
         if(auto test_expr = stmt.get_test_expr()) {

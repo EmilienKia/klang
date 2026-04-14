@@ -1813,6 +1813,24 @@ std::shared_ptr<ast::break_statement> parser::parse_break_statement()
     return std::make_shared<ast::break_statement>(lex::as<lex::keyword>(lbreak));
 }
 
+std::shared_ptr<ast::continue_statement> parser::parse_continue_statement()
+{
+    lex::lex_holder holder(_lexer);
+
+    auto lcontinue = _lexer.get();
+    if(lcontinue != lex::keyword::CONTINUE) {
+        holder.rollback();
+        return {};
+    }
+
+    auto lsemicolon = _lexer.get();
+    if(lsemicolon != lex::punctuator::SEMICOLON) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CONTINUE_MISSING_SEMICOLON), _lexer.pick_current(), "Continue statement is expecting to finish by a semicolon ';'");
+    }
+
+    return std::make_shared<ast::continue_statement>(lex::as<lex::keyword>(lcontinue));
+}
+
 std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
     lex::lex_holder holder(_lexer);
 
@@ -1981,6 +1999,10 @@ std::shared_ptr<ast::statement> parser::parse_statement()
 
     if(auto brk = parse_break_statement()) {
         return brk;
+    }
+
+    if(auto cont = parse_continue_statement()) {
+        return cont;
     }
 
     if(auto if_else = parse_if_else_statement()) {

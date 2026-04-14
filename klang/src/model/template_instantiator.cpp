@@ -348,6 +348,13 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
         return new_bs;
     }
 
+    // Continue statement
+    if (auto cs = dynamic_cast<const continue_statement*>(&src)) {
+        auto new_cs = std::make_shared<continue_statement>(parent_stmt);
+        new_cs->_ast_node = cs->get_ast_node();
+        return new_cs;
+    }
+
     // If-else statement
     if (auto ies = dynamic_cast<const if_else_statement*>(&src)) {
         auto new_ies = std::make_shared<if_else_statement>(parent_stmt);

@@ -83,6 +83,13 @@ void break_statement::accept(model_visitor &visitor) {
     visitor.visit_break_statement(*this);
 }
 
+//
+// Continue statement
+//
+void continue_statement::accept(model_visitor &visitor) {
+    visitor.visit_continue_statement(*this);
+}
+
 
 //
 // If then else statement

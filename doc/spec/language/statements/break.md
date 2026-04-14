@@ -125,5 +125,5 @@ nested_break(n : int) : int {
 // nested_break(5) = 5 * 3 = 15  (inner loop runs at most 3 iterations)
 ```
 ---
-*See also:* [Statements](statements.md) · [While Statement](while.md) · [For Statement](for.md) · [Return Statement](return.md)
+*See also:* [Statements](statements.md) · [While Statement](while.md) · [For Statement](for.md) · [Continue Statement](continue.md) · [Return Statement](return.md)
 

@@ -423,6 +423,10 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             prefix() << "break;" << std::endl;
         }
 
+        virtual void visit_continue_statement(ast::continue_statement& stmt) override {
+            prefix() << "continue;" << std::endl;
+        }
+
         virtual void visit_if_else_statement(ast::if_else_statement& stmt) override {
             prefix() << "if ( ";
             stmt.test_expr->visit(*this);

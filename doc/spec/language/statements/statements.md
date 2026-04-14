@@ -20,6 +20,7 @@ Statement:
     BlockStatement
     | ReturnStatement
     | BreakStatement
+    | ContinueStatement
     | IfElseStatement
     | WhileStatement
     | ForStatement
@@ -31,6 +32,8 @@ ExpressionStatement:
     [ Expression ] ';'
 BreakStatement:
     'break' ';'
+ContinueStatement:
+    'continue' ';'
 ```
 ---
 ## 2. Block statement
@@ -169,7 +172,7 @@ test_static() : int {
 ### Variable lifetime and destruction
 For struct-typed local variables:
 - The constructor is called when the declaration is reached.
-- The destructor is called when the enclosing block exits (or a `return` or `break` is reached), in reverse declaration order.
+- The destructor is called when the enclosing block exits (or a `return`, `break`, or `continue` is reached), in reverse declaration order.
 ```k
 test_local_dtor() : int {
     c : counter;           // constructor called here
@@ -203,5 +206,6 @@ For owner-typed local variables (`T!`, `T[N]!`):
 | `for`     | [For Statement](for.md) |
 | `return`  | [Return Statement](return.md) |
 | `break`   | [Break Statement](break.md) |
+| `continue`| [Continue Statement](continue.md) |
 ---
 *See also:* [Expressions](../expressions/expressions.md) · [Functions](../functions/functions.md) · [Types](../basic/types.md) · [Dynamic Allocation](../memory/new-delete.md)

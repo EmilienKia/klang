@@ -28,6 +28,8 @@ The body may be a single statement or a block.
 If the condition is false on the first evaluation, the body is never executed.
 
 A [`break`](break.md) statement inside the body immediately exits the loop.
+
+A [`continue`](continue.md) statement inside the body skips the rest of the current iteration and jumps back to the condition evaluation.
 ---
 ## 3. Examples
 ### Basic while loop
@@ -53,4 +55,4 @@ process(p : int*) {
 }
 ```
 ---
-*See also:* [Statements](statements.md) · [If Statement](if.md) · [For Statement](for.md) · [Break Statement](break.md)
+*See also:* [Statements](statements.md) · [If Statement](if.md) · [For Statement](for.md) · [Break Statement](break.md) · [Continue Statement](continue.md)

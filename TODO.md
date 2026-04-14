@@ -14,7 +14,6 @@
   - [ ] SFINAE-like overload filtering based on template constraints
 
 - Review casting algorithm and implicit casting strategy (char[]! -> const char[]?  ou  char[]! -> const char[], etc.)
-- Add continue statements in loops
 - Add support of foreach loops
 - Add support of non-fatal "else" branches for bad conversions in if statements (e.g. `if (x as T) { ... } else { ... }`)
 - Add placement new operator and support for custom allocators

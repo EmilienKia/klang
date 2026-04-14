@@ -141,6 +141,7 @@ public:
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;
     void visit_break_statement(break_statement&) override;
+    void visit_continue_statement(continue_statement&) override;
     void visit_if_else_statement(if_else_statement&) override;
     void visit_while_statement(while_statement&) override;
     void visit_for_statement(for_statement&) override;
@@ -175,7 +176,10 @@ protected:
     /** Stack of loop exit blocks for 'break' statements. */
     std::stack<llvm::BasicBlock*> _loop_exit_blocks;
 
-    /** Stack: cleanup stack depth at each loop entry (for scoped cleanup on break). */
+    /** Stack of loop continue blocks for 'continue' statements. */
+    std::stack<llvm::BasicBlock*> _loop_continue_blocks;
+
+    /** Stack: cleanup stack depth at each loop entry (for scoped cleanup on break/continue). */
     std::stack<size_t> _loop_cleanup_depth;
 
     /** Parallel stack: for each cleanup block, the list of owner-typed PARAMETERS to destroy (function body only). */
@@ -317,6 +321,7 @@ public:
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;
     void visit_break_statement(break_statement&) override;
+    void visit_continue_statement(continue_statement&) override;
     void visit_if_else_statement(if_else_statement&) override;
     void visit_while_statement(while_statement&) override;
     void visit_for_statement(for_statement&) override;

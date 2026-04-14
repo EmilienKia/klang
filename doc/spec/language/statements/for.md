@@ -37,6 +37,8 @@ The parenthesised header has three parts separated by semicolons:
 If the condition is omitted, the loop runs indefinitely (break or return must exit it).
 
 A [`break`](break.md) statement inside the body immediately exits the loop.
+
+A [`continue`](continue.md) statement inside the body skips the rest of the current iteration, jumps to the **step** expression (if any), and then re-evaluates the condition.
 ---
 ## 3. Scope of the loop variable
 A variable declared in the `for` init is scoped to the `for` statement itself (including its body).  
@@ -73,4 +75,4 @@ processAll(arr: int[8]&, len: int) {
 }
 ```
 ---
-*See also:* [Statements](statements.md) · [While Statement](while.md) · [If Statement](if.md) · [Break Statement](break.md)
+*See also:* [Statements](statements.md) · [While Statement](while.md) · [If Statement](if.md) · [Break Statement](break.md) · [Continue Statement](continue.md)

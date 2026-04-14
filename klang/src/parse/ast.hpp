@@ -291,6 +291,7 @@ namespace k::parse {
         struct block_statement;
         struct return_statement;
         struct break_statement;
+        struct continue_statement;
         typedef variable_decl declaration_statement;
         struct expression_statement;
         struct if_else_statement;
@@ -639,6 +640,14 @@ namespace k::parse {
             lex::keyword break_kw;
 
             break_statement(const lex::keyword& break_kw) : break_kw(break_kw) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
+        struct continue_statement : public statement {
+            lex::keyword continue_kw;
+
+            continue_statement(const lex::keyword& continue_kw) : continue_kw(continue_kw) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -1313,6 +1322,7 @@ namespace k::parse {
         virtual void visit_block_statement(ast::block_statement &) = 0;
         virtual void visit_return_statement(ast::return_statement &) = 0;
         virtual void visit_break_statement(ast::break_statement &) = 0;
+        virtual void visit_continue_statement(ast::continue_statement &) = 0;
         virtual void visit_if_else_statement(ast::if_else_statement &) = 0;
         virtual void visit_while_statement(ast::while_statement &) = 0;
         virtual void visit_for_statement(ast::for_statement &) = 0;
@@ -1379,6 +1389,7 @@ namespace k::parse {
         void visit_block_statement(ast::block_statement &) override;
         void visit_return_statement(ast::return_statement &) override;
         void visit_break_statement(ast::break_statement &) override;
+        void visit_continue_statement(ast::continue_statement &) override;
         void visit_if_else_statement(ast::if_else_statement &) override;
         void visit_while_statement(ast::while_statement &) override;
         void visit_for_statement(ast::for_statement &) override;

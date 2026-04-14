@@ -121,6 +121,29 @@ public:
 };
 
 /**
+ * Continue statement — jumps to the next iteration of the innermost enclosing loop.
+ */
+class continue_statement : public statement
+{
+public:
+    continue_statement() = delete;
+    continue_statement(const std::shared_ptr<statement>& parent) :
+            statement(parent) {}
+    continue_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::continue_statement>& ast) :
+            statement(parent) { _ast_node = ast; }
+
+    void accept(model_visitor& visitor) override;
+
+    void set_ast_continue_statement(std::shared_ptr<k::parse::ast::continue_statement> ast) {
+        _ast_node = std::move(ast);
+    }
+
+    std::shared_ptr<const k::parse::ast::continue_statement> get_ast_continue_statement() const {
+        return get_ast_node_as<k::parse::ast::continue_statement>();
+    }
+};
+
+/**
  * If then else statement
  */
 class if_else_statement : public statement

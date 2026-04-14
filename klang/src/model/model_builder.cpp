@@ -1318,6 +1318,33 @@ namespace k::model {
         _stmt = break_stmt;
     }
 
+    void model_builder::visit_continue_statement(parse::ast::continue_statement &stmt) {
+        auto parent_scope = current_context_content<statement>();
+        if(!parent_scope) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_CONTINUE_NOT_IN_LOOP), stmt.continue_kw, "'continue' statement cannot appear here; it must be inside a function or block body");
+        }
+
+        // Verify that the continue statement is inside a loop (while or for)
+        bool in_loop = false;
+        for (auto it = _contexts.rbegin(); it != _contexts.rend(); ++it) {
+            if (std::dynamic_pointer_cast<while_context>(*it) && std::dynamic_pointer_cast<model::while_statement>((*it)->content)) {
+                in_loop = true;
+                break;
+            }
+            if (std::dynamic_pointer_cast<for_context>(*it) && std::dynamic_pointer_cast<model::for_statement>((*it)->content)) {
+                in_loop = true;
+                break;
+            }
+        }
+        if (!in_loop) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_CONTINUE_NOT_IN_LOOP), stmt.continue_kw, "'continue' statement can only appear inside a loop body (while or for)");
+        }
+
+        std::shared_ptr<model::continue_statement> continue_stmt = std::make_shared<model::continue_statement>(parent_scope, stmt.shared_as<parse::ast::continue_statement>());
+
+        _stmt = continue_stmt;
+    }
+
     void model_builder::visit_if_else_statement(parse::ast::if_else_statement &stmt) {
         auto parent_scope = current_context_content<statement>();
         if(!parent_scope) {

@@ -46,6 +46,7 @@ namespace k::lex {
         {"while", keyword::WHILE},
         {"for", keyword::FOR},
         {"break", keyword::BREAK},
+        {"continue", keyword::CONTINUE},
 
         {"struct", keyword::STRUCT},
         {"class", keyword::CLASS},

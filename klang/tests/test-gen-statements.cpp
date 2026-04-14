@@ -274,3 +274,151 @@ TEST_CASE("Break outside loop is an error", "[gen][break]") {
     }
 }
 
+//
+// Continue
+//
+
+TEST_CASE("Continue in while loop", "[gen][continue]") {
+    auto jit = gen_jit(R"SRC(
+        module __continue_while__;
+        sum_odd(n : int) : int {
+            r : int = 0;
+            i : int = 0;
+            while(i < n) {
+                i = i + 1;
+                if(i % 2 == 0) {
+                    continue;
+                }
+                r = r + i;
+            }
+            return r;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    SECTION("continue skips even numbers in while loop") {
+        auto sum_odd = jit->lookup_symbol<int(*)(int)>("sum_odd");
+        REQUIRE(sum_odd != nullptr);
+        REQUIRE(sum_odd(0) == 0);
+        REQUIRE(sum_odd(1) == 1);
+        REQUIRE(sum_odd(2) == 1);
+        REQUIRE(sum_odd(3) == 4);
+        REQUIRE(sum_odd(4) == 4);
+        REQUIRE(sum_odd(5) == 9);
+        REQUIRE(sum_odd(10) == 25);
+    }
+}
+
+TEST_CASE("Continue in for loop", "[gen][continue]") {
+    auto jit = gen_jit(R"SRC(
+        module __continue_for__;
+        sum_skip_multiples(n : int, skip : int) : int {
+            r : int = 0;
+            for(i : int = 0; i < n; i += 1) {
+                if(i % skip == 0) {
+                    continue;
+                }
+                r = r + i;
+            }
+            return r;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    SECTION("continue skips multiples in for loop") {
+        auto sum_skip = jit->lookup_symbol<int(*)(int,int)>("sum_skip_multiples");
+        REQUIRE(sum_skip != nullptr);
+        // skip multiples of 3 in 0..5: skip 0,3 -> sum 1+2+4 = 7
+        REQUIRE(sum_skip(5, 3) == 7);
+        // skip multiples of 2 in 0..6: skip 0,2,4 -> sum 1+3+5 = 9
+        REQUIRE(sum_skip(6, 2) == 9);
+        // skip multiples of 1 (all): sum = 0
+        REQUIRE(sum_skip(5, 1) == 0);
+    }
+}
+
+TEST_CASE("Continue in for loop preserves step", "[gen][continue]") {
+    auto jit = gen_jit(R"SRC(
+        module __continue_for_step__;
+        count_non_multiples(n : int, skip : int) : int {
+            count : int = 0;
+            for(i : int = 1; i <= n; i += 1) {
+                if(i % skip == 0) {
+                    continue;
+                }
+                count = count + 1;
+            }
+            return count;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    SECTION("continue executes step expression before next iteration") {
+        auto count = jit->lookup_symbol<int(*)(int,int)>("count_non_multiples");
+        REQUIRE(count != nullptr);
+        // 1..10, skip multiples of 3 (3,6,9) -> 7 non-multiples
+        REQUIRE(count(10, 3) == 7);
+        // 1..10, skip multiples of 2 (2,4,6,8,10) -> 5 non-multiples
+        REQUIRE(count(10, 2) == 5);
+        // 1..1, skip multiples of 1 (1) -> 0
+        REQUIRE(count(1, 1) == 0);
+    }
+}
+
+TEST_CASE("Continue in nested loops", "[gen][continue]") {
+    auto jit = gen_jit(R"SRC(
+        module __continue_nested__;
+        nested_continue(n : int) : int {
+            total : int = 0;
+            i : int = 0;
+            while(i < n) {
+                j : int = 0;
+                while(j < n) {
+                    j = j + 1;
+                    if(j % 2 == 0) {
+                        continue;
+                    }
+                    total = total + 1;
+                }
+                i = i + 1;
+            }
+            return total;
+        }
+        )SRC");
+    REQUIRE(jit);
+
+    SECTION("continue only affects innermost loop") {
+        auto nested = jit->lookup_symbol<int(*)(int)>("nested_continue");
+        REQUIRE(nested != nullptr);
+        // n=1: outer 1 iter, inner j=1(odd,+1) -> total=1
+        REQUIRE(nested(1) == 1);
+        // n=2: outer 2 iters, inner j=1(odd,+1),j=2(even,skip) -> 1 per outer -> total=2
+        REQUIRE(nested(2) == 2);
+        // n=4: outer 4 iters, inner j=1(+1),j=2(skip),j=3(+1),j=4(skip) -> 2 per outer -> total=8
+        REQUIRE(nested(4) == 8);
+    }
+}
+
+TEST_CASE("Continue outside loop is an error", "[gen][continue]") {
+    SECTION("continue in function body (not in loop)") {
+        REQUIRE_THROWS(gen_jit_throws(R"SRC(
+            module __continue_error__;
+            bad() : int {
+                continue;
+                return 0;
+            }
+        )SRC"));
+    }
+
+    SECTION("continue in if (not in loop)") {
+        REQUIRE_THROWS(gen_jit_throws(R"SRC(
+            module __continue_error2__;
+            bad(x : int) : int {
+                if(x > 0) {
+                    continue;
+                }
+                return 0;
+            }
+        )SRC"));
+    }
+}

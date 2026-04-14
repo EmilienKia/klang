@@ -272,6 +272,7 @@ protected:
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;
     void visit_break_statement(break_statement&) override;
+    void visit_continue_statement(continue_statement&) override;
     void visit_if_else_statement(if_else_statement&) override;
     void visit_while_statement(while_statement&) override;
     void visit_for_statement(for_statement&) override;
@@ -757,6 +758,7 @@ protected:
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;
     void visit_break_statement(break_statement&) override;
+    void visit_continue_statement(continue_statement&) override;
     void visit_if_else_statement(if_else_statement&) override;
     void visit_while_statement(while_statement&) override;
     void visit_for_statement(for_statement&) override;

@@ -121,6 +121,10 @@ void ast::break_statement::visit(ast_visitor &visitor) {
     visitor.visit_break_statement(*this);
 }
 
+void ast::continue_statement::visit(ast_visitor &visitor) {
+    visitor.visit_continue_statement(*this);
+}
+
 void ast::if_else_statement::visit(ast_visitor &visitor) {
     visitor.visit_if_else_statement(*this);
 }
@@ -332,6 +336,10 @@ void default_ast_visitor::visit_return_statement(ast::return_statement &) {
 }
 
 void default_ast_visitor::visit_break_statement(ast::break_statement &) {
+
+}
+
+void default_ast_visitor::visit_continue_statement(ast::continue_statement &) {
 
 }
 

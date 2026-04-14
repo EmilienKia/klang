@@ -564,6 +564,83 @@ void implementation_generator::visit_break_statement(break_statement& stmt) {
 }
 
 //
+// Continue
+//
+
+void symbol_resolver::visit_continue_statement(continue_statement& stmt)
+{
+    // Nothing to resolve
+}
+
+void type_reference_resolver::visit_continue_statement(continue_statement& stmt)
+{
+    // Nothing to resolve
+}
+
+void declaration_generator::visit_continue_statement(continue_statement& stmt) {
+    // Nothing to do here
+}
+
+/**
+ * Generate LLVM IR for a continue statement.
+ *
+ * Steps:
+ *   1. Emit cleanup for all block-scoped variables between the continue and the loop boundary.
+ *   2. Branch to the loop continue block (condition for while, step for for).
+ *   3. Create a new unreachable basic block for any code following the continue.
+ */
+void implementation_generator::visit_continue_statement(continue_statement& stmt) {
+    // Emit cleanup for all scopes between the continue and the loop boundary.
+    size_t loop_depth = _loop_cleanup_depth.top();
+    size_t current_depth = _cleanup_vars_stack.size();
+
+    if (current_depth > loop_depth) {
+        // Collect scope variable lists from innermost to the loop boundary
+        std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
+        std::vector<std::vector<std::shared_ptr<variable_statement>>> loop_scopes;
+        size_t count = current_depth - loop_depth;
+        for (size_t i = 0; i < count && !tmp.empty(); ++i) {
+            loop_scopes.push_back(tmp.top());
+            tmp.pop();
+        }
+        // Emit destructor calls in reverse declaration order for each scope
+        for (auto& scope_vars : loop_scopes) {
+            for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
+                auto& var_stmt = *it;
+
+                // NRVO: do NOT destroy the NRVO candidate
+                if (_nrvo_candidate && var_stmt == _nrvo_candidate) continue;
+
+                auto vt = var_stmt->get_type();
+                auto var_it = _context->_variables.find(var_stmt);
+                if (var_it == _context->_variables.end()) continue;
+                llvm::AllocaInst* alloca = var_it->second;
+
+                if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
+                    auto dtor = st_type->get_struct()->get_destructor();
+                    if (!dtor) continue;
+                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                    if (dtor_it == _context->_functions.end()) continue;
+                    _builder->CreateCall(dtor_it->second, {alloca});
+                } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
+                    emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                        alloca, own_type->get_owned_type(), "continue_owner");
+                }
+            }
+        }
+    }
+
+    // Branch to loop continue block
+    _builder->CreateBr(_loop_continue_blocks.top());
+
+    // Create unreachable basic block for any code following the continue
+    llvm::Function* func = _builder->GetInsertBlock()->getParent();
+    llvm::BasicBlock* after_continue = llvm::BasicBlock::Create(**_context, "after-continue");
+    func->insert(func->end(), after_continue);
+    _builder->SetInsertPoint(after_continue);
+}
+
+//
 // If-then-else
 //
 
@@ -752,12 +829,14 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
 
     // Push loop exit context for break statements
     _loop_exit_blocks.push(cont_block);
+    _loop_continue_blocks.push(while_block);
     _loop_cleanup_depth.push(_cleanup_vars_stack.size());
 
     stmt.get_nested_stmt()->accept(*this);
 
     // Pop loop exit context
     _loop_cleanup_depth.pop();
+    _loop_continue_blocks.pop();
     _loop_exit_blocks.pop();
 
     // Go back to test
@@ -845,6 +924,7 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     llvm::Function* func = _builder->GetInsertBlock()->getParent();
     llvm::BasicBlock* for_block = llvm::BasicBlock::Create(**_context, "for-condition");
     llvm::BasicBlock* nested_block = llvm::BasicBlock::Create(**_context, "for-nested");
+    llvm::BasicBlock* step_block = llvm::BasicBlock::Create(**_context, "for-step");
     llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(**_context, "for-continue");
 
     // Generate variable decl, if any
@@ -878,17 +958,26 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     func->insert(func->end(), nested_block);
     _builder->SetInsertPoint(nested_block);
 
-    // Push loop exit context for break statements
+    // Push loop context for break/continue statements
+    // continue jumps to step_block, break jumps to cont_block
     _loop_exit_blocks.push(cont_block);
+    _loop_continue_blocks.push(step_block);
     _loop_cleanup_depth.push(_cleanup_vars_stack.size());
 
     stmt.get_nested_stmt()->accept(*this);
 
-    // Pop loop exit context
+    // Pop loop context
     _loop_cleanup_depth.pop();
+    _loop_continue_blocks.pop();
     _loop_exit_blocks.pop();
 
-    // Step 2: Create cond/body/step/after basic blocks
+    // Fall through to step block
+    _builder->CreateBr(step_block);
+
+    // Step block
+    func->insert(func->end(), step_block);
+    _builder->SetInsertPoint(step_block);
+
     // Step, if any
     if(auto step = stmt.get_step_expr()) {
         _value = nullptr;
@@ -896,19 +985,15 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
         auto step_value = _value;
         _value = nullptr;
 
-        // Step 3: Evaluate condition, branch to body or after
         // Destroy any struct temporaries created during step evaluation
         emit_expression_temporaries_cleanup();
     }
 
-    // Step 4: Visit body block, branch to step
     // Go back to test
     _builder->CreateBr(for_block);
 
-    // Step 5: Visit step expression, branch to cond
     // Generate "continuation" block
     func->insert(func->end(), cont_block);
-    // Step 6: Set insertion point to after block
     _builder->SetInsertPoint(cont_block);
 }
 

@@ -283,6 +283,11 @@ public:
      std::shared_ptr<ast::break_statement> parse_break_statement();
 
      /**
+      * ContinueStatement = 'continue' , ';' ;
+      */
+     std::shared_ptr<ast::continue_statement> parse_continue_statement();
+
+     /**
       * IfElseStatement = 'if' , '(' , Expression , ')' , Statement ,
       *                   [ 'else' , Statement ] ;
       */

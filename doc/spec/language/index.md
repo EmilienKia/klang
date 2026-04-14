@@ -50,6 +50,7 @@ Examples are included where they clarify the normative text.
 | [For Statement](statements/for.md) | Counter-controlled loop |
 | [Return Statement](statements/return.md) | Function return |
 | [Break Statement](statements/break.md) | Exit the innermost loop |
+| [Continue Statement](statements/continue.md) | Skip to the next iteration of the innermost loop |
 
 ### Functions
 

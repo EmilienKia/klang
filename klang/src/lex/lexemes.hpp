@@ -135,6 +135,7 @@ struct keyword : public lexeme {
         WHILE,
         FOR,
         BREAK,
+        CONTINUE,
         STRUCT,
         CLASS,
         INTERFACE,
