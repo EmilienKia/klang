@@ -503,6 +503,7 @@ IfElseStatement
     = 'if' , '(' , Expression , ')' , Statement , [ 'else' , Statement ]
     | 'if' , '(' , IfCondVarDecl , ')' , Statement , [ 'else' , Statement ]
     | 'if' , '(' , IfCondVarDeclList , ';' , ConditionalExpr , ')' , Statement , [ 'else' , Statement ]
+    | 'if' , '(' , IfCondVarDeclList , ')' , Statement , [ 'else' , Statement ]
     ;
 
 IfCondVarDeclList
@@ -518,9 +519,18 @@ IfCondVarDecl
     (* Single-variable form (classic if-let):                                   *)
     (*   if (v : T = expr) { ... }                                              *)
     (*   The variable value, cast to bool, determines the branch taken.         *)
-    (*   For non-nullable addressors (reference '&' or link '+'), a null        *)
-    (*   initialiser triggers a soft-fail: the else branch is taken and the     *)
-    (*   variable does not exist on that path.                                  *)
+    (*   For addressor types (ref, link, ptr, view, owner), a null initialiser  *)
+    (*   triggers a soft-fail: the else branch is taken and the variable does   *)
+    (*   not exist on that path.                                                *)
+    (*   For non-addressor types (int, struct, etc.), bool cast applies.        *)
+    (*                                                                          *)
+    (* Multi-variable soft-fail form (no test expression):                      *)
+    (*   if (v1 : T1 = e1; v2 : T2 = e2; ...) { ... }                         *)
+    (*   Variables are declared left to right; later declarations may reference *)
+    (*   earlier ones. Each addressor variable is null-checked after init; the  *)
+    (*   first null triggers a jump to else (or continue). Non-addressor        *)
+    (*   variables are never null-checked. No variables are visible in else.    *)
+    (*   Previously-initialized variables are cleaned up before jumping.        *)
     (*                                                                          *)
     (* Multi-variable form with separate test:                                  *)
     (*   if (v1 : T1 = e1; v2 : T2 = e2; ...; testExpr) { ... }               *)

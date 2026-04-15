@@ -682,6 +682,10 @@ void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
             } else if(cast != expr) {
                 stmt.set_test_expr(cast);
             }
+        } else if(stmt.is_multi_var_softfail()) {
+            // Multi-var soft-fail form: each addressor variable is null-checked.
+            // Non-addressor variables are allowed (they just don't get null-checked).
+            // No explicit bool-castability check needed — null-check is implicit.
         } else {
             // Classic if-let: the boolean test is derived from the variable's type at codegen time.
             // For non-nullable addressors (ref &, link +), the soft-fail mechanism
@@ -796,6 +800,9 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
     bool has_else = (bool)stmt.get_else_stmt();
     bool has_cond_var = stmt.has_cond_var();
     bool has_cond_var_with_test = stmt.has_cond_var_with_test();
+    bool is_multi_softfail = stmt.is_multi_var_softfail();
+    // Single-var soft-fail: single addressor var without test expression
+    bool is_single_softfail = has_cond_var && !has_cond_var_with_test && !is_multi_softfail;
 
     // Step 1: Create then/else/merge basic blocks BEFORE evaluating the condition,
     // so that _null_failure_bb can reference them during condition codegen.
@@ -804,118 +811,245 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
     llvm::BasicBlock* else_block = has_else ? llvm::BasicBlock::Create(**_context, "if-else") : nullptr;
     llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(**_context, "if-continue");
 
-    // Step 2: Set up soft-fail destination for link null-checks in the condition.
-    // For if(var; test) form, do NOT set up soft-fail — null assignments are fatal errors.
-    auto* saved_null_failure_bb = _null_failure_bb;
-    if(!has_cond_var_with_test) {
-        _null_failure_bb = has_else ? else_block : cont_block;
-    }
+    // The destination for soft-fail branches (else or continue)
+    llvm::BasicBlock* fail_dest = has_else ? else_block : cont_block;
 
-    if(has_cond_var) {
-        // Emit all condition variable declarations (alloca + init)
+    auto* saved_null_failure_bb = _null_failure_bb;
+
+    if(is_multi_softfail) {
+        // =====================================================================
+        // Multi-var soft-fail form: if(var1; var2; ...)
+        // Each addressor var gets a null-check after init. On null, cleanup
+        // previously-initialized vars in reverse, then jump to else/cont.
+        // For ref/link: _null_failure_bb handles the soft-fail during init.
+        // For ptr/view/owner: explicit null-check after init.
+        // Non-addressor vars: no null-check, always succeed.
+        // =====================================================================
+        auto& vars = stmt.get_cond_vars();
+
+        for(size_t i = 0; i < vars.size(); ++i) {
+            auto& var = vars[i];
+
+            // Create a cleanup trampoline for failure at this variable.
+            // It cleans up vars 0..i-1 (already initialized) in reverse, then jumps to fail_dest.
+            // For ref/link, _null_failure_bb is set to this trampoline so the
+            // existing soft-fail mechanism in visit_variable_statement uses it.
+            llvm::BasicBlock* trampoline = nullptr;
+            if(i > 0) {
+                trampoline = llvm::BasicBlock::Create(**_context, "if-softfail-cleanup-" + std::to_string(i));
+                // Build the trampoline: cleanup vars [i-1 .. 0] then branch to fail_dest
+                // We'll fill it in after emitting the var, but create it now for _null_failure_bb
+            }
+
+            // Determine if this variable type is an addressor
+            auto var_type = var->get_type();
+            bool is_addressor = type::is_any_indirection(var_type);
+            bool is_ref_or_link = std::dynamic_pointer_cast<reference_type>(var_type) != nullptr
+                               || std::dynamic_pointer_cast<link_type>(var_type) != nullptr;
+
+            // Set _null_failure_bb for ref/link soft-fail during init
+            if(is_ref_or_link) {
+                _null_failure_bb = trampoline ? trampoline : fail_dest;
+            } else {
+                // For non-ref/link, don't set soft-fail — null assignment would be fatal
+                // (which is correct for ptr/view/owner: we'll check explicitly after init)
+                _null_failure_bb = saved_null_failure_bb;
+            }
+
+            // Emit the variable declaration
+            var->accept(*this);
+
+            // For ref/link: if we reach here, init succeeded (soft-fail would have jumped away)
+            // For ptr/view/owner: emit explicit null-check
+            if(is_addressor && !is_ref_or_link) {
+                auto var_it = _context->_variables.find(var);
+                if(var_it != _context->_variables.end()) {
+                    llvm::AllocaInst* alloca = var_it->second;
+                    auto& llvm_ctx = _builder->getContext();
+                    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                    llvm::Value* loaded = _builder->CreateLoad(ptr_ty, alloca, "softfail_null_check");
+                    auto* is_null = _builder->CreateICmpEQ(loaded,
+                        llvm::ConstantPointerNull::get(ptr_ty), "softfail_is_null");
+
+                    llvm::BasicBlock* ok_bb = llvm::BasicBlock::Create(**_context, "softfail-ok-" + std::to_string(i), func);
+
+                    // On null, jump to trampoline (or fail_dest if first var)
+                    llvm::BasicBlock* null_target = trampoline ? trampoline : fail_dest;
+
+                    // But we also need to cleanup THIS var (var i) if it's an owner with non-null before the check
+                    // Actually: the var IS null if we branch here, so no cleanup of THIS var needed.
+                    // But we need to cleanup vars 0..i-1. The trampoline handles 0..i-1.
+                    // For var i which is null, no cleanup needed (it's null).
+                    // However we need a trampoline that also cleans up var i if it was already
+                    // stored but is not null... Actually no: if is_null is true, the value IS null,
+                    // so no cleanup needed for this var. Just cleanup 0..i-1.
+                    // But for owner types, the alloca was already stored with null, which is fine —
+                    // emit_cond_var_cleanup checks for null before freeing owners.
+                    // Actually, let's just route to a trampoline that cleans i..0 including this var
+                    // since cleanup of a null owner/ptr is a no-op anyway.
+
+                    // Create a trampoline for failure AT this var (cleanup vars 0..i in reverse)
+                    llvm::BasicBlock* this_fail_bb = llvm::BasicBlock::Create(**_context, "if-softfail-at-" + std::to_string(i));
+                    _builder->CreateCondBr(is_null, this_fail_bb, ok_bb);
+
+                    // Fill the this_fail_bb: cleanup vars [i..0] then jump to fail_dest
+                    func->insert(func->end(), this_fail_bb);
+                    _builder->SetInsertPoint(this_fail_bb);
+                    for(int j = (int)i; j >= 0; --j) {
+                        emit_cond_var_cleanup(vars[j]);
+                    }
+                    _builder->CreateBr(fail_dest);
+
+                    _builder->SetInsertPoint(ok_bb);
+                }
+            }
+
+            // Fill the trampoline for ref/link failure at var i (created earlier)
+            // This trampoline cleans up vars 0..i-1 (the ref/link at i was never stored)
+            if(trampoline && is_ref_or_link) {
+                // Save current insert point
+                auto* saved_bb = _builder->GetInsertBlock();
+                func->insert(func->end(), trampoline);
+                _builder->SetInsertPoint(trampoline);
+                for(int j = (int)i - 1; j >= 0; --j) {
+                    emit_cond_var_cleanup(vars[j]);
+                }
+                _builder->CreateBr(fail_dest);
+                _builder->SetInsertPoint(saved_bb);
+            } else if(trampoline && !is_addressor) {
+                // Non-addressor: trampoline was created but won't be used. Drop it.
+                // Actually it might be used by a later ref/link. Let's fill it anyway.
+                auto* saved_bb = _builder->GetInsertBlock();
+                func->insert(func->end(), trampoline);
+                _builder->SetInsertPoint(trampoline);
+                for(int j = (int)i - 1; j >= 0; --j) {
+                    emit_cond_var_cleanup(vars[j]);
+                }
+                _builder->CreateBr(fail_dest);
+                _builder->SetInsertPoint(saved_bb);
+            }
+        }
+
+        // All vars initialized successfully → go to then
+        _null_failure_bb = saved_null_failure_bb;
+        _builder->CreateBr(then_block);
+
+    } else if(has_cond_var_with_test) {
+        // =====================================================================
+        // if(vars; test) form — hard-fail, test expression determines branch
+        // =====================================================================
+        // No soft-fail for any var
         for(auto& var : stmt.get_cond_vars()) {
             var->accept(*this);
         }
+        _null_failure_bb = saved_null_failure_bb;
 
-        if(has_cond_var_with_test) {
-            // if(var; test) form: variable declared, now evaluate the separate test expression.
-            // No soft-fail, no bool cast of the variable — only the test expression matters.
+        _value = nullptr;
+        stmt.get_test_expr()->accept(*this);
+        auto test_value = _value;
+        _value = nullptr;
+
+        emit_expression_temporaries_cleanup();
+
+        if(has_else) {
+            _builder->CreateCondBr(test_value, then_block, else_block);
+        } else {
+            _builder->CreateCondBr(test_value, then_block, cont_block);
+        }
+
+    } else if(is_single_softfail) {
+        // =====================================================================
+        // Classic if-let: single var, no test expression
+        // =====================================================================
+        _null_failure_bb = fail_dest;
+
+        stmt.get_cond_var()->accept(*this);
+
+        auto var_type = stmt.get_cond_var()->get_type();
+        bool is_ref_or_link = std::dynamic_pointer_cast<reference_type>(var_type) != nullptr
+                           || std::dynamic_pointer_cast<link_type>(var_type) != nullptr;
+
+        if(is_ref_or_link) {
+            // Soft-fail mechanism handled null → else. If we're here, success → then.
             _null_failure_bb = saved_null_failure_bb;
-
-            _value = nullptr;
-            stmt.get_test_expr()->accept(*this);
-            auto test_value = _value;
-            _value = nullptr;
+            _builder->CreateBr(then_block);
+        } else if(std::dynamic_pointer_cast<pointer_type>(var_type)
+               || std::dynamic_pointer_cast<owner_type>(var_type)
+               || std::dynamic_pointer_cast<view_type>(var_type)) {
+            // Pointer/owner/view: explicit null-check → soft-fail
+            _null_failure_bb = saved_null_failure_bb;
+            auto var_it = _context->_variables.find(stmt.get_cond_var());
+            llvm::AllocaInst* alloca = var_it->second;
+            auto& llvm_ctx = _builder->getContext();
+            auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+            llvm::Value* loaded = _builder->CreateLoad(ptr_ty, alloca, "if_cond_ptr_load");
+            auto* test_value = _builder->CreateICmpNE(loaded,
+                llvm::ConstantPointerNull::get(ptr_ty), "if_cond_ne_null");
 
             emit_expression_temporaries_cleanup();
 
-            // Emit conditional branch based on the test expression
             if(has_else) {
                 _builder->CreateCondBr(test_value, then_block, else_block);
             } else {
                 _builder->CreateCondBr(test_value, then_block, cont_block);
             }
         } else {
-            // Classic if-let form: determine branch from the variable's type.
-            auto var_type = stmt.get_cond_var()->get_type();
-            bool is_ref_or_link = std::dynamic_pointer_cast<reference_type>(var_type) != nullptr
-                               || std::dynamic_pointer_cast<link_type>(var_type) != nullptr;
+            _null_failure_bb = saved_null_failure_bb;
 
-            if(is_ref_or_link) {
-                // For ref/link: the soft-fail mechanism handles null → else branching.
-                // If we reach here, the ref/link was successfully bound → go to then.
-                _null_failure_bb = saved_null_failure_bb;
-                _builder->CreateBr(then_block);
-            } else {
-                _null_failure_bb = saved_null_failure_bb;
+            // Generate bool cast from the variable value (primitive, aggregate, etc.)
+            auto var_it = _context->_variables.find(stmt.get_cond_var());
+            llvm::AllocaInst* alloca = var_it->second;
 
-                // Generate bool cast from the variable value
-                auto var_it = _context->_variables.find(stmt.get_cond_var());
-                llvm::AllocaInst* alloca = var_it->second;
-
-                llvm::Value* test_value = nullptr;
-                if(auto prim_type = std::dynamic_pointer_cast<primitive_type>(var_type)) {
-                    // Numeric primitive: != 0
-                    llvm::Type* llvm_t = _context->get_llvm_type(var_type);
-                    llvm::Value* loaded = _builder->CreateLoad(llvm_t, alloca, "if_cond_load");
-                    if(prim_type->is_float()) {
-                        test_value = _builder->CreateFCmpONE(loaded,
-                            llvm::ConstantFP::get(llvm_t, 0.0), "if_cond_ne_zero");
-                    } else {
-                        test_value = _builder->CreateICmpNE(loaded,
-                            llvm::ConstantInt::get(llvm_t, 0), "if_cond_ne_zero");
-                    }
-                } else if(std::dynamic_pointer_cast<pointer_type>(var_type)
-                       || std::dynamic_pointer_cast<owner_type>(var_type)
-                       || std::dynamic_pointer_cast<view_type>(var_type)) {
-                    // Pointer/owner/view: != null
-                    auto& llvm_ctx = _builder->getContext();
-                    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
-                    llvm::Value* loaded = _builder->CreateLoad(ptr_ty, alloca, "if_cond_ptr_load");
-                    test_value = _builder->CreateICmpNE(loaded,
-                        llvm::ConstantPointerNull::get(ptr_ty), "if_cond_ne_null");
-                } else if(auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
-                    // Aggregate: call bool cast operator (__operator_cv_bool)
-                    auto agg = st_type->get_struct();
-                    auto funcs = agg->get_functions("__operator_cv_bool");
-                    if(!funcs.empty()) {
-                        auto cast_fn = funcs[0];
-                        auto fn_it = _context->_functions.find(cast_fn);
-                        if(fn_it != _context->_functions.end()) {
-                            test_value = _builder->CreateCall(fn_it->second, {alloca}, "if_cond_bool_cast");
-                        }
-                    }
-                }
-
-                if(!test_value) {
-                    // Fallback: should not happen if type_reference_resolver validated
-                    test_value = _builder->getTrue();
-                }
-
-                emit_expression_temporaries_cleanup();
-
-                // Emit conditional branch
-                if(has_else) {
-                    _builder->CreateCondBr(test_value, then_block, else_block);
+            llvm::Value* test_value = nullptr;
+            if(auto prim_type = std::dynamic_pointer_cast<primitive_type>(var_type)) {
+                llvm::Type* llvm_t = _context->get_llvm_type(var_type);
+                llvm::Value* loaded = _builder->CreateLoad(llvm_t, alloca, "if_cond_load");
+                if(prim_type->is_float()) {
+                    test_value = _builder->CreateFCmpONE(loaded,
+                        llvm::ConstantFP::get(llvm_t, 0.0), "if_cond_ne_zero");
                 } else {
-                    _builder->CreateCondBr(test_value, then_block, cont_block);
+                    test_value = _builder->CreateICmpNE(loaded,
+                        llvm::ConstantInt::get(llvm_t, 0), "if_cond_ne_zero");
                 }
+            } else if(auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
+                auto agg = st_type->get_struct();
+                auto funcs = agg->get_functions("__operator_cv_bool");
+                if(!funcs.empty()) {
+                    auto cast_fn = funcs[0];
+                    auto fn_it = _context->_functions.find(cast_fn);
+                    if(fn_it != _context->_functions.end()) {
+                        test_value = _builder->CreateCall(fn_it->second, {alloca}, "if_cond_bool_cast");
+                    }
+                }
+            }
+
+            if(!test_value) {
+                test_value = _builder->getTrue();
+            }
+
+            emit_expression_temporaries_cleanup();
+
+            if(has_else) {
+                _builder->CreateCondBr(test_value, then_block, else_block);
+            } else {
+                _builder->CreateCondBr(test_value, then_block, cont_block);
             }
         }
     } else {
-        // Classic form: evaluate the condition expression
+        // =====================================================================
+        // Classic form: if(expr) — no cond vars
+        // =====================================================================
+        _null_failure_bb = fail_dest;
+
         _value = nullptr;
         stmt.get_test_expr()->accept(*this);
         auto test_value = _value;
         _value = nullptr;
 
-        // Step 4: Restore previous _null_failure_bb (supports nested if-statements)
         _null_failure_bb = saved_null_failure_bb;
 
-        // Destroy any struct temporaries created during condition evaluation.
         emit_expression_temporaries_cleanup();
 
-        // Step 5: Emit conditional branch
         if(has_else) {
             _builder->CreateCondBr(test_value, then_block, else_block);
         } else {
@@ -940,25 +1074,18 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         func->insert(func->end(), else_block);
         _builder->SetInsertPoint(else_block);
         stmt.get_else_stmt()->accept(*this);
-        // For ref/link soft-fail (classic if-let): the variable doesn't exist on the else path,
-        // so skip cleanup. For if(var; test) form, cleanup always happens.
-        // For all other types, clean up.
+        // For soft-fail forms (single or multi without test): no cleanup in else.
+        // Variables don't exist on the else path (option 3a).
+        // For if(vars; test) form: all variables always exist, cleanup in reverse order.
         if(has_cond_var) {
             if(has_cond_var_with_test) {
-                // if(vars; test) form: all variables always exist, always cleanup in reverse order
                 auto& vars = stmt.get_cond_vars();
                 for(auto it = vars.rbegin(); it != vars.rend(); ++it) {
                     emit_cond_var_cleanup(*it);
                 }
-            } else {
-                // Classic if-let (single var)
-                auto var_type = stmt.get_cond_var()->get_type();
-                bool is_ref_or_link = std::dynamic_pointer_cast<reference_type>(var_type) != nullptr
-                                   || std::dynamic_pointer_cast<link_type>(var_type) != nullptr;
-                if(!is_ref_or_link) {
-                    emit_cond_var_cleanup(stmt.get_cond_var());
-                }
             }
+            // else: soft-fail form — no cleanup in else (cleanup done in trampolines
+            // or variable was never fully initialized)
         }
         _builder->CreateBr(cont_block);
     }

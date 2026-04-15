@@ -1971,10 +1971,7 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                 cond_vars.push_back(var);
                 var_holder.sync();
                 parsing_vars = false;
-                // No test expression — classic if-let (only valid with single var)
-                if(cond_vars.size() > 1) {
-                    throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CONDITION), lnext, "If statement with multiple condition variables requires a test expression after the last ';'");
-                }
+                // No test expression — if-let / multi-var soft-fail form
             } else {
                 // Unexpected token — bail out
                 single_var_holder.rollback();
@@ -2029,12 +2026,22 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                             then_stmt,
                             else_stmt
                         );
-            } else {
+            } else if(cond_vars.size() == 1) {
                 // Single var, classic if-let with else
                 return std::make_shared<ast::if_else_statement>(
                             lex::as<lex::keyword>(lif),
                             lex::as<lex::keyword>(lelse),
                             cond_vars[0],
+                            then_stmt,
+                            else_stmt
+                        );
+            } else {
+                // Multi-var soft-fail without test, with else
+                return std::make_shared<ast::if_else_statement>(
+                            lex::as<lex::keyword>(lif),
+                            lex::as<lex::keyword>(lelse),
+                            cond_vars,
+                            nullptr,
                             then_stmt,
                             else_stmt
                         );
@@ -2058,11 +2065,19 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                         test_expr,
                         then_stmt
                 );
-            } else {
+            } else if(cond_vars.size() == 1) {
                 // Single var, classic if-let without else
                 return std::make_shared<ast::if_else_statement>(
                         lex::as<lex::keyword>(lif),
                         cond_vars[0],
+                        then_stmt
+                );
+            } else {
+                // Multi-var soft-fail without test, without else
+                return std::make_shared<ast::if_else_statement>(
+                        lex::as<lex::keyword>(lif),
+                        cond_vars,
+                        nullptr,
                         then_stmt
                 );
             }

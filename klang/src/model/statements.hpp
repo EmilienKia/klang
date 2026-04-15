@@ -220,6 +220,9 @@ public:
     /** True when this if uses condition variable(s) and a separate test expression. */
     bool has_cond_var_with_test() const { return !_cond_vars.empty() && _test_expr != nullptr; }
 
+    /** True when this if uses multiple condition variables without a test expression (soft-fail mode). */
+    bool is_multi_var_softfail() const { return _cond_vars.size() > 1 && _test_expr == nullptr; }
+
     std::shared_ptr<variable_holder> get_variable_holder() override;
     std::shared_ptr<const variable_holder> get_variable_holder() const override;
 };

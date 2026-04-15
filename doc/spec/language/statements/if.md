@@ -14,7 +14,8 @@ The `if` statement conditionally executes a branch based on a boolean test expre
 5. [Link guard (soft-fail)](#5-link-guard-soft-fail)
 6. [Condition variable declaration (if-let)](#6-condition-variable-declaration-if-let)
 7. [Condition variable with separate test](#7-condition-variable-with-separate-test)
-8. [Multiple condition variables](#8-multiple-condition-variables)
+8. [Multiple condition variables with test (hard-fail)](#8-multiple-condition-variables-with-test-hard-fail)
+9. [Multiple condition variables without test (soft-fail)](#9-multiple-condition-variables-without-test-soft-fail)
 ---
 ## 1. Syntax
 ### Grammar
@@ -26,6 +27,8 @@ IfElseStatement:
     | 'if' '(' IfCondVarDecl ')' Statement 'else' Statement
     | 'if' '(' IfCondVarDeclList ';' ConditionalExpr ')' Statement
     | 'if' '(' IfCondVarDeclList ';' ConditionalExpr ')' Statement 'else' Statement
+    | 'if' '(' IfCondVarDeclList ')' Statement
+    | 'if' '(' IfCondVarDeclList ')' Statement 'else' Statement
 
 IfCondVarDeclList:
     IfCondVarDecl { ';' IfCondVarDecl }
@@ -42,6 +45,8 @@ The test expression (or condition variable declaration) is enclosed in parenthes
 Both the `then` branch and the `else` branch may be a single statement or a block statement.
 The `if(var; test)` and `if(var1; var2; ...; test)` forms declare variables scoped to
 the `if` statement and use a separate test expression for branching (see §7 and §8).
+The `if(var1; var2; ...)` form without test expression uses soft-fail: each addressor
+variable is null-checked, and the first null jumps to `else` (see §9).
 ---
 ## 2. Semantics
 1. The test expression is evaluated.
@@ -198,24 +203,29 @@ if (myvar : int = callSomething()) {
 // myvar is NOT accessible here — it has been destroyed
 ```
 
-### Boolean casting
+### Boolean casting and soft-fail
 
-The value of the declared variable is cast to `bool` to decide which branch to
-take.  The cast follows the same rules as any explicit cast to `bool`:
+The value of the declared variable determines which branch to take.  For
+**addressor types**, a null value triggers a soft-fail (the `else` branch is
+taken and the variable is not visible there).  For other types, the value is
+cast to `bool`:
 
-| Variable type                 | Cast rule                              |
+| Variable type                 | Behaviour                              |
 |-------------------------------|----------------------------------------|
-| Numeric primitive (`int`, `float`, …) | `!= 0`                        |
-| Pointer `*`, owner `!`, view `?`      | `!= null`                     |
+| Numeric primitive (`int`, `float`, …) | `!= 0` → then, `== 0` → else |
 | Aggregate (struct/class)              | User-defined `operator() : bool` is called |
-| Reference `&`, link `+`              | *Special soft-fail* (see below) |
+| Pointer `*`, owner `!`, view `?`      | `!= null` → then, `== null` → else (**soft-fail**: var not in else) |
+| Reference `&`, link `+`              | non-null → then, null → else (**soft-fail**: var not in else) |
 
 ### Scope and lifetime
 
 The condition variable is local to the `if` statement:
 
-- It is **visible** in both the `then` and `else` branches (except for the
-  ref/link soft-fail case described below).
+- For **non-addressor types** (int, struct, etc.): the variable is **visible**
+  in both the `then` and `else` branches.
+- For **addressor types** (ref, link, ptr, view, owner): the variable is
+  **only visible in the `then` branch** (soft-fail means it may be null/unset
+  on the `else` path).
 - It is **destroyed** at the end of each branch:
   - Destructors are called for aggregate types.
   - Memory is freed for owner types.
@@ -223,19 +233,17 @@ The condition variable is local to the `if` statement:
 - After the `if` statement, the variable no longer exists.  A new variable with
   the same name may be declared.
 
-### Reference and link soft-fail
+### Addressor soft-fail
 
-When the declared variable is a **non-nullable addressor** (reference `&` or
-link `+`) and its initialiser evaluates to `null`, a **soft-fail** is triggered:
+When the declared variable is an **addressor type** (reference `&`, link `+`,
+pointer `*`, view `?`, or owner `!`) and its initialiser evaluates to `null`,
+a **soft-fail** is triggered:
 
-1. The variable initialisation is skipped (the variable does not exist).
+1. The variable initialisation is skipped or its value is null.
 2. The `else` branch is taken (or execution continues after the `if` if there is
    no `else`).
 3. The variable is **not visible** in the `else` branch — using it is a
    compile-time error.
-
-This is the only case where the condition variable does not exist on the `else`
-path.
 
 ```k
 test() : int {
@@ -329,7 +337,7 @@ test3() : int {
 ```
 
 ---
-## 8. Multiple condition variables
+## 8. Multiple condition variables with test (hard-fail)
 
 The `if(var; test)` form can be extended with **multiple variable declarations**,
 each separated by a semicolon.  The last semicolon-separated element is always the
@@ -411,6 +419,111 @@ test3() : int {
         }
     }
     return 0;
+}
+```
+
+---
+## 9. Multiple condition variables without test (soft-fail)
+
+When multiple condition variables are declared **without** a trailing test
+expression, the `if` statement uses **soft-fail** semantics: each addressor
+variable (pointer `*`, reference `&`, link `+`, view `?`, owner `!`) is
+null-checked after initialization.  The first null triggers a jump to `else`
+(or continues after the `if` if there is no `else`).
+
+```k
+if (p1 : Foo* = getPtr(); p2 : Bar* = p1->getBar(); p3 : Baz* = p2->getBaz()) {
+    // all three are non-null
+    use(p3);
+} else {
+    // at least one was null — no variables are visible here
+}
+```
+
+### Behaviour summary
+
+| Form | Soft-fail | Branch condition | Vars in else | Cleanup in else |
+|---|---|---|---|---|
+| `if(var)` single, non-addressor | no | `bool(var)` | yes | yes |
+| `if(var)` single, addressor | **yes** | non-null | **no** | **no** |
+| `if(var1; var2; ...)` multi, no test | **yes** | all non-null | **no** | **no** |
+| `if(var1; ...; test)` with test | no (fatal) | `test` | yes | yes |
+
+### Declaration order and short-circuit
+
+Variables are declared **left to right**.  Later declarations may reference
+earlier ones.  If a variable's null-check fails, subsequent variable
+declarations are **not evaluated** (short-circuit), preventing null
+dereferences in chain expressions.
+
+```k
+// Safe chained dereference — if getPtr() returns null, getBar() is never called
+if (a : Foo* = getPtr(); b : Bar* = a->getBar()) {
+    use(b);
+}
+```
+
+### Non-addressor variables
+
+Non-addressor variables (integers, structs, etc.) are allowed and are **never**
+null-checked.  They always succeed and proceed to the next variable.
+
+```k
+// x is an int — always succeeds. p is null-checked.
+if (x : int = compute(); p : Foo* = getPtr(x)) {
+    use(x, p);
+}
+```
+
+### Variables not visible in else
+
+In this form, **no variables** are visible in the `else` branch.  This is
+because the soft-fail may have occurred at any point during the chain, and
+variables after the failure point were never initialized.
+
+### Cleanup
+
+When a soft-fail occurs at variable `i`, all previously-initialized variables
+(`0` through `i-1`, or `0` through `i` for pointer/view/owner types where
+the null value was stored) are cleaned up in **reverse declaration order**
+(destructors called, owners freed) before jumping to `else`.
+
+In the `then` branch, all variables are cleaned up in reverse order at the
+end of the block, as usual.
+
+### Examples
+
+```k
+// Two pointers — second is null → enters else
+test() : int {
+    a : int = 10;
+    if (p1 : int* = &a; p2 : int* = null) {
+        return *p1 + *p2;
+    } else {
+        return -1;   // -1
+    }
+}
+
+// Two links — first null → enters else
+test2() : int {
+    pn : int* = null;
+    b : int = 20;
+    pb : int* = &b;
+    if (l1 : int+ = pn; l2 : int+ = pb) {
+        return *l1 + *l2;
+    } else {
+        return -2;   // -2
+    }
+}
+
+// Struct cleanup on soft-fail
+test3() : int {
+    g_dtor_count = 0;
+    if (s : S = makeS(1); p : int* = null) {
+        return 1;
+    }
+    // s's destructor was called during soft-fail cleanup
+    return g_dtor_count;   // >= 1
 }
 ```
 

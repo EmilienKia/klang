@@ -310,6 +310,7 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     `'if'` `'('` [Expression](#expression) `')'` [Statement](#statement) `[` `'else'` [Statement](#statement) `]`
     | `'if'` `'('` [IfCondVarDecl](#ifcondvardecl) `')'` [Statement](#statement) `[` `'else'` [Statement](#statement) `]`
     | `'if'` `'('` [IfCondVarDeclList](#ifcondvardecllist) `';'` [ConditionalExpr](#conditionalexpr) `')'` [Statement](#statement) `[` `'else'` [Statement](#statement) `]`
+    | `'if'` `'('` [IfCondVarDeclList](#ifcondvardecllist) `')'` [Statement](#statement) `[` `'else'` [Statement](#statement) `]`
 <a id="ifcondvardecllist"></a>**IfCondVarDeclList:**
     [IfCondVarDecl](#ifcondvardecl) {{ `';'` [IfCondVarDecl](#ifcondvardecl) }}
 <a id="ifcondvardecl"></a>**IfCondVarDecl:**
