@@ -13,6 +13,8 @@ The `if` statement conditionally executes a branch based on a boolean test expre
 4. [Examples](#4-examples)
 5. [Link guard (soft-fail)](#5-link-guard-soft-fail)
 6. [Condition variable declaration (if-let)](#6-condition-variable-declaration-if-let)
+7. [Condition variable with separate test](#7-condition-variable-with-separate-test)
+8. [Multiple condition variables](#8-multiple-condition-variables)
 ---
 ## 1. Syntax
 ### Grammar
@@ -22,6 +24,11 @@ IfElseStatement:
     | 'if' '(' Expression ')' Statement 'else' Statement
     | 'if' '(' IfCondVarDecl ')' Statement
     | 'if' '(' IfCondVarDecl ')' Statement 'else' Statement
+    | 'if' '(' IfCondVarDeclList ';' ConditionalExpr ')' Statement
+    | 'if' '(' IfCondVarDeclList ';' ConditionalExpr ')' Statement 'else' Statement
+
+IfCondVarDeclList:
+    IfCondVarDecl { ';' IfCondVarDecl }
 
 IfCondVarDecl:
     { Specifier } Identifier ':' TypeSpec [ CondVarInitialiser ]
@@ -33,6 +40,8 @@ CondVarInitialiser:
 ```
 The test expression (or condition variable declaration) is enclosed in parentheses.  
 Both the `then` branch and the `else` branch may be a single statement or a block statement.
+The `if(var; test)` and `if(var1; var2; ...; test)` forms declare variables scoped to
+the `if` statement and use a separate test expression for branching (see §7 and §8).
 ---
 ## 2. Semantics
 1. The test expression is evaluated.
@@ -251,6 +260,154 @@ test() : int {
     if (a : int = 3) {
         if (b : int = 5) {
             return a + b;   // 8
+        }
+    }
+    return 0;
+}
+```
+
+---
+## 7. Condition variable with separate test
+
+A condition variable declaration may be followed by a semicolon and a separate
+test expression.  In this form, the variable is declared and initialised, but
+branching is determined by the **test expression** — not by a boolean cast of
+the variable.
+
+```k
+if (myVar : MyStruct& = getSomething(); myVar.aTest()) {
+    // entered when myVar.aTest() returns true
+} else {
+    // entered when myVar.aTest() returns false
+    // myVar is accessible here
+}
+```
+
+### Key differences with classic if-let
+
+| Aspect                        | Classic if-let                  | `if(var; test)` form            |
+|-------------------------------|----------------------------------|---------------------------------|
+| Branch condition              | Boolean cast of variable value   | Separate test expression        |
+| Ref/link soft-fail            | Yes — null → else branch         | **No** — null is a fatal error  |
+| Variable in else branch       | Not visible for ref/link         | Always visible                  |
+
+### No soft-fail
+
+When using the `if(var; test)` form, null assignments to references (`&`) or
+links (`+`) are treated as **fatal errors**, exactly as they would be outside an
+`if` condition.  There is no soft-fail mechanism — the programmer is responsible
+for ensuring the initialiser is non-null.
+
+### Examples
+
+```k
+// Variable declared, test determines branching
+test() : int {
+    if (x : int = 42; x > 0) {
+        return x;       // entered because x > 0
+    }
+    return 0;
+}
+
+// Zero variable would be false in classic if-let, but separate test overrides
+test2() : int {
+    if (x : int = 0; true) {
+        return 1;       // entered because test is true, despite x == 0
+    }
+    return -1;
+}
+
+// Reference variable with separate test — no soft-fail
+test3() : int {
+    val : int = 7;
+    if (r : int& = val; r > 5) {
+        return r;
+    } else {
+        return -1;      // r is accessible here
+    }
+}
+```
+
+---
+## 8. Multiple condition variables
+
+The `if(var; test)` form can be extended with **multiple variable declarations**,
+each separated by a semicolon.  The last semicolon-separated element is always the
+test expression that determines branching.
+
+```k
+if (v1 : T1 = e1; v2 : T2 = e2; v3 : T3 = e3; testExpr) {
+    // all variables are accessible here
+} else {
+    // all variables are accessible here too
+}
+```
+
+### Declaration order
+
+Variables are declared **left to right**.  Later declarations may reference
+earlier ones:
+
+```k
+if (a : int = 1; b : int = a + 1; c : int = b + 1; c == 3) {
+    return a + b + c;   // 6
+}
+```
+
+### All initialiser forms supported
+
+Each variable declaration supports assignment (`= expr`), constructor
+(`T(args)`), and brace initialisation (`T{...}`):
+
+```k
+if (x : int = 5; s : MyStruct{.a = x, .b = x + 1}; s.a + s.b > 10) {
+    return s.a + s.b;
+}
+```
+
+### No soft-fail
+
+As with the single-variable form, null assignments to references or links are
+**fatal errors** in the multi-variable form.  There is no soft-fail mechanism.
+
+### Scope and lifetime
+
+- All variables are scoped to the `if` statement.
+- All variables are accessible in both the `then` and `else` branches.
+- Destructors are called for all variables at the end of each branch, in
+  **reverse declaration order** (last declared is destroyed first).
+- After the `if` statement, none of the variables exist.
+
+### Test expression is mandatory
+
+When multiple variables are declared, a test expression **must** follow the last
+semicolon.  Omitting it is a parse error.  (For a single variable without a
+separate test, use the classic if-let form instead.)
+
+### Examples
+
+```k
+// Two variables, second references first
+test() : int {
+    if (a : int = 3; b : int = a + 1; b > 3) {
+        return a + b;   // 7
+    }
+    return 0;
+}
+
+// Struct variables with destructors
+test2() : int {
+    if (s1 : S = makeS(10); s2 : S = makeS(s1.val + 5); s2.val > 10) {
+        return s1.val + s2.val;   // 25
+    }
+    return 0;
+}
+
+// Nested multi-var if
+test3() : int {
+    if (a : int = 1; b : int = 2; a + b > 0) {
+        if (c : int = a + b; d : int = c * 2; d == 6) {
+            return d;   // 6
         }
     }
     return 0;

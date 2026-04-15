@@ -502,6 +502,11 @@ BreakStatement
 IfElseStatement
     = 'if' , '(' , Expression , ')' , Statement , [ 'else' , Statement ]
     | 'if' , '(' , IfCondVarDecl , ')' , Statement , [ 'else' , Statement ]
+    | 'if' , '(' , IfCondVarDeclList , ';' , ConditionalExpr , ')' , Statement , [ 'else' , Statement ]
+    ;
+
+IfCondVarDeclList
+    = IfCondVarDecl , { ';' , IfCondVarDecl }
     ;
 
 IfCondVarDecl
@@ -509,10 +514,20 @@ IfCondVarDecl
     ;
     (* Same form as a VariableDecl but without the trailing semicolon.          *)
     (* The declared variable is scoped to the if statement (then + else blocks).*)
-    (* Its value, cast to bool, determines the branch taken.                    *)
-    (* For non-nullable addressors (reference '&' or link '+'), a null          *)
-    (* initialiser triggers a soft-fail: the else branch is taken and the       *)
-    (* variable does not exist on that path.                                    *)
+    (*                                                                          *)
+    (* Single-variable form (classic if-let):                                   *)
+    (*   if (v : T = expr) { ... }                                              *)
+    (*   The variable value, cast to bool, determines the branch taken.         *)
+    (*   For non-nullable addressors (reference '&' or link '+'), a null        *)
+    (*   initialiser triggers a soft-fail: the else branch is taken and the     *)
+    (*   variable does not exist on that path.                                  *)
+    (*                                                                          *)
+    (* Multi-variable form with separate test:                                  *)
+    (*   if (v1 : T1 = e1; v2 : T2 = e2; ...; testExpr) { ... }               *)
+    (*   Variables are declared left to right; later declarations may reference *)
+    (*   earlier ones. The test expression (after the last ';') determines the  *)
+    (*   branch taken. No soft-fail: null assignments to ref/link are fatal.    *)
+    (*   All variables are accessible in both then and else branches.           *)
 
 CondVarInitialiser
     = '=' , ConditionalExpr

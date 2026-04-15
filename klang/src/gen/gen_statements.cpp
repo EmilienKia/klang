@@ -647,7 +647,9 @@ void implementation_generator::visit_continue_statement(continue_statement& stmt
 void symbol_resolver::visit_if_else_statement(if_else_statement& stmt)
 {
     if(stmt.has_cond_var()) {
-        stmt.get_cond_var()->accept(*this);
+        for(auto& var : stmt.get_cond_vars()) {
+            var->accept(*this);
+        }
     }
     if(stmt.has_cond_var_with_test() || !stmt.has_cond_var()) {
         stmt.get_test_expr()->accept(*this);
@@ -664,8 +666,10 @@ void symbol_resolver::visit_if_else_statement(if_else_statement& stmt)
 void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
 {
     if(stmt.has_cond_var()) {
-        // Resolve the condition variable (type + init)
-        stmt.get_cond_var()->accept(*this);
+        // Resolve all condition variables (type + init)
+        for(auto& var : stmt.get_cond_vars()) {
+            var->accept(*this);
+        }
 
         if(stmt.has_cond_var_with_test()) {
             // if(var; test) form: resolve and cast the separate test expression to bool.
@@ -736,7 +740,9 @@ void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
 
 void declaration_generator::visit_if_else_statement(if_else_statement& stmt) {
     if(stmt.has_cond_var()) {
-        stmt.get_cond_var()->accept(*this);
+        for(auto& var : stmt.get_cond_vars()) {
+            var->accept(*this);
+        }
     }
     if(stmt.has_cond_var_with_test() || !stmt.has_cond_var()) {
         // Visit test_expr for declarations (e.g. lambdas or nested constructs)
@@ -806,8 +812,10 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
     }
 
     if(has_cond_var) {
-        // Emit the condition variable declaration (alloca + init)
-        stmt.get_cond_var()->accept(*this);
+        // Emit all condition variable declarations (alloca + init)
+        for(auto& var : stmt.get_cond_vars()) {
+            var->accept(*this);
+        }
 
         if(has_cond_var_with_test) {
             // if(var; test) form: variable declared, now evaluate the separate test expression.
@@ -915,15 +923,19 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         }
     }
 
-    // Step 6: Visit then-block, emit cleanup for cond var, emit branch to merge
+    // Step 6: Visit then-block, emit cleanup for cond vars, emit branch to merge
     _builder->SetInsertPoint(then_block);
     stmt.get_then_stmt()->accept(*this);
     if(has_cond_var) {
-        emit_cond_var_cleanup(stmt.get_cond_var());
+        // Cleanup in reverse declaration order
+        auto& vars = stmt.get_cond_vars();
+        for(auto it = vars.rbegin(); it != vars.rend(); ++it) {
+            emit_cond_var_cleanup(*it);
+        }
     }
     _builder->CreateBr(cont_block);
 
-    // Step 7: Visit else-block (if present), emit cleanup for cond var, emit branch to merge
+    // Step 7: Visit else-block (if present), emit cleanup for cond vars, emit branch to merge
     if(has_else) {
         func->insert(func->end(), else_block);
         _builder->SetInsertPoint(else_block);
@@ -933,9 +945,13 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         // For all other types, clean up.
         if(has_cond_var) {
             if(has_cond_var_with_test) {
-                // if(var; test) form: variable always exists, always cleanup
-                emit_cond_var_cleanup(stmt.get_cond_var());
+                // if(vars; test) form: all variables always exist, always cleanup in reverse order
+                auto& vars = stmt.get_cond_vars();
+                for(auto it = vars.rbegin(); it != vars.rend(); ++it) {
+                    emit_cond_var_cleanup(*it);
+                }
             } else {
+                // Classic if-let (single var)
                 auto var_type = stmt.get_cond_var()->get_type();
                 bool is_ref_or_link = std::dynamic_pointer_cast<reference_type>(var_type) != nullptr
                                    || std::dynamic_pointer_cast<link_type>(var_type) != nullptr;

@@ -1845,94 +1845,154 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_OPEN_PAREN), lpopen, "If statement expect an open parenthesis '(' after the 'if' keyword for the tested expression");
     }
 
-    // Try to parse a condition variable declaration (if-let form):
-    //   if (name : type = expr) { ... }
-    // This is like a variable_decl but terminated by ')' instead of ';'.
-    std::shared_ptr<ast::variable_decl> cond_var;
+    // Try to parse condition variable declaration(s) (if-let / if(vars; test) form):
+    //   if (name : type = expr) { ... }                          — single var, classic if-let
+    //   if (name : type = expr; test) { ... }                    — single var + test
+    //   if (v1 : T1 = e1; v2 : T2 = e2; ...; test) { ... }     — multi var + test
+    std::vector<std::shared_ptr<ast::variable_decl>> cond_vars;
     std::shared_ptr<ast::expression> test_expr;
     {
         lex::lex_holder var_holder(_lexer);
+        bool parsing_vars = true;
 
-        std::vector<lex::keyword> specifiers = parse_specifiers();
+        while(parsing_vars) {
+            lex::lex_holder single_var_holder(_lexer);
 
-        auto lname = _lexer.get();
-        if(lex::is<lex::identifier>(lname)) {
+            std::vector<lex::keyword> specifiers = parse_specifiers();
+
+            auto lname = _lexer.get();
+            if(!lex::is<lex::identifier>(lname)) {
+                // Not a variable declaration — if we already have vars, treat as test expr
+                single_var_holder.rollback();
+                if(!cond_vars.empty()) {
+                    // Parse what follows as the test expression
+                    test_expr = parse_conditional_expr();
+                    if(!test_expr) {
+                        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CONDITION), _lexer.pick_current(), "If statement expects a test expression after ';'");
+                    }
+                    auto lpclose_final = _lexer.get();
+                    if(lpclose_final != lex::punctuator::PARENTHESIS_CLOSE) {
+                        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CLOSE_PAREN), lpclose_final, "If statement expect a close parenthesis ')' after the test expression");
+                    }
+                    var_holder.sync();
+                }
+                parsing_vars = false;
+                break;
+            }
+
             auto lcolon = _lexer.get();
-            if(lcolon == lex::operator_::COLON) {
-                auto type = parse_type_spec();
-                if(type) {
-                    bool is_constructor = false;
-                    bool is_brace_init = false;
-                    ast::expr_ptr init_expr;
-                    auto lequal_or_openp = _lexer.get();
-                    if(lequal_or_openp == lex::operator_::EQUAL) {
-                        init_expr = parse_conditional_expr();
-                    } else if(lequal_or_openp == lex::punctuator::PARENTHESIS_OPEN) {
-                        // Constructor init form: T(args...)
-                        std::vector<ast::expr_ptr> paren_args;
-                        auto lclose_or_first = _lexer.get();
-                        if (lclose_or_first != lex::punctuator::PARENTHESIS_CLOSE) {
-                            _lexer.unget();
-                            while (true) {
-                                auto arg = parse_conditional_expr();
-                                paren_args.push_back(arg);
-                                auto sep = _lexer.get();
-                                if (sep == lex::punctuator::PARENTHESIS_CLOSE) break;
-                                if (sep != lex::punctuator::COMMA) {
-                                    // Not a valid constructor init — bail out
-                                    break;
-                                }
-                            }
-                        }
-                        if (paren_args.size() == 1) {
-                            init_expr = paren_args[0];
-                        } else if (paren_args.size() > 1) {
-                            init_expr = std::make_shared<ast::expr_list_expr>(paren_args);
-                        }
-                        is_constructor = true;
-                    } else if(lequal_or_openp == lex::punctuator::BRACE_OPEN) {
-                        auto open_brace = lex::as<lex::punctuator>(lequal_or_openp);
-                        init_expr = parse_brace_init_list(open_brace);
-                        is_brace_init = true;
-                    } else {
-                        _lexer.unget();
+            if(lcolon != lex::operator_::COLON) {
+                // Not a variable declaration — rollback this attempt
+                single_var_holder.rollback();
+                if(!cond_vars.empty()) {
+                    // Parse what follows as the test expression
+                    test_expr = parse_conditional_expr();
+                    if(!test_expr) {
+                        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CONDITION), _lexer.pick_current(), "If statement expects a test expression after ';'");
                     }
+                    auto lpclose_final = _lexer.get();
+                    if(lpclose_final != lex::punctuator::PARENTHESIS_CLOSE) {
+                        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CLOSE_PAREN), lpclose_final, "If statement expect a close parenthesis ')' after the test expression");
+                    }
+                    var_holder.sync();
+                }
+                parsing_vars = false;
+                break;
+            }
 
-                    // Now expect closing parenthesis or semicolon (for if(var; test) form)
-                    auto lpclose_check = _lexer.get();
-                    if(lpclose_check == lex::punctuator::SEMICOLON) {
-                        // if(varDecl; testExpr) form: parse the test expression
-                        auto cond_test_expr = parse_conditional_expr();
-                        if(!cond_test_expr) {
-                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CONDITION), _lexer.pick_current(), "If statement expects a test expression after ';' in if(var; test) form");
-                        }
-                        auto lpclose2 = _lexer.get();
-                        if(lpclose2 != lex::punctuator::PARENTHESIS_CLOSE) {
-                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CLOSE_PAREN), lpclose2, "If statement expect a close parenthesis ')' after the test expression");
-                        }
-                        var_holder.sync();
-                        cond_var = std::make_shared<ast::variable_decl>(
-                            specifiers, lex::as<lex::identifier>(lname), type,
-                            init_expr, is_constructor, is_brace_init);
-                        test_expr = cond_test_expr;
-                    } else if(lpclose_check == lex::punctuator::PARENTHESIS_CLOSE) {
-                        // Success: this is a condition variable declaration (if-let form)
-                        var_holder.sync();
-                        cond_var = std::make_shared<ast::variable_decl>(
-                            specifiers, lex::as<lex::identifier>(lname), type,
-                            init_expr, is_constructor, is_brace_init);
+            auto type = parse_type_spec();
+            if(!type) {
+                single_var_holder.rollback();
+                if(!cond_vars.empty()) {
+                    test_expr = parse_conditional_expr();
+                    if(!test_expr) {
+                        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CONDITION), _lexer.pick_current(), "If statement expects a test expression after ';'");
                     }
+                    auto lpclose_final = _lexer.get();
+                    if(lpclose_final != lex::punctuator::PARENTHESIS_CLOSE) {
+                        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CLOSE_PAREN), lpclose_final, "If statement expect a close parenthesis ')' after the test expression");
+                    }
+                    var_holder.sync();
+                }
+                parsing_vars = false;
+                break;
+            }
+
+            bool is_constructor = false;
+            bool is_brace_init = false;
+            ast::expr_ptr init_expr;
+            auto lequal_or_openp = _lexer.get();
+            if(lequal_or_openp == lex::operator_::EQUAL) {
+                init_expr = parse_conditional_expr();
+            } else if(lequal_or_openp == lex::punctuator::PARENTHESIS_OPEN) {
+                // Constructor init form: T(args...)
+                std::vector<ast::expr_ptr> paren_args;
+                auto lclose_or_first = _lexer.get();
+                if (lclose_or_first != lex::punctuator::PARENTHESIS_CLOSE) {
+                    _lexer.unget();
+                    while (true) {
+                        auto arg = parse_conditional_expr();
+                        paren_args.push_back(arg);
+                        auto sep = _lexer.get();
+                        if (sep == lex::punctuator::PARENTHESIS_CLOSE) break;
+                        if (sep != lex::punctuator::COMMA) {
+                            break;
+                        }
+                    }
+                }
+                if (paren_args.size() == 1) {
+                    init_expr = paren_args[0];
+                } else if (paren_args.size() > 1) {
+                    init_expr = std::make_shared<ast::expr_list_expr>(paren_args);
+                }
+                is_constructor = true;
+            } else if(lequal_or_openp == lex::punctuator::BRACE_OPEN) {
+                auto open_brace = lex::as<lex::punctuator>(lequal_or_openp);
+                init_expr = parse_brace_init_list(open_brace);
+                is_brace_init = true;
+            } else {
+                _lexer.unget();
+            }
+
+            auto var = std::make_shared<ast::variable_decl>(
+                specifiers, lex::as<lex::identifier>(lname), type,
+                init_expr, is_constructor, is_brace_init);
+
+            // Check what follows: ')' or ';'
+            auto lnext = _lexer.get();
+            if(lnext == lex::punctuator::SEMICOLON) {
+                // More declarations or test expression follows
+                single_var_holder.sync();
+                cond_vars.push_back(var);
+                // Continue loop — next iteration will try to parse another var or test expr
+            } else if(lnext == lex::punctuator::PARENTHESIS_CLOSE) {
+                // End of if condition
+                single_var_holder.sync();
+                cond_vars.push_back(var);
+                var_holder.sync();
+                parsing_vars = false;
+                // No test expression — classic if-let (only valid with single var)
+                if(cond_vars.size() > 1) {
+                    throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CONDITION), lnext, "If statement with multiple condition variables requires a test expression after the last ';'");
+                }
+            } else {
+                // Unexpected token — bail out
+                single_var_holder.rollback();
+                parsing_vars = false;
+                if(!cond_vars.empty()) {
+                    // We have some vars already, this is an error
+                    throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CLOSE_PAREN), lnext, "If statement expect ';' or ')' after condition variable declaration");
                 }
             }
         }
 
-        if(!cond_var) {
+        if(cond_vars.empty()) {
             var_holder.rollback();
         }
     }
 
     // test_expr may already be set from if(var; test) form
-    if(!cond_var && !test_expr) {
+    if(cond_vars.empty() && !test_expr) {
         // Classic form: parse expression
         test_expr = parse_expression();
         if(!test_expr) {
@@ -1959,16 +2019,26 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_ELSE_BODY), lelse, "If statement expect a statement after the 'else' keyword");
         }
 
-        if(cond_var) {
-            auto result = std::make_shared<ast::if_else_statement>(
-                        lex::as<lex::keyword>(lif),
-                        lex::as<lex::keyword>(lelse),
-                        cond_var,
-                        then_stmt,
-                        else_stmt
-                    );
-            if(test_expr) result->test_expr = test_expr;
-            return result;
+        if(!cond_vars.empty()) {
+            if(test_expr) {
+                return std::make_shared<ast::if_else_statement>(
+                            lex::as<lex::keyword>(lif),
+                            lex::as<lex::keyword>(lelse),
+                            cond_vars,
+                            test_expr,
+                            then_stmt,
+                            else_stmt
+                        );
+            } else {
+                // Single var, classic if-let with else
+                return std::make_shared<ast::if_else_statement>(
+                            lex::as<lex::keyword>(lif),
+                            lex::as<lex::keyword>(lelse),
+                            cond_vars[0],
+                            then_stmt,
+                            else_stmt
+                        );
+            }
         } else {
             return std::make_shared<ast::if_else_statement>(
                         lex::as<lex::keyword>(lif),
@@ -1980,14 +2050,22 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
         }
     } else {
         holder.rollback();
-        if(cond_var) {
-            auto result = std::make_shared<ast::if_else_statement>(
-                    lex::as<lex::keyword>(lif),
-                    cond_var,
-                    then_stmt
-            );
-            if(test_expr) result->test_expr = test_expr;
-            return result;
+        if(!cond_vars.empty()) {
+            if(test_expr) {
+                return std::make_shared<ast::if_else_statement>(
+                        lex::as<lex::keyword>(lif),
+                        cond_vars,
+                        test_expr,
+                        then_stmt
+                );
+            } else {
+                // Single var, classic if-let without else
+                return std::make_shared<ast::if_else_statement>(
+                        lex::as<lex::keyword>(lif),
+                        cond_vars[0],
+                        then_stmt
+                );
+            }
         } else {
             return std::make_shared<ast::if_else_statement>(
                     lex::as<lex::keyword>(lif),

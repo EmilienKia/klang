@@ -164,6 +164,7 @@ add_executable(klang-tests
         tests/test-gen-if-link-softfail.cpp
         tests/test-gen-if-local-var.cpp
         tests/test-gen-if-cond-var-test.cpp
+        tests/test-gen-if-multi-cond-var.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
 # Export symbols from the test executable so that the JIT's

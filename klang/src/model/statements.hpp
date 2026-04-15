@@ -153,8 +153,8 @@ protected:
     std::shared_ptr<statement> _then_stmt;
     std::shared_ptr<statement> _else_stmt;
 
-    /** Optional condition variable (if-let form). */
-    std::shared_ptr<variable_statement> _cond_var;
+    /** Condition variables (if-let / if(vars; test) forms). */
+    std::vector<std::shared_ptr<variable_statement>> _cond_vars;
 
     std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
     void on_variable_defined(std::shared_ptr<variable_definition>) override;
@@ -204,16 +204,21 @@ public:
         return _else_stmt;
     }
 
-    /** Get the condition variable statement (if-let form), or nullptr. */
-    const std::shared_ptr<variable_statement> &get_cond_var() const {
-        return _cond_var;
+    /** Get all condition variable statements, or empty vector. */
+    const std::vector<std::shared_ptr<variable_statement>> &get_cond_vars() const {
+        return _cond_vars;
     }
 
-    /** True when this if uses a condition variable declaration. */
-    bool has_cond_var() const { return _cond_var != nullptr; }
+    /** Get the single condition variable statement (for backward compat), or nullptr. */
+    std::shared_ptr<variable_statement> get_cond_var() const {
+        return _cond_vars.empty() ? nullptr : _cond_vars[0];
+    }
 
-    /** True when this if uses both a condition variable and a separate test expression. */
-    bool has_cond_var_with_test() const { return _cond_var != nullptr && _test_expr != nullptr; }
+    /** True when this if uses condition variable declaration(s). */
+    bool has_cond_var() const { return !_cond_vars.empty(); }
+
+    /** True when this if uses condition variable(s) and a separate test expression. */
+    bool has_cond_var_with_test() const { return !_cond_vars.empty() && _test_expr != nullptr; }
 
     std::shared_ptr<variable_holder> get_variable_holder() override;
     std::shared_ptr<const variable_holder> get_variable_holder() const override;

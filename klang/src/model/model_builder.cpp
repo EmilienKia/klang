@@ -1357,14 +1357,16 @@ namespace k::model {
         stack<if_else_context> push(_contexts, if_else_stmt);
 
         if(stmt.has_cond_var()) {
-            // If-let form: visit the condition variable declaration
-            _stmt.reset();
-            stmt.cond_var_decl->visit(*this);
-            // Variable is registered via variable_holder mechanism
-            _stmt.reset();
+            // Visit all condition variable declarations in order
+            for(auto& var_decl : stmt.cond_var_decls) {
+                _stmt.reset();
+                var_decl->visit(*this);
+                // Variable is registered via variable_holder mechanism
+                _stmt.reset();
+            }
 
             if(stmt.has_cond_var_with_test()) {
-                // if(var; test) form: visit the separate test expression
+                // if(var; test) or if(var1; var2; ...; test) form: visit the separate test expression
                 _expr.reset();
                 stmt.test_expr->visit(*this);
                 if(_expr) {

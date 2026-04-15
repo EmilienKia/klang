@@ -114,7 +114,7 @@ std::shared_ptr<variable_definition> if_else_statement::do_create_variable(const
 }
 
 void if_else_statement::on_variable_defined(std::shared_ptr<variable_definition> var) {
-    _cond_var = std::dynamic_pointer_cast<variable_statement>(var);
+    _cond_vars.push_back(std::dynamic_pointer_cast<variable_statement>(var));
 }
 
 //
