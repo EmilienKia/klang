@@ -98,6 +98,25 @@ void if_else_statement::accept(model_visitor &visitor) {
     visitor.visit_if_else_statement(*this);
 }
 
+std::shared_ptr<variable_holder> if_else_statement::get_variable_holder() {
+    return shared_as<variable_holder>();
+}
+
+std::shared_ptr<const variable_holder> if_else_statement::get_variable_holder() const {
+    return shared_as<const variable_holder>();
+}
+
+std::shared_ptr<variable_definition> if_else_statement::do_create_variable(const std::string &name, bool is_static) {
+    if (is_static) {
+        std::clog << "An if-declared variable cannot be declared static : " << name << ", ignore it" << std::endl;
+    }
+    return std::shared_ptr<variable_definition>(variable_statement::make_shared(shared_as<statement>(), name));
+}
+
+void if_else_statement::on_variable_defined(std::shared_ptr<variable_definition> var) {
+    _cond_var = std::dynamic_pointer_cast<variable_statement>(var);
+}
+
 //
 // While statement
 //

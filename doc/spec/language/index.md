@@ -45,7 +45,7 @@ Examples are included where they clarify the normative text.
 | Page | Description |
 |------|-------------|
 | [Statements Overview](statements/statements.md) | Block, expression statement, variable declaration |
-| [If Statement](statements/if.md) | Conditional branching |
+| [If Statement](statements/if.md) | Conditional branching, condition variable declaration (if-let), link soft-fail |
 | [While Statement](statements/while.md) | Condition-controlled loop |
 | [For Statement](statements/for.md) | Counter-controlled loop |
 | [Return Statement](statements/return.md) | Function return |

@@ -659,6 +659,11 @@ namespace k::parse {
             std::shared_ptr<statement> then_stmt;
             std::shared_ptr<statement> else_stmt;
 
+            /** Optional condition variable declaration (if-let form).
+             *  When set, test_expr is null — the boolean test is derived from
+             *  the variable's init expression. */
+            std::shared_ptr<variable_decl> cond_var_decl;
+
             if_else_statement(const lex::keyword &if_kw,
                               const lex::keyword &else_kw,
                               const std::shared_ptr<expression>& test_expr,
@@ -670,6 +675,25 @@ namespace k::parse {
                               const std::shared_ptr<expression>& test_expr,
                               const std::shared_ptr<statement> &then_stmt)
                     : if_kw(if_kw), test_expr(test_expr), then_stmt(then_stmt) {}
+
+            /** Constructor for if-let form with else. */
+            if_else_statement(const lex::keyword &if_kw,
+                              const lex::keyword &else_kw,
+                              const std::shared_ptr<variable_decl>& cond_var_decl,
+                              const std::shared_ptr<statement> &then_stmt,
+                              const std::shared_ptr<statement> &else_stmt)
+                    : if_kw(if_kw), else_kw(else_kw), then_stmt(then_stmt), else_stmt(else_stmt),
+                      cond_var_decl(cond_var_decl) {}
+
+            /** Constructor for if-let form without else. */
+            if_else_statement(const lex::keyword &if_kw,
+                              const std::shared_ptr<variable_decl>& cond_var_decl,
+                              const std::shared_ptr<statement> &then_stmt)
+                    : if_kw(if_kw), then_stmt(then_stmt),
+                      cond_var_decl(cond_var_decl) {}
+
+            /** True when this if uses a condition variable declaration. */
+            bool has_cond_var() const { return cond_var_decl != nullptr; }
 
             virtual void visit(ast_visitor &visitor) override;
         };

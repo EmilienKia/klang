@@ -146,12 +146,18 @@ public:
 /**
  * If then else statement
  */
-class if_else_statement : public statement
+class if_else_statement : public statement, public variable_holder
 {
 protected:
     std::shared_ptr<expression> _test_expr;
     std::shared_ptr<statement> _then_stmt;
     std::shared_ptr<statement> _else_stmt;
+
+    /** Optional condition variable (if-let form). */
+    std::shared_ptr<variable_statement> _cond_var;
+
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
+    void on_variable_defined(std::shared_ptr<variable_definition>) override;
 
 public:
     if_else_statement() = delete;
@@ -198,6 +204,16 @@ public:
         return _else_stmt;
     }
 
+    /** Get the condition variable statement (if-let form), or nullptr. */
+    const std::shared_ptr<variable_statement> &get_cond_var() const {
+        return _cond_var;
+    }
+
+    /** True when this if uses a condition variable declaration. */
+    bool has_cond_var() const { return _cond_var != nullptr; }
+
+    std::shared_ptr<variable_holder> get_variable_holder() override;
+    std::shared_ptr<const variable_holder> get_variable_holder() const override;
 };
 
 
@@ -352,6 +368,7 @@ class variable_statement : public statement, public variable_definition
 protected:
     friend class block;
     friend class for_statement;
+    friend class if_else_statement;
     friend class gen::implementation_generator;
     friend class template_instantiator;
 

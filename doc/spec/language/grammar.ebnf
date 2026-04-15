@@ -501,6 +501,23 @@ BreakStatement
 
 IfElseStatement
     = 'if' , '(' , Expression , ')' , Statement , [ 'else' , Statement ]
+    | 'if' , '(' , IfCondVarDecl , ')' , Statement , [ 'else' , Statement ]
+    ;
+
+IfCondVarDecl
+    = { Specifier } , Identifier , ':' , TypeSpec , [ CondVarInitialiser ]
+    ;
+    (* Same form as a VariableDecl but without the trailing semicolon.          *)
+    (* The declared variable is scoped to the if statement (then + else blocks).*)
+    (* Its value, cast to bool, determines the branch taken.                    *)
+    (* For non-nullable addressors (reference '&' or link '+'), a null          *)
+    (* initialiser triggers a soft-fail: the else branch is taken and the       *)
+    (* variable does not exist on that path.                                    *)
+
+CondVarInitialiser
+    = '=' , ConditionalExpr
+    | '(' , [ ExpressionList ] , ')'
+    | BraceInitList
     ;
 
 WhileStatement

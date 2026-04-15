@@ -359,6 +359,11 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
     if (auto ies = dynamic_cast<const if_else_statement*>(&src)) {
         auto new_ies = std::make_shared<if_else_statement>(parent_stmt);
         new_ies->_ast_node = ies->get_ast_node();
+        if (ies->has_cond_var()) {
+            // Clone the condition variable by cloning it as a statement
+            auto cloned_var = clone_statement(*ies->get_cond_var(), new_ies, subst, val_subst);
+            // The variable_holder mechanism should have registered it via on_variable_defined
+        }
         if (ies->get_test_expr()) {
             new_ies->set_test_expr(clone_and_substitute_expr(
                 std::const_pointer_cast<expression>(ies->get_test_expr()), subst, val_subst));
@@ -931,6 +936,9 @@ static void resolve_symbols_in_stmt(const std::shared_ptr<statement>& stmt) {
             resolve_symbols_in_expr(
                 std::const_pointer_cast<expression>(vs->get_init_expr()));
     } else if (auto ies = std::dynamic_pointer_cast<if_else_statement>(stmt)) {
+        if (ies->has_cond_var()) {
+            resolve_symbols_in_stmt(ies->get_cond_var());
+        }
         if (ies->get_test_expr())
             resolve_symbols_in_expr(
                 std::const_pointer_cast<expression>(ies->get_test_expr()));

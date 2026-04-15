@@ -12,6 +12,7 @@ The `if` statement conditionally executes a branch based on a boolean test expre
 3. [Else-if chains](#3-else-if-chains)
 4. [Examples](#4-examples)
 5. [Link guard (soft-fail)](#5-link-guard-soft-fail)
+6. [Condition variable declaration (if-let)](#6-condition-variable-declaration-if-let)
 ---
 ## 1. Syntax
 ### Grammar
@@ -19,8 +20,18 @@ The `if` statement conditionally executes a branch based on a boolean test expre
 IfElseStatement:
     'if' '(' Expression ')' Statement
     | 'if' '(' Expression ')' Statement 'else' Statement
+    | 'if' '(' IfCondVarDecl ')' Statement
+    | 'if' '(' IfCondVarDecl ')' Statement 'else' Statement
+
+IfCondVarDecl:
+    { Specifier } Identifier ':' TypeSpec [ CondVarInitialiser ]
+
+CondVarInitialiser:
+    '=' ConditionalExpr
+    | '(' [ ExpressionList ] ')'
+    | BraceInitList
 ```
-The test expression is enclosed in parentheses.  
+The test expression (or condition variable declaration) is enclosed in parentheses.  
 Both the `then` branch and the `else` branch may be a single statement or a block statement.
 ---
 ## 2. Semantics
@@ -159,6 +170,92 @@ test() : int {
 Nested `if` statements each have their own soft-fail destination.  An inner
 `if` with a link guard soft-fails to its own `else` (or continuation) without
 affecting the outer `if`.
+
+---
+## 6. Condition variable declaration (if-let)
+
+An `if` statement may declare a local variable as its condition instead of
+providing an expression.  The variable declaration has exactly the same form as a
+regular local variable declaration (`name : type = expr`, `name : type(args)`, or
+`name : type {init}`), but is written inside the parentheses and is **not**
+terminated by a semicolon.
+
+```k
+if (myvar : int = callSomething()) {
+    // myvar is accessible here
+} else {
+    // myvar is accessible here too (except for ref/link soft-fail — see below)
+}
+// myvar is NOT accessible here — it has been destroyed
+```
+
+### Boolean casting
+
+The value of the declared variable is cast to `bool` to decide which branch to
+take.  The cast follows the same rules as any explicit cast to `bool`:
+
+| Variable type                 | Cast rule                              |
+|-------------------------------|----------------------------------------|
+| Numeric primitive (`int`, `float`, …) | `!= 0`                        |
+| Pointer `*`, owner `!`, view `?`      | `!= null`                     |
+| Aggregate (struct/class)              | User-defined `operator() : bool` is called |
+| Reference `&`, link `+`              | *Special soft-fail* (see below) |
+
+### Scope and lifetime
+
+The condition variable is local to the `if` statement:
+
+- It is **visible** in both the `then` and `else` branches (except for the
+  ref/link soft-fail case described below).
+- It is **destroyed** at the end of each branch:
+  - Destructors are called for aggregate types.
+  - Memory is freed for owner types.
+- Destruction also occurs on early exits (`return`, `break`, `continue`).
+- After the `if` statement, the variable no longer exists.  A new variable with
+  the same name may be declared.
+
+### Reference and link soft-fail
+
+When the declared variable is a **non-nullable addressor** (reference `&` or
+link `+`) and its initialiser evaluates to `null`, a **soft-fail** is triggered:
+
+1. The variable initialisation is skipped (the variable does not exist).
+2. The `else` branch is taken (or execution continues after the `if` if there is
+   no `else`).
+3. The variable is **not visible** in the `else` branch — using it is a
+   compile-time error.
+
+This is the only case where the condition variable does not exist on the `else`
+path.
+
+```k
+test() : int {
+    p : int* = null;
+    if (lnk : int+ = p) {
+        // entered only if p is non-null — lnk is valid
+        return *lnk;
+    } else {
+        // entered because p is null — lnk does NOT exist here
+        return -1;
+    }
+}
+```
+
+### Nested if-let
+
+Condition variable declarations can be nested.  Each `if` defines its own
+scope, so there is no name collision:
+
+```k
+test() : int {
+    if (a : int = 3) {
+        if (b : int = 5) {
+            return a + b;   // 8
+        }
+    }
+    return 0;
+}
+```
 
 ---
 *See also:* [Statements](statements.md) · [While Statement](while.md) · [For Statement](for.md) · [Expressions](../expressions/expressions.md)

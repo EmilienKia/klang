@@ -1356,17 +1356,27 @@ namespace k::model {
         // Push function context
         stack<if_else_context> push(_contexts, if_else_stmt);
 
-        // Test expression
-        _expr.reset();
-        if(stmt.test_expr) {
-            stmt.test_expr->visit(*this);
-        } /* else process absence in next if */
-        if(_expr) {
-            if_else_stmt->set_test_expr(_expr);
-            _expr.reset();
+        if(stmt.has_cond_var()) {
+            // If-let form: visit the condition variable declaration
+            _stmt.reset();
+            stmt.cond_var_decl->visit(*this);
+            // Variable is registered via variable_holder mechanism
+            _stmt.reset();
+
+            // Test expression is derived from the variable — no explicit test_expr
         } else {
-            // Test expression is mandatory
-            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_IF_STMT_NEEDS_CONDITION), stmt.if_kw, "'if' statement requires a condition expression between the parentheses: 'if (condition) ...'");
+            // Classic form: test expression
+            _expr.reset();
+            if(stmt.test_expr) {
+                stmt.test_expr->visit(*this);
+            } /* else process absence in next if */
+            if(_expr) {
+                if_else_stmt->set_test_expr(_expr);
+                _expr.reset();
+            } else {
+                // Test expression is mandatory
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_IF_STMT_NEEDS_CONDITION), stmt.if_kw, "'if' statement requires a condition expression between the parentheses: 'if (condition) ...'");
+            }
         }
 
         // Then statement

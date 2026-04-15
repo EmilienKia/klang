@@ -162,6 +162,7 @@ add_executable(klang-tests
         tests/test-gen-template-comprehensive.cpp
         tests/test-template-instantiator.cpp
         tests/test-gen-if-link-softfail.cpp
+        tests/test-gen-if-local-var.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
 # Export symbols from the test executable so that the JIT's

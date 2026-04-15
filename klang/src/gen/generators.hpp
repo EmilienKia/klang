@@ -430,6 +430,12 @@ public:
      */
     void emit_expression_temporaries_cleanup();
 
+    /**
+     * Emit cleanup (destructor / owner free) for a single condition variable.
+     * Used for if-let condition variable cleanup at end of then/else blocks.
+     */
+    void emit_cond_var_cleanup(const std::shared_ptr<variable_statement>& var_stmt);
+
     void generate();
 
 protected:

@@ -308,6 +308,13 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     `'break'` `';'`
 <a id="ifelsestatement"></a>**IfElseStatement:**
     `'if'` `'('` [Expression](#expression) `')'` [Statement](#statement) `[` `'else'` [Statement](#statement) `]`
+    | `'if'` `'('` [IfCondVarDecl](#ifcondvardecl) `')'` [Statement](#statement) `[` `'else'` [Statement](#statement) `]`
+<a id="ifcondvardecl"></a>**IfCondVarDecl:**
+    {{ [Specifier](#specifier) }} [Identifier](#identifier) `':'` [TypeSpec](#typespec) `[` [CondVarInitialiser](#condvarinitialiser) `]`
+<a id="condvarinitialiser"></a>**CondVarInitialiser:**
+    `'='` [ConditionalExpr](#conditionalexpr)
+    | `'('` `[` [ExpressionList](#expressionlist) `]` `')'`
+    | [BraceInitList](#braceinitlist)
 <a id="whilestatement"></a>**WhileStatement:**
     `'while'` `'('` [Expression](#expression) `')'` [Statement](#statement)
 <a id="forstatement"></a>**ForStatement:**

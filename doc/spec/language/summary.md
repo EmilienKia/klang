@@ -523,9 +523,15 @@ Initializer: `= expr`, `(args…)` (constructor), `(args…)[N]` (uniform array 
 
 ```
 'if' '(' Expression ')' Statement [ 'else' Statement ]
+'if' '(' IfCondVarDecl ')' Statement [ 'else' Statement ]
 ```
 
 The test expression may be any type convertible to `bool`. `else if` chaining via nesting.
+
+**Condition variable declaration (if-let):** A local variable may be declared as the condition.
+Its value, cast to `bool`, determines the branch. The variable is scoped to the `if` (destroyed
+at end of then/else). For non-nullable addressors (`&`, `+`), null triggers a soft-fail to `else`
+and the variable does not exist on that path.
 
 ### 9.5 While
 
