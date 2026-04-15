@@ -212,6 +212,9 @@ public:
     /** True when this if uses a condition variable declaration. */
     bool has_cond_var() const { return _cond_var != nullptr; }
 
+    /** True when this if uses both a condition variable and a separate test expression. */
+    bool has_cond_var_with_test() const { return _cond_var != nullptr && _test_expr != nullptr; }
+
     std::shared_ptr<variable_holder> get_variable_holder() override;
     std::shared_ptr<const variable_holder> get_variable_holder() const override;
 };

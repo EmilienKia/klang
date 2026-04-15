@@ -429,9 +429,17 @@ class ast_dump_visitor : public k::parse::ast_visitor {
 
         virtual void visit_if_else_statement(ast::if_else_statement& stmt) override {
             if(stmt.has_cond_var()) {
-                prefix() << "if ( var ";
-                stmt.cond_var_decl->visit(*this);
-                _stm << " ) " << std::endl;
+                if(stmt.has_cond_var_with_test()) {
+                    prefix() << "if ( var ";
+                    stmt.cond_var_decl->visit(*this);
+                    _stm << " ; ";
+                    stmt.test_expr->visit(*this);
+                    _stm << " ) " << std::endl;
+                } else {
+                    prefix() << "if ( var ";
+                    stmt.cond_var_decl->visit(*this);
+                    _stm << " ) " << std::endl;
+                }
             } else {
                 prefix() << "if ( ";
                 stmt.test_expr->visit(*this);

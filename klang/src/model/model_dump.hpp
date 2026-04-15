@@ -374,9 +374,17 @@ public:
 
     void visit_if_else_statement(if_else_statement& stmt) override {
         if(stmt.has_cond_var()) {
-            prefix() << "if ( var ";
-            stmt.get_cond_var()->accept(*this);
-            _stm << " ) " << std::endl;
+            if(stmt.has_cond_var_with_test()) {
+                prefix() << "if ( var ";
+                stmt.get_cond_var()->accept(*this);
+                _stm << " ; ";
+                stmt.get_test_expr()->accept(*this);
+                _stm << " ) " << std::endl;
+            } else {
+                prefix() << "if ( var ";
+                stmt.get_cond_var()->accept(*this);
+                _stm << " ) " << std::endl;
+            }
         } else {
             prefix() << "if ( ";
             if(auto test_expr = stmt.get_test_expr()) {

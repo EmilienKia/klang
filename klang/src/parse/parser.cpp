@@ -1849,6 +1849,7 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
     //   if (name : type = expr) { ... }
     // This is like a variable_decl but terminated by ')' instead of ';'.
     std::shared_ptr<ast::variable_decl> cond_var;
+    std::shared_ptr<ast::expression> test_expr;
     {
         lex::lex_holder var_holder(_lexer);
 
@@ -1897,10 +1898,25 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
                         _lexer.unget();
                     }
 
-                    // Now expect closing parenthesis
+                    // Now expect closing parenthesis or semicolon (for if(var; test) form)
                     auto lpclose_check = _lexer.get();
-                    if(lpclose_check == lex::punctuator::PARENTHESIS_CLOSE) {
-                        // Success: this is a condition variable declaration
+                    if(lpclose_check == lex::punctuator::SEMICOLON) {
+                        // if(varDecl; testExpr) form: parse the test expression
+                        auto cond_test_expr = parse_conditional_expr();
+                        if(!cond_test_expr) {
+                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CONDITION), _lexer.pick_current(), "If statement expects a test expression after ';' in if(var; test) form");
+                        }
+                        auto lpclose2 = _lexer.get();
+                        if(lpclose2 != lex::punctuator::PARENTHESIS_CLOSE) {
+                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_IF_EXPECT_CLOSE_PAREN), lpclose2, "If statement expect a close parenthesis ')' after the test expression");
+                        }
+                        var_holder.sync();
+                        cond_var = std::make_shared<ast::variable_decl>(
+                            specifiers, lex::as<lex::identifier>(lname), type,
+                            init_expr, is_constructor, is_brace_init);
+                        test_expr = cond_test_expr;
+                    } else if(lpclose_check == lex::punctuator::PARENTHESIS_CLOSE) {
+                        // Success: this is a condition variable declaration (if-let form)
                         var_holder.sync();
                         cond_var = std::make_shared<ast::variable_decl>(
                             specifiers, lex::as<lex::identifier>(lname), type,
@@ -1915,8 +1931,8 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
         }
     }
 
-    std::shared_ptr<ast::expression> test_expr;
-    if(!cond_var) {
+    // test_expr may already be set from if(var; test) form
+    if(!cond_var && !test_expr) {
         // Classic form: parse expression
         test_expr = parse_expression();
         if(!test_expr) {
@@ -1944,13 +1960,15 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
         }
 
         if(cond_var) {
-            return std::make_shared<ast::if_else_statement>(
+            auto result = std::make_shared<ast::if_else_statement>(
                         lex::as<lex::keyword>(lif),
                         lex::as<lex::keyword>(lelse),
                         cond_var,
                         then_stmt,
                         else_stmt
                     );
+            if(test_expr) result->test_expr = test_expr;
+            return result;
         } else {
             return std::make_shared<ast::if_else_statement>(
                         lex::as<lex::keyword>(lif),
@@ -1963,11 +1981,13 @@ std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
     } else {
         holder.rollback();
         if(cond_var) {
-            return std::make_shared<ast::if_else_statement>(
+            auto result = std::make_shared<ast::if_else_statement>(
                     lex::as<lex::keyword>(lif),
                     cond_var,
                     then_stmt
             );
+            if(test_expr) result->test_expr = test_expr;
+            return result;
         } else {
             return std::make_shared<ast::if_else_statement>(
                     lex::as<lex::keyword>(lif),

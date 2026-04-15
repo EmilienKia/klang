@@ -695,6 +695,9 @@ namespace k::parse {
             /** True when this if uses a condition variable declaration. */
             bool has_cond_var() const { return cond_var_decl != nullptr; }
 
+            /** True when this if uses both a condition variable and a separate test expression. */
+            bool has_cond_var_with_test() const { return cond_var_decl != nullptr && test_expr != nullptr; }
+
             virtual void visit(ast_visitor &visitor) override;
         };
 

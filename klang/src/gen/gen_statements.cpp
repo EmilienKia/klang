@@ -648,7 +648,8 @@ void symbol_resolver::visit_if_else_statement(if_else_statement& stmt)
 {
     if(stmt.has_cond_var()) {
         stmt.get_cond_var()->accept(*this);
-    } else {
+    }
+    if(stmt.has_cond_var_with_test() || !stmt.has_cond_var()) {
         stmt.get_test_expr()->accept(*this);
     }
 
@@ -666,31 +667,44 @@ void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
         // Resolve the condition variable (type + init)
         stmt.get_cond_var()->accept(*this);
 
-        // The boolean test is derived from the variable's type at codegen time.
-        // For non-nullable addressors (ref &, link +), the soft-fail mechanism
-        // handles branching — no explicit bool cast needed.
-        // For all other types, adapt_type to bool is done at codegen.
-        // We just verify the type is convertible to bool here.
-        auto var_type = stmt.get_cond_var()->get_type();
-        if(var_type) {
-            bool is_ref_or_link = std::dynamic_pointer_cast<reference_type>(var_type) != nullptr
-                               || std::dynamic_pointer_cast<link_type>(var_type) != nullptr;
-            if(!is_ref_or_link) {
-                // Check convertibility to bool: primitives, pointers, owners, views,
-                // and aggregates with bool cast operator are ok.
-                bool can_cast = false;
-                if(std::dynamic_pointer_cast<primitive_type>(var_type)) can_cast = true;
-                else if(std::dynamic_pointer_cast<pointer_type>(var_type)) can_cast = true;
-                else if(std::dynamic_pointer_cast<owner_type>(var_type)) can_cast = true;
-                else if(std::dynamic_pointer_cast<view_type>(var_type)) can_cast = true;
-                else if(auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
-                    // Check for bool cast operator via resolver
-                    auto bool_type = _context->from_type(primitive_type::BOOL);
-                    auto cast_fn = resolve_cast_operator_overload(st_type->get_struct(), bool_type);
-                    if(cast_fn) can_cast = true;
-                }
-                if(!can_cast) {
-                    throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL), stmt.get_ast_if_else_stmt()->if_kw, "If condition variable type must be convertible to bool");
+        if(stmt.has_cond_var_with_test()) {
+            // if(var; test) form: resolve and cast the separate test expression to bool.
+            // No bool-castability check on the variable itself — the test expression determines branching.
+            auto expr = stmt.get_test_expr();
+            expr->accept(*this);
+            auto cast = adapt_type(expr, _context->from_type(primitive_type::BOOL));
+            if(!cast) {
+                throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL), stmt.get_ast_if_else_stmt()->if_kw, "If test expression type must be convertible to bool");
+            } else if(cast != expr) {
+                stmt.set_test_expr(cast);
+            }
+        } else {
+            // Classic if-let: the boolean test is derived from the variable's type at codegen time.
+            // For non-nullable addressors (ref &, link +), the soft-fail mechanism
+            // handles branching — no explicit bool cast needed.
+            // For all other types, adapt_type to bool is done at codegen.
+            // We just verify the type is convertible to bool here.
+            auto var_type = stmt.get_cond_var()->get_type();
+            if(var_type) {
+                bool is_ref_or_link = std::dynamic_pointer_cast<reference_type>(var_type) != nullptr
+                                   || std::dynamic_pointer_cast<link_type>(var_type) != nullptr;
+                if(!is_ref_or_link) {
+                    // Check convertibility to bool: primitives, pointers, owners, views,
+                    // and aggregates with bool cast operator are ok.
+                    bool can_cast = false;
+                    if(std::dynamic_pointer_cast<primitive_type>(var_type)) can_cast = true;
+                    else if(std::dynamic_pointer_cast<pointer_type>(var_type)) can_cast = true;
+                    else if(std::dynamic_pointer_cast<owner_type>(var_type)) can_cast = true;
+                    else if(std::dynamic_pointer_cast<view_type>(var_type)) can_cast = true;
+                    else if(auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
+                        // Check for bool cast operator via resolver
+                        auto bool_type = _context->from_type(primitive_type::BOOL);
+                        auto cast_fn = resolve_cast_operator_overload(st_type->get_struct(), bool_type);
+                        if(cast_fn) can_cast = true;
+                    }
+                    if(!can_cast) {
+                        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL), stmt.get_ast_if_else_stmt()->if_kw, "If condition variable type must be convertible to bool");
+                    }
                 }
             }
         }
@@ -723,6 +737,9 @@ void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
 void declaration_generator::visit_if_else_statement(if_else_statement& stmt) {
     if(stmt.has_cond_var()) {
         stmt.get_cond_var()->accept(*this);
+    }
+    if(stmt.has_cond_var_with_test() || !stmt.has_cond_var()) {
+        // Visit test_expr for declarations (e.g. lambdas or nested constructs)
     }
     stmt.get_then_stmt()->accept(*this);
     if(stmt.get_else_stmt()) {
@@ -772,6 +789,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
     bool has_else = (bool)stmt.get_else_stmt();
     bool has_cond_var = stmt.has_cond_var();
+    bool has_cond_var_with_test = stmt.has_cond_var_with_test();
 
     // Step 1: Create then/else/merge basic blocks BEFORE evaluating the condition,
     // so that _null_failure_bb can reference them during condition codegen.
@@ -781,78 +799,99 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
     llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(**_context, "if-continue");
 
     // Step 2: Set up soft-fail destination for link null-checks in the condition.
+    // For if(var; test) form, do NOT set up soft-fail — null assignments are fatal errors.
     auto* saved_null_failure_bb = _null_failure_bb;
-    _null_failure_bb = has_else ? else_block : cont_block;
+    if(!has_cond_var_with_test) {
+        _null_failure_bb = has_else ? else_block : cont_block;
+    }
 
     if(has_cond_var) {
         // Emit the condition variable declaration (alloca + init)
         stmt.get_cond_var()->accept(*this);
 
-        // Determine if this is a non-nullable addressor (ref/link) soft-fail case.
-        // For ref/link, the soft-fail mechanism already branched to else on null,
-        // so we just need to check if we're still on the current block (not branched away).
-        auto var_type = stmt.get_cond_var()->get_type();
-        bool is_ref_or_link = std::dynamic_pointer_cast<reference_type>(var_type) != nullptr
-                           || std::dynamic_pointer_cast<link_type>(var_type) != nullptr;
-
-        if(is_ref_or_link) {
-            // For ref/link: the soft-fail mechanism handles null → else branching.
-            // If we reach here, the ref/link was successfully bound → go to then.
-            _null_failure_bb = saved_null_failure_bb;
-            _builder->CreateBr(then_block);
-        } else {
+        if(has_cond_var_with_test) {
+            // if(var; test) form: variable declared, now evaluate the separate test expression.
+            // No soft-fail, no bool cast of the variable — only the test expression matters.
             _null_failure_bb = saved_null_failure_bb;
 
-            // Generate bool cast from the variable value
-            auto var_it = _context->_variables.find(stmt.get_cond_var());
-            llvm::AllocaInst* alloca = var_it->second;
-
-            llvm::Value* test_value = nullptr;
-            if(auto prim_type = std::dynamic_pointer_cast<primitive_type>(var_type)) {
-                // Numeric primitive: != 0
-                llvm::Type* llvm_t = _context->get_llvm_type(var_type);
-                llvm::Value* loaded = _builder->CreateLoad(llvm_t, alloca, "if_cond_load");
-                if(prim_type->is_float()) {
-                    test_value = _builder->CreateFCmpONE(loaded,
-                        llvm::ConstantFP::get(llvm_t, 0.0), "if_cond_ne_zero");
-                } else {
-                    test_value = _builder->CreateICmpNE(loaded,
-                        llvm::ConstantInt::get(llvm_t, 0), "if_cond_ne_zero");
-                }
-            } else if(std::dynamic_pointer_cast<pointer_type>(var_type)
-                   || std::dynamic_pointer_cast<owner_type>(var_type)
-                   || std::dynamic_pointer_cast<view_type>(var_type)) {
-                // Pointer/owner/view: != null
-                auto& llvm_ctx = _builder->getContext();
-                auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
-                llvm::Value* loaded = _builder->CreateLoad(ptr_ty, alloca, "if_cond_ptr_load");
-                test_value = _builder->CreateICmpNE(loaded,
-                    llvm::ConstantPointerNull::get(ptr_ty), "if_cond_ne_null");
-            } else if(auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
-                // Aggregate: call bool cast operator (__operator_cv_bool)
-                auto agg = st_type->get_struct();
-                auto funcs = agg->get_functions("__operator_cv_bool");
-                if(!funcs.empty()) {
-                    auto cast_fn = funcs[0];
-                    auto fn_it = _context->_functions.find(cast_fn);
-                    if(fn_it != _context->_functions.end()) {
-                        test_value = _builder->CreateCall(fn_it->second, {alloca}, "if_cond_bool_cast");
-                    }
-                }
-            }
-
-            if(!test_value) {
-                // Fallback: should not happen if type_reference_resolver validated
-                test_value = _builder->getTrue();
-            }
+            _value = nullptr;
+            stmt.get_test_expr()->accept(*this);
+            auto test_value = _value;
+            _value = nullptr;
 
             emit_expression_temporaries_cleanup();
 
-            // Emit conditional branch
+            // Emit conditional branch based on the test expression
             if(has_else) {
                 _builder->CreateCondBr(test_value, then_block, else_block);
             } else {
                 _builder->CreateCondBr(test_value, then_block, cont_block);
+            }
+        } else {
+            // Classic if-let form: determine branch from the variable's type.
+            auto var_type = stmt.get_cond_var()->get_type();
+            bool is_ref_or_link = std::dynamic_pointer_cast<reference_type>(var_type) != nullptr
+                               || std::dynamic_pointer_cast<link_type>(var_type) != nullptr;
+
+            if(is_ref_or_link) {
+                // For ref/link: the soft-fail mechanism handles null → else branching.
+                // If we reach here, the ref/link was successfully bound → go to then.
+                _null_failure_bb = saved_null_failure_bb;
+                _builder->CreateBr(then_block);
+            } else {
+                _null_failure_bb = saved_null_failure_bb;
+
+                // Generate bool cast from the variable value
+                auto var_it = _context->_variables.find(stmt.get_cond_var());
+                llvm::AllocaInst* alloca = var_it->second;
+
+                llvm::Value* test_value = nullptr;
+                if(auto prim_type = std::dynamic_pointer_cast<primitive_type>(var_type)) {
+                    // Numeric primitive: != 0
+                    llvm::Type* llvm_t = _context->get_llvm_type(var_type);
+                    llvm::Value* loaded = _builder->CreateLoad(llvm_t, alloca, "if_cond_load");
+                    if(prim_type->is_float()) {
+                        test_value = _builder->CreateFCmpONE(loaded,
+                            llvm::ConstantFP::get(llvm_t, 0.0), "if_cond_ne_zero");
+                    } else {
+                        test_value = _builder->CreateICmpNE(loaded,
+                            llvm::ConstantInt::get(llvm_t, 0), "if_cond_ne_zero");
+                    }
+                } else if(std::dynamic_pointer_cast<pointer_type>(var_type)
+                       || std::dynamic_pointer_cast<owner_type>(var_type)
+                       || std::dynamic_pointer_cast<view_type>(var_type)) {
+                    // Pointer/owner/view: != null
+                    auto& llvm_ctx = _builder->getContext();
+                    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+                    llvm::Value* loaded = _builder->CreateLoad(ptr_ty, alloca, "if_cond_ptr_load");
+                    test_value = _builder->CreateICmpNE(loaded,
+                        llvm::ConstantPointerNull::get(ptr_ty), "if_cond_ne_null");
+                } else if(auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
+                    // Aggregate: call bool cast operator (__operator_cv_bool)
+                    auto agg = st_type->get_struct();
+                    auto funcs = agg->get_functions("__operator_cv_bool");
+                    if(!funcs.empty()) {
+                        auto cast_fn = funcs[0];
+                        auto fn_it = _context->_functions.find(cast_fn);
+                        if(fn_it != _context->_functions.end()) {
+                            test_value = _builder->CreateCall(fn_it->second, {alloca}, "if_cond_bool_cast");
+                        }
+                    }
+                }
+
+                if(!test_value) {
+                    // Fallback: should not happen if type_reference_resolver validated
+                    test_value = _builder->getTrue();
+                }
+
+                emit_expression_temporaries_cleanup();
+
+                // Emit conditional branch
+                if(has_else) {
+                    _builder->CreateCondBr(test_value, then_block, else_block);
+                } else {
+                    _builder->CreateCondBr(test_value, then_block, cont_block);
+                }
             }
         }
     } else {
@@ -889,14 +928,20 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         func->insert(func->end(), else_block);
         _builder->SetInsertPoint(else_block);
         stmt.get_else_stmt()->accept(*this);
-        // For ref/link soft-fail: the variable doesn't exist on the else path,
-        // so skip cleanup. For all other types, clean up.
+        // For ref/link soft-fail (classic if-let): the variable doesn't exist on the else path,
+        // so skip cleanup. For if(var; test) form, cleanup always happens.
+        // For all other types, clean up.
         if(has_cond_var) {
-            auto var_type = stmt.get_cond_var()->get_type();
-            bool is_ref_or_link = std::dynamic_pointer_cast<reference_type>(var_type) != nullptr
-                               || std::dynamic_pointer_cast<link_type>(var_type) != nullptr;
-            if(!is_ref_or_link) {
+            if(has_cond_var_with_test) {
+                // if(var; test) form: variable always exists, always cleanup
                 emit_cond_var_cleanup(stmt.get_cond_var());
+            } else {
+                auto var_type = stmt.get_cond_var()->get_type();
+                bool is_ref_or_link = std::dynamic_pointer_cast<reference_type>(var_type) != nullptr
+                                   || std::dynamic_pointer_cast<link_type>(var_type) != nullptr;
+                if(!is_ref_or_link) {
+                    emit_cond_var_cleanup(stmt.get_cond_var());
+                }
             }
         }
         _builder->CreateBr(cont_block);

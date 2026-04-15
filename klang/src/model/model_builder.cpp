@@ -1363,7 +1363,18 @@ namespace k::model {
             // Variable is registered via variable_holder mechanism
             _stmt.reset();
 
-            // Test expression is derived from the variable — no explicit test_expr
+            if(stmt.has_cond_var_with_test()) {
+                // if(var; test) form: visit the separate test expression
+                _expr.reset();
+                stmt.test_expr->visit(*this);
+                if(_expr) {
+                    if_else_stmt->set_test_expr(_expr);
+                    _expr.reset();
+                } else {
+                    throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_IF_STMT_NEEDS_CONDITION), stmt.if_kw, "'if(var; test)' statement requires a valid test expression after ';'");
+                }
+            }
+            // else: Test expression is derived from the variable — no explicit test_expr
         } else {
             // Classic form: test expression
             _expr.reset();
