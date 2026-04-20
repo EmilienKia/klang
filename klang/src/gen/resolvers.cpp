@@ -2986,6 +2986,8 @@ void type_reference_resolver::visit_variable_definition(variable_definition& var
 
     if (type::is_primitive(var_type)) {
         validate_primitive_variable(ctx);
+    } else if (type::is_enum(var_type)) {
+        validate_primitive_variable(ctx);
     } else if (std::dynamic_pointer_cast<struct_type>(var_type)) {
         validate_struct_variable(ctx);
     } else if (type::is_reference(var_type)) {
@@ -3561,6 +3563,17 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     if (!enum_eff_src && enum_eff_tgt) {
         auto p_src = std::dynamic_pointer_cast<primitive_type>(eff_src_nc);
         if (p_src) return CAST_WIDENING;
+
+        if (enum_eff_tgt->is_object_backed()) {
+            auto obj_tgt = enum_eff_tgt->get_object_type();
+            auto src_st = std::dynamic_pointer_cast<struct_type>(eff_src_nc);
+            if (!src_st && type::is_reference(effective_src)) {
+                auto src_ref = std::dynamic_pointer_cast<reference_type>(effective_src);
+                src_st = std::dynamic_pointer_cast<struct_type>(
+                    type::remove_const(src_ref->get_subtype()));
+            }
+            if (obj_tgt && src_st && src_st == obj_tgt) return CAST_WIDENING;
+        }
     }
     // ref<enum> cases: load + convert
     if (type::is_reference(effective_src)) {

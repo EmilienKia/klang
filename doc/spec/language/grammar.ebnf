@@ -311,6 +311,10 @@ EnumDecl
       [ ':' , TypeSpec ] ,
       '{' , { EnumEntry } , '}' , ';'
     ;
+    (* Disambiguation for ':' TypeSpec:
+       - if TypeSpec resolves to an enum type, it is the base enum (derivation);
+       - if TypeSpec resolves to a primitive integer or aggregate type, it is
+         the explicit underlying type (integer-backed or object-backed enum). *)
 
 EnumEntry
     = Identifier , [ '=' , ( IntegerLiteral | Identifier )
@@ -318,6 +322,12 @@ EnumEntry
                    | '(' , [ ExpressionList ] , ')' ] ,
       [ 'default' ] , ';'
     ;
+    (* Supported forms include:
+       - integer/alias form: NAME = 1, NAME = OTHER
+       - object/designated init: NAME{ ... }
+       - constructor/default-init form: NAME(args...), NAME()
+       - implicit value form: NAME
+    *)
 
 (* ---------- Annotations ------------------------------------------------- *)
 

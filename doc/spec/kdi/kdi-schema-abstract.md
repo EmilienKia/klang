@@ -60,11 +60,16 @@ Primitive types and indirection types are encoded inline where they appear
 ```
 KdiTypeTable {
   aggregates : [KdiAggregateType]
+  enums      : [KdiEnumType]        -- optional; omitted when empty
 }
 
 KdiAggregateType {
   fq_name      : string            -- fully-qualified K name, e.g. "math::Vec3"
   mangled_name : string            -- LLVM struct type name
+}
+
+KdiEnumType {
+  fq_name      : string            -- fully-qualified K name, e.g. "math::Axis"
 }
 ```
 
@@ -91,6 +96,7 @@ KdiType = one of:
   { kind: "sized_array", elem: KdiType, size: uint }
   { kind: "fn_ref",  ret: KdiType, params: [KdiType] }
   { kind: "aggregate", fq_name: string }  -- reference into KdiTypeTable
+  { kind: "enum", fq_name: string }       -- reference into KdiTypeTable.enums
 ```
 
 ---
@@ -114,8 +120,10 @@ KdiNamespace {
   fq_name    : string
   namespaces : [KdiNamespace]      -- nested namespaces
   aggregates : [KdiAggregate]      -- struct / class / interface
+  enums      : [KdiEnum]
   functions  : [KdiFunction]       -- global and static functions (PUBLIC only)
   variables  : [KdiVariable]       -- global and static variables (PUBLIC only)
+  template_defs : [KdiTemplateDef] -- optional; omitted when empty
 }
 ```
 
@@ -280,6 +288,41 @@ KdiThunk {
 
 ---
 
+## KdiEnum
+
+```
+KdiEnum {
+  name              : string
+  fq_name           : string
+  visibility        : "public" | "protected"
+  underlying_type   : KdiType
+  object_type       : KdiType?      -- aggregate ref for object-backed enums
+  object_table_symbol : string?     -- required when object_type is set
+  base_fq_name      : string?       -- enum derivation base
+  entries           : [KdiEnumEntry]
+}
+
+KdiEnumEntry {
+  name              : string
+  value             : int
+  is_default        : bool
+  object_init_members : [KdiObjectInitMember]  -- only for object-backed enums
+}
+
+KdiObjectInitMember {
+  name  : string
+  value : int
+}
+```
+
+Compatibility rules:
+
+* Integer-backed enums omit `object_type` and `object_table_symbol`.
+* Legacy payloads without typed-enum fields remain valid.
+* If `object_type` is present, importers must treat the enum as object-backed.
+
+---
+
 ## KdiFunction
 
 ```
@@ -404,4 +447,7 @@ KdiVariable {
   consumer **must** treat a missing transitive dependency as a fatal error:
   without all transitive KDIs the aggregate layouts and vtable slots cannot
   be fully reconstructed.
+* For enums, `object_type`, `object_table_symbol`, and `object_init_members`
+  are optional typed-enum extensions; consumers must remain backward-compatible
+  with payloads that only contain integer-enum fields.
 

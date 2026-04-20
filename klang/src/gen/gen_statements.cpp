@@ -701,6 +701,7 @@ void type_reference_resolver::visit_if_else_statement(if_else_statement& stmt)
                     // and aggregates with bool cast operator are ok.
                     bool can_cast = false;
                     if(std::dynamic_pointer_cast<primitive_type>(var_type)) can_cast = true;
+                    else if(std::dynamic_pointer_cast<enum_type>(var_type)) can_cast = true;
                     else if(std::dynamic_pointer_cast<pointer_type>(var_type)) can_cast = true;
                     else if(std::dynamic_pointer_cast<owner_type>(var_type)) can_cast = true;
                     else if(std::dynamic_pointer_cast<view_type>(var_type)) can_cast = true;
@@ -1011,6 +1012,11 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                     test_value = _builder->CreateICmpNE(loaded,
                         llvm::ConstantInt::get(llvm_t, 0), "if_cond_ne_zero");
                 }
+            } else if(auto en_type = std::dynamic_pointer_cast<enum_type>(var_type)) {
+                llvm::Type* llvm_t = _context->get_llvm_type(var_type);
+                llvm::Value* loaded = _builder->CreateLoad(llvm_t, alloca, "if_cond_enum_load");
+                test_value = _builder->CreateICmpNE(loaded,
+                    llvm::ConstantInt::get(llvm_t, 0), "if_cond_enum_ne_zero");
             } else if(auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
                 auto agg = st_type->get_struct();
                 auto funcs = agg->get_functions("__operator_cv_bool");

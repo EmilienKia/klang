@@ -756,6 +756,12 @@ struct enum_entry_def {
     bool is_default = false;
     /** For object-backed enums: the brace-initializer AST node for this entry. */
     std::shared_ptr<k::parse::ast::brace_init_list> brace_init;
+    /** For object-backed enums: constructor-style args for `ENTRY(...)` initializers. */
+    std::vector<std::shared_ptr<expression>> ctor_args;
+    /** For object-backed enums: true if this entry is implicitly incremented from the previous one. */
+    bool is_implicit_increment = false;
+    /** True when this entry aliases another entry (shares its backing-table slot). */
+    bool is_alias = false;
 };
 
 /**
@@ -769,6 +775,8 @@ struct enum_raw_entry_def {
     bool is_default = false;
     /** Brace-initializer for object-backed enum entries (e.g. `ENTRY{.x=1, .y=2}`). */
     std::shared_ptr<k::parse::ast::brace_init_list> brace_init;
+    /** Constructor-style args for object-backed enum entries (e.g. `ENTRY(1, 2)`). */
+    std::vector<std::shared_ptr<expression>> ctor_args;
 };
 
 /**
@@ -797,6 +805,8 @@ protected:
     std::shared_ptr<struct_type> _object_type;
     /** LLVM global constant array for object-backed typed enums: `[N x StructType]`. */
     llvm::GlobalVariable* _table_global = nullptr;
+    /** Canonical LLVM symbol name for the object-backed enum table. */
+    std::string _table_symbol;
     visibility _visibility = PUBLIC;
 
     /** Optional base enum name (unresolved, from AST). */
@@ -822,8 +832,11 @@ public:
 
     const std::vector<enum_entry_def>& entries() const { return _entries; }
     void add_entry(const std::string& name, int64_t value, bool is_default,
-                   std::shared_ptr<k::parse::ast::brace_init_list> brace_init = nullptr) {
-        _entries.push_back({name, value, is_default, std::move(brace_init)});
+                   std::shared_ptr<k::parse::ast::brace_init_list> brace_init = nullptr,
+                   std::vector<std::shared_ptr<expression>> ctor_args = {},
+                   bool is_implicit_increment = false,
+                   bool is_alias = false) {
+        _entries.push_back({name, value, is_default, std::move(brace_init), std::move(ctor_args), is_implicit_increment, is_alias});
     }
 
     std::optional<enum_entry_def> get_entry_by_name(const std::string& name) const {
@@ -854,7 +867,12 @@ public:
 
     /** LLVM global constant array used at runtime for object-backed enums. */
     llvm::GlobalVariable* get_table_global() const { return _table_global; }
-    void set_table_global(llvm::GlobalVariable* gv) { _table_global = gv; }
+    void set_table_global(llvm::GlobalVariable* gv) {
+        _table_global = gv;
+        if (gv) _table_symbol = gv->getName().str();
+    }
+    const std::string& get_table_symbol() const { return _table_symbol; }
+    void set_table_symbol(std::string symbol) { _table_symbol = std::move(symbol); }
 
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }

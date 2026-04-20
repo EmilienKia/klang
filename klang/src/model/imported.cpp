@@ -587,8 +587,15 @@ rebuild_object_init_brace(const kdi::kdi_enum_entry& entry)
     std::vector<std::shared_ptr<k::parse::ast::expression>> elements;
     elements.reserve(entry.object_init_members.size());
     for (const auto& [member_name, member_value] : entry.object_init_members) {
+        std::string lit_txt = std::to_string(member_value);
         auto lit = std::make_shared<k::parse::ast::literal_expr>(
-            lex::any_literal{lex::integer{std::to_string(member_value)}});
+            lex::any_literal{lex::integer{
+                lit_txt,
+                /*num_prefix_size=*/0,
+                /*num_content_size=*/lit_txt.size(),
+                lex::DECIMAL,
+                /*unsigned_num=*/false,
+                lex::LONGLONG}});
         auto designated = std::make_shared<k::parse::ast::designated_init_element>(
             lex::operator_(".", lex::operator_::DOT),
             lex::identifier(member_name),
@@ -1047,8 +1054,11 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
         auto object_model_type = kdi_type_to_model_type(*kdi_en->object_type, *this, ctx);
         if (auto object_st = std::dynamic_pointer_cast<struct_type>(object_model_type)) {
             en->set_object_type(object_st);
-            // NOTE: We do NOT create the GlobalVariable here.
-            // We rely on declaration_generator::visit_enumeration() to generate the full table.
+            if (kdi_en->object_table_symbol.has_value() && !kdi_en->object_table_symbol->empty()) {
+                en->set_table_symbol(*kdi_en->object_table_symbol);
+            } else {
+                en->set_table_symbol("__klang_enum_table_" + en->get_mangled_name() + "__");
+            }
         }
     }
 

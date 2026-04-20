@@ -1008,7 +1008,14 @@ With an explicit primitive type (`enum E : unsigned byte`), that explicit primit
 - Runtime representation is an integer index.
 - Each entry maps to one object in a static backing table.
 - `E -> const AggregateType&` conversion returns a reference to that table entry.
+- `AggregateType -> E` conversion performs a runtime lookup against the backing
+  table and requires value equality support for the aggregate.
+- `AggregateType -> E` on non-match is fatal by default.
+- In `if` condition-variable declarations (`if (e : E = obj)`), a non-match
+  follows the existing soft-fail path and branches to `else`.
 - Entry initializers support designated braces (`NAME{.f = v}`), constructor form (`NAME(args)`), and zero-init (`NAME`).
+- Implicit entries in object-backed enums derive from the previous entry value
+  (copy + increment semantics when supported by the underlying object shape).
 
 ### 19.3 Enum Derivation
 
@@ -1016,6 +1023,7 @@ With an explicit primitive type (`enum E : unsigned byte`), that explicit primit
 - Multi-level chains supported.
 - Implicit conversion `Derived` → `Base` (upcast). `Base` → `Derived` = error.
 - The derived underlying type covers all entries (inherited + local).
+- For typed enums, derivation inherits the base enum underlying object type.
 
 ### 19.4 Usage
 

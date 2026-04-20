@@ -30,7 +30,11 @@
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 
 #include "llvm/Support/raw_os_ostream.h"
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/DataLayout.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/Intrinsics.h>
 
 #include <unordered_set>
 #include "../errors.hpp"
@@ -62,6 +66,40 @@ static bool extract_value_from_ast_expr(
             return true;
         }
     }, val);
+}
+
+static llvm::GlobalVariable* ensure_enum_object_table_reference(
+    const std::shared_ptr<enumeration>& en,
+    const std::shared_ptr<context>& ctx)
+{
+    if (!en || !ctx || !en->is_object_backed()) return nullptr;
+    if (auto* existing = en->get_table_global()) return existing;
+
+    auto obj_type = en->get_object_type();
+    if (!obj_type || !obj_type->is_resolved()) return nullptr;
+
+    auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(ctx->get_llvm_type(obj_type));
+    if (!llvm_st) return nullptr;
+
+    const std::string table_name = !en->get_table_symbol().empty()
+                                   ? en->get_table_symbol()
+                                   : ("__klang_enum_table_" + en->get_mangled_name() + "__");
+    if (auto* gv = ctx->module().getNamedGlobal(table_name)) {
+        en->set_table_global(gv);
+        return gv;
+    }
+
+    // Importer: declare external table symbol (definition must come from producer module).
+    auto* arr_ty = llvm::ArrayType::get(llvm_st, en->entries().size());
+    auto* gv = new llvm::GlobalVariable(
+        ctx->module(),
+        arr_ty,
+        /*isConstant=*/true,
+        llvm::GlobalValue::ExternalLinkage,
+        nullptr,
+        table_name);
+    en->set_table_global(gv);
+    return gv;
 }
 
 // Forward declarations for class-related helpers defined in gen_class.cpp
@@ -6365,6 +6403,135 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         auto enum_src = std::dynamic_pointer_cast<enum_type>(src_nc);
         auto enum_tgt = std::dynamic_pointer_cast<enum_type>(tgt_nc);
         if (enum_src || enum_tgt) {
+            // ── Object value/ref -> object-backed enum: linear lookup in backing table ──
+            if (!enum_src && enum_tgt && enum_tgt->is_object_backed()) {
+                auto obj_type = enum_tgt->get_object_type();
+                auto src_st = std::dynamic_pointer_cast<struct_type>(src_nc);
+                if (!src_st && type::is_reference(src_nc)) {
+                    auto src_ref = std::dynamic_pointer_cast<reference_type>(src_nc);
+                    src_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(src_ref->get_subtype()));
+                }
+
+                if (obj_type && src_st && src_st == obj_type) {
+                    _value = nullptr;
+                    expr.sub_expr()->accept(*this);
+                    if (!_value) return;
+
+                    auto en = enum_tgt->get_enumeration();
+                    if (!en) return;
+                    auto* table_gv = ensure_enum_object_table_reference(en, _context);
+                    if (!table_gv) return;
+
+                    auto* arr_ty = llvm::dyn_cast<llvm::ArrayType>(table_gv->getValueType());
+                    auto* llvm_st = arr_ty ? llvm::dyn_cast<llvm::StructType>(arr_ty->getElementType()) : nullptr;
+                    auto* tgt_int_ty = llvm::dyn_cast_or_null<llvm::IntegerType>(enum_tgt->get_llvm_type());
+                    if (!arr_ty || !llvm_st || !tgt_int_ty) return;
+
+                    llvm::Value* src_ptr = _value;
+                    // Symbol values for non-reference structs are addresses already; cast expressions may also provide pointers.
+                    if (!src_ptr->getType()->isPointerTy()) return;
+
+                    auto* cur_fn = _builder->GetInsertBlock()->getParent();
+                    auto* i1_ty = llvm::Type::getInt1Ty(_builder->getContext());
+
+                    llvm::Function* equals_fn = nullptr;
+                    if (auto obj_agg = obj_type->get_struct()) {
+                        std::shared_ptr<function> eq_model = obj_agg->get_function("equals");
+                        if (!eq_model) eq_model = obj_agg->get_function("__operator_eq_");
+                        if (eq_model) {
+                            equals_fn = get_module().getFunction(eq_model->get_mangled_name());
+                        }
+                    }
+                    if (!equals_fn) {
+                        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_UNSUPPORTED), expr.first_lexeme(),
+                            "Object-backed enum cast '{}' -> '{}' requires underlying type '{}' to define equality (equals/==)",
+                            {source_type->to_string(), target_type->to_string(), obj_type->to_string()});
+                    }
+
+                    auto default_entry = en->get_default_entry();
+                    llvm::Value* found = llvm::ConstantInt::getFalse(i1_ty);
+                    llvm::Value* out_idx = llvm::ConstantInt::get(
+                        tgt_int_ty,
+                        static_cast<uint64_t>(default_entry.value),
+                        default_entry.value < 0);
+
+                    for (size_t i = 0; i < en->entries().size(); ++i) {
+                        llvm::Value* indices[] = {
+                            llvm::ConstantInt::get(llvm::Type::getInt64Ty(_builder->getContext()), 0),
+                            llvm::ConstantInt::get(llvm::Type::getInt64Ty(_builder->getContext()), i)
+                        };
+                        auto* table_elem_ptr = _builder->CreateInBoundsGEP(
+                            arr_ty,
+                            table_gv,
+                            llvm::ArrayRef<llvm::Value*>(indices),
+                            "enum_obj_tbl_elem");
+
+                        llvm::Value* is_match = nullptr;
+                        auto* eq_call = _builder->CreateCall(equals_fn, {src_ptr, table_elem_ptr}, "enum_obj_equals");
+                        if (eq_call->getType()->isIntegerTy(1)) {
+                            is_match = eq_call;
+                        } else if (eq_call->getType()->isIntegerTy()) {
+                            is_match = _builder->CreateICmpNE(eq_call,
+                                llvm::ConstantInt::get(eq_call->getType(), 0),
+                                "enum_obj_equals_bool");
+                        }
+
+                        if (!is_match) {
+                            is_match = llvm::ConstantInt::getTrue(i1_ty);
+                            unsigned field_index = 0;
+                            for (auto it = obj_type->fields_begin(); it != obj_type->fields_end(); ++it, ++field_index) {
+                                auto ft = it->field_type.lock();
+                                if (!ft) continue;
+                                auto* llvm_ft = _context->get_llvm_type(ft);
+                                if (!llvm_ft) continue;
+
+                                auto* src_field_ptr = _builder->CreateStructGEP(
+                                    llvm_st, src_ptr, field_index, "enum_obj_src_field_ptr");
+                                auto* tbl_field_ptr = _builder->CreateStructGEP(
+                                    llvm_st, table_elem_ptr, field_index, "enum_obj_tbl_field_ptr");
+                                auto* src_field = _builder->CreateLoad(llvm_ft, src_field_ptr, "enum_obj_src_field");
+                                auto* tbl_field = _builder->CreateLoad(llvm_ft, tbl_field_ptr, "enum_obj_tbl_field");
+
+                                llvm::Value* field_eq = nullptr;
+                                if (llvm_ft->isIntegerTy() || llvm_ft->isPointerTy()) {
+                                    field_eq = _builder->CreateICmpEQ(src_field, tbl_field, "enum_obj_field_eq");
+                                } else if (llvm_ft->isFloatingPointTy()) {
+                                    field_eq = _builder->CreateFCmpOEQ(src_field, tbl_field, "enum_obj_field_eq");
+                                } else {
+                                    field_eq = llvm::ConstantInt::getFalse(i1_ty);
+                                }
+                                is_match = _builder->CreateAnd(is_match, field_eq, "enum_obj_entry_match");
+                            }
+                        }
+
+                        auto* not_found_yet = _builder->CreateNot(found, "enum_obj_not_found_yet");
+                        auto* take_this = _builder->CreateAnd(not_found_yet, is_match, "enum_obj_take_this");
+                        auto* idx_const = llvm::ConstantInt::get(tgt_int_ty, static_cast<uint64_t>(i), false);
+                        out_idx = _builder->CreateSelect(take_this, idx_const, out_idx, "enum_obj_idx_sel");
+                        found = _builder->CreateOr(found, is_match, "enum_obj_found");
+                    }
+
+                    if (_null_failure_bb) {
+                        auto* ok_bb = llvm::BasicBlock::Create(_builder->getContext(), "enum_obj_cast_ok", cur_fn);
+                        auto* should_fail = _builder->CreateNot(found, "enum_obj_cast_fail");
+                        _builder->CreateCondBr(should_fail, _null_failure_bb, ok_bb);
+                        _builder->SetInsertPoint(ok_bb);
+                    } else {
+                        auto* ok_bb = llvm::BasicBlock::Create(_builder->getContext(), "enum_obj_cast_ok", cur_fn);
+                        auto* fail_bb = llvm::BasicBlock::Create(_builder->getContext(), "enum_obj_cast_fail", cur_fn);
+                        _builder->CreateCondBr(found, ok_bb, fail_bb);
+                        _builder->SetInsertPoint(fail_bb);
+                        auto* trap_fn = llvm::Intrinsic::getDeclaration(&get_module(), llvm::Intrinsic::trap);
+                        _builder->CreateCall(trap_fn, {});
+                        _builder->CreateUnreachable();
+                        _builder->SetInsertPoint(ok_bb);
+                    }
+
+                    _value = out_idx;
+                    return;
+                }
+            }
+
             // ── Object-backed enum → const T& (reference to backing table element) ──
             if (enum_src && enum_src->is_object_backed() && !enum_tgt) {
                 // Check target is a reference to the object type
@@ -6386,9 +6553,9 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 
                     // Get the backing table global
                     auto en = enum_src->get_enumeration();
-                    if (!en || !en->get_table_global()) return;
-
-                    auto* table_gv = en->get_table_global();
+                    if (!en) return;
+                    auto* table_gv = ensure_enum_object_table_reference(en, _context);
+                    if (!table_gv) return;
                     auto* arr_ty = llvm::dyn_cast<llvm::ArrayType>(
                         table_gv->getValueType());
                     if (!arr_ty) return;

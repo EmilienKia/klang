@@ -71,7 +71,16 @@ Entry initializer forms for object-backed enums:
 
 - `NAME{ ... }` designated object initializer.
 - `NAME(args...)` constructor-style initializer.
-- `NAME` zero-initialized object.
+- `NAME()` default-construction form.
+- `NAME` implicit entry value (derived from previous entry when possible, otherwise zero-init).
+
+Additional conversion rules for object-backed enums:
+
+- `E -> const T&` is always supported via backing-table lookup.
+- `T -> E` is supported when equality is available for `T`.
+- `T -> E` non-match is fatal outside soft-fail contexts.
+- In `if (e : E = value)` condition-variable form, `T -> E` non-match follows
+  soft-fail control flow and selects the `else` path.
 
 ---
 
@@ -106,6 +115,7 @@ enum ExtShape : Shape {
 | **Cycle detection** | Circular derivation (`A : B`, `B : A`) is detected and rejected with an error. |
 | **Declaration order** | The base enum does not need to be declared before the derived enum — the compiler resolves forward references. |
 | **Underlying type** | The underlying type of the derived enum is the smallest type that fits **all** entries (inherited + local). |
+| **Typed derivation** | If the base enum is object-backed, the derived enum inherits the same underlying object type. |
 
 ### Conversion rules for derived enums
 
@@ -164,6 +174,8 @@ c : Color = 2;        // implicit int → Color conversion
 | primitive int | `E` | widening | Implicit |
 | `ref<E>` | `E` | ref-load | Load + identity |
 | `ref<E>` | primitive int | ref-load + widening | Load then convert |
+| `T` (typed enum object type) | `E` | widening | Runtime table lookup; fatal on non-match except soft-fail in `if` cond-var form |
+| `ref<T>` (typed enum object type) | `E` | widening | Runtime table lookup on loaded value |
 
 > **Note:** Implicit conversions between unrelated enums are **not** allowed.
 > Only `Derived → Base` (upcast) is permitted.
@@ -210,6 +222,13 @@ width) or integer truncation / extension.
 
 Derived enums are represented identically to their base — the derivation
 relationship exists only at the compiler's type-system level.
+
+For object-backed enums:
+
+- The enum value remains an integer index type.
+- A static global table stores the concrete object values for entries.
+- `E -> const T&` computes a pointer into that table.
+- `T -> E` performs a runtime table scan to recover the matching index.
 
 ---
 

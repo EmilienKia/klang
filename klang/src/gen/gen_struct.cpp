@@ -832,9 +832,16 @@ void declaration_generator::visit_enumeration(enumeration& en) {
     if (!llvm_st) return;
 
     auto& llvm_ctx = _context->module().getContext();
-    size_t n = en.entries().size();
 
-    // Helper: build a constant struct from a designated brace-init (supports integer field values only).
+    auto extract_i64_from_model_expr = [](const std::shared_ptr<expression>& expr) -> std::optional<int64_t> {
+        auto val = std::dynamic_pointer_cast<value_expression>(expr);
+        if (!val || !val->is_literal()) return std::nullopt;
+        const auto& any = val->any_literal();
+        if (any.index() != lex::any_literal_type_index::INTEGER) return std::nullopt;
+        return static_cast<int64_t>(any.get<lex::integer>().to_unsigned_int());
+    };
+
+    // Helper: build a constant struct from enum entry explicit init (designated or ctor-args).
     auto build_entry_constant = [&](const enum_entry_def& entry) -> llvm::Constant* {
         // Start with all-zero fields
         std::vector<llvm::Constant*> field_values;
@@ -871,27 +878,122 @@ void declaration_generator::visit_enumeration(enumeration& en) {
                         int_lit.to_unsigned_int());
                 }
             }
+        } else if (!entry.ctor_args.empty()) {
+            // Constructor-form fallback: map integer literal args to user fields in declaration order.
+            std::vector<size_t> user_int_fields;
+            for (auto it = obj_type->fields_begin(); it != obj_type->fields_end(); ++it) {
+                if (it->name.rfind("__", 0) == 0) continue;
+                auto ft = it->field_type.lock();
+                auto* llvm_ft = ft ? ft->get_llvm_type() : nullptr;
+                if (llvm_ft && llvm_ft->isIntegerTy()) {
+                    user_int_fields.push_back(it->index);
+                }
+            }
+
+            const size_t assign_n = std::min(user_int_fields.size(), entry.ctor_args.size());
+            for (size_t i = 0; i < assign_n; ++i) {
+                auto lit_opt = extract_i64_from_model_expr(entry.ctor_args[i]);
+                if (!lit_opt.has_value()) continue;
+
+                size_t field_idx = user_int_fields[i];
+                auto fit = obj_type->fields_begin();
+                for (; fit != obj_type->fields_end(); ++fit) {
+                    if (fit->index == field_idx) break;
+                }
+                if (fit == obj_type->fields_end()) continue;
+
+                auto ft = fit->field_type.lock();
+                if (!ft || !ft->get_llvm_type() || !ft->get_llvm_type()->isIntegerTy()) continue;
+                field_values[field_idx] = llvm::ConstantInt::get(
+                    ft->get_llvm_type(),
+                    static_cast<uint64_t>(*lit_opt),
+                    /*isSigned=*/(*lit_opt < 0));
+            }
         }
 
         return llvm::ConstantStruct::get(llvm_st, field_values);
     };
 
-    // Build the array initializer
-    auto* arr_ty = llvm::ArrayType::get(llvm_st, n);
-    std::vector<llvm::Constant*> elements;
-    elements.reserve(n);
+    // Helper: implicit progression from previous value (copy + heuristic ++ on last user integer field).
+    auto build_implicit_from_previous = [&](llvm::Constant* previous) -> llvm::Constant* {
+        auto* prev_st = llvm::dyn_cast_or_null<llvm::ConstantStruct>(previous);
+        if (!prev_st) return previous;
+
+        std::vector<llvm::Constant*> fields;
+        fields.reserve(prev_st->getNumOperands());
+        for (unsigned i = 0; i < prev_st->getNumOperands(); ++i) {
+            fields.push_back(llvm::cast<llvm::Constant>(prev_st->getOperand(i)));
+        }
+
+        int target_index = -1;
+        for (auto it = obj_type->fields_begin(); it != obj_type->fields_end(); ++it) {
+            if (it->name.rfind("__", 0) == 0) continue;
+            if (it->index >= fields.size()) continue;
+            if (!fields[it->index]->getType()->isIntegerTy()) continue;
+            target_index = static_cast<int>(it->index);
+        }
+
+        if (target_index >= 0) {
+            auto* int_ty = llvm::dyn_cast<llvm::IntegerType>(fields[static_cast<size_t>(target_index)]->getType());
+            if (!int_ty) return previous;
+            auto* one = llvm::ConstantInt::get(int_ty, 1, /*isSigned=*/false);
+            fields[static_cast<size_t>(target_index)] =
+                llvm::ConstantExpr::getAdd(fields[static_cast<size_t>(target_index)], one);
+            return llvm::ConstantStruct::get(llvm_st, fields);
+        }
+
+        return previous;
+    };
+
+    // Build the array initializer by unique backing index (aliases share slots).
+    size_t table_size = 0;
     for (auto& entry : en.entries()) {
-        elements.push_back(build_entry_constant(entry));
+        if (entry.value >= 0) {
+            table_size = std::max(table_size, static_cast<size_t>(entry.value + 1));
+        }
     }
+
+    auto* arr_ty = llvm::ArrayType::get(llvm_st, table_size);
+    std::vector<llvm::Constant*> elements(table_size, nullptr);
+
+    // Pass 1: explicit non-alias entries (designated / ctor-args).
+    for (auto& entry : en.entries()) {
+        if (entry.is_alias || entry.is_implicit_increment || entry.value < 0) continue;
+        const size_t idx = static_cast<size_t>(entry.value);
+        if (idx >= elements.size() || elements[idx] != nullptr) continue;
+        elements[idx] = build_entry_constant(entry);
+    }
+
+    // Pass 2: implicit non-alias entries from previous slot.
+    for (auto& entry : en.entries()) {
+        if (entry.is_alias || !entry.is_implicit_increment || entry.value < 0) continue;
+        const size_t idx = static_cast<size_t>(entry.value);
+        if (idx >= elements.size() || elements[idx] != nullptr) continue;
+        if (idx > 0 && elements[idx - 1] != nullptr) {
+            elements[idx] = build_implicit_from_previous(elements[idx - 1]);
+        }
+    }
+
+    // Pass 3: any unresolved slot defaults to zero-init.
+    for (size_t i = 0; i < elements.size(); ++i) {
+        if (!elements[i]) {
+            elements[i] = llvm::Constant::getNullValue(llvm_st);
+        }
+    }
+
     auto* arr_init = llvm::ConstantArray::get(arr_ty, elements);
 
-    // Emit as a private constant global: @__klang_enum_table_<MangledName>
+    // Emit as a constant global: @__klang_enum_table_<MangledName>
+    // Use ExternalLinkage for public enums (cross-module visibility), PrivateLinkage for private.
     std::string table_name = "__klang_enum_table_" + en.get_mangled_name() + "__";
+    auto linkage = (en.get_visibility() == k::model::PUBLIC)
+                   ? llvm::GlobalValue::ExternalLinkage
+                   : llvm::GlobalValue::PrivateLinkage;
     auto* gv = new llvm::GlobalVariable(
         _context->module(),
         arr_ty,
         /*isConstant=*/true,
-        llvm::GlobalValue::PrivateLinkage,
+        linkage,
         arr_init,
         table_name);
     gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
@@ -1001,7 +1103,7 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
 
     // ── 2. Build the combined list of work entries ──
     // For derived enums, prepend the base entries (already resolved) so that
-    // references and auto-increment from local entries can see them.
+     // references and auto-increment from local entries can see them.
     struct work_entry {
         std::string name;
         bool from_base = false;
@@ -1013,6 +1115,12 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         int64_t resolved_value = 0;
         // For object-backed entries: the brace_init AST node (may be null for zero-init)
         std::shared_ptr<k::parse::ast::brace_init_list> brace_init;
+        // For object-backed entries: constructor args for `ENTRY(...)`
+        std::vector<std::shared_ptr<expression>> ctor_args;
+        // For implicitly incremented object-backed entries
+        bool is_implicit_increment = false;
+        // True for alias entries (`ENTRY = OTHER`).
+        bool is_alias = false;
     };
     std::vector<work_entry> work;
 
@@ -1027,6 +1135,10 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
             we.resolved = true;
             we.resolved_value = be.value;
             we.is_default = be.is_default;
+            we.brace_init = be.brace_init;
+            we.ctor_args = be.ctor_args;
+            we.is_implicit_increment = be.is_implicit_increment;
+            we.is_alias = be.is_alias;
             work.push_back(std::move(we));
         }
     }
@@ -1040,10 +1152,13 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         we.is_default = re.is_default;
 
         if (en.is_object_backed()) {
-            // For object-backed enums, entries have sequential index values (assigned below).
-            // Store brace_init for later constant table construction.
+            // Object-backed entries keep rich initializer shape for table construction.
             we.brace_init = re.brace_init;
-            // resolved_value will be set to the sequential index below
+            we.ctor_args = re.ctor_args;
+            if (!re.ref_name.empty()) {
+                we.ref_name = re.ref_name;
+                we.is_alias = true;
+            }
         } else {
             if (re.explicit_value.has_value()) {
                 we.has_literal = true;
@@ -1068,17 +1183,51 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         work.push_back(std::move(we));
     }
 
-    // For object-backed enums: assign sequential indices starting from 0
+    // For object-backed enums: resolve references and compute implicit entries
     if (en.is_object_backed()) {
-        for (size_t i = 0; i < work.size(); ++i) {
-            work[i].resolved = true;
-            work[i].resolved_value = static_cast<int64_t>(i);
+        // Assign indices to non-alias entries first.
+        int64_t next_index = 0;
+        for (auto& we : work) {
+            if (we.is_alias) continue;
+            we.resolved = true;
+            we.resolved_value = next_index++;
         }
-    }
 
-    // ── 3. Resolve references and auto-increment ──
-    // Skip for object-backed enums (entries have sequential indices already assigned)
-    if (!en.is_object_backed()) {
+        // Resolve aliases (supports chains, rejects cycles/missing targets).
+        bool changed = true;
+        const size_t max_iter = work.size() + 1;
+        for (size_t iter = 0; iter < max_iter && changed; ++iter) {
+            changed = false;
+            for (auto& we : work) {
+                if (!we.is_alias || we.resolved) continue;
+                for (auto& other : work) {
+                    if (other.name == we.ref_name && other.resolved) {
+                        we.resolved = true;
+                        we.resolved_value = other.resolved_value;
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        for (auto& we : work) {
+            if (we.is_alias && !we.resolved) {
+                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_ENTRY_AMBIGUOUS), en_lexeme,
+                    "Enum entry '{}' references unresolvable entry '{}' (cycle or missing entry)",
+                    {we.name, we.ref_name});
+            }
+        }
+
+        // Mark implicit entries (non-alias entries without explicit init and not first effective entry).
+        for (size_t i = 1; i < work.size(); ++i) {
+            auto& we = work[i];
+            if (we.is_alias) continue;
+            if (we.brace_init || !we.ctor_args.empty()) continue;
+            we.is_implicit_increment = true;
+        }
+    } else {
+        // For integer enums
+        // ── 3. Resolve references and auto-increment ──
         bool changed = true;
         size_t max_iter = work.size() + 1;
         for (size_t iter = 0; iter < max_iter && changed; ++iter) {
@@ -1151,7 +1300,12 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
     if (en.is_object_backed()) {
         // Object-backed: runtime representation is an unsigned index into the backing table.
         // Use the smallest unsigned type that can hold all entry indices.
-        size_t n = work.size();
+        size_t n = 0;
+        for (auto& we : work) {
+            if (we.resolved_value >= 0) {
+                n = std::max(n, static_cast<size_t>(we.resolved_value + 1));
+            }
+        }
         primitive_type::PRIMITIVE_TYPE prim_type;
         if (n <= 256)         prim_type = primitive_type::BYTE;
         else if (n <= 65536)  prim_type = primitive_type::UNSIGNED_SHORT;
@@ -1183,7 +1337,7 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
     // ── 6. Populate the resolved entries ──
     // Store ALL entries (base + local) so that entries() returns the full set.
     for (auto& we : work) {
-        en.add_entry(we.name, we.resolved_value, we.is_default, we.brace_init);
+        en.add_entry(we.name, we.resolved_value, we.is_default, we.brace_init, we.ctor_args, we.is_implicit_increment, we.is_alias);
     }
 
     // Step 3: Build the enum_type from the enumeration model

@@ -837,6 +837,31 @@ TEST_CASE("import enum — basic qualified access to imported enum entries",
     REQUIRE( result.exit_code == 1 );  // GREEN = 1
 }
 
+TEST_CASE("import enum — explicit integer underlying stays integer-backed across module boundary",
+          "[import][e2e][import-enum][typed]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module intenumlib;
+            enum Small : unsigned byte {
+                A = 250;
+                B;
+            };
+        )K",
+        R"K(
+            module exec_import_int_typed_enum;
+            import intenumlib;
+            main() : int {
+                v : intenumlib::Small = intenumlib::Small::B;
+                if (v == 251) { return v; }
+                return 0;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 251 );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // [import-enum-default] Imported enum with a 'default' entry.
 //
@@ -1135,8 +1160,6 @@ TEST_CASE("import enum — local derivation from cross-lib derived enum (3-level
 
 TEST_CASE("import enum — object-backed typed enum to const ref across module boundary",
           "[import][e2e][import-enum][typed]") {
-    SKIP("Typed enum import runtime path needs additional debugging - values currently off");
-
     auto result = build_exec_with_lib(
         R"K(
             module typedenumlib;
@@ -1165,8 +1188,6 @@ TEST_CASE("import enum — object-backed typed enum to const ref across module b
 
 TEST_CASE("import enum — local typed extension from imported typed base enum",
           "[import][e2e][import-enum][typed][import-enum-derive]") {
-    SKIP("Typed enum import runtime path needs additional debugging - values currently off");
-
     auto result = build_exec_with_lib(
         R"K(
             module typedbase_lib;
@@ -1184,7 +1205,7 @@ TEST_CASE("import enum — local typed extension from imported typed base enum",
             import typedbase_lib;
 
             enum ExtendedDir : typedbase_lib::Dir {
-                DOWN{.x = 0, .y = -1};
+                DOWN{.x = 0, .y = 7};
             };
 
             main() : int {
@@ -1195,7 +1216,7 @@ TEST_CASE("import enum — local typed extension from imported typed base enum",
 
     if (!result.out.empty()) INFO("stdout: " << result.out);
     if (!result.err.empty()) INFO("stderr: " << result.err);
-    REQUIRE( result.exit_code == 1 );  // y=-1 and DOWN index=2
+    REQUIRE( result.exit_code == 9 );  // y=7 and DOWN index=2
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

@@ -70,6 +70,16 @@ void validate_enum(const kdi_enum& en,
         if (!en.object_table_symbol.has_value() || en.object_table_symbol->empty()) {
             result.add(path + ".object_table_symbol", "must be set for object-backed enums");
         }
+    } else {
+        if (en.object_table_symbol.has_value() && !en.object_table_symbol->empty()) {
+            result.add(path + ".object_table_symbol", "must not be set when object_type is absent");
+        }
+        for (size_t i = 0; i < en.entries.size(); ++i) {
+            if (!en.entries[i].object_init_members.empty()) {
+                result.add(path + ".entries[" + std::to_string(i) + "].object_init_members",
+                           "must be empty for integer-backed enums");
+            }
+        }
     }
 }
 

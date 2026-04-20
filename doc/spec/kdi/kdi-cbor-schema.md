@@ -55,12 +55,17 @@ Header = {
 
 ```
 TypeTable = {
-  "aggregates" : array[AggregateTypeEntry]
+  "aggregates" : array[AggregateTypeEntry],
+  ?"enums"     : array[EnumTypeEntry]
 }
 
 AggregateTypeEntry = {
   "fq_name"      : text,
   "mangled_name" : text
+}
+
+EnumTypeEntry = {
+  "fq_name"      : text
 }
 ```
 
@@ -84,9 +89,11 @@ Namespace = {
   "name"       : text,
   "fq_name"    : text,
   "aggregates" : array[Aggregate],
+  "enums"      : array[Enum],
   "functions"  : array[Function],
   "variables"  : array[Variable],
-  "namespaces" : array[Namespace]
+  "namespaces" : array[Namespace],
+  ?"template_defs" : array[TemplateDef]
 }
 ```
 
@@ -112,6 +119,7 @@ Type =
 | { "kind": "sized_array", "elem": Type, "size": uint }
 | { "kind": "fn_ref", "ret": Type, "params": array[Type] }
 | { "kind": "aggregate", "fq_name": text }
+| { "kind": "enum", "fq_name": text }
 ```
 
 ---
@@ -367,4 +375,38 @@ Aggregate = {
                                     -- e.g. "%struct.ns.Counter = type { i32*, i32 }"
 }
 ```
+
+---
+
+## Enum
+
+```
+Enum = {
+  "name"                : text,
+  "fq_name"             : text,
+  "visibility"          : Visibility,
+  "underlying_type"     : Type,
+  ?"object_type"         : Type,     -- aggregate ref for object-backed enums
+  ?"object_table_symbol" : text,
+  ?"base_fq_name"        : text,
+  "entries"             : array[EnumEntry]
+}
+
+EnumEntry = {
+  "name"                : text,
+  "value"               : int,
+  ?"is_default"          : bool,
+  ?"object_init_members" : array[ObjectInitMember]
+}
+
+ObjectInitMember = {
+  "name"                : text,
+  "value"               : int
+}
+```
+
+Compatibility:
+
+- Integer-backed enums omit typed metadata fields.
+- Older payloads (without typed-enum fields) remain valid and must be accepted.
 

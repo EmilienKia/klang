@@ -25,6 +25,7 @@
 #include "resolvers.hpp"
 
 #include "../model/expressions.hpp"
+#include "../errors.hpp"
 
 namespace k::model::gen {
 
@@ -732,6 +733,20 @@ type_reference_resolver::adapt_from_reference(
         if (!loaded) return {};
         return adapt_type(loaded, type_nc);
     }
+
+    // ref<struct> -> object-backed enum: allow direct cast without forcing a value load
+    if (auto ref_struct_sub = std::dynamic_pointer_cast<struct_type>(type::remove_const(ref_subtype))) {
+        if (auto enum_tgt = std::dynamic_pointer_cast<enum_type>(type_nc)) {
+            if (enum_tgt->is_object_backed()) {
+                auto obj_type = enum_tgt->get_object_type();
+                if (obj_type && ref_struct_sub == obj_type) {
+                    auto cast = cast_expression::make_shared(expr, enum_tgt);
+                    cast->set_type(enum_tgt);
+                    return cast;
+                }
+            }
+        }
+    }
     // ref<indirection> → bool: load the pointer then compare to null.
     if (type::is_prim_bool(type_nc)) {
         if (type::is_pointer(ref_subtype) || type::is_link(ref_subtype) ||
@@ -828,13 +843,45 @@ type_reference_resolver::adapt_enum_type(
         }
     }
 
-    // primitive int → enum: implicit
+    // primitive int / object value → enum: implicit
     if (!enum_src && enum_tgt) {
         auto prim_src = std::dynamic_pointer_cast<primitive_type>(type::remove_const(expr->get_type()));
         if (prim_src) {
             auto cast = cast_expression::make_shared(expr, enum_tgt);
             cast->set_type(enum_tgt);
             return cast;
+        }
+
+        // Object-backed enum: allow T (or const T&) -> E
+        if (enum_tgt->is_object_backed()) {
+            auto obj_type = enum_tgt->get_object_type();
+            auto src_nc = type::remove_const(expr->get_type());
+
+            auto src_st = std::dynamic_pointer_cast<struct_type>(src_nc);
+            if (!src_st && type::is_reference(src_nc)) {
+                auto src_ref = std::dynamic_pointer_cast<reference_type>(src_nc);
+                src_st = std::dynamic_pointer_cast<struct_type>(
+                    type::remove_const(src_ref->get_subtype()));
+            }
+
+            if (obj_type && src_st && src_st == obj_type) {
+                auto agg = obj_type->get_struct();
+                bool has_equality = false;
+                if (agg) {
+                    has_equality = (agg->get_function("equals") != nullptr)
+                        || (agg->get_function("__operator_eq_") != nullptr)
+                        || (agg->get_function("__operator_ne_") != nullptr);
+                }
+                if (!has_equality) {
+                    throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_UNSUPPORTED), expr->first_lexeme(),
+                        "Object-backed enum cast '{}' -> '{}' requires underlying type '{}' to define equality (equals/==/!=)",
+                        {expr->get_type()->to_string(), enum_tgt->to_string(), obj_type->to_string()});
+                }
+
+                auto cast = cast_expression::make_shared(expr, enum_tgt);
+                cast->set_type(enum_tgt);
+                return cast;
+            }
         }
     }
 

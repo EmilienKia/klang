@@ -160,3 +160,60 @@ TEST_CASE("validate: duplicate fq_name in namespace fails", "[validate]") {
     REQUIRE(!r.is_valid());
 }
 
+TEST_CASE("validate: integer-backed enum remains valid without typed metadata", "[validate][enum]") {
+    kdi_file f;
+    f.header.module_name = "enum::ok";
+    f.unit.name          = "enum::ok";
+
+    kdi_enum en;
+    en.name            = "Color";
+    en.fq_name         = "enum::ok::Color";
+    en.underlying_type = kdi_type::make_int(32, true);
+    en.entries.push_back(kdi_enum_entry{"RED", 0, true, {}});
+    en.entries.push_back(kdi_enum_entry{"GREEN", 1, false, {}});
+    f.unit.root_ns.enums.push_back(en);
+
+    auto r = kdi_validate(f);
+    REQUIRE(r.is_valid());
+}
+
+TEST_CASE("validate: object-backed enum requires table symbol", "[validate][enum]") {
+    kdi_file f;
+    f.header.module_name = "enum::bad";
+    f.unit.name          = "enum::bad";
+    f.types.aggregates.push_back({"enum::bad::Vec2", "_KS_enum_bad_Vec2"});
+
+    kdi_enum en;
+    en.name            = "Dir";
+    en.fq_name         = "enum::bad::Dir";
+    en.underlying_type = kdi_type::make_int(8, false);
+    en.object_type     = kdi_type::make_aggregate("enum::bad::Vec2");
+    en.entries.push_back(kdi_enum_entry{"UP", 0, true, {{"x", 0}, {"y", 1}}});
+    f.unit.root_ns.enums.push_back(en);
+
+    auto r = kdi_validate(f);
+    REQUIRE(!r.is_valid());
+}
+
+TEST_CASE("validate: integer-backed enum rejects object-backed-only fields", "[validate][enum]") {
+    kdi_file f;
+    f.header.module_name = "enum::bad2";
+    f.unit.name          = "enum::bad2";
+
+    kdi_enum en;
+    en.name                = "Color";
+    en.fq_name             = "enum::bad2::Color";
+    en.underlying_type     = kdi_type::make_int(32, true);
+    en.object_table_symbol = "__klang_enum_table_bad__";
+    kdi_enum_entry e;
+    e.name = "RED";
+    e.value = 0;
+    e.is_default = true;
+    e.object_init_members.emplace_back("x", 0);
+    en.entries.push_back(std::move(e));
+    f.unit.root_ns.enums.push_back(std::move(en));
+
+    auto r = kdi_validate(f);
+    REQUIRE(!r.is_valid());
+}
+

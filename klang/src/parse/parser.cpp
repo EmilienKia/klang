@@ -875,7 +875,7 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
     if(lex::opt_ref_any_lexeme lopenbrace = _lexer.get(); lopenbrace==lex::punctuator::BRACE_OPEN) {
         open_brace_val = lex::as<lex::punctuator>(lopenbrace);
     } else {
-        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_USING_EXPECT_QNAME), _lexer.pick_current(), "Enum open brace is missing");
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_MISSING_OPEN_BRACE), _lexer.pick_current(), "Enum open brace is missing");
     }
 
     // Parse enum entries
@@ -893,7 +893,7 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
         // Expect an identifier (entry name)
         auto lentry_name = _lexer.get();
         if(lex::is_not<lex::identifier>(lentry_name)) {
-            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_USING_MISSING_SEMICOLON), _lexer.pick_current(), "Expected enum entry name");
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_ENTRY_EXPECT_NAME), _lexer.pick_current(), "Expected enum entry name");
         }
         auto entry_name = lex::as<lex::identifier>(lentry_name);
 

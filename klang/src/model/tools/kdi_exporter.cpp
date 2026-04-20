@@ -39,6 +39,7 @@
 
 #include <memory>
 #include <string>
+#include <type_traits>
 
 namespace k::model {
 
@@ -47,6 +48,16 @@ namespace k::model {
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace {
+
+static int64_t integer_literal_to_i64(const lex::integer& lit) {
+    return std::visit([](const auto& v) -> int64_t {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool>) {
+            return static_cast<int64_t>(v);
+        }
+        return 0;
+    }, lit.value());
+}
 
 /**
  * Capture the LLVM IR declaration line of @p fn as a string.
@@ -735,7 +746,9 @@ void kdi_builder::visit_enumeration(enumeration& en) {
         if (auto obj_type = en.get_object_type()) {
             ke.object_type = to_kdi_type(obj_type);
         }
-        if (auto* table = en.get_table_global()) {
+        if (!en.get_table_symbol().empty()) {
+            ke.object_table_symbol = en.get_table_symbol();
+        } else if (auto* table = en.get_table_global()) {
             ke.object_table_symbol = table->getName().str();
         } else {
             // Keep import robust even when the table global is not directly reachable here.
@@ -765,7 +778,7 @@ void kdi_builder::visit_enumeration(enumeration& en) {
                 auto& int_lit = any_lit.get<lex::integer>();
                 kee.object_init_members.emplace_back(
                     std::string{desig->member_name.content},
-                    static_cast<int64_t>(int_lit.to_unsigned_int()));
+                    integer_literal_to_i64(int_lit));
             }
         }
         ke.entries.push_back(std::move(kee));

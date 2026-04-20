@@ -871,8 +871,7 @@ TEST_CASE("Enum derivation — empty derived enum", "[gen][enum]") {
 // Phase 7: Typed enum tests
 // ============================================================
 
-TEST_CASE("Typed enum — parser supports object-backed entry forms", "[gen][enum][typed][expected]") {
-    SKIP("Typed enums are not implemented yet");
+TEST_CASE("Typed enum — parser supports object-backed entry forms", "[parser][enum][typed]") {
 
     test_logger log;
     k::source src{R"(
@@ -886,6 +885,32 @@ TEST_CASE("Typed enum — parser supports object-backed entry forms", "[gen][enu
     k::parse::parser parser(log, src);
     auto decl = parser.parse_enum_decl();
     REQUIRE(decl);
+
+    CHECK(std::string{decl->name.content} == "MyEnum");
+    REQUIRE(decl->explicit_underlying_type != nullptr);
+    REQUIRE(decl->base_name.has_value());
+    CHECK(*decl->base_name == "MyStruct");
+
+    REQUIRE(decl->entries.size() == 4);
+    CHECK(std::string{decl->entries[0]->name.content} == "FIRST_VALUE");
+    CHECK(std::string{decl->entries[1]->name.content} == "SECOND_VALUE");
+    CHECK(std::string{decl->entries[2]->name.content} == "THIRD_VALUE");
+    CHECK(std::string{decl->entries[3]->name.content} == "ANOTHER_SECOND_VALUE");
+
+    CHECK(decl->entries[0]->has_paren_initializer());
+    CHECK(decl->entries[0]->ctor_args.size() == 2);
+    CHECK_FALSE(decl->entries[0]->is_default);
+
+    CHECK(decl->entries[1]->has_paren_initializer());
+    CHECK(decl->entries[1]->ctor_args.empty());
+    CHECK(decl->entries[1]->is_default);
+
+    CHECK(decl->entries[2]->has_brace_initializer());
+    CHECK_FALSE(decl->entries[2]->is_default);
+
+    CHECK(decl->entries[3]->has_ref_initializer());
+    REQUIRE(decl->entries[3]->ref_value.has_value());
+    CHECK(std::string{decl->entries[3]->ref_value->content} == "SECOND_VALUE");
 }
 
 TEST_CASE("Typed enum — parser parses class-backed implicit entries", "[parser][enum][typed]") {
@@ -992,8 +1017,6 @@ TEST_CASE("Typed enum — class-backed implicit auto-increment values", "[gen][e
 }
 
 TEST_CASE("Typed enum — class-backed implicit ++ from previous value", "[gen][enum][typed][expected]") {
-    SKIP("Object-value implicit ++ semantics for class-backed typed enums are not implemented yet");
-
     auto jit = gen_jit(R"(
         module test;
         class Counter {
@@ -1041,8 +1064,6 @@ TEST_CASE("Typed enum — enum entry to const underlying reference", "[gen][enum
 }
 
 TEST_CASE("Typed enum — object to enum conversion and soft-fail in if", "[gen][enum][typed][expected]") {
-    SKIP("Typed enums are not implemented yet");
-
     auto jit = gen_jit(R"(
         module test;
         struct S {
@@ -1058,8 +1079,92 @@ TEST_CASE("Typed enum — object to enum conversion and soft-fail in if", "[gen]
             e : E = s;
             return e;
         }
+        test_softfail_if() : int {
+            s : S{.a = 99};
+            if(e : E = s) {
+                return 10 + e;
+            } else {
+                return 7;
+            }
+        }
     )");
     REQUIRE(jit);
     CHECK(jit->lookup_symbol<int(*)()>("test_match")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("test_softfail_if")() == 7);
+}
+
+TEST_CASE("Typed enum — object to enum conversion hard-fails outside if", "[gen][enum][typed][expected]") {
+    auto res = build_and_exec(R"(
+        module test;
+        struct S {
+            a: int;
+            equals(other: S&) : bool { return a == other.a; }
+        }
+        enum E : S {
+            V1{.a = 1} default;
+            V2{.a = 2};
+        };
+        main() : int {
+            s : S{.a = 99};
+            e : E = s;
+            return e;
+        }
+    )");
+    REQUIRE(res.exit_code != 0);
+}
+
+TEST_CASE("Typed enum — constructor entry args initialize backing object", "[gen][enum][typed][expected]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Point {
+            x: int;
+            y: int;
+        }
+        enum Dir : Point {
+            UP(0, 1);
+        };
+        get_y() : int {
+            p : const Point& = Dir::UP;
+            return p.y;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_y")() == 1);
+}
+
+TEST_CASE("Typed enum — alias shares backing object slot", "[gen][enum][typed][expected]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct S {
+            a: int;
+        }
+        enum E : S {
+            V1{.a = 10};
+            A1 = V1;
+        };
+        read_alias() : int {
+            s : const S& = E::A1;
+            return s.a;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("read_alias")() == 10);
+}
+
+TEST_CASE("Typed enum — object to enum conversion requires equality", "[gen][enum][typed][expected]") {
+    REQUIRE_THROWS(gen_jit_throws(R"(
+        module test;
+        struct S {
+            a: int;
+        }
+        enum E : S {
+            V1{.a = 1} default;
+        };
+        main() : int {
+            s : S{.a = 1};
+            e : E = s;
+            return e;
+        }
+    )"));
 }
 

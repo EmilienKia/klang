@@ -519,6 +519,16 @@ namespace k::model {
                 re.brace_init = ast_entry->brace_init;
             }
 
+            // Capture constructor-style args for object-backed typed enum entries
+            if (!ast_entry->ctor_args.empty()) {
+                for (auto& arg_ast : ast_entry->ctor_args) {
+                    _expr.reset();
+                    arg_ast->visit(*this);
+                    re.ctor_args.push_back(_expr);
+                }
+                _expr.reset();
+            }
+
             en->add_raw_entry(re);
         }
 
