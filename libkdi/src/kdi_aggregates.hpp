@@ -35,6 +35,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -389,6 +390,9 @@ struct kdi_enum_entry {
     std::string name;
     int64_t     value      = 0;
     bool        is_default = false;
+    /// Optional designated-init payload for object-backed enum entries.
+    /// Keys are member names, values are integer literal constants.
+    std::vector<std::pair<std::string, int64_t>> object_init_members;
 };
 
 /** An exported enumeration. */
@@ -397,6 +401,10 @@ struct kdi_enum {
     std::string                   fq_name;         ///< fully-qualified K name
     kdi_visibility                visibility = kdi_visibility::public_;
     kdi_type                      underlying_type; ///< backing primitive int type
+    /// Backing object type for typed object-backed enums (must be aggregate ref when set).
+    std::optional<kdi_type>       object_type;
+    /// Symbol name of the backing global table (array of object_type entries).
+    std::optional<std::string>    object_table_symbol;
     std::optional<std::string>    base_fq_name;    ///< base enum fq_name (derivation)
     std::vector<kdi_enum_entry>   entries;
 };

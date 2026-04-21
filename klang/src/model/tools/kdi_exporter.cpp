@@ -731,6 +731,17 @@ void kdi_builder::visit_enumeration(enumeration& en) {
     if (en.get_underlying_type()) {
         ke.underlying_type = to_kdi_type(en.get_underlying_type());
     }
+    if (en.is_object_backed()) {
+        if (auto obj_type = en.get_object_type()) {
+            ke.object_type = to_kdi_type(obj_type);
+        }
+        if (auto* table = en.get_table_global()) {
+            ke.object_table_symbol = table->getName().str();
+        } else {
+            // Keep import robust even when the table global is not directly reachable here.
+            ke.object_table_symbol = "__klang_enum_table_" + en.get_mangled_name() + "__";
+        }
+    }
 
     if (en.has_base()) {
         const std::string& bfq = en.get_base()->get_fq_name();
@@ -743,6 +754,20 @@ void kdi_builder::visit_enumeration(enumeration& en) {
         kee.name       = entry.name;
         kee.value      = entry.value;
         kee.is_default = entry.is_default;
+        if (entry.brace_init && entry.brace_init->is_designated) {
+            for (auto& elem : entry.brace_init->elements) {
+                auto desig = std::dynamic_pointer_cast<parse::ast::designated_init_element>(elem);
+                if (!desig || desig->is_call_form) continue;
+                auto lit = std::dynamic_pointer_cast<parse::ast::literal_expr>(desig->value);
+                if (!lit) continue;
+                auto& any_lit = lit->literal;
+                if (any_lit.index() != lex::any_literal_type_index::INTEGER) continue;
+                auto& int_lit = any_lit.get<lex::integer>();
+                kee.object_init_members.emplace_back(
+                    std::string{desig->member_name.content},
+                    static_cast<int64_t>(int_lit.to_unsigned_int()));
+            }
+        }
         ke.entries.push_back(std::move(kee));
     }
 

@@ -514,6 +514,11 @@ namespace k::model {
                 re.ref_name = std::string{ast_entry->ref_value->content};
             }
 
+            // Capture brace-initializer for object-backed typed enum entries
+            if (ast_entry->brace_init) {
+                re.brace_init = ast_entry->brace_init;
+            }
+
             en->add_raw_entry(re);
         }
 

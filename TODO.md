@@ -1,7 +1,7 @@
 ## TODO and wish list
 ### K Language
 
-- Add templates (Phase 2+ — partial specialization, variadic templates, template template parameters, etc.)
+- Add templates advanced features (Phase 2+ — partial specialization, variadic templates, template template parameters, etc.)
   - [ ] Tests: name mangling tests for template entities
   - [ ] Partial and full template specialization
   - [ ] Template template parameters (`template<template<typename> class C>`)
@@ -12,10 +12,12 @@
   - [ ] Standalone template enum declarations
   - [ ] Template constructors (independent of aggregate template)
   - [ ] SFINAE-like overload filtering based on template constraints
+  - export templates (Phase 3+ — separate compilation of template definitions and instantiations)
+  - Generics (template with uniform materialization whatever the arguments)
+  - Covariance for generics
 
 - Review casting algorithm and implicit casting strategy (char[]! -> const char[]?  ou  char[]! -> const char[], etc.)
 - Add support of foreach loops
-- Add support of non-fatal "else" branches for bad conversions in if statements (e.g. `if (x as T) { ... } else { ... }`)
 - Add placement new operator and support for custom allocators
 - Add non-construct memory allocation and deallocation intrinsics (e.g. `alloc(size)`, `dealloc(ptr, size)`) for manual memory management
 - Add FFI memcopy/memmove intrinsics for efficient raw memory manipulation
@@ -23,6 +25,8 @@
 - Add return type covariance
 - Add "virtual" symbols (parent, self, etc.)
 - Add typed enums
+  - Motivation: support enum entries backed by non-integer constant objects with deterministic index-based runtime representation.
+  - Related tests: `klang/tests/test-gen-enum.cpp` (tag `[gen][enum][typed][expected]`)
 - Add unions, typed unions
 - Add state classes
 - Better private visibility support
@@ -35,6 +39,13 @@
 - Add support for separate compilation and module interfaces (e.g. `export` keyword, module partitions)
 - Add concepts
 - Add traits (Rust like)
+- Exceptions
+- Switch/case statements and expression
+- With-block - temporary change 'this' scope for a block of code (e.g. `with (obj) { ... }` to access members directly)
+- Add static code decoration and constraint (usage example : units of measurement)
+- member reordering optimization
+- boolean member bitfield optimization
+- comparison operator (spaceship operator <=>)
 
 ### K compiler and language specifics for compiler capabilities
 - Add support for producing inline documentation (e.g. via `///` comments) and generating API reference docs from it
@@ -60,4 +71,3 @@
   - serialization
   - database client
   - message-bus client
-

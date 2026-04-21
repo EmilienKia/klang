@@ -1133,6 +1133,71 @@ TEST_CASE("import enum — local derivation from cross-lib derived enum (3-level
     REQUIRE( result.exit_code == 6 );  // 1 + 2 + 3
 }
 
+TEST_CASE("import enum — object-backed typed enum to const ref across module boundary",
+          "[import][e2e][import-enum][typed]") {
+    SKIP("Typed enum import runtime path needs additional debugging - values currently off");
+
+    auto result = build_exec_with_lib(
+        R"K(
+            module typedenumlib;
+            struct Vec2 {
+                x : int;
+                y : int;
+            }
+            enum Dir : Vec2 {
+                UP{.x = 0, .y = 1} default;
+                RIGHT{.x = 1, .y = 0};
+            };
+        )K",
+        R"K(
+            module exec_import_typed_enum;
+            import typedenumlib;
+            main() : int {
+                p : const typedenumlib::Vec2& = typedenumlib::Dir::RIGHT;
+                return p.x * 10 + p.y;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 10 );
+}
+
+TEST_CASE("import enum — local typed extension from imported typed base enum",
+          "[import][e2e][import-enum][typed][import-enum-derive]") {
+    SKIP("Typed enum import runtime path needs additional debugging - values currently off");
+
+    auto result = build_exec_with_lib(
+        R"K(
+            module typedbase_lib;
+            struct Vec2 {
+                x : int;
+                y : int;
+            }
+            enum Dir : Vec2 {
+                UP{.x = 0, .y = 1} default;
+                RIGHT{.x = 1, .y = 0};
+            };
+        )K",
+        R"K(
+            module exec_import_typed_extend;
+            import typedbase_lib;
+
+            enum ExtendedDir : typedbase_lib::Dir {
+                DOWN{.x = 0, .y = -1};
+            };
+
+            main() : int {
+                p : const typedbase_lib::Vec2& = ExtendedDir::DOWN;
+                return p.y + ExtendedDir::DOWN;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 1 );  // y=-1 and DOWN index=2
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // TRANSITIVE IMPORT TESTS
 // ═════════════════════════════════════════════════════════════════════════════

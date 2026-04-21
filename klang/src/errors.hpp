@@ -183,6 +183,8 @@ enum class parser_diag : unsigned int {
     ERR_BRACE_INIT_SEP_ERROR                      = 0x007D,
     ERR_BREAK_MISSING_SEMICOLON                   = 0x0190,
     ERR_CONTINUE_MISSING_SEMICOLON                = 0x0191,
+    ERR_ENUM_MISSING_OPEN_BRACE                   = 0x0192,
+    ERR_ENUM_ENTRY_EXPECT_NAME                    = 0x0193,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

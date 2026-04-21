@@ -42,6 +42,35 @@ void validate_type(const kdi_type& t, const std::string& path,
                               + "' not found in type table");
         }
     }
+    if (auto* eref = std::get_if<kdi_enum_ref>(&t.value)) {
+        bool found = false;
+        for (auto& e : types.enums) {
+            if (e.fq_name == eref->fq_name) { found = true; break; }
+        }
+        if (!found) {
+            result.add(path, "enum reference '" + eref->fq_name
+                              + "' not found in type table");
+        }
+    }
+}
+
+void validate_enum(const kdi_enum& en,
+                   const std::string& path,
+                   const kdi_type_table& types,
+                   kdi_validation_result& result) {
+    if (en.fq_name.empty()) {
+        result.add(path, "fq_name must not be empty");
+    }
+    validate_type(en.underlying_type, path + ".underlying_type", types, result);
+    if (en.object_type.has_value()) {
+        validate_type(*en.object_type, path + ".object_type", types, result);
+        if (!std::holds_alternative<kdi_aggregate_ref>(en.object_type->value)) {
+            result.add(path + ".object_type", "must be an aggregate type reference");
+        }
+        if (!en.object_table_symbol.has_value() || en.object_table_symbol->empty()) {
+            result.add(path + ".object_table_symbol", "must be set for object-backed enums");
+        }
+    }
 }
 
 void validate_params(const std::vector<kdi_param>& params,
@@ -167,6 +196,10 @@ void validate_namespace(const kdi_namespace& ns,
         if (ns.variables[i].mangled_name.empty()) {
             result.add(vp, "mangled_name must not be empty");
         }
+    }
+    for (size_t i = 0; i < ns.enums.size(); ++i) {
+        auto ep = path + ".enums[" + std::to_string(i) + "]";
+        validate_enum(ns.enums[i], ep, types, result);
     }
     for (size_t i = 0; i < ns.namespaces.size(); ++i) {
         validate_namespace(ns.namespaces[i],

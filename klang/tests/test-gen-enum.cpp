@@ -866,3 +866,200 @@ TEST_CASE("Enum derivation — empty derived enum", "[gen][enum]") {
     CHECK(jit->lookup_symbol<int(*)()>("get_a")() == 1);
     CHECK(jit->lookup_symbol<int(*)()>("get_default")() == 2);
 }
+
+// ============================================================
+// Phase 7: Typed enum tests
+// ============================================================
+
+TEST_CASE("Typed enum — parser supports object-backed entry forms", "[gen][enum][typed][expected]") {
+    SKIP("Typed enums are not implemented yet");
+
+    test_logger log;
+    k::source src{R"(
+        enum MyEnum : MyStruct {
+            FIRST_VALUE(1, 2);
+            SECOND_VALUE() default;
+            THIRD_VALUE{.a = 42};
+            ANOTHER_SECOND_VALUE = SECOND_VALUE;
+        };
+    )"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_enum_decl();
+    REQUIRE(decl);
+}
+
+TEST_CASE("Typed enum — parser parses class-backed implicit entries", "[parser][enum][typed]") {
+    test_logger log;
+    k::source src{R"(
+        enum E : MyClass {
+            A;
+            B;
+            C;
+        };
+    )"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_enum_decl();
+    REQUIRE(decl);
+
+    CHECK(std::string{decl->name.content} == "E");
+    REQUIRE(decl->explicit_underlying_type != nullptr);
+    REQUIRE(decl->base_name.has_value());
+    CHECK(*decl->base_name == "MyClass");
+
+    REQUIRE(decl->entries.size() == 3);
+    CHECK(std::string{decl->entries[0]->name.content} == "A");
+    CHECK(std::string{decl->entries[1]->name.content} == "B");
+    CHECK(std::string{decl->entries[2]->name.content} == "C");
+    CHECK_FALSE(decl->entries[0]->has_explicit_initializer());
+    CHECK_FALSE(decl->entries[1]->has_explicit_initializer());
+    CHECK_FALSE(decl->entries[2]->has_explicit_initializer());
+}
+
+TEST_CASE("Typed enum — explicit integer underlying keeps classic behavior", "[gen][enum][typed][expected]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Small : unsigned byte {
+            A = 1;
+            B = 2;
+        };
+        test() : int {
+            v : Small = Small::B;
+            return v;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test")() == 2);
+}
+
+TEST_CASE("Typed enum — derived enum inherits explicit integer underlying", "[gen][enum][typed][expected]") {
+    auto jit = gen_jit(R"(
+        module test;
+        enum Small : unsigned byte {
+            A = 250;
+            B;
+        };
+        enum SmallMore : Small {
+            C;
+        };
+        get_a() : int { return SmallMore::A; }
+        get_b() : int { return SmallMore::B; }
+        get_c() : int { return SmallMore::C; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_a")() == 250);
+    CHECK(jit->lookup_symbol<int(*)()>("get_b")() == 251);
+    CHECK(jit->lookup_symbol<int(*)()>("get_c")() == 252);
+}
+
+TEST_CASE("Typed enum — object-backed zero-init entry", "[gen][enum][typed][expected]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Vec2 {
+            x : int;
+            y : int;
+        }
+        enum Dir : Vec2 {
+            UP;
+        };
+        test() : int {
+            p: const Vec2& = Dir::UP;
+            return p.x + p.y;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test")() == 0);
+}
+
+TEST_CASE("Typed enum — class-backed implicit auto-increment values", "[gen][enum][typed][expected]") {
+    auto jit = gen_jit(R"(
+        module test;
+        class Marker {
+            public id : int;
+        }
+        enum Kind : Marker {
+            FIRST;
+            SECOND;
+            THIRD;
+        };
+        get_first() : int { return Kind::FIRST; }
+        get_second() : int { return Kind::SECOND; }
+        get_third() : int { return Kind::THIRD; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_first")() == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("get_second")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("get_third")() == 2);
+}
+
+TEST_CASE("Typed enum — class-backed implicit ++ from previous value", "[gen][enum][typed][expected]") {
+    SKIP("Object-value implicit ++ semantics for class-backed typed enums are not implemented yet");
+
+    auto jit = gen_jit(R"(
+        module test;
+        class Counter {
+            public value : int;
+            public Counter() : value(0) {}
+            public Counter(v : int) : value(v) {}
+        }
+        enum Numbers : Counter {
+            TEN{.value = 10};
+            ELEVEN;
+            TWELVE;
+        };
+        get_eleven_value() : int {
+            c : const Counter& = Numbers::ELEVEN;
+            return c.value;
+        }
+        get_twelve_value() : int {
+            c : const Counter& = Numbers::TWELVE;
+            return c.value;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_eleven_value")() == 11);
+    CHECK(jit->lookup_symbol<int(*)()>("get_twelve_value")() == 12);
+}
+
+TEST_CASE("Typed enum — enum entry to const underlying reference", "[gen][enum][typed][expected]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Vec2 {
+            x: int;
+            y: int;
+        }
+        enum Dir : Vec2 {
+            UP{.x = 0, .y = 1};
+            RIGHT{.x = 1, .y = 0};
+        };
+        sum_right() : int {
+            p: const Vec2& = Dir::RIGHT;
+            return p.x + p.y;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("sum_right")() == 1);
+}
+
+TEST_CASE("Typed enum — object to enum conversion and soft-fail in if", "[gen][enum][typed][expected]") {
+    SKIP("Typed enums are not implemented yet");
+
+    auto jit = gen_jit(R"(
+        module test;
+        struct S {
+            a: int;
+            equals(other: S&) : bool { return a == other.a; }
+        }
+        enum E : S {
+            V1{.a = 1} default;
+            V2{.a = 2};
+        };
+        test_match() : int {
+            s : S{.a = 2};
+            e : E = s;
+            return e;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test_match")() == 1);
+}
+

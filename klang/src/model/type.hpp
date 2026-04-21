@@ -30,6 +30,7 @@ namespace llvm {
     class ArrayType;
     class Constant;
     class ConstantStruct;
+    class GlobalVariable;
     class Type;
     class StructType;
     class Value;
@@ -931,6 +932,11 @@ public:
 
     std::shared_ptr<primitive_type> get_underlying_type() const { return _underlying_type; }
     std::shared_ptr<enumeration> get_enumeration() const { return _enumeration.lock(); }
+
+    /** True when enum entries are represented as indices into a static backing table. */
+    bool is_object_backed() const;
+    /** Non-null for object-backed enums: the struct_type of the backing object. */
+    std::shared_ptr<struct_type> get_object_type() const;
 
     llvm::Type* get_llvm_type() const override;
     llvm::Constant* generate_default_value_initializer() const override;

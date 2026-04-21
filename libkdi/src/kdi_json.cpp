@@ -695,8 +695,17 @@ static kdi_aggregate from_json_aggregate(const json& j) {
 
 static json to_json(const kdi_enum& e) {
     json entries = json::array();
-    for (auto& en : e.entries)
-        entries.push_back({{"name",en.name},{"value",en.value},{"is_default",en.is_default}});
+    for (auto& en : e.entries) {
+        json je = {{"name",en.name},{"value",en.value},{"is_default",en.is_default}};
+        if (!en.object_init_members.empty()) {
+            json members = json::array();
+            for (const auto& [member_name, member_value] : en.object_init_members) {
+                members.push_back({{"name", member_name}, {"value", member_value}});
+            }
+            je["object_init_members"] = std::move(members);
+        }
+        entries.push_back(std::move(je));
+    }
     json obj = {
         {"name",            e.name},
         {"fq_name",         e.fq_name},
@@ -704,6 +713,10 @@ static json to_json(const kdi_enum& e) {
         {"underlying_type", to_json(e.underlying_type)},
         {"entries",         entries},
     };
+    if (e.object_type.has_value())
+        obj["object_type"] = to_json(*e.object_type);
+    if (e.object_table_symbol.has_value())
+        obj["object_table_symbol"] = *e.object_table_symbol;
     if (e.base_fq_name.has_value())
         obj["base_fq_name"] = *e.base_fq_name;
     return obj;
@@ -715,6 +728,10 @@ static kdi_enum from_json_enum(const json& j) {
     e.fq_name         = j.at("fq_name");
     e.visibility      = vis_from_str(j.value("visibility", "public"));
     e.underlying_type = from_json_type(j.at("underlying_type"));
+    if (j.contains("object_type"))
+        e.object_type = from_json_type(j.at("object_type"));
+    if (j.contains("object_table_symbol"))
+        e.object_table_symbol = j.at("object_table_symbol").get<std::string>();
     if (j.contains("base_fq_name"))
         e.base_fq_name = j.at("base_fq_name").get<std::string>();
     for (auto& en : j.value("entries", json::array())) {
@@ -722,6 +739,11 @@ static kdi_enum from_json_enum(const json& j) {
         entry.name       = en.at("name");
         entry.value      = en.at("value").get<int64_t>();
         entry.is_default = en.value("is_default", false);
+        for (auto& mem : en.value("object_init_members", json::array())) {
+            entry.object_init_members.emplace_back(
+                mem.at("name").get<std::string>(),
+                mem.at("value").get<int64_t>());
+        }
         e.entries.push_back(entry);
     }
     return e;

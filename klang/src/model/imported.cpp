@@ -40,6 +40,10 @@
 
 #include <kdi.hpp>
 
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/GlobalVariable.h>
+
 namespace k::model {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -575,6 +579,31 @@ convert_template_origin_args(const kdi::kdi_template_origin& origin,
     return model_args;
 }
 
+static std::shared_ptr<k::parse::ast::brace_init_list>
+rebuild_object_init_brace(const kdi::kdi_enum_entry& entry)
+{
+    if (entry.object_init_members.empty()) return nullptr;
+
+    std::vector<std::shared_ptr<k::parse::ast::expression>> elements;
+    elements.reserve(entry.object_init_members.size());
+    for (const auto& [member_name, member_value] : entry.object_init_members) {
+        auto lit = std::make_shared<k::parse::ast::literal_expr>(
+            lex::any_literal{lex::integer{std::to_string(member_value)}});
+        auto designated = std::make_shared<k::parse::ast::designated_init_element>(
+            lex::operator_(".", lex::operator_::DOT),
+            lex::identifier(member_name),
+            std::vector<lex::identifier>{},
+            std::static_pointer_cast<k::parse::ast::expression>(lit));
+        elements.push_back(std::static_pointer_cast<k::parse::ast::expression>(designated));
+    }
+
+    return std::make_shared<k::parse::ast::brace_init_list>(
+        lex::punctuator("{", lex::punctuator::BRACE_OPEN),
+        lex::punctuator("}", lex::punctuator::BRACE_CLOSE),
+        elements,
+        /*is_designated=*/true);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // unit::get_or_create_imported_function
 // ─────────────────────────────────────────────────────────────────────────────
@@ -982,7 +1011,9 @@ std::shared_ptr<enumeration>
 unit::get_or_create_imported_enum(const k::name& fq_name,
                                   std::shared_ptr<context> ctx)
 {
-    const std::string key = fq_name.to_string();
+    const k::name normalised_name = fq_name.has_root_prefix()
+                                    ? fq_name.without_root_prefix() : fq_name;
+    const std::string key = normalised_name.to_string();
     auto it = _imported_enums.find(key);
     if (it != _imported_enums.end()) {
         return it->second;
@@ -1001,6 +1032,9 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
         en->assign_name(fq_to_abs_kname(kdi_en->fq_name));
     }
 
+    // Cache before recursive base resolution to break cycles.
+    _imported_enums[key] = en;
+
     // Resolve underlying type from KDI
     auto underlying_model_type = kdi_type_to_model_type(kdi_en->underlying_type, *this, ctx);
     auto underlying = std::dynamic_pointer_cast<primitive_type>(underlying_model_type);
@@ -1008,9 +1042,23 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
         en->set_underlying_type(underlying);
     }
 
+    // Typed object-backed metadata (optional, for backward compatibility with old KDI files).
+    if (kdi_en->object_type.has_value()) {
+        auto object_model_type = kdi_type_to_model_type(*kdi_en->object_type, *this, ctx);
+        if (auto object_st = std::dynamic_pointer_cast<struct_type>(object_model_type)) {
+            en->set_object_type(object_st);
+            // NOTE: We do NOT create the GlobalVariable here.
+            // We rely on declaration_generator::visit_enumeration() to generate the full table.
+        }
+    }
+
     // Add all entries
     for (auto& kdi_entry : kdi_en->entries) {
-        en->add_entry(kdi_entry.name, kdi_entry.value, kdi_entry.is_default);
+        en->add_entry(
+            kdi_entry.name,
+            kdi_entry.value,
+            kdi_entry.is_default,
+            rebuild_object_init_brace(kdi_entry));
     }
 
     // Resolve base enum (derivation)
@@ -1042,7 +1090,6 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
     // Set visibility
     en->set_visibility(kdi_en->visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
 
-    _imported_enums[key] = en;
     return en;
 }
 

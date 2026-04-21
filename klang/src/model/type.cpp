@@ -796,6 +796,16 @@ llvm::Type* enum_type::get_llvm_type() const {
     return nullptr;
 }
 
+bool enum_type::is_object_backed() const {
+    auto en = _enumeration.lock();
+    return en && en->is_object_backed();
+}
+
+std::shared_ptr<struct_type> enum_type::get_object_type() const {
+    auto en = _enumeration.lock();
+    return en ? en->get_object_type() : nullptr;
+}
+
 llvm::Constant* enum_type::generate_default_value_initializer() const {
     if (_underlying_type) {
         // Use the enum's default entry value (not just zero)

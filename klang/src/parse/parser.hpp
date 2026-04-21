@@ -182,9 +182,12 @@ public:
 
     /**
      * EnumDecl = { Specifier } , 'enum' , Identifier ,
-     *            [ ':' , QualifiedIdentifier ] ,
+     *            [ ':' , TypeSpec ] ,
      *            '{' , { EnumEntry } , '}' , ';' ;
-     * EnumEntry = Identifier , [ '=' , ( IntegerLiteral | Identifier ) ] ,
+     * EnumEntry = Identifier ,
+     *             [ '=' , ( Literal | Identifier )
+     *             | '(' , [ ExpressionList ] , ')'
+     *             | BraceInitList ] ,
      *             [ 'default' ] , ';' ;
      */
     std::shared_ptr<ast::enum_decl> parse_enum_decl();

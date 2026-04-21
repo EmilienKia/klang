@@ -1010,6 +1010,85 @@ TEST_CASE( "Parse private visibility declaration", "[parser][visibility]") {
     REQUIRE( var->scope.type == k::lex::keyword::PRIVATE );
 }
 
+TEST_CASE("Parse typed enum with object-backed entry forms", "[parser][enum][typed]") {
+    test_logger log;
+    k::source src{R"(
+        enum MyEnum : MyStruct {
+            FIRST_VALUE(1, 2);
+            SECOND_VALUE() default;
+            THIRD_VALUE{.a = 42};
+            ANOTHER_SECOND_VALUE = SECOND_VALUE;
+            IMPLICIT_VALUE;
+        };
+    )"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_enum_decl();
+
+    REQUIRE(decl);
+    REQUIRE(decl->explicit_underlying_type);
+
+    auto underlying = std::dynamic_pointer_cast<ast::identified_type_specifier>(decl->explicit_underlying_type);
+    REQUIRE(underlying);
+    REQUIRE(underlying->name.names.size() == 1);
+    REQUIRE(std::string{underlying->name.names[0].content} == "MyStruct");
+
+    // Compatibility path kept for current enum derivation pipeline.
+    REQUIRE(decl->base_name.has_value());
+    REQUIRE(*decl->base_name == "MyStruct");
+
+    REQUIRE(decl->entries.size() == 5);
+
+    auto& first = *decl->entries[0];
+    REQUIRE(first.has_paren_initializer());
+    REQUIRE(first.ctor_args.size() == 2);
+    REQUIRE_FALSE(first.is_default);
+
+    auto& second = *decl->entries[1];
+    REQUIRE(second.has_paren_initializer());
+    REQUIRE(second.ctor_args.empty());
+    REQUIRE(second.is_default);
+
+    auto& third = *decl->entries[2];
+    REQUIRE(third.has_brace_initializer());
+    REQUIRE(third.brace_init);
+    REQUIRE(third.brace_init->is_designated);
+    REQUIRE(third.brace_init->elements.size() == 1);
+
+    auto& alias = *decl->entries[3];
+    REQUIRE(alias.has_ref_initializer());
+    REQUIRE(alias.ref_value.has_value());
+    REQUIRE(std::string{alias.ref_value->content} == "SECOND_VALUE");
+
+    auto& implicit = *decl->entries[4];
+    REQUIRE_FALSE(implicit.has_explicit_initializer());
+    REQUIRE_FALSE(implicit.is_default);
+}
+
+TEST_CASE("Parse enum with explicit integer underlying type", "[parser][enum][typed]") {
+    test_logger log;
+    k::source src{R"(
+        enum Small : unsigned byte {
+            A = 1;
+            B = 2;
+        };
+    )"};
+    k::parse::parser parser(log, src);
+    auto decl = parser.parse_enum_decl();
+
+    REQUIRE(decl);
+    REQUIRE(decl->explicit_underlying_type);
+
+    auto underlying = std::dynamic_pointer_cast<ast::keyword_type_specifier>(decl->explicit_underlying_type);
+    REQUIRE(underlying);
+    REQUIRE(underlying->keyword.type == k::lex::keyword::BYTE);
+    REQUIRE(underlying->is_unsigned);
+
+    REQUIRE_FALSE(decl->base_name.has_value());
+    REQUIRE(decl->entries.size() == 2);
+    REQUIRE(decl->entries[0]->has_literal_initializer());
+    REQUIRE(decl->entries[1]->has_literal_initializer());
+}
+
 //
 // Various cases
 //

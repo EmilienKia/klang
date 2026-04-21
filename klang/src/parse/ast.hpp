@@ -1260,7 +1260,11 @@ namespace k::parse {
 
         /**
          * A single entry in an enum declaration.
-         * Syntax: identifier [ '=' ( integer_literal | identifier ) ] [ 'default' ] ';'
+         * Syntax: identifier
+         *       , [ '=' , ( literal | identifier )
+         *         | '(' , [ ExpressionList ] , ')'
+         *         | BraceInitList ]
+         *       , [ 'default' ] , ';'
          */
         struct enum_entry : public ast_node {
             lex::identifier name;
@@ -1268,26 +1272,47 @@ namespace k::parse {
             std::optional<lex::any_literal> literal_value;
             /** Optional reference to another entry (by identifier). Mutually exclusive with literal_value in practice. */
             std::optional<lex::identifier> ref_value;
+            /** Optional constructor-style initializer arguments: VALUE(...). */
+            std::vector<expr_ptr> ctor_args;
+            /** Optional brace initializer: VALUE{...}. */
+            std::shared_ptr<brace_init_list> brace_init;
+            /** True when constructor-style initialization syntax VALUE(...) was explicitly written. */
+            bool has_paren_init = false;
             /** True when the 'default' keyword follows the entry. */
             bool is_default = false;
 
             enum_entry(const lex::identifier& name,
                        const std::optional<lex::any_literal>& literal_value,
                        const std::optional<lex::identifier>& ref_value,
-                       bool is_default)
-                : name(name), literal_value(literal_value), ref_value(ref_value), is_default(is_default) {}
+                       bool is_default,
+                       const std::vector<expr_ptr>& ctor_args = {},
+                       std::shared_ptr<brace_init_list> brace_init = nullptr,
+                       bool has_paren_init = false)
+                : name(name), literal_value(literal_value), ref_value(ref_value),
+                  ctor_args(ctor_args), brace_init(std::move(brace_init)),
+                  has_paren_init(has_paren_init), is_default(is_default) {}
+
+            bool has_literal_initializer() const { return literal_value.has_value(); }
+            bool has_ref_initializer() const { return ref_value.has_value(); }
+            bool has_paren_initializer() const { return has_paren_init; }
+            bool has_brace_initializer() const { return brace_init != nullptr; }
+            bool has_explicit_initializer() const {
+                return has_literal_initializer() || has_ref_initializer() || has_paren_initializer() || has_brace_initializer();
+            }
 
             virtual void visit(ast_visitor &visitor) override;
         };
 
         /**
          * Enum declaration.
-         * Syntax: SPECIFIERS 'enum' identifier [ ':' QualifiedName ] '{' ENUM_ENTRY* '}' ';'
+         * Syntax: SPECIFIERS 'enum' identifier [ ':' TypeSpec ] '{' ENUM_ENTRY* '}' ';'
          */
         struct enum_decl : public declaration {
             std::vector<lex::keyword> specifiers;
             lex::keyword kw_enum;
             lex::identifier name;
+            /** Optional explicit type written after ':'. Kept even when it may later resolve as a base enum name. */
+            std::shared_ptr<type_specifier> explicit_underlying_type;
             /** Optional base enum name for enum derivation (e.g. "Base" or "ns::Base"). */
             std::optional<std::string> base_name;
             lex::punctuator open_brace, close_brace;
@@ -1296,11 +1321,13 @@ namespace k::parse {
             enum_decl(const std::vector<lex::keyword>& specifiers,
                       const lex::keyword& kw_enum,
                       const lex::identifier& name,
+                      std::shared_ptr<type_specifier> explicit_underlying_type,
                       const std::optional<std::string>& base_name,
                       const lex::punctuator& open_brace,
                       const lex::punctuator& close_brace,
                       const std::vector<std::shared_ptr<enum_entry>>& entries)
                 : specifiers(specifiers), kw_enum(kw_enum), name(name),
+                  explicit_underlying_type(std::move(explicit_underlying_type)),
                   base_name(base_name),
                   open_brace(open_brace), close_brace(close_brace), entries(entries) {}
 

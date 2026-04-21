@@ -308,12 +308,15 @@ BaseSpec
 
 EnumDecl
     = { Specifier } , 'enum' , Identifier ,
-      [ ':' , QualifiedIdentifier ] ,
+      [ ':' , TypeSpec ] ,
       '{' , { EnumEntry } , '}' , ';'
     ;
 
 EnumEntry
-    = Identifier , [ '=' , ( IntegerLiteral | Identifier ) ] , [ 'default' ] , ';'
+    = Identifier , [ '=' , ( IntegerLiteral | Identifier )
+                   | BraceInitList
+                   | '(' , [ ExpressionList ] , ')' ] ,
+      [ 'default' ] , ';'
     ;
 
 (* ---------- Annotations ------------------------------------------------- *)

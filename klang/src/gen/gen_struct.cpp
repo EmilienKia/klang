@@ -28,6 +28,9 @@
 #include "../model/imported.hpp"
 #include "../parse/ast.hpp"
 
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Verifier.h>
 
 #include <queue>
@@ -815,11 +818,85 @@ void declaration_generator::visit_aggregate(aggregate& st) {
 
 // declaration_generator::visit_enumeration
 // -----------------------------------------
-// Enums have no LLVM-level declarations; their underlying type is already handled
-// by the symbol resolver. This override exists only to prevent the default visitor
-// from trying to visit children that don't exist.
-void declaration_generator::visit_enumeration(enumeration&) {
-    // Nothing to do.
+// For integer enums, there are no LLVM-level declarations to emit.
+// For object-backed typed enums, emits a `[N x StructType]` global constant array
+// that serves as the backing table for runtime `E → const T&` conversions.
+void declaration_generator::visit_enumeration(enumeration& en) {
+    if (!en.is_resolved() || !en.is_object_backed()) return;
+
+    auto obj_type = en.get_object_type();
+    if (!obj_type || !obj_type->is_resolved()) return;
+
+    auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(
+        _context->get_llvm_type(obj_type));
+    if (!llvm_st) return;
+
+    auto& llvm_ctx = _context->module().getContext();
+    size_t n = en.entries().size();
+
+    // Helper: build a constant struct from a designated brace-init (supports integer field values only).
+    auto build_entry_constant = [&](const enum_entry_def& entry) -> llvm::Constant* {
+        // Start with all-zero fields
+        std::vector<llvm::Constant*> field_values;
+        for (auto it = obj_type->fields_begin(); it != obj_type->fields_end(); ++it) {
+            auto ft = it->field_type.lock();
+            if (ft && ft->get_llvm_type()) {
+                field_values.push_back(llvm::Constant::getNullValue(ft->get_llvm_type()));
+            } else {
+                field_values.push_back(llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), 0));
+            }
+        }
+
+        if (entry.brace_init && entry.brace_init->is_designated) {
+            for (auto& elem : entry.brace_init->elements) {
+                if (!elem) continue;
+                auto desig = std::dynamic_pointer_cast<k::parse::ast::designated_init_element>(elem);
+                if (!desig || desig->is_call_form) continue;
+
+                std::string field_name{desig->member_name.content};
+                auto field_opt = obj_type->get_member(field_name);
+                if (!field_opt) continue;
+                size_t field_idx = field_opt->index;
+
+                // Evaluate the value expression — only integer literals are supported for constants
+                auto lit = std::dynamic_pointer_cast<k::parse::ast::literal_expr>(desig->value);
+                if (!lit) continue;
+                auto& any_lit = lit->literal;
+                if (any_lit.index() != lex::any_literal_type_index::INTEGER) continue;
+                auto& int_lit = any_lit.get<lex::integer>();
+                auto ft = field_opt->field_type.lock();
+                if (ft && ft->get_llvm_type()) {
+                    field_values[field_idx] = llvm::ConstantInt::get(
+                        ft->get_llvm_type(),
+                        int_lit.to_unsigned_int());
+                }
+            }
+        }
+
+        return llvm::ConstantStruct::get(llvm_st, field_values);
+    };
+
+    // Build the array initializer
+    auto* arr_ty = llvm::ArrayType::get(llvm_st, n);
+    std::vector<llvm::Constant*> elements;
+    elements.reserve(n);
+    for (auto& entry : en.entries()) {
+        elements.push_back(build_entry_constant(entry));
+    }
+    auto* arr_init = llvm::ConstantArray::get(arr_ty, elements);
+
+    // Emit as a private constant global: @__klang_enum_table_<MangledName>
+    std::string table_name = "__klang_enum_table_" + en.get_mangled_name() + "__";
+    auto* gv = new llvm::GlobalVariable(
+        _context->module(),
+        arr_ty,
+        /*isConstant=*/true,
+        llvm::GlobalValue::PrivateLinkage,
+        arr_init,
+        table_name);
+    gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+    en.set_table_global(gv);
 }
 
 // symbol_resolver::visit_enumeration
@@ -883,15 +960,43 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
             base_en = _unit.get_or_create_imported_enum(qualified_name, _context);
         }
 
-        // Step 2: Determine the underlying type (explicit or inherited from base)
         if (!base_en) {
-            throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_ENTRY_NOT_FOUND), en_lexeme,
-                "Enum '{}': base enum '{}' not found",
-                {en.get_short_name(), base_name_str});
+            // Not an enum — try to find as a struct (object-backed typed enum)
+            auto obj_agg = scope_lookup::lookup_structure(en.shared_as<element>(), base_name_str);
+            if (!obj_agg && base_name_str.find("::") != std::string::npos) {
+                // Also try via qualified name resolution
+                std::vector<std::string> parts;
+                std::size_t pos = 0;
+                while (true) {
+                    auto sep = base_name_str.find("::", pos);
+                    if (sep == std::string::npos) { parts.push_back(base_name_str.substr(pos)); break; }
+                    parts.push_back(base_name_str.substr(pos, sep - pos)); pos = sep + 2;
+                }
+                k::name qname{false, std::move(parts)};
+                if (auto imported_agg = _unit.get_or_create_imported_aggregate(qname, _context))
+                    obj_agg = imported_agg;
+            }
+            if (obj_agg) {
+                // Object-backed typed enum: entries are represented as unsigned indices
+                en.set_object_type(obj_agg->get_struct_type());
+                // Object-backed enums have no base enum (derivation not supported)
+                // Fall through to entry resolution below (index assignment)
+            } else {
+                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_ENTRY_NOT_FOUND), en_lexeme,
+                    "Enum '{}': base enum or underlying type '{}' not found",
+                    {en.get_short_name(), base_name_str});
+            }
+        } else {
+            // Step 2: Determine the underlying type (explicit or inherited from base)
+            // Recursively resolve the base if it hasn't been resolved yet
+            resolve_enumeration(*base_en);
+            en.set_base(base_en);
         }
-        // Recursively resolve the base if it hasn't been resolved yet
-        resolve_enumeration(*base_en);
-        en.set_base(base_en);
+    }
+
+    // Inherit object-backed typed mode from base enum (typed derivation).
+    if (!en.is_object_backed() && en.has_base() && en.get_base()->is_object_backed()) {
+        en.set_object_type(en.get_base()->get_object_type());
     }
 
     // ── 2. Build the combined list of work entries ──
@@ -906,6 +1011,8 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         bool is_default = false;
         bool resolved = false;
         int64_t resolved_value = 0;
+        // For object-backed entries: the brace_init AST node (may be null for zero-init)
+        std::shared_ptr<k::parse::ast::brace_init_list> brace_init;
     };
     std::vector<work_entry> work;
 
@@ -931,13 +1038,21 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         we.name = re.name;
         we.from_base = false;
         we.is_default = re.is_default;
-        if (re.explicit_value.has_value()) {
-            we.has_literal = true;
-            we.literal_value = *re.explicit_value;
-            we.resolved = true;
-            we.resolved_value = *re.explicit_value;
-        } else if (!re.ref_name.empty()) {
-            we.ref_name = re.ref_name;
+
+        if (en.is_object_backed()) {
+            // For object-backed enums, entries have sequential index values (assigned below).
+            // Store brace_init for later constant table construction.
+            we.brace_init = re.brace_init;
+            // resolved_value will be set to the sequential index below
+        } else {
+            if (re.explicit_value.has_value()) {
+                we.has_literal = true;
+                we.literal_value = *re.explicit_value;
+                we.resolved = true;
+                we.resolved_value = *re.explicit_value;
+            } else if (!re.ref_name.empty()) {
+                we.ref_name = re.ref_name;
+            }
         }
         // Check for name shadowing with base entries (warning)
         if (en.has_base()) {
@@ -953,51 +1068,62 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         work.push_back(std::move(we));
     }
 
-    // ── 3. Resolve references and auto-increment ──
-    bool changed = true;
-    size_t max_iter = work.size() + 1;
-    for (size_t iter = 0; iter < max_iter && changed; ++iter) {
-        changed = false;
+    // For object-backed enums: assign sequential indices starting from 0
+    if (en.is_object_backed()) {
         for (size_t i = 0; i < work.size(); ++i) {
-            auto& we = work[i];
-            if (we.resolved) continue;
-
-            if (!we.ref_name.empty()) {
-                // Try to resolve the reference against all entries (base + local)
-                for (auto& other : work) {
-                    if (other.name == we.ref_name && other.resolved) {
-                        we.resolved = true;
-                        we.resolved_value = other.resolved_value;
-                        changed = true;
-                        break;
-                    }
-                }
-            } else {
-                // Auto-increment: value = previous entry's value + 1, or 0 if first
-                if (i == 0) {
-                    we.resolved = true;
-                    we.resolved_value = 0;
-                    changed = true;
-                } else if (work[i-1].resolved) {
-                    we.resolved = true;
-                    we.resolved_value = work[i-1].resolved_value + 1;
-                    changed = true;
-                }
-            }
+            work[i].resolved = true;
+            work[i].resolved_value = static_cast<int64_t>(i);
         }
     }
 
-    // Check for unresolved entries
-    for (auto& we : work) {
-        if (!we.resolved) {
-            if (!we.ref_name.empty()) {
-                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNDERLYING_NOT_INT), en_lexeme,
-                    "Enum entry '{}' references unresolvable entry '{}' (cycle or missing entry)",
-                    {we.name, we.ref_name});
-            } else {
-                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_BASE_NOT_ENUM), en_lexeme,
-                    "Enum entry '{}' could not be resolved (depends on unresolved previous entry)",
-                    {we.name});
+    // ── 3. Resolve references and auto-increment ──
+    // Skip for object-backed enums (entries have sequential indices already assigned)
+    if (!en.is_object_backed()) {
+        bool changed = true;
+        size_t max_iter = work.size() + 1;
+        for (size_t iter = 0; iter < max_iter && changed; ++iter) {
+            changed = false;
+            for (size_t i = 0; i < work.size(); ++i) {
+                auto& we = work[i];
+                if (we.resolved) continue;
+
+                if (!we.ref_name.empty()) {
+                    // Try to resolve the reference against all entries (base + local)
+                    for (auto& other : work) {
+                        if (other.name == we.ref_name && other.resolved) {
+                            we.resolved = true;
+                            we.resolved_value = other.resolved_value;
+                            changed = true;
+                            break;
+                        }
+                    }
+                } else {
+                    // Auto-increment: value = previous entry's value + 1, or 0 if first
+                    if (i == 0) {
+                        we.resolved = true;
+                        we.resolved_value = 0;
+                        changed = true;
+                    } else if (work[i-1].resolved) {
+                        we.resolved = true;
+                        we.resolved_value = work[i-1].resolved_value + 1;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        // Check for unresolved entries
+        for (auto& we : work) {
+            if (!we.resolved) {
+                if (!we.ref_name.empty()) {
+                    throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNDERLYING_NOT_INT), en_lexeme,
+                        "Enum entry '{}' references unresolvable entry '{}' (cycle or missing entry)",
+                        {we.name, we.ref_name});
+                } else {
+                    throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_BASE_NOT_ENUM), en_lexeme,
+                        "Enum entry '{}' could not be resolved (depends on unresolved previous entry)",
+                        {we.name});
+                }
             }
         }
     }
@@ -1021,32 +1147,43 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
     }
 
     // ── 5. Determine the smallest underlying type ──
-    int64_t min_val = 0, max_val = 0;
-    for (auto& we : work) {
-        if (we.resolved_value < min_val) min_val = we.resolved_value;
-        if (we.resolved_value > max_val) max_val = we.resolved_value;
-    }
-
-    primitive_type::PRIMITIVE_TYPE prim_type;
-    if (min_val >= 0) {
-        if (max_val <= 255) prim_type = primitive_type::BYTE;
-        else if (max_val <= 65535) prim_type = primitive_type::UNSIGNED_SHORT;
-        else if (max_val <= 4294967295LL) prim_type = primitive_type::UNSIGNED_INT;
-        else prim_type = primitive_type::UNSIGNED_LONG;
+    std::shared_ptr<primitive_type> underlying;
+    if (en.is_object_backed()) {
+        // Object-backed: runtime representation is an unsigned index into the backing table.
+        // Use the smallest unsigned type that can hold all entry indices.
+        size_t n = work.size();
+        primitive_type::PRIMITIVE_TYPE prim_type;
+        if (n <= 256)         prim_type = primitive_type::BYTE;
+        else if (n <= 65536)  prim_type = primitive_type::UNSIGNED_SHORT;
+        else                  prim_type = primitive_type::UNSIGNED_INT;
+        underlying = _context->from_type(prim_type);
     } else {
-        if (min_val >= -128 && max_val <= 127) prim_type = primitive_type::CHAR;
-        else if (min_val >= -32768 && max_val <= 32767) prim_type = primitive_type::SHORT;
-        else if (min_val >= -2147483648LL && max_val <= 2147483647LL) prim_type = primitive_type::INT;
-        else prim_type = primitive_type::LONG;
-    }
+        int64_t min_val = 0, max_val = 0;
+        for (auto& we : work) {
+            if (we.resolved_value < min_val) min_val = we.resolved_value;
+            if (we.resolved_value > max_val) max_val = we.resolved_value;
+        }
 
-    auto underlying = _context->from_type(prim_type);
+        primitive_type::PRIMITIVE_TYPE prim_type;
+        if (min_val >= 0) {
+            if (max_val <= 255) prim_type = primitive_type::BYTE;
+            else if (max_val <= 65535) prim_type = primitive_type::UNSIGNED_SHORT;
+            else if (max_val <= 4294967295LL) prim_type = primitive_type::UNSIGNED_INT;
+            else prim_type = primitive_type::UNSIGNED_LONG;
+        } else {
+            if (min_val >= -128 && max_val <= 127) prim_type = primitive_type::CHAR;
+            else if (min_val >= -32768 && max_val <= 32767) prim_type = primitive_type::SHORT;
+            else if (min_val >= -2147483648LL && max_val <= 2147483647LL) prim_type = primitive_type::INT;
+            else prim_type = primitive_type::LONG;
+        }
+        underlying = _context->from_type(prim_type);
+    }
     en.set_underlying_type(underlying);
 
     // ── 6. Populate the resolved entries ──
     // Store ALL entries (base + local) so that entries() returns the full set.
     for (auto& we : work) {
-        en.add_entry(we.name, we.resolved_value, we.is_default);
+        en.add_entry(we.name, we.resolved_value, we.is_default, we.brace_init);
     }
 
     // Step 3: Build the enum_type from the enumeration model

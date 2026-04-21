@@ -686,6 +686,32 @@ TEST_CASE("kdi_enum: derived enum with base_fq_name", "[dto][enum]") {
     REQUIRE(*en.base_fq_name == "gfx::Color");
 }
 
+TEST_CASE("kdi_enum: object-backed metadata fields", "[dto][enum]") {
+    kdi_enum en;
+    en.name                = "Dir";
+    en.fq_name             = "geom::Dir";
+    en.underlying_type     = kdi_type::make_int(8, false);
+    en.object_type         = kdi_type::make_aggregate("geom::Vec2");
+    en.object_table_symbol = "__klang_enum_table_geom_Dir__";
+
+    kdi_enum_entry up;
+    up.name = "UP";
+    up.value = 0;
+    up.object_init_members.emplace_back("x", 0);
+    up.object_init_members.emplace_back("y", 1);
+    en.entries.push_back(up);
+
+    REQUIRE(en.object_type.has_value());
+    REQUIRE(std::holds_alternative<kdi_aggregate_ref>(en.object_type->value));
+    REQUIRE(std::get<kdi_aggregate_ref>(en.object_type->value).fq_name == "geom::Vec2");
+    REQUIRE(en.object_table_symbol.has_value());
+    REQUIRE(*en.object_table_symbol == "__klang_enum_table_geom_Dir__");
+    REQUIRE(en.entries.size() == 1u);
+    REQUIRE(en.entries[0].object_init_members.size() == 2u);
+    REQUIRE(en.entries[0].object_init_members[1].first == "y");
+    REQUIRE(en.entries[0].object_init_members[1].second == 1);
+}
+
 // ─── kdi_type_table ──────────────────────────────────────────────────────────
 
 TEST_CASE("kdi_type_table: aggregate entries", "[dto][type_table]") {

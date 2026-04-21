@@ -13,10 +13,14 @@ all declared values as the *underlying type*.
 
 ```
 EnumDecl:
-    { Specifier } 'enum' Identifier [ ':' QualifiedName ] '{' { EnumEntry } '}' ';'
+    { Specifier } 'enum' Identifier [ ':' TypeSpec ] '{' { EnumEntry } '}' ';'
 
 EnumEntry:
-    Identifier [ '=' ( IntegerLiteral | Identifier ) ] [ 'default' ] ';'
+    Identifier
+    [ '=' ( IntegerLiteral | Identifier )
+    | BraceInitList
+    | '(' [ ExpressionList ] ')' ]
+    [ 'default' ] ';'
 ```
 
 ### Example
@@ -37,7 +41,37 @@ enum Color {
 | **Auto-increment** | When no value is specified, the entry takes the value of the preceding entry plus one.  The first entry defaults to `0`. |
 | **Duplicate values** | Two entries may have the same numeric value; they are treated as aliases with no distinction. |
 | **Default entry** | Appending `default` after the value marks the entry as the default.  At most **one** entry per enum may carry this attribute.  If no entry is explicitly marked, the first entry is the default. |
-| **Underlying type** | The compiler picks the smallest primitive integer type that can represent all values (unsigned if all values ≥ 0, signed otherwise). |
+| **Typed enum clause** | `enum E : T` accepts either an enum base (`T` is an enum) or an explicit backing type (`T` is a primitive or aggregate type). |
+| **Underlying type** | Integer enums use the smallest primitive integer type that can represent all values (unsigned if all values ≥ 0, signed otherwise), unless an explicit primitive type is provided. |
+
+---
+
+## 1.1 Typed enums (object-backed)
+
+When `T` is an aggregate type (`struct`/`class`), the enum is **object-backed**:
+
+- The enum runtime value is still an integer index.
+- Each entry maps to one object in a static backing table.
+- `E -> const T&` conversion returns a reference to the corresponding table element.
+
+```k
+struct Vec2 {
+    x : int;
+    y : int;
+}
+
+enum Dir : Vec2 {
+    UP{.x = 0, .y = 1} default;
+    RIGHT{.x = 1, .y = 0};
+    DOWN;  // zero-init object
+};
+```
+
+Entry initializer forms for object-backed enums:
+
+- `NAME{ ... }` designated object initializer.
+- `NAME(args...)` constructor-style initializer.
+- `NAME` zero-initialized object.
 
 ---
 
@@ -184,8 +218,6 @@ relationship exists only at the compiler's type-system level.
 The following features are **not** currently supported but are planned
 for future versions:
 
-- **Non-numeric backing types**: using types other than primitive integers
-  as the underlying representation.
 - **Methods on enums**: defining member functions associated with an enum
   type.
 - **`switch` / pattern matching**: exhaustive matching on enum entries.

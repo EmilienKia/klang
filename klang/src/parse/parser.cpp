@@ -837,35 +837,34 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
     auto enum_name = lex::as<lex::identifier>(lname);
 
     trace("[parser::parse_enum_decl] parsing enum '{}'", {std::string{enum_name.content}});
-    // Optional base enum clause: ':' QualifiedName
+    // Optional enum type / base clause: ':' TypeSpec
+    std::shared_ptr<ast::type_specifier> explicit_underlying_type;
     std::optional<std::string> base_name;
     {
         lex::lex_holder base_holder(_lexer);
         auto maybe_colon = _lexer.get();
         if (maybe_colon == lex::operator_::COLON) {
-            auto lbase = _lexer.get();
-            if (!lex::is<lex::identifier>(lbase)) {
+            explicit_underlying_type = parse_type_spec();
+            if (!explicit_underlying_type) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_EXPECTED_BASE_ENUM_NAME), _lexer.pick_current(), "Expected base enum name after ':' in enum declaration");
             }
-            std::string qualified = std::string{lex::as<lex::identifier>(lbase).content};
-            // Support qualified names: id ('::' id)*
-            while (true) {
-                lex::lex_holder dcolon_holder(_lexer);
-                auto maybe_dcolon = _lexer.get();
-                if (maybe_dcolon == lex::punctuator::DOUBLE_COLON) {
-                    auto lnext = _lexer.get();
-                    if (lex::is<lex::identifier>(lnext)) {
-                        qualified += "::" + std::string{lex::as<lex::identifier>(lnext).content};
-                    } else {
-                        dcolon_holder.rollback();
-                        break;
-                    }
-                } else {
-                    dcolon_holder.rollback();
-                    break;
+
+            // Backward-compatibility path: keep a plain identified type name as base_name
+            // so the current enum-derivation pipeline continues to work unchanged until
+            // semantic disambiguation between base enum and typed underlying type is added.
+            if (auto identified = std::dynamic_pointer_cast<ast::identified_type_specifier>(explicit_underlying_type)) {
+                std::string qualified;
+                if (identified->name.has_root_prefix()) {
+                    qualified = "::";
                 }
+                for (size_t i = 0; i < identified->name.names.size(); ++i) {
+                    if (i > 0) {
+                        qualified += "::";
+                    }
+                    qualified += std::string{identified->name.names[i].content};
+                }
+                base_name = qualified;
             }
-            base_name = qualified;
         } else {
             base_holder.rollback();
         }
@@ -898,24 +897,58 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
         }
         auto entry_name = lex::as<lex::identifier>(lentry_name);
 
-        // Optional '=' value
+        // Optional explicit initializer
         std::optional<lex::any_literal> literal_value;
         std::optional<lex::identifier> ref_value;
+        std::vector<ast::expr_ptr> ctor_args;
+        std::shared_ptr<ast::brace_init_list> brace_init;
+        bool has_paren_init = false;
         {
-            lex::lex_holder eq_holder(_lexer);
-            auto maybe_eq = _lexer.get();
-            if(maybe_eq == lex::operator_::EQUAL) {
-                // Expect integer literal or identifier
+            lex::lex_holder init_holder(_lexer);
+            auto maybe_init = _lexer.get();
+            if(maybe_init == lex::operator_::EQUAL) {
                 auto lval = _lexer.get();
                 if(lex::is<lex::integer>(lval)) {
                     literal_value = lex::any_literal{lex::as<lex::integer>(lval)};
+                } else if(lex::is<lex::float_num>(lval)) {
+                    literal_value = lex::any_literal{lex::as<lex::float_num>(lval)};
+                } else if(lex::is<lex::character>(lval)) {
+                    literal_value = lex::any_literal{lex::as<lex::character>(lval)};
+                } else if(lex::is<lex::string>(lval)) {
+                    literal_value = lex::any_literal{lex::as<lex::string>(lval)};
+                } else if(lex::is<lex::boolean>(lval)) {
+                    literal_value = lex::any_literal{lex::as<lex::boolean>(lval)};
+                } else if(lex::is<lex::null>(lval)) {
+                    literal_value = lex::any_literal{lex::as<lex::null>(lval)};
                 } else if(lex::is<lex::identifier>(lval)) {
                     ref_value = lex::as<lex::identifier>(lval);
                 } else {
-                    throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_ENTRY_EXPECT_VALUE), _lexer.pick_current(), "Expected integer literal or entry name after '=' in enum entry");
+                    throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_ENTRY_EXPECT_VALUE), _lexer.pick_current(), "Expected a literal or entry name after '=' in enum entry");
                 }
+            } else if (maybe_init == lex::punctuator::PARENTHESIS_OPEN) {
+                has_paren_init = true;
+                auto maybe_close = _lexer.get();
+                if (maybe_close != lex::punctuator::PARENTHESIS_CLOSE) {
+                    _lexer.unget();
+                    while (true) {
+                        auto arg = parse_assignment_expression();
+                        if (!arg) {
+                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_ENTRY_EXPECT_VALUE), _lexer.pick_current(), "Expected an expression in enum entry constructor-style initializer");
+                        }
+                        ctor_args.push_back(arg);
+                        auto sep = _lexer.get();
+                        if (sep == lex::punctuator::PARENTHESIS_CLOSE) {
+                            break;
+                        }
+                        if (sep != lex::punctuator::COMMA) {
+                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_ENTRY_EXPECT_VALUE), _lexer.pick_current(), "Expected ',' or ')' in enum entry constructor-style initializer");
+                        }
+                    }
+                }
+            } else if (maybe_init == lex::punctuator::BRACE_OPEN) {
+                brace_init = parse_brace_init_list(lex::as<lex::punctuator>(maybe_init));
             } else {
-                eq_holder.rollback();
+                init_holder.rollback();
             }
         }
 
@@ -937,7 +970,7 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
         }
 
         entries.push_back(std::make_shared<ast::enum_entry>(
-            entry_name, literal_value, ref_value, is_default));
+            entry_name, literal_value, ref_value, is_default, ctor_args, brace_init, has_paren_init));
     }
 
     // Expect closing brace
@@ -953,7 +986,7 @@ std::shared_ptr<ast::enum_decl> parser::parse_enum_decl()
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_ENUM_MISSING_SEMICOLON), _lexer.pick_current(), "Expected ';' after enum declaration");
     }
 
-    return std::make_shared<ast::enum_decl>(specifiers, kw_enum, enum_name, base_name, open_brace_val, close_brace_val, entries);
+    return std::make_shared<ast::enum_decl>(specifiers, kw_enum, enum_name, explicit_underlying_type, base_name, open_brace_val, close_brace_val, entries);
 }
 
 std::vector<lex::keyword> parser::parse_specifiers()
@@ -2518,17 +2551,26 @@ std::shared_ptr<ast::type_specifier> parser::parse_type_spec(bool stop_before_br
 
         if(lex == lex::punctuator::BRACKET_OPEN && !stop_before_bracket) {
 
-            auto lint = _lexer.get();
+            auto lind_or_close = _lexer.get();
             std::optional<lex::integer> int_index;
-            if (lex::is<lex::integer>(lint)) {
-                int_index = lex::as<lex::integer>(lint);
-            } else {
-                _lexer.unget();
-            }
+            lex::opt_ref_any_lexeme lbrclose;
 
-            auto lbrclose = _lexer.get();
-            if (lbrclose != lex::punctuator::BRACKET_CLOSE) {
-                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TYPE_ARRAY_EXPECT_CLOSE_BRACKET), lbrclose, "Type specifier array index expect a closing bracket");
+            if (lind_or_close == lex::punctuator::BRACKET_CLOSE) {
+                // Unsized array suffix: []
+                lbrclose = lind_or_close;
+            } else if (lex::is<lex::integer>(lind_or_close)) {
+                // Sized array suffix: [N]
+                int_index = lex::as<lex::integer>(lind_or_close);
+                lbrclose = _lexer.get();
+                if (lbrclose != lex::punctuator::BRACKET_CLOSE) {
+                    throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TYPE_ARRAY_EXPECT_CLOSE_BRACKET), lbrclose, "Type specifier array index expect a closing bracket");
+                }
+            } else {
+                // Not a type suffix (e.g. expression subscript in tentative parsing).
+                // Roll back to before '[' so the caller can parse it in expression context.
+                _lexer.unget();
+                holder.rollback();
+                break;
             }
 
             res = std::make_shared<ast::array_type_specifier>(res, lex::as<lex::punctuator>(lex), lex::as<lex::punctuator>(lbrclose), int_index);

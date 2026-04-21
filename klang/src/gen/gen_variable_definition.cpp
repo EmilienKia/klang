@@ -626,8 +626,23 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
 
     auto arg_type = arg->get_type();
 
-    // Case B, step 3: The initialiser must be a reference (lvalue), not a bare value
+    // Case B, step 3: The initialiser must be a reference (lvalue), not a bare value.
+    // Exception: object-backed enum → const T& is allowed (the backing table provides an lvalue).
     if (!type::is_reference(arg_type)) {
+        // Check: is this an object-backed enum being assigned to const T& where T is the object type?
+        auto arg_enum = std::dynamic_pointer_cast<enum_type>(type::remove_const(arg_type));
+        if (arg_enum && arg_enum->is_object_backed()) {
+            auto obj_type = arg_enum->get_object_type();
+            auto ref_sub_nc = type::remove_const(ref_sub);
+            if (obj_type && ref_sub_nc == obj_type) {
+                // Adapt: enum → const T& via table GEP cast
+                auto adapted = adapt_type(arg, ctx.var_type);
+                if (adapted) {
+                    ctx.init_expr->assign_argument(0, adapted);
+                    return;  // Adaptation succeeded; no further validation needed
+                }
+            }
+        }
         throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_STRUCT_VAR_CTOR_ARG_MISMATCH), ctx.var_lexeme,
             "Reference variable '{}' of type '{}' must be initialised with a reference (an addressable "
             "object), but the initialiser has type '{}' which is not a reference; "

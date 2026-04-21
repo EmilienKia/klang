@@ -6365,6 +6365,55 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         auto enum_src = std::dynamic_pointer_cast<enum_type>(src_nc);
         auto enum_tgt = std::dynamic_pointer_cast<enum_type>(tgt_nc);
         if (enum_src || enum_tgt) {
+            // ── Object-backed enum → const T& (reference to backing table element) ──
+            if (enum_src && enum_src->is_object_backed() && !enum_tgt) {
+                // Check target is a reference to the object type
+                auto obj_type = enum_src->get_object_type();
+                auto tgt_ref = std::dynamic_pointer_cast<reference_type>(tgt_nc);
+                if (!tgt_ref) {
+                    if (auto tgt_const = std::dynamic_pointer_cast<const_type>(tgt_nc)) {
+                        tgt_ref = std::dynamic_pointer_cast<reference_type>(tgt_const->get_subtype());
+                    }
+                }
+                bool is_table_gep = tgt_ref && obj_type &&
+                    type::remove_const(tgt_ref->get_subtype()) == obj_type;
+
+                if (is_table_gep) {
+                    // Get the enum index value
+                    _value = nullptr;
+                    expr.sub_expr()->accept(*this);
+                    if (!_value) return;
+
+                    // Get the backing table global
+                    auto en = enum_src->get_enumeration();
+                    if (!en || !en->get_table_global()) return;
+
+                    auto* table_gv = en->get_table_global();
+                    auto* arr_ty = llvm::dyn_cast<llvm::ArrayType>(
+                        table_gv->getValueType());
+                    if (!arr_ty) return;
+
+                    // Zero-extend the index to i64 for GEP
+                    auto* idx_i64 = _builder->CreateZExt(_value,
+                        llvm::Type::getInt64Ty(_builder->getContext()),
+                        "enum_tbl_idx");
+
+                    // GEP: &table[0][enum_index] → ptr to the struct element
+                    llvm::Value* indices[] = {
+                        llvm::ConstantInt::get(llvm::Type::getInt64Ty(_builder->getContext()), 0),
+                        idx_i64
+                    };
+                    _value = _builder->CreateInBoundsGEP(
+                        arr_ty,
+                        table_gv,
+                        llvm::ArrayRef<llvm::Value*>(indices),
+                        "enum_tbl_elem");
+
+                    // _value is now a pointer to the struct element (= the reference value)
+                    return;
+                }
+            }
+
             // Evaluate source expression
             _value = nullptr;
             expr.sub_expr()->accept(*this);

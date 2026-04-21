@@ -997,6 +997,10 @@ cbor_item_t* encode_enum(const kdi_enum& e) {
     map_push(m, "fq_name",         cbor_str(e.fq_name));
     map_push(m, "visibility",      encode_visibility(e.visibility));
     map_push(m, "underlying_type", encode_type(e.underlying_type));
+    if (e.object_type.has_value())
+        map_push(m, "object_type", encode_type(*e.object_type));
+    if (e.object_table_symbol.has_value())
+        map_push(m, "object_table_symbol", cbor_str(*e.object_table_symbol));
     if (e.base_fq_name.has_value())
         map_push(m, "base_fq_name", cbor_str(*e.base_fq_name));
     cbor_item_t* entries = cbor_new_indefinite_array();
@@ -1005,6 +1009,16 @@ cbor_item_t* encode_enum(const kdi_enum& e) {
         map_push(em, "name",       cbor_str(en.name));
         map_push(em, "value",      encode_int64(en.value));
         if (en.is_default) map_push(em, "is_default", cbor_bool(true));
+        if (!en.object_init_members.empty()) {
+            cbor_item_t* members = cbor_new_indefinite_array();
+            for (const auto& [member_name, member_value] : en.object_init_members) {
+                cbor_item_t* mm = cbor_new_indefinite_map();
+                map_push(mm, "name", cbor_str(member_name));
+                map_push(mm, "value", encode_int64(member_value));
+                cbor_array_push(members, cbor_move(mm));
+            }
+            map_push(em, "object_init_members", members);
+        }
         cbor_array_push(entries, cbor_move(em));
     }
     map_push(m, "entries", entries);
@@ -1018,6 +1032,10 @@ kdi_enum decode_enum(cbor_item_t* item, const std::string& path) {
     e.visibility = decode_visibility(item, "visibility", path);
     auto* ut = map_get(item, "underlying_type");
     if (ut) e.underlying_type = decode_type(ut, path + ".underlying_type");
+    if (auto* ot = map_get(item, "object_type"))
+        e.object_type = decode_type(ot, path + ".object_type");
+    if (auto* ots = map_get(item, "object_table_symbol"); ots && cbor_isa_string(ots))
+        e.object_table_symbol = read_string(ots, path + ".object_table_symbol");
     auto* bn = map_get(item, "base_fq_name");
     if (bn && cbor_isa_string(bn))
         e.base_fq_name = read_string(bn, path + ".base_fq_name");
@@ -1031,6 +1049,16 @@ kdi_enum decode_enum(cbor_item_t* item, const std::string& path) {
             en.name       = req_string(ei, "name", ep);
             en.value      = read_int64(map_get(ei, "value"), ep + ".value");
             en.is_default = opt_bool(ei, "is_default");
+            if (auto* members = map_get(ei, "object_init_members"); members && cbor_isa_array(members)) {
+                size_t mn = cbor_array_size(members);
+                for (size_t mi = 0; mi < mn; ++mi) {
+                    auto* mm = cbor_array_get(members, mi);
+                    auto mp = ep + ".object_init_members[" + std::to_string(mi) + "]";
+                    en.object_init_members.emplace_back(
+                        req_string(mm, "name", mp),
+                        read_int64(map_get(mm, "value"), mp + ".value"));
+                }
+            }
             e.entries.push_back(en);
         }
     }

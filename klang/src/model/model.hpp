@@ -42,6 +42,7 @@ struct parameter_spec;
 struct aggregate_decl;
 struct enum_decl;
 struct annotation_def;
+struct brace_init_list;
 }
 
 namespace k::model {
@@ -753,6 +754,8 @@ struct enum_entry_def {
     std::string name;
     int64_t value = 0;
     bool is_default = false;
+    /** For object-backed enums: the brace-initializer AST node for this entry. */
+    std::shared_ptr<k::parse::ast::brace_init_list> brace_init;
 };
 
 /**
@@ -764,6 +767,8 @@ struct enum_raw_entry_def {
     std::optional<int64_t> explicit_value;  ///< Set if entry has an integer literal value.
     std::string ref_name;                    ///< Set if entry references another entry by name.
     bool is_default = false;
+    /** Brace-initializer for object-backed enum entries (e.g. `ENTRY{.x=1, .y=2}`). */
+    std::shared_ptr<k::parse::ast::brace_init_list> brace_init;
 };
 
 /**
@@ -788,6 +793,10 @@ protected:
     std::vector<enum_entry_def> _entries;
     std::shared_ptr<enum_type> _type;
     std::shared_ptr<primitive_type> _underlying_type;
+    /** Non-null for object-backed typed enums: the struct_type of the backing object. */
+    std::shared_ptr<struct_type> _object_type;
+    /** LLVM global constant array for object-backed typed enums: `[N x StructType]`. */
+    llvm::GlobalVariable* _table_global = nullptr;
     visibility _visibility = PUBLIC;
 
     /** Optional base enum name (unresolved, from AST). */
@@ -812,8 +821,9 @@ public:
     void accept(model_visitor& visitor) override;
 
     const std::vector<enum_entry_def>& entries() const { return _entries; }
-    void add_entry(const std::string& name, int64_t value, bool is_default) {
-        _entries.push_back({name, value, is_default});
+    void add_entry(const std::string& name, int64_t value, bool is_default,
+                   std::shared_ptr<k::parse::ast::brace_init_list> brace_init = nullptr) {
+        _entries.push_back({name, value, is_default, std::move(brace_init)});
     }
 
     std::optional<enum_entry_def> get_entry_by_name(const std::string& name) const {
@@ -836,6 +846,15 @@ public:
 
     std::shared_ptr<primitive_type> get_underlying_type() const { return _underlying_type; }
     void set_underlying_type(std::shared_ptr<primitive_type> t) { _underlying_type = t; }
+
+    /** True when enum entries are represented as indices into a static backing table. */
+    bool is_object_backed() const { return _object_type != nullptr; }
+    std::shared_ptr<struct_type> get_object_type() const { return _object_type; }
+    void set_object_type(std::shared_ptr<struct_type> st) { _object_type = std::move(st); }
+
+    /** LLVM global constant array used at runtime for object-backed enums. */
+    llvm::GlobalVariable* get_table_global() const { return _table_global; }
+    void set_table_global(llvm::GlobalVariable* gv) { _table_global = gv; }
 
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }

@@ -466,3 +466,42 @@ TEST_CASE("CBOR: template_def round-trips in namespace", "[cbor][template]") {
     REQUIRE(rtd.source == "template<typename T> struct Box { val: T; }");
 }
 
+TEST_CASE("CBOR: object-backed enum metadata round-trips", "[cbor][enum][typed]") {
+    kdi_file f;
+    f.header.module_name = "typed::enum";
+    f.header.lib_base    = "typed.enum";
+    f.unit.name          = "typed::enum";
+
+    kdi_enum en;
+    en.name                = "Dir";
+    en.fq_name             = "typed::enum::Dir";
+    en.underlying_type     = kdi_type::make_int(8, false);
+    en.object_type         = kdi_type::make_aggregate("typed::enum::Vec2");
+    en.object_table_symbol = "__klang_enum_table_Dir__";
+
+    kdi_enum_entry up;
+    up.name = "UP";
+    up.value = 0;
+    up.is_default = true;
+    up.object_init_members.emplace_back("x", 0);
+    up.object_init_members.emplace_back("y", 1);
+    en.entries.push_back(up);
+    f.unit.root_ns.enums.push_back(en);
+
+    std::ostringstream oss(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(f, oss));
+    std::istringstream iss(oss.str(), std::ios::binary);
+    kdi_file restored;
+    REQUIRE_NOTHROW(restored = kdi_read_cbor(iss));
+
+    REQUIRE(restored.unit.root_ns.enums.size() == 1);
+    auto& ren = restored.unit.root_ns.enums[0];
+    REQUIRE(ren.object_type.has_value());
+    REQUIRE(std::holds_alternative<kdi_aggregate_ref>(ren.object_type->value));
+    REQUIRE(std::get<kdi_aggregate_ref>(ren.object_type->value).fq_name == "typed::enum::Vec2");
+    REQUIRE(ren.object_table_symbol.has_value());
+    REQUIRE(*ren.object_table_symbol == "__klang_enum_table_Dir__");
+    REQUIRE(ren.entries.size() == 1);
+    REQUIRE(ren.entries[0].object_init_members.size() == 2);
+}
+

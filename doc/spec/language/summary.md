@@ -985,12 +985,12 @@ p : Point { .x = 10, .y = 20 };
 > Details: [enums.md](enums/enums.md)
 
 ```
-{ Specifier } 'enum' Identifier [ ':' QualifiedName ] '{' { EnumEntry } '}' ';'
+{ Specifier } 'enum' Identifier [ ':' TypeSpec ] '{' { EnumEntry } '}' ';'
 ```
 
 ### 19.1 Entries
 
-`Identifier [ '=' ( IntegerLiteral | Identifier ) ] [ 'default' ] ';'`
+`Identifier [ '=' ( IntegerLiteral | Identifier ) | BraceInitList | '(' [ ExpressionList ] ')' ] [ 'default' ] ';'`
 
 - Auto-incrementation from the last value + 1 (first = 0).
 - Duplicate values allowed (aliases).
@@ -999,6 +999,16 @@ p : Point { .x = 10, .y = 20 };
 ### 19.2 Underlying Type
 
 The compiler chooses the smallest primitive integer type containing all values. Unsigned if all ≥ 0.
+With an explicit primitive type (`enum E : unsigned byte`), that explicit primitive is used.
+
+### 19.2.1 Object-backed typed enums
+
+`enum E : AggregateType { ... }` defines an object-backed enum:
+
+- Runtime representation is an integer index.
+- Each entry maps to one object in a static backing table.
+- `E -> const AggregateType&` conversion returns a reference to that table entry.
+- Entry initializers support designated braces (`NAME{.f = v}`), constructor form (`NAME(args)`), and zero-init (`NAME`).
 
 ### 19.3 Enum Derivation
 
