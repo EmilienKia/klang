@@ -5,7 +5,7 @@ include_directories(${PROJECT_BINARY_DIR}/klang)
 # K lang compiler library and executable
 #
 
-add_library(klangcomp
+add_library(klang
         src/lex/lexemes.cpp
         src/lex/lexer.cpp
         src/parse/parser_declarations.cpp
@@ -79,17 +79,17 @@ add_library(klangcomp
         src/model/template.cpp
 )
 
-target_include_directories(klangcomp PRIVATE
+target_include_directories(klang PRIVATE
     ${CMAKE_SOURCE_DIR}/libkdi/src
 )
-target_link_libraries(klangcomp ${LLVM_LIBRARIES} ${Boost_LIBRARIES} kdi)
+target_link_libraries(klang ${LLVM_LIBRARIES} ${Boost_LIBRARIES} kdi)
 
 add_executable(klangc
         src/klang.cpp
 )
 
 target_include_directories(klangc PUBLIC ${PROJECT_BINARY_DIR})
-target_link_libraries(klangc klangcomp ${LLVM_LIBRARIES} fmt::fmt ${Boost_LIBRARIES})
+target_link_libraries(klangc klang ${LLVM_LIBRARIES} fmt::fmt ${Boost_LIBRARIES})
 
 #
 # Tests
@@ -99,7 +99,7 @@ add_library(klang-test-helpers STATIC
         tests/helpers.hpp
         tests/helpers.cpp
 )
-target_link_libraries(klang-test-helpers PUBLIC klangcomp ${LLVM_LIBRARIES} fmt::fmt kdi dl)
+target_link_libraries(klang-test-helpers PUBLIC klang ${LLVM_LIBRARIES} fmt::fmt kdi dl)
 target_include_directories(klang-test-helpers PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/tests
     ${CMAKE_SOURCE_DIR}/libkdi/src
@@ -212,12 +212,3 @@ target_link_libraries(klangc-tests klang-test-helpers Catch2::Catch2WithMain)
 add_dependencies(klangc-tests klangc libk_stdlib)
 
 add_test(NAME klangc-tests COMMAND klangc-tests)
-
-#
-# Dev and test tools
-#
-
-add_executable(klang
-        src/main.cpp
-)
-target_link_libraries(klang klangcomp ${LLVM_LIBRARIES} fmt::fmt)

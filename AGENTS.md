@@ -12,7 +12,7 @@ code via LLVM. The repository contains:
 
 | Sub-project | Path | Purpose |
 |-------------|------|---------|
-| `klang/` | `klang/` | Compiler (library `klangcomp` + executables `klangc`, `klang`) |
+| `klang/` | `klang/` | Compiler (library `klang` + executable `klangc`) |
 | `libk/` | `libk/` | K standard library (written in K, compiled by klangc) |
 | `libkdi/` | `libkdi/` | KDI (K Description Interface) file format library |
 
@@ -120,8 +120,7 @@ A missing transitive KDI is a **fatal error**.
 | `errors_lex_parse.hpp` | `compiler_diag`, `lexer_diag`, `parser_diag` |
 | `errors_model.hpp` | `model_diag`, `symbol_diag`, `structure_diag`, `function_diag`, `type_diag` |
 | `errors_gen.hpp` | `operator_diag`, `variable_diag`, `statement_diag`, `codegen_diag`, `template_diag` |
-| `main.cpp` | `klangc` executable entry point |
-| `klang.cpp` | `klang` JIT/test-runner entry point |
+| `klang.cpp` | `klangc` executable entry point |
 | `config.h.in` | CMake-generated version header |
 
 ### `klang/src/common/`
@@ -461,7 +460,7 @@ cd cmake-build-debug && ./klang/klang-tests "[gen][arithmetic]"
 - Always rebuild after editing CMakeLists.txt: CMake re-runs automatically on
   the next `ninja` invocation.
 - The `compile_flags.txt` in the root is for clangd (editor tooling) only.
-- Log level is `info` by default; add `--log-level trace` to `klangc`/`klang`
+- Log level is `info` by default; add `--log-level trace` to `klangc`
   for verbose pipeline tracing.
 
 ### Build & run cheat-sheet
