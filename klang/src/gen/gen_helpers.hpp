@@ -21,8 +21,11 @@
 
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
+#include "llvm/Support/raw_os_ostream.h"
 
 #include "../model/model.hpp"
+#include "../model/context.hpp"
+#include "../parse/ast.hpp"
 
 #include <map>
 #include <memory>
@@ -258,6 +261,83 @@ inline void emit_sized_array_elements_cleanup(
 
 namespace k::model::gen {
 
+// ── Forward declarations for helpers defined in specific gen_*.cpp files ────
+
+/** Emit vptr store (defined in gen_class.cpp). */
+void emit_vptr_store(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr, std::shared_ptr<context> ctx);
+
+/** Emit virtual dispatch call (defined in gen_class.cpp). */
+llvm::Value* emit_virtual_dispatch_call(llvm::IRBuilder<>& builder, klass& st, llvm::Value* this_ptr,
+    int slot_index, llvm::FunctionType* fn_type, const std::vector<llvm::Value*>& args,
+    std::shared_ptr<context> ctx, const std::string& result_name);
+
+/** Compute operator dispatch info (defined in gen_operators.cpp). */
+virtual_dispatch_info compute_operator_dispatch_info(
+    const std::shared_ptr<function>& func,
+    const std::shared_ptr<type>& receiver_type);
+
+// ── Shared static helpers ──────────────────────────────────────────────────
+
+/**
+ * Extract a concrete k::value_type from an AST expression node.
+ * Only literal expressions are supported (compile-time constants).
+ */
+inline bool extract_value_from_ast_expr(
+    const k::parse::ast::expression* expr,
+    k::value_type& out_value)
+{
+    auto lit = dynamic_cast<const k::parse::ast::literal_expr*>(expr);
+    if (!lit) return false;
+    auto val = lit->literal.value().value();
+    return std::visit([&out_value](auto&& v) -> bool {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, std::monostate> || std::is_same_v<T, std::nullptr_t>) {
+            return false;
+        } else {
+            out_value = k::value_type{v};
+            return true;
+        }
+    }, val);
+}
+
+/**
+ * Ensure an LLVM global reference for an enum's object-backing table.
+ */
+inline llvm::GlobalVariable* ensure_enum_object_table_reference(
+    const std::shared_ptr<enumeration>& en,
+    const std::shared_ptr<context>& ctx)
+{
+    if (!en || !ctx || !en->is_object_backed()) return nullptr;
+    if (auto* existing = en->get_table_global()) return existing;
+
+    auto obj_type = en->get_object_type();
+    if (!obj_type || !obj_type->is_resolved()) return nullptr;
+
+    auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(ctx->get_llvm_type(obj_type));
+    if (!llvm_st) return nullptr;
+
+    const std::string table_name = !en->get_table_symbol().empty()
+                                   ? en->get_table_symbol()
+                                   : ("__klang_enum_table_" + en->get_mangled_name() + "__");
+    if (auto* gv = ctx->module().getNamedGlobal(table_name)) {
+        en->set_table_global(gv);
+        return gv;
+    }
+
+    auto* arr_ty = llvm::ArrayType::get(llvm_st, en->entries().size());
+    auto* gv = new llvm::GlobalVariable(
+        ctx->module(),
+        arr_ty,
+        /*isConstant=*/true,
+        llvm::GlobalValue::ExternalLinkage,
+        nullptr,
+        table_name);
+    en->set_table_global(gv);
+    return gv;
+}
+
+// ── LLVM type/value stream helpers ─────────────────────────────────────────
+
 /**
  * Get or declare the __k_fatal_array_bounds_check_failed(index, size) function
  * in the given module.  The actual body is provided by libk (fatal.c),
@@ -320,6 +400,20 @@ inline void emit_array_bounds_check(
 }
 
 } // namespace k::model::gen
+
+template<typename STM>
+inline STM& operator << (STM& stm, const llvm::Type& type) {
+    llvm::raw_os_ostream ross(stm);
+    type.print(ross, true);
+    return stm;
+}
+
+template<typename STM>
+inline STM& operator << (STM& stm, const llvm::Value& value) {
+    llvm::raw_os_ostream ross(stm);
+    value.print(ross, true);
+    return stm;
+}
 
 #endif // KLANG_GEN_HELPERS_HPP
 

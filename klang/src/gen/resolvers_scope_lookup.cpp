@@ -1,0 +1,291 @@
+/*
+ * K Language compiler
+ *
+ * Copyright 2023-2026 Emilien Kia
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#include "resolvers_scope_lookup.hpp"
+
+namespace k::model::gen {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// scope_lookup — visibility helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::shared_ptr<ns> scope_lookup::enclosing_namespace(const element& elem) {
+    auto cur = elem.shared_as<const element>();
+    while (cur) {
+        if (auto n = std::dynamic_pointer_cast<const ns>(cur))
+            return std::const_pointer_cast<ns>(n);
+        cur = cur->parent<element>();
+    }
+    return {};
+}
+
+std::shared_ptr<ns> scope_lookup::root_namespace(const element& elem) {
+    auto cur = elem.shared_as<const element>();
+    std::shared_ptr<ns> last_ns;
+    while (cur) {
+        if (auto n = std::dynamic_pointer_cast<const ns>(cur))
+            last_ns = std::const_pointer_cast<ns>(n);
+        cur = cur->parent<element>();
+    }
+    return last_ns;
+}
+
+bool scope_lookup::is_inside_member_function_of_or_ancestor(const element& access_site, const aggregate& st) {
+    auto cur = access_site.shared_as<const element>();
+    while (cur) {
+        if (auto fn = std::dynamic_pointer_cast<const function>(cur)) {
+            if (fn->is_member() && !fn->is_static()) {
+                auto check_st = fn->get_owner();
+                while (check_st) {
+                    if (check_st.get() == &st) return true;
+                    check_st = check_st->get_enclosing_aggregate();
+                }
+            }
+        }
+        cur = cur->parent<element>();
+    }
+    return false;
+}
+
+bool scope_lookup::is_in_same_namespace(const element& access_site, const ns& owner_ns) {
+    auto cur = access_site.shared_as<const element>();
+    while (cur) {
+        if (auto n = std::dynamic_pointer_cast<const ns>(cur))
+            if (n.get() == &owner_ns) return true;
+        cur = cur->parent<element>();
+    }
+    return false;
+}
+
+bool scope_lookup::is_in_same_module(const element& access_site, const ns& owner_root) {
+    auto access_root = root_namespace(access_site);
+    return access_root && access_root.get() == &owner_root;
+}
+
+bool scope_lookup::is_struct_member_accessible(
+    visibility vis,
+    const aggregate& owner_st,
+    const std::shared_ptr<aggregate>& owner_st_shared,
+    const std::vector<std::shared_ptr<function>>& function_stack)
+{
+    if (vis == PUBLIC) return true;
+
+    for (auto it = function_stack.rbegin(); it != function_stack.rend(); ++it) {
+        const auto& fn = *it;
+        if (!fn->is_member() || fn->is_static()) continue;
+
+        auto check_st = fn->get_owner();
+        while (check_st) {
+            if (vis == PRIVATE) {
+                if (check_st.get() == &owner_st) return true;
+            } else {
+                if (check_st.get() == &owner_st) return true;
+                if (owner_st_shared && check_st->is_derived_from(owner_st_shared)) return true;
+            }
+            check_st = check_st->get_enclosing_aggregate();
+        }
+    }
+    return false;
+}
+
+bool scope_lookup::is_friend_of(
+    const aggregate& owner_agg,
+    const std::vector<std::shared_ptr<function>>& function_stack,
+    const unit& unit)
+{
+    if (function_stack.empty()) return false;
+
+    const auto& directives = owner_agg.get_friend_directives();
+    if (directives.empty()) return false;
+
+    const auto& current_fn = function_stack.back();
+
+    for (const auto& dir : directives) {
+        auto root = unit.get_root_namespace();
+        if (!root) continue;
+
+        std::shared_ptr<const element> current = root;
+        bool resolved = true;
+        for (size_t i = 0; i < dir.target_name.size(); ++i) {
+            const auto& part = dir.target_name[i];
+            bool stepped = false;
+
+            if (auto nspc = std::dynamic_pointer_cast<const ns>(current)) {
+                if (auto child = nspc->get_child_namespace(part)) {
+                    current = child;
+                    stepped = true;
+                }
+            }
+            if (!stepped) {
+                if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(current)) {
+                    if (auto agg = ah->get_aggregate(part)) {
+                        current = std::dynamic_pointer_cast<const element>(agg);
+                        stepped = true;
+                    }
+                }
+            }
+            if (!stepped && i == dir.target_name.size() - 1) {
+                if (auto fh = std::dynamic_pointer_cast<const function_holder>(current)) {
+                    if (auto fn = fh->get_function(part)) {
+                        current = std::dynamic_pointer_cast<const element>(fn);
+                        stepped = true;
+                    }
+                }
+            }
+            if (!stepped) {
+                resolved = false;
+                break;
+            }
+        }
+
+        if (!resolved || !current) continue;
+
+        auto target = current;
+
+        if (auto target_agg = std::dynamic_pointer_cast<const aggregate>(target)) {
+            if (dir.filter != friend_directive::filter_t::NONE) {
+                bool filter_match = false;
+                if (dir.filter == friend_directive::filter_t::STRUCT) {
+                    filter_match = (dynamic_cast<const structure*>(target.get()) != nullptr);
+                } else if (dir.filter == friend_directive::filter_t::CLASS) {
+                    filter_match = target_agg->is_class() && (dynamic_cast<const interface*>(target.get()) == nullptr);
+                } else if (dir.filter == friend_directive::filter_t::INTERFACE) {
+                    filter_match = (dynamic_cast<const interface*>(target.get()) != nullptr);
+                }
+                if (!filter_match) continue;
+            }
+
+            auto fn_owner = current_fn->get_owner();
+            if (fn_owner && fn_owner.get() == target_agg.get()) {
+                return true;
+            }
+        } else if (auto target_fn = std::dynamic_pointer_cast<const function>(target)) {
+            if (dir.filter != friend_directive::filter_t::NONE) {
+                continue;
+            }
+            if (current_fn.get() == target_fn.get()) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// scope_lookup — scope-chain lookup methods
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::shared_ptr<variable_definition>
+scope_lookup::lookup_variable(std::shared_ptr<element> elem, const std::string& name) {
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto vh = std::dynamic_pointer_cast<variable_holder>(current)) {
+            if (auto var = vh->get_variable(name)) {
+                return var;
+            }
+        }
+        if (auto blck = std::dynamic_pointer_cast<block>(current)) {
+            if (auto func = blck->get_direct_function()) {
+                if (auto param = func->get_parameter(name)) {
+                    return std::const_pointer_cast<parameter>(param);
+                }
+            }
+        }
+    }
+    return {};
+}
+
+std::shared_ptr<function>
+scope_lookup::lookup_function(std::shared_ptr<element> elem, const std::string& name) {
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto fh = std::dynamic_pointer_cast<function_holder>(current)) {
+            if (auto func = fh->get_function(name)) {
+                return func;
+            }
+        }
+    }
+    return {};
+}
+
+std::vector<std::shared_ptr<function>>
+scope_lookup::lookup_functions(std::shared_ptr<element> elem, const std::string& name) {
+    std::vector<std::shared_ptr<function>> result;
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto fh = std::dynamic_pointer_cast<function_holder>(current)) {
+            auto local = fh->get_functions(name);
+            result.insert(result.end(), local.begin(), local.end());
+        }
+    }
+    return result;
+}
+
+std::shared_ptr<aggregate>
+scope_lookup::lookup_structure(std::shared_ptr<element> elem, const std::string& name) {
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto sh = std::dynamic_pointer_cast<aggregate_holder>(current)) {
+            if (auto agg = sh->get_aggregate(name)) {
+                return agg;
+            }
+        }
+    }
+    return {};
+}
+
+std::shared_ptr<enumeration>
+scope_lookup::lookup_enumeration(std::shared_ptr<element> elem, const std::string& name) {
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto eh = std::dynamic_pointer_cast<enum_holder>(current)) {
+            if (auto en = eh->get_enum(name)) {
+                return en;
+            }
+        }
+    }
+    return {};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolve_using_target — free helper (declared in resolvers_common.hpp)
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::shared_ptr<const element>
+resolve_using_target(const k::name& target_name, const unit& unit) {
+    auto root = unit.get_root_namespace();
+    if (!root) return nullptr;
+
+    std::shared_ptr<const element> current = root;
+    for (size_t i = 0; i < target_name.size(); ++i) {
+        const auto& part = target_name[i];
+
+        if (auto nspc = std::dynamic_pointer_cast<const ns>(current)) {
+            if (auto child = nspc->get_child_namespace(part)) {
+                current = child;
+                continue;
+            }
+        }
+        if (auto ah = std::dynamic_pointer_cast<const aggregate_holder>(current)) {
+            if (auto agg = ah->get_aggregate(part)) {
+                current = std::dynamic_pointer_cast<const element>(agg);
+                continue;
+            }
+        }
+        return nullptr;
+    }
+    return current;
+}
+
+} // namespace k::model::gen
+

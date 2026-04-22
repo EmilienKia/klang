@@ -1,0 +1,381 @@
+/*
+ * K Language compiler
+ *
+ * Copyright 2023-2026 Emilien Kia
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#ifndef KLANG_MODEL_NS_HPP
+#define KLANG_MODEL_NS_HPP
+#include "model_function.hpp"
+namespace k::model {
+
+class global_variable_definition : public element, public variable_definition {
+protected:
+
+    friend class ns;
+    friend class aggregate;
+    friend class block;
+    friend class gen::implementation_generator;
+
+    /** Declared visibility of this global/static variable. PUBLIC by default. */
+    visibility _visibility = PUBLIC;
+
+    global_variable_definition(std::shared_ptr<variable_holder> parent);
+
+    static std::shared_ptr<global_variable_definition> make_shared(std::shared_ptr<variable_holder> parent, const std::string& name);
+
+    void update_mangled_name() override;
+
+public:
+    void accept(model_visitor& visitor) override;
+
+    visibility get_visibility() const { return _visibility; }
+    void set_visibility(visibility v) { _visibility = v; }
+};
+
+
+class ns : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public using_holder {
+protected:
+
+    friend class unit;
+
+    /** Collection of all children of this namespace. */
+    std::vector<std::shared_ptr</*ns_element*/element>> _children;
+
+    /** Map of direct child namespaces. */
+    std::map<std::string, std::shared_ptr<ns>> _ns;
+
+    ns(std::shared_ptr<element> parent):
+        element(parent) {}
+
+    static std::shared_ptr<ns> make_shared(std::shared_ptr<element> parent, const std::string& name);
+
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
+    void on_variable_defined(std::shared_ptr<variable_definition>) override;
+
+    std::shared_ptr<function> do_create_function(const std::string &name, bool is_static) override;
+    void on_function_defined(std::shared_ptr<function> func) override;
+
+    std::shared_ptr<structure> do_create_structure(const std::string &name) override;
+    std::shared_ptr<klass> do_create_class(const std::string &name) override;
+    std::shared_ptr<interface> do_create_interface(const std::string &name) override;
+    std::shared_ptr<annotation_type> do_create_annotation(const std::string &name) override;
+    void on_aggregate_defined(std::shared_ptr<aggregate>) override;
+
+    std::shared_ptr<enumeration> do_create_enum(const std::string &name) override;
+    void on_enum_defined(std::shared_ptr<enumeration>) override;
+
+    void update_mangled_name() override;
+public:
+
+    void accept(model_visitor& visitor) override;
+
+    //
+    // This namespace manipulations
+    //
+
+    /**
+     * Test if this namespace is the root namespace.
+     * @return True if root namespace, false otherwise.
+     */
+    bool is_root() const { return !!parent<unit>(); }
+
+    //
+    // Children namespace manipulations
+    //
+
+    /**
+     * Retrieve the direct child namespace of given name, creating it if not found.
+     * @param child_name Child namespace name to look for.
+     * @return The child namespace.
+     */
+    std::shared_ptr<ns> get_child_namespace(const std::string& child_name);
+
+    /**
+     * Retrieve the direct child namespace of given name.
+     * @param child_name Child namespace name to look for.
+     * @return The child namespace, null if not found.
+     */
+    std::shared_ptr<const ns> get_child_namespace(const std::string& child_name)const;
+
+    //
+    // Children functions
+    //
+
+    const std::vector<std::shared_ptr</*ns_element*/element>>& get_children() const {
+        return _children;
+    }
+};
+
+
+
+class unit : public element {
+protected:
+    friend class element;
+    /** Analysis context */
+    std::shared_ptr<context> _context;
+
+    /** Unit name */
+    name _unit_name;
+
+    /** Root namespace.*/
+    std::shared_ptr<ns> _root_ns;
+
+    std::shared_ptr<global_constructor_function> _global_constructor_func;
+    std::shared_ptr<global_destructor_function> _global_destructor_func;
+
+    /** Declared imports (populated by model_builder, resolved by kdi_importer). */
+    std::vector<imported_module> _imported_modules;
+
+    /**
+     * KDI files loaded as transitive dependencies (not direct imports of this unit).
+     * Populated by kdi_importer::import_all() to allow find_imported_type() to
+     * resolve types from indirectly-imported modules (e.g. base classes).
+     */
+    std::vector<std::shared_ptr<kdi::kdi_file>> _transitive_kdis;
+
+    /**
+     * Cache of imported_function model nodes keyed by mangled name (C1 for ctors).
+     * Created lazily by get_or_create_imported_function().
+     */
+    std::unordered_map<std::string, std::shared_ptr<imported_function>>  _imported_functions;
+
+    /**
+     * Cache of imported_aggregate model nodes keyed by fully-qualified K name.
+     * Created lazily by get_or_create_imported_aggregate().
+     */
+    std::unordered_map<std::string, std::shared_ptr<imported_aggregate>> _imported_aggregates;
+
+    /**
+     * Cache of imported_variable model nodes keyed by mangled name.
+     * Created lazily by get_or_create_imported_variable().
+     */
+    std::unordered_map<std::string, std::shared_ptr<imported_variable>>  _imported_variables;
+
+    /**
+     * Cache of imported enumeration model nodes keyed by fully-qualified K name.
+     * Created lazily by get_or_create_imported_enum().
+     */
+    std::unordered_map<std::string, std::shared_ptr<enumeration>>        _imported_enums;
+
+    std::shared_ptr<global_main_function> _global_main_func;
+
+    friend class k::model::gen::symbol_resolver;
+    friend class k::model::gen::aggregate_type_resolver;
+    friend class k::model::gen::model_materializer;
+    friend class k::model::gen::type_reference_resolver;
+    friend class k::model::gen::declaration_generator;
+    friend class k::model::gen::implementation_generator;
+    friend class k::model::gen::init_order_resolver;
+
+    global_constructor_function& get_global_constructor_function() {return *_global_constructor_func;}
+    global_destructor_function& get_global_destructor_function() {return *_global_destructor_func;}
+
+    std::shared_ptr<global_main_function> generate_main_function(std::shared_ptr<function> func);
+
+
+    unit() = delete;
+    unit(std::shared_ptr<context> context);
+public:
+
+    static std::shared_ptr<unit> create(std::shared_ptr<context> context);
+
+    void accept(model_visitor& visitor) override;
+
+    /**
+     * Get the model name.
+     * @return Unit name identifier
+     */
+    name get_unit_name() const {
+        return _unit_name;
+    }
+
+    /**
+     * Set the model name
+     * @param unit_name New model name
+     */
+    void set_unit_name(const name& unit_name);
+
+    //
+    // Imports
+    //
+
+    /**
+     * Register an import declaration (called by model_builder).
+     * @param module_name  Qualified name of the module to import.
+     */
+    void add_import(const k::name& module_name);
+
+    /**
+     * Read-only access to all declared imports.
+     */
+    const std::vector<imported_module>& get_imports() const {
+        return _imported_modules;
+    }
+
+    /**
+     * Mutable access to all declared imports (used by kdi_importer to fill
+     * in resolved_kdi_path, kdi and used fields).
+     */
+    std::vector<imported_module>& get_imports() {
+        return _imported_modules;
+    }
+
+    /**
+     * Find an import by module name.
+     * @return Pointer to the matching entry, or nullptr if not found.
+     */
+    imported_module* find_import(const k::name& module_name);
+    const imported_module* find_import(const k::name& module_name) const;
+
+    /**
+     * Register a KDI file loaded as a transitive dependency (not a direct
+     * import of this unit).  Called by kdi_importer so that find_imported_type()
+     * and friends can resolve symbols from indirectly-imported modules.
+     */
+    void add_transitive_kdi(std::shared_ptr<kdi::kdi_file> kdi_ptr) {
+        if (kdi_ptr) _transitive_kdis.push_back(std::move(kdi_ptr));
+    }
+
+    /** Read-only access to the list of transitive KDIs. */
+    const std::vector<std::shared_ptr<kdi::kdi_file>>& get_transitive_kdis() const {
+        return _transitive_kdis;
+    }
+
+    // ── Cross-module symbol lookup ──────────────────────────────────────────
+    //
+    // These methods search ALL loaded imports for a symbol identified by its
+    // qualified K name (e.g. name{"math", "vec", "dot"}).
+    //
+    // When a match is found, the owning imported_module is marked used=true.
+    // The current unit's own namespace is NOT searched here — callers are
+    // expected to try local resolution first.
+    //
+    // Return nullptr when no import contains the requested symbol.
+
+    /**
+     * Find a global/namespace-level function in any loaded import.
+     * @param name  Qualified name of the function (without root prefix).
+     * @return Pointer into the kdi_file's kdi_function entry, or nullptr.
+     */
+    const kdi::kdi_function*
+    find_imported_function(const k::name& name);
+
+    /**
+     * Find a global/static variable in any loaded import.
+     * @param name  Qualified name of the variable (without root prefix).
+     * @return Pointer into the kdi_file's kdi_variable entry, or nullptr.
+     */
+    const kdi::kdi_variable*
+    find_imported_variable(const k::name& name);
+
+    /**
+     * Find an aggregate type (struct/class/interface) in any loaded import.
+     * @param name  Qualified name of the aggregate (without root prefix).
+     * @return Pointer into the kdi_file's kdi_aggregate entry, or nullptr.
+     */
+    const kdi::kdi_aggregate*
+    find_imported_type(const k::name& name);
+
+    /**
+     * Find an enum type in any loaded import.
+     * @param name  Qualified name of the enum (without root prefix).
+     * @return Pointer into the kdi_file's kdi_enum entry, or nullptr.
+     */
+    const kdi::kdi_enum*
+    find_imported_enum(const k::name& name);
+
+    // ── Imported model-node factory methods ─────────────────────────────────
+    //
+    // Each method returns (or retrieves from cache) a fully-built model node
+    // for the corresponding KDI descriptor.  Signatures and types are resolved
+    // using kdi_type_to_model_type(); the nodes have no body / initialiser.
+    // All side-effects (struct_type registration in context, marking
+    // imported_module::used) happen here.
+
+    /**
+     * Return (or create) the imported_function model node for @p kdi_fn.
+     * Keyed by mangled_name.  Populates return type and parameter list.
+     */
+    std::shared_ptr<imported_function>
+    get_or_create_imported_function(const kdi::kdi_function* kdi_fn,
+                                    std::shared_ptr<context> ctx);
+
+    /**
+     * Return (or create) the imported_aggregate model node for the aggregate
+     * identified by its fully-qualified K name @p fq_name.
+     *
+     * Searches all loaded imports; builds the LLVM StructType from the KDI
+     * layout; materialises all public/protected members, methods (as
+     * imported_method), constructors (as imported_constructor) and destructor
+     * (as imported_destructor).
+     */
+    std::shared_ptr<imported_aggregate>
+    get_or_create_imported_aggregate(const k::name& fq_name,
+                                     std::shared_ptr<context> ctx);
+
+    /**
+     * Return (or create) the imported_variable model node for @p kdi_var.
+     * Keyed by mangled_name.  Resolves the variable type.
+     */
+    std::shared_ptr<imported_variable>
+    get_or_create_imported_variable(const kdi::kdi_variable* kdi_var,
+                                    std::shared_ptr<context> ctx);
+
+    /**
+     * Return (or create) an imported enumeration model node for the enum
+     * identified by its fully-qualified K name @p fq_name.
+     *
+     * Searches all loaded imports; builds the underlying type, entries,
+     * and registers the enum_type in context::add_enum().
+     */
+    std::shared_ptr<enumeration>
+    get_or_create_imported_enum(const k::name& fq_name,
+                                std::shared_ptr<context> ctx);
+
+    // ── Accessors ────────────────────────────────────────────────────────────
+
+    const std::unordered_map<std::string, std::shared_ptr<imported_function>>&
+    get_imported_functions() const { return _imported_functions; }
+
+    const std::unordered_map<std::string, std::shared_ptr<imported_aggregate>>&
+    get_imported_aggregates() const { return _imported_aggregates; }
+
+    const std::unordered_map<std::string, std::shared_ptr<imported_variable>>&
+    get_imported_variables() const { return _imported_variables; }
+
+
+    //
+    // Namespaces
+    //
+
+    /**
+     * Retrieve the root namespace of this model.
+     * @return The root namespace.
+     */
+    std::shared_ptr<ns> get_root_namespace();
+    std::shared_ptr<const ns> get_root_namespace() const {
+        return _root_ns;
+    }
+
+    bool has_main_method() const {
+        return _global_main_func !=  nullptr;
+    }
+};
+
+
+
+} // namespace k::model
+
+#endif //KLANG_MODEL_NS_HPP

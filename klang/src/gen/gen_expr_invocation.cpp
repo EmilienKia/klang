@@ -1,0 +1,1892 @@
+/*
+ * K Language compiler
+ *
+ * Copyright 2023-2026 Emilien Kia
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#include "resolvers.hpp"
+#include "generators.hpp"
+#include "gen_helpers.hpp"
+#include "../model/expressions.hpp"
+#include "../model/statements.hpp"
+#include "../model/operators.hpp"
+#include "../model/mangler.hpp"
+#include "../model/imported.hpp"
+#include "../model/template.hpp"
+#include "../model/template_instantiator.hpp"
+#include "../parse/ast.hpp"
+#include "../../../libkdi/src/kdi_aggregates.hpp"
+#include "llvm/Support/raw_os_ostream.h"
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/DataLayout.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/Intrinsics.h>
+#include <unordered_set>
+#include "../errors.hpp"
+namespace k::model::gen {
+// function_invocation_expression
+
+void symbol_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
+    expr.callee_expr()->accept(*this);
+    for (auto arg : expr.arguments()) {
+        arg->accept(*this);
+    }
+    // TODO Add more pre process here ?!?
+}
+
+namespace {
+/**
+ * Phase-3 helper: compute and store a virtual_dispatch_info annotation on a
+ * function_invocation_expression after the callee and its 'this' type have been resolved.
+ *
+ * @param expr          The call expression being annotated.
+ * @param func          The resolved function (callee).
+ * @param member_callee Non-null when the call is of the form obj.method(...).
+ *
+ * Rules:
+ *  - Qualified call (expr.is_non_virtual_qualified_call()) → DIRECT
+ *  - Non-member call / no receiver              → DIRECT
+ *  - Function not virtual                       → DIRECT
+ *  - Virtual function through a class reference → VTABLE
+ *    The dispatch_class is the *static* receiver type (the base class as written
+ *    in the source).  The slot_index comes from the vtable layout.
+ *    If the receiver is a secondary-base reference (embedded at non-zero offset),
+ *    this_adjustment is set from secondary_vtable_spec::base_offset so the generator
+ *    can use it if needed (Phase 4).
+ */
+void annotate_dispatch_info(function_invocation_expression& expr,
+                            const std::shared_ptr<function>& func,
+                            const std::shared_ptr<member_of_object_expression>& member_callee)
+{
+    // ── DIRECT cases ─────────────────────────────────────────────────────────
+    if (expr.is_non_virtual_qualified_call() || !member_callee || !func) {
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+        expr.set_dispatch_info(std::move(di));
+        return;
+    }
+
+    if (!func->is_virtual() || func->get_vtable_slot() < 0) {
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+        expr.set_dispatch_info(std::move(di));
+        return;
+    }
+
+    // ── Determine the static receiver type ───────────────────────────────────
+    auto this_type = member_callee->sub_expr()->get_type();
+    if (!type::is_reference(this_type) && !type::is_drain(this_type)) {
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+        expr.set_dispatch_info(std::move(di));
+        return;
+    }
+
+    auto bare_subtype = type::remove_const(this_type->get_subtype());
+    auto st_type = std::dynamic_pointer_cast<struct_type>(bare_subtype);
+    if (!st_type) {
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+        expr.set_dispatch_info(std::move(di));
+        return;
+    }
+
+    auto kl = std::dynamic_pointer_cast<klass>(st_type->get_struct());
+    if (!kl || !kl->has_vtable()) {
+        // Check if it is an imported aggregate with a vtable
+        // (imported_klass / imported_interface — neither derives from klass).
+        auto imp = std::dynamic_pointer_cast<aggregate>(st_type->get_struct());
+        if (imp && imp->has_vtable()) {
+            virtual_dispatch_info di;
+            di.kind                = virtual_dispatch_info::dispatch_kind::VTABLE;
+            di.slot_index          = func->get_vtable_slot();
+            di.imported_dispatch_agg = imp;
+            di.this_adjustment     = 0;
+            expr.set_dispatch_info(std::move(di));
+            return;
+        }
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+        expr.set_dispatch_info(std::move(di));
+        return;
+    }
+
+    // ── Build VTABLE annotation ───────────────────────────────────────────────
+    virtual_dispatch_info di;
+    di.kind           = virtual_dispatch_info::dispatch_kind::VTABLE;
+    di.slot_index     = func->get_vtable_slot();
+    di.dispatch_class = kl;
+    di.this_adjustment = 0;
+
+    // Check if this receiver class is a secondary base somewhere (for information;
+    // the generator may use this in Phase 4 to apply this-adjustment before vptr load).
+    // We look for kl in the secondary_vtable_specs of its owner classes.
+    // For now, for static dispatch we just store 0: the vptr in the object already
+    // points to the right secondary vtable (set up by the constructor via emit_vptr_store).
+    // The slot_index here is the index within kl's own vtable.
+
+    expr.set_dispatch_info(std::move(di));
+}
+} // anonymous namespace
+
+/**
+ * Resolve a function invocation expression: overload resolution, argument adaptation,
+ * virtual dispatch annotation.
+ *
+ * Steps:
+ *   1. Resolve callee expression and all argument expressions.
+ *   2. If callee is a member-of-object: resolve member call (member + unified call syntax).
+ *   3. If callee is a symbol: resolve direct call or free-function call.
+ *   4. If callee is a function pointer: validate argument types.
+ *   5. Perform overload resolution via get_best_matching_function.
+ *   6. Adapt arguments to match selected function's parameter types.
+ *   7. Annotate virtual dispatch info (for virtual method calls via vtable).
+ *   8. Set result type from the selected function's return type.
+ */
+void type_reference_resolver::visit_function_invocation_expression(function_invocation_expression &expr) {
+    // Step 1: Resolve callee expression and all argument expressions
+    auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
+    auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
+    auto pm_callee = std::dynamic_pointer_cast<pm_expression>(expr.callee_expr());
+    auto ptr_member_callee = std::dynamic_pointer_cast<member_of_pointer_expression>(expr.callee_expr());
+
+    if(!callee && !member_callee && !pm_callee && !ptr_member_callee) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_NOT_CALLABLE), expr.first_lexeme(),
+            "Unsupported call expression form: only direct function calls ('func(args)'), "
+            "member function calls ('obj.method(args)') and pointer-to-member calls "
+            "('obj.*mfp(args)') are supported");
+    }
+
+    // Resolve and type-check all arguments first
+    for(size_t arg_idx = 0; arg_idx < expr.arguments().size(); ++arg_idx) {
+        _replacement_expr = nullptr;
+        expr.arguments()[arg_idx]->accept(*this);
+        if (_replacement_expr) {
+            expr.assign_argument(arg_idx, _replacement_expr);
+            _replacement_expr = nullptr;
+        }
+    }
+
+    // Step 2: If callee is a member-of-object: resolve member call (member + unified call syntax)
+    // ── Pre-process: ptr->method(args) → (*ptr).method(args) ─────────────────
+    // When the callee is a member_of_pointer_expression (ptr->method), transform it
+    // into member_of_object_expression(dereference(ptr), method) so that the existing
+    // member_callee path handles dispatch uniformly (including vtable dispatch).
+    if (ptr_member_callee) {
+        auto sym = ptr_member_callee->symbol().shared_as<symbol_expression>();
+        auto sub = ptr_member_callee->sub_expr();
+        auto deref = dereference_expression::make_shared(sub);
+        auto obj_member = member_of_object_expression::make_shared(deref, sym);
+        expr.callee_expr(obj_member);
+        member_callee = obj_member;
+    }
+
+    // ----------------------------------------------------------------
+    // Case 0 : pointer-to-member call  "obj.*mfp(args)" or "ptr->*mfp(args)"
+    // ----------------------------------------------------------------
+    if (pm_callee) {
+        // Visit the pm_expression to resolve types of both LHS and RHS
+        pm_callee->accept(*this);
+
+        // Retrieve the member function reference type from the RHS
+        auto mfp_type = pm_callee->right()->get_type();
+        if (auto ref = std::dynamic_pointer_cast<reference_type>(mfp_type)) {
+            mfp_type = ref->get_subtype();
+        }
+        auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type);
+        if (!frt) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DYNAMIC_CAST_BAD_TYPE), expr.first_lexeme(),
+                "The '{}' call requires a member function reference type, but got '{}'",
+                {pm_callee->is_arrow() ? "->*" : ".*", mfp_type ? mfp_type->to_string() : "?"});
+        }
+
+        // Set return type of the invocation expression
+        // If the frt has no return type (e.g. it's a parameter with inferred type),
+        // propagate from the enclosing function's return type.
+        auto ret_type = frt->get_return_type();
+        if (!ret_type && !_function_stack.empty()) {
+            ret_type = _function_stack.back()->get_return_type();
+            if (ret_type) {
+                // Cache on the frt so later uses (e.g. in impl_gen) see it
+                frt->set_return_type(ret_type);
+            }
+        }
+        expr.set_type(ret_type);
+
+        // Adapt arguments against the frt's parameter types.
+        // NOTE: for member_function_reference_type, get_parameter_types() returns ONLY the
+        // explicit parameters — the implicit 'this' pointer is NOT in _parameter_types
+        // (it appears only in the LLVM FunctionType built by function_reference_type_builder).
+        // Therefore param_offset is always 0 here.
+        const auto& frt_params = frt->get_parameter_types();
+        const auto& call_args = expr.arguments();
+        for (size_t i = 0; i < call_args.size() && i < frt_params.size(); ++i) {
+            auto adapted = adapt_type(call_args[i], frt_params[i]);
+            if (adapted && adapted != call_args[i]) {
+                expr.assign_argument(i, adapted);
+            }
+        }
+
+        // Annotate dispatch info as INDIRECT_MEMBER
+        virtual_dispatch_info di;
+        di.kind = virtual_dispatch_info::dispatch_kind::INDIRECT_MEMBER;
+        expr.set_dispatch_info(std::move(di));
+        return;
+    }
+
+    // ----------------------------------------------------------------
+    // Case 1 : member-of-object call  "obj.method(args)"
+    // ----------------------------------------------------------------
+    if (member_callee) {
+        // Visit the full member_of_object_expression so that upcast injection for inherited
+        // methods is triggered (visit_member_of_object_expression injects a cast_expression
+        // into sub_expr when the method belongs to a base struct).
+        member_callee->accept(*this);
+
+        callee = std::dynamic_pointer_cast<symbol_expression>(
+                member_callee->symbol().shared_as<symbol_expression>());
+        if (!callee) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_ARG_TYPE_MISMATCH), expr.first_lexeme(),
+                "Unsupported member call form: the right-hand side of '.' must be a simple name, "
+                "not a complex expression");
+        }
+
+        // sub_expr of member_callee gives the object reference (possibly upcast)
+        auto this_expr = member_callee->sub_expr();
+        auto this_type = this_expr->get_type(); // should be ref<struct> (possibly base)
+
+        if (!type::is_reference(this_type) && !type::is_struct(this_type) && !type::is_drain(this_type)) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_TOO_MANY_ARGS), expr.first_lexeme(),
+                "The '.' operator requires the left-hand side to have a reference type, "
+                "but '{}' is not a reference; did you mean to use a reference parameter?",
+                {this_type ? this_type->to_string() : "?"});
+        }
+        auto subtype = (type::is_reference(this_type) || type::is_drain(this_type)) ? this_type->get_subtype() : this_type;
+        // Detect if the object is accessed through a const reference (ref<const S>)
+        bool is_const_this = type::is_const(subtype);
+        auto bare_subtype = type::remove_const(subtype);
+        auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype);
+        if (!struct_subtype) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_TOO_FEW_ARGS), expr.first_lexeme(),
+                "The '.' operator can only be applied to a struct type, "
+                "but the left-hand side has type '{}' which is not a struct",
+                {bare_subtype ? bare_subtype->to_string() : "?"});
+        }
+        auto st = struct_subtype->get_struct();
+
+        // Use the short (unqualified) name for function lookup
+        std::string func_short_name = callee->get_name().back();
+
+        // ── Qualified member call: obj.Base::method(args) or this->Base::method(args) ──
+        // If the callee symbol has more than one name component (e.g. Base::method), it is
+        // an explicit qualification: bypass virtual dispatch and call the exact named class.
+        const bool is_qualified_member_call = (callee->get_name().size() > 1);
+        if (is_qualified_member_call) {
+            // The qualifying class name is the second-to-last component (e.g. "Base" in Base::method).
+            const std::string& qualifying_class_name = callee->get_name()[callee->get_name().size() - 2];
+
+            // Find the qualifying aggregate — it must be the class itself or one of its bases.
+            std::shared_ptr<aggregate> qualifying_agg;
+            std::function<void(const std::shared_ptr<aggregate>&)> find_class;
+            find_class = [&](const std::shared_ptr<aggregate>& agg) {
+                if (!agg || qualifying_agg) return;
+                if (agg->get_short_name() == qualifying_class_name) {
+                    qualifying_agg = agg;
+                    return;
+                }
+                for (auto& bs : agg->get_bases()) {
+                    if (bs.base) find_class(bs.base);
+                }
+            };
+            find_class(st);
+
+            if (!qualifying_agg) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_EXPECT_STRUCT_OR_PRIM), expr.first_lexeme(),
+                    "Qualified member call '{}': '{}' is not a base class of '{}'; "
+                    "the qualifying class must be the class itself or one of its base classes",
+                    {callee->get_name().to_string(), qualifying_class_name, st->get_short_name()});
+            }
+
+            // Collect overloads of func_short_name directly in the qualifying class
+            std::vector<std::shared_ptr<function>> qual_candidates;
+            for (auto& fn : qualifying_agg->functions()) {
+                if (fn && fn->get_short_name() == func_short_name) {
+                    qual_candidates.push_back(fn);
+                }
+            }
+            if (qual_candidates.empty()) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_CTOR_ARG_MISMATCH), expr.first_lexeme(),
+                    "No function named '{}' found in class '{}'",
+                    {func_short_name, qualifying_class_name});
+            }
+
+            // Upcast this_expr to the qualifying class reference
+            auto qual_ref_type = is_const_this
+                ? qualifying_agg->get_struct_type()->get_const()->get_reference()
+                : qualifying_agg->get_struct_type()->get_reference();
+            auto upcast_this = adapt_type(this_expr, qual_ref_type);
+            if (upcast_this) this_expr = upcast_this;
+            // Update the sub_expr of member_callee so the IR generator uses the upcast
+            member_callee->sub_expr() = this_expr;
+
+            auto best = get_best_matching_function(qual_candidates, expr.arguments(), this_expr);
+            if (!best.func) return;
+
+            check_function_visibility(*best.func, expr);
+
+            callee->set_target(best.func);
+            expr.set_type(best.func->get_return_type());
+            expr.assign_arguments(best.adapted_args);
+            // Bypass virtual dispatch — this is an explicit base-class call
+            expr.set_non_virtual_qualified_call(true);
+            // Phase 3: annotate dispatch info
+            annotate_dispatch_info(expr, best.func, member_callee);
+            return;
+        }
+
+        // Collect all candidate functions (member + free/static from parent scopes)
+        std::vector<std::shared_ptr<function>> candidates = scope_lookup::lookup_functions(st, func_short_name);
+
+        // If calling on a const object, only const member functions are callable.
+        if (is_const_this) {
+            std::vector<std::shared_ptr<function>> const_candidates;
+            for (auto& f : candidates) {
+                if (!f->is_member() || f->is_static() || f->is_const_member()) {
+                    const_candidates.push_back(f);
+                }
+            }
+            if (const_candidates.empty() && !candidates.empty()) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_UNSUPPORTED), expr.first_lexeme(),
+                    "Cannot call mutable member function '{}' on a const object of type '{}': "
+                    "only const member functions can be called on const objects",
+                    {func_short_name, struct_subtype->name()});
+            }
+            candidates = std::move(const_candidates);
+        }
+
+        if (candidates.empty()) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_NO_MATCHING_OVERLOAD), expr.first_lexeme(),
+                "No function named '{}' found in struct '{}' or its enclosing scopes; "
+                "check the spelling or verify that '{}' is declared as a method or free function",
+                {callee->get_name().to_string(), st->get_short_name(),
+                 callee->get_name().to_string()});
+        }
+
+        auto best = get_best_matching_function(candidates, expr.arguments(), this_expr);
+        if (!best.func) {
+            // get_best_matching_function already reported/threw an error
+            return;
+        }
+
+        // Static constructors and destructors cannot be called explicitly
+        if (std::dynamic_pointer_cast<static_constructor>(best.func)) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_VISIBILITY_DENIED), expr.first_lexeme(),
+                "Static constructor '{}' cannot be called explicitly; "
+                "it is automatically invoked during program initialization",
+                {best.func->get_short_name()});
+        }
+        if (std::dynamic_pointer_cast<static_destructor>(best.func)) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_CTOR_RESULT), expr.first_lexeme(),
+                "Static destructor '~{}' cannot be called explicitly; "
+                "it is automatically invoked during program finalization",
+                {best.func->get_short_name()});
+        }
+
+        // Check visibility of the resolved function
+        check_function_visibility(*best.func, expr);
+
+        callee->set_target(best.func);
+        expr.set_type(best.func->get_return_type());
+
+        // Apply adapted arguments (may include cloned defaults for trailing params)
+        expr.assign_arguments(best.adapted_args);
+        // Note: if best.is_unified_call, the callee stays as member_of_object_expression
+        // but the resolved function is free/static. impl_gen handles this by passing
+        // sub_expr() value as first argument when the function is not a member.
+        // Phase 3: annotate dispatch info
+        annotate_dispatch_info(expr, best.func, member_callee);
+        return;
+    }
+
+    // Step 3: If callee is a symbol: resolve direct call or free-function call
+    // ----------------------------------------------------------------
+    // Case 1.5 : indirect call via a function-reference variable "fp(args)"
+    //   callee may be unresolved (symbol_resolver deferred it as a potential function call).
+    //   Try to resolve it as a variable by walking the scope chain manually.
+    //   If a variable with a function_reference_type is found, treat this as indirect.
+    // ----------------------------------------------------------------
+    if (callee && !callee->is_resolved()) {
+        // Walk up the scope chain from the callee expression to find a variable with this name.
+        const k::name& sym_name = callee->get_name();
+        if (sym_name.size() == 1) {
+            const std::string& simple_name = sym_name.back();
+            // Walk up: callee → function_invocation → ... → block → function
+            std::shared_ptr<element> cur = callee->shared_as<element>();
+            while (cur) {
+                if (auto vh = std::dynamic_pointer_cast<variable_holder>(cur)) {
+                    if (auto vdef = vh->get_variable(sym_name)) {
+                        callee->set_target(vdef);
+                        break;
+                    }
+                }
+                cur = cur->parent<element>();
+            }
+        }
+    }
+    if (callee && callee->is_variable_def()) {
+        // Make sure the callee symbol has its type resolved
+        callee->accept(*this);
+        auto callee_type = callee->get_type();
+        if (callee_type) {
+            // Unwrap reference / indirection wrapper
+            auto inner_type = callee_type;
+            while (inner_type && (type::is_reference(inner_type) || type::is_link(inner_type) ||
+                                   type::is_pointer(inner_type) || type::is_view(inner_type))) {
+                inner_type = inner_type->get_subtype();
+            }
+            // Also unwrap an unresolved_function_ref_type that has been resolved
+            if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(inner_type)) {
+                if (ufrt->is_resolved()) {
+                    inner_type = ufrt->get_resolved();
+                    while (inner_type && (type::is_reference(inner_type) || type::is_link(inner_type) ||
+                                           type::is_pointer(inner_type) || type::is_view(inner_type))) {
+                        inner_type = inner_type->get_subtype();
+                    }
+                }
+            }
+            // If the inner type is a function_reference_type, this is an indirect call
+            auto frt = std::dynamic_pointer_cast<function_reference_type>(inner_type);
+            if (frt) {
+                // Set the return type of the call expression.
+                // If the frt has no return type yet (e.g. parameter with no init expression),
+                // try to propagate the return type from the enclosing function's context.
+                auto ret_type = frt->get_return_type();
+                if (!ret_type && !_function_stack.empty()) {
+                    // Propagate from the enclosing function's return type
+                    ret_type = _function_stack.back()->get_return_type();
+                    if (ret_type) {
+                        // Mutate the frt in-place to record the inferred return type.
+                        frt->set_return_type(ret_type);
+                    }
+                }
+                expr.set_type(ret_type);
+                // Type-adapt arguments against the function_reference_type's parameter types
+                const auto& params = frt->get_parameter_types();
+                for (size_t n = 0; n < expr.arguments().size() && n < params.size(); ++n) {
+                    auto arg = expr.arguments().at(n);
+                    auto cast = adapt_type(arg, params[n]);
+                    if (cast && cast != arg) expr.assign_argument(n, cast);
+                }
+                // Mark as indirect call — no dispatch annotation needed
+                virtual_dispatch_info di;
+                di.kind = virtual_dispatch_info::dispatch_kind::INDIRECT;
+                expr.set_dispatch_info(std::move(di));
+                return;
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // Case 2 : plain symbol call  "func(args)"
+    // ----------------------------------------------------------------
+    {
+        std::string func_name = callee->get_name().back();
+        const auto& args = expr.arguments();
+
+        // A qualified name (e.g. Base::value) means the call is non-virtual and targets
+        // exactly the named function.  Do NOT collect additional member-function candidates
+        // from the first argument's struct type — that would create false ambiguities and
+        // would defeat the purpose of the explicit qualification.
+        const bool is_qualified_call = (callee->get_name().size() > 1);
+
+        std::vector<std::shared_ptr<function>> all_candidates;
+        if (is_qualified_call) {
+            // For a qualified name (e.g. Base::value or point::get), collect ALL overloads
+            // of the short name within the qualifying context (struct / namespace), not the
+            // entire scope chain.  This prevents false ambiguity with functions of the same
+            // name in outer scopes while still supporting overload resolution.
+            if (callee->is_function() && callee->get_function()) {
+                auto resolved_fn = callee->get_function();
+                auto owner = resolved_fn->parent<element>();
+                if (owner) {
+                    // Collect all overloads of func_name directly in the owner element.
+                    if (auto fh = dynamic_cast<function_holder*>(owner.get())) {
+                        for (auto& fn : fh->functions()) {
+                            if (fn && fn->get_short_name() == func_name) {
+                                all_candidates.push_back(fn);
+                            }
+                        }
+                    }
+                }
+                // Fallback: only the resolved function
+                if (all_candidates.empty()) {
+                    all_candidates.push_back(resolved_fn);
+                }
+            }
+        } else {
+            all_candidates = scope_lookup::lookup_functions(callee, func_name);
+        }
+
+        std::shared_ptr<expression> this_candidate;
+        std::vector<std::shared_ptr<expression>> rest_args;
+
+        // For a qualified call (e.g. Base::value(d) or point::get(pt, 6f)):
+        // If the first argument is a reference to a struct, treat it as the potential 'this'
+        // for member functions (Mode A) while also allowing Mode B matching for static functions.
+        // We do NOT restrict to all_are_member because the candidates may be a mix of member
+        // and static overloads.
+        if (is_qualified_call && !all_candidates.empty() && !args.empty()) {
+            auto first_arg_type = args[0]->get_type();
+            if (type::is_reference(first_arg_type)) {
+                auto bare_sub = type::remove_const(first_arg_type->get_subtype());
+                if (std::dynamic_pointer_cast<struct_type>(bare_sub)) {
+                    this_candidate = args[0];
+                    rest_args = std::vector<std::shared_ptr<expression>>(args.begin() + 1, args.end());
+                }
+            }
+        }
+
+        // ── Implicit 'this' injection for Base::method() from inside a member function ──
+        // If we have a qualified call (Base::method) with no explicit 'this' argument yet,
+        // and we are inside a non-static member function whose owning class is derived from
+        // the qualifying base class, inject 'this' automatically.
+        // This enables the pattern:  Base::method()  inside an override instead of
+        // the more verbose:  Base::method(this)
+        //
+        // Also applies to unqualified member-function calls: when calling method() from
+        // within another member function, inject 'this' so that the member function
+        // candidate can match via Mode A in get_best_matching_function.
+        if (!this_candidate && !_function_stack.empty()) {
+            auto enclosing_fn = _function_stack.back();
+            if (enclosing_fn && enclosing_fn->is_member() && !enclosing_fn->is_static()) {
+                auto this_param = enclosing_fn->get_this_parameter();
+                if (this_param && this_param->get_type()) {
+                    // Check that at least one candidate is a member function (not static)
+                    bool any_member = std::any_of(all_candidates.begin(), all_candidates.end(),
+                        [](const std::shared_ptr<function>& f){ return f && f->is_member() && !f->is_static(); });
+                    if (any_member) {
+                        // Build a symbol_expression for 'this'
+                        auto this_sym = symbol_expression::from_identifier(k::name("this"));
+                        this_sym->set_target(std::const_pointer_cast<parameter>(this_param));
+                        this_sym->set_type(this_param->get_type());
+                        this_candidate = this_sym;
+                        rest_args = args; // all explicit args remain as-is (no args consumed)
+                    }
+                }
+            }
+        }
+
+        // Unified-call-syntax: only when the call is NOT a qualified name.
+        // For a qualified call "Base::method(d)", d is already handled above.
+        if (!is_qualified_call && !args.empty()) {
+            auto first_arg_type = args[0]->get_type();
+            if (type::is_reference(first_arg_type)) {
+                if (auto first_struct = std::dynamic_pointer_cast<struct_type>(first_arg_type->get_subtype())) {
+                    auto st = first_struct->get_struct();
+                    this_candidate = args[0];
+                    rest_args = std::vector<std::shared_ptr<expression>>(args.begin() + 1, args.end());
+                    // Collect member functions from the aggregate and all its bases (recursively)
+                    std::function<void(const std::shared_ptr<aggregate>&)> collect_member_fns;
+                    collect_member_fns = [&](const std::shared_ptr<aggregate>& s) {
+                        if (!s) return;
+                        for (auto& f : scope_lookup::lookup_functions(s, func_name)) {
+                            if (std::find(all_candidates.begin(), all_candidates.end(), f) == all_candidates.end()) {
+                                all_candidates.push_back(f);
+                            }
+                        }
+                        for (auto& bs : s->get_bases()) {
+                            if (bs.base) collect_member_fns(bs.base);
+                        }
+                    };
+                    collect_member_fns(st);
+                }
+            }
+        }
+
+        // ── Template function instantiation ──────────────────────────────
+        // If the callee carries explicit template arguments (e.g. identity<int>),
+        // try to find a template function definition, instantiate it with the
+        // provided arguments, run it through the resolution pipeline, and
+        // replace the candidates with the concrete instance.
+        if (callee && callee->has_ast_template_args()) {
+            const auto& ast_args = callee->get_ast_template_args();
+            // Look up the template function by base name (could be in all_candidates or root ns)
+            std::shared_ptr<function> tpl_func;
+            for (auto& cand : all_candidates) {
+                if (cand->is_template()) {
+                    tpl_func = cand;
+                    break;
+                }
+            }
+            if (!tpl_func) {
+                auto root_ns = _unit.get_root_namespace();
+                if (root_ns) {
+                    for (auto& fn : root_ns->functions()) {
+                        if (fn->get_short_name() == func_name && fn->is_template()) {
+                            tpl_func = fn;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (tpl_func) {
+                auto* ti = tpl_func->get_tpl_info();
+                if (ti && ast_args.size() <= ti->params.size()) {
+                    // Convert AST template args to model template_arguments
+                    std::vector<template_argument> model_args;
+                    bool args_ok = true;
+                    for (size_t i = 0; i < ast_args.size(); ++i) {
+                        const auto& ast_arg = ast_args[i];
+                        if (ast_arg->is_type()) {
+                            auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
+                            if (!arg_type || !type::is_resolved(arg_type)) {
+                                if (arg_type) {
+                                    if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
+                                        auto resolved = resolve_type_by_name(unres_arg->type_id(), expr);
+                                        if (resolved && type::is_resolved(resolved)) {
+                                            arg_type = resolved;
+                                        }
+                                    }
+                                }
+                            }
+                            if (!arg_type || !type::is_resolved(arg_type)) { args_ok = false; break; }
+                            model_args.push_back(template_argument::make_type(arg_type));
+                        } else if (ast_arg->is_value()) {
+                            // Value template argument — extract compile-time constant literal
+                            k::value_type val;
+                            if (!extract_value_from_ast_expr(ast_arg->value_arg.get(), val)) {
+                                args_ok = false; break;
+                            }
+                            model_args.push_back(template_argument::make_value(val));
+                        } else {
+                            args_ok = false; break;
+                        }
+                    }
+                    // Fill defaults for trailing params
+                    for (size_t i = ast_args.size(); i < ti->params.size() && args_ok; ++i) {
+                        auto& param = ti->params[i];
+                        if (param.is_type_param() && param.default_type) {
+                            auto def = param.default_type;
+                            if (!type::is_resolved(def)) def = _context->resolve_type(def);
+                            if (def && type::is_resolved(def)) {
+                                model_args.push_back(template_argument::make_type(def));
+                            } else { args_ok = false; }
+                        } else if (param.is_value_param() && param.default_value.has_value()) {
+                            model_args.push_back(template_argument::make_value(*param.default_value));
+                        } else { args_ok = false; }
+                    }
+                    // Resolve constraint types in template params if still unresolved
+                    if (args_ok) {
+                        for (auto& param : ti->params) {
+                            if (param.is_type_param() && param.constraint_type && !type::is_resolved(param.constraint_type)) {
+                                auto resolved = _context->resolve_type(param.constraint_type);
+                                if (resolved && type::is_resolved(resolved)) {
+                                    param.constraint_type = resolved;
+                                }
+                            }
+                        }
+                    }
+                    // Validate type constraints (kind filter + base-type constraint)
+                    if (args_ok) {
+                        size_t err_idx;
+                        std::string err_reason;
+                        if (!validate_template_arg_constraints(ti->params, model_args, err_idx, err_reason)) {
+                            auto [code, msg] = format_constraint_error(
+                                tpl_func->get_short_name(), ti->params, model_args, err_idx, err_reason);
+                            logger_relay::error(code, lex::opt_any_lexeme{}, msg);
+                            args_ok = false;
+                        }
+                    }
+                    if (args_ok) {
+                        auto root_ns = _unit.get_root_namespace();
+                        auto concrete = template_instantiator::instantiate_function(
+                            *tpl_func, model_args, root_ns, _unit, _context, *this);
+                        if (concrete) {
+                            // Run the concrete function through the resolver pipeline
+                            {
+                                symbol_resolver sr(*this, _context, _unit);
+                                concrete->accept(sr);
+                            }
+                            {
+                                signature_resolver sigr(*this, _context, _unit);
+                                concrete->accept(sigr);
+                            }
+                            concrete->accept(*this);
+
+                            // Replace all_candidates with just the concrete instance
+                            callee->set_target(concrete);
+                            all_candidates.clear();
+                            all_candidates.push_back(concrete);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 4: If callee is a function pointer: validate argument types
+        if (all_candidates.empty()) {
+            if (callee->is_function()) {
+                auto already_func = callee->get_function();
+                expr.set_type(already_func->get_return_type());
+                const auto& params = already_func->parameters();
+                for (size_t n = 0; n < expr.arguments().size() && n < params.size(); ++n) {
+                    auto arg = expr.arguments().at(n);
+                    auto w = compute_cast_weight(arg, params[n]->get_type());
+                    if (w != CAST_IMPOSSIBLE) {
+                        auto cast = adapt_type(arg, params[n]->get_type());
+                        if (cast && cast != arg) expr.assign_argument(n, cast);
+                    }
+                }
+                // Phase 3: annotate — already_func is resolved but we have no member_callee here
+                {
+                    auto mc = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
+                    annotate_dispatch_info(expr, already_func, mc);
+                }
+                return;
+            }
+
+            // ── Temporary anonymous object construction: S(args...) ────────────
+            // The callee name does not resolve to any function. Try to resolve it
+            // as a struct/class type. If found, this is a temporary construction
+            // expression: allocate a stack temporary, call the constructor, and
+            // register for destructor cleanup.
+            {
+                auto resolved_type = resolve_type_by_name(callee->get_name(), expr);
+                if (resolved_type) {
+                    auto resolved_nc = type::remove_const(resolved_type);
+                    // Strip reference wrapper if present (resolve_type_by_name may return ref<struct>)
+                    if (type::is_reference(resolved_nc))
+                        resolved_nc = resolved_nc->get_subtype();
+                    auto st_type = std::dynamic_pointer_cast<struct_type>(resolved_nc);
+                    if (st_type && st_type->get_struct()) {
+                        // Create a temporary_construction_expression
+                        auto temp_expr = temporary_construction_expression::make_shared(
+                            st_type, expr.arguments());
+                        // Copy AST node for diagnostics
+                        if (auto ast = expr.get_ast_expression()) {
+                            temp_expr->set_ast_expression(ast);
+                        }
+                        // Visit it to resolve constructor + argument types
+                        temp_expr->accept(*this);
+                        // Signal to the caller to replace expr with temp_expr
+                        _replacement_expr = temp_expr;
+                        return;
+                    }
+                }
+            }
+
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_AMBIGUOUS_OVERLOAD), expr.first_lexeme(),
+                "No function named '{}' found in the current scope; "
+                "check the spelling or add the appropriate declaration",
+                {func_name});
+        }
+
+        // Step 5: Perform overload resolution via get_best_matching_function
+        FunctionCandidate best = get_best_matching_function(all_candidates,
+                                                            this_candidate ? rest_args : args,
+                                                            this_candidate,
+                                                            this_candidate ? &args : nullptr);
+        bool is_free_to_member_call = false;
+
+        // Step 6: Adapt arguments to match selected function's parameter types
+        if (!best.func) {
+            // get_best_matching_function already reported/threw an error
+            return;
+        }
+
+        // Static constructors and destructors cannot be called explicitly
+        if (std::dynamic_pointer_cast<static_constructor>(best.func)) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_METHOD_ARG_MISMATCH), expr.first_lexeme(),
+                "Static constructor '{}' cannot be called explicitly; "
+                "it is automatically invoked during program initialization",
+                {best.func->get_short_name()});
+        }
+        if (std::dynamic_pointer_cast<static_destructor>(best.func)) {
+            throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_ACCESS_DENIED), expr.first_lexeme(),
+                "Static destructor '~{}' cannot be called explicitly; "
+                "it is automatically invoked during program finalization",
+                {best.func->get_short_name()});
+        }
+
+        // Check visibility of the resolved function
+        check_function_visibility(*best.func, expr);
+
+        if (this_candidate && best.func->is_member() && !best.func->is_static() && !best.is_unified_call) {
+            is_free_to_member_call = true;
+        }
+
+        callee->set_target(best.func);
+        expr.set_type(best.func->get_return_type());
+
+        if (is_free_to_member_call) {
+            // Member function found via free-function syntax: func(obj, args...)
+            // (also covers qualified calls like Base::method(d))
+            auto obj_expr = this_candidate; // first arg is the object
+
+            // For a qualified call targeting a base-class method (e.g. Base::value(d)),
+            // adapt the object expression to the expected 'this' type (upcast Derived→Base).
+            if (is_qualified_call && best.func->is_member() && !best.func->is_static()) {
+                // The implicit 'this' type is ref<OwningClass>.
+                auto owner_st = best.func->parent<aggregate>();
+                if (owner_st) {
+                    auto owner_ref_type = owner_st->get_struct_type()
+                        ? owner_st->get_struct_type()->get_reference()
+                        : nullptr;
+                    if (owner_ref_type) {
+                        auto adapted_obj = adapt_type(obj_expr, owner_ref_type);
+                        if (adapted_obj) obj_expr = adapted_obj;
+                    }
+                }
+            }
+
+            auto sym_for_member = symbol_expression::from_function(best.func);
+            sym_for_member->set_target(best.func);
+            auto member_expr = member_of_object_expression::make_shared(obj_expr, sym_for_member);
+            expr.assign(member_expr, best.adapted_args);
+
+            // A qualified call (e.g. Base::method(d)) must bypass virtual dispatch
+            // and invoke the exact named function directly.
+            if (is_qualified_call) {
+                expr.set_non_virtual_qualified_call(true);
+            }
+        } else {
+            // Regular/unified call — may include default values for trailing params
+            expr.assign_arguments(best.adapted_args);
+        }
+
+        // Step 7: Annotate virtual dispatch info (for virtual method calls via vtable)
+        // Phase 3: annotate dispatch info
+        // After the potential rewrite above, re-read member_callee from the (possibly updated) callee.
+        {
+            auto updated_member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
+            annotate_dispatch_info(expr, best.func, updated_member_callee);
+        }
+        return;
+    }
+}
+
+/**
+ * Generate LLVM IR for a function invocation expression.
+ *
+ * Steps:
+ *   1. Evaluate all argument expressions.
+ *   2. If virtual dispatch: load vptr, GEP to vtable slot, indirect call.
+ *   3. If direct call: resolve LLVM function, emit direct call instruction.
+ *   4. If sret return: allocate temp or use _sret_destination, pass as first arg.
+ *   5. Handle function pointer calls (indirect call through loaded pointer).
+ *   6. Handle member function pointer calls (.* / ->*).
+ *   7. Set _value to the call result.
+ */
+void implementation_generator::visit_function_invocation_expression(function_invocation_expression &expr) {
+    auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
+    auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
+    auto pm_callee = std::dynamic_pointer_cast<pm_expression>(expr.callee_expr());
+
+    if(!callee && !member_callee && !pm_callee) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F026), expr.first_lexeme(),
+            "Internal error: unsupported call expression form during code generation; "
+            "only direct, member and pointer-to-member function calls are supported");
+    }
+
+    // ── Helper state: track whether sret destination was consumed ──────────
+    bool _sret_dest_was_consumed = false;
+
+    // ── Helper lambda: handle sret call result ─────────────────────────────
+    // For functions that return non-primitive types via sret, _value after the call
+    // is the sret alloca pointer (already written by the callee).
+    // If the struct has a destructor and this is a temporary, track it for cleanup.
+    auto handle_sret_result = [&](llvm::Value* sret_ptr_val) {
+        _value = sret_ptr_val;
+
+        // If the sret destination was consumed from _sret_destination (variable init),
+        // it's NOT a temporary — don't track it for cleanup (the variable owns it).
+        if (_sret_dest_was_consumed) {
+            _sret_dest_was_consumed = false;
+            return;
+        }
+
+        // Track for temporary cleanup if the struct has a destructor
+        if (!expr.get_type()) return;
+        auto ret_type_nc = type::remove_const(expr.get_type());
+        auto ret_st = std::dynamic_pointer_cast<struct_type>(ret_type_nc);
+        if (!ret_st) return;
+        auto st = ret_st->get_struct();
+        if (st) {
+            auto dtor = st->get_destructor();
+            if (dtor) {
+                auto dtor_fn = dtor->shared_as<k::model::function>();
+                auto dtor_it = _context->_functions.find(dtor_fn);
+                if (dtor_it != _context->_functions.end()) {
+                    // Only track if the value is an AllocaInst (temporary)
+                    if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(sret_ptr_val)) {
+                        _expression_temporaries.push_back(std::make_pair(alloca, dtor_it->second));
+                    }
+                }
+            }
+        }
+    };
+
+    // ── Helper lambda: create or get sret destination for a call ──────────────
+    // If _sret_destination is set (from variable_statement or return), use it directly.
+    // Otherwise create a new temporary alloca.
+    auto get_sret_ptr_for_call = [&]() -> llvm::Value* {
+        if (_sret_destination) {
+            // Caller provided a destination — use it directly (no temporary)
+            llvm::Value* dest = _sret_destination;
+            _sret_destination = nullptr; // consume it
+            _sret_dest_was_consumed = true;
+            return dest;
+        }
+        _sret_dest_was_consumed = false;
+        // Create a temporary alloca for the sret result
+        auto ret_type_nc = type::remove_const(expr.get_type());
+        llvm::Type* llvm_ret = _context->get_llvm_type(ret_type_nc);
+        llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+        llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+        return entry_builder.CreateAlloca(llvm_ret, nullptr, "sret_tmp");
+    };
+
+    // ── Helper lambda: emit a call with sret if needed ──────────────────────
+    // Wraps CreateCall: if the callee uses sret ABI, prepend the sret pointer.
+    // Returns the sret pointer (or nullptr if not sret).
+    auto emit_sret_call = [&](llvm::FunctionType* fn_type, llvm::Value* callee_val,
+                               std::vector<llvm::Value*>& call_args,
+                               const std::string& name) -> llvm::Value* {
+        bool callee_is_sret = fn_type->getReturnType()->isVoidTy()
+            && expr.get_type() && needs_sret_return(expr.get_type());
+        if (callee_is_sret) {
+            llvm::Value* sret_ptr = get_sret_ptr_for_call();
+            call_args.insert(call_args.begin(), sret_ptr);
+
+            // Rebuild fn_type with the sret param prepended
+            std::vector<llvm::Type*> param_types;
+            param_types.push_back(llvm::PointerType::get(**_context, 0));
+            for (auto* pt : fn_type->params())
+                param_types.push_back(pt);
+            auto* sret_fn_type = llvm::FunctionType::get(
+                llvm::Type::getVoidTy(**_context), param_types, false);
+
+            _builder->CreateCall(sret_fn_type, callee_val, call_args);
+            return sret_ptr;
+        }
+        // Non-sret call
+        _value = _builder->CreateCall(fn_type, callee_val, call_args,
+            fn_type->getReturnType()->isVoidTy() ? "" : name);
+        return nullptr;
+    };
+
+    // ── INDIRECT_MEMBER call via pointer-to-member  obj.*mfp(args) ────────────
+    if (expr.has_dispatch_info() &&
+        expr.get_dispatch_info().kind == virtual_dispatch_info::dispatch_kind::INDIRECT_MEMBER) {
+        // pm_callee->left() = object expression (this), pm_callee->right() = mfp variable
+        if (!pm_callee) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F048), expr.first_lexeme(),
+                "Internal error: INDIRECT_MEMBER dispatch without a pm_expression callee");
+        }
+
+        // 1. Evaluate the object (this) pointer
+        _value = nullptr;
+        pm_callee->left()->accept(*this);
+        llvm::Value* this_val = _value;
+
+        // If the object is a ref/indirection, load the actual pointer
+        auto obj_type = pm_callee->left()->get_type();
+        if (auto ref = std::dynamic_pointer_cast<reference_type>(obj_type)) {
+            auto inner = ref->get_subtype();
+            if (pm_callee->is_arrow()) {
+                // ->*: load the pointer value from the ref, then we have a ptr-to-struct
+                this_val = _builder->CreateLoad(_context->get_llvm_type(inner), this_val, "pm_ptr_load");
+                // Null-check for nullable indirections
+                if (std::dynamic_pointer_cast<pointer_type>(inner) ||
+                    std::dynamic_pointer_cast<view_type>(inner)) {
+                    auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_dereference");
+                    emit_null_check(this_val, fatal, "pm_arrow");
+                }
+            }
+            // For .*, this_val is already the struct alloca address (which is what we want as `this`)
+        }
+
+        // 2. Evaluate the member function pointer variable (load fn pointer)
+        _value = nullptr;
+        pm_callee->right()->accept(*this);
+        llvm::Value* mfp_alloca = _value;
+
+        auto mfp_type = pm_callee->right()->get_type();
+        if (auto ref = std::dynamic_pointer_cast<reference_type>(mfp_type)) {
+            mfp_type = ref->get_subtype();
+        }
+        auto frt = std::dynamic_pointer_cast<function_reference_type>(mfp_type);
+        if (!frt || !mfp_alloca) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F049), expr.first_lexeme(),
+                "Internal error: INDIRECT_MEMBER call: could not obtain function pointer");
+        }
+
+        // Load the actual function pointer from the alloca
+        llvm::Type* frt_llvm = frt->get_llvm_type();
+        llvm::Value* fn_ptr = _builder->CreateLoad(frt_llvm, mfp_alloca, "mfp_fn_ptr");
+
+        // 3. Build LLVM function type from frt parameter types
+        //    For member_function_reference_type the first param is implicit `this` (ptr)
+        std::vector<llvm::Type*> param_llvm_types;
+        // Always prepend `this` as opaque ptr
+        param_llvm_types.push_back(llvm::PointerType::getUnqual(**_context));
+        for (const auto& pt : frt->get_parameter_types()) {
+            // Skip the implicit this param if it's already in get_parameter_types()
+            auto llt = _context->get_llvm_type(pt);
+            if (!llt) continue;
+            param_llvm_types.push_back(llt);
+        }
+        llvm::Type* ret_llvm = frt->get_return_type()
+            ? _context->get_llvm_type(frt->get_return_type())
+            : llvm::Type::getVoidTy(**_context);
+        auto llvm_fn_type = llvm::FunctionType::get(ret_llvm, param_llvm_types, false);
+
+        // 4. Build call arguments: this_val first, then expression arguments
+        std::vector<llvm::Value*> call_args;
+        call_args.push_back(this_val);
+        for (auto& arg : expr.arguments()) {
+            _value = nullptr;
+            arg->accept(*this);
+            if (_value) call_args.push_back(_value);
+        }
+
+        auto* sret_result = emit_sret_call(llvm_fn_type, fn_ptr, call_args, "mfp_call");
+        if (sret_result) {
+            handle_sret_result(sret_result);
+        }
+        return;
+    }
+
+    // ── INDIRECT call via function-reference variable ─────────────────────────
+    if (expr.has_dispatch_info() &&
+        expr.get_dispatch_info().kind == virtual_dispatch_info::dispatch_kind::INDIRECT) {
+        // callee is a symbol_expression that holds a variable of function_reference_type.
+        // We already visited the callee in type_reference_resolver, so its type is set.
+        // In impl_gen, visiting a variable symbol gives us the *address* of the variable (alloca).
+        // For function-reference variables, we must load the function pointer from that address.
+        _value = nullptr;
+        if (callee) callee->accept(*this);
+        llvm::Value* var_addr = _value;
+        if (!var_addr) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F044), expr.first_lexeme(),
+                "Internal error: indirect call through function reference produced no LLVM value");
+        }
+
+        // Build the LLVM function type from the function_reference_type in the call expression.
+        auto callee_type = callee ? callee->get_type() : nullptr;
+        auto inner_type = callee_type;
+        while (inner_type && (type::is_reference(inner_type) || type::is_link(inner_type) ||
+                               type::is_pointer(inner_type) || type::is_view(inner_type))) {
+            inner_type = inner_type->get_subtype();
+        }
+        auto frt = std::dynamic_pointer_cast<function_reference_type>(inner_type);
+        if (!frt) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F045), expr.first_lexeme(),
+                "Internal error: indirect call without a function_reference_type annotation");
+        }
+
+        // The function_reference_type has a ptr (opaque pointer) as its LLVM type.
+        // Load the actual function pointer from the variable's address.
+        llvm::Type* frt_llvm = _context->get_llvm_type(inner_type); // = opaque ptr
+        llvm::Value* fn_ptr = _builder->CreateLoad(frt_llvm, var_addr, "fn_ptr_load");
+
+        // Build LLVM parameter types from the function_reference_type
+        std::vector<llvm::Type*> param_llvm_types;
+        for (const auto& pt : frt->get_parameter_types()) {
+            auto llt = _context->get_llvm_type(pt);
+            if (!llt) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F046), expr.first_lexeme(),
+                    "Internal error: could not map K parameter type to LLVM type for indirect call");
+            }
+            param_llvm_types.push_back(llt);
+        }
+        llvm::Type* ret_llvm_type = frt->get_return_type()
+            ? _context->get_llvm_type(frt->get_return_type())
+            : llvm::Type::getVoidTy(**_context);
+        auto llvm_fn_type = llvm::FunctionType::get(ret_llvm_type, param_llvm_types, false);
+
+        // Generate arguments
+        std::vector<llvm::Value*> call_args;
+        for (auto& arg : expr.arguments()) {
+            _value = nullptr;
+            arg->accept(*this);
+            if (!_value) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F047), expr.first_lexeme(),
+                    "Internal error: an argument for an indirect call produced no LLVM value");
+            }
+            call_args.push_back(_value);
+        }
+
+        auto* sret_result = emit_sret_call(llvm_fn_type, fn_ptr, call_args, "ind_call");
+        if (sret_result) {
+            handle_sret_result(sret_result);
+        }
+        return;
+    }
+
+    // Generate arguments and add them to the args list (for non-indirect calls)
+    std::vector<llvm::Value*> args;
+    if (member_callee) {
+        callee = std::dynamic_pointer_cast<symbol_expression>(member_callee->symbol().shared_as<symbol_expression>());
+        if (!callee) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F027), expr.first_lexeme(),
+                "Internal error: member function call has a non-symbol callee; "
+                "this should have been rejected during type resolution");
+        }
+
+        // First argument is the object pointer (this)
+        member_callee->sub_expr()->accept(*this);
+        if(!_value) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F028), expr.first_lexeme(),
+                "Internal error: failed to generate the 'this' argument for member function call '{}'; "
+                "the object expression produced no LLVM value",
+                {callee ? callee->get_name().to_string() : "<unknown>"});
+        }
+
+        args.push_back(_value);
+    }
+    // Save outer _sret_destination — it's meant for the call result, not for arguments
+    llvm::Value* saved_sret_destination = _sret_destination;
+    _sret_destination = nullptr;
+
+    // Step 1: Evaluate all argument expressions
+    for(auto arg : expr.arguments()) {
+        _value = nullptr;
+
+        // ── Argument copy elision for by-value struct parameters ──────────
+        // When a by-value struct argument is the direct result of a sret-
+        // returning function call (prvalue), set _sret_destination so the
+        // inner call writes directly into a staging alloca without tracking
+        // it as a temporary. This avoids an extra destructor call.
+        bool arg_elision_set = false;
+        bool arg_is_struct = arg->get_type() && type::is_struct(arg->get_type())
+            && !type::is_reference(arg->get_type())
+            && !type::is_any_indirection(arg->get_type());
+        bool arg_is_fn_call = std::dynamic_pointer_cast<function_invocation_expression>(arg) != nullptr;
+        if (arg_is_struct
+            && needs_sret_return(arg->get_type())
+            && !_sret_destination
+            && arg_is_fn_call)
+        {
+            auto st_type_nc = type::remove_const(arg->get_type());
+            llvm::Type* llvm_st = _context->get_llvm_type(st_type_nc);
+            llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+            llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+            auto* staging_alloca = entry_builder.CreateAlloca(llvm_st, nullptr, "arg_staging");
+            _sret_destination = staging_alloca;
+            arg_elision_set = true;
+        }
+
+        arg->accept(*this);
+
+        // Only clear _sret_destination if WE set it (and it wasn't consumed)
+        if (arg_elision_set && _sret_destination) {
+            _sret_destination = nullptr;
+        }
+
+        if(!_value) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F029), expr.first_lexeme(),
+                "Internal error: a call argument for '{}' produced no LLVM value during code generation; "
+                "this indicates a bug in expression code generation",
+                {callee ? callee->get_name().to_string() : "<unknown>"});
+        }
+        // If the argument is a struct rvalue (bare struct type, not ref) and _value is
+        // an alloca (pointer), we need to load the aggregate to pass it by value.
+        // This happens when a function return value is materialized into an alloca.
+        if (arg->get_type() && type::is_struct(arg->get_type())) {
+            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(_value)) {
+                auto st_type_nc = type::remove_const(arg->get_type());
+                llvm::Type* llvm_st = _context->get_llvm_type(st_type_nc);
+                _value = _builder->CreateLoad(llvm_st, alloca, "struct_arg_load");
+            }
+        }
+        args.push_back(_value);
+    }
+
+    // Restore outer _sret_destination for the call result
+    _sret_destination = saved_sret_destination;
+
+    // Find the function definition
+    auto function = callee->get_function();
+    auto it = _context->_functions.find(function);
+    if(it==_context->_functions.end()) {
+        // Abstract virtual functions and imported virtual functions without a
+        // concrete LLVM declaration can still be dispatched through the vtable.
+        if (function && function->is_virtual() &&
+            (function->is_abstract_func() || function->is_external())) {
+            // Fall through: llvm_func will remain null; virtual dispatch handles it below.
+        } else {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02A), expr.first_lexeme(),
+                "Internal error: LLVM declaration not found for function '{}' during code generation; "
+                "the declaration pass must be run before the implementation pass",
+                {function ? function->get_fq_name() : "<null>"});
+        }
+    }
+    llvm::Function* llvm_func = (it != _context->_functions.end()) ? it->second : nullptr;
+    if(llvm_func == nullptr &&
+       !(function && (function->is_abstract_func() ||
+                      (function->is_virtual() && function->is_external())))) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02B), expr.first_lexeme(),
+            "Internal error: LLVM function object is null for '{}'; "
+            "this indicates a compiler bug in the declaration pass",
+            {function ? function->get_fq_name() : "<null>"});
+    }
+
+    // ── Virtual dispatch ─────────────────────────────────────────────────────
+    // Phase 3/4: dispatch_info is normally set by type_reference_resolver.
+    // If absent (e.g. a synthetic node that bypassed the resolver), treat as DIRECT.
+    const bool is_vtable_dispatch =
+        expr.has_dispatch_info()
+        && expr.get_dispatch_info().kind == virtual_dispatch_info::dispatch_kind::VTABLE
+        && (expr.get_dispatch_info().dispatch_class != nullptr
+            || expr.get_dispatch_info().imported_dispatch_agg != nullptr);
+
+    if (is_vtable_dispatch) {
+        const auto& di = expr.get_dispatch_info();
+
+        // ── Local klass dispatch ──────────────────────────────────────────
+        auto kl = di.dispatch_class;
+        if (kl && kl->has_vtable() && !args.empty()) {
+            llvm::FunctionType* fn_type = nullptr;
+            if (llvm_func) {
+                fn_type = llvm_func->getFunctionType();
+            } else {
+                std::vector<llvm::Type*> param_types;
+                // For sret: prepend sret pointer parameter
+                if (function->has_return_type() && needs_sret_return(function->get_return_type()))
+                    param_types.push_back(llvm::PointerType::get(**_context, 0));
+                if (function->is_member() && !function->is_static())
+                    param_types.push_back(_context->get_llvm_type(function->get_this_parameter()->get_type()));
+                for (const auto& param : function->parameters())
+                    param_types.push_back(_context->get_llvm_type(param->get_type()));
+                llvm::Type* ret_type_llvm = llvm::Type::getVoidTy(**_context);
+                if (function->has_return_type() && !needs_sret_return(function->get_return_type()))
+                    ret_type_llvm = _context->get_llvm_type(function->get_return_type());
+                fn_type = llvm::FunctionType::get(ret_type_llvm, param_types, false);
+            }
+            // Check if sret ABI is used
+            bool call_uses_sret = fn_type->getReturnType()->isVoidTy()
+                && expr.get_type() && needs_sret_return(expr.get_type());
+            if (call_uses_sret) {
+                llvm::Value* sret_alloca = get_sret_ptr_for_call();
+                args.insert(args.begin(), sret_alloca);
+                _value = emit_virtual_dispatch_call(*_builder, *kl, args[1], di.slot_index, fn_type, args, _context, "");
+                handle_sret_result(sret_alloca);
+            } else {
+                _value = emit_virtual_dispatch_call(*_builder, *kl, args[0], di.slot_index, fn_type, args, _context, "");
+            }
+            return;
+        }
+
+        // ── Imported aggregate dispatch (imported_klass / imported_interface) ──
+        // The LLVM struct type was interned from llvm_def — field 0 is always the
+        // primary vptr.  The vtable layout is:  { RTTI ptr, slot0 ptr, slot1 ptr, … }
+        // so the function pointer is at index  (slot_index + 1).
+        auto imp_agg = di.imported_dispatch_agg;
+        if (imp_agg && imp_agg->has_vtable() && !args.empty()) {
+            // Build the callee FunctionType from the LLVM declaration if we have it,
+            // or reconstruct from K model types as fallback.
+            llvm::FunctionType* fn_type = nullptr;
+            if (llvm_func) {
+                fn_type = llvm_func->getFunctionType();
+            } else if (function) {
+                std::vector<llvm::Type*> param_types;
+                if (function->has_return_type() && needs_sret_return(function->get_return_type()))
+                    param_types.push_back(llvm::PointerType::get(**_context, 0));
+                if (function->is_member() && !function->is_static() && function->get_this_parameter())
+                    param_types.push_back(_context->get_llvm_type(function->get_this_parameter()->get_type()));
+                for (const auto& param : function->parameters())
+                    param_types.push_back(_context->get_llvm_type(param->get_type()));
+                llvm::Type* ret_type_llvm = llvm::Type::getVoidTy(**_context);
+                if (function->has_return_type() && !needs_sret_return(function->get_return_type()))
+                    ret_type_llvm = _context->get_llvm_type(function->get_return_type());
+                fn_type = llvm::FunctionType::get(ret_type_llvm, param_types, false);
+            }
+            if (!fn_type) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02F), expr.first_lexeme(),
+                    "Internal error: cannot build FunctionType for imported virtual dispatch of '{}'",
+                    {function ? function->get_fq_name() : "<null>"});
+            }
+
+            auto* struct_llvm_type = imp_agg->get_struct_type()
+                                     ? imp_agg->get_struct_type()->get_llvm_type() : nullptr;
+            if (!struct_llvm_type) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F030), expr.first_lexeme(),
+                    "Internal error: imported aggregate '{}' has no LLVM struct type",
+                    {imp_agg->get_fq_name()});
+            }
+
+            llvm::LLVMContext& llvm_ctx = **_context;
+            llvm::Type* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+            // Find the vptr field index from the KDI layout (first kdi_layout_vptr).
+            uint32_t vptr_field_index = 0; // default: field 0 (primary vptr)
+            auto imp_agg_cast = std::dynamic_pointer_cast<imported_aggregate>(imp_agg);
+            if (imp_agg_cast) {
+                const auto* kdi_agg = imp_agg_cast->get_kdi_aggregate();
+                if (kdi_agg) {
+                    for (const auto& lf : kdi_agg->layout) {
+                        if (auto* vp = std::get_if<kdi::kdi_layout_vptr>(&lf)) {
+                            vptr_field_index = vp->llvm_field_index;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Step 2: If virtual dispatch: load vptr, GEP to vtable slot, indirect call
+            // Load the vptr
+            llvm::Value* vptr_addr = _builder->CreateStructGEP(
+                struct_llvm_type, args[0], vptr_field_index, "imp_vptr_addr");
+            llvm::Value* vptr = _builder->CreateLoad(ptr_ty, vptr_addr, "imp_vptr");
+
+            // Step 3: If direct call: resolve LLVM function, emit direct call instruction
+            // The vtable layout is { RTTI, fn0, fn1, … } so slot i → index i+1.
+            // We use a byte-offset GEP because we don't have the vtable's StructType.
+            // On all supported 64-bit targets a pointer is 8 bytes.
+            const uint64_t ptr_size = 8;
+            llvm::Value* slot_offset = llvm::ConstantInt::get(
+                llvm::Type::getInt64Ty(llvm_ctx),
+                (di.slot_index + 1) * ptr_size);
+            llvm::Value* fn_ptr_addr = _builder->CreateInBoundsGEP(
+                llvm::Type::getInt8Ty(llvm_ctx), vptr, slot_offset, "imp_vtbl_slot");
+            llvm::Value* fn_ptr = _builder->CreateLoad(ptr_ty, fn_ptr_addr, "imp_fn_ptr");
+            bool call_uses_sret = fn_type->getReturnType()->isVoidTy()
+                && expr.get_type() && needs_sret_return(expr.get_type());
+            if (call_uses_sret) {
+                llvm::Value* sret_alloca = get_sret_ptr_for_call();
+                // Step 4: If sret return: allocate temp or use _sret_destination, pass as first arg
+                args.insert(args.begin(), sret_alloca);
+                _builder->CreateCall(fn_type, fn_ptr, args);
+                handle_sret_result(sret_alloca);
+            } else {
+                _value = _builder->CreateCall(fn_type, fn_ptr, args,
+                    fn_type->getReturnType()->isVoidTy() ? "" : "imp_vcall");
+            }
+            return;
+        }
+    }
+    // ── Direct call (non-virtual, or qualified, or free function) ────────────
+    bool call_uses_sret = llvm_func->getReturnType()->isVoidTy()
+        && expr.get_type() && needs_sret_return(expr.get_type());
+    if (call_uses_sret) {
+        llvm::Value* sret_alloca = get_sret_ptr_for_call();
+        args.insert(args.begin(), sret_alloca);
+        _builder->CreateCall(llvm_func, args);
+        handle_sret_result(sret_alloca);
+    } else {
+        _value = _builder->CreateCall(llvm_func, args);
+    }
+}
+
+//
+// Constructor invocation
+//
+
+void symbol_resolver::visit_constructor_invocation_expression(constructor_invocation_expression& expr) {
+    for (auto arg : expr.arguments()) {
+        arg->accept(*this);
+    }
+}
+
+void symbol_resolver::visit_temporary_construction_expression(temporary_construction_expression& expr) {
+    for (auto& arg : expr.arguments()) {
+        if (arg) arg->accept(*this);
+    }
+}
+
+//
+// New expression
+//
+
+void symbol_resolver::visit_new_expression(new_expression& expr) {
+    if (expr.is_uniform_array()) {
+        if (expr.array_size_expr()) expr.array_size_expr()->accept(*this);
+        for (auto& a : expr.uniform_ctor_args()) {
+            if (a) a->accept(*this);
+        }
+    } else if (expr.is_array()) {
+        if (expr.array_size_expr()) expr.array_size_expr()->accept(*this);
+        for (auto& e : expr.array_init_elements()) {
+            if (e) e->accept(*this);
+        }
+    } else {
+        for (auto& arg : expr.arguments()) {
+            arg->accept(*this);
+        }
+    }
+}
+
+/**
+ * Resolve a new expression (heap allocation): type resolution, constructor resolution.
+ *
+ * Steps:
+ *   1. Resolve the target type (class/struct or array).
+ *   2. For arrays: validate size expression, set result type to owner<array<T>>.
+ *   3. For structs: resolve constructor overload with provided arguments.
+ *   4. Set result type to owner<T>.
+ */
+void type_reference_resolver::visit_new_expression(new_expression& expr) {
+    if (expr.is_uniform_array()) {
+        // ── Uniform array form: new T(args)[N] ──
+
+        // Resolve uniform ctor args
+        for (auto& a : expr._uniform_ctor_args) {
+            if (a) a->accept(*this);
+        }
+
+        // Resolve the array size expression
+        if (expr._array_size_expr) {
+            expr._array_size_expr->accept(*this);
+        }
+
+        // Resolve the element type
+        auto elem_type = expr.allocated_type();
+        if (!type::is_resolved(elem_type)) {
+            if (auto unres = std::dynamic_pointer_cast<unresolved_type>(elem_type)) {
+                auto resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
+                if (!resolved || !type::is_resolved(resolved)) {
+                    auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                    if (imported_agg) resolved = imported_agg->get_struct_type();
+                }
+                if (resolved && type::is_resolved(resolved)) {
+                    expr.allocated_type(resolved);
+                    elem_type = resolved;
+                }
+            }
+        }
+        if (!type::is_resolved(elem_type)) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_TYPE_NOT_FOUND), expr.first_lexeme(),
+                "Cannot resolve element type of 'new' uniform array expression: type '{}' is unknown",
+                {elem_type ? elem_type->to_string() : "<null>"});
+            return;
+        }
+
+        // Determine the array size (static or dynamic)
+        size_t arr_size = 0;
+        bool is_dynamic = false;
+
+        if (expr._array_size_expr) {
+            auto size_val = std::dynamic_pointer_cast<value_expression>(expr._array_size_expr);
+            if (size_val && size_val->is_literal()
+                && std::holds_alternative<lex::integer>(size_val->any_literal())) {
+                auto& int_lit = size_val->any_literal().get<lex::integer>();
+                arr_size = int_lit.to_unsigned_int();
+            } else {
+                // Dynamic size
+                is_dynamic = true;
+                auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
+                auto adapted_size = adapt_type(expr._array_size_expr, uint_type);
+                if (!adapted_size) {
+                    throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ALLOC_SIZE_NOT_INT), expr.first_lexeme(),
+                        "Uniform array size expression must be convertible to an unsigned integer; "
+                        "expression has type '{}'",
+                        {expr._array_size_expr->get_type() ? expr._array_size_expr->get_type()->to_string() : "?"});
+                    return;
+                }
+                if (adapted_size != expr._array_size_expr) {
+                    expr._array_size_expr = adapted_size;
+                    adapted_size->set_parent_expression(expr.shared_as<expression>());
+                }
+            }
+        }
+
+        // Check for abstract types
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+            auto struct_model = st_type->get_struct();
+            if (struct_model && struct_model->is_abstract()) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ALLOC_NOT_POINTER), expr.first_lexeme(),
+                    "Cannot create uniform array of abstract class '{}'",
+                    {struct_model->get_short_name()});
+                return;
+            }
+        }
+
+        // Step 1: Resolve the target type (class/struct or array)
+        // Resolve the constructor / type-check for the uniform args
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+            auto struct_model = st_type->get_struct();
+            if (!struct_model) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ELEM_ABSTRACT), expr.first_lexeme(),
+                    "Cannot resolve struct for uniform 'new {}(...)[]': aggregate not resolved",
+                    {st_type->to_string()});
+                return;
+            }
+            auto [best_ctor, adapted_args] = get_best_matching_constructor(
+                struct_model->constructors(), expr._uniform_ctor_args);
+            if (!best_ctor) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ALLOC_NOT_ARRAY), expr.first_lexeme(),
+                    "No matching constructor for uniform array init of type '{}'",
+                    {st_type->to_string()});
+                return;
+            }
+            check_constructor_visibility(*best_ctor, expr);
+            expr._uniform_constructor = best_ctor;
+            expr.set_uniform_ctor_args(adapted_args);
+        } else if (type::is_primitive(elem_type)) {
+            // Primitive: must have exactly one arg convertible to the element type
+            if (expr._uniform_ctor_args.size() > 1) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ALLOC_TYPE_MISMATCH), expr.first_lexeme(),
+                    "Uniform array init for primitive type '{}' expects at most one argument, got {}",
+                    {elem_type->to_string(), std::to_string(expr._uniform_ctor_args.size())});
+                return;
+            }
+            if (!expr._uniform_ctor_args.empty() && expr._uniform_ctor_args[0]) {
+                auto cast = adapt_type(expr._uniform_ctor_args[0], elem_type);
+                if (!cast) {
+                    throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ALLOC_TYPE_MISMATCH), expr.first_lexeme(),
+                        "Cannot convert uniform init value to primitive element type '{}'",
+                        {elem_type->to_string()});
+                    return;
+                }
+                if (cast != expr._uniform_ctor_args[0]) {
+                    expr.assign_uniform_ctor_arg(0, cast);
+                }
+            }
+        }
+
+        if (is_dynamic) {
+            expr._is_dynamic_size = true;
+            expr._array_size = 0;
+            auto arr_type_unsized = elem_type->get_array();
+            expr.set_type(arr_type_unsized->get_owner());
+        } else {
+            expr._array_size = arr_size;
+            auto arr_type_unsized = elem_type->get_array();
+            auto sized_arr_type = arr_type_unsized->with_size(arr_size);
+            expr.set_type(sized_arr_type->get_owner());
+        }
+        return;
+    }
+
+    if (expr.is_array()) {
+        // ── Array form: new T[N]{e0, e1, ...} ──
+
+        // Resolve array size expression
+        if (expr._array_size_expr) {
+            expr._array_size_expr->accept(*this);
+        }
+
+        // Resolve element init expressions
+        // For function_invocation_expression elements, only resolve their arguments
+        // (the callee is a struct name, not a function — constructor resolution happens below)
+        for (size_t i = 0; i < expr._array_init_elements.size(); ++i) {
+            if (auto& e = expr._array_init_elements[i]) {
+                auto func_inv = std::dynamic_pointer_cast<function_invocation_expression>(e);
+                if (func_inv) {
+                    // Only resolve the arguments, not the callee
+                    for (auto& arg : func_inv->arguments()) {
+                        if (arg) arg->accept(*this);
+                    }
+                } else {
+                    e->accept(*this);
+                }
+            }
+        }
+
+        // Resolve the element type
+        auto elem_type = expr.allocated_type();
+        if (!type::is_resolved(elem_type)) {
+            if (auto unres = std::dynamic_pointer_cast<unresolved_type>(elem_type)) {
+                auto resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
+                if (!resolved || !type::is_resolved(resolved)) {
+                    auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                    if (imported_agg) resolved = imported_agg->get_struct_type();
+                }
+                if (resolved && type::is_resolved(resolved)) {
+                    expr.allocated_type(resolved);
+                    elem_type = resolved;
+                }
+            }
+        }
+        if (!type::is_resolved(elem_type)) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_TYPE_NOT_FOUND), expr.first_lexeme(),
+                "Cannot resolve element type of 'new[]' expression: type '{}' is unknown",
+                {elem_type ? elem_type->to_string() : "<null>"});
+            return;
+        }
+
+        // Determine the array size
+        size_t init_count = expr._array_init_elements.size();
+        size_t arr_size = 0;
+        bool has_explicit_size = (expr._array_size_expr != nullptr);
+        bool is_dynamic = false;
+
+        if (has_explicit_size) {
+            // Try to evaluate the size expression as a compile-time constant
+            auto size_val = std::dynamic_pointer_cast<value_expression>(expr._array_size_expr);
+            if (size_val && size_val->is_literal()
+                && std::holds_alternative<lex::integer>(size_val->any_literal())) {
+                auto& int_lit = size_val->any_literal().get<lex::integer>();
+                arr_size = int_lit.to_unsigned_int();
+            } else {
+                // ── Dynamic size: runtime expression ──
+                is_dynamic = true;
+
+                // The size expression must be convertible to unsigned int
+                auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
+                auto adapted_size = adapt_type(expr._array_size_expr, uint_type);
+                if (!adapted_size) {
+                    throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_SIZE_NOT_INT), expr.first_lexeme(),
+                        "Array size expression for 'new[]' must be convertible to an unsigned integer; "
+                        "expression has type '{}'",
+                        {expr._array_size_expr->get_type() ? expr._array_size_expr->get_type()->to_string() : "?"});
+                    return;
+                }
+                if (adapted_size != expr._array_size_expr) {
+                    expr._array_size_expr = adapted_size;
+                    adapted_size->set_parent_expression(expr.shared_as<expression>());
+                }
+
+                // Brace initializers are not allowed for dynamic-sized arrays
+                if (expr._has_brace_init) {
+                    throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_BRACE_INIT_DYNAMIC), expr.first_lexeme(),
+                        "Brace initializer lists are not allowed for dynamically-sized 'new[]' arrays; "
+                        "all elements will be default-initialized");
+                    return;
+                }
+            }
+        } else {
+            // Size inferred from init list (or empty brace init → 0 elements)
+            arr_size = init_count;
+            if (arr_size == 0 && !expr._has_brace_init) {
+                // new T[] with no brace init at all → cannot infer the size
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_SUBSCRIPT_BAD_TYPE), expr.first_lexeme(),
+                    "Cannot infer array size for 'new[]': "
+                    "either provide an explicit size or a brace initializer list");
+                return;
+            }
+            // new T[]{} → arr_size == 0 is valid (empty array)
+        }
+
+        if (is_dynamic) {
+            // ── Dynamic-sized array: new T[expr] ──
+            // No brace init, no static size. All elements default-initialized.
+            expr._is_dynamic_size = true;
+            expr._array_size = 0; // not meaningful for dynamic
+
+            // For struct element types, resolve the default constructor
+            if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+                auto struct_model = st_type->get_struct();
+                if (!struct_model) {
+                    throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ELEM_ABSTRACT), expr.first_lexeme(),
+                        "Cannot resolve struct for 'new {}[]': aggregate not resolved",
+                        {st_type->to_string()});
+                    return;
+                }
+                if (struct_model->is_abstract()) {
+                    throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ELEM_NO_CTOR), expr.first_lexeme(),
+                        "Cannot 'new' array of abstract class '{}'",
+                        {struct_model->get_short_name()});
+                    return;
+                }
+                // Resolve default constructor (needed for each element)
+                auto [default_ctor, default_args] = get_best_matching_constructor(
+                    struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
+                // Store in element_constructors[0] as the single default ctor to use
+                expr._element_constructors.resize(1, nullptr);
+                expr._element_constructors[0] = default_ctor;
+            }
+
+            // Result type: owner<array_type> (unsized) → T[]!
+            auto arr_type_unsized = elem_type->get_array();
+            expr.set_type(arr_type_unsized->get_owner());
+            return;
+        }
+
+        // ── Static-sized array: new T[N]{...} ──
+
+        // Validate init count vs array size
+        if (init_count > arr_size) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_INIT_NO_MATCH), expr.first_lexeme(),
+                "Array initializer list for 'new {}[{}]' has {} elements: too many initializers",
+                {elem_type->to_string(), std::to_string(arr_size), std::to_string(init_count)});
+            return;
+        }
+        if (init_count < arr_size && init_count > 0) {
+            warn(static_cast<unsigned int>(k::diag::type_diag::WARN_ARRAY_INIT_EXTRA),
+                "Array initializer list for 'new {}[{}]' has only {} elements: "
+                "remaining {} elements will be default-initialized",
+                {elem_type->to_string(), std::to_string(arr_size), std::to_string(init_count),
+                 std::to_string(arr_size - init_count)});
+        }
+
+        expr._array_size = arr_size;
+
+        // Type-check and adapt each element + resolve constructors
+        expr._element_constructors.resize(arr_size, nullptr);
+
+        if (type::is_primitive(elem_type)) {
+            for (size_t i = 0; i < init_count; ++i) {
+                auto e = expr._array_init_elements[i];
+                if (!e) continue;
+                auto cast = adapt_type(e, elem_type);
+                if (!cast) {
+                    throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ELEM_INIT_MISMATCH), expr.first_lexeme(),
+                        "Cannot convert element {} to type '{}' in 'new[]' initializer",
+                        {std::to_string(i), elem_type->to_string()});
+                } else if (cast != e) {
+                    expr.assign_array_init_element(i, cast);
+                }
+            }
+        } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(elem_type)) {
+            auto struct_model = st_type->get_struct();
+            if (!struct_model) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ELEM_ABSTRACT), expr.first_lexeme(),
+                    "Cannot resolve struct for 'new {}[]': aggregate not resolved",
+                    {st_type->to_string()});
+                return;
+            }
+            if (struct_model->is_abstract()) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ELEM_NO_CTOR), expr.first_lexeme(),
+                    "Cannot 'new' array of abstract class '{}'",
+                    {struct_model->get_short_name()});
+                return;
+            }
+            for (size_t i = 0; i < init_count; ++i) {
+                auto e = expr._array_init_elements[i];
+                if (!e) continue; // default-init
+
+                auto func_inv = std::dynamic_pointer_cast<function_invocation_expression>(e);
+                if (func_inv) {
+                    // Explicit constructor call
+                    std::vector<std::shared_ptr<expression>> ctor_args;
+                    for (auto& arg : func_inv->arguments()) ctor_args.push_back(arg);
+                    auto [best_ctor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
+                    if (!best_ctor) {
+                        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_CTOR_NO_SINGLE_PARAM), expr.first_lexeme(),
+                            "No matching constructor for element {} of type '{}' in 'new[]'",
+                            {std::to_string(i), st_type->to_string()});
+                    }
+                    check_constructor_visibility(*best_ctor, expr);
+                    expr._element_constructors[i] = best_ctor;
+                    func_inv->assign_arguments(adapted_args);
+                } else {
+                    // Implicit single-param constructor
+                    std::vector<std::shared_ptr<expression>> ctor_args = {e};
+                    auto [best_ctor, adapted_args] = get_best_matching_constructor(struct_model->constructors(), ctor_args);
+                    if (!best_ctor) {
+                        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_CTOR_PARAM_MISMATCH), expr.first_lexeme(),
+                            "No matching single-parameter constructor for element {} of type '{}' "
+                            "with argument type '{}' in 'new[]'",
+                            {std::to_string(i), st_type->to_string(),
+                             e->get_type() ? e->get_type()->to_string() : "?"});
+                    }
+                    check_constructor_visibility(*best_ctor, expr);
+                    expr._element_constructors[i] = best_ctor;
+                    if (!adapted_args.empty() && adapted_args[0] != e) {
+                        expr.assign_array_init_element(i, adapted_args[0]);
+                    }
+                }
+            }
+            // For uninitialized elements, find default constructor
+            // Only search if there are actually elements that need default-init
+            bool needs_default_ctor = false;
+            for (size_t i = 0; i < arr_size; ++i) {
+                if (i >= init_count || !expr._array_init_elements[i]) {
+                    needs_default_ctor = true;
+                    break;
+                }
+            }
+            if (needs_default_ctor) {
+                auto [default_ctor, default_args] = get_best_matching_constructor(
+                    struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
+                for (size_t i = 0; i < arr_size; ++i) {
+                    if (i >= init_count || !expr._array_init_elements[i]) {
+                        expr._element_constructors[i] = default_ctor;
+                    }
+                }
+            }
+        }
+
+        // Step 2: For arrays: validate size expression, set result type to owner<array<T>>
+        // Build the sized_array_type and set the expression type to owner<sized_array_type>
+        auto arr_type_unsized = elem_type->get_array();
+        auto sized_arr_type = arr_type_unsized->with_size(arr_size);
+        expr.set_type(sized_arr_type->get_owner());
+
+        return;
+    }
+
+    // ── Single-object form (unchanged) ──
+
+    // Resolve arguments first
+    for (auto& arg : expr.arguments()) {
+        arg->accept(*this);
+    }
+
+    // Step 3: For structs: resolve constructor overload with provided arguments
+    auto alloc_type = expr.allocated_type();
+    if (!type::is_resolved(alloc_type)) {
+        // Try to resolve unresolved type
+        if (auto unres = std::dynamic_pointer_cast<unresolved_type>(alloc_type)) {
+            auto resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
+            if (!resolved || !type::is_resolved(resolved)) {
+                auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                if (imported_agg) resolved = imported_agg->get_struct_type();
+            }
+            if (resolved && type::is_resolved(resolved)) {
+                expr.allocated_type(resolved);
+                alloc_type = resolved;
+            }
+        }
+    }
+
+    if (!type::is_resolved(alloc_type)) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_TYPE_NOT_FOUND), expr.first_lexeme(),
+            "Cannot resolve the type of 'new' expression: type '{}' is unknown",
+            {alloc_type ? alloc_type->to_string() : "<null>"});
+    }
+
+    // Step 4: Set result type to owner<T>
+    // Set the expression type to owner<allocated_type>
+    expr.set_type(alloc_type->get_owner());
+
+    // If the allocated type is a struct, find the best matching constructor
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(alloc_type)) {
+        auto st = st_type->get_struct();
+        if (!st) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_INIT_TYPE_MISMATCH), expr.first_lexeme(),
+                "Cannot 'new' a struct type '{}': the aggregate is not resolved",
+                {st_type->to_string()});
+        }
+        if (st->is_abstract()) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_ABSTRACT_CLASS), expr.first_lexeme(),
+                "Cannot 'new' abstract class '{}': abstract classes cannot be directly instantiated",
+                {st->get_short_name()});
+        }
+        auto [best_ctor, adapted_args] = get_best_matching_constructor(st->constructors(), expr.arguments());
+        if (!best_ctor) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_ARRAY_BAD_INIT), expr.first_lexeme(),
+                "No matching constructor found for 'new {}': none of the available constructors "
+                "can be called with the provided arguments",
+                {st_type->to_string()});
+        }
+        check_constructor_visibility(*best_ctor, expr);
+        expr.set_constructor(best_ctor);
+        expr.assign_arguments(adapted_args);
+    } else if (type::is_primitive(alloc_type)) {
+        // Primitive type: adapt the single argument if any
+        if (!expr.arguments().empty()) {
+            auto cast = adapt_type(expr.arguments()[0], alloc_type);
+            if (cast && cast != expr.arguments()[0]) {
+                expr.assign_argument(0, cast);
+            }
+        }
+    }
+}
+
+
+} // namespace k::model::gen

@@ -8,7 +8,9 @@ include_directories(${PROJECT_BINARY_DIR}/klang)
 add_library(klangcomp
         src/lex/lexemes.cpp
         src/lex/lexer.cpp
-        src/parse/parser.cpp
+        src/parse/parser_declarations.cpp
+        src/parse/parser_statements.cpp
+        src/parse/parser_expressions.cpp
         src/parse/ast.cpp
         src/model/context.cpp
         src/model/context.hpp
@@ -19,7 +21,12 @@ add_library(klangcomp
         src/common/common.cpp
         src/model/type.cpp
         src/model/model_builder.cpp
-        src/gen/resolvers.cpp
+        src/gen/resolvers_scope_lookup.cpp
+        src/gen/resolvers_symbol.cpp
+        src/gen/resolvers_aggregate.cpp
+        src/gen/resolvers_materializer.cpp
+        src/gen/resolvers_type_ref.cpp
+        src/gen/resolvers_init_order.cpp
         src/gen/generators.cpp
         src/common/logger.cpp
         src/common/logger.hpp
@@ -34,7 +41,17 @@ add_library(klangcomp
         src/model/statements.cpp
         src/model/statements.hpp
         src/gen/gen_expressions.cpp
-        src/gen/gen_operators.cpp
+        src/gen/gen_expr_unary.cpp
+        src/gen/gen_expr_member.cpp
+        src/gen/gen_expr_invocation.cpp
+        src/gen/gen_expr_memory.cpp
+        src/gen/gen_expr_construct.cpp
+        src/gen/gen_expr_cast.cpp
+        src/gen/gen_operators_overload.cpp
+        src/gen/gen_operators_arithmetic.cpp
+        src/gen/gen_operators_assign.cpp
+        src/gen/gen_operators_unary.cpp
+        src/gen/gen_operators_logical.cpp
         src/gen/gen_statements.cpp
         src/gen/gen_unit.cpp
         src/gen/gen_struct.cpp
@@ -45,6 +62,8 @@ add_library(klangcomp
         src/gen/gen_adapt_type.cpp
         src/compiler.hpp
         src/compiler.cpp
+        src/compiler_linker.cpp
+        src/compiler_diagnostic.cpp
         src/common/process.cpp
         src/common/file_resolver.cpp
         src/common/path_lookup_file_resolver.cpp

@@ -1,0 +1,1060 @@
+/*
+ * K Language compiler
+ *
+ * Copyright 2023-2026 Emilien Kia
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include "resolvers.hpp"
+#include "generators.hpp"
+#include "gen_helpers.hpp"
+#include "../common/operator_names.hpp"
+#include "../parse/ast.hpp"
+
+#include "../errors.hpp"
+#include "gen_operators_helpers.hpp"
+
+namespace k::model::gen {
+
+void type_reference_resolver::visit_assignation_expression(assignation_expression &expr) {
+    // TODO Rework conversions and promotions and mutualize with symbol_type_resolver::process_arithmetic(...)
+    visit_binary_expression(expr);
+
+    auto left = expr.left();
+    auto right = expr.right();
+
+    auto left_type = left->get_type();
+
+    if(!type::is_reference(left_type)) {
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
+            "The left operand of an assignment must be assignable (an lvalue): "
+            "the left-hand side has type '{}' which is not a reference; "
+            "you can only assign to a variable, parameter, or array element",
+            {left_type ? left_type->to_string() : "?"});
+    }
+    auto ref_target_type = std::dynamic_pointer_cast<reference_type>(left_type);
+    auto target_type = ref_target_type->get_subtype();
+
+    // ── Const-check ──────────────────────────────────────────────────────────
+    // If the target type is const-qualified (ref<const T>), assignment is forbidden.
+    if (type::is_const(target_type)) {
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_CALL_NO_MATCH), expr.first_lexeme(),
+            "Cannot assign to a const variable: "
+            "the left-hand side has type '{}' which is const; "
+            "const variables cannot be modified after initialisation",
+            {target_type ? target_type->to_string() : "?"});
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Step 1: Resolve left and right sub-expressions
+    if(type::is_reference(target_type)) {
+        // Left hand is ref-to-ref: assignment acts on the underlying object.
+        left = load_value_expression::make_shared(left);
+        left->set_type(target_type);
+        expr.assign_left(left);
+        target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
+    } else if (type::is_link(target_type)) {
+        // Left hand is ref-to-link.
+        // Determine if this is a rebind (RHS is an indirection) or
+        // an assignment to the pointed object (RHS is a value).
+        auto link_subtype = std::dynamic_pointer_cast<link_type>(target_type)->get_linked_type();
+        auto rhs_type = right->get_type();
+        // Unwrap ref<indirection> from rhs_type
+        auto rhs_effective = rhs_type;
+        if (type::is_reference(rhs_type)) {
+            auto inner = std::dynamic_pointer_cast<reference_type>(rhs_type)->get_subtype();
+            if (type::is_link(inner) || type::is_pointer(inner) || type::is_view(inner)) {
+                rhs_effective = inner;
+            }
+        }
+        // Helper lambda: check if rhs_effective is an indirection compatible with link_subtype (same, static upcast, or dynamic downcast)
+        auto is_rebind_compatible = [&]() -> bool {
+            if (!type::is_any_indirection(rhs_effective) || !rhs_effective->get_subtype() || !link_subtype)
+                return false;
+            auto rhs_sub_nc = type::remove_const(rhs_effective->get_subtype());
+            auto lnk_sub_nc = type::remove_const(link_subtype);
+            if (type::are_equal(rhs_sub_nc, lnk_sub_nc)) return true;
+            auto src_st = std::dynamic_pointer_cast<struct_type>(rhs_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(lnk_sub_nc);
+            if (!src_st || !tgt_st || !src_st->get_struct() || !tgt_st->get_struct()) return false;
+            // Static upcast: rhs points to Derived, link points to Base
+            if (src_st->get_struct()->is_derived_from(tgt_st->get_struct())) return true;
+            // Dynamic downcast: rhs points to Base, link points to Derived (klass/interface only)
+            if (tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
+                tgt_st->get_struct()->has_rtti() &&
+                std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr) return true;
+            return false;
+        };
+        // If RHS is an indirection compatible (same or upcast) with link_subtype: REBIND
+        if (is_rebind_compatible()) {
+            // Rebind: check const compatibility (const T~ ← T~ is OK; T~ ← const T~ is not)
+            if (type::is_const(rhs_effective->get_subtype()) && !type::is_const(link_subtype)) {
+                throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_ARG_TYPE_MISMATCH), expr.first_lexeme(),
+                    "Cannot rebind a link-to-mutable ('{}') from a link-to-const ('{}'): "
+                    "this would allow modification of a const object",
+                    {target_type ? target_type->to_string() : "?",
+                     rhs_type ? rhs_type->to_string() : "?"});
+            }
+            // Rebind: load the source address and store into the link alloca.
+            // If source is nullable, warn — null-check at IR level.
+            if (type::is_nullable_indirection(rhs_effective)) {
+                auto diag = k::log::diagnostic::make_warning(static_cast<unsigned int>(k::diag::operator_diag::WARN_IMPLICIT_LOSSY_CAST),
+                    "Rebinding a link from a nullable indirection (type '{}'): "
+                    "a runtime null-check will be inserted",
+                    {rhs_type ? rhs_type->to_string() : "?"});
+                logger_relay::report(diag);
+            }
+            // Unwrap the ref wrapper from rhs if needed
+            if (type::is_reference(rhs_type)) {
+                right = load_value_expression::make_shared(right);
+                rhs_type = rhs_effective;
+                right->set_type(rhs_type);
+                expr.assign_right(right);
+            }
+            // Determine whether to use static upcast or dynamic downcast
+            {
+                auto rhs_sub_nc = type::remove_const(right->get_type()->get_subtype());
+                auto lnk_sub_nc = type::remove_const(link_subtype);
+                if (!type::are_equal(rhs_sub_nc, lnk_sub_nc)) {
+                    auto src_st = std::dynamic_pointer_cast<struct_type>(rhs_sub_nc);
+                    auto tgt_st = std::dynamic_pointer_cast<struct_type>(lnk_sub_nc);
+                    bool is_static_upcast = src_st && tgt_st &&
+                        src_st->get_struct() && tgt_st->get_struct() &&
+                        src_st->get_struct()->is_derived_from(tgt_st->get_struct());
+                    if (is_static_upcast) {
+                        auto upcast = cast_expression::make_shared(right, target_type);
+                        upcast->set_type(target_type);
+                        expr.assign_right(upcast);
+                    } else {
+                        // Dynamic downcast — lien is non-null, so fatal on null result
+                        auto dc = cast_expression::make_shared(right, target_type, /*null_is_fatal=*/true);
+                        expr.assign_right(dc);
+                    }
+                }
+            }
+            // The assignment stores a new address into the link alloca.
+            expr.set_type(ref_target_type);
+            return;
+        }
+        // Otherwise: transparent reference — assignment to the pointed object.
+        left = load_value_expression::make_shared(left);
+        left->set_type(target_type);
+        auto ref_to_target = link_subtype->get_reference();
+        left->set_type(ref_to_target);
+        expr.assign_left(left);
+        target_type = link_subtype;
+        ref_target_type = ref_to_target;
+    } else if (type::is_view(target_type)) {
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_LOGICAL_NOT_BOOL), expr.first_lexeme(),
+            "Cannot assign to a view indirection (type '{}'): "
+            "a view ('?') is immutable after initialisation",
+            {target_type ? target_type->to_string() : "?"});
+    }
+
+    auto source_type = right->get_type();
+
+    // Unwrap ref<link/ptr/pin> for source-side checks
+    auto effective_source_type = source_type;
+    if (type::is_reference(source_type)) {
+        auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+        if (type::is_link(inner) || type::is_pointer(inner) || type::is_view(inner)) {
+            effective_source_type = inner;
+        }
+    }
+
+    if(type::is_pointer(target_type)) {
+        // Null literal: always compatible with any pointer type.
+        if(type::is_null(effective_source_type) || type::is_null(source_type)) {
+            expr.set_type(ref_target_type);
+            return;
+        }
+        if(type::is_pointer(effective_source_type) || type::is_link(effective_source_type)
+           || type::is_view(effective_source_type)) {
+            auto src_sub = effective_source_type->get_subtype();
+            auto tgt_sub = target_type->get_subtype();
+            // Strip const from both sides for structural comparison
+            auto src_sub_nc = type::remove_const(src_sub);
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (src_sub_nc != tgt_sub_nc) {
+                // Check static upcast: ptr<Derived>→ptr<Base>
+                auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                bool is_static_upcast = src_st && tgt_st &&
+                                 src_st->get_struct() && tgt_st->get_struct() &&
+                                 src_st->get_struct()->is_derived_from(tgt_st->get_struct());
+                bool is_dynamic_downcast = !is_static_upcast && src_st && tgt_st &&
+                                 src_st->get_struct() && tgt_st->get_struct() &&
+                                 tgt_st->get_struct()->has_rtti();
+                                 std::dynamic_pointer_cast<klass>(tgt_st->get_struct()) != nullptr;
+                if (!is_static_upcast && !is_dynamic_downcast) {
+                    throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ASSIGN_TO_CONST), expr.first_lexeme(),
+                        "Pointer assignment type mismatch: "
+                        "cannot assign a '{}' to a '{}'; pointer subtypes must match "
+                        "or source must be a derived type of the target",
+                        {source_type ? source_type->to_string() : "?",
+                         target_type ? target_type->to_string() : "?"});
+                }
+                // Forbid const T* → T* (would lose const-ness on pointed object)
+                if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
+                    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_GEN_FUNC_OVERLOAD_AMBIGUOUS), expr.first_lexeme(),
+                        "Cannot assign a pointer-to-const ('{}') to a pointer-to-mutable ('{}'): "
+                        "this would allow modification of a const object through the mutable pointer",
+                        {source_type ? source_type->to_string() : "?",
+                         target_type ? target_type->to_string() : "?"});
+                }
+                // Unwrap ref wrapper if needed
+                if (type::is_reference(source_type)) {
+                    right = load_value_expression::make_shared(right);
+                    source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+                    right->set_type(source_type);
+                    expr.assign_right(right);
+                }
+                if (is_static_upcast) {
+                    auto upcast = cast_expression::make_shared(right, target_type);
+                    upcast->set_type(target_type);
+                    expr.assign_right(upcast);
+                } else {
+                    // Dynamic downcast — ptr can be null, not fatal
+                    auto dc = cast_expression::make_shared(right, target_type, /*null_is_fatal=*/false);
+                    expr.assign_right(dc);
+                }
+                expr.set_type(ref_target_type);
+                return;
+            }
+            // Forbid const T* → T* (would lose const-ness on pointed object)
+            if (type::is_const(src_sub) && !type::is_const(tgt_sub)) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_GEN_FUNC_OVERLOAD_AMBIGUOUS), expr.first_lexeme(),
+                    "Cannot assign a pointer-to-const ('{}') to a pointer-to-mutable ('{}'): "
+                    "this would allow modification of a const object through the mutable pointer",
+                    {source_type ? source_type->to_string() : "?",
+                     target_type ? target_type->to_string() : "?"});
+            }
+            if (type::is_reference(source_type)) {
+                right = load_value_expression::make_shared(right);
+                source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+                right->set_type(source_type);
+                expr.assign_right(right);
+            }
+            expr.set_type(ref_target_type);
+            return;
+        } else {
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_RETURN_TYPE), expr.first_lexeme(),
+                "Pointer assignment requires a pointer or link on the right-hand side: "
+                "cannot assign a value of type '{}' to a pointer of type '{}'",
+                {source_type ? source_type->to_string() : "?",
+                 target_type ? target_type->to_string() : "?"});
+        }
+    } else if (type::is_link(target_type)) {
+        // Direct link rebind (reached after link-to-link case not matched above).
+        if (!type::is_any_indirection(effective_source_type)) {
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_LOGICAL_AND_INCOMPATIBLE), expr.first_lexeme(),
+                "Link assignment requires an indirection on the right-hand side, "
+                "but got type '{}'",
+                {source_type ? source_type->to_string() : "?"});
+        }
+        if (type::is_nullable_indirection(effective_source_type)) {
+            auto diag = k::log::diagnostic::make_warning(static_cast<unsigned int>(k::diag::operator_diag::WARN_IMPLICIT_LOSSY_CAST),
+                "Assigning a nullable indirection (type '{}') to a link: "
+                "a runtime null-check will be inserted",
+                {source_type ? source_type->to_string() : "?"});
+            logger_relay::report(diag);
+        }
+        if (type::is_reference(source_type)) {
+            right = load_value_expression::make_shared(right);
+            source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+            right->set_type(source_type);
+            expr.assign_right(right);
+        }
+        expr.set_type(ref_target_type);
+        return;
+    } else if (type::is_sized_array(target_type)) {
+        // Array = array : element-wise copy (see spec).
+        // Source must be a reference to a sized array of the same element type.
+        auto dest_arr = std::dynamic_pointer_cast<sized_array_type>(target_type);
+        std::shared_ptr<type> src_inner_type = source_type;
+        if (type::is_reference(source_type)) {
+            src_inner_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+        }
+        if (!type::is_sized_array(src_inner_type)) {
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SHIFT_NOT_INT), expr.first_lexeme(),
+                "Array assignment: the right-hand side must be an array of the same element type, "
+                "but '{}' is not a sized array",
+                {source_type ? source_type->to_string() : "?"});
+        }
+        auto src_arr = std::dynamic_pointer_cast<sized_array_type>(src_inner_type);
+        if (!type::are_equal(dest_arr->get_subtype(), src_arr->get_subtype())) {
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SHIFT_INCOMPATIBLE), expr.first_lexeme(),
+                "Array assignment: element type mismatch — cannot copy from '{}' to '{}'",
+                {source_type ? source_type->to_string() : "?",
+                 target_type ? target_type->to_string() : "?"});
+        }
+        // Type of the assignment expression is ref<dest array>
+        expr.set_type(ref_target_type);
+        // Ensure the source is referenced (if it isn't already)
+        if (!type::is_reference(source_type)) {
+            right = load_value_expression::make_shared(right);
+            right->set_type(source_type->get_reference());
+            expr.assign_right(right);
+        }
+        return; // code generation handled in visit_simple_assignation_expression
+    } else if (type::is_function_reference(target_type)) {
+        // Assigning a function address (or another frt variable) to a function-pointer variable.
+        // target_type is a function_reference_type; source should be ref<frt> (function symbol)
+        // or frt itself (another variable). The ref wrapper is stripped below if present.
+        //
+        // Check: only pointer (*) frt is rebindable; view (?) and link (+) are immutable.
+        auto frt_target = std::dynamic_pointer_cast<function_reference_type>(target_type);
+        if (frt_target && frt_target->get_ref_kind() != function_reference_type::ref_kind::pointer) {
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_PM_EXPR_BAD_TYPE), expr.first_lexeme(),
+                "Cannot assign to an immutable function reference (type '{}'): "
+                "only pointer (*) function references are rebindable",
+                {target_type ? target_type->to_string() : "?"});
+        }
+        // Unwrap ref<frt> on the source side if needed.
+        // For a direct function symbol (is_function()), impl_gen returns the Function* directly —
+        // no load needed. For a frt variable, impl_gen returns the alloca address — needs a load.
+        if (type::is_reference(source_type)) {
+            auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+            if (type::is_function_reference(inner)) {
+                auto rhs_sym = std::dynamic_pointer_cast<symbol_expression>(right);
+                if (!rhs_sym || !rhs_sym->is_function()) {
+                    // Variable of frt type: load the stored function pointer from the alloca
+                    right = load_value_expression::make_shared(right);
+                    source_type = inner;
+                    right->set_type(source_type);
+                    expr.assign_right(right);
+                }
+                // else: direct function symbol → keep ref<frt>; impl_gen produces Function* directly
+            }
+        }
+        expr.set_type(ref_target_type);
+        return;
+    } else if (type::is_owner(target_type)) {
+        // ── Owner assignment: destroy old object (if any), transfer ownership ─────
+        //   - null literal    → destroy current + set null
+        //   - ref<owner<T>>  → move (load + null source), same or compatible subtype
+        //   - owner<T>       → direct (from new_expression or already an owner value)
+
+        // Detect null literal (both parsed 'null' and programmatic nullptr)
+        bool rhs_is_null = type::is_null(source_type);
+        if (!rhs_is_null) {
+            if (auto ve = std::dynamic_pointer_cast<value_expression>(right)) {
+                if (ve->is_literal() && ve->any_literal().has_value()) {
+                    rhs_is_null = std::holds_alternative<lex::null>(ve->any_literal());
+                } else {
+                    rhs_is_null = std::holds_alternative<std::nullptr_t>(ve->get_value());
+                }
+            }
+        }
+        if (rhs_is_null) {
+            // Assign null: destroy current owned object and store null
+            expr.set_type(ref_target_type);
+            return;
+        }
+
+        if (type::is_reference(source_type)) {
+            auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+            if (type::is_owner(inner)) {
+                // Move: wrap source in owner_move_expression (load + null source alloca)
+                auto own_src_nc = type::remove_const(inner->get_subtype());
+                auto own_tgt_nc = type::remove_const(target_type->get_subtype());
+                auto move = owner_move_expression::make_shared(right);
+                move->set_type(inner);
+                std::shared_ptr<expression> new_right = move;
+                if (!type::are_equal(own_src_nc, own_tgt_nc)) {
+                    // Check upcast: owner<Derived> → owner<Base>
+                    auto src_st = std::dynamic_pointer_cast<struct_type>(own_src_nc);
+                    auto tgt_st = std::dynamic_pointer_cast<struct_type>(own_tgt_nc);
+                    if (!src_st || !tgt_st || !src_st->get_struct() || !tgt_st->get_struct() ||
+                        !src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SUBSCRIPT_OVERLOAD_CONST), expr.first_lexeme(),
+                            "Owner assignment type mismatch: cannot move '{}' into '{}'",
+                            {source_type->to_string(), target_type->to_string()});
+                    }
+                    auto upcast = cast_expression::make_shared(move, target_type);
+                    upcast->set_type(target_type);
+                    new_right = upcast;
+                }
+                expr.assign_right(new_right);
+                expr.set_type(ref_target_type);
+                return;
+            }
+        }
+        if (type::is_owner(source_type)) {
+            // Direct owner value (e.g. from new_expression or already an owner_move_expression)
+            expr.set_type(ref_target_type);
+            return;
+        }
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SUBSCRIPT_OVERLOAD_NOT_FOUND), expr.first_lexeme(),
+            "Owner assignment: right-hand side must be an owner value, "
+            "another owner variable (move), or null; got type '{}'",
+            {source_type ? source_type->to_string() : "?"});
+    } else if(type::is_struct(target_type)) {
+        // ── Struct assignment: try operator overload ──
+        auto nc_target = type::remove_const(target_type);
+        auto st_type = std::dynamic_pointer_cast<struct_type>(nc_target);
+        if (st_type) {
+            auto agg = st_type->get_struct();
+            if (agg) {
+                // Check if the operator is explicitly deleted
+                std::string op_name = get_binary_operator_name(expr);
+                if (!op_name.empty()) {
+                    auto member_funcs = collect_member_operators_from_hierarchy(agg, op_name);
+                    for (auto& f : member_funcs) {
+                        if (f->is_deleted()) {
+                            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SUBSCRIPT_OVERLOAD_BAD_RETURN), expr.first_lexeme(),
+                                "Use of deleted operator '{}' on type '{}': "
+                                "this operator was explicitly deleted with '-> delete'",
+                                {get_operator_symbol(op_name),
+                                 target_type ? target_type->to_string() : "?"});
+                        }
+                    }
+                }
+                bool is_const_left = type::is_const(target_type);
+                auto [op_func, adapted_right] = resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
+                if (op_func) {
+                    // Store the resolved operator function on the expression
+                    expr.set_operator_func(op_func);
+                    // Apply the adapted right operand (implicit cast if needed)
+                    if (adapted_right && adapted_right != right) {
+                        expr.assign_right(adapted_right);
+                    }
+                    // Set the expression type to the return type of the operator function
+                    if (op_func->has_return_type()) {
+                        expr.set_type(op_func->get_return_type());
+                    } else {
+                        expr.set_type(ref_target_type);
+                    }
+                    // Compute dispatch info for virtual calls
+                    if (op_func->is_member()) {
+                        auto di = compute_operator_dispatch_info(op_func, left_type);
+                        expr.set_operator_dispatch_info(std::move(di));
+                    } else {
+                        virtual_dispatch_info di;
+                        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                        expr.set_operator_dispatch_info(std::move(di));
+                    }
+                    return;
+                }
+            }
+        }
+        // No operator overload found — fall through to default struct assignment (memcpy/store).
+        expr.set_type(ref_target_type);
+        // If source type is reference, deref it
+        if(type::is_reference(source_type)) {
+            right = load_value_expression::make_shared(right);
+            source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+            right->set_type(source_type);
+            expr.assign_right(right);
+        }
+        return;
+    } else if(!type::is_primitive(target_type)) {
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_PARAMS), expr.first_lexeme(),
+            "Assignment to a non-primitive, non-pointer type is not yet supported: "
+            "the target has type '{}'; only assignments to primitive types, pointers and arrays are supported",
+            {target_type ? target_type->to_string() : "?"});
+    } else if(type::is_prim_bool(target_type)) {
+        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH), expr.first_lexeme(),
+            "Direct arithmetic assignment to a boolean variable is not supported: "
+            "use a comparison or logical expression to produce a boolean value for '{}'",
+            {target_type ? target_type->to_string() : "?"});
+    }
+
+    // Type of an assignation is a reference
+    expr.set_type(ref_target_type);
+
+    // Step 2: Validate that the left operand is assignable (reference, not const)
+    // If source type is reference, deref it
+    if(type::is_reference(source_type)) {
+        // Source type must be de-referenced
+        right = load_value_expression::make_shared(right);
+        source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
+        right->set_type(source_type);
+        expr.assign_right(right);
+    }
+
+    // Step 3: For struct types: check for operator= overload or direct copy
+    // Step 6: For primitives: adapt right operand type to match left
+    // TODO Promote to largest target_type instead to align to left operand.
+    auto cast = adapt_type(right, target_type);
+    if(!cast) {
+        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_IF_COND_NOT_BOOL), expr.first_lexeme(),
+            "Incompatible types in assignment: "
+            "the right-hand side of type '{}' cannot be implicitly converted to the target type '{}'; "
+            "use an explicit cast if a narrowing conversion is intended",
+            {right->get_type() ? right->get_type()->to_string() : "?",
+             target_type ? target_type->to_string() : "?"});
+    } else if(cast != right) {
+        // Casted, assign casted expression instead of right source.
+        expr.assign_right(cast);
+    } else {
+        // Compatible target_type, no need to cast.
+    }
+}
+
+//
+// Simple assignment expression (=)
+//
+
+/**
+ * Generate LLVM IR for simple assignment (=).
+ *
+ * Steps:
+ *   1. Evaluate left and right operands.
+ *   2. For operator= overload: delegate to generate_binary_operator_overload.
+ *   3. For owner assignment: emit owner_move + null the source.
+ *   4. For struct copy: emit memcpy or copy constructor call.
+ *   5. For primitives/pointers: emit store instruction.
+ */
+void implementation_generator::visit_simple_assignation_expression(simple_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
+    // Step 1: Evaluate left and right operands
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F035), expr.first_lexeme(),
+            "Internal error: assignment expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
+    }
+
+    // Step 2: For operator= overload: delegate to generate_binary_operator_overload
+    // left is a pointer to the storage.
+    // Determine what the target type really is after one level of ref-unwrap.
+    auto expr_left_type = expr.left()->get_type();
+    auto left_ref_type  = std::dynamic_pointer_cast<reference_type>(expr_left_type);
+    auto target_type    = left_ref_type ? left_ref_type->get_subtype() : nullptr;
+
+    // If target is ref-to-ref, unwrap one more level (variable access pattern).
+    if (target_type && type::is_reference(target_type)) {
+        target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
+    }
+
+    // ------------------------------------------------------------------
+    // Array assignment: element-wise copy (spec: partial copy, no resize)
+    // ------------------------------------------------------------------
+    if (target_type && type::is_sized_array(target_type)) {
+        auto dest_arr  = std::dynamic_pointer_cast<sized_array_type>(target_type);
+        auto* struct_llvm    = dest_arr->get_llvm_struct_type();
+        auto* data_arr_llvm  = dest_arr->get_llvm_data_array_type();
+        auto* elem_llvm      = _context->get_llvm_type(dest_arr->get_subtype());
+        auto  dest_n         = static_cast<uint64_t>(dest_arr->get_size());
+
+        // right is the pointer to the source struct { i32, [N x T] }
+        auto* i32_t = llvm::Type::getInt32Ty(_builder->getContext());
+
+        // Source capacity (runtime value from field 0)
+        llvm::Value* src_size_ptr = _builder->CreateStructGEP(struct_llvm, right,
+            sized_array_type::FIELD_SIZE, "src_sz_ptr");
+        llvm::Value* src_n = _builder->CreateLoad(i32_t, src_size_ptr, "src_n");
+
+        // Data pointers
+        llvm::Value* src_data  = _builder->CreateStructGEP(struct_llvm, right,
+            sized_array_type::FIELD_DATA, "src_data");
+        llvm::Value* dest_data = _builder->CreateStructGEP(struct_llvm, left,
+            sized_array_type::FIELD_DATA, "dst_data");
+
+        // copy_n = min(dest_n, src_n)
+        auto* dest_n_val = llvm::ConstantInt::get(i32_t, dest_n, false);
+        llvm::Value* copy_n = _builder->CreateSelect(
+            _builder->CreateICmpULT(src_n, dest_n_val), src_n, dest_n_val, "copy_n");
+
+        // Emit copy loop
+        auto* fn = _builder->GetInsertBlock()->getParent();
+        auto* pre_bb   = _builder->GetInsertBlock();
+        auto* loop_bb  = llvm::BasicBlock::Create(_builder->getContext(), "arr_asgn_loop", fn);
+        auto* done_bb  = llvm::BasicBlock::Create(_builder->getContext(), "arr_asgn_done", fn);
+
+        _builder->CreateCondBr(
+            _builder->CreateICmpUGT(copy_n, llvm::ConstantInt::get(i32_t, 0, false)),
+            loop_bb, done_bb);
+
+        _builder->SetInsertPoint(loop_bb);
+        auto* idx = _builder->CreatePHI(i32_t, 2, "asgn_idx");
+        idx->addIncoming(llvm::ConstantInt::get(i32_t, 0, false), pre_bb);
+
+        llvm::Value* s = _builder->CreateGEP(data_arr_llvm, src_data,
+            {_builder->getInt32(0), idx}, "s_elem");
+        llvm::Value* d = _builder->CreateGEP(data_arr_llvm, dest_data,
+            {_builder->getInt32(0), idx}, "d_elem");
+        _builder->CreateStore(_builder->CreateLoad(elem_llvm, s, "ev"), d);
+
+        auto* nxt = _builder->CreateAdd(idx, llvm::ConstantInt::get(i32_t, 1), "nxt");
+        idx->addIncoming(nxt, loop_bb);
+        _builder->CreateCondBr(_builder->CreateICmpULT(nxt, copy_n), loop_bb, done_bb);
+
+        _builder->SetInsertPoint(done_bb);
+        _value = left;
+        return;
+    }
+
+    // ------------------------------------------------------------------
+    // Owner assignment: delete old object (if any), store new pointer
+    // ------------------------------------------------------------------
+    if (target_type && type::is_owner(target_type)) {
+        auto& llvm_ctx = _builder->getContext();
+        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+
+        // Step 3: For owner assignment: emit owner_move + null the source
+        // If non-null, destroy + free the existing object (don't null-out, we're about to store the new value)
+        auto own_type = std::dynamic_pointer_cast<owner_type>(target_type);
+        emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+            left, own_type->get_owned_type(), "owner_asgn", /*null_out=*/false);
+
+        // Determine the new pointer value to store:
+        // - right may be null (from null literal → visit_value_expression returns nullptr LLVM val)
+        // - right may be an owner ptr (from owner_move_expression)
+        llvm::Value* new_ptr = right;
+        if (!new_ptr) {
+            // null literal case
+            new_ptr = llvm::ConstantPointerNull::get(ptr_ty);
+        }
+        _builder->CreateStore(new_ptr, left);
+        _value = left;
+        return;
+    }
+
+    // ------------------------------------------------------------------
+    // Scalar / pointer assignment (existing behaviour)
+    // ------------------------------------------------------------------
+
+    // Step 4: For struct copy: emit memcpy or copy constructor call
+    // Link rebind from nullable source: emit null-check before store.
+    // (The resolver emits warning 0x0072 at compile-time; we add the runtime guard here.)
+    if (target_type && type::is_link(target_type)) {
+        // Pierce cast_expression to find the real source nullability
+        auto rhs_model = expr.right();
+        auto rhs_type = rhs_model ? rhs_model->get_type() : nullptr;
+        // Also check original type through a cast (upcast Derived→Base wraps nullable ptr)
+        if (auto cast_e = std::dynamic_pointer_cast<cast_expression>(rhs_model)) {
+            auto inner_type = cast_e->sub_expr()->get_type();
+            if (inner_type && type::is_nullable_indirection(inner_type)) {
+                rhs_type = inner_type;
+            }
+        }
+        if (rhs_type && type::is_nullable_indirection(rhs_type)) {
+            auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_assignation");
+            // In an if-condition, soft-fail to _null_failure_bb instead of fatal trap.
+            emit_null_check(right, fatal, "link_rebind", _null_failure_bb);
+        }
+    }
+
+    // Step 5: For primitives/pointers: emit store instruction
+    _value = right;
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
+
+}
+
+//
+// Arithmetic assignation expression
+//
+
+void symbol_resolver::visit_arithmetic_assignation_expression(arithmetic_assignation_expression &expr) {
+    visit_assignation_expression(expr);
+}
+
+void type_reference_resolver::visit_arithmetic_assignation_expression(arithmetic_assignation_expression &expr) {
+    visit_assignation_expression(expr);
+
+    // If an operator overload was resolved, no further checks needed.
+    if (expr.has_operator_overload()) return;
+
+    auto left = expr.left();
+    auto right = expr.right();
+
+    auto left_type = left->get_type();
+    auto ref_target_type = std::dynamic_pointer_cast<reference_type>(left_type);
+    auto target_type = ref_target_type->get_subtype();
+    if(type::is_pointer(target_type)) {
+        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_FOR_COND_NOT_BOOL), expr.first_lexeme(),
+            "Arithmetic-assignment operators (e.g. '+=', '-=') cannot be applied to pointer types: "
+            "the target has type '{}'; pointer arithmetic is not supported",
+            {target_type ? target_type->to_string() : "?"});
+    }
+}
+
+//
+// Addition assignment expression (+=)
+//
+
+void implementation_generator::visit_addition_assignation_expression(additition_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F036), expr.first_lexeme(),
+            "Internal error: '+=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
+    }
+
+    auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
+    auto left_type = left_ref_type->get_subtype();
+    auto llvm_type = _context->get_llvm_type(left_type);
+
+    auto left_val = _builder->CreateLoad(llvm_type, left);
+    if(type::is_prim_integer(left_type)) {
+        _value = _builder->CreateAdd(left_val, right);
+    } else if(type::is_prim_float(left_type)) {
+        _value = _builder->CreateFAdd(left_val, right);
+    } else {
+        // TODO: Support other types
+    }
+
+    // Store the value, return the left ref
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
+}
+
+//
+// Substraction assignment expression (-=)
+//
+
+void implementation_generator::visit_substraction_assignation_expression(substraction_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F037), expr.first_lexeme(),
+            "Internal error: '-=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
+    }
+
+    auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
+    auto left_type = left_ref_type->get_subtype();
+    auto llvm_type = _context->get_llvm_type(left_type);
+
+    auto left_val = _builder->CreateLoad(llvm_type, left);
+    if(type::is_prim_integer(left_type)) {
+        _value = _builder->CreateSub(left_val, right);
+    } else if(type::is_prim_float(left_type)) {
+        _value = _builder->CreateFSub(left_val, right);
+    } else {
+        // TODO: Support other types
+    }
+
+    // Store the value, return the left ref
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
+}
+
+//
+// Multiplication assignment expression (*=)
+//
+
+void implementation_generator::visit_multiplication_assignation_expression(multiplication_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F038), expr.first_lexeme(),
+            "Internal error: '*=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
+    }
+
+    auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
+    auto left_type = left_ref_type->get_subtype();
+    auto llvm_type = _context->get_llvm_type(left_type);
+
+    auto left_val = _builder->CreateLoad(llvm_type, left);
+    if(type::is_prim_integer(left_type)) {
+        _value = _builder->CreateMul(left_val, right);
+    } else if(type::is_prim_float(left_type)) {
+        _value = _builder->CreateFMul(left_val, right);
+    } else {
+        // TODO: Support other types
+    }
+
+    // Store the value, return the left ref
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
+}
+
+//
+// Division assignment expression (/=)
+//
+
+void implementation_generator::visit_division_assignation_expression(division_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F039), expr.first_lexeme(),
+            "Internal error: '/=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
+    }
+
+    auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
+    auto llvm_type = _context->get_llvm_type(left_type);
+
+    auto left_val = _builder->CreateLoad(llvm_type, left);
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
+        if(prim->is_integer()) {
+            if(prim->is_unsigned()) {
+                _value = _builder->CreateUDiv(left_val, right);
+            } else {
+                _value = _builder->CreateSDiv(left_val, right);
+            }
+        } else if(prim->is_float()) {
+            _value = _builder->CreateFDiv(left_val, right);
+        }
+    } else {
+        // TODO: Support other types
+    }
+
+    // Store the value, return the left ref
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
+}
+
+//
+// Modulo assignment expression (%=)
+//
+
+void implementation_generator::visit_modulo_assignation_expression(modulo_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03A), expr.first_lexeme(),
+            "Internal error: '%=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
+    }
+
+    auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
+    auto llvm_type = _context->get_llvm_type(left_type);
+
+    auto left_val = _builder->CreateLoad(llvm_type, left);
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
+        if(prim->is_integer()) {
+            if(prim->is_unsigned()) {
+                _value = _builder->CreateURem(left_val, right);
+            } else {
+                _value = _builder->CreateSRem(left_val, right);
+            }
+        } else if(prim->is_float()) {
+            _value = _builder->CreateFRem(left_val, right);
+        }
+    } else {
+        // TODO: Support other types
+    }
+
+    // Store the value, return the left ref
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
+}
+
+//
+// Bitwise and assignment expression
+//
+
+void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03B), expr.first_lexeme(),
+            "Internal error: '&=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
+    }
+
+    auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
+    auto llvm_type = _context->get_llvm_type(left_type);
+
+    auto left_val = _builder->CreateLoad(llvm_type, left);
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
+        if(prim->is_integer()) {
+            _value = _builder->CreateAnd(left_val, right);
+        } else if(prim->is_float()) {
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ADD_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
+                "Bitwise AND-assignment ('&=') cannot be applied to floating-point values: "
+                "bitwise operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
+        }
+    } else {
+        // TODO: Support other types
+    }
+
+    // Store the value, return the left ref
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
+}
+
+//
+// Bitwise or assignment expression
+//
+
+void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03C), expr.first_lexeme(),
+            "Internal error: '|=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
+    }
+
+    auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
+    auto llvm_type = _context->get_llvm_type(left_type);
+
+    auto left_val = _builder->CreateLoad(llvm_type, left);
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
+        if(prim->is_integer()) {
+            _value = _builder->CreateOr(left_val, right);
+        } else if(prim->is_float()) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_NOT_SUPPORTED), expr.first_lexeme(),
+                "Bitwise OR-assignment ('|=') cannot be applied to floating-point values: "
+                "bitwise operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
+        }
+    } else {
+        // TODO: Support other types
+    }
+
+    // Store the value, return the left ref
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
+}
+
+//
+// Bitwise xor assignment expression
+//
+
+void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03D), expr.first_lexeme(),
+            "Internal error: '^=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
+    }
+
+    auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
+    auto llvm_type = _context->get_llvm_type(left_type);
+
+    auto left_val = _builder->CreateLoad(llvm_type, left);
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
+        if(prim->is_integer()) {
+            _value = _builder->CreateXor(left_val, right);
+        } else if(prim->is_float()) {
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MUL_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
+                "Bitwise XOR-assignment ('^=') cannot be applied to floating-point values: "
+                "bitwise operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
+        }
+    } else {
+        // TODO: Support other types
+    }
+
+    // Store the value, return the left ref
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
+}
+
+//
+// Left shift assignment expression
+//
+
+void implementation_generator::visit_left_shift_assignation_expression(left_shift_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03E), expr.first_lexeme(),
+            "Internal error: '<<=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
+    }
+
+    auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
+    auto llvm_type = _context->get_llvm_type(left_type);
+
+    auto left_val = _builder->CreateLoad(llvm_type, left);
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
+        if(prim->is_integer()) {
+            // TODO may it poison when overflow ?
+            _value = _builder->CreateShl(left_val, right);
+        } else if(prim->is_float()) {
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SUB_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
+                "Left shift-assignment ('<<=') cannot be applied to floating-point values: "
+                "shift operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
+        }
+    } else {
+        // TODO: Support other types
+    }
+
+    // Store the value, return the left ref
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
+}
+
+//
+// Right shift assignment expression
+//
+
+void implementation_generator::visit_right_shift_assignation_expression(right_shift_assignation_expression& expr) {
+    if (generate_binary_operator_overload(expr)) return;
+
+    auto [left, right] = process_binary_expression(expr);
+    if(!left || !right) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03F), expr.first_lexeme(),
+            "Internal error: '>>=' expression produced a null left or right LLVM value; "
+            "this indicates a code-generation bug in an operand expression");
+    }
+
+    auto left_ref_type = std::dynamic_pointer_cast<reference_type>(expr.left()->get_type());
+    auto left_type = type::remove_const(left_ref_type->get_subtype());
+    auto llvm_type = _context->get_llvm_type(left_type);
+
+    auto left_val = _builder->CreateLoad(llvm_type, left);
+    if(auto prim = std::dynamic_pointer_cast<primitive_type>(left_type)) {
+        if(prim->is_integer()) {
+            if(prim->is_unsigned()) {
+                // TODO may it poison when overflow ?
+                _value = _builder->CreateLShr(left_val, right);
+            } else {
+                // TODO may it poison when overflow ?
+                _value = _builder->CreateAShr(left_val, right);
+            }
+        } else if(prim->is_float()) {
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_DIV_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
+                "Right shift-assignment ('>>=') cannot be applied to floating-point values: "
+                "shift operations are only defined for integer types; "
+                "the operand has type '{}'",
+                {prim->to_string()});
+        }
+    } else {
+        // TODO: Support other types
+    }
+
+    // Store the value, return the left ref
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
+}
+
+//
+// Arithmetic unary expression
+//
+
+} // namespace k::model::gen

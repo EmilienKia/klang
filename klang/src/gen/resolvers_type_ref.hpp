@@ -1,0 +1,492 @@
+/*
+ * K Language compiler
+ *
+ * Copyright 2023-2026 Emilien Kia
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef KLANG_RESOLVERS_TYPE_REF_HPP
+#define KLANG_RESOLVERS_TYPE_REF_HPP
+
+#include "resolvers_common.hpp"
+
+namespace k::model::gen {
+
+/**
+ * Unit type resolver
+ * This helper class will resolve all types usages, and particularly set types for expressions and variables.
+ * It must be run after symbol resolution and before any code generation phase.
+ */
+class type_reference_resolver : public default_model_visitor, protected k::log::logger_relay {
+protected:
+
+    std::shared_ptr<context> _context;
+
+    unit& _unit;
+
+    /** Stack of functions currently being visited (for visibility access-site context). */
+    std::vector<std::shared_ptr<function>> _function_stack;
+
+    /**
+     * Keeps function_reference_type objects alive for the duration of type resolution.
+     * A frt created in visit_symbol_expression is a temporary shared_ptr; the only
+     * strong reference to it is through fn_ref_type->reference (the cached ref_type).
+     * If fn_ref_type goes out of scope, the reference_type's weak_ptr<subtype> expires
+     * and any later is_resolved() call crashes.  Storing the frt here prevents that.
+     */
+    std::vector<std::shared_ptr<type>> _ephemeral_types;
+
+    /**
+     * Pending expression replacement — set by visit_function_invocation_expression
+     * when a function call is rewritten into a temporary_construction_expression.
+     * Callers that visit child expressions must check this after each accept() and
+     * replace the child if non-null.
+     */
+    std::shared_ptr<expression> _replacement_expr;
+
+public:
+
+    type_reference_resolver(k::log::logger& logger, std::shared_ptr<context> context, unit& unit) :
+    k::log::logger_relay(logger),
+    _context(context),
+    _unit(unit)  {
+    }
+
+    void resolve();
+
+protected:
+
+    /**
+     * Resolve a struct type by qualified name, searching from elem upward.
+     * Handles simple names (e.g. "rect"), qualified names (e.g. "shapes::rect"),
+     * and root-prefixed names (e.g. "::shapes::rect" or "::module::shapes::rect").
+     * All resolution logic stays in the resolver, not in the model.
+     */
+    std::shared_ptr<type> resolve_type_by_name(const k::name& type_name, const element& context_elem);
+
+    /** Resolve a struct type from a given element, without climbing to parents. */
+    static std::shared_ptr<aggregate> resolve_struct_from(const element& elem, const k::name& qualified_name);
+
+    /** Resolve a struct type from the root namespace of the unit. */
+    std::shared_ptr<type> resolve_type_from_root(const k::name& name_without_prefix);
+
+    /**
+     * Resolve an unresolved_function_ref_type to a concrete function_reference_type
+     * or member_function_reference_type.  The context_elem is used for scope lookup.
+     */
+    std::shared_ptr<type> resolve_function_ref_type(
+        const std::shared_ptr<unresolved_function_ref_type>& ufrt,
+        const element& context_elem);
+
+    /**
+     * Resolve an unresolved_type to a concrete type using the standard 4-step
+     * fallback chain:  resolve_type_by_name → from_string → imported_aggregate → imported_enum.
+     *
+     * If the inner type is already resolved, delegates to context::resolve_type.
+     *
+     * @param inner          The type to resolve (may be an unresolved_type or already resolved).
+     * @param scope_elem     The element used as starting scope for name-based lookups (may be nullptr).
+     * @return The resolved type, or nullptr/unresolved if resolution failed.
+     */
+    std::shared_ptr<type> resolve_inner_type(
+        const std::shared_ptr<type>& inner,
+        const element* scope_elem);
+
+    /**
+     * Try to resolve an unresolved_type that carries AST template arguments
+     * (e.g. Box<int>) by finding the template definition, converting the AST
+     * args to model template_argument values, and triggering instantiation.
+     *
+     * Returns the struct_type of the concrete instantiated aggregate, or
+     * nullptr if the base name is not a known template.
+     */
+    std::shared_ptr<type> try_instantiate_template_type(
+        const std::shared_ptr<unresolved_type>& unres,
+        const element& context_elem);
+
+    /**
+     * Strip the spurious reference(array(T)) → array(T) layer that resolve_type
+     * adds for unsized arrays.  Indirection wrappers (pointer, link, view, owner)
+     * should NOT contain the reference layer.
+     */
+    static std::shared_ptr<type> strip_ref_array(const std::shared_ptr<type>& t);
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        auto diag = k::log::diagnostic::make_error(code, message, args);
+        logger_relay::report(diag);
+        throw resolution_error(std::move(diag));
+    }
+
+    [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
+        auto diag = k::log::diagnostic::make_error(code, message, args);
+        if (lexeme) diag.at(*lexeme);
+        logger_relay::report(diag);
+        throw resolution_error(std::move(diag));
+    }
+
+
+    void visit_unit(unit&) override;
+
+    void visit_namespace(ns& ) override;
+    void visit_aggregate(aggregate&) override;
+    void visit_klass(klass&) override;
+    void visit_interface(interface&) override;
+    void visit_annotation_type(annotation_type&) override;
+    void visit_variable_definition(variable_definition&);
+
+    /**
+     * Helper context passed to the per-type-category variable validation helpers.
+     * Bundles the common state needed by all validation paths so that each helper
+     * has a clean, uniform signature.
+     */
+    struct var_init_context {
+        variable_definition& var;
+        const lex::opt_any_lexeme& var_lexeme;
+        std::shared_ptr<type> var_type;
+        std::shared_ptr<expression> init_expr_base;
+        std::shared_ptr<constructor_invocation_expression> init_expr;
+
+        /** Get the single init argument regardless of storage form. */
+        std::shared_ptr<expression> get_single_init_arg() const;
+        /** True if there is a single init argument. */
+        bool has_single_init_arg() const;
+        /** Assign a new expression as the single init argument. */
+        void assign_single_init_arg(std::shared_ptr<expression> new_arg);
+    };
+
+    /** Resolve the unresolved type of a variable (phase 1 of visit_variable_definition). */
+    void resolve_variable_type(variable_definition& var, const lex::opt_any_lexeme& var_lexeme);
+
+    /** Validate init expression for a primitive-typed variable. */
+    void validate_primitive_variable(var_init_context& ctx);
+
+    /** Validate init expression for a struct-typed variable (constructor resolution). */
+    void validate_struct_variable(var_init_context& ctx);
+
+    /** Validate init expression for a reference-typed variable. */
+    void validate_reference_variable(var_init_context& ctx);
+
+    /** Validate init expression for a pointer-typed variable. */
+    void validate_pointer_variable(var_init_context& ctx);
+
+    /** Validate init expression for a link-typed variable. */
+    void validate_link_variable(var_init_context& ctx);
+
+    /** Validate init expression for a view-typed variable. */
+    void validate_view_variable(var_init_context& ctx);
+
+    /** Validate init expression for an owner-typed variable. */
+    void validate_owner_variable(var_init_context& ctx);
+
+    /** Validate init expression for a sized-array-typed variable. */
+    void validate_sized_array_variable(var_init_context& ctx);
+
+    /**
+     * Extract the pointed/linked/viewed/owned sub-type from any indirection type,
+     * after stripping a reference wrapper.  Returns nullptr if the type is not an
+     * indirection or owner.
+     */
+    static std::shared_ptr<type> extract_indirection_subtype(const std::shared_ptr<type>& arg_type);
+
+    /**
+     * Check whether two types (after const-stripping) are compatible considering
+     * unsized array element const widening (e.g. array<T> matches array<const<T>>).
+     */
+    static bool types_match_array_const_compatible(const std::shared_ptr<type>& src_nc, const std::shared_ptr<type>& tgt_nc);
+
+    /**
+     * Check inheritance-based type compatibility and insert cast expressions
+     * for upcast/downcast when necessary.
+     * @return true if types are compatible (equal or cast inserted), false if incompatible.
+     */
+    bool check_and_insert_inheritance_cast(
+        const std::shared_ptr<type>& src_sub_nc,
+        const std::shared_ptr<type>& tgt_sub_nc,
+        const std::shared_ptr<expression>& arg,
+        const std::shared_ptr<type>& target_type,
+        std::function<void(std::shared_ptr<expression>)> assign_arg,
+        bool null_is_fatal);
+
+    /**
+     * Inject vptr fields into the LLVM struct type for a polymorphic class.
+     * Records section first-slot indices in the vtable_layout.
+     * Called after the LLVM struct type has been built by visit_klass.
+     */
+    void inject_vptr_fields(klass& st);
+    void visit_member_variable_definition(member_variable_definition&) override;
+    void visit_global_variable_definition(global_variable_definition&) override;
+    void visit_parameter(parameter &) override;
+    void visit_function(function&) override;
+    void visit_constructor(constructor &) override;
+    void visit_destructor(destructor&) override;
+    void visit_static_constructor(static_constructor&) override;
+    void visit_static_destructor(static_destructor&) override;
+    void visit_global_constructor_function(global_constructor_function&) override;
+    void visit_global_destructor_function(global_destructor_function&) override;
+    void visit_global_main_function(global_main_function&) override;
+
+    /**
+     * Check if a function is accessible from the given access-site element.
+     * For namespace-level functions: public = open, protected = same module, private = same namespace.
+     * For struct member functions: public = open, protected/private = member functions of the same struct only.
+     * Throws a resolution_error (code 0x002E for namespace-level, 0x002F for struct-level) if not accessible.
+     * @param func         The function being accessed.
+     * @param access_site  The element from which the access occurs.
+     */
+    void check_function_visibility(const function& func, const element& access_site);
+
+    /**
+     * Check if a constructor is accessible from the given access-site element.
+     * Throws a resolution_error (code 0x0030) if not accessible.
+     */
+    void check_constructor_visibility(const constructor& ctor, const element& access_site);
+
+    void visit_block(block&) override;
+    void visit_return_statement(return_statement&) override;
+    void visit_break_statement(break_statement&) override;
+    void visit_continue_statement(continue_statement&) override;
+    void visit_if_else_statement(if_else_statement&) override;
+    void visit_while_statement(while_statement&) override;
+    void visit_for_statement(for_statement&) override;
+    void visit_expression_statement(expression_statement&) override;
+    void visit_variable_statement(variable_statement&) override;
+
+    void visit_value_expression(value_expression&) override;
+    void visit_symbol_expression(symbol_expression&) override;
+    void visit_unary_expression(unary_expression&) override;
+    void visit_binary_expression(binary_expression&) override;
+
+    void process_arithmetic(binary_expression&);
+
+    void visit_arithmetic_binary_expression(arithmetic_binary_expression &expression) override;
+    void visit_assignation_expression(assignation_expression &expression) override;
+    void visit_arithmetic_assignation_expression(arithmetic_assignation_expression &expression) override;
+
+    void visit_arithmetic_unary_expression(arithmetic_unary_expression&) override;
+
+    void visit_prefix_increment_expression(prefix_increment_expression&) override;
+    void visit_prefix_decrement_expression(prefix_decrement_expression&) override;
+    void visit_postfix_increment_expression(postfix_increment_expression&) override;
+    void visit_postfix_decrement_expression(postfix_decrement_expression&) override;
+
+    void visit_logical_binary_expression(logical_binary_expression&) override;
+    void visit_logical_not_expression(logical_not_expression&) override;
+
+    void visit_address_of_expression(address_of_expression&) override;
+    void visit_drain_expression(drain_expression&) override;
+    void visit_load_value_expression(load_value_expression&) override;
+    void visit_dereference_expression(dereference_expression&) override;
+//    void visit_member_of_expression(member_of_expression&) override;
+    void visit_member_of_object_expression(member_of_object_expression&) override;
+    void visit_member_of_pointer_expression(member_of_pointer_expression&) override;
+    void visit_pm_expression(pm_expression&) override;
+
+    void visit_comparison_expression(comparison_expression&) override;
+
+    void visit_subscript_expression(subscript_expression&) override;
+    void visit_function_invocation_expression(function_invocation_expression &) override;
+    void visit_constructor_invocation_expression(constructor_invocation_expression &) override;
+    void visit_temporary_construction_expression(temporary_construction_expression &) override;
+    void visit_new_expression(new_expression &) override;
+    void visit_delete_expression(delete_expression &) override;
+    void visit_owner_move_expression(owner_move_expression &) override;
+    void visit_array_init_expression(array_init_expression &) override;
+    void visit_designated_struct_init_expression(designated_struct_init_expression &) override;
+
+    void visit_cast_expression(cast_expression&) override;
+
+    /**
+     * Cast weight values, representing the cost of an implicit conversion.
+     * NONE      (0)          : no conversion needed, types are identical.
+     * REF_CONV  (1)          : reference/pointer load (ref -> value).
+     * WIDENING  (2)          : lossless primitive widening (e.g. short -> int).
+     * NARROWING (3)          : lossy primitive narrowing (e.g. int -> short, possible overflow).
+     * CONSTRUCT (4)          : construction of an intermediate object via a 1-arg constructor.
+     * IMPOSSIBLE(UINT32_MAX) : conversion is not possible.
+     */
+    enum cast_weight : unsigned int {
+        CAST_NONE      = 0,
+        CAST_REF_CONV  = 1,
+        CAST_WIDENING  = 2,
+        CAST_NARROWING = 3,
+        CAST_CONSTRUCT = 4,
+        CAST_IMPOSSIBLE = std::numeric_limits<unsigned int>::max()
+    };
+
+    /**
+     * Compute the cost (weight) of an implicit conversion from expr's type to target type,
+     * without actually building any new expression node.
+     * @param expr   Source expression (must have a resolved type).
+     * @param type   Target type (must be resolved).
+     * @return The cast_weight value for this conversion.
+     */
+    cast_weight compute_cast_weight(const std::shared_ptr<expression>& expr, const std::shared_ptr<type>& type);
+
+    /**
+     * Choose the best-matching constructor among a list of candidates given a set of arguments.
+     * Scoring: score of a candidate = max cast_weight over all its parameters.
+     * If no candidate has the right parameter count, emits a specific message.
+     * If all arity-matching candidates have at least one impossible cast, lists them with details.
+     * If multiple candidates share the same (lowest) score, emits an ambiguity error.
+     * @param constructors  List of constructor candidates.
+     * @param args          Argument expressions.
+     * @return {best_constructor, adapted_args} or {nullptr, {}} on failure.
+     */
+    std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::shared_ptr<expression>>/*adapted_args*/>
+    get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args);
+
+
+    /**
+     * Result of function overload resolution.
+     * When 'is_unified_call' is true, the function is a free function called via unified call syntax,
+     * and 'this_expr' contains the object expression that will be passed as the first argument.
+     */
+    struct FunctionCandidate {
+        std::shared_ptr<function> func;
+        std::vector<std::shared_ptr<expression>> adapted_args;
+        /** If true, the match is via unified-call syntax (free fn with first param = ref to struct). */
+        bool is_unified_call = false;
+        /** The object expression used as 'this' when is_unified_call is true. */
+        std::shared_ptr<expression> this_expr;
+    };
+
+    /**
+     * Choose the best-matching function among a list of candidates given a set of arguments.
+     * Supports both regular calls and unified-call syntax.
+     * @param candidates     List of function candidates (member or free).
+     * @param args           For Mode A/C: explicit args after 'this'. For Mode B: ignored if direct_args set.
+     * @param this_expr      Optional object expression for member (Mode A) / unified (Mode C) calls.
+     * @param direct_args    Optional full args for Mode B (free/static direct call). If null, uses args.
+     *                       Pass full args (including obj) here to enable direct matching of free functions
+     *                       alongside member/unified matching in the same scorer invocation.
+     * @return FunctionCandidate with the best match, or {nullptr,...} on failure.
+     */
+    FunctionCandidate
+    get_best_matching_function(const std::vector<std::shared_ptr<function>>& candidates,
+                               const std::vector<std::shared_ptr<expression>>& args,
+                               const std::shared_ptr<expression>& this_expr = nullptr,
+                               const std::vector<std::shared_ptr<expression>>* direct_args = nullptr);
+
+    /**
+     * Check all groups of same-named free functions in a function_holder for arity-overlap
+     * collisions caused by default-parameter values.
+     * Reports an error for every colliding pair found.
+     */
+    void check_overload_collisions(function_holder& fh);
+
+    /**
+     * Check all constructor overloads of an aggregate for arity-overlap collisions caused
+     * by default-parameter values.
+     * Reports an error for every colliding pair found.
+     */
+    void check_constructor_overload_collisions(aggregate& st);
+
+    /**
+     * Adapt a reference expression to load its value.
+     * @param expr Reference expression.
+     * @return The given arg if already not a reference or the newly loaded-value expr if is a reference.
+     */
+    std::shared_ptr<expression> adapt_reference_load_value(const std::shared_ptr<expression>& expr);
+
+    /**
+     * Adapt an expression to ensure it maps to a given type, by casting it.
+     * @param expr Expression to map.
+     * @param type Type to target
+     * @return The given arg expression if already compatible, the new wrapping casting expr if mapping, nullptr if not possible.
+     */
+    std::shared_ptr<expression> adapt_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type);
+
+    // ── adapt_type per-category helpers (defined in gen_adapt_type.cpp) ──────
+
+    /** Adapt function reference types (frt → frt, ref<frt> → frt, etc.). Returns nullptr if not a frt case. */
+    std::shared_ptr<expression> adapt_function_ref_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is a pointer type (ptr<T> → ptr/lnk/ref). */
+    std::shared_ptr<expression> adapt_from_pointer(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is a link type (lnk<T> → lnk/ptr/view/ref). */
+    std::shared_ptr<expression> adapt_from_link(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is a view type (view<T> → view/ptr/ref). */
+    std::shared_ptr<expression> adapt_from_view(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is an owner type (owner<T> → owner/ptr/lnk/view/ref). */
+    std::shared_ptr<expression> adapt_from_owner(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is a drain type (drain<T> → drain/ref/lnk/view/ptr/value). */
+    std::shared_ptr<expression> adapt_from_drain(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt ref<owner<T>> to owner/ptr/lnk/view/ref (owner borrow and move patterns). */
+    std::shared_ptr<expression> adapt_from_ref_owner(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc);
+    /** Adapt when source is a reference type (ref<T> → ref/value/lnk/view/owner + loads and casts). */
+    std::shared_ptr<expression> adapt_from_reference(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_src, const std::shared_ptr<type>& type_nc, const std::shared_ptr<type>& type_orig);
+    /** Adapt enum conversions (enum ↔ enum, enum ↔ primitive). Returns nullptr if not an enum case. */
+    std::shared_ptr<expression> adapt_enum_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_nc);
+    /** Adapt primitive-to-primitive or struct identity. Terminal fallback. */
+    std::shared_ptr<expression> adapt_primitive_or_struct_type(std::shared_ptr<expression> expr, const std::shared_ptr<type>& type_nc);
+
+    /**
+     * Resolve a binary operator overload for an aggregate type, using cast-weight scoring
+     * on the right operand to select the best match among multiple candidates.
+     * Member operators are preferred over non-member when scores are equal.
+     * For non-member operators, both left and right parameter compatibility are validated.
+     * When is_const_this is true, only const member operators are considered.
+     * @param expr          The binary expression node.
+     * @param left_agg      The aggregate type of the left operand.
+     * @param left_expr     The left operand expression (used for scope lookup and non-member left param scoring).
+     * @param right_expr    The right operand expression.
+     * @param is_const_this True if the left operand is a const object (only const member operators are viable).
+     * @return {best_func, adapted_right} or {nullptr, nullptr} if no viable match.
+     */
+    std::pair<std::shared_ptr<function>, std::shared_ptr<expression>>
+    resolve_binary_operator_overload(
+        const binary_expression& expr,
+        const std::shared_ptr<aggregate>& left_agg,
+        const std::shared_ptr<expression>& left_expr,
+        const std::shared_ptr<expression>& right_expr,
+        bool is_const_this = false);
+
+    /**
+     * Resolve a unary operator overload for an aggregate type, using cast-weight scoring
+     * to select the best match among multiple candidates.
+     * Member operators are preferred over non-member when scores are equal.
+     * For non-member operators, the operand parameter compatibility is validated.
+     * When is_const_this is true, only const member operators are considered.
+     * @param expr          The unary expression node.
+     * @param operand_agg   The aggregate type of the operand.
+     * @param operand_expr  The operand expression (used for scope lookup and non-member param scoring).
+     * @param is_const_this True if the operand is a const object (only const member operators are viable).
+     * @return The best matching function, or nullptr if no viable match.
+     */
+    std::shared_ptr<function>
+    resolve_unary_operator_overload(
+        const unary_expression& expr,
+        const std::shared_ptr<aggregate>& operand_agg,
+        const std::shared_ptr<expression>& operand_expr,
+        bool is_const_this = false);
+
+    /**
+     * Resolve a casting operator overload for an aggregate type.
+     * Looks for a member function named "operator_cast_<encoded_type>" matching the
+     * target type of the cast.
+     * @param source_agg    The aggregate type of the source expression.
+     * @param target_type   The target type of the cast.
+     * @param is_const_this True if the source is a const object.
+     * @return The matching casting operator function, or nullptr if no viable match.
+     */
+    std::shared_ptr<function>
+    resolve_cast_operator_overload(
+        const std::shared_ptr<aggregate>& source_agg,
+        const std::shared_ptr<type>& target_type,
+        bool is_const_this = false);
+};
+
+} // namespace k::model::gen
+
+#endif //KLANG_RESOLVERS_TYPE_REF_HPP
+
