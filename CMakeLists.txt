@@ -30,8 +30,7 @@ separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
 add_definitions(${LLVM_DEFINITIONS_LIST})
 llvm_map_components_to_libnames(LLVM_LIBRARIES
     core irreader native orcjit support
-    AArch64 AMDGPU ARM AVR BPF Hexagon Lanai M68k Mips MSP430
-    NVPTX PowerPC RISCV Sparc SystemZ VE WebAssembly X86 XCore
+    AArch64 ARM X86
 )
 message(STATUS "LLVM libs (by cmake): ${LLVM_LIBRARIES}")
 

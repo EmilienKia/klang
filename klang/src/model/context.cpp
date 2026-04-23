@@ -29,6 +29,7 @@
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "../common/target_init.hpp"
 
 
 namespace k::model {
@@ -46,11 +47,7 @@ std::shared_ptr<context> context::create()
 context::context()
 {
     // TODO initialize them only once
-    llvm::InitializeAllTargetInfos();
-    llvm::InitializeAllTargets();
-    llvm::InitializeAllTargetMCs();
-    llvm::InitializeAllAsmPrinters();
-    llvm::InitializeAllAsmParsers();
+    ::k::initialize_llvm_targets();
 
     reset();
 }

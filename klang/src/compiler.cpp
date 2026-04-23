@@ -59,6 +59,7 @@
 
 #include <kdi.hpp>
 #include "errors.hpp"
+#include "common/target_init.hpp"
 
 namespace k {
 
@@ -66,11 +67,7 @@ bool compiler::_compiler_class_init = false;
 
 void compiler::initialize() {
     if (!_compiler_class_init) {
-        llvm::InitializeAllTargetInfos();
-        llvm::InitializeAllTargets();
-        llvm::InitializeAllTargetMCs();
-        llvm::InitializeAllAsmParsers();
-        llvm::InitializeAllAsmPrinters();
+        k::initialize_llvm_targets();
         _compiler_class_init = true;
     }
 }
