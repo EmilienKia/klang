@@ -152,6 +152,12 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
             if (!inner) return nullptr;
             return inner->get_view();
         }
+        else if constexpr (std::is_same_v<T, kdi::kdi_owner_type>) {
+            if (!v.inner) return nullptr;
+            auto inner = convert(*v.inner, owner, ctx);
+            if (!inner) return nullptr;
+            return inner->get_owner();
+        }
         else if constexpr (std::is_same_v<T, kdi::kdi_drain_type>) {
             if (!v.inner) return nullptr;
             auto inner = convert(*v.inner, owner, ctx);
@@ -201,6 +207,9 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
             auto en = owner.get_or_create_imported_enum(kname, ctx);
             if (!en) return nullptr;
             return en->get_enum_type();
+        }
+        else if constexpr (std::is_same_v<T, kdi::kdi_template_param_ref>) {
+            return ctx->from_string(v.name);
         }
         else {
             return nullptr;

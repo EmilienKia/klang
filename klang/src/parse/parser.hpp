@@ -156,6 +156,15 @@ public:
     ast::template_param_list parse_template_declaration(const char** out_template_kw_start = nullptr);
 
     /**
+     * GenericDeclaration = 'generic' , '<' , GenericParameterList , '>' ;
+     * Analogous to parse_template_declaration but uses the 'generic' keyword.
+     * Only type parameters are accepted; value parameters trigger a parse error.
+     * Returns empty list if no 'generic' keyword is present.
+     * @param[out] out_is_generic  Set to true if a 'generic' keyword was consumed.
+     */
+    ast::template_param_list parse_generic_declaration(bool* out_is_generic = nullptr);
+
+    /**
      * TemplateParameter = TemplateParameterKind , Identifier ,
      *                     [ ':' , TypeSpec ] , [ '=' , ConditionalExpr ] ;
      */

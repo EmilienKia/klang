@@ -984,6 +984,12 @@ namespace k::parse {
             annotation_def_list annotations;
             /** Template parameters, empty if not a template. */
             template_param_list template_params;
+            /**
+             * True when the declaration uses the 'generic' keyword instead of 'template'.
+             * When true, only type parameters are allowed (no value parameters), and all
+             * uses of type params in the body must be via addressers.
+             */
+            bool is_generic = false;
             /** Raw K source text of the complete template declaration (from 'template' keyword
              *  through closing '}'), captured for KDI export. Empty if not a template. */
             std::string template_source_text;
@@ -1207,6 +1213,13 @@ namespace k::parse {
 
             /** True if this is a template function declaration. */
             bool is_template() const { return !template_params.empty(); }
+
+            /**
+             * True when the declaration uses the 'generic' keyword instead of 'template'.
+             * When true, only type parameters are allowed (no value parameters), and all
+             * uses of type params must be via addressers.
+             */
+            bool is_generic = false;
 
             /** Named return variable — present when function uses named return syntax:
              *  func(params) retVarName : RetType [ Initialiser ] { body }

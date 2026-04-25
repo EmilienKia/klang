@@ -85,6 +85,18 @@ static kdi_file make_aggregate_file() {
     return f;
 }
 
+static kdi_type rt_type(const kdi_type& t) {
+    auto f = make_minimal_file();
+    f.unit.root_ns.functions[0].return_type = t;
+
+    std::ostringstream oss(std::ios::binary);
+    kdi_write_cbor(f, oss);
+
+    std::istringstream iss(oss.str(), std::ios::binary);
+    auto restored = kdi_read_cbor(iss);
+    return restored.unit.root_ns.functions.at(0).return_type;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_CASE("CBOR: minimal file round-trips", "[cbor]") {
@@ -135,6 +147,14 @@ TEST_CASE("CBOR: aggregate file round-trips", "[cbor]") {
     REQUIRE(agg.constructors[0].mangled_name == "_KFMC1N3geo5PointE");
     REQUIRE(agg.methods.size() == 1u);
     REQUIRE(agg.methods[0].name == "norm");
+}
+
+TEST_CASE("CBOR: owner type round-trips", "[cbor][type]") {
+    auto t = rt_type(kdi_type::make_owner(kdi_type::make_template_param("T")));
+    REQUIRE(std::holds_alternative<kdi_owner_type>(t.value));
+    auto& inner = *std::get<kdi_owner_type>(t.value).inner;
+    REQUIRE(std::holds_alternative<kdi_template_param_ref>(inner.value));
+    REQUIRE(std::get<kdi_template_param_ref>(inner.value).name == "T");
 }
 
 TEST_CASE("CBOR: opaque_block round-trips", "[cbor]") {
@@ -464,6 +484,58 @@ TEST_CASE("CBOR: template_def round-trips in namespace", "[cbor][template]") {
     REQUIRE(rtd.params[0].kind == "typename");
     REQUIRE(rtd.params[0].name == "T");
     REQUIRE(rtd.source == "template<typename T> struct Box { val: T; }");
+}
+
+TEST_CASE("CBOR: generic template_def round-trips with signature and no source", "[cbor][template][generic]") {
+    kdi_file f;
+    f.header.module_name = "tpl";
+    f.header.lib_base    = "tpl";
+    f.unit.name          = "tpl";
+
+    kdi_template_def td;
+    td.name = "Box";
+    td.fq_name = "tpl::Box";
+    td.entity_kind = "struct";
+    td.visibility = "public";
+    td.is_generic = true;
+    td.params.push_back(kdi_template_param{"typename", "T", std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+
+    auto sig = std::make_shared<kdi_aggregate>();
+    sig->kind = kdi_aggregate_kind::struct_;
+    sig->name = "Box";
+    sig->fq_name = "tpl::Box";
+
+    kdi_layout_member member;
+    member.llvm_field_index = 0;
+    member.name = "value";
+    member.fq_name = "tpl::Box::value";
+    member.visibility = kdi_visibility::public_;
+    kdi_ref_type ref_t;
+    ref_t.inner = std::make_shared<kdi_type>(kdi_type::make_template_param("T"));
+    member.type = kdi_type{std::move(ref_t)};
+    sig->layout.push_back(member);
+
+    td.aggregate_signature = sig;
+    f.unit.root_ns.template_defs.push_back(td);
+
+    std::ostringstream oss(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(f, oss));
+    std::istringstream iss(oss.str(), std::ios::binary);
+    kdi_file restored;
+    REQUIRE_NOTHROW(restored = kdi_read_cbor(iss));
+
+    REQUIRE(restored.unit.root_ns.template_defs.size() == 1);
+    auto& rtd = restored.unit.root_ns.template_defs[0];
+    REQUIRE(rtd.is_generic);
+    REQUIRE(rtd.source.empty());
+    REQUIRE(rtd.aggregate_signature != nullptr);
+    REQUIRE(rtd.aggregate_signature->layout.size() == 1);
+    auto* rmember = std::get_if<kdi_layout_member>(&rtd.aggregate_signature->layout[0]);
+    REQUIRE(rmember != nullptr);
+    REQUIRE(std::holds_alternative<kdi_ref_type>(rmember->type.value));
+    auto& inner = *std::get<kdi_ref_type>(rmember->type.value).inner;
+    REQUIRE(std::holds_alternative<kdi_template_param_ref>(inner.value));
+    REQUIRE(std::get<kdi_template_param_ref>(inner.value).name == "T");
 }
 
 TEST_CASE("CBOR: object-backed enum metadata round-trips", "[cbor][enum][typed]") {

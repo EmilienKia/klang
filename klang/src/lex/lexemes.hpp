@@ -149,7 +149,8 @@ struct keyword : public lexeme {
         ANNOTATION,
         OVERRIDE,
         TEMPLATE,
-        TYPENAME
+        TYPENAME,
+        GENERIC
     };
 
     type_t type;

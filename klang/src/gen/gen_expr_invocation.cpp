@@ -139,6 +139,7 @@ void annotate_dispatch_info(function_invocation_expression& expr,
 
     expr.set_dispatch_info(std::move(di));
 }
+
 } // anonymous namespace
 
 /**
@@ -267,16 +268,21 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         auto this_expr = member_callee->sub_expr();
         auto this_type = this_expr->get_type(); // should be ref<struct> (possibly base)
 
-        if (!type::is_reference(this_type) && !type::is_struct(this_type) && !type::is_drain(this_type)) {
+        if (!type::is_reference(this_type) && !type::is_struct(this_type)
+            && !type::is_drain(this_type) && !type::is_owner(this_type)) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_TOO_MANY_ARGS), expr.first_lexeme(),
                 "The '.' operator requires the left-hand side to have a reference type, "
                 "but '{}' is not a reference; did you mean to use a reference parameter?",
                 {this_type ? this_type->to_string() : "?"});
         }
-        auto subtype = (type::is_reference(this_type) || type::is_drain(this_type)) ? this_type->get_subtype() : this_type;
+        auto subtype = (type::is_reference(this_type) || type::is_drain(this_type) || type::is_owner(this_type))
+            ? this_type->get_subtype() : this_type;
         // Detect if the object is accessed through a const reference (ref<const S>)
         bool is_const_this = type::is_const(subtype);
         auto bare_subtype = type::remove_const(subtype);
+        if (auto owner_subtype = std::dynamic_pointer_cast<owner_type>(bare_subtype)) {
+            bare_subtype = type::remove_const(owner_subtype->get_subtype());
+        }
         auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype);
         if (!struct_subtype) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_TOO_FEW_ARGS), expr.first_lexeme(),
@@ -347,7 +353,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             check_function_visibility(*best.func, expr);
 
             callee->set_target(best.func);
-            expr.set_type(best.func->get_return_type());
+            auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_expr);
+            expr.set_type(resolved_return_type ? resolved_return_type : best.func->get_return_type());
             expr.assign_arguments(best.adapted_args);
             // Bypass virtual dispatch — this is an explicit base-class call
             expr.set_non_virtual_qualified_call(true);
@@ -408,7 +415,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         check_function_visibility(*best.func, expr);
 
         callee->set_target(best.func);
-        expr.set_type(best.func->get_return_type());
+        auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_expr);
+        expr.set_type(resolved_return_type ? resolved_return_type : best.func->get_return_type());
 
         // Apply adapted arguments (may include cloned defaults for trailing params)
         expr.assign_arguments(best.adapted_args);
@@ -621,6 +629,119 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // provided arguments, run it through the resolution pipeline, and
         // replace the candidates with the concrete instance.
         if (callee && callee->has_ast_template_args()) {
+            const auto resolve_type_from_instantiation_context = [&](const std::shared_ptr<unresolved_type>& unresolved)
+                    -> std::shared_ptr<type> {
+                if (!unresolved || unresolved->type_id().has_root_prefix() || unresolved->type_id().size() != 1) {
+                    return nullptr;
+                }
+
+                const std::string param_name = unresolved->type_id().front();
+                const auto lookup_template_param = [&](const auto& ast_params,
+                                                       const auto& concrete_args) -> std::shared_ptr<type> {
+                    const size_t count = std::min(ast_params.size(), concrete_args.size());
+                    for (size_t i = 0; i < count; ++i) {
+                        if (ast_params[i] == nullptr) continue;
+                        if (std::string(ast_params[i]->name.content) != param_name) continue;
+                        if (concrete_args[i].is_type()) {
+                            return concrete_args[i].type_arg;
+                        }
+                        return nullptr;
+                    }
+                    return nullptr;
+                };
+
+                if (_function_stack.empty()) return nullptr;
+
+                auto current_fn = _function_stack.back();
+                if (!current_fn) return nullptr;
+
+                if (current_fn->has_tpl_args()) {
+                    if (auto ast_fn = current_fn->get_ast_function_decl()) {
+                        if (auto resolved = lookup_template_param(ast_fn->template_params, current_fn->get_tpl_args())) {
+                            return resolved;
+                        }
+                    }
+                }
+
+                if (current_fn->is_member()) {
+                    if (auto owner = current_fn->get_owner()) {
+                        if (owner->has_tpl_args()) {
+                            if (auto ast_agg = owner->get_ast_aggregate_decl()) {
+                                if (auto resolved = lookup_template_param(ast_agg->template_params, owner->get_tpl_args())) {
+                                    return resolved;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return nullptr;
+            };
+
+            const auto resolve_explicit_template_arg_type = [&](const auto& self,
+                                                                const std::shared_ptr<type>& arg_type)
+                    -> std::shared_ptr<type> {
+                if (!arg_type) return nullptr;
+
+                auto resolved = _context->resolve_type(arg_type);
+                if (resolved && type::contains_unresolved(resolved) == false && type::is_resolved(resolved)) {
+                    return resolved;
+                }
+
+                if (auto unres = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
+                    if (auto resolved_from_inst = resolve_type_from_instantiation_context(unres)) {
+                        return resolved_from_inst;
+                    }
+                    resolved = resolve_type_by_name(unres->type_id(), expr);
+                    if ((!resolved || !type::is_resolved(resolved)) && unres->type_id().empty() == false) {
+                        resolved = _context->from_string(unres->type_id().to_string());
+                    }
+                    if (resolved && type::contains_unresolved(resolved) == false && type::is_resolved(resolved)) {
+                        return resolved;
+                    }
+                    return nullptr;
+                }
+
+                auto subtype = arg_type->get_subtype();
+                if (!subtype) return nullptr;
+
+                auto resolved_subtype = self(self, subtype);
+                if (!resolved_subtype || type::contains_unresolved(resolved_subtype) || !type::is_resolved(resolved_subtype)) {
+                    return nullptr;
+                }
+
+                std::shared_ptr<type> rebuilt;
+                if (type::is_const(arg_type)) {
+                    rebuilt = resolved_subtype->get_const();
+                } else if (type::is_pointer(arg_type)) {
+                    rebuilt = resolved_subtype->get_pointer();
+                } else if (type::is_reference(arg_type)) {
+                    rebuilt = resolved_subtype->get_reference();
+                } else if (type::is_link(arg_type)) {
+                    rebuilt = resolved_subtype->get_link();
+                } else if (type::is_view(arg_type)) {
+                    rebuilt = resolved_subtype->get_view();
+                } else if (type::is_owner(arg_type)) {
+                    rebuilt = resolved_subtype->get_owner();
+                } else if (type::is_drain(arg_type)) {
+                    rebuilt = resolved_subtype->get_drain();
+                } else if (type::is_array(arg_type)) {
+                    if (auto sized = std::dynamic_pointer_cast<sized_array_type>(arg_type)) {
+                        rebuilt = resolved_subtype->get_array(sized->get_size());
+                    } else {
+                        rebuilt = resolved_subtype->get_array()->get_reference();
+                    }
+                }
+
+                if (!rebuilt) return nullptr;
+
+                resolved = _context->resolve_type(rebuilt);
+                if (resolved && type::contains_unresolved(resolved) == false && type::is_resolved(resolved)) {
+                    return resolved;
+                }
+                return nullptr;
+            };
+
             const auto& ast_args = callee->get_ast_template_args();
             // Look up the template function by base name (could be in all_candidates or root ns)
             std::shared_ptr<function> tpl_func;
@@ -651,17 +772,11 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         const auto& ast_arg = ast_args[i];
                         if (ast_arg->is_type()) {
                             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
-                            if (!arg_type || !type::is_resolved(arg_type)) {
-                                if (arg_type) {
-                                    if (auto unres_arg = std::dynamic_pointer_cast<unresolved_type>(arg_type)) {
-                                        auto resolved = resolve_type_by_name(unres_arg->type_id(), expr);
-                                        if (resolved && type::is_resolved(resolved)) {
-                                            arg_type = resolved;
-                                        }
-                                    }
-                                }
+                            arg_type = resolve_explicit_template_arg_type(resolve_explicit_template_arg_type, arg_type);
+                            if (!arg_type || !type::is_resolved(arg_type) || type::contains_unresolved(arg_type)) {
+                                args_ok = false;
+                                break;
                             }
-                            if (!arg_type || !type::is_resolved(arg_type)) { args_ok = false; break; }
                             model_args.push_back(template_argument::make_type(arg_type));
                         } else if (ast_arg->is_value()) {
                             // Value template argument — extract compile-time constant literal
@@ -710,9 +825,14 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         }
                     }
                     if (args_ok) {
-                        auto root_ns = _unit.get_root_namespace();
+                        auto parent_ns = _unit.get_root_namespace();
+                        if (auto parent_elem = tpl_func->parent<element>()) {
+                            if (auto owner_ns = std::dynamic_pointer_cast<ns>(parent_elem)) {
+                                parent_ns = owner_ns;
+                            }
+                        }
                         auto concrete = template_instantiator::instantiate_function(
-                            *tpl_func, model_args, root_ns, _unit, _context, *this);
+                            *tpl_func, model_args, parent_ns, _unit, _context, *this);
                         if (concrete) {
                             // Run the concrete function through the resolver pipeline
                             {
@@ -828,7 +948,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         }
 
         callee->set_target(best.func);
-        expr.set_type(best.func->get_return_type());
+        auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_candidate);
+        expr.set_type(resolved_return_type ? resolved_return_type : best.func->get_return_type());
 
         if (is_free_to_member_call) {
             // Member function found via free-function syntax: func(obj, args...)
@@ -1222,6 +1343,80 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     auto function = callee->get_function();
     auto it = _context->_functions.find(function);
     if(it==_context->_functions.end()) {
+        // Late materialization path for functions that appear after the main
+        // declaration walk (e.g. template-instantiated methods).
+        if (function) {
+            std::vector<llvm::Type*> late_param_types;
+            if (function->is_member() && !function->is_static()) {
+                auto this_param = function->get_this_parameter();
+                if (this_param && this_param->get_type()) {
+                    if (auto* this_ty = _context->get_llvm_type(this_param->get_type())) {
+                        late_param_types.push_back(this_ty);
+                    }
+                }
+            }
+            bool bad_param = false;
+            for (const auto& p : function->parameters()) {
+                auto* pty = _context->get_llvm_type(p->get_type());
+                if (!pty) {
+                    bad_param = true;
+                    break;
+                }
+                late_param_types.push_back(pty);
+            }
+
+            // Fallback: derive the function signature directly from generated call args.
+            // This is safe for codegen at this call-site and avoids hard-failing on
+            // late-instantiated methods whose model parameter types are still opaque.
+            if (bad_param || late_param_types.size() != args.size()) {
+                late_param_types.clear();
+                late_param_types.reserve(args.size());
+                for (auto* av : args) {
+                    if (!av) {
+                        bad_param = true;
+                        break;
+                    }
+                    late_param_types.push_back(av->getType());
+                }
+                bad_param = late_param_types.empty();
+            }
+
+            if (!bad_param) {
+                llvm::Type* late_ret_type = nullptr;
+                bool late_use_sret = false;
+                if (function->has_return_type()) {
+                    if (needs_sret_return(function->get_return_type())) {
+                        late_param_types.insert(late_param_types.begin(), llvm::PointerType::get(**_context, 0));
+                        late_ret_type = llvm::Type::getVoidTy(**_context);
+                        late_use_sret = true;
+                    } else {
+                        late_ret_type = _context->get_llvm_type(function->get_return_type());
+                        if (!late_ret_type && expr.get_type()) {
+                            late_ret_type = _context->get_llvm_type(expr.get_type());
+                        }
+                    }
+                } else {
+                    late_ret_type = llvm::Type::getVoidTy(**_context);
+                }
+
+                if (late_ret_type) {
+                    llvm::FunctionType* late_ft = llvm::FunctionType::get(late_ret_type, late_param_types, false);
+                    llvm::Function* late_fn = _context->_module->getFunction(function->get_mangled_name());
+                    if (!late_fn) {
+                        late_fn = llvm::Function::Create(
+                            late_ft, llvm::Function::ExternalLinkage,
+                            function->get_mangled_name(), *_context->_module);
+                    }
+                    if (late_use_sret) {
+                        late_fn->addParamAttr(0, llvm::Attribute::get(**_context, llvm::Attribute::StructRet,
+                            _context->get_llvm_type(function->get_return_type())));
+                    }
+                    _context->_functions.insert({function, late_fn});
+                    it = _context->_functions.find(function);
+                }
+            }
+        }
+
         // Abstract virtual functions and imported virtual functions without a
         // concrete LLVM declaration can still be dispatched through the vtable.
         if (function && function->is_virtual() &&

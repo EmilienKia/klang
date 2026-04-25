@@ -494,6 +494,77 @@ ast::template_param_list parser::parse_template_declaration(const char** out_tem
     return params;
 }
 
+ast::template_param_list parser::parse_generic_declaration(bool* out_is_generic)
+{
+    lex::lex_holder holder(_lexer);
+
+    if (out_is_generic) *out_is_generic = false;
+
+    // Check for 'generic' keyword
+    auto lgeneric = _lexer.get();
+    if (lgeneric != lex::keyword::GENERIC) {
+        holder.rollback();
+        return {};
+    }
+
+    if (out_is_generic) *out_is_generic = true;
+
+    // Expect '<'
+    auto lopen = _lexer.get();
+    if (lopen != lex::operator_::CHEVRON_OPEN) {
+        throw_error(0x10050, _lexer.pick_current(), "Expected '<' after 'generic' keyword");
+    }
+
+    // Parse type parameters (value parameters are forbidden)
+    ast::template_param_list params;
+    auto first_param = parse_template_parameter();
+    if (!first_param) {
+        throw_error(0x10051, _lexer.pick_current(), "Expected at least one generic type parameter");
+    }
+    if (first_param->is_value_param()) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_GENERIC_VALUE_PARAM_NOT_ALLOWED),
+                    _lexer.pick_current(),
+                    "Value parameters are not allowed in 'generic' declarations; only type parameters (typename, class, struct, interface) are permitted");
+    }
+    params.push_back(std::move(first_param));
+
+    while (true) {
+        lex::lex_holder comma_holder(_lexer);
+        auto maybe_comma = _lexer.get();
+        if (maybe_comma == lex::punctuator::COMMA) {
+            auto param = parse_template_parameter();
+            if (!param) {
+                throw_error(0x10052, _lexer.pick_current(), "Expected generic type parameter after ','");
+            }
+            if (param->is_value_param()) {
+                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_GENERIC_VALUE_PARAM_NOT_ALLOWED),
+                            _lexer.pick_current(),
+                            "Value parameters are not allowed in 'generic' declarations; only type parameters (typename, class, struct, interface) are permitted");
+            }
+            params.push_back(std::move(param));
+        } else {
+            comma_holder.rollback();
+            break;
+        }
+    }
+
+    // Expect '>' (handle '>>' by splitting)
+    auto lclose = _lexer.get();
+    if (lclose == lex::operator_::DOUBLE_CHEVRON_CLOSE) {
+        auto last_mut = _lexer.pick_last_mutable();
+        if (last_mut) {
+            auto& lex_ref = last_mut->get();
+            auto& op = std::get<lex::operator_>(lex_ref);
+            lex_ref = lex::operator_(op.content.substr(0, 1), lex::operator_::CHEVRON_CLOSE);
+        }
+        _lexer.unget();
+    } else if (lclose != lex::operator_::CHEVRON_CLOSE) {
+        throw_error(0x10053, _lexer.pick_current(), "Expected '>' to close generic parameter list");
+    }
+
+    return params;
+}
+
 std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
 {
     lex::lex_holder holder(_lexer);
@@ -698,9 +769,13 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
     // Parse leading annotation definitions
     ast::annotation_def_list annotations = parse_annotation_defs();
 
-    // Parse optional template declaration
+    // Parse optional generic or template declaration
     const char* tpl_kw_start = nullptr;
-    ast::template_param_list template_params = parse_template_declaration(&tpl_kw_start);
+    bool is_generic = false;
+    ast::template_param_list template_params = parse_generic_declaration(&is_generic);
+    if (template_params.empty() && !is_generic) {
+        template_params = parse_template_declaration(&tpl_kw_start);
+    }
 
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
@@ -801,9 +876,11 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
 
     auto result = std::make_shared<ast::aggregate_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations, annotations);
     result->template_params = std::move(template_params);
+    result->is_generic = is_generic;
 
     // Capture template source text for KDI export: from 'template' keyword through closing '}'
-    if (result->is_template() && tpl_kw_start) {
+    // Generic aggregates do not need source text (they are synthesised in their declaration module).
+    if (result->is_template() && !result->is_generic && tpl_kw_start) {
         const char* src_end = close_brace->content.data() + close_brace->content.size();
         if (src_end > tpl_kw_start) {
             result->template_source_text = std::string(tpl_kw_start, static_cast<size_t>(src_end - tpl_kw_start));
@@ -1080,9 +1157,13 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     // Parse leading annotation definitions (before specifiers, same as aggregate_decl)
     ast::annotation_def_list annotations = parse_annotation_defs();
 
-    // Parse optional template declaration
+    // Parse optional generic or template declaration
     const char* tpl_kw_start = nullptr;
-    ast::template_param_list template_params = parse_template_declaration(&tpl_kw_start);
+    bool fn_is_generic = false;
+    ast::template_param_list template_params = parse_generic_declaration(&fn_is_generic);
+    if (template_params.empty() && !fn_is_generic) {
+        template_params = parse_template_declaration(&tpl_kw_start);
+    }
 
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
@@ -1628,6 +1709,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 decl->is_operator = is_operator;
                 decl->annotations = std::move(annotations);
                 decl->template_params = std::move(template_params);
+                decl->is_generic = fn_is_generic;
                 return decl;
             }
 
@@ -1682,6 +1764,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 redirect_target, redirect_param_types, redirect_has_param_types);
             decl->annotations = std::move(annotations);
             decl->template_params = std::move(template_params);
+            decl->is_generic = fn_is_generic;
             return decl;
         }
         alias_holder.rollback();
@@ -1698,6 +1781,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 decl->is_operator = is_operator;
                 decl->annotations = std::move(annotations);
                 decl->template_params = std::move(template_params);
+                decl->is_generic = fn_is_generic;
                 return decl;
             }
             semi_holder.rollback();
@@ -1709,6 +1793,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     decl->is_operator = is_operator;
     decl->annotations = std::move(annotations);
     decl->template_params = std::move(template_params);
+    decl->is_generic = fn_is_generic;
     if (has_named_return) {
         decl->has_named_return = true;
         decl->return_var_name = return_var_name;
@@ -1717,7 +1802,8 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     }
 
     // Capture template source text for KDI export: from 'template' keyword through closing '}'
-    if (decl->is_template() && tpl_kw_start && statements) {
+    // Generic functions do not need source text (synthesised in their declaration module).
+    if (decl->is_template() && !decl->is_generic && tpl_kw_start && statements) {
         const char* src_end = statements->close_brace.content.data() + statements->close_brace.content.size();
         if (src_end > tpl_kw_start) {
             decl->template_source_text = std::string(tpl_kw_start, static_cast<size_t>(src_end - tpl_kw_start));

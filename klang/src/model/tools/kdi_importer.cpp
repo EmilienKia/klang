@@ -22,6 +22,7 @@
 #include "../context.hpp"
 #include "../imported.hpp"
 #include "../model_builder.hpp"
+#include "kdi_type_converter.hpp"
 #include "../../parse/parser.hpp"
 
 #include <kdi.hpp>  // kdi_read_cbor_file, kdi_file, kdi_namespace, kdi_aggregate, …
@@ -31,6 +32,101 @@
 #include "../../errors.hpp"
 
 namespace k::model {
+
+namespace {
+
+template_param_kind template_param_kind_from_kdi(const std::string& kind) {
+    if (kind == "struct") return template_param_kind::STRUCT;
+    if (kind == "class") return template_param_kind::CLASS;
+    if (kind == "interface") return template_param_kind::INTERFACE;
+    if (kind == "value") return template_param_kind::VALUE;
+    return template_param_kind::TYPENAME;
+}
+
+std::unique_ptr<tpl_info> build_tpl_info_from_kdi(const kdi::kdi_template_def& tdef,
+                                                  unit& owner,
+                                                  const std::shared_ptr<context>& ctx) {
+    auto ti = std::make_unique<tpl_info>();
+    ti->is_generic = tdef.is_generic;
+    ti->is_imported_signature_only = tdef.is_generic;
+    for (const auto& param : tdef.params) {
+        template_param_descriptor desc;
+        desc.kind = template_param_kind_from_kdi(param.kind);
+        desc.name = param.name;
+        if (param.constraint_type) {
+            desc.constraint_type = kdi_type_to_model_type(*param.constraint_type, owner, ctx);
+        }
+        if (param.default_type) {
+            desc.default_type = kdi_type_to_model_type(*param.default_type, owner, ctx);
+        }
+        if (param.value_type) {
+            desc.value_type = kdi_type_to_model_type(*param.value_type, owner, ctx);
+        }
+        ti->params.push_back(std::move(desc));
+    }
+    return ti;
+}
+
+void populate_template_signature_aggregate(aggregate& agg,
+                                           const kdi::kdi_aggregate& sig,
+                                           unit& owner,
+                                           const std::shared_ptr<context>& ctx) {
+    for (const auto& field : sig.layout) {
+        auto* member = std::get_if<kdi::kdi_layout_member>(&field);
+        if (!member) continue;
+        auto var = agg.append_variable(member->name, false);
+        auto mv = std::dynamic_pointer_cast<member_variable_definition>(var);
+        if (!mv) continue;
+        mv->set_visibility(member->visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+        mv->set_const(member->is_const);
+        mv->set_type(kdi_type_to_model_type(member->type, owner, ctx));
+    }
+
+    for (const auto& ctor_sig : sig.constructors) {
+        auto fn = agg.define_function(agg.get_short_name(), false);
+        auto ctor = std::dynamic_pointer_cast<constructor>(fn);
+        if (!ctor) continue;
+        ctor->set_visibility(ctor_sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+        ctor->set_copy_constructor(ctor_sig.is_copy_constructor);
+        ctor->set_aliasing(ctor_sig.is_deleted ? function::function_aliasing::DELETE
+                                              : (ctor_sig.is_defaulted ? function::function_aliasing::DEFAULT
+                                                                       : function::function_aliasing::NONE));
+        for (const auto& param : ctor_sig.params) {
+            ctor->append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
+        }
+    }
+
+    for (const auto& method_sig : sig.methods) {
+        auto fn = agg.define_function(method_sig.name, method_sig.is_static);
+        if (!fn) continue;
+        fn->set_visibility(method_sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+        fn->set_const_member(method_sig.is_const_member);
+        fn->set_virtual(method_sig.is_virtual);
+        fn->set_abstract_func(method_sig.is_abstract);
+        fn->set_final_func(method_sig.is_final);
+        fn->set_operator(method_sig.is_operator);
+        auto ret_type = kdi_type_to_model_type(method_sig.return_type, owner, ctx);
+        if (ret_type) fn->set_return_type(ret_type);
+        for (const auto& param : method_sig.params) {
+            fn->append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
+        }
+    }
+}
+
+void populate_template_signature_function(function& fn,
+                                          const kdi::kdi_function& sig,
+                                          unit& owner,
+                                          const std::shared_ptr<context>& ctx) {
+    fn.set_visibility(sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+    fn.set_operator(sig.is_operator);
+    auto ret_type = kdi_type_to_model_type(sig.return_type, owner, ctx);
+    if (ret_type) fn.set_return_type(ret_type);
+    for (const auto& param : sig.params) {
+        fn.append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
+    }
+}
+
+} // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Construction
@@ -446,6 +542,84 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                                              const kdi::kdi_namespace& parent_kdi_ns,
                                              std::shared_ptr<context> ctx)
 {
+    const bool generic_signature_only =
+        tdef.is_generic &&
+        (tdef.aggregate_signature != nullptr ||
+         (tdef.function_signature != nullptr && tdef.source.empty()));
+
+    if (generic_signature_only) {
+        std::shared_ptr<ns> target_ns = _unit.get_root_namespace();
+        const std::string& ns_fq = parent_kdi_ns.fq_name;
+        if (!ns_fq.empty()) {
+            std::size_t pos = 0;
+            while (true) {
+                auto sep = ns_fq.find("::", pos);
+                std::string part = (sep == std::string::npos) ? ns_fq.substr(pos) : ns_fq.substr(pos, sep - pos);
+                if (!part.empty()) {
+                    target_ns = target_ns->get_child_namespace(part);
+                }
+                if (sep == std::string::npos) break;
+                pos = sep + 2;
+            }
+        }
+
+        std::unordered_set<std::string> param_names;
+        for (const auto& param : tdef.params) {
+            if (!param.name.empty()) param_names.insert(param.name);
+        }
+        ctx->push_template_param_scope(param_names);
+
+        auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx);
+
+        if (tdef.aggregate_signature) {
+            if (auto existing = target_ns->get_aggregate(tdef.name)) {
+                if (existing->is_template()) {
+                    ctx->pop_template_param_scope();
+                    return;
+                }
+            }
+
+            std::shared_ptr<aggregate> tpl_agg;
+            switch (tdef.aggregate_signature->kind) {
+                case kdi::kdi_aggregate_kind::class_:
+                    tpl_agg = target_ns->define_class(tdef.name);
+                    break;
+                case kdi::kdi_aggregate_kind::interface_:
+                    tpl_agg = target_ns->define_interface(tdef.name);
+                    break;
+                case kdi::kdi_aggregate_kind::annotation_:
+                    tpl_agg = target_ns->define_annotation(tdef.name);
+                    break;
+                case kdi::kdi_aggregate_kind::struct_:
+                default:
+                    tpl_agg = target_ns->define_structure(tdef.name);
+                    break;
+            }
+
+            if (tpl_agg) {
+                tpl_agg->set_visibility(tdef.visibility == "protected" ? PROTECTED : PUBLIC);
+                tpl_agg->set_tpl_info(std::move(ti));
+                populate_template_signature_aggregate(*tpl_agg, *tdef.aggregate_signature, _unit, ctx);
+            }
+        } else if (tdef.function_signature) {
+            if (auto existing = target_ns->get_function(tdef.name)) {
+                if (existing->is_template()) {
+                    ctx->pop_template_param_scope();
+                    return;
+                }
+            }
+
+            auto tpl_fn = target_ns->define_function(tdef.name, tdef.function_signature->is_static);
+            if (tpl_fn) {
+                tpl_fn->set_tpl_info(std::move(ti));
+                populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx);
+            }
+        }
+
+        ctx->pop_template_param_scope();
+        return;
+    }
+
     if (tdef.source.empty()) return;
 
     // ── 1. Navigate to (or create) the target namespace in the model ────────
@@ -475,6 +649,9 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
     // ── 2. Check if a template with this name already exists ────────────────
     if (auto existing = target_ns->get_aggregate(tdef.name)) {
         if (existing->is_template()) return;
+    }
+    if (auto existing_fn = target_ns->get_function(tdef.name)) {
+        if (existing_fn->is_template()) return;
     }
 
     // ── 3. Parse the template source text ───────────────────────────────────

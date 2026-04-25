@@ -27,6 +27,7 @@ add_library(klang
         src/gen/resolvers_materializer.cpp
         src/gen/resolvers_type_ref.cpp
         src/gen/resolvers_init_order.cpp
+        src/gen/resolvers_generic.cpp
         src/gen/generators.cpp
         src/common/logger.cpp
         src/common/logger.hpp
@@ -181,6 +182,7 @@ add_executable(klang-tests
         tests/test-gen-template-constraints.cpp
         tests/test-gen-template-value-params.cpp
         tests/test-gen-template-comprehensive.cpp
+        tests/test-gen-generic.cpp
         tests/test-template-instantiator.cpp
         tests/test-gen-if-link-softfail.cpp
         tests/test-gen-if-local-var.cpp

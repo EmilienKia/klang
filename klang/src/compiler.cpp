@@ -391,6 +391,10 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
 
         _context->resolve_types();
 
+        trace("[compiler::parse_sources] generic constraint validation");
+        k::model::gen::generic_constraint_validator generic_validator(*this, _context, *_model_unit);
+        generic_validator.validate();
+
         trace("[compiler::parse_sources] aggregate type resolution");
         k::model::gen::aggregate_type_resolver agg_type_resolver(*this, _context, *_model_unit);
         agg_type_resolver.resolve();

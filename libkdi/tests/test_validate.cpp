@@ -217,3 +217,53 @@ TEST_CASE("validate: integer-backed enum rejects object-backed-only fields", "[v
     REQUIRE(!r.is_valid());
 }
 
+TEST_CASE("validate: generic template_def requires signature and no source", "[validate][template][generic]") {
+    kdi_file f = make_valid_file();
+
+    kdi_template_def td;
+    td.name = "Box";
+    td.fq_name = "valid::mod::Box";
+    td.entity_kind = "struct";
+    td.visibility = "public";
+    td.is_generic = true;
+    td.source = "generic<typename T> struct Box { value : T&; }";
+    td.params.push_back(kdi_template_param{"typename", "T", std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+    f.unit.root_ns.template_defs.push_back(std::move(td));
+
+    auto r = kdi_validate(f);
+    REQUIRE(!r.is_valid());
+}
+
+TEST_CASE("validate: generic template_def with aggregate signature passes", "[validate][template][generic]") {
+    kdi_file f = make_valid_file();
+
+    kdi_template_def td;
+    td.name = "Box";
+    td.fq_name = "valid::mod::Box";
+    td.entity_kind = "struct";
+    td.visibility = "public";
+    td.is_generic = true;
+    td.params.push_back(kdi_template_param{"typename", "T", std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+
+    auto sig = std::make_shared<kdi_aggregate>();
+    sig->kind = kdi_aggregate_kind::struct_;
+    sig->name = "Box";
+    sig->fq_name = "valid::mod::Box";
+
+    kdi_layout_member member;
+    member.llvm_field_index = 0;
+    member.name = "value";
+    member.fq_name = "valid::mod::Box::value";
+    member.visibility = kdi_visibility::public_;
+    kdi_ref_type ref_t;
+    ref_t.inner = std::make_shared<kdi_type>(kdi_type::make_template_param("T"));
+    member.type = kdi_type{std::move(ref_t)};
+    sig->layout.push_back(member);
+
+    td.aggregate_signature = sig;
+    f.unit.root_ns.template_defs.push_back(std::move(td));
+
+    auto r = kdi_validate(f);
+    REQUIRE(r.is_valid());
+}
+

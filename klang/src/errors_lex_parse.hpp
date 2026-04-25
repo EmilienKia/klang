@@ -185,6 +185,8 @@ enum class parser_diag : unsigned int {
     ERR_CONTINUE_MISSING_SEMICOLON                = 0x0191,
     ERR_ENUM_MISSING_OPEN_BRACE                   = 0x0192,
     ERR_ENUM_ENTRY_EXPECT_NAME                    = 0x0193,
+    // Generic declaration errors (0x01A0–0x01AF)
+    ERR_GENERIC_VALUE_PARAM_NOT_ALLOWED           = 0x01A0,
 };
 
 } // namespace k::diag

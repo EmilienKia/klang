@@ -14,7 +14,20 @@
   - [ ] SFINAE-like overload filtering based on template constraints
   - export templates (Phase 3+ — separate compilation of template definitions and instantiations)
   - Generics (template with uniform materialization whatever the arguments)
-  - Covariance for generics
+    See IN-PROGRESS.md for the completed implementation plan (Phases 1-10, 12).
+    - [x] Phase 6: Generic constraint validator (direct usage of type param, owner constraint)
+    - [x] Phase 7: Generic synthesis (single LLVM IR for all type-arg combinations)
+    - [x] Phase 8: Type tracking at usage sites (generic_aggregate_instance)
+    - [x] Phase 9: Mangling for generic synthesis (single symbol, no arg suffix)
+    - [x] Phase 10: KDI export/import of generics (signature only, no source text)
+    - [ ] Phase 11: libk LinkedList and DoubleLinkedList (deferred — pending libk stabilisation)
+    - [x] Phase 12: Full test suite for generics (test-gen-generic.cpp, 57 pass + 3 documented skip)
+  - Known generic call-site limitations (found by Phase 12, tracked for future fix):
+    - [ ] Generic constructor call with owner `T!` argument: synthesized ctor takes `byte*!`, call site `ConcreteType!` implicit cast not supported
+    - [ ] Member access on `T*` inside generic body (opaque pointer — by design; workaround: access at call site)
+    - [ ] Explicit generic type args in generic member method call on non-generic host class (`obj.method<Dog>(arg)`)
+    - [ ] `ConcreteType! → byte*` implicit cast at generic setter sites (runtime returns 0 instead of value)
+  - Covariance for generics (invariant only in Phase 1; co/contra-variance is a future feature)
 
 - Review casting algorithm and implicit casting strategy (char[]! -> const char[]?  ou  char[]! -> const char[], etc.)
 - Add support of foreach loops

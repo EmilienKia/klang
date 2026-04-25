@@ -53,6 +53,8 @@ std::string type_str(const kdi_type& t) {
             return "~" + (v.inner ? type_str(*v.inner) : "?");
         if constexpr (std::is_same_v<T, kdi_view_type>)
             return "^" + (v.inner ? type_str(*v.inner) : "?");
+        if constexpr (std::is_same_v<T, kdi_owner_type>)
+            return "!" + (v.inner ? type_str(*v.inner) : "?");
         if constexpr (std::is_same_v<T, kdi_drain_type>)
             return "#" + (v.inner ? type_str(*v.inner) : "?");
         if constexpr (std::is_same_v<T, kdi_const_type>)
@@ -73,6 +75,8 @@ std::string type_str(const kdi_type& t) {
             return v.fq_name;
         if constexpr (std::is_same_v<T, kdi_enum_ref>)
             return "enum " + v.fq_name;
+        if constexpr (std::is_same_v<T, kdi_template_param_ref>)
+            return "$" + v.name;
         return "?";
     }, t.value);
 }
@@ -297,12 +301,20 @@ void dump_namespace(const kdi_namespace& ns, std::ostream& out, int depth) {
     // Template definitions
     for (auto& td : ns.template_defs) {
         int d = depth + (ns.name.empty() ? 0 : 1);
-        out << indent(d) << td.visibility << " template<";
+        out << indent(d) << td.visibility << ' ';
+        if (td.is_generic) out << "generic<";
+        else out << "template<";
         for (size_t i = 0; i < td.params.size(); ++i) {
             if (i) out << ", ";
             out << td.params[i].kind << " " << td.params[i].name;
         }
         out << "> " << td.entity_kind << " " << td.name << "  // " << td.fq_name << "\n";
+        if (td.aggregate_signature) {
+            out << indent(d + 1) << "// aggregate signature: " << td.aggregate_signature->name << "\n";
+        }
+        if (td.function_signature) {
+            out << indent(d + 1) << "// function signature: " << td.function_signature->name << "\n";
+        }
         if (!td.source.empty()) {
             // Show first line of source
             auto nl = td.source.find('\n');

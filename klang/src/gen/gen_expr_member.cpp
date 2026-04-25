@@ -77,7 +77,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         return;
     }
 
-    if(!type::is_reference(type) && !type::is_drain(type)) {
+    if(!type::is_reference(type) && !type::is_drain(type) && !type::is_owner(type)) {
         // ── Bare struct rvalue (e.g. function return value) ──────────────────
         // Allow member access on struct-typed rvalues (temporaries).
         // The implementation generator will materialize the temporary into an alloca.
@@ -113,6 +113,13 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
     bool is_const_access = type::is_const(subtype);
     // Strip const to get the actual struct_type for member lookup
     auto bare_subtype = type::remove_const(subtype);
+
+    // A variable of type owner<T> is used through a symbol expression of type
+    // ref<owner<T>>. For member access with '.', unwrap the intermediate owner
+    // layer so lookup runs against T itself.
+    if (auto owner_subtype = std::dynamic_pointer_cast<owner_type>(bare_subtype)) {
+        bare_subtype = type::remove_const(owner_subtype->get_subtype());
+    }
 
     // ── Handle unsized-array fields: T[] is canonically ref<array<T>>, so a
     //    const T[] field appears as const(ref(array(T))). After unwrapping the
@@ -520,6 +527,15 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
 
     // Strip const from the subtype to get the bare struct_type for GEP/method lookup.
     auto bare_subtype = type::remove_const(type->get_subtype());
+
+    // Member access on an owner variable comes through a ref<owner<T>> symbol.
+    // Load the owned object pointer from the owner slot, then continue as if we
+    // were operating on T directly.
+    if (auto owner_subtype = std::dynamic_pointer_cast<owner_type>(bare_subtype)) {
+        _value = _builder->CreateLoad(
+            llvm::PointerType::get(_builder->getContext(), 0), _value, "owner_obj_load");
+        bare_subtype = type::remove_const(owner_subtype->get_subtype());
+    }
 
     // Step 2: If LHS is a reference: unwrap to get the object pointer
     // ── Handle unsized-array fields: const T[] = const(ref(array(T))).

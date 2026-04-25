@@ -84,6 +84,11 @@ struct kdi_view_type {
     std::shared_ptr<kdi_type> inner;
 };
 
+/** Owner type (!inner) — owning, nullable. */
+struct kdi_owner_type {
+    std::shared_ptr<kdi_type> inner;
+};
+
 /** Drain type (#inner) — immutable binding, non-null, drain permission. */
 struct kdi_drain_type {
     std::shared_ptr<kdi_type> inner;
@@ -129,6 +134,11 @@ struct kdi_enum_ref {
     std::string fq_name;      ///< e.g. "color::Color"
 };
 
+/** Reference to a template parameter by name inside a template signature. */
+struct kdi_template_param_ref {
+    std::string name;         ///< e.g. "T"
+};
+
 // ── Tagged union ─────────────────────────────────────────────────────────────
 
 using kdi_type_variant = std::variant<
@@ -141,13 +151,15 @@ using kdi_type_variant = std::variant<
     kdi_ptr_type,
     kdi_link_type,
     kdi_view_type,
+    kdi_owner_type,
     kdi_drain_type,
     kdi_const_type,
     kdi_array_type,
     kdi_sized_array_type,
     kdi_fn_ref_type,
     kdi_aggregate_ref,
-    kdi_enum_ref
+    kdi_enum_ref,
+    kdi_template_param_ref
 >;
 
 /** A complete K type, encoded as a tagged union. */
@@ -169,6 +181,12 @@ struct kdi_type {
     }
     static kdi_type make_enum(std::string fq_name) {
         return {kdi_enum_ref{std::move(fq_name)}};
+    }
+    static kdi_type make_template_param(std::string name) {
+        return {kdi_template_param_ref{std::move(name)}};
+    }
+    static kdi_type make_owner(kdi_type inner) {
+        return {kdi_owner_type{std::make_shared<kdi_type>(std::move(inner))}};
     }
 };
 

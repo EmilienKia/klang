@@ -427,7 +427,9 @@ namespace k::model {
                 ti->params.push_back(std::move(desc));
             }
             // Capture the template source text from the AST (for KDI export)
+            // Generic aggregates do not store source text — they are synthesised in place.
             ti->source_text = st.template_source_text;
+            ti->is_generic = st.is_generic;
             agg->set_tpl_info(std::move(ti));
             // Push template parameter names so that create_unresolved() marks them
             // as placeholders — suppresses spurious "cannot resolve type: T" messages.
@@ -869,7 +871,9 @@ namespace k::model {
                 ti->params.push_back(std::move(desc));
             }
             // Capture the template source text from the AST (for KDI export)
+            // Generic functions do not store source text — they are synthesised in place.
             ti->source_text = func.template_source_text;
+            ti->is_generic = func.is_generic;
             function->set_tpl_info(std::move(ti));
             // Push template parameter names so that create_unresolved() marks them
             // as placeholders — suppresses spurious "cannot resolve type: T" messages.

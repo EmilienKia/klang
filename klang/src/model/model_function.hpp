@@ -94,6 +94,7 @@ public:
 protected:
     friend class ns;
     friend class aggregate;
+    friend class gen::declaration_generator;
     friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
@@ -250,6 +251,8 @@ public:
 
     void set_block(const std::shared_ptr<block>& block);
     std::shared_ptr<block> get_block();
+    std::shared_ptr<block> get_existing_block();
+    std::shared_ptr<const block> get_existing_block() const;
 
     /** True if this function has a named return variable. */
     bool has_named_return_var() const { return _named_return_var != nullptr; }
@@ -383,6 +386,12 @@ public:
 
     /** True if this function is a template definition (has template parameters). */
     bool is_template() const { return _tpl_info != nullptr; }
+
+    /**
+     * True if this function is a generic definition (declared with 'generic' keyword).
+     * Implies is_template() == true.
+     */
+    bool is_generic() const { return _tpl_info != nullptr && _tpl_info->is_generic; }
 
     /** Returns the template info (nullptr if not a template). */
     tpl_info* get_tpl_info() const { return _tpl_info.get(); }

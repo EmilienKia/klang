@@ -41,6 +41,9 @@
 
 namespace kdi {
 
+struct kdi_function;
+struct kdi_aggregate;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Template data DTOs
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,8 +100,11 @@ struct kdi_template_def {
     std::string fq_name;       ///< fully-qualified name (e.g. "containers::Pair")
     std::string entity_kind;   ///< "struct", "class", "interface", "function"
     std::string visibility;    ///< "public" or "protected"
+    bool is_generic = false;   ///< true for `generic<...>` declarations
     std::vector<kdi_template_param> params; ///< template parameter descriptors
     std::string source;        ///< raw K source text (full declaration + body)
+    std::shared_ptr<kdi_aggregate> aggregate_signature; ///< template declaration signature for aggregates
+    std::shared_ptr<kdi_function>  function_signature;  ///< template declaration signature for free functions
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

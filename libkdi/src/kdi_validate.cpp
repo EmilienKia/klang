@@ -29,6 +29,16 @@ void validate_aggregate(const kdi_aggregate& agg,
                         const kdi_type_table& types,
                         kdi_validation_result& result);
 
+void validate_params(const std::vector<kdi_param>& params,
+                     const std::string& path,
+                     const kdi_type_table& types,
+                     kdi_validation_result& result);
+
+void validate_template_def(const kdi_template_def& def,
+                           const std::string& path,
+                           const kdi_type_table& types,
+                           kdi_validation_result& result);
+
 void validate_type(const kdi_type& t, const std::string& path,
                    const kdi_type_table& types,
                    kdi_validation_result& result) {
@@ -50,6 +60,97 @@ void validate_type(const kdi_type& t, const std::string& path,
         if (!found) {
             result.add(path, "enum reference '" + eref->fq_name
                               + "' not found in type table");
+        }
+    }
+    if (std::holds_alternative<kdi_template_param_ref>(t.value)) {
+        return;
+    }
+}
+
+void validate_template_signature_aggregate(const kdi_aggregate& agg,
+                                           const std::string& path,
+                                           const kdi_type_table& types,
+                                           kdi_validation_result& result) {
+    if (agg.name.empty()) {
+        result.add(path + ".name", "must not be empty");
+    }
+    for (size_t i = 0; i < agg.layout.size(); ++i) {
+        if (auto* member = std::get_if<kdi_layout_member>(&agg.layout[i])) {
+            validate_type(member->type, path + ".layout[" + std::to_string(i) + "].type", types, result);
+        }
+    }
+    for (size_t i = 0; i < agg.methods.size(); ++i) {
+        auto mp = path + ".methods[" + std::to_string(i) + "]";
+        validate_type(agg.methods[i].return_type, mp + ".return_type", types, result);
+        validate_params(agg.methods[i].params, mp, types, result);
+    }
+    for (size_t i = 0; i < agg.constructors.size(); ++i) {
+        validate_params(agg.constructors[i].params,
+                        path + ".constructors[" + std::to_string(i) + "]",
+                        types, result);
+    }
+    for (size_t i = 0; i < agg.static_vars.size(); ++i) {
+        validate_type(agg.static_vars[i].type,
+                      path + ".static_vars[" + std::to_string(i) + "].type",
+                      types, result);
+    }
+}
+
+void validate_template_signature_function(const kdi_function& fn,
+                                          const std::string& path,
+                                          const kdi_type_table& types,
+                                          kdi_validation_result& result) {
+    if (fn.name.empty()) {
+        result.add(path + ".name", "must not be empty");
+    }
+    validate_type(fn.return_type, path + ".return_type", types, result);
+    validate_params(fn.params, path, types, result);
+}
+
+void validate_template_def(const kdi_template_def& def,
+                           const std::string& path,
+                           const kdi_type_table& types,
+                           kdi_validation_result& result) {
+    if (def.name.empty()) {
+        result.add(path + ".name", "must not be empty");
+    }
+    if (def.fq_name.empty()) {
+        result.add(path + ".fq_name", "must not be empty");
+    }
+    if (def.entity_kind.empty()) {
+        result.add(path + ".entity_kind", "must not be empty");
+    }
+    if (def.params.empty()) {
+        result.add(path + ".params", "must not be empty");
+    }
+    if (def.is_generic) {
+        if (!def.source.empty()) {
+            result.add(path + ".source", "must be empty for generic template definitions");
+        }
+        for (size_t i = 0; i < def.params.size(); ++i) {
+            if (def.params[i].kind == "value") {
+                result.add(path + ".params[" + std::to_string(i) + "]",
+                           "generic template definitions may not declare value parameters");
+            }
+        }
+        if (def.entity_kind == "function") {
+            if (!def.function_signature) {
+                result.add(path + ".function_signature", "is required for generic function definitions");
+            } else {
+                validate_template_signature_function(*def.function_signature,
+                                                    path + ".function_signature",
+                                                    types,
+                                                    result);
+            }
+        } else {
+            if (!def.aggregate_signature) {
+                result.add(path + ".aggregate_signature", "is required for generic aggregate definitions");
+            } else {
+                validate_template_signature_aggregate(*def.aggregate_signature,
+                                                     path + ".aggregate_signature",
+                                                     types,
+                                                     result);
+            }
         }
     }
 }
@@ -215,6 +316,12 @@ void validate_namespace(const kdi_namespace& ns,
         validate_namespace(ns.namespaces[i],
                            path + ".namespaces[" + std::to_string(i) + "]",
                            types, result);
+    }
+    for (size_t i = 0; i < ns.template_defs.size(); ++i) {
+        validate_template_def(ns.template_defs[i],
+                              path + ".template_defs[" + std::to_string(i) + "]",
+                              types,
+                              result);
     }
 }
 

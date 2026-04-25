@@ -93,6 +93,22 @@ class mangler {
 protected:
     std::shared_ptr<context> _context;
 
+    bool is_generic_template_instantiation(const aggregate& agg) const;
+    bool is_generic_template_instantiation(const function& func) const;
+
+    std::string mangle_fq_name_template_base_only(
+        const name& n,
+        const std::string& tpl_inst_name,
+        const std::string& tpl_base_name,
+        bool with_k_prefix = false) const;
+
+    std::string mangle_fq_name_with_raw_last_part_template_base_only(
+        const name& n,
+        const std::string& last_part,
+        const std::string& tpl_inst_name,
+        const std::string& tpl_base_name,
+        bool with_k_prefix = false) const;
+
 public:
     mangler() = delete;
     mangler(const mangler&) = default;

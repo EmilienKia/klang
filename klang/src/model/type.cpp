@@ -841,10 +841,21 @@ std::shared_ptr<type> substitute_type(
 
     // Leaf: unresolved_type → look up in substitution map
     if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
-        auto it = subst.find(ut->type_id().to_string());
-        if (it != subst.end()) {
-            return it->second;
+        const auto& tid = ut->type_id();
+
+        auto it = subst.find(tid.to_string());
+        if (it != subst.end()) return it->second;
+
+        if (tid.has_root_prefix()) {
+            it = subst.find(tid.without_root_prefix().to_string());
+            if (it != subst.end()) return it->second;
         }
+
+        if (!tid.empty()) {
+            it = subst.find(tid.back());
+            if (it != subst.end()) return it->second;
+        }
+
         return t; // not a template param, keep as-is
     }
 

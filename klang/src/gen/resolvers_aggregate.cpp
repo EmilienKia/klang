@@ -107,6 +107,21 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             }
         }
     }
+    // Fallback for unqualified names imported from modules (e.g. implicit import k).
+    if (!tpl_agg && base_name.size() == 1) {
+        if (auto root_ns = _unit.get_root_namespace()) {
+            for (const auto& imp : _unit.get_imports()) {
+                if (imp.module_name.empty()) continue;
+                auto imported_name = imp.module_name.with_back(base_name.front());
+                if (auto st = resolve_struct_from(*root_ns, imported_name)) {
+                    if (st->is_template()) {
+                        tpl_agg = st;
+                        break;
+                    }
+                }
+            }
+        }
+    }
     if (!tpl_agg) return {};
 
     auto* ti = tpl_agg->get_tpl_info();
@@ -199,8 +214,20 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     auto parent_ns = scope_lookup::enclosing_namespace(*tpl_agg);
     if (!parent_ns) return {};
 
-    auto concrete = template_instantiator::instantiate_aggregate(
-        *tpl_agg, model_args, parent_ns, _unit, _context, *this);
+    std::shared_ptr<aggregate> concrete;
+    if (tpl_agg->is_generic()) {
+        concrete = template_instantiator::synthesize_generic_aggregate(
+            *tpl_agg, parent_ns, _unit, _context, *this);
+        if (concrete) {
+            // Track concrete-argument usages while keeping a single synthesized body.
+            const auto key = build_instantiation_key(model_args);
+            ti->instantiations[key] = concrete;
+            record_generic_usage(*ti, model_args);
+        }
+    } else {
+        concrete = template_instantiator::instantiate_aggregate(
+            *tpl_agg, model_args, parent_ns, _unit, _context, *this);
+    }
     if (!concrete) return {};
 
     // 4b. Resolve unresolved member-variable references in method bodies.
@@ -441,6 +468,74 @@ resolve_one_type(const std::shared_ptr<type>& t,
         }
     }
 
+    // Composite wrapper path (e.g. Box<int>!, Box<int>&, const Box<int>?, ...)
+    // Peel wrappers until the inner unresolved type, resolve it, then rebuild
+    // the wrapper chain around the resolved inner type.
+    {
+        enum class WrapKind { Ref, Ptr, Link, View, Const, Owner, Drain, Array, SizedArray };
+        struct wrap_item {
+            WrapKind kind;
+            unsigned long size = 0;
+        };
+
+        std::vector<wrap_item> wrappers;
+        auto inner = t;
+        while (inner && !std::dynamic_pointer_cast<unresolved_type>(inner)) {
+            if (type::is_reference(inner)) {
+                wrappers.push_back({WrapKind::Ref});
+            } else if (type::is_pointer(inner)) {
+                wrappers.push_back({WrapKind::Ptr});
+            } else if (type::is_link(inner)) {
+                wrappers.push_back({WrapKind::Link});
+            } else if (type::is_view(inner)) {
+                wrappers.push_back({WrapKind::View});
+            } else if (type::is_const(inner)) {
+                wrappers.push_back({WrapKind::Const});
+            } else if (type::is_owner(inner)) {
+                wrappers.push_back({WrapKind::Owner});
+            } else if (type::is_drain(inner)) {
+                wrappers.push_back({WrapKind::Drain});
+            } else if (auto sat = std::dynamic_pointer_cast<sized_array_type>(inner)) {
+                wrappers.push_back({WrapKind::SizedArray, sat->get_size()});
+            } else if (type::is_array(inner)) {
+                wrappers.push_back({WrapKind::Array});
+            } else {
+                break;
+            }
+            inner = inner->get_subtype();
+        }
+
+        if (auto unres_inner = std::dynamic_pointer_cast<unresolved_type>(inner)) {
+            std::shared_ptr<type> resolved_inner;
+            if (unres_inner->has_template_args()) {
+                resolved_inner = resolver.try_instantiate_template_type(unres_inner, context_elem);
+            }
+            if (!resolved_inner || !type::is_resolved(resolved_inner)) {
+                resolved_inner = resolver.resolve_type_by_name(unres_inner->type_id(), context_elem);
+            }
+            if (!resolved_inner || !type::is_resolved(resolved_inner)) {
+                resolved_inner = ctx->from_string(unres_inner->type_id());
+            }
+            if (resolved_inner && type::is_resolved(resolved_inner)) {
+                auto rebuilt = resolved_inner;
+                for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
+                    switch (it->kind) {
+                        case WrapKind::Ref:        rebuilt = rebuilt->get_reference();        break;
+                        case WrapKind::Ptr:        rebuilt = rebuilt->get_pointer();          break;
+                        case WrapKind::Link:       rebuilt = rebuilt->get_link();             break;
+                        case WrapKind::View:       rebuilt = rebuilt->get_view();             break;
+                        case WrapKind::Const:      rebuilt = rebuilt->get_const();            break;
+                        case WrapKind::Owner:      rebuilt = rebuilt->get_owner();            break;
+                        case WrapKind::Drain:      rebuilt = rebuilt->get_drain();            break;
+                        case WrapKind::Array:      rebuilt = rebuilt->get_array();            break;
+                        case WrapKind::SizedArray: rebuilt = rebuilt->get_array(it->size);    break;
+                    }
+                }
+                if (rebuilt && type::is_resolved(rebuilt)) return rebuilt;
+            }
+        }
+    }
+
     // Composite type (reference_type, pointer_type, etc. wrapping an unresolved subtype)
     auto resolved_composite = ctx->resolve_type(t);
     if (type::is_resolved(resolved_composite)) return resolved_composite;
@@ -667,6 +762,9 @@ void aggregate_type_resolver::visit_global_variable_definition(global_variable_d
  * Does NOT process default expressions (type_reference_resolver handles those).
  */
 void aggregate_type_resolver::visit_parameter(parameter& param) {
+    // Some synthesized/template-only params can be temporarily typeless during early resolution.
+    if (!param.get_type()) return;
+
     // Step 1: Handle unresolved_function_ref_type: resolve parameter types and optional owner
     // Resolve the type only (no default expressions — those are handled by type_reference_resolver)
     if (!type::is_resolved(param.get_type())) {

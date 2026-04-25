@@ -789,3 +789,274 @@ TEST_CASE("[Y] M10: error message for constraint violation includes constraint t
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [Z] Generic validation: local variables must respect addresser rule
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[Z] M10: generic function rejects bare local variable type",
+          "[milestone10][template][constraints][generic][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_z__;
+            generic<typename T>
+            fun bad(value: T&) : int {
+                local : T;
+                return 0;
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_DIRECT_TYPE_USAGE));
+        CHECK(e.get_diagnostic().message.find("local variable 'local'") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AA] Generic validation: owner local variable requires class/interface
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AA] M10: generic function rejects owner local for typename param",
+          "[milestone10][template][constraints][generic][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_aa__;
+            generic<typename T>
+            fun bad(value: T&) : int {
+                owned : T!;
+                return 0;
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_REQUIRES_CLASS));
+        CHECK(e.get_diagnostic().message.find("local variable 'owned'") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AB] Generic validation: member generic methods merge nested generic params
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AB] M10: generic member function validates its own generic locals",
+          "[milestone10][template][constraints][generic][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_ab__;
+            generic<typename T>
+            struct Box {
+                generic<typename U>
+                fun bad(value: T&, other: U&) : int {
+                    local : U;
+                    return 0;
+                }
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_DIRECT_TYPE_USAGE));
+        CHECK(e.get_diagnostic().message.find("Generic type parameter 'U'") != std::string::npos);
+        CHECK(e.get_diagnostic().message.find("local variable 'local'") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AC] Generic validation: cast target type must respect addresser rule
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AC] M10: generic function rejects cast target with bare type parameter",
+          "[milestone10][template][constraints][generic][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_ac__;
+            generic<typename T>
+            fun bad(v: int) : int {
+                (T) v;
+                return 0;
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_DIRECT_TYPE_USAGE));
+        CHECK(e.get_diagnostic().message.find("cast target type") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AD] Generic validation: owner cast target requires class/interface
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AD] M10: generic function rejects owner cast target for typename",
+          "[milestone10][template][constraints][generic][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_ad__;
+            generic<typename T>
+            fun bad(v: int) : int {
+                (T!) v;
+                return 0;
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_REQUIRES_CLASS));
+        CHECK(e.get_diagnostic().message.find("cast target type") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AE] Generic validation: new allocated type must respect addresser rule
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AE] M10: generic function rejects new allocation of bare type parameter",
+          "[milestone10][template][constraints][generic][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_ae__;
+            generic<typename T>
+            fun bad() : int {
+                new T();
+                return 0;
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_DIRECT_TYPE_USAGE));
+        CHECK(e.get_diagnostic().message.find("new allocation type") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AF] Generic validation: const wrapper must not hide direct type usage
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AF] M10: generic function rejects const-wrapped bare local type",
+          "[milestone10][template][constraints][generic][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_af__;
+            generic<typename T>
+            fun bad(value: T&) : int {
+                local : const T;
+                return 0;
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_DIRECT_TYPE_USAGE));
+        CHECK(e.get_diagnostic().message.find("local variable 'local'") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AG] Generic validation: const wrapper must not hide owner constraint
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AG] M10: generic function rejects const owner local for typename param",
+          "[milestone10][template][constraints][generic][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_ag__;
+            generic<typename T>
+            fun bad(value: T&) : int {
+                owned : const T!;
+                return 0;
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_REQUIRES_CLASS));
+        CHECK(e.get_diagnostic().message.find("local variable 'owned'") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AH] Generic validation: explicit template arg must respect addresser rule
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AH] M10: generic function rejects explicit template arg with bare type parameter",
+          "[milestone10][template][constraints][generic][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_ah__;
+            template<typename X>
+            identity(x: X&) : int { return 0; }
+
+            generic<typename T>
+            fun bad(value: T&) : int {
+                return identity<T>(value);
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_DIRECT_TYPE_USAGE));
+        CHECK(e.get_diagnostic().message.find("explicit template argument #1") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AI] Generic validation: explicit owner arg requires class/interface
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AI] M10: generic function rejects explicit owner template arg for typename",
+          "[milestone10][template][constraints][generic][integration]") {
+    try {
+        gen_jit_throws(R"SRC(
+            module __m10_ai__;
+            template<typename X>
+            consume() : int { return 0; }
+
+            generic<typename T>
+            fun bad(value: T&) : int {
+                return consume<T!>();
+            }
+        )SRC");
+        FAIL("Expected resolution_error to be thrown");
+    } catch (const k::model::gen::resolution_error& e) {
+        CHECK(e.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_OWNER_REQUIRES_CLASS));
+        CHECK(e.get_diagnostic().message.find("explicit template argument #1") != std::string::npos);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [AJ] Generic validation: explicit owner arg is accepted for class param
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[AJ] M10: generic function accepts explicit owner template arg for class",
+          "[milestone10][template][constraints][generic][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module __m10_aj__;
+        class Boxed {
+            public value : int;
+            Boxed() : value(7) {}
+        }
+
+        template<typename X>
+        consume() : int { return 1; }
+
+        generic<class T>
+        fun ok(value: T&) : int {
+            return consume<T!>();
+        }
+
+        run() : int {
+            b : Boxed;
+            return ok<Boxed>(b);
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto run_fn = jit->lookup_symbol<int(*)()>("_KFN10__m10_aj__3runEv");
+    REQUIRE(run_fn != nullptr);
+    CHECK(run_fn() == 1);
+}
+
+

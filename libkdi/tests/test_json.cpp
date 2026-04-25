@@ -114,6 +114,13 @@ TEST_CASE("JSON: ptr type round-trips", "[json][type]") {
     auto t = rt_type(kdi_type{std::move(p)});
     REQUIRE( std::holds_alternative<kdi_ptr_type>(t.value) );
 }
+TEST_CASE("JSON: owner type round-trips", "[json][type]") {
+    auto t = rt_type(kdi_type::make_owner(kdi_type::make_template_param("T")));
+    REQUIRE( std::holds_alternative<kdi_owner_type>(t.value) );
+    auto& inner = *std::get<kdi_owner_type>(t.value).inner;
+    REQUIRE( std::holds_alternative<kdi_template_param_ref>(inner.value) );
+    REQUIRE( std::get<kdi_template_param_ref>(inner.value).name == "T" );
+}
 TEST_CASE("JSON: const type round-trips", "[json][type]") {
     kdi_const_type c; c.inner = std::make_shared<kdi_type>(kdi_type::make_int(32));
     auto t = rt_type(kdi_type{std::move(c)});
@@ -495,6 +502,54 @@ TEST_CASE("JSON: template_def round-trips in namespace", "[json][template]") {
     REQUIRE(rtd.params[1].name == "B");
     REQUIRE(rtd.params[1].default_type.has_value());
     REQUIRE(rtd.source.find("Pair") != std::string::npos);
+}
+
+TEST_CASE("JSON: generic template_def round-trips with signature and no source", "[json][template][generic]") {
+    kdi_file f = make_minimal_file();
+
+    kdi_template_def td;
+    td.name = "Box";
+    td.fq_name = "test::json::Box";
+    td.entity_kind = "struct";
+    td.visibility = "public";
+    td.is_generic = true;
+
+    kdi_template_param tp;
+    tp.kind = "typename";
+    tp.name = "T";
+    td.params.push_back(tp);
+
+    auto sig = std::make_shared<kdi_aggregate>();
+    sig->kind = kdi_aggregate_kind::struct_;
+    sig->name = "Box";
+    sig->fq_name = "test::json::Box";
+
+    kdi_layout_member member;
+    member.name = "value";
+    member.fq_name = "test::json::Box::value";
+    member.visibility = kdi_visibility::public_;
+    member.llvm_field_index = 0;
+    kdi_ref_type ref_t;
+    ref_t.inner = std::make_shared<kdi_type>(kdi_type::make_template_param("T"));
+    member.type = kdi_type{std::move(ref_t)};
+    sig->layout.push_back(member);
+
+    td.aggregate_signature = sig;
+    f.unit.root_ns.template_defs.push_back(td);
+
+    auto restored = json_round_trip(f);
+    REQUIRE(restored.unit.root_ns.template_defs.size() == 1);
+    auto& rtd = restored.unit.root_ns.template_defs[0];
+    REQUIRE(rtd.is_generic);
+    REQUIRE(rtd.source.empty());
+    REQUIRE(rtd.aggregate_signature != nullptr);
+    REQUIRE(rtd.aggregate_signature->layout.size() == 1);
+    auto* rmember = std::get_if<kdi_layout_member>(&rtd.aggregate_signature->layout[0]);
+    REQUIRE(rmember != nullptr);
+    REQUIRE(std::holds_alternative<kdi_ref_type>(rmember->type.value));
+    auto& inner = *std::get<kdi_ref_type>(rmember->type.value).inner;
+    REQUIRE(std::holds_alternative<kdi_template_param_ref>(inner.value));
+    REQUIRE(std::get<kdi_template_param_ref>(inner.value).name == "T");
 }
 
 TEST_CASE("JSON: object-backed enum metadata round-trips", "[json][enum][typed]") {

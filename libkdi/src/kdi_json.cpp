@@ -115,6 +115,8 @@ static json to_json(const kdi_type& t) {
             return {{"kind","link"},{"inner",to_json(*v.inner)}};
         else if constexpr (std::is_same_v<T, kdi_view_type>)
             return {{"kind","view"},{"inner",to_json(*v.inner)}};
+        else if constexpr (std::is_same_v<T, kdi_owner_type>)
+            return {{"kind","owner"},{"inner",to_json(*v.inner)}};
         else if constexpr (std::is_same_v<T, kdi_drain_type>)
             return {{"kind","drain"},{"inner",to_json(*v.inner)}};
         else if constexpr (std::is_same_v<T, kdi_const_type>)
@@ -132,6 +134,8 @@ static json to_json(const kdi_type& t) {
             return {{"kind","aggregate"},{"fq_name",v.fq_name}};
         else if constexpr (std::is_same_v<T, kdi_enum_ref>)
             return {{"kind","enum"},{"fq_name",v.fq_name}};
+        else if constexpr (std::is_same_v<T, kdi_template_param_ref>)
+            return {{"kind","template_param"},{"name",v.name}};
         else
             return {{"kind","unknown"}};
     }, t.value);
@@ -159,6 +163,10 @@ static kdi_type from_json_type(const json& j) {
     }
     if (kind == "view") {
         kdi_view_type r; r.inner = std::make_shared<kdi_type>(from_json_type(j.at("inner")));
+        return kdi_type{std::move(r)};
+    }
+    if (kind == "owner") {
+        kdi_owner_type r; r.inner = std::make_shared<kdi_type>(from_json_type(j.at("inner")));
         return kdi_type{std::move(r)};
     }
     if (kind == "drain") {
@@ -190,6 +198,8 @@ static kdi_type from_json_type(const json& j) {
         return kdi_type::make_aggregate(j.at("fq_name").get<std::string>());
     if (kind == "enum")
         return kdi_type::make_enum(j.at("fq_name").get<std::string>());
+    if (kind == "template_param")
+        return kdi_type::make_template_param(j.at("name").get<std::string>());
     throw kdi_json_error("unknown type kind: " + kind);
 }
 
@@ -283,8 +293,12 @@ static kdi_template_origin from_json_template_origin(const json& j) {
 static json to_json(const kdi_template_def& d) {
     json params = json::array();
     for (auto& p : d.params) params.push_back(to_json(p));
-    return {{"name", d.name}, {"fq_name", d.fq_name}, {"entity_kind", d.entity_kind},
-            {"visibility", d.visibility}, {"params", params}, {"source", d.source}};
+    json j = {{"name", d.name}, {"fq_name", d.fq_name}, {"entity_kind", d.entity_kind},
+              {"visibility", d.visibility}, {"params", params}, {"source", d.source}};
+    if (d.is_generic) j["is_generic"] = true;
+    if (d.aggregate_signature) j["aggregate_signature"] = to_json(*d.aggregate_signature);
+    if (d.function_signature) j["function_signature"] = to_json(*d.function_signature);
+    return j;
 }
 static kdi_template_def from_json_template_def(const json& j) {
     kdi_template_def d;
@@ -292,9 +306,14 @@ static kdi_template_def from_json_template_def(const json& j) {
     d.fq_name     = j.at("fq_name");
     d.entity_kind = j.at("entity_kind");
     d.visibility  = j.value("visibility", "public");
+    d.is_generic  = j.value("is_generic", false);
     for (auto& p : j.value("params", json::array()))
         d.params.push_back(from_json_template_param(p));
     d.source = j.value("source", "");
+    if (j.contains("aggregate_signature"))
+        d.aggregate_signature = std::make_shared<kdi_aggregate>(from_json_aggregate(j.at("aggregate_signature")));
+    if (j.contains("function_signature"))
+        d.function_signature = std::make_shared<kdi_function>(from_json_function(j.at("function_signature")));
     return d;
 }
 

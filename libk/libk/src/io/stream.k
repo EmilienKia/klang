@@ -124,10 +124,24 @@ public class ByteArrayInputStream : public InputStream {
 
 public:
     /**
-     * Construct a ByteArrayInputStream reading from the given buffer.
-     * Takes ownership of `buf`. `size` is the number of valid bytes.
+     * Construct a ByteArrayInputStream from a byte array pointer.
+     * The content is copied so the stream keeps independent storage.
+     * `size` is the number of valid bytes to read from `buf`.
      */
-    ByteArrayInputStream(buf: byte[]!, size: int) : _buf(buf), _pos(0), _count(size) {}
+    ByteArrayInputStream(buf: byte[]*, size: int) : _buf(null), _pos(0), _count(0) {
+        if (size <= 0 || buf == null) {
+            _buf = new byte[0];
+            return;
+        }
+
+        _buf = new byte[size];
+        i : int = 0;
+        while (i < size) {
+            _buf[i] = buf[i];
+            i = i + 1;
+        }
+        _count = size;
+    }
 
     // ── InputStream implementation ───────────────────────────────────────
 

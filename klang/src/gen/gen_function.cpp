@@ -177,6 +177,8 @@ void symbol_resolver::visit_parameter(parameter& param) {
 }
 
 void signature_resolver::visit_parameter(parameter& param) {
+    if (!param.get_type()) return;
+
     if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
         // Handle unresolved_function_ref_type (function pointer/pin/link type)
         if (auto ufrt = std::dynamic_pointer_cast<unresolved_function_ref_type>(var_type)) {
@@ -234,6 +236,7 @@ void signature_resolver::visit_parameter(parameter& param) {
 }
 
 void type_reference_resolver::visit_parameter(parameter& param) {
+    if (!param.get_type()) return;
 
     if (auto var_type = param.get_type(); !type::is_resolved(var_type)) {
         // Extract lexeme from AST parameter_spec for error reporting
@@ -572,8 +575,8 @@ void symbol_resolver::visit_function(function& fn) {
     }
 
     _function_stack.push_back(fn.shared_as<function>());
-    if(auto block = fn.get_block()) {
-        visit_block(*block);
+    if (fn._block) {
+        visit_block(*fn._block);
     }
     _function_stack.pop_back();
 }
@@ -635,8 +638,8 @@ void type_reference_resolver::visit_function(function& fn) {
     }
 
     _function_stack.push_back(fn.shared_as<function>());
-    if(auto block = fn.get_block()) {
-        visit_block(*block);
+    if (fn._block) {
+        visit_block(*fn._block);
     }
     _function_stack.pop_back();
 }
@@ -645,6 +648,10 @@ void declaration_generator::visit_function(function &function) {
     // Skip template definitions — they are not instantiated yet.
     if (function.is_template()) {
         trace("[declaration_generator::visit_function] skipping template '{}'", {function.get_short_name()});
+        return;
+    }
+    // Methods that still belong to a template definition are not concrete call targets.
+    if (auto owner = function.get_owner(); owner && owner->is_template()) {
         return;
     }
     trace("[declaration_generator::visit_function] '{}'", {function.get_short_name()});
@@ -706,6 +713,12 @@ void declaration_generator::visit_function(function &function) {
     // Parameter types:
     std::vector<llvm::Type*> param_types;
     if (function.is_member()  && !function.is_static()) {
+        // Some synthesized/imported methods may bypass symbol_resolver.
+        if (!function.get_this_parameter()) {
+            if (auto owner = function.get_owner(); owner && owner->get_struct_type()) {
+                function.create_this_parameter();
+            }
+        }
         // First parameter is the 'this' pointer
         auto this_param = function.get_this_parameter();
         if (!this_param || !this_param->get_type()) {
@@ -752,9 +765,11 @@ void declaration_generator::visit_function(function &function) {
 
     _context->_functions.insert({function.shared_as<k::model::function>(), func});
 
-    // Declare content (only if there is a block — defaulted constructors may have no body yet)
-    if (auto blck = function.get_block()) {
-        blck->accept(*this);
+    // Declare content only when an explicit body already exists.
+    // Do not call get_block() here, it would synthesize empty bodies for
+    // signature-only imported templates.
+    if (function._block) {
+        function._block->accept(*this);
     }
 }
 
@@ -779,6 +794,10 @@ void implementation_generator::visit_function(function &function) {
         trace("[implementation_generator::visit_function] skipping template '{}'", {function.get_short_name()});
         return;
     }
+    // Methods that still belong to a template definition are not concrete call targets.
+    if (auto owner = function.get_owner(); owner && owner->is_template()) {
+        return;
+    }
     trace("[implementation_generator::visit_function] '{}'", {function.get_short_name()});
     // Deleted functions have no LLVM declaration and must never be implemented.
     if (function.is_deleted()) {
@@ -796,16 +815,96 @@ void implementation_generator::visit_function(function &function) {
     if (function.is_redirected()) {
         return;
     }
+    // Declaration-only functions (e.g. imported signature-only methods) have no body.
+    // They must not go through implementation generation.
+    if (!function._block && !function.is_compiler_generated()) {
+        return;
+    }
 
     // Step 1: Resolve the LLVM Function from the context
     auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
     if (func_it==_context->_functions.end()) {
-        lex::opt_any_lexeme fn_lexeme;
-        if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
-        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
-            "Internal error: LLVM function declaration not found for '{}'; "
-            "the declaration pass must be run before the implementation pass",
-            {function.get_fq_name()});
+        // Late materialization path: template-instantiated functions can appear
+        // after the main declaration walk. Build their LLVM declaration on-demand.
+        std::vector<llvm::Type*> late_param_types;
+        if (function.is_member() && !function.is_static()) {
+            if (!function.get_this_parameter()) {
+                if (auto owner = function.get_owner(); owner && owner->get_struct_type()) {
+                    function.create_this_parameter();
+                }
+            }
+            auto this_param = function.get_this_parameter();
+            if (!this_param || !this_param->get_type()) {
+                lex::opt_any_lexeme fn_lexeme;
+                if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
+                    "Internal error: LLVM function declaration not found for '{}' (missing this-parameter type)",
+                    {function.get_fq_name()});
+            }
+            auto* this_ty = _context->get_llvm_type(this_param->get_type());
+            if (!this_ty) {
+                lex::opt_any_lexeme fn_lexeme;
+                if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
+                    "Internal error: LLVM function declaration not found for '{}' (unresolved this-parameter LLVM type)",
+                    {function.get_fq_name()});
+            }
+            late_param_types.push_back(this_ty);
+        }
+        for (const auto& param : function.parameters()) {
+            auto* ptype = _context->get_llvm_type(param->get_type());
+            if (!ptype) {
+                lex::opt_any_lexeme fn_lexeme;
+                if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
+                    "Internal error: LLVM function declaration not found for '{}' (unresolved parameter type)",
+                    {function.get_fq_name()});
+            }
+            late_param_types.push_back(ptype);
+        }
+
+        llvm::Type* late_ret_type = nullptr;
+        bool late_use_sret = false;
+        if (const auto& ret = function.get_return_type()) {
+            if (needs_sret_return(ret)) {
+                late_param_types.insert(late_param_types.begin(), llvm::PointerType::get(**_context, 0));
+                late_ret_type = llvm::Type::getVoidTy(**_context);
+                late_use_sret = true;
+            } else {
+                late_ret_type = _context->get_llvm_type(ret);
+            }
+        } else {
+            late_ret_type = llvm::Type::getVoidTy(**_context);
+        }
+        if (!late_ret_type) {
+            lex::opt_any_lexeme fn_lexeme;
+            if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
+                "Internal error: LLVM function declaration not found for '{}' (unresolved return type)",
+                {function.get_fq_name()});
+        }
+
+        llvm::FunctionType* late_ft = llvm::FunctionType::get(late_ret_type, late_param_types, false);
+        llvm::Function* late_fn = _context->_module->getFunction(function.get_mangled_name());
+        if (!late_fn) {
+            late_fn = llvm::Function::Create(
+                late_ft, llvm::Function::ExternalLinkage,
+                function.get_mangled_name(), *_context->_module);
+        }
+        if (late_use_sret) {
+            late_fn->addParamAttr(0, llvm::Attribute::get(**_context, llvm::Attribute::StructRet,
+                _context->get_llvm_type(function.get_return_type())));
+        }
+        _context->_functions.insert({function.shared_as<k::model::function>(), late_fn});
+        func_it = _context->_functions.find(function.shared_as<k::model::function>());
+        if (func_it == _context->_functions.end()) {
+            lex::opt_any_lexeme fn_lexeme;
+            if (auto ast_fd = function.get_ast_function_decl()) fn_lexeme = lex::any_lexeme{ast_fd->name};
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B), fn_lexeme,
+                "Internal error: LLVM function declaration not found for '{}'; "
+                "the declaration pass must be run before the implementation pass",
+                {function.get_fq_name()});
+        }
     }
 
     llvm::Function* func = func_it->second;
@@ -1497,6 +1596,9 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
  *   6. LLVM function verification.
  */
 void implementation_generator::emit_function_return_epilogue(function& function, llvm::Function* func, bool use_sret) {
+    const bool needs_fallthrough_epilogue =
+        (_builder->GetInsertBlock() != nullptr) && (_builder->GetInsertBlock()->getTerminator() == nullptr);
+
     // Step 1: Emit owner parameter cleanup (null the caller's owner after move)
     // Force adding a terminator as last instruction guard (will be eliminated if unreachable).
     // Before that, emit cleanup for owner-typed parameters (fall-through exit path).
@@ -1505,15 +1607,17 @@ void implementation_generator::emit_function_return_epilogue(function& function,
     if (!_owner_params_stack.empty()) {
         auto params = _owner_params_stack.top();
         _owner_params_stack.pop();
-        for (auto it = params.rbegin(); it != params.rend(); ++it) {
-            auto& param = *it;
-            auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
-            if (!own_type) continue;
-            auto param_it = _context->_parameter_variables.find(param);
-            if (param_it == _context->_parameter_variables.end()) continue;
-            llvm::AllocaInst* alloca = param_it->second;
-            emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-                alloca, own_type->get_owned_type(), "exit_param");
+        if (needs_fallthrough_epilogue) {
+            for (auto it = params.rbegin(); it != params.rend(); ++it) {
+                auto& param = *it;
+                auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
+                if (!own_type) continue;
+                auto param_it = _context->_parameter_variables.find(param);
+                if (param_it == _context->_parameter_variables.end()) continue;
+                llvm::AllocaInst* alloca = param_it->second;
+                emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                    alloca, own_type->get_owned_type(), "exit_param");
+            }
         }
     }
 
@@ -1522,21 +1626,23 @@ void implementation_generator::emit_function_return_epilogue(function& function,
     if (!_struct_params_stack.empty()) {
         auto params = _struct_params_stack.top();
         _struct_params_stack.pop();
-        for (auto it = params.rbegin(); it != params.rend(); ++it) {
-            auto& param = *it;
-            auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
-            if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
-            auto dtor = st_type->get_struct()->get_destructor();
-            auto dtor_it = _context->_functions.find(dtor->shared_as<k::model::function>());
-            if (dtor_it == _context->_functions.end()) continue;
-            auto param_it = _context->_parameter_variables.find(param);
-            if (param_it == _context->_parameter_variables.end()) continue;
-            _builder->CreateCall(dtor_it->second, {param_it->second});
+        if (needs_fallthrough_epilogue) {
+            for (auto it = params.rbegin(); it != params.rend(); ++it) {
+                auto& param = *it;
+                auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
+                if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
+                auto dtor = st_type->get_struct()->get_destructor();
+                auto dtor_it = _context->_functions.find(dtor->shared_as<k::model::function>());
+                if (dtor_it == _context->_functions.end()) continue;
+                auto param_it = _context->_parameter_variables.find(param);
+                if (param_it == _context->_parameter_variables.end()) continue;
+                _builder->CreateCall(dtor_it->second, {param_it->second});
+            }
         }
     }
 
     // Step 3: Emit return instruction (ret void, ret value, or ret through sret pointer)
-    if (function.has_return_type() && !use_sret) {
+    if (needs_fallthrough_epilogue && function.has_return_type() && !use_sret) {
         // Named return variable (non-sret): load and return it at fall-through
         if (function.has_named_return_var()) {
             auto nrv = function.get_named_return_var();
@@ -1553,7 +1659,7 @@ void implementation_generator::emit_function_return_epilogue(function& function,
             llvm::Type* ret_type = _context->get_llvm_type(function.get_return_type());
             _builder->CreateRet(llvm::UndefValue::get(ret_type));
         }
-    } else {
+    } else if (needs_fallthrough_epilogue) {
         _builder->CreateRetVoid();
     }
 

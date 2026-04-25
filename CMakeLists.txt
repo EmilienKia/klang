@@ -40,6 +40,11 @@ if(NOT DEFINED KLANG_LIB_PATH_ENV_VAR)
     set(KLANG_LIB_PATH_ENV_VAR "KLANG_LIB_PATH")
 endif()
 
+# Build-time path to the K base standard library KDI and binary directories
+# (used by tests and the compiler to locate libk.kdi and libk.so/.a)
+set(KLANG_STDLIB_KDI_DIR "${CMAKE_BINARY_DIR}/libk/libk")
+set(KLANG_STDLIB_LIB_DIR "${CMAKE_BINARY_DIR}/libk/libk")
+
 # Multi-arch tuple (e.g. "x86_64-linux-gnu").
 if(CMAKE_LIBRARY_ARCHITECTURE)
     set(KLANG_LIBRARY_ARCHITECTURE "${CMAKE_LIBRARY_ARCHITECTURE}")
@@ -57,6 +62,8 @@ else()
 endif()
 message(STATUS "KLANG_LIBRARY_ARCHITECTURE: ${KLANG_LIBRARY_ARCHITECTURE}")
 message(STATUS "KLANG_LIB_PATH_ENV_VAR: ${KLANG_LIB_PATH_ENV_VAR}")
+message(STATUS "KLANG_STDLIB_KDI_DIR: ${KLANG_STDLIB_KDI_DIR}")
+message(STATUS "KLANG_STDLIB_LIB_DIR: ${KLANG_STDLIB_LIB_DIR}")
 
 # ── Sub-projects ──────────────────────────────────────────────────────────────
 add_subdirectory(libkdi)

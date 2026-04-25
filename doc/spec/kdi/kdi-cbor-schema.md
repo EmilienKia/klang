@@ -120,6 +120,7 @@ Type =
 | { "kind": "fn_ref", "ret": Type, "params": array[Type] }
 | { "kind": "aggregate", "fq_name": text }
 | { "kind": "enum", "fq_name": text }
+| { "kind": "template_param", "name": text }
 ```
 
 ---
@@ -375,6 +376,34 @@ Aggregate = {
                                     -- e.g. "%struct.ns.Counter = type { i32*, i32 }"
 }
 ```
+
+When embedded under a generic `TemplateDef.aggregate_signature`, this payload is
+declaration-only: ABI fields such as `mangled_name` and `llvm_def` may be empty,
+and `layout` only needs the accessible named members required for type-checking.
+
+---
+
+## TemplateDef
+
+```
+TemplateDef = {
+  "name"        : text,
+  "fq_name"     : text,
+  "entity_kind" : text,
+  "visibility"  : text,
+  ?"is_generic" : bool,
+  "params"      : array[TemplateParam],
+  "source"      : text,
+  ?"aggregate_signature" : Aggregate,
+  ?"function_signature"  : Function
+}
+```
+
+Rules:
+
+* Classic templates serialize their full `source` and may omit signature fields.
+* Generic templates set `is_generic = true`, serialize an empty `source`, and
+  provide exactly one declaration signature matching `entity_kind`.
 
 ---
 

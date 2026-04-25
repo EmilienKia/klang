@@ -19,15 +19,15 @@
 #include "resolvers_aggregate.hpp"
 #include "resolvers_signature.hpp"
 #include "resolvers_scope_lookup.hpp"
-#include "resolvers_aggregate.hpp"
-#include "resolvers_signature.hpp"
 #include "gen_helpers.hpp"
 #include "../model/imported.hpp"
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
 #include "../model/template.hpp"
 #include "../model/template_instantiator.hpp"
+#include "../model/tools/kdi_type_converter.hpp"
 #include "../parse/ast.hpp"
+#include <kdi.hpp>
 #include <llvm/IR/DerivedTypes.h>
 #include <queue>
 #include <set>
@@ -35,6 +35,103 @@
 #include <functional>
 #include "../errors.hpp"
 namespace k::model::gen {
+
+namespace {
+
+const kdi::kdi_template_def* find_kdi_template_def(const kdi::kdi_namespace& ns,
+                                                   const std::string& fq_name) {
+    for (const auto& tdef : ns.template_defs) {
+        if (tdef.fq_name == fq_name) {
+            return &tdef;
+        }
+    }
+    for (const auto& child : ns.namespaces) {
+        if (auto* found = find_kdi_template_def(child, fq_name)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+void collect_matching_kdi_method_template_defs(
+    const kdi::kdi_namespace& ns,
+    const std::string& method_name,
+    size_t param_count,
+    std::vector<const kdi::kdi_template_def*>& matches) {
+    for (const auto& tdef : ns.template_defs) {
+        if (!tdef.aggregate_signature) continue;
+        for (const auto& method_sig : tdef.aggregate_signature->methods) {
+            if (method_sig.name == method_name && method_sig.params.size() == param_count) {
+                matches.push_back(&tdef);
+                break;
+            }
+        }
+    }
+    for (const auto& child : ns.namespaces) {
+        collect_matching_kdi_method_template_defs(child, method_name, param_count, matches);
+    }
+}
+
+const kdi::kdi_template_def* find_imported_kdi_template_def(const unit& u,
+                                                            const std::string& fq_name) {
+    for (const auto& imp : u.get_imports()) {
+        if (imp.kdi) {
+            if (auto* found = find_kdi_template_def(imp.kdi->unit.root_ns, fq_name)) {
+                return found;
+            }
+        }
+    }
+    for (const auto& tdep : u.get_transitive_kdis()) {
+        if (tdep) {
+            if (auto* found = find_kdi_template_def(tdep->unit.root_ns, fq_name)) {
+                return found;
+            }
+        }
+    }
+    return nullptr;
+}
+
+const kdi::kdi_template_def* find_unique_imported_kdi_method_template_def(
+    const unit& u,
+    const std::string& method_name,
+    size_t param_count) {
+    std::vector<const kdi::kdi_template_def*> matches;
+    for (const auto& imp : u.get_imports()) {
+        if (imp.kdi) {
+            collect_matching_kdi_method_template_defs(
+                imp.kdi->unit.root_ns, method_name, param_count, matches);
+        }
+    }
+    for (const auto& tdep : u.get_transitive_kdis()) {
+        if (tdep) {
+            collect_matching_kdi_method_template_defs(
+                tdep->unit.root_ns, method_name, param_count, matches);
+        }
+    }
+    return matches.size() == 1 ? matches.front() : nullptr;
+}
+
+std::shared_ptr<type> build_model_type_from_kdi_signature(const kdi::kdi_type& sig_type,
+                                                          const kdi::kdi_template_def& tdef,
+                                                          unit& owner,
+                                                          const std::shared_ptr<context>& ctx) {
+    std::unordered_set<std::string> param_names;
+    for (const auto& param : tdef.params) {
+        if (!param.name.empty()) {
+            param_names.insert(param.name);
+        }
+    }
+
+    ctx->push_template_param_scope(param_names);
+    auto guard = std::unique_ptr<void, std::function<void(void*)>>(
+        nullptr,
+        [&](void*) { ctx->pop_template_param_scope(); });
+
+    return k::model::kdi_type_to_model_type(sig_type, owner, ctx);
+}
+
+} // namespace
+
 // type_reference_resolver
 
 //
@@ -545,6 +642,125 @@ type_reference_resolver::resolve_function_ref_type(
     return resolved_type;
 }
 
+const tpl_info::generic_usage_descriptor*
+type_reference_resolver::find_generic_usage_for_site(const variable_definition* site) const
+{
+    if (!site) return nullptr;
+    auto it = _generic_usage_by_site.find(site);
+    if (it == _generic_usage_by_site.end()) return nullptr;
+    return &it->second;
+}
+
+const tpl_info::generic_usage_descriptor*
+type_reference_resolver::find_generic_usage_for_receiver(const std::shared_ptr<expression>& receiver) const
+{
+    if (!receiver) return nullptr;
+
+    if (auto sym = std::dynamic_pointer_cast<symbol_expression>(receiver)) {
+        if (sym->is_variable_def() && sym->get_variable_def()) {
+            return find_generic_usage_for_site(sym->get_variable_def().get());
+        }
+    }
+
+    if (auto mem_obj = std::dynamic_pointer_cast<member_of_object_expression>(receiver)) {
+        auto& member_sym = mem_obj->symbol();
+        if (member_sym.is_variable_def() && member_sym.get_variable_def()) {
+            if (auto usage = find_generic_usage_for_site(member_sym.get_variable_def().get())) {
+                return usage;
+            }
+        }
+        return find_generic_usage_for_receiver(std::const_pointer_cast<expression>(mem_obj->sub_expr()));
+    }
+
+    if (auto mem_ptr = std::dynamic_pointer_cast<member_of_pointer_expression>(receiver)) {
+        auto& member_sym = mem_ptr->symbol();
+        if (member_sym.is_variable_def() && member_sym.get_variable_def()) {
+            if (auto usage = find_generic_usage_for_site(member_sym.get_variable_def().get())) {
+                return usage;
+            }
+        }
+        return find_generic_usage_for_receiver(std::const_pointer_cast<expression>(mem_ptr->sub_expr()));
+    }
+
+    if (auto unary = std::dynamic_pointer_cast<unary_expression>(receiver)) {
+        return find_generic_usage_for_receiver(std::const_pointer_cast<expression>(unary->sub_expr()));
+    }
+
+    return nullptr;
+}
+
+std::shared_ptr<type>
+type_reference_resolver::resolve_generic_call_return_type(
+    const function& called_func,
+    const std::shared_ptr<expression>& receiver_expr)
+{
+    if (!called_func.has_return_type() || !receiver_expr) return {};
+
+    const auto* usage = find_generic_usage_for_receiver(receiver_expr);
+    if (!usage || usage->type_bindings.empty()) return {};
+
+    std::shared_ptr<type> declared_ret;
+    if (auto ast_decl = called_func.get_ast_function_decl(); ast_decl && ast_decl->type) {
+        declared_ret = _context->from_type_specifier(*ast_decl->type);
+    }
+
+    if (!declared_ret) {
+        if (auto owner_agg = called_func.parent<aggregate>()) {
+            auto agg_fq = owner_agg->get_fq_name();
+            if (agg_fq.size() >= 2 && agg_fq[0] == ':' && agg_fq[1] == ':') {
+                agg_fq = agg_fq.substr(2);
+            }
+
+            const kdi::kdi_template_def* tdef = nullptr;
+            if (!agg_fq.empty()) {
+                tdef = find_imported_kdi_template_def(_unit, agg_fq);
+            }
+            if (!tdef) {
+                tdef = find_unique_imported_kdi_method_template_def(
+                    _unit, called_func.get_short_name(), called_func.parameters().size());
+            }
+
+            if (tdef && tdef->aggregate_signature) {
+                for (const auto& method_sig : tdef->aggregate_signature->methods) {
+                    if (method_sig.name == called_func.get_short_name()
+                        && method_sig.params.size() == called_func.parameters().size()) {
+                        declared_ret = build_model_type_from_kdi_signature(
+                            method_sig.return_type, *tdef, _unit, _context);
+                        if (declared_ret) break;
+                    }
+                }
+            }
+        } else {
+            auto func_fq = called_func.get_fq_name();
+            if (func_fq.size() >= 2 && func_fq[0] == ':' && func_fq[1] == ':') {
+                func_fq = func_fq.substr(2);
+            }
+            if (const auto* tdef = find_imported_kdi_template_def(_unit, func_fq)) {
+                if (tdef->function_signature) {
+                    declared_ret = build_model_type_from_kdi_signature(
+                        tdef->function_signature->return_type, *tdef, _unit, _context);
+                }
+            }
+        }
+    }
+
+    if (!declared_ret) return {};
+
+    type_substitution_map subst;
+    for (const auto& kv : usage->type_bindings) {
+        if (kv.second) subst[kv.first] = kv.second;
+    }
+    if (subst.empty()) return {};
+
+    auto specialized = substitute_type(declared_ret, subst);
+    if (!specialized) return {};
+
+    auto resolved = _context->resolve_type(specialized);
+    if (!resolved) resolved = specialized;
+    if (!resolved || type::contains_unresolved(resolved) || !type::is_resolved(resolved)) return {};
+    return resolved;
+}
+
 // ── Template instantiation from type reference ──────────────────────────────
 
 std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
@@ -572,6 +788,24 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
         if (root_ns) {
             if (auto st = resolve_struct_from(*root_ns, base_name)) {
                 if (st->is_template()) tpl_agg = st;
+            }
+        }
+    }
+    if (!tpl_agg && base_name.size() == 1) {
+        for (const auto& imp : _unit.get_imports()) {
+            if (imp.module_name.empty()) continue;
+
+            auto imported_ns = _unit.get_root_namespace();
+            for (std::size_t i = 0; imported_ns && i < imp.module_name.size(); ++i) {
+                imported_ns = imported_ns->get_child_namespace(imp.module_name[i]);
+            }
+
+            if (!imported_ns) continue;
+            if (auto st = imported_ns->get_aggregate(base_name.front())) {
+                if (st->is_template()) {
+                    tpl_agg = st;
+                    break;
+                }
             }
         }
     }
@@ -671,8 +905,33 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     auto parent_ns_ptr = scope_lookup::enclosing_namespace(*tpl_agg);
     if (!parent_ns_ptr) return {};
 
-    auto concrete_agg = template_instantiator::instantiate_aggregate(
-        *tpl_agg, model_args, parent_ns_ptr, _unit, _context, *this);
+    std::shared_ptr<aggregate> concrete_agg;
+    const bool is_imported_signature_only_generic =
+        tpl_agg->is_generic() && tpl_agg->get_tpl_info() && tpl_agg->get_tpl_info()->is_imported_signature_only;
+    if (tpl_agg->is_generic() && !is_imported_signature_only_generic) {
+        concrete_agg = template_instantiator::synthesize_generic_aggregate(
+            *tpl_agg, parent_ns_ptr, _unit, _context, *this);
+        if (concrete_agg) {
+            // Keep one synthesized body and track per-argument usage aliases.
+            const auto key = build_instantiation_key(model_args);
+            ti->instantiations[key] = concrete_agg;
+            record_generic_usage(*ti, model_args);
+            if (auto site_var = dynamic_cast<const variable_definition*>(&context_elem)) {
+                _generic_usage_by_site[site_var] = build_generic_usage_descriptor(*ti, model_args);
+            }
+        }
+    } else {
+        concrete_agg = template_instantiator::instantiate_aggregate(
+            *tpl_agg, model_args, parent_ns_ptr, _unit, _context, *this);
+        if (concrete_agg && tpl_agg->is_generic()) {
+            const auto key = build_instantiation_key(model_args);
+            ti->instantiations[key] = concrete_agg;
+            record_generic_usage(*ti, model_args);
+            if (auto site_var = dynamic_cast<const variable_definition*>(&context_elem)) {
+                _generic_usage_by_site[site_var] = build_generic_usage_descriptor(*ti, model_args);
+            }
+        }
+    }
     if (!concrete_agg) return {};
 
     // 4b. Resolve unresolved member-variable references in method bodies.
@@ -1552,8 +1811,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
     debug("[type_reference_resolver::get_best_matching_constructor] {} candidates, {} args", {std::to_string(constructors.size()), std::to_string(args.size())});
     const size_t arg_count = args.size();
 
-    // Helper: a constructor is callable with arg_count args if it has exactly arg_count params,
-    // OR if it has more params and all trailing params (beyond arg_count) have default values.
     auto ctor_is_callable = [&](const std::shared_ptr<constructor>& ctor) -> bool {
         const auto& params = ctor->parameters();
         if (params.size() == arg_count) return true;
@@ -1564,7 +1821,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         return true;
     };
 
-    // --- Step 1: filter by arity (exact or using defaults for trailing params) ---
     std::vector<std::shared_ptr<constructor>> arity_matched;
     for (auto& ctor : constructors) {
         if (ctor_is_callable(ctor)) {
@@ -1589,15 +1845,12 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         return {nullptr, {}};
     }
 
-    // --- Step 1b: among arity-matched, check if all are deleted ---
-    // If the best match would be a deleted constructor, report a dedicated error.
     {
         std::vector<std::shared_ptr<constructor>> non_deleted;
         for (auto& ctor : arity_matched) {
             if (!ctor->is_deleted()) non_deleted.push_back(ctor);
         }
         if (non_deleted.empty()) {
-            // All arity-matched constructors are deleted
             auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
                 "Use of deleted constructor: a constructor matching {} argument(s) exists but has been explicitly deleted with '-> delete'",
                 {std::to_string(arg_count)});
@@ -1607,12 +1860,11 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         arity_matched = std::move(non_deleted);
     }
 
-    // --- Step 2: compute per-candidate score (max of per-param weights) ---
     struct Candidate {
         std::shared_ptr<constructor> ctor;
         std::vector<std::shared_ptr<expression>> adapted_args;
-        cast_weight score; // worst (max) cast weight across all parameters
-        size_t defaults_used; // number of default values used (fewer = better)
+        cast_weight score;
+        size_t defaults_used;
     };
 
     struct FailedCandidate {
@@ -1633,7 +1885,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         std::vector<size_t> failed_indices;
         std::vector<std::shared_ptr<expression>> adapted_args;
 
-        // Score provided arguments
         for (size_t i = 0; i < arg_count; ++i) {
             auto param_type = params[i]->get_type();
             cast_weight w = compute_cast_weight(args[i], param_type);
@@ -1647,7 +1898,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
             }
         }
 
-        // Append cloned default expressions for trailing parameters
         if (!has_impossible) {
             for (size_t i = arg_count; i < total_params; ++i) {
                 adapted_args.push_back(params[i]->get_default_expr()->clone());
@@ -1661,7 +1911,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         }
     }
 
-    // --- Step 3: no valid candidates ---
     if (valid_candidates.empty()) {
         auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
             "No viable constructor found: none of the {} candidate(s) accept the provided argument types",
@@ -1685,7 +1934,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         return {nullptr, {}};
     }
 
-    // --- Step 4: find minimum score, then fewest defaults used ---
     cast_weight best_score = CAST_IMPOSSIBLE;
     size_t best_defaults = std::numeric_limits<size_t>::max();
     for (auto& cand : valid_candidates) {
@@ -1695,7 +1943,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         }
     }
 
-    // Perfect match short-circuit
     if (best_score == CAST_NONE && best_defaults == 0) {
         for (auto& cand : valid_candidates) {
             if (cand.score == CAST_NONE && cand.defaults_used == 0) {
@@ -1704,7 +1951,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         }
     }
 
-    // --- Step 5: collect all candidates with best score + best defaults ---
     std::vector<Candidate*> best_candidates;
     for (auto& cand : valid_candidates) {
         if (cand.score == best_score && cand.defaults_used == best_defaults) {
@@ -1712,17 +1958,16 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         }
     }
 
-    // --- Step 6: ambiguity check ---
     if (best_candidates.size() > 1) {
-        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH),
-            "Ambiguous constructor call: {} equally viable candidates",
+        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_FUNC_VISIBILITY_DENIED),
+            "Ambiguous constructor call: {} equally viable overloads",
             {std::to_string(best_candidates.size())});
-        for (auto* cand : best_candidates) {
+        for (auto* c : best_candidates) {
             std::string sig;
             bool first = true;
-            for (auto& param : cand->ctor->parameters()) {
+            for (auto& p : c->ctor->parameters()) {
                 if (!first) sig += ", ";
-                sig += param->get_type() ? param->get_type()->to_string() : "?";
+                sig += p->get_type() ? p->get_type()->to_string() : "?";
                 first = false;
             }
             d.add_note("candidate constructor({})", {sig});
@@ -1731,7 +1976,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         return {nullptr, {}};
     }
 
-    // --- Step 7: unique best candidate ---
     return {best_candidates[0]->ctor, best_candidates[0]->adapted_args};
 }
 
@@ -1739,16 +1983,6 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 type_reference_resolver::FunctionCandidate
 /**
  * Choose the best-matching function among candidates given arguments.
- *
- * Supports three modes:
- *   A. Member call: this_expr + args (member functions, skip this in scoring).
- *   B. Direct call: direct_args (free/static functions, full arg list).
- *   C. Unified call: free functions with first param = ref to struct.
- *
- * Scoring: max cast_weight across all parameters. Member operators preferred
- * over non-member when scores are equal.
- *
- * @return FunctionCandidate with the best match, or {nullptr,...} on failure.
  */
 type_reference_resolver::get_best_matching_function(
         const std::vector<std::shared_ptr<function>>& candidates,
@@ -1756,24 +1990,18 @@ type_reference_resolver::get_best_matching_function(
         const std::shared_ptr<expression>& this_expr,
         const std::vector<std::shared_ptr<expression>>* direct_args)
 {
-    // Call modes:
-    //   A) Member call: this_expr supplies 'this', args are explicit params (with possible defaults).
-    //   B) Free/static direct call: uses direct_args or args (with possible defaults).
-    //   C) Unified call: this_expr is first arg (params[0]), args match params[1..] (with defaults).
-
     struct CandInfo {
         std::shared_ptr<function> func;
         std::vector<std::shared_ptr<expression>> adapted_args;
         cast_weight score;
         bool is_unified;
         std::shared_ptr<expression> this_for_unified;
-        int preference; // 0=member, 1=free/static direct, 2=unified
+        int preference;
         size_t defaults_used;
     };
 
     std::vector<CandInfo> valid;
 
-    // Score exprs against params[offset..], filling defaults for trailing missing params.
     auto score_with_defaults = [&](const std::vector<std::shared_ptr<expression>>& exprs,
                                    const std::vector<std::shared_ptr<parameter>>& params,
                                    size_t offset = 0)
@@ -1803,15 +2031,11 @@ type_reference_resolver::get_best_matching_function(
     for (auto& func : candidates) {
         const auto& params = func->parameters();
 
-        // -------- Mode A: member function called with this_expr --------
         if (func->is_member() && !func->is_static() && this_expr) {
             if (args.size() <= params.size()) {
                 auto [w, adapted] = score_with_defaults(args, params, 0);
                 if (w != CAST_IMPOSSIBLE) {
                     size_t def = params.size() - args.size();
-                    // Const/mutable tie-breaker: on a mutable this, prefer mutable overload (pref=0)
-                    // over const overload (pref=1). On a const this, both are filtered upstream
-                    // (only const methods remain in candidates), so both get pref=0.
                     bool this_is_const = false;
                     if (this_expr && this_expr->get_type()) {
                         auto t = this_expr->get_type();
@@ -1824,7 +2048,6 @@ type_reference_resolver::get_best_matching_function(
             }
         }
 
-        // -------- Mode B: free/static function called directly --------
         if (!func->is_member() || func->is_static()) {
             const auto& b_args = direct_args ? *direct_args : args;
             if (b_args.size() <= params.size()) {
@@ -1836,7 +2059,6 @@ type_reference_resolver::get_best_matching_function(
             }
         }
 
-        // -------- Mode C: unified call (free/static, params[0]=ref<struct>, args match params[1..]) --------
         if ((!func->is_member() || func->is_static()) && this_expr && !params.empty()
             && args.size() <= params.size() - 1) {
             auto first_param_type = params[0]->get_type();
@@ -1857,6 +2079,48 @@ type_reference_resolver::get_best_matching_function(
     }
 
     if (valid.empty()) {
+        if (candidates.size() == 1 && candidates.front()) {
+            auto fn = candidates.front();
+            const auto& params = fn->parameters();
+            const auto& b_args = direct_args ? *direct_args : args;
+
+            // Member-call shape-compatible fallback.
+            if (fn->is_member() && !fn->is_static() && this_expr && args.size() <= params.size()) {
+                bool defaults_ok = true;
+                for (size_t i = args.size(); i < params.size(); ++i) {
+                    if (!params[i]->has_default_expr()) {
+                        defaults_ok = false;
+                        break;
+                    }
+                }
+                if (defaults_ok) {
+                    std::vector<std::shared_ptr<expression>> adapted = args;
+                    for (size_t i = args.size(); i < params.size(); ++i) {
+                        adapted.push_back(params[i]->get_default_expr()->clone());
+                    }
+                    return {fn, adapted, false, nullptr};
+                }
+            }
+
+            // Direct/free/static shape-compatible fallback.
+            if ((!fn->is_member() || fn->is_static()) && b_args.size() <= params.size()) {
+                bool defaults_ok = true;
+                for (size_t i = b_args.size(); i < params.size(); ++i) {
+                    if (!params[i]->has_default_expr()) {
+                        defaults_ok = false;
+                        break;
+                    }
+                }
+                if (defaults_ok) {
+                    std::vector<std::shared_ptr<expression>> adapted = b_args;
+                    for (size_t i = b_args.size(); i < params.size(); ++i) {
+                        adapted.push_back(params[i]->get_default_expr()->clone());
+                    }
+                    return {fn, adapted, false, nullptr};
+                }
+            }
+        }
+
         std::string fname = candidates.empty() ? "<unknown>" : candidates.front()->get_short_name();
         lex::opt_any_lexeme fn_lexeme;
         if (!candidates.empty()) {
@@ -1868,7 +2132,6 @@ type_reference_resolver::get_best_matching_function(
             {fname, std::to_string(args.size()), std::to_string(candidates.size())});
     }
 
-    // Best = lowest score, then fewest defaults, then lowest preference
     cast_weight best_score = CAST_IMPOSSIBLE;
     size_t best_def = std::numeric_limits<size_t>::max();
     int best_pref = 999;

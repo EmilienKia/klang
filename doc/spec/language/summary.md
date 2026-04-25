@@ -1411,4 +1411,167 @@ Phase 1 does **not** support:
 
 ---
 
+## 26. Generics
+
+> Formal grammar: see [`grammar.ebnf`](grammar.ebnf) §GenericDeclaration.
+
+Generics provide **uniform** parametric polymorphism over type arguments. Unlike
+templates (§25), a generic aggregate or function is compiled **exactly once**:
+all generic type parameters are mapped to opaque pointers at the LLVM IR level,
+and a single binary artefact serves all concrete type arguments.
+
+This model resembles Java/C# generics (type erasure at the code level) but
+preserves static type-checking at the K source level.
+
+### 26.1 Generic Declaration
+
+```
+GenericDeclaration:
+    'generic' '<' GenericParameterList '>'
+
+GenericParameterList:
+    GenericParameter { ',' GenericParameter }
+
+GenericParameter:
+    GenericParameterKind Identifier [ ':' TypeSpec ]
+
+GenericParameterKind:
+    'typename' | 'struct' | 'class' | 'interface'
+```
+
+The `GenericDeclaration` prefix is placed **after** annotations and **before**
+specifiers, in the same syntactic position as `TemplateDeclaration`.
+
+```k
+// Generic aggregate
+generic<class T> class Box {
+    private val : T!;
+    public:
+    Box(v : T!) { val = v; }
+    get() : T* { return val; }
+}
+
+// Generic free function
+generic<class T> identity(v : T*) : T* { return v; }
+
+// Generic method inside a non-generic class
+class Util {
+    generic<class T> wrap(v : T*) : T* { return v; }
+}
+```
+
+### 26.2 Generic Parameters
+
+Only **type parameters** are allowed. Value parameters (`N : unsigned int`) are
+rejected at parse time with diagnostic `0x01A0`
+(`ERR_GENERIC_VALUE_PARAM_NOT_ALLOWED`).
+
+| Keyword     | Constraint                                | Owner (`!`) allowed |
+|-------------|-------------------------------------------|---------------------|
+| `typename`  | Any type                                  | ✗                   |
+| `struct`    | Must be a `struct` type                   | ✗                   |
+| `class`     | Must be a `class` type                    | ✓                   |
+| `interface` | Must be an `interface` type               | ✓                   |
+
+No default types are supported (templates support `= DefaultType`; generics do not).
+
+### 26.3 Constraints on Type Parameter Usage
+
+Within the body of a generic declaration, the type parameters may appear **only
+through an addresser** (`&`, `*`, `!`, `?`, `+`, `#`). Direct bare usage (e.g.
+`local : T;`) is forbidden because the compiler maps type parameters to uniform
+opaque pointers, making value-type layout unknown.
+
+| Usage pattern          | Valid? | Error code |
+|------------------------|--------|------------|
+| `T&`, `T*`, `T?`       | ✓      | —          |
+| `T+`, `T#`             | ✓      | —          |
+| `T!` with `class T`    | ✓      | —          |
+| `T!` with `typename T` | ✗      | `0x01B1`   |
+| `T!` with `struct T`   | ✗      | `0x01B1`   |
+| `T` (bare)             | ✗      | `0x01B0`   |
+
+The **owner** addresser (`!`) requires a `class` or `interface` constraint
+because the uniform synthesised code calls the virtual destructor through the
+vtable. With `typename` or `struct`, no vtable exists, so destruction through a
+uniform pointer is unsafe.
+
+These rules are enforced at compile time by the `generic_constraint_validator`
+pass (runs immediately after model building).
+
+### 26.4 Uniform Synthesis
+
+The compiler synthesises the generic body **once** per declaration, keyed under
+`"<generic_synthesis>"` in the internal instantiation cache. All distinct
+concrete type arguments (e.g. `Box<Dog>`, `Box<Cat>`) share the same synthesised
+LLVM IR and the same mangled symbol — no type-argument suffix is appended.
+
+Instantiation at use sites:
+1. Parse the concrete type argument list `<Dog>`.
+2. Validate the constraint (kind filter, `!` owner rule).
+3. Look up the `"<generic_synthesis>"` entry — always a cache hit from the
+   second use onward.
+4. Record a usage descriptor (`generic_aggregate_instance`) mapping the single
+   synthesised aggregate to the concrete types for source-level type-checking.
+
+### 26.5 Type-Checking at Usage Sites
+
+Despite uniform code synthesis, the compiler still type-checks generic usages
+at the call site with the concrete type information:
+
+- `box.get()` on a `Box<Dog>` is statically known to return `Dog*`.
+- Passing a `Cat*` to a `Box<Dog>::set()` is a compile-time error.
+
+This is achieved via `tpl_info::generic_usages`, a map from the concrete
+instantiation key to a `generic_aggregate_instance` descriptor that holds the
+`{param → concrete_type}` mapping.
+
+### 26.6 Name Mangling
+
+Generic aggregates and functions are mangled **without** a type-argument suffix,
+unlike template instantiations:
+
+| Generic use  | Mangled form (example)          |
+|--------------|---------------------------------|
+| `Box`        | `N3BoxE` (no type suffix)       |
+| `Box::get`   | `_KFN3Box3getEv`                |
+| `identity`   | `_KFN8identityEP` (one ptr arg) |
+
+This ensures a single binary symbol for all concrete uses.
+
+### 26.7 Cross-Module Use (KDI)
+
+Generic aggregates and functions are exported to `.kdi` files as
+**signature-only** entries: the source text is not included (there is no
+monomorphization at import sites). The KDI entry preserves:
+
+- Parameter names and kind constraints (`typename`, `class`, `interface`).
+- Member/parameter/return type signatures using `kdi_template_param_ref`
+  placeholders.
+
+Importing modules can instantiate the generic normally; the compiler resolves the
+single synthesised aggregate symbol from the importing module's link-time
+dependencies.
+
+### 26.8 Invariance
+
+Generic types are **invariant**: `Box<Dog>` is not a subtype of `Box<Animal>`,
+even if `Dog` extends `Animal`. This matches the semantics of Java/C# generics in
+their default (invariant) mode. Covariance and contravariance are future features.
+
+### 26.9 Differences from Templates
+
+| Feature                    | `template`                         | `generic`                           |
+|----------------------------|------------------------------------|-------------------------------------|
+| Value parameters           | ✓                                  | ✗                                   |
+| Code synthesis             | Once per concrete argument set     | Once total (uniform materialization)|
+| Default type parameters    | ✓                                  | ✗                                   |
+| Partial specialization     | Future                             | Not applicable                      |
+| KDI export                 | Full source text                   | Signature + constraints only        |
+| Name mangling              | Type-arg suffix (e.g. `I4DogE`)    | No suffix                           |
+| Covariance                 | Not applicable                     | Invariant (future: co/contra)       |
+| Direct bare-T usage        | ✓                                  | ✗ (must use an addresser)           |
+
+---
+
 *This summary is complete and self-contained. For detailed examples, edge cases, and error codes, consult the individual specification files referenced in each section, as well as the formal grammar in [`grammar.ebnf`](grammar.ebnf).*

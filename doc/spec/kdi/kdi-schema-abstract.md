@@ -90,13 +90,15 @@ KdiType = one of:
   { kind: "ref",    inner: KdiType }
   { kind: "ptr",    inner: KdiType }
   { kind: "link",   inner: KdiType }     -- + operator
-  { kind: "view", inner: KdiType }     -- ? operator
+  { kind: "view",   inner: KdiType }     -- ? operator
+  { kind: "owner",  inner: KdiType }     -- ! operator
   { kind: "const",  inner: KdiType }
   { kind: "array",  elem: KdiType }
   { kind: "sized_array", elem: KdiType, size: uint }
   { kind: "fn_ref",  ret: KdiType, params: [KdiType] }
   { kind: "aggregate", fq_name: string }  -- reference into KdiTypeTable
   { kind: "enum", fq_name: string }       -- reference into KdiTypeTable.enums
+  { kind: "template_param", name: string } -- template-signature placeholder
 ```
 
 ---
@@ -134,6 +136,39 @@ KdiNamespace {
 Describes a `struct`, `class` or `interface`.
 
 ```
+
+When `KdiAggregate` is embedded inside a `KdiTemplateDef.aggregate_signature`, it
+acts as a declaration-only signature carrier:
+
+* `layout` contains only accessible named members needed for type-checking.
+* `llvm_def`, `mangled_name`, and ABI-only fields may be empty.
+* Method and constructor signatures may omit LLVM/mangling fields.
+
+---
+
+## KdiTemplateDef
+
+```
+KdiTemplateDef {
+  name         : string
+  fq_name      : string
+  entity_kind  : "struct" | "class" | "interface" | "function"
+  visibility   : "public" | "protected"
+  is_generic   : bool?                 -- true for `generic<...>` declarations
+  params       : [KdiTemplateParam]
+  source       : string                -- full source for classic templates
+                                       -- MUST be empty for generic definitions
+  aggregate_signature : KdiAggregate?  -- declaration-only aggregate signature
+  function_signature  : KdiFunction?   -- declaration-only free-function signature
+}
+```
+
+Rules:
+
+* Classic `template<...>` definitions export `source` and may omit signature fields.
+* `generic<...>` definitions export `is_generic = true`, MUST leave `source` empty,
+  and MUST provide exactly one matching signature field:
+  `aggregate_signature` for aggregate entities, `function_signature` for free functions.
 KdiAggregate {
   -- Identity
   kind         : "struct" | "class" | "interface"

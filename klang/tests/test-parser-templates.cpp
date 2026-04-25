@@ -17,6 +17,7 @@
  */
 #include <catch2/catch_all.hpp>
 
+#include "../src/errors.hpp"
 #include "../src/lex/lexer.hpp"
 #include "../src/parse/parser.hpp"
 
@@ -68,6 +69,117 @@ TEST_CASE("Parse template function with typename parameter", "[parser][template]
     CHECK(param->is_type_param());
     CHECK(param->kind_kw->type == k::lex::keyword::TYPENAME);
     CHECK(std::string{param->name.content} == "T");
+}
+
+TEST_CASE("Parse generic struct with typename parameter", "[parser][template][generic]") {
+    test_logger log;
+    k::source src{"generic<typename T> struct Box { public value : T&; }"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto agg = std::dynamic_pointer_cast<ast::aggregate_decl>(unit->declarations[0]);
+    REQUIRE(agg);
+    REQUIRE(agg->is_template());
+    CHECK(agg->is_generic);
+    REQUIRE(agg->template_params.size() == 1);
+    CHECK(std::string{agg->template_params[0]->name.content} == "T");
+}
+
+TEST_CASE("Parse generic struct with class parameter", "[parser][template][generic]") {
+    test_logger log;
+    k::source src{"generic<class T> struct Box { public value : T&; }"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto agg = std::dynamic_pointer_cast<ast::aggregate_decl>(unit->declarations[0]);
+    REQUIRE(agg);
+    REQUIRE(agg->is_template());
+    CHECK(agg->is_generic);
+    REQUIRE(agg->template_params.size() == 1);
+    CHECK(agg->template_params[0]->is_type_param());
+    CHECK(agg->template_params[0]->kind_kw->type == k::lex::keyword::CLASS);
+    CHECK(std::string{agg->template_params[0]->name.content} == "T");
+}
+
+TEST_CASE("Parse generic public class with nested aggregate", "[parser][template][generic]") {
+    test_logger log;
+    k::source src{R"K(generic<class TYPE>
+        public class LinkedList {
+            private struct Node {
+                public val: TYPE&;
+            }
+        }
+    )K"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto agg = std::dynamic_pointer_cast<ast::aggregate_decl>(unit->declarations[0]);
+    REQUIRE(agg);
+    REQUIRE(agg->is_template());
+    CHECK(agg->is_generic);
+    REQUIRE(agg->template_params.size() == 1);
+    CHECK(agg->template_params[0]->kind_kw->type == k::lex::keyword::CLASS);
+    CHECK(std::string{agg->template_params[0]->name.content} == "TYPE");
+}
+
+TEST_CASE("Parse generic function with typename parameter", "[parser][template][generic]") {
+    test_logger log;
+    k::source src{"generic<typename T> fun wrap(value: T&) : int { return 0; }"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto func = std::dynamic_pointer_cast<ast::function_decl>(unit->declarations[0]);
+    REQUIRE(func);
+    REQUIRE(func->is_template());
+    CHECK(func->is_generic);
+    REQUIRE(func->template_params.size() == 1);
+    CHECK(std::string{func->template_params[0]->name.content} == "T");
+}
+
+TEST_CASE("Parse generic function declaration without body keeps generic flag", "[parser][template][generic]") {
+    test_logger log;
+    k::source src{"generic<typename T> fun declare(value: T&) : int;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto func = std::dynamic_pointer_cast<ast::function_decl>(unit->declarations[0]);
+    REQUIRE(func);
+    REQUIRE(func->is_template());
+    CHECK(func->is_generic);
+    CHECK(func->content == nullptr);
+}
+
+TEST_CASE("Parse generic function redirect keeps generic flag", "[parser][template][generic]") {
+    test_logger log;
+    k::source src{"generic<typename T> fun call(value: T&) : int -> target;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto func = std::dynamic_pointer_cast<ast::function_decl>(unit->declarations[0]);
+    REQUIRE(func);
+    REQUIRE(func->is_template());
+    CHECK(func->is_generic);
+    CHECK(func->aliasing_spec == ast::function_decl::aliasing_spec_t::REDIRECT);
+}
+
+TEST_CASE("Parse generic declaration rejects value parameter", "[parser][template][generic][error]") {
+    test_logger log;
+    k::source src{"generic<typename T, unsigned int N> struct Arr {}"};
+    k::parse::parser parser(log, src);
+
+    try {
+        (void)parser.parse_unit();
+        FAIL("Expected parsing_error");
+    } catch (const k::parse::parsing_error& err) {
+        REQUIRE(err.get_diagnostic().code
+                == static_cast<unsigned int>(k::diag::parser_diag::ERR_GENERIC_VALUE_PARAM_NOT_ALLOWED));
+    }
 }
 
 TEST_CASE("Parse template struct with multiple parameters", "[parser][template]") {

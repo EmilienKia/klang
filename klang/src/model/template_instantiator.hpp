@@ -51,6 +51,20 @@ std::string build_instantiated_name(const std::string& base_name,
                                      const std::vector<template_argument>& args);
 
 /**
+ * Build usage-site bindings for a generic template from concrete arguments.
+ */
+tpl_info::generic_usage_descriptor build_generic_usage_descriptor(
+    const tpl_info& ti,
+    const std::vector<template_argument>& args);
+
+/**
+ * Record usage-site bindings keyed by build_instantiation_key(args).
+ */
+void record_generic_usage(
+    tpl_info& ti,
+    const std::vector<template_argument>& args);
+
+/**
  * Returns a display name for a type, suitable for use in instantiation
  * keys and instantiated names.
  */
@@ -88,6 +102,20 @@ public:
     static std::shared_ptr<aggregate> instantiate_aggregate(
         aggregate& tpl_def,
         const std::vector<template_argument>& args,
+        std::shared_ptr<ns> parent_ns,
+        k::model::unit& unit,
+        std::shared_ptr<context> ctx,
+        k::log::logger& logger);
+
+    /**
+     * Synthesize a generic aggregate exactly once.
+     *
+     * For declarations marked with the `generic` keyword, all type parameters
+     * are substituted with a uniform opaque pointer model type (i8*), and the
+     * resulting aggregate is cached under a dedicated synthesis key.
+     */
+    static std::shared_ptr<aggregate> synthesize_generic_aggregate(
+        aggregate& tpl_def,
         std::shared_ptr<ns> parent_ns,
         k::model::unit& unit,
         std::shared_ptr<context> ctx,
@@ -260,6 +288,21 @@ private:
     static void retarget_init_expr(
         const std::shared_ptr<expression>& init_expr,
         const std::shared_ptr<variable_definition>& new_var);
+
+    /**
+     * Clone a nested aggregate (struct/class/interface) from a template aggregate
+     * into a concrete aggregate, recursively cloning its children with type
+     * substitution applied.
+     *
+     * This handles the case where a generic/template aggregate contains an inner
+     * struct/class whose member types reference the outer template parameters
+     * (e.g. a Node struct with a field of type TYPE!).
+     */
+    static void clone_nested_aggregate(
+        const aggregate& src,
+        std::shared_ptr<aggregate> target,
+        const type_substitution_map& subst,
+        const value_substitution_map& val_subst);
 };
 
 } // namespace k::model

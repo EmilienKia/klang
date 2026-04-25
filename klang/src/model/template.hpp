@@ -196,12 +196,44 @@ struct tpl_info {
     std::vector<template_param_descriptor> params;
 
     /**
+     * True if this template was declared with the 'generic' keyword.
+     *
+     * When true:
+     *  - All parameters are type parameters (no value parameters).
+     *  - Type params may only be used via addressers in member types and bodies.
+     *  - Owner ('!') of a generic type param requires a 'class' or 'interface' constraint.
+     *  - Code synthesis is performed once (uniform materialization), with all generic
+     *    type params mapped to opaque pointers in LLVM IR.
+     *  - The same synthesised aggregate/function is reused for all instantiations.
+     */
+    bool is_generic = false;
+
+    /** True when this template definition comes from KDI signature metadata only. */
+    bool is_imported_signature_only = false;
+
+    /**
      * Raw K source text of the complete template declaration + entity body.
      * Captured during parsing for KDI export, so that importing compilers can
      * re-parse and re-instantiate the template locally with new arguments.
      * Empty if not captured (e.g. for imported or synthetic templates).
+     * Always empty for generic declarations (synthesised in declaration module,
+     * KDI exports the signature only).
      */
     std::string source_text;
+
+    /**
+     * Usage-site concrete type bindings for generic declarations.
+     *
+     * Keyed by build_instantiation_key(args), this stores the concrete type
+     * selected for each type parameter name at use sites.
+     *
+     * This metadata is used for Phase 8 type tracking and does not trigger
+     * additional code synthesis.
+     */
+    struct generic_usage_descriptor {
+        std::unordered_map<std::string, std::shared_ptr<type>> type_bindings;
+    };
+    std::unordered_map<template_instantiation_key, generic_usage_descriptor> generic_usages;
 
     /**
      * Cache of concrete instantiations keyed by a canonical string

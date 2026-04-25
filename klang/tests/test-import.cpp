@@ -2055,6 +2055,201 @@ TEST_CASE("import template — template_def exported in KDI for uninstantiated t
     REQUIRE(found_def);
 }
 
+TEST_CASE("import generic — template_def exported as signature-only metadata",
+          "[import][template][generic][model]") {
+    TmpKdi lib(R"K(
+        module tplgenericmeta;
+
+        generic<typename T>
+        struct Box {
+            public value : T&;
+            relay(v : T&) : T& { return v; }
+        }
+
+        dummy() : int { return 0; }
+    )K");
+
+    auto kdi = kdi::kdi_read_cbor_file(lib.kdi_path);
+
+    bool found_def = false;
+    std::function<void(const kdi::kdi_namespace&)> search_ns =
+        [&](const kdi::kdi_namespace& ns) {
+        for (const auto& td : ns.template_defs) {
+            if (td.name == "Box") {
+                REQUIRE(td.is_generic);
+                REQUIRE(td.source.empty());
+                REQUIRE(td.aggregate_signature != nullptr);
+                REQUIRE(td.aggregate_signature->methods.size() == 1);
+                auto* member = std::get_if<kdi::kdi_layout_member>(&td.aggregate_signature->layout[0]);
+                REQUIRE(member != nullptr);
+                REQUIRE(std::holds_alternative<kdi::kdi_ref_type>(member->type.value));
+                auto& inner = *std::get<kdi::kdi_ref_type>(member->type.value).inner;
+                REQUIRE(std::holds_alternative<kdi::kdi_template_param_ref>(inner.value));
+                REQUIRE(std::get<kdi::kdi_template_param_ref>(inner.value).name == "T");
+                found_def = true;
+            }
+        }
+        for (const auto& child : ns.namespaces) search_ns(child);
+    };
+    search_ns(kdi.unit.root_ns);
+    REQUIRE(found_def);
+}
+
+TEST_CASE("import generic — signature-only template_def is materialised into model",
+          "[import][template][generic][model]") {
+    TmpKdi lib(R"K(
+        module tplgenericimport;
+
+        generic<typename T>
+        struct Box {
+            public value : T&;
+            relay(v : T&) : T& { return v; }
+        }
+
+        dummy() : int { return 0; }
+    )K");
+
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("tplgenericimport", lib.kdi_path);
+    comp->set_file_resolver(resolver);
+
+    REQUIRE_NOTHROW(comp->parse_source("consumer.k", R"K(
+        module consumer;
+        import tplgenericimport;
+    )K"));
+
+    auto root_ns = comp->get_unit()->get_root_namespace();
+    REQUIRE(root_ns != nullptr);
+    auto imported_ns = root_ns->get_child_namespace("tplgenericimport");
+    REQUIRE(imported_ns != nullptr);
+
+    auto box_tpl = imported_ns->get_aggregate("Box");
+    REQUIRE(box_tpl != nullptr);
+    REQUIRE(box_tpl->is_template());
+    REQUIRE(box_tpl->is_generic());
+    REQUIRE(box_tpl->get_tpl_info() != nullptr);
+    REQUIRE(box_tpl->get_tpl_info()->is_imported_signature_only);
+    REQUIRE(box_tpl->get_variable("value") != nullptr);
+    REQUIRE(box_tpl->get_function("relay") != nullptr);
+}
+
+TEST_CASE("import generic<class> — owner placeholder is preserved in signature metadata",
+          "[import][template][generic][model]") {
+    TmpKdi lib(R"K(
+        module tplgenericownermeta;
+
+        class Dog {
+        }
+
+        generic<class T>
+        class Box {
+            relay(v : T!) : T! { return v; }
+        }
+
+        dummy() : int { return 0; }
+    )K");
+
+    auto kdi = kdi::kdi_read_cbor_file(lib.kdi_path);
+
+    bool found_def = false;
+    std::function<void(const kdi::kdi_namespace&)> search_ns =
+        [&](const kdi::kdi_namespace& ns) {
+        for (const auto& td : ns.template_defs) {
+            if (td.name != "Box") continue;
+            REQUIRE(td.is_generic);
+            REQUIRE(td.aggregate_signature != nullptr);
+            REQUIRE(td.aggregate_signature->methods.size() == 1);
+
+            const auto& method = td.aggregate_signature->methods[0];
+            REQUIRE(std::holds_alternative<kdi::kdi_owner_type>(method.return_type.value));
+            auto& ret_inner = *std::get<kdi::kdi_owner_type>(method.return_type.value).inner;
+            REQUIRE(std::holds_alternative<kdi::kdi_template_param_ref>(ret_inner.value));
+            REQUIRE(std::get<kdi::kdi_template_param_ref>(ret_inner.value).name == "T");
+
+            REQUIRE(method.params.size() == 1);
+            REQUIRE(std::holds_alternative<kdi::kdi_owner_type>(method.params[0].type.value));
+            auto& param_inner = *std::get<kdi::kdi_owner_type>(method.params[0].type.value).inner;
+            REQUIRE(std::holds_alternative<kdi::kdi_template_param_ref>(param_inner.value));
+            REQUIRE(std::get<kdi::kdi_template_param_ref>(param_inner.value).name == "T");
+            found_def = true;
+        }
+        for (const auto& child : ns.namespaces) search_ns(child);
+    };
+
+    search_ns(kdi.unit.root_ns);
+    REQUIRE(found_def);
+}
+
+TEST_CASE("import generic<class> — nested aggregate template_def keeps generic metadata",
+          "[import][template][generic][model]") {
+    TmpKdi lib(R"K(
+        module tplgenericclassmeta;
+
+        generic<class T>
+        class Box {
+            private struct Node {
+                public value : T&;
+            }
+
+        public:
+            public head : Node*;
+        }
+
+        dummy() : int { return 0; }
+    )K");
+
+    auto kdi = kdi::kdi_read_cbor_file(lib.kdi_path);
+
+    bool found_def = false;
+    std::function<void(const kdi::kdi_namespace&)> search_ns =
+        [&](const kdi::kdi_namespace& ns) {
+        for (const auto& td : ns.template_defs) {
+            if (td.name == "Box") {
+                REQUIRE(td.is_generic);
+                REQUIRE(td.source.empty());
+                REQUIRE(td.aggregate_signature != nullptr);
+                found_def = true;
+            }
+        }
+        for (const auto& child : ns.namespaces) search_ns(child);
+    };
+    search_ns(kdi.unit.root_ns);
+    REQUIRE(found_def);
+}
+
+TEST_CASE("cross-module generic function — owner parameter works after KDI import",
+          "[import][e2e][template][owner]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module generic_owner_lib;
+
+            class Dog {
+            }
+
+            generic<class T>
+            is_not_null(v : T!) : int {
+                if (v == null) {
+                    return 0;
+                }
+                return 42;
+            }
+        )K",
+        R"K(
+            module generic_owner_exe;
+            import generic_owner_lib;
+
+            main() : int {
+                d : generic_owner_lib::Dog! = new generic_owner_lib::Dog();
+                return generic_owner_lib::is_not_null<generic_owner_lib::Dog>(d);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Template with value parameter: verify template_origin includes value args.
 // ─────────────────────────────────────────────────────────────────────────────

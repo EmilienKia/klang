@@ -269,4 +269,176 @@ TEST_CASE("[G] Mangling: free template function instantiation has IiE encoding (
     CHECK(concrete->get_tpl_base_name() == "identity");
 }
 
+TEST_CASE("[H] Mangling: generic synthesis keeps base symbol without template arg encoding",
+          "[mangling][template][generic]") {
+    auto comp = compile_model(R"SRC(
+        module __mangle_h__;
+        generic<typename T>
+        struct Box {
+            public value : T&;
+        }
+
+        struct Uses {
+            public a : Box<int>;
+            public b : Box<float>;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    auto root_ns = unit->get_root_namespace();
+    REQUIRE(root_ns != nullptr);
+
+    auto box_tpl = root_ns->get_aggregate("Box");
+    REQUIRE(box_tpl != nullptr);
+    REQUIRE(box_tpl->is_template());
+    REQUIRE(box_tpl->is_generic());
+
+    auto ctx = comp->get_context_for_test();
+    REQUIRE(ctx != nullptr);
+    auto int_type = ctx->from_type(k::model::primitive_type::INT);
+    REQUIRE(int_type != nullptr);
+
+    std::vector<k::model::template_argument> args;
+    args.push_back(k::model::template_argument::make_type(int_type));
+
+    test_logger logger;
+    auto synthesized = k::model::template_instantiator::synthesize_generic_aggregate(
+        *box_tpl, root_ns, *unit, ctx, logger);
+    REQUIRE(synthesized != nullptr);
+
+    // Simulate an imported/aliased instantiation metadata on the synthesized node.
+    synthesized->set_tpl_instantiation_info("Box", args);
+
+    k::model::mangler mg(ctx);
+
+    auto agg_mangled = mg.mangle_structure(*synthesized);
+    CAPTURE(agg_mangled);
+    CHECK(agg_mangled.find("3Box") != std::string::npos);
+    CHECK(agg_mangled.find("3BoxI") == std::string::npos);
+    CHECK(agg_mangled.find("Ii") == std::string::npos);
+
+}
+
+TEST_CASE("[I] Mangling: generic synthesized method keeps one symbol across concrete usages",
+          "[mangling][template][generic]") {
+    auto comp = compile_model(R"SRC(
+        module __mangle_i__;
+        generic<typename T>
+        struct Box {
+            relay(v : T&) : T& { return v; }
+        }
+
+        struct Uses {
+            public a : Box<int>;
+            public b : Box<float>;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    auto root_ns = unit->get_root_namespace();
+    REQUIRE(root_ns != nullptr);
+
+    auto box_tpl = root_ns->get_aggregate("Box");
+    REQUIRE(box_tpl != nullptr);
+    REQUIRE(box_tpl->is_generic());
+
+    auto ctx = comp->get_context_for_test();
+    REQUIRE(ctx != nullptr);
+
+    test_logger logger;
+    auto synthesized = k::model::template_instantiator::synthesize_generic_aggregate(
+        *box_tpl, root_ns, *unit, ctx, logger);
+    REQUIRE(synthesized != nullptr);
+
+    auto relay = synthesized->get_function("relay");
+    REQUIRE(relay != nullptr);
+
+    k::model::mangler mg(ctx);
+
+    std::vector<k::model::template_argument> int_args;
+    int_args.push_back(k::model::template_argument::make_type(
+        ctx->from_type(k::model::primitive_type::INT)));
+    synthesized->set_tpl_instantiation_info("Box", int_args);
+    auto int_mangled = mg.mangle_function(*relay);
+
+    std::vector<k::model::template_argument> float_args;
+    float_args.push_back(k::model::template_argument::make_type(
+        ctx->from_type(k::model::primitive_type::FLOAT)));
+    synthesized->set_tpl_instantiation_info("Box", float_args);
+    auto float_mangled = mg.mangle_function(*relay);
+
+    CAPTURE(int_mangled, float_mangled);
+    CHECK(int_mangled == float_mangled);
+    CHECK(int_mangled.find("3Box") != std::string::npos);
+    CHECK(int_mangled.find("5relay") != std::string::npos);
+    CHECK(int_mangled.find("3BoxI") == std::string::npos);
+    CHECK(int_mangled.find("Ii") == std::string::npos);
+    CHECK(int_mangled.find("If") == std::string::npos);
+}
+
+TEST_CASE("[J] Mangling: generic synthesized constructor keeps one symbol across concrete usages",
+          "[mangling][template][generic]") {
+    auto comp = compile_model(R"SRC(
+        module __mangle_j__;
+        generic<typename T>
+        struct Box {
+            public value : T&;
+        }
+
+        struct Uses {
+            public a : Box<int>;
+            public b : Box<float>;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    auto root_ns = unit->get_root_namespace();
+    REQUIRE(root_ns != nullptr);
+
+    auto box_tpl = root_ns->get_aggregate("Box");
+    REQUIRE(box_tpl != nullptr);
+    REQUIRE(box_tpl->is_generic());
+
+    auto ctx = comp->get_context_for_test();
+    REQUIRE(ctx != nullptr);
+
+    test_logger logger;
+    auto synthesized = k::model::template_instantiator::synthesize_generic_aggregate(
+        *box_tpl, root_ns, *unit, ctx, logger);
+    REQUIRE(synthesized != nullptr);
+    REQUIRE(!synthesized->constructors().empty());
+
+    auto ctor = synthesized->constructors().front();
+    REQUIRE(ctor != nullptr);
+
+    k::model::mangler mg(ctx);
+
+    std::vector<k::model::template_argument> int_args;
+    int_args.push_back(k::model::template_argument::make_type(
+        ctx->from_type(k::model::primitive_type::INT)));
+    synthesized->set_tpl_instantiation_info("Box", int_args);
+    auto int_mangled = mg.mangle_constructor(*ctor);
+
+    std::vector<k::model::template_argument> float_args;
+    float_args.push_back(k::model::template_argument::make_type(
+        ctx->from_type(k::model::primitive_type::FLOAT)));
+    synthesized->set_tpl_instantiation_info("Box", float_args);
+    auto float_mangled = mg.mangle_constructor(*ctor);
+
+    CAPTURE(int_mangled, float_mangled);
+    CHECK(int_mangled == float_mangled);
+    CHECK(int_mangled.find("_KFM") == 0);
+    CHECK(int_mangled.find("3Box") != std::string::npos);
+    CHECK(int_mangled.find("C1") != std::string::npos);
+    CHECK(int_mangled.find("3BoxI") == std::string::npos);
+    CHECK(int_mangled.find("Ii") == std::string::npos);
+    CHECK(int_mangled.find("If") == std::string::npos);
+}
+
 

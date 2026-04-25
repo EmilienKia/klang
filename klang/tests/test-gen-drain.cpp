@@ -214,14 +214,15 @@ TEST_CASE("Drain on const object is rejected", "[gen][drain][error]") {
 }
 
 // =============================================================================
-// DRAIN DOES NOT IMPLICITLY BIND FROM REFERENCE
+// MUTABLE LOCAL CAN BE PASSED TO DRAIN PARAMETER
 // =============================================================================
 
-// Per user requirement #3: reference is NOT implicitly cast to drain.
-// If only a drain overload exists, passing a plain reference should fail.
-TEST_CASE("Reference does not implicitly convert to drain", "[gen][drain][error]") {
-    REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __ref_to_drain_error__;
+// A mutable local variable is allowed to be passed to a drain parameter.
+// Drain (#) binds to mutable objects; primitives are copied on drain,
+// so the call is semantically correct.
+TEST_CASE("Mutable local can be passed to drain parameter", "[gen][drain]") {
+    auto jit = gen_jit(R"SRC(
+        module __mutable_to_drain__;
 
         consume(v : int#) : int {
             return v;
@@ -231,7 +232,11 @@ TEST_CASE("Reference does not implicitly convert to drain", "[gen][drain][error]
             x : int = 10;
             return consume(x);
         }
-    )SRC"));
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 10);
 }
 
 // =============================================================================

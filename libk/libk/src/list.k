@@ -1,5 +1,5 @@
 /*
- * K Language compiler
+ * K Language standard library — linked list collections (retired placeholder)
  *
  * Copyright 2023-2026 Emilien Kia
  *
@@ -15,17 +15,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef KLANG_RESOLVERS_HPP
-#define KLANG_RESOLVERS_HPP
-// Umbrella header — includes all resolver sub-headers.
-// Prefer including the specific sub-header when only one resolver is needed.
-#include "resolvers_common.hpp"
-#include "resolvers_scope_lookup.hpp"
-#include "resolvers_symbol.hpp"
-#include "resolvers_aggregate.hpp"
-#include "resolvers_materializer.hpp"
-#include "resolvers_signature.hpp"
-#include "resolvers_type_ref.hpp"
-#include "resolvers_init_order.hpp"
-#include "resolvers_generic.hpp"
-#endif //KLANG_RESOLVERS_HPP
+
+module k;
+
+/*
+ * LinkedList and DoubleLinkedList are temporarily retired from the default
+ * standard library build. They will be reintroduced once the collection API
+ * is redesigned on top of the stabilised generic import/KDI pipeline.
+ */

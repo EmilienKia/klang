@@ -31,6 +31,10 @@
 
 #include <catch2/catch_all.hpp>
 
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+
 #include "helpers.hpp"
 #include "../src/model/template.hpp"
 #include "../src/model/template_instantiator.hpp"
@@ -347,12 +351,332 @@ TEST_CASE("[I] M4: instantiated function has cloned body",
     CHECK_FALSE(blk->get_statements().empty());
 }
 
+TEST_CASE("[J] M7: generic aggregate synthesis is unique and uses base name",
+          "[milestone7][generic][instantiator]") {
+    auto comp = compile_model(R"SRC(
+        module __m7_j__;
+        generic<typename T>
+        struct Box {
+            public value : T&;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
 
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    auto root_ns = unit->get_root_namespace();
+    REQUIRE(root_ns != nullptr);
 
+    auto tpl = root_ns->get_aggregate("Box");
+    REQUIRE(tpl != nullptr);
+    REQUIRE(tpl->is_template());
+    REQUIRE(tpl->is_generic());
 
+    auto ctx = comp->get_context_for_test();
+    REQUIRE(ctx != nullptr);
 
+    test_logger logger;
 
+    auto syn1 = k::model::template_instantiator::synthesize_generic_aggregate(
+        *tpl, root_ns, *unit, ctx, logger);
+    auto syn2 = k::model::template_instantiator::synthesize_generic_aggregate(
+        *tpl, root_ns, *unit, ctx, logger);
 
+    REQUIRE(syn1 != nullptr);
+    REQUIRE(syn2 != nullptr);
+    CHECK(syn1.get() == syn2.get());
+    CHECK(syn1->get_short_name() == "Box");
 
+    auto value = syn1->get_variable("value");
+    REQUIRE(value != nullptr);
+    REQUIRE(value->get_type() != nullptr);
+    CHECK(k::model::type::is_reference(value->get_type()));
 
+    auto ref_inner = value->get_type()->get_subtype();
+    REQUIRE(ref_inner != nullptr);
+    CHECK(k::model::type::is_pointer(ref_inner));
+
+    auto ptr_inner = ref_inner->get_subtype();
+    REQUIRE(ptr_inner != nullptr);
+    CHECK(k::model::type::is_primitive(ptr_inner));
+    auto prim = std::dynamic_pointer_cast<k::model::primitive_type>(ptr_inner);
+    REQUIRE(prim != nullptr);
+    CHECK(prim->get_type() == k::model::primitive_type::BYTE);
+}
+
+TEST_CASE("[K] M7: generic uses track concrete arguments without re-synthesis",
+          "[milestone7][generic][resolver]") {
+    auto comp = compile_model(R"SRC(
+        module __m7_k__;
+        generic<typename T>
+        struct Box {
+            public value : T&;
+        }
+
+        struct Uses {
+            public a : Box<int>;
+            public b : Box<float>;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    auto root_ns = unit->get_root_namespace();
+    REQUIRE(root_ns != nullptr);
+
+    auto box_tpl = root_ns->get_aggregate("Box");
+    REQUIRE(box_tpl != nullptr);
+    REQUIRE(box_tpl->is_generic());
+
+    auto* ti = box_tpl->get_tpl_info();
+    REQUIRE(ti != nullptr);
+
+    auto ctx = comp->get_context_for_test();
+    REQUIRE(ctx != nullptr);
+    auto int_type = ctx->from_type(k::model::primitive_type::INT);
+    auto float_type = ctx->from_type(k::model::primitive_type::FLOAT);
+    REQUIRE(int_type != nullptr);
+    REQUIRE(float_type != nullptr);
+
+    std::vector<k::model::template_argument> int_args;
+    int_args.push_back(k::model::template_argument::make_type(int_type));
+    const std::string int_key = k::model::build_instantiation_key(int_args);
+
+    std::vector<k::model::template_argument> float_args;
+    float_args.push_back(k::model::template_argument::make_type(float_type));
+    const std::string float_key = k::model::build_instantiation_key(float_args);
+
+    auto syn_it = ti->instantiations.find("<generic_synthesis>");
+    REQUIRE(syn_it != ti->instantiations.end());
+
+    auto int_it = ti->instantiations.find(int_key);
+    auto float_it = ti->instantiations.find(float_key);
+    REQUIRE(int_it != ti->instantiations.end());
+    REQUIRE(float_it != ti->instantiations.end());
+
+    auto int_usage_it = ti->generic_usages.find(int_key);
+    auto float_usage_it = ti->generic_usages.find(float_key);
+    REQUIRE(int_usage_it != ti->generic_usages.end());
+    REQUIRE(float_usage_it != ti->generic_usages.end());
+
+    auto int_binding_it = int_usage_it->second.type_bindings.find("T");
+    auto float_binding_it = float_usage_it->second.type_bindings.find("T");
+    REQUIRE(int_binding_it != int_usage_it->second.type_bindings.end());
+    REQUIRE(float_binding_it != float_usage_it->second.type_bindings.end());
+    CHECK(int_binding_it->second == int_type);
+    CHECK(float_binding_it->second == float_type);
+
+    auto syn = std::get<std::shared_ptr<k::model::aggregate>>(syn_it->second);
+    auto as_int = std::get<std::shared_ptr<k::model::aggregate>>(int_it->second);
+    auto as_float = std::get<std::shared_ptr<k::model::aggregate>>(float_it->second);
+    REQUIRE(syn != nullptr);
+    REQUIRE(as_int != nullptr);
+    REQUIRE(as_float != nullptr);
+    CHECK(syn.get() == as_int.get());
+    CHECK(syn.get() == as_float.get());
+}
+
+TEST_CASE("[L] M7: generic flag preserved for class-kind parameter",
+          "[milestone7][generic][model]") {
+    auto comp = compile_model(R"SRC(
+        module __m7_l__;
+        generic<class T>
+        class Box {
+            public value : T&;
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    auto root_ns = unit->get_root_namespace();
+    REQUIRE(root_ns != nullptr);
+
+    auto tpl = root_ns->get_aggregate("Box");
+    REQUIRE(tpl != nullptr);
+    REQUIRE(tpl->is_template());
+    REQUIRE(tpl->get_tpl_info() != nullptr);
+    CHECK(tpl->get_tpl_info()->is_generic);
+    CHECK(tpl->is_generic());
+}
+
+TEST_CASE("[M] M7: generic flag preserved for module k nested aggregate",
+          "[milestone7][generic][model]") {
+    auto comp = compile_model(R"SRC(
+        module k;
+        generic<class TYPE>
+        public class LinkedList {
+            private struct Node {
+                public val : TYPE&;
+            }
+        }
+    )SRC");
+    REQUIRE(comp != nullptr);
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    auto root_ns = unit->get_root_namespace();
+    REQUIRE(root_ns != nullptr);
+
+    auto tpl = root_ns->get_aggregate("LinkedList");
+    REQUIRE(tpl != nullptr);
+    REQUIRE(tpl->is_template());
+    REQUIRE(tpl->get_tpl_info() != nullptr);
+    CHECK(tpl->get_tpl_info()->is_generic);
+    CHECK(tpl->is_generic());
+}
+
+TEST_CASE("[N] M7: generic flag preserved with optimize=true parse pipeline",
+          "[milestone7][generic][model]") {
+    auto comp = k::compiler::create();
+    REQUIRE(comp != nullptr);
+
+    REQUIRE_NOTHROW(comp->parse_source("", R"SRC(
+        module k;
+        generic<class TYPE>
+        public class LinkedList {
+            private struct Node {
+                public val : TYPE&;
+            }
+        }
+    )SRC", /*optimize=*/true, /*dump=*/false));
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    auto root_ns = unit->get_root_namespace();
+    REQUIRE(root_ns != nullptr);
+
+    auto tpl = root_ns->get_aggregate("LinkedList");
+    REQUIRE(tpl != nullptr);
+    REQUIRE(tpl->is_template());
+    REQUIRE(tpl->get_tpl_info() != nullptr);
+    CHECK(tpl->get_tpl_info()->is_generic);
+    CHECK(tpl->is_generic());
+}
+
+TEST_CASE("[O] M7: generic flag preserved in parse_sources with forced module",
+          "[milestone7][generic][model]") {
+    auto comp = k::compiler::create();
+    REQUIRE(comp != nullptr);
+
+    std::vector<std::pair<std::string, std::string>> sources;
+    sources.emplace_back("list.k", R"SRC(
+        module k;
+        generic<class TYPE>
+        public class LinkedList {
+            private struct Node {
+                public val : TYPE&;
+            }
+        }
+    )SRC");
+
+    REQUIRE_NOTHROW(comp->parse_sources(std::move(sources), /*optimize=*/true, /*dump=*/false, /*forced_module_name=*/"k"));
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit != nullptr);
+    auto root_ns = unit->get_root_namespace();
+    REQUIRE(root_ns != nullptr);
+
+    auto tpl = root_ns->get_aggregate("LinkedList");
+    REQUIRE(tpl != nullptr);
+    REQUIRE(tpl->is_template());
+    REQUIRE(tpl->get_tpl_info() != nullptr);
+    CHECK(tpl->get_tpl_info()->is_generic);
+    CHECK(tpl->is_generic());
+}
+
+TEST_CASE("[P] M7: generic flag survives shared-lib generation and KDI export",
+          "[milestone7][generic][e2e]") {
+    auto comp = k::compiler::create();
+    REQUIRE(comp != nullptr);
+
+    std::vector<std::pair<std::string, std::string>> sources;
+    sources.emplace_back("list.k", R"SRC(
+        module k;
+        generic<class TYPE>
+        public class LinkedList {
+            private struct Node {
+                public val : TYPE&;
+            }
+        }
+    )SRC");
+
+    REQUIRE_NOTHROW(comp->parse_sources(std::move(sources), /*optimize=*/true, /*dump=*/false, /*forced_module_name=*/"k"));
+
+    auto root_ns = comp->get_unit()->get_root_namespace();
+    REQUIRE(root_ns != nullptr);
+    auto tpl_before = root_ns->get_aggregate("LinkedList");
+    REQUIRE(tpl_before != nullptr);
+    REQUIRE(tpl_before->get_tpl_info() != nullptr);
+    CHECK(tpl_before->get_tpl_info()->is_generic);
+
+    const auto out_so = (std::filesystem::temp_directory_path() / "klang_m7_p.so").string();
+    REQUIRE(comp->gen_shared_library(out_so));
+
+    auto tpl_after = root_ns->get_aggregate("LinkedList");
+    REQUIRE(tpl_after != nullptr);
+    REQUIRE(tpl_after->get_tpl_info() != nullptr);
+    CHECK(tpl_after->get_tpl_info()->is_generic);
+
+    const auto out_kdi = (std::filesystem::path(out_so).replace_extension(".kdi")).string();
+    auto kdi = kdi::kdi_read_cbor_file(out_kdi);
+
+    bool found = false;
+    for (const auto& td : kdi.unit.root_ns.template_defs) {
+        if (td.name == "LinkedList") {
+            CHECK(td.is_generic);
+            CHECK(td.aggregate_signature != nullptr);
+            found = true;
+        }
+    }
+    CHECK(found);
+}
+
+TEST_CASE("[Q] M7: generic KDI export with file-backed source and absolute path",
+          "[milestone7][generic][e2e]") {
+    const auto src_path = (std::filesystem::temp_directory_path() / "klang_m7_q.k").string();
+    const auto out_so = (std::filesystem::temp_directory_path() / "klang_m7_q.so").string();
+
+    {
+        std::ofstream os(src_path);
+        REQUIRE(os.is_open());
+        os << R"SRC(
+module k;
+generic<class TYPE>
+public class LinkedList {
+    private struct Node {
+        public val: TYPE&;
+    }
+}
+)SRC";
+    }
+
+    std::ifstream is(src_path);
+    REQUIRE(is.is_open());
+    std::stringstream buffer;
+    buffer << is.rdbuf();
+
+    auto comp = k::compiler::create();
+    REQUIRE(comp != nullptr);
+
+    std::vector<std::pair<std::string, std::string>> sources;
+    sources.emplace_back(src_path, buffer.str());
+
+    REQUIRE_NOTHROW(comp->parse_sources(std::move(sources), /*optimize=*/true, /*dump=*/false, /*forced_module_name=*/"k"));
+    REQUIRE(comp->gen_shared_library(out_so));
+
+    const auto out_kdi = (std::filesystem::path(out_so).replace_extension(".kdi")).string();
+    auto kdi = kdi::kdi_read_cbor_file(out_kdi);
+
+    bool found = false;
+    for (const auto& td : kdi.unit.root_ns.template_defs) {
+        if (td.name == "LinkedList") {
+            CHECK(td.is_generic);
+            CHECK(td.aggregate_signature != nullptr);
+            found = true;
+        }
+    }
+    CHECK(found);
+}
 

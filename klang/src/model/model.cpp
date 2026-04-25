@@ -375,6 +375,14 @@ std::shared_ptr<block> function::get_block() {
     return _block;
 }
 
+std::shared_ptr<block> function::get_existing_block() {
+    return _block;
+}
+
+std::shared_ptr<const block> function::get_existing_block() const {
+    return _block;
+}
+
 bool function::is_member() const {
     return std::dynamic_pointer_cast<const aggregate>(parent<element>()) != nullptr;
 }

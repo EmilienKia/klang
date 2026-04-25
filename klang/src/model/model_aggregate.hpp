@@ -341,6 +341,12 @@ public:
     /** True if this aggregate is a template definition (has template parameters). */
     bool is_template() const { return _tpl_info != nullptr; }
 
+    /**
+     * True if this aggregate is a generic definition (declared with 'generic' keyword).
+     * Implies is_template() == true.
+     */
+    bool is_generic() const { return _tpl_info != nullptr && _tpl_info->is_generic; }
+
     /** Returns the template info (nullptr if not a template). */
     tpl_info* get_tpl_info() const { return _tpl_info.get(); }
 

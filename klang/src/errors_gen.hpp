@@ -215,6 +215,44 @@ enum class template_diag : unsigned int {
     ERR_TPL_VALUE_ARG_TYPE_MISMATCH               = 0x0186,
 };
 
+// ────────────────────────────────────────────────────────────────────────────
+// Generic diagnostics (constraint violation on generic declarations/usage)
+// ────────────────────────────────────────────────────────────────────────────
+enum class generic_diag : unsigned int {
+    /**
+     * A generic type parameter is used directly (not through an addresser).
+     * E.g., a member variable 'val: T' where T is a generic param is forbidden;
+     * use 'val: T!' or 'val: T&' instead.
+     */
+    ERR_GENERIC_DIRECT_TYPE_USAGE                 = 0x01B0,
+
+    /**
+     * An owner addresser ('!') is applied to a generic type parameter whose
+     * constraint is not 'class' or 'interface'.
+     * Owner of a generic type param requires a class/interface constraint so
+     * that the virtual destructor is reachable from the unifom synthesised code.
+     */
+    ERR_GENERIC_OWNER_REQUIRES_CLASS              = 0x01B1,
+
+    /**
+     * A generic aggregate or function was instantiated with a concrete type
+     * argument that does not satisfy the declared constraint.
+     */
+    ERR_GENERIC_ARG_CONSTRAINT_VIOLATED           = 0x01B2,
+
+    /**
+     * A generic aggregate or function was instantiated with too many type
+     * arguments.
+     */
+    ERR_GENERIC_TOO_MANY_ARGS                     = 0x01B3,
+
+    /**
+     * A generic aggregate or function was instantiated with too few type
+     * arguments (and no defaults are available).
+     */
+    ERR_GENERIC_TOO_FEW_ARGS                      = 0x01B4,
+};
+
 
 } // namespace k::diag
 

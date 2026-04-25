@@ -311,6 +311,9 @@ cbor_item_t* encode_type(const kdi_type& t) {
         } else if constexpr (std::is_same_v<T, kdi_view_type>) {
             map_push(m, "kind",  cbor_str("view"));
             map_push(m, "inner", encode_type(*v.inner));
+        } else if constexpr (std::is_same_v<T, kdi_owner_type>) {
+            map_push(m, "kind", cbor_str("owner"));
+            map_push(m, "inner", encode_type(*v.inner));
         } else if constexpr (std::is_same_v<T, kdi_drain_type>) {
             map_push(m, "kind",  cbor_str("drain"));
             map_push(m, "inner", encode_type(*v.inner));
@@ -336,6 +339,9 @@ cbor_item_t* encode_type(const kdi_type& t) {
         } else if constexpr (std::is_same_v<T, kdi_enum_ref>) {
             map_push(m, "kind",    cbor_str("enum"));
             map_push(m, "fq_name", cbor_str(v.fq_name));
+        } else if constexpr (std::is_same_v<T, kdi_template_param_ref>) {
+            map_push(m, "kind", cbor_str("template_param"));
+            map_push(m, "name", cbor_str(v.name));
         }
     }, t.value);
     return m;
@@ -370,6 +376,7 @@ kdi_type decode_type(cbor_item_t* item, const std::string& path) {
     if (kind == "ptr")    return {kdi_ptr_type{decode_inner("inner")}};
     if (kind == "link")   return {kdi_link_type{decode_inner("inner")}};
     if (kind == "view") return {kdi_view_type{decode_inner("inner")}};
+    if (kind == "owner")  return {kdi_owner_type{decode_inner("inner")}};
     if (kind == "drain") return {kdi_drain_type{decode_inner("inner")}};
     if (kind == "const")  return {kdi_const_type{decode_inner("inner")}};
     if (kind == "array")  return {kdi_array_type{decode_inner("elem")}};
@@ -400,6 +407,9 @@ kdi_type decode_type(cbor_item_t* item, const std::string& path) {
     }
     if (kind == "enum") {
         return {kdi_enum_ref{req_string(item, "fq_name", path)}};
+    }
+    if (kind == "template_param") {
+        return {kdi_template_param_ref{req_string(item, "name", path)}};
     }
     throw kdi_parse_error("unknown type kind '" + kind + "' at " + path);
 }
@@ -1139,10 +1149,13 @@ cbor_item_t* encode_template_def(const kdi_template_def& d) {
     map_push(m, "fq_name", cbor_str(d.fq_name));
     map_push(m, "entity_kind", cbor_str(d.entity_kind));
     map_push(m, "visibility", cbor_str(d.visibility));
+    if (d.is_generic) map_push(m, "is_generic", cbor_bool(true));
     cbor_item_t* params = cbor_new_indefinite_array();
     for (auto& p : d.params) cbor_array_push(params, cbor_move(encode_template_param(p)));
     map_push(m, "params", params);
     map_push(m, "source", cbor_str(d.source));
+    if (d.aggregate_signature) map_push(m, "aggregate_signature", encode_aggregate(*d.aggregate_signature));
+    if (d.function_signature) map_push(m, "function_signature", encode_function(*d.function_signature));
     return m;
 }
 
@@ -1152,6 +1165,7 @@ kdi_template_def decode_template_def(cbor_item_t* item, const std::string& path)
     d.fq_name     = req_string(item, "fq_name", path);
     d.entity_kind = req_string(item, "entity_kind", path);
     d.visibility  = opt_string(item, "visibility");
+    d.is_generic  = opt_bool(item, "is_generic", false);
     auto* pa = map_get(item, "params");
     if (pa && cbor_isa_array(pa)) {
         size_t n = cbor_array_size(pa);
@@ -1160,6 +1174,12 @@ kdi_template_def decode_template_def(cbor_item_t* item, const std::string& path)
                                                       path + ".params[" + std::to_string(i) + "]"));
     }
     d.source = opt_string(item, "source");
+    if (auto* agg = map_get(item, "aggregate_signature")) {
+        d.aggregate_signature = std::make_shared<kdi_aggregate>(decode_aggregate(agg, path + ".aggregate_signature"));
+    }
+    if (auto* fn = map_get(item, "function_signature")) {
+        d.function_signature = std::make_shared<kdi_function>(decode_function(fn, path + ".function_signature"));
+    }
     return d;
 }
 

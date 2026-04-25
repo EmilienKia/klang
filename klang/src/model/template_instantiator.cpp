@@ -17,6 +17,7 @@
  */
 
 #include "template_instantiator.hpp"
+#include "context.hpp"
 #include "type.hpp"
 #include "statements.hpp"
 #include "expressions.hpp"
@@ -25,6 +26,10 @@
 #include <queue>
 
 namespace k::model {
+
+namespace {
+constexpr const char* generic_synthesis_key = "<generic_synthesis>";
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Name / key helpers
@@ -110,6 +115,32 @@ std::string build_instantiated_name(const std::string& base_name,
     return oss.str();
 }
 
+tpl_info::generic_usage_descriptor build_generic_usage_descriptor(
+    const tpl_info& ti,
+    const std::vector<template_argument>& args)
+{
+    tpl_info::generic_usage_descriptor usage;
+    const size_t count = std::min(ti.params.size(), args.size());
+    for (size_t i = 0; i < count; ++i) {
+        const auto& param = ti.params[i];
+        const auto& arg = args[i];
+        if (!param.is_type_param() || !arg.is_type() || !arg.type_arg) {
+            continue;
+        }
+        usage.type_bindings[param.name] = arg.type_arg;
+    }
+    return usage;
+}
+
+void record_generic_usage(
+    tpl_info& ti,
+    const std::vector<template_argument>& args)
+{
+    if (!ti.is_generic) return;
+    const auto key = build_instantiation_key(args);
+    ti.generic_usages[key] = build_generic_usage_descriptor(ti, args);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Build substitution map
 // ═══════════════════════════════════════════════════════════════════════════
@@ -138,6 +169,26 @@ value_substitution_map template_instantiator::build_value_substitution_map(
     for (size_t i = 0; i < count; ++i) {
         if (args[i].is_value() && args[i].value_arg.has_value()) {
             result[ti.params[i].name] = *args[i].value_arg;
+        }
+    }
+    return result;
+}
+
+static type_substitution_map build_generic_substitution_map(
+    const tpl_info& ti,
+    const std::shared_ptr<context>& ctx)
+{
+    type_substitution_map result;
+    if (!ctx) return result;
+
+    auto byte_type = ctx->from_type(primitive_type::BYTE);
+    if (!byte_type) return result;
+
+    // Generic synthesis uses a uniform opaque pointer model type (i8*).
+    auto opaque_ptr_type = byte_type->get_pointer();
+    for (const auto& param : ti.params) {
+        if (param.is_type_param() && !param.name.empty()) {
+            result[param.name] = opaque_ptr_type;
         }
     }
     return result;
@@ -178,10 +229,12 @@ void template_instantiator::substitute_expr_types(
         substitute_expr_types(be->left(), subst);
         substitute_expr_types(be->right(), subst);
     } else if (auto fie = std::dynamic_pointer_cast<function_invocation_expression>(expr)) {
+        substitute_expr_types(std::const_pointer_cast<expression>(fie->callee_expr()), subst);
         for (auto& arg : fie->arguments()) {
             substitute_expr_types(std::const_pointer_cast<expression>(arg), subst);
         }
     } else if (auto cie = std::dynamic_pointer_cast<constructor_invocation_expression>(expr)) {
+        substitute_expr_types(std::static_pointer_cast<expression>(cie->constructed_symbol()), subst);
         for (auto& arg : cie->arguments()) {
             substitute_expr_types(std::const_pointer_cast<expression>(arg), subst);
         }
@@ -541,8 +594,9 @@ void template_instantiator::populate_function_from_template(
         new_param->_ast_node = param->get_ast_node(); // diagnostics
     }
 
-    // Clone body
-    auto src_block = const_cast<function&>(src).get_block();
+    // Clone body only when the source function actually has one.
+    // Using get_block() would synthesize empty blocks for signature-only imports.
+    auto src_block = src._block;
     if (src_block) {
         auto dst_block = dst->get_block();
         if (dst_block) {
@@ -634,6 +688,64 @@ void template_instantiator::clone_destructor(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Clone nested aggregate
+// ═══════════════════════════════════════════════════════════════════════════
+
+void template_instantiator::clone_nested_aggregate(
+    const aggregate& src,
+    std::shared_ptr<aggregate> target,
+    const type_substitution_map& subst,
+    const value_substitution_map& val_subst)
+{
+    // Create the nested aggregate inside target (not in the parent namespace).
+    std::shared_ptr<aggregate> nested;
+    if (src.is_class()) {
+        nested = target->define_class(src.get_short_name());
+    } else {
+        nested = target->define_structure(src.get_short_name());
+    }
+    if (!nested) return;
+
+    // Copy aggregate flags
+    nested->set_final(src.is_final());
+    nested->set_abstract(src.is_abstract());
+    nested->set_const_struct(src.is_const_struct());
+    nested->set_visibility(src.get_visibility());
+    nested->_ast_node = src.get_ast_node();
+
+    // Copy base class specs (raw names — resolved later by resolution passes)
+    for (auto& bs : src.get_bases()) {
+        nested->add_base(bs.raw_name, bs.vis);
+    }
+
+    // Clone all children with type substitution
+    for (auto& child : src.get_children()) {
+        if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
+            clone_member_variable(*mv, nested, subst, val_subst);
+        } else if (auto ctor = std::dynamic_pointer_cast<constructor>(child)) {
+            clone_constructor(*ctor, nested, subst, val_subst);
+        } else if (auto dtor = std::dynamic_pointer_cast<destructor>(child)) {
+            clone_destructor(*dtor, nested, subst, val_subst);
+        } else if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+            clone_method(*fn, nested, subst, val_subst);
+        } else if (auto inner = std::dynamic_pointer_cast<aggregate>(child)) {
+            // Recursively clone deeper nested aggregates
+            clone_nested_aggregate(*inner, nested, subst, val_subst);
+        }
+    }
+
+    // Generate a default constructor when no explicit constructor was cloned
+    if (nested->constructors().empty()) {
+        auto default_ctor = constructor::make_shared(nested->shared_as<aggregate>());
+        default_ctor->set_compiler_generated(true);
+        nested->_constructors.push_back(default_ctor);
+        nested->_children.push_back(default_ctor);
+    }
+
+    nested->update_mangled_name();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Instantiation: aggregate
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -720,8 +832,11 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
                     gv_new->set_visibility(gv->get_visibility());
                 }
             }
+        } else if (auto inner = std::dynamic_pointer_cast<aggregate>(child)) {
+            // Clone nested aggregate types (structs/classes defined inside the template)
+            clone_nested_aggregate(*inner, concrete, subst, val_subst);
         }
-        // Nested aggregates, enums, using declarations — handled as needed in future
+        // Enums and using declarations — handled as needed in future
     }
 
     // 3. Post-instantiation: generate default constructor and set up this parameters
@@ -745,6 +860,95 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     // 4. Register in the instantiation cache
     ti->instantiations[key] = concrete;
 
+    return concrete;
+}
+
+std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
+    aggregate& tpl_def,
+    std::shared_ptr<ns> parent_ns,
+    k::model::unit& unit,
+    std::shared_ptr<context> ctx,
+    k::log::logger& logger)
+{
+    auto* ti = tpl_def.get_tpl_info();
+    if (!ti || !ti->is_generic) return nullptr;
+
+    auto cached = ti->instantiations.find(generic_synthesis_key);
+    if (cached != ti->instantiations.end()) {
+        if (auto* agg_ptr = std::get_if<std::shared_ptr<aggregate>>(&cached->second)) {
+            return *agg_ptr;
+        }
+    }
+
+    const std::string base_name = tpl_def.get_short_name();
+    auto subst = build_generic_substitution_map(*ti, ctx);
+    value_substitution_map val_subst;
+
+    std::shared_ptr<aggregate> concrete;
+    if (tpl_def.is_class()) {
+        concrete = parent_ns->define_class(base_name);
+    } else if (tpl_def.is_annotation()) {
+        concrete = parent_ns->define_annotation(base_name);
+    } else {
+        concrete = parent_ns->define_structure(base_name);
+    }
+    if (!concrete) return nullptr;
+
+    (void)unit;
+    (void)logger;
+
+    concrete->set_final(tpl_def.is_final());
+    concrete->set_abstract(tpl_def.is_abstract());
+    concrete->set_const_struct(tpl_def.is_const_struct());
+    concrete->set_visibility(tpl_def.get_visibility());
+    concrete->_ast_node = tpl_def.get_ast_node();
+
+    // Keep the synthesized symbol on the base aggregate name (no arg suffix).
+
+    for (auto& bs : tpl_def.get_bases()) {
+        concrete->add_base(bs.raw_name, bs.vis);
+    }
+
+    for (auto& child : tpl_def.get_children()) {
+        if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
+            clone_member_variable(*mv, concrete, subst, val_subst);
+        } else if (auto ctor = std::dynamic_pointer_cast<constructor>(child)) {
+            clone_constructor(*ctor, concrete, subst, val_subst);
+        } else if (auto dtor = std::dynamic_pointer_cast<destructor>(child)) {
+            clone_destructor(*dtor, concrete, subst, val_subst);
+        } else if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+            clone_method(*fn, concrete, subst, val_subst);
+        } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
+            auto new_var = concrete->append_variable(gv->get_short_name(), /*is_static=*/true);
+            if (new_var) {
+                auto src_type = std::const_pointer_cast<type>(gv->get_type());
+                new_var->set_type(substitute_type(src_type, subst));
+                new_var->set_const(gv->is_const());
+                if (gv->get_init_expr()) {
+                    auto cloned_init = clone_and_substitute_expr(
+                        std::const_pointer_cast<expression>(gv->get_init_expr()), subst, val_subst);
+                    new_var->set_init_expr(cloned_init);
+                    retarget_init_expr(cloned_init, new_var);
+                }
+                if (auto gv_new = std::dynamic_pointer_cast<global_variable_definition>(new_var)) {
+                    gv_new->set_visibility(gv->get_visibility());
+                }
+            }
+        } else if (auto inner = std::dynamic_pointer_cast<aggregate>(child)) {
+            // Clone nested aggregate types (e.g. private Node struct inside LinkedList)
+            clone_nested_aggregate(*inner, concrete, subst, val_subst);
+        }
+    }
+
+    if (concrete->constructors().empty()) {
+        auto default_ctor = constructor::make_shared(concrete->shared_as<aggregate>());
+        default_ctor->set_compiler_generated(true);
+        concrete->_constructors.push_back(default_ctor);
+        concrete->_children.push_back(default_ctor);
+    }
+
+    concrete->update_mangled_name();
+    ti->instantiations[generic_synthesis_key] = concrete;
     return concrete;
 }
 
@@ -818,8 +1022,8 @@ static void resolve_symbols_in_expr(const std::shared_ptr<expression>& expr) {
             && !sym->get_name().has_root_prefix()) {
             const std::string& var_name = sym->get_name().front();
             // Walk up the element parent chain
-            for (auto cur = sym->template parent<element>(); cur;
-                 cur = cur->template parent<element>()) {
+            for (auto cur = sym->parent<element>(); cur;
+                 cur = cur->parent<element>()) {
                 // Check variable holders (block locals, aggregate members)
                 if (auto* vh = dynamic_cast<variable_holder*>(cur.get())) {
                     if (auto var = vh->get_variable(var_name)) {

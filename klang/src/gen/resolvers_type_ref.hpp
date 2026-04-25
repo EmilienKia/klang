@@ -21,6 +21,8 @@
 
 #include "resolvers_common.hpp"
 
+#include <unordered_map>
+
 namespace k::model::gen {
 
 /**
@@ -54,6 +56,12 @@ protected:
      * replace the child if non-null.
      */
     std::shared_ptr<expression> _replacement_expr;
+
+    /**
+     * Usage-site bindings captured while resolving generic aggregate type references.
+     * Key: declaration element that carries the concrete generic type (variable, parameter, ...).
+     */
+    std::unordered_map<const variable_definition*, tpl_info::generic_usage_descriptor> _generic_usage_by_site;
 
 public:
 
@@ -114,6 +122,20 @@ protected:
     std::shared_ptr<type> try_instantiate_template_type(
         const std::shared_ptr<unresolved_type>& unres,
         const element& context_elem);
+
+    /** Return captured generic usage bindings for a declaration site, if any. */
+    const tpl_info::generic_usage_descriptor* find_generic_usage_for_site(const variable_definition* site) const;
+
+    /** Infer generic usage bindings from a receiver expression (symbol/member/unary wrapper cases). */
+    const tpl_info::generic_usage_descriptor* find_generic_usage_for_receiver(const std::shared_ptr<expression>& receiver) const;
+
+    /**
+     * Compute a concrete return type for generic member calls using receiver bindings.
+     * Falls back to nullptr when no generic mapping can be inferred.
+     */
+    std::shared_ptr<type> resolve_generic_call_return_type(
+        const function& called_func,
+        const std::shared_ptr<expression>& receiver_expr);
 
     /**
      * Strip the spurious reference(array(T)) → array(T) layer that resolve_type
