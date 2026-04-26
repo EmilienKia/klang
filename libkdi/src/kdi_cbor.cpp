@@ -422,6 +422,7 @@ cbor_item_t* encode_param(const kdi_param& p) {
     cbor_item_t* m = cbor_new_indefinite_map();
     map_push(m, "name", cbor_str(p.name));
     map_push(m, "type", encode_type(p.type));
+    if (p.is_varargs) map_push(m, "is_varargs", cbor_build_bool(true));
     return m;
 }
 
@@ -432,6 +433,7 @@ kdi_param decode_param(cbor_item_t* item, const std::string& path) {
     auto* tp = map_get(item, "type");
     if (!tp) throw kdi_parse_error("missing 'type' at " + path);
     p.type = decode_type(tp, path + ".type");
+    p.is_varargs = opt_bool(item, "is_varargs", false);
     return p;
 }
 

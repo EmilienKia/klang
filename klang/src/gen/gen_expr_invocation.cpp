@@ -1339,6 +1339,80 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     // Restore outer _sret_destination for the call result
     _sret_destination = saved_sret_destination;
 
+    // ── Varargs packing ─────────────────────────────────────────────────────
+    // If the called function has a varargs last parameter, pack trailing
+    // arguments into a stack-allocated array { i32 count, [N x T] data }.
+    {
+        auto va_function = callee->get_function();
+        if (va_function && va_function->has_varargs()) {
+            const auto& va_params = va_function->parameters();
+            // Number of fixed parameters (excluding varargs param, but including 'this' in args)
+            size_t this_offset = (member_callee && va_function->is_member() && !va_function->is_static()) ? 1 : 0;
+            size_t n_fixed = va_params.size() - 1; // model params exclude 'this'
+            size_t n_fixed_in_args = n_fixed + this_offset;
+
+            auto varargs_param = va_params.back();
+            auto varargs_param_type = varargs_param->get_type();
+            // Unwrap reference wrapper if present (parameter type may be ref<T[]>)
+            if (type::is_reference(varargs_param_type))
+                varargs_param_type = varargs_param_type->get_subtype();
+            auto varargs_array_type = std::dynamic_pointer_cast<array_type>(varargs_param_type);
+            if (varargs_array_type) {
+                auto elem_type = varargs_array_type->get_subtype();
+                llvm::Type* llvm_elem_type = _context->get_llvm_type(elem_type);
+
+                size_t n_varargs = (args.size() > n_fixed_in_args) ? (args.size() - n_fixed_in_args) : 0;
+
+                // Check if a single explicit array was passed (no packing needed)
+                bool is_direct_array_pass = false;
+                if (n_varargs == 1 && args.size() == n_fixed_in_args + 1) {
+                    // Check if the last expression arg in the model is already an array type
+                    auto& last_model_arg = expr.arguments().back();
+                    if (last_model_arg->get_type()) {
+                        auto arg_type = last_model_arg->get_type();
+                        // Unwrap reference if present (variables are ref<T>)
+                        if (type::is_reference(arg_type))
+                            arg_type = arg_type->get_subtype();
+                        if (type::is_array(arg_type)) {
+                            is_direct_array_pass = true;
+                        }
+                    }
+                }
+
+                if (!is_direct_array_pass) {
+                    // Pack trailing args into a sized array on the stack
+                    auto sized_arr_type = varargs_array_type->with_size(n_varargs);
+                    llvm::Type* llvm_arr_struct = _context->get_llvm_type(sized_arr_type);
+
+                    llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
+                    llvm::IRBuilder<> entry_builder(&cur_fn->getEntryBlock(), cur_fn->getEntryBlock().begin());
+                    llvm::Value* arr_alloca = entry_builder.CreateAlloca(llvm_arr_struct, nullptr, "varargs_pack");
+
+                    // Store count in field 0
+                    auto* count_ptr = _builder->CreateStructGEP(llvm_arr_struct, arr_alloca, array_type::FIELD_SIZE, "varargs_count_ptr");
+                    _builder->CreateStore(
+                        llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), n_varargs),
+                        count_ptr);
+
+                    // Store each trailing arg into the data array (field 1)
+                    if (n_varargs > 0) {
+                        auto* llvm_data_arr_type = sized_arr_type->get_llvm_data_array_type();
+                        auto* data_ptr = _builder->CreateStructGEP(llvm_arr_struct, arr_alloca, array_type::FIELD_DATA, "varargs_data_ptr");
+                        for (size_t i = 0; i < n_varargs; ++i) {
+                            auto* elem_ptr = _builder->CreateConstInBoundsGEP2_32(
+                                llvm_data_arr_type, data_ptr, 0, static_cast<unsigned>(i), "varargs_elem_ptr");
+                            _builder->CreateStore(args[n_fixed_in_args + i], elem_ptr);
+                        }
+                    }
+
+                    // Replace trailing args with the array pointer
+                    args.resize(n_fixed_in_args);
+                    args.push_back(arr_alloca);
+                }
+            }
+        }
+    }
+
     // Find the function definition
     auto function = callee->get_function();
     auto it = _context->_functions.find(function);

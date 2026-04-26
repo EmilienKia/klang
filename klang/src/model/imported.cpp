@@ -501,7 +501,8 @@ static void attach_params(function& fn,
         auto model_type = kdi_type_to_model_type(kp.type, owner, ctx);
         // Use an anonymous name if the KDI entry has no name
         const std::string& pname = kp.name.empty() ? "__p" : kp.name;
-        fn.append_parameter(pname, model_type);
+        auto p = fn.append_parameter(pname, model_type);
+        if (p) p->set_varargs(kp.is_varargs);
     }
 }
 

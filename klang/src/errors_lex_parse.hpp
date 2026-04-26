@@ -187,6 +187,10 @@ enum class parser_diag : unsigned int {
     ERR_ENUM_ENTRY_EXPECT_NAME                    = 0x0193,
     // Generic declaration errors (0x01A0–0x01AF)
     ERR_GENERIC_VALUE_PARAM_NOT_ALLOWED           = 0x01A0,
+    // Varargs parameter errors (0x01B0–0x01BF)
+    ERR_VARARGS_NOT_LAST                          = 0x01B0,
+    ERR_VARARGS_WITH_DEFAULT                      = 0x01B1,
+    ERR_MULTIPLE_VARARGS                          = 0x01B2,
 };
 
 } // namespace k::diag

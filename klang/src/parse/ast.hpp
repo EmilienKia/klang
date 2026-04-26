@@ -1152,16 +1152,22 @@ namespace k::parse {
             std::shared_ptr<ast::type_specifier> type;
             /** Optional default value expression (e.g. '= 42' or '= a + 1'). */
             expr_ptr default_expr;
+            /** True when declared with '...' (varargs parameter). */
+            bool is_varargs = false;
 
             parameter_spec(annotation_def_list annotations,
                            const std::vector <lex::keyword> &specifiers, const std::optional <lex::identifier> &name,
-                           const std::shared_ptr<ast::type_specifier> &type, expr_ptr default_expr = nullptr) :
-                    annotations(std::move(annotations)), specifiers(specifiers), name(name), type(type), default_expr(std::move(default_expr)) {}
+                           const std::shared_ptr<ast::type_specifier> &type, expr_ptr default_expr = nullptr,
+                           bool is_varargs = false) :
+                    annotations(std::move(annotations)), specifiers(specifiers), name(name), type(type),
+                    default_expr(std::move(default_expr)), is_varargs(is_varargs) {}
 
             parameter_spec(annotation_def_list annotations,
                            std::vector <lex::keyword> &&specifiers, std::optional <lex::identifier> &&name,
-                           std::shared_ptr<ast::type_specifier> &&type, expr_ptr default_expr = nullptr) :
-                    annotations(std::move(annotations)), specifiers(specifiers), name(name), type(type), default_expr(std::move(default_expr)) {}
+                           std::shared_ptr<ast::type_specifier> &&type, expr_ptr default_expr = nullptr,
+                           bool is_varargs = false) :
+                    annotations(std::move(annotations)), specifiers(specifiers), name(name), type(type),
+                    default_expr(std::move(default_expr)), is_varargs(is_varargs) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

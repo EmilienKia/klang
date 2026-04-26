@@ -749,8 +749,21 @@ void k_source_emitter::emit_parameter_list(const function& fn) {
             continue;
         if (!first) _os << ", ";
         first = false;
-        _os << param->get_short_name() << " : ";
-        emit_type(param->get_type());
+        _os << param->get_short_name();
+        if (param->is_varargs()) _os << "...";
+        _os << " : ";
+        if (param->is_varargs()) {
+            // Varargs param type is T[] in the model; emit the element type T
+            // because the parser will re-wrap it as T[] when it sees '...'
+            auto ptype = param->get_type();
+            if (type::is_reference(ptype)) ptype = ptype->get_subtype();
+            if (type::is_array(ptype) && ptype->get_subtype())
+                emit_type(ptype->get_subtype());
+            else
+                emit_type(param->get_type());
+        } else {
+            emit_type(param->get_type());
+        }
         // Default value
         if (param->has_default_expr()) {
             _os << " = ";

@@ -591,6 +591,7 @@ void template_instantiator::populate_function_from_template(
             std::const_pointer_cast<type>(param->get_type()), subst);
         auto new_param = dst->append_parameter(param->get_short_name(), param_type);
         new_param->set_const(param->is_const());
+        new_param->set_varargs(param->is_varargs());
         new_param->_ast_node = param->get_ast_node(); // diagnostics
     }
 

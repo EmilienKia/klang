@@ -85,7 +85,9 @@ std::string params_str(const std::vector<kdi_param>& params) {
     std::string s = "(";
     for (size_t i = 0; i < params.size(); ++i) {
         if (i) s += ", ";
-        s += params[i].name + ": " + type_str(params[i].type);
+        s += params[i].name;
+        if (params[i].is_varargs) s += "...";
+        s += ": " + type_str(params[i].type);
     }
     return s + ")";
 }

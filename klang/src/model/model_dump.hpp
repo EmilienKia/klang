@@ -175,7 +175,9 @@ public:
         for(size_t idx = 0; idx < func.parameters().size(); idx++) {
             if(idx != 0) _stm << ", ";
             auto param = func.parameters()[idx];
-            _stm << param->get_short_name() << " : ";
+            _stm << param->get_short_name();
+            if(param->is_varargs()) _stm << "...";
+            _stm << " : ";
             if(param->get_type()) {
                 dump_type(*param->get_type());
             } else {

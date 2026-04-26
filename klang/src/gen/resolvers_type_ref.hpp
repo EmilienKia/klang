@@ -343,6 +343,7 @@ protected:
         CAST_WIDENING  = 2,
         CAST_NARROWING = 3,
         CAST_CONSTRUCT = 4,
+        CAST_VARARGS_PACK = 5,
         CAST_IMPOSSIBLE = std::numeric_limits<unsigned int>::max()
     };
 

@@ -599,7 +599,7 @@ Init variable scoped to the loop. Omitted condition = infinite loop.
 
 ```
 ParameterSpec:
-    { Specifier } [ Identifier ':' ] TypeSpec [ '=' ConditionalExpr ]
+    { Specifier } [ Identifier [ '...' ] ':' ] TypeSpec [ '=' ConditionalExpr ]
 ```
 
 - Name is optional (anonymous if omitted).
@@ -607,6 +607,29 @@ ParameterSpec:
 - Pass by value (`T`): copy. If struct with destructor: destructor called on exit from the callee.
 - Pass by reference (`T&`): lvalue required as argument.
 - Pass by pointer (`T*`), link (`T+`), etc.
+
+#### Varargs Parameters
+
+A parameter declared with `...` after the name is a **varargs parameter** (variable-length
+argument list). It is syntactic sugar for an unsized array parameter (`T[]`):
+
+```k
+fun sum(values... : int) : int { /* values is int[] */ }
+fun format(fmt: int, args... : int) : int { /* ... */ }
+```
+
+Rules:
+- Must be the **last** parameter of the function.
+- Only **one** varargs parameter per function.
+- Cannot have a default value.
+- At the call site, individual trailing arguments are packed into a stack-allocated array:
+  `sum(1, 2, 3)` → compiler creates `int[3]{1, 2, 3}` and passes it.
+- An explicit array of the matching type can be passed directly (no packing):
+  `arr : int[3]{1, 2, 3}; sum(arr);`
+- Zero arguments for the varargs position is valid: `sum()` → empty `int[0]` array.
+- Non-varargs overloads are preferred over varargs overloads during resolution.
+- Template varargs are supported: `template<typename T> fun first(args... : T) : T&`.
+- Template parameter packs / expansion / fold expressions are **not** supported.
 
 ### 10.3 Function Overloading
 

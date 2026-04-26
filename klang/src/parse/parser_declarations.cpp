@@ -1395,6 +1395,25 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_NO_DEFAULT_AFTER_NON_DEFAULT), _lexer.pick_current(), "Parameter without default value cannot follow a parameter with a default value");
                 }
             }
+
+            // Validate varargs constraints
+            {
+                bool found_varargs = false;
+                for(size_t i = 0; i < params.size(); ++i) {
+                    if(params[i]->is_varargs) {
+                        if(found_varargs) {
+                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_MULTIPLE_VARARGS), _lexer.pick_current(), "Only one varargs parameter is allowed per function");
+                        }
+                        found_varargs = true;
+                        if(i != params.size() - 1) {
+                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_VARARGS_NOT_LAST), _lexer.pick_current(), "Varargs parameter must be the last parameter");
+                        }
+                        if(params[i]->default_expr) {
+                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_VARARGS_WITH_DEFAULT), _lexer.pick_current(), "Varargs parameter cannot have a default value");
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1822,12 +1841,28 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
     std::optional<lex::identifier> name;
+    bool is_varargs = false;
     lex::lex_holder holder_name(_lexer);
     if(auto lname = _lexer.get(); lex::is<lex::identifier>(lname)) {
-        if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
-            name = lex::as<lex::identifier>(lname);
+        // Check for '...' (varargs) before ':'
+        lex::lex_holder holder_ellipsis(_lexer);
+        auto maybe_ellipsis = _lexer.get();
+        if(maybe_ellipsis == lex::punctuator::ELLIPSIS) {
+            // Varargs: name... : type
+            if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
+                name = lex::as<lex::identifier>(lname);
+                is_varargs = true;
+            } else {
+                holder_name.rollback();
+            }
         } else {
-            holder_name.rollback();
+            holder_ellipsis.rollback();
+            // Standard path: name : type
+            if(auto lcolon = _lexer.get(); lcolon==lex::operator_::COLON) {
+                name = lex::as<lex::identifier>(lname);
+            } else {
+                holder_name.rollback();
+            }
         }
     } else {
         holder_name.rollback();
@@ -1837,6 +1872,13 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
     if(!type) {
         holder.rollback();
         return {};
+    }
+
+    // If varargs, wrap the declared type in an unsized array type specifier
+    if(is_varargs) {
+        lex::punctuator br_open(std::string_view("["), lex::punctuator::BRACKET_OPEN);
+        lex::punctuator br_close(std::string_view("]"), lex::punctuator::BRACKET_CLOSE);
+        type = std::make_shared<ast::array_type_specifier>(type, br_open, br_close, std::nullopt);
     }
 
     // Parse optional default value: '=' CONDITIONAL_EXPR
@@ -1853,7 +1895,7 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
         }
     }
 
-    return std::make_shared<ast::parameter_spec>(std::move(annotations), specifiers, name, type, std::move(default_expr));
+    return std::make_shared<ast::parameter_spec>(std::move(annotations), specifiers, name, type, std::move(default_expr), is_varargs);
 }
 
 } // k::parse

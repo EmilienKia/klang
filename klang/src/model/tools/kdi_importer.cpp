@@ -92,7 +92,8 @@ void populate_template_signature_aggregate(aggregate& agg,
                                               : (ctor_sig.is_defaulted ? function::function_aliasing::DEFAULT
                                                                        : function::function_aliasing::NONE));
         for (const auto& param : ctor_sig.params) {
-            ctor->append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
+            auto p = ctor->append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
+            if (p) p->set_varargs(param.is_varargs);
         }
     }
 
@@ -108,7 +109,8 @@ void populate_template_signature_aggregate(aggregate& agg,
         auto ret_type = kdi_type_to_model_type(method_sig.return_type, owner, ctx);
         if (ret_type) fn->set_return_type(ret_type);
         for (const auto& param : method_sig.params) {
-            fn->append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
+            auto p = fn->append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
+            if (p) p->set_varargs(param.is_varargs);
         }
     }
 }
@@ -122,7 +124,8 @@ void populate_template_signature_function(function& fn,
     auto ret_type = kdi_type_to_model_type(sig.return_type, owner, ctx);
     if (ret_type) fn.set_return_type(ret_type);
     for (const auto& param : sig.params) {
-        fn.append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
+        auto p = fn.append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
+        if (p) p->set_varargs(param.is_varargs);
     }
 }
 

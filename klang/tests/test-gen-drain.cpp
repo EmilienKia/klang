@@ -217,9 +217,10 @@ TEST_CASE("Drain on const object is rejected", "[gen][drain][error]") {
 // MUTABLE LOCAL CAN BE PASSED TO DRAIN PARAMETER
 // =============================================================================
 
-// A mutable local variable is allowed to be passed to a drain parameter.
+// A mutable local variable can be explicitly drained and passed to a drain parameter.
 // Drain (#) binds to mutable objects; primitives are copied on drain,
 // so the call is semantically correct.
+// Note: implicit ref→drain conversion is NOT allowed (spec says explicit # is required).
 TEST_CASE("Mutable local can be passed to drain parameter", "[gen][drain]") {
     auto jit = gen_jit(R"SRC(
         module __mutable_to_drain__;
@@ -230,7 +231,7 @@ TEST_CASE("Mutable local can be passed to drain parameter", "[gen][drain]") {
 
         test() : int {
             x : int = 10;
-            return consume(x);
+            return consume(#x);
         }
     )SRC");
     REQUIRE(jit);

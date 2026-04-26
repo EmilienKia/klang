@@ -1158,6 +1158,7 @@ namespace k::model {
             }
             std::shared_ptr<model::parameter> parameter = function->append_parameter(std::string{param->name->content}, param_type);
             parameter->set_const(param_is_const);
+            parameter->set_varargs(param->is_varargs);
             parameter->set_ast_parameter_spec(param);
 
             // Populate annotation instances from the AST annotation list

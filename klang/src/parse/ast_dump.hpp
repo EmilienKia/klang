@@ -307,7 +307,9 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             }
             visit_specifiers(param.specifiers);
             if(param.name) {
-                _stm << param.name.value().content << " : ";
+                _stm << param.name.value().content;
+                if(param.is_varargs) _stm << "...";
+                _stm << " : ";
             }
             param.type->visit(*this);
             if(param.default_expr) {

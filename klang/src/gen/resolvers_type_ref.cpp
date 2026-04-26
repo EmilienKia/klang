@@ -1893,8 +1893,8 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
                 failed_indices.push_back(i);
             } else {
                 if (w > max_weight) max_weight = w;
-                auto adapted = adapt_type(args[i], param_type);
-                adapted_args.push_back(adapted ? adapted : args[i]);
+                auto a = adapt_type(args[i], param_type);
+                adapted_args.push_back(a ? a : args[i]);
             }
         }
 
@@ -2009,6 +2009,82 @@ type_reference_resolver::get_best_matching_function(
     {
         const size_t n_params = params.size() - offset;
         const size_t n_exprs  = exprs.size();
+
+        // Check if last param is varargs
+        bool last_is_varargs = (n_params > 0) && params.back()->is_varargs();
+
+        if (last_is_varargs) {
+            // Fixed params = all except the last (varargs) param
+            const size_t n_fixed = n_params - 1;
+            // Must have at least enough args for fixed params
+            if (n_exprs < n_fixed) {
+                for (size_t i = n_exprs; i < n_fixed; ++i)
+                    if (!params[offset + i]->has_default_expr()) return {CAST_IMPOSSIBLE, {}};
+            }
+
+            cast_weight max_w = CAST_NONE;
+            std::vector<std::shared_ptr<expression>> adapted;
+
+            // Score fixed params
+            size_t fixed_provided = std::min(n_exprs, n_fixed);
+            for (size_t i = 0; i < fixed_provided; ++i) {
+                auto w = compute_cast_weight(exprs[i], params[offset + i]->get_type());
+                if (w == CAST_IMPOSSIBLE) return {CAST_IMPOSSIBLE, {}};
+                if (w > max_w) max_w = w;
+                auto a = adapt_type(exprs[i], params[offset + i]->get_type());
+                adapted.push_back(a ? a : exprs[i]);
+            }
+            // Fill defaults for missing fixed params
+            for (size_t i = fixed_provided; i < n_fixed; ++i)
+                adapted.push_back(params[offset + i]->get_default_expr()->clone());
+
+            // Score varargs trailing arguments
+            size_t n_varargs_exprs = (n_exprs > n_fixed) ? (n_exprs - n_fixed) : 0;
+            auto varargs_param_type = params.back()->get_type(); // T[]& or T[] (array_type)
+            // Unwrap reference if parameter type is ref<T[]>
+            if (type::is_reference(varargs_param_type))
+                varargs_param_type = varargs_param_type->get_subtype();
+            auto varargs_elem_type = varargs_param_type ? varargs_param_type->get_subtype() : nullptr; // T
+
+            if (!varargs_elem_type) return {CAST_IMPOSSIBLE, {}};
+
+            if (n_varargs_exprs == 1) {
+                // Check if passing a single array directly (exact match to T[] or ref<T[]>)
+                // Try against the original (possibly ref-wrapped) param type first
+                auto orig_param_type = params.back()->get_type();
+                auto w_direct = compute_cast_weight(exprs[n_fixed], orig_param_type);
+                if (w_direct == CAST_IMPOSSIBLE) {
+                    // Also try against the unwrapped array type
+                    w_direct = compute_cast_weight(exprs[n_fixed], varargs_param_type);
+                }
+                if (w_direct != CAST_IMPOSSIBLE) {
+                    if (w_direct > max_w) max_w = w_direct;
+                    auto a = adapt_type(exprs[n_fixed], orig_param_type);
+                    if (!a) a = adapt_type(exprs[n_fixed], varargs_param_type);
+                    adapted.push_back(a ? a : exprs[n_fixed]);
+                    return {max_w, adapted};
+                }
+            }
+
+            if (n_varargs_exprs == 0) {
+                if (CAST_VARARGS_PACK > max_w) max_w = CAST_VARARGS_PACK;
+            }
+
+            // Score each trailing arg against the element type
+            for (size_t i = n_fixed; i < n_exprs; ++i) {
+                auto w = compute_cast_weight(exprs[i], varargs_elem_type);
+                if (w == CAST_IMPOSSIBLE) return {CAST_IMPOSSIBLE, {}};
+                if (w > max_w) max_w = w;
+                auto a = adapt_type(exprs[i], varargs_elem_type);
+                adapted.push_back(a ? a : exprs[i]);
+            }
+
+            if (n_varargs_exprs > 0 && CAST_VARARGS_PACK > max_w) max_w = CAST_VARARGS_PACK;
+
+            return {max_w, adapted};
+        }
+
+        // Non-varargs path (original logic)
         if (n_exprs > n_params) return {CAST_IMPOSSIBLE, {}};
         if (n_exprs < n_params) {
             for (size_t i = n_exprs; i < n_params; ++i)
@@ -2030,12 +2106,13 @@ type_reference_resolver::get_best_matching_function(
 
     for (auto& func : candidates) {
         const auto& params = func->parameters();
+        bool func_has_varargs = func->has_varargs();
 
         if (func->is_member() && !func->is_static() && this_expr) {
-            if (args.size() <= params.size()) {
+            if (args.size() <= params.size() || func_has_varargs) {
                 auto [w, adapted] = score_with_defaults(args, params, 0);
                 if (w != CAST_IMPOSSIBLE) {
-                    size_t def = params.size() - args.size();
+                    size_t def = (args.size() < params.size()) ? params.size() - args.size() : 0;
                     bool this_is_const = false;
                     if (this_expr && this_expr->get_type()) {
                         auto t = this_expr->get_type();
@@ -2050,17 +2127,17 @@ type_reference_resolver::get_best_matching_function(
 
         if (!func->is_member() || func->is_static()) {
             const auto& b_args = direct_args ? *direct_args : args;
-            if (b_args.size() <= params.size()) {
+            if (b_args.size() <= params.size() || func_has_varargs) {
                 auto [w, adapted] = score_with_defaults(b_args, params, 0);
                 if (w != CAST_IMPOSSIBLE) {
-                    size_t def = params.size() - b_args.size();
+                    size_t def = (b_args.size() < params.size()) ? params.size() - b_args.size() : 0;
                     valid.push_back({func, std::move(adapted), w, false, nullptr, 1, def});
                 }
             }
         }
 
         if ((!func->is_member() || func->is_static()) && this_expr && !params.empty()
-            && args.size() <= params.size() - 1) {
+            && (args.size() <= params.size() - 1 || func_has_varargs)) {
             auto first_param_type = params[0]->get_type();
             if (type::is_reference(first_param_type)) {
                 auto w_this = compute_cast_weight(this_expr, first_param_type);
@@ -2069,7 +2146,7 @@ type_reference_resolver::get_best_matching_function(
                     if (w_rest != CAST_IMPOSSIBLE) {
                         cast_weight total = std::max(w_this, w_rest);
                         auto adapted_this = adapt_type(this_expr, first_param_type);
-                        size_t def = (params.size() - 1) - args.size();
+                        size_t def = (args.size() < params.size() - 1) ? (params.size() - 1) - args.size() : 0;
                         valid.push_back({func, std::move(adapted_rest), total, true,
                                          adapted_this ? adapted_this : this_expr, 2, def});
                     }
@@ -2085,37 +2162,19 @@ type_reference_resolver::get_best_matching_function(
             const auto& b_args = direct_args ? *direct_args : args;
 
             // Member-call shape-compatible fallback.
-            if (fn->is_member() && !fn->is_static() && this_expr && args.size() <= params.size()) {
-                bool defaults_ok = true;
-                for (size_t i = args.size(); i < params.size(); ++i) {
-                    if (!params[i]->has_default_expr()) {
-                        defaults_ok = false;
-                        break;
-                    }
-                }
-                if (defaults_ok) {
-                    std::vector<std::shared_ptr<expression>> adapted = args;
-                    for (size_t i = args.size(); i < params.size(); ++i) {
-                        adapted.push_back(params[i]->get_default_expr()->clone());
-                    }
+            if (fn->is_member() && !fn->is_static() && this_expr
+                && (args.size() <= params.size() || fn->has_varargs())) {
+                auto [w, adapted] = score_with_defaults(args, params, 0);
+                if (w != CAST_IMPOSSIBLE) {
                     return {fn, adapted, false, nullptr};
                 }
             }
 
             // Direct/free/static shape-compatible fallback.
-            if ((!fn->is_member() || fn->is_static()) && b_args.size() <= params.size()) {
-                bool defaults_ok = true;
-                for (size_t i = b_args.size(); i < params.size(); ++i) {
-                    if (!params[i]->has_default_expr()) {
-                        defaults_ok = false;
-                        break;
-                    }
-                }
-                if (defaults_ok) {
-                    std::vector<std::shared_ptr<expression>> adapted = b_args;
-                    for (size_t i = b_args.size(); i < params.size(); ++i) {
-                        adapted.push_back(params[i]->get_default_expr()->clone());
-                    }
+            if ((!fn->is_member() || fn->is_static())
+                && (b_args.size() <= params.size() || fn->has_varargs())) {
+                auto [w, adapted] = score_with_defaults(b_args, params, 0);
+                if (w != CAST_IMPOSSIBLE) {
                     return {fn, adapted, false, nullptr};
                 }
             }

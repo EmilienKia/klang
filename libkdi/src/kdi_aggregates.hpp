@@ -123,6 +123,7 @@ enum class kdi_visibility : uint8_t {
 struct kdi_param {
     std::string name;
     kdi_type    type;
+    bool        is_varargs = false;  ///< True if declared with '...' (informational)
 };
 
 struct kdi_variable {

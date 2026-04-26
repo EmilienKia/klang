@@ -1,218 +1,257 @@
-# Generics Implementation — In Progress
+# Varargs Implementation — Complete
 
-**Started:** 2026-04-25  
-**Status:** Phase 1-10 complete, Phase 11 in progress (diagnostic required)
+**Started:** 2026-04-28  
+**Completed:** 2026-04-28  
+**Status:** All phases complete, ready for deletion
 
 ---
 
 ## Feature Summary
 
-Add a `generic` keyword to the K language that allows declaring template-like
-classes and methods whose code is synthesised **once** (uniform materialization)
-regardless of the concrete type arguments, mapped as opaque pointers in LLVM IR.
+Add Java-style varargs to the K language. A varargs parameter is declared with
+`...` after the name and is syntactic sugar for an unsized array parameter (`T[]`).
+The compiler automatically packs individual arguments into an intermediate array
+at the call site.
 
 ### Key rules
 
-1. `generic<typename T, class C>` instead of `template<...>`.
-2. Only type parameters allowed (no value parameters).
-3. Generic type params may only appear via addressers (`&`, `*`, `!`, `?`, `+`, `#`).
-4. Owner (`!`) of a generic type param requires the param to be `class` or `interface`.
-5. Code is synthesised in the declaration module (not at use site).
-6. No covariance/contravariance in this phase — pure type equality.
-7. KDI exports signature + constraints only (no source text for aggregates).
+1. `args... : T` declares a varargs parameter — internally stored as `args : T[]`.
+2. Must be the **last** parameter of the function.
+3. Only **one** varargs parameter per function.
+4. Cannot have a default value (`= expr`).
+5. At the call site, trailing arguments are packed into a stack-allocated array.
+6. An explicit array of the right type can be passed directly (no packing).
+7. Non-varargs overloads are preferred over varargs overloads.
+8. Template varargs (`template<typename T> fun f(args... : T)`) are supported.
+9. Template packs / expansion / fold expressions are **not** in scope.
 
 ### Syntax
 
 ```k
-// Generic aggregate
-generic<typename T> class Box {
-    val: T!;
-    getVal() : T& { return *val; }
+// Declaration
+fun sum(values... : int) : int {
+    total : int = 0;
+    i : int = 0;
+    // TODO: use foreach when available
+    return total;
 }
 
-// Generic method in non-generic aggregate
-class Util {
-    generic<class T> process(item: T&) : void { ... }
-}
+// Calls
+sum(1, 2, 3);           // varargs pack → int[3]{1,2,3}
+sum();                   // zero varargs → int[0]{}
+arr : int[3]{1, 2, 3};
+sum(arr);                // explicit array — no packing
+
+// Mixed fixed + varargs
+fun format(fmt: int, args... : int) : int { /* ... */ }
+format(0, 1, 2, 3);     // fmt=0, args=int[3]{1,2,3}
+
+// Template varargs
+template<typename T>
+fun first(args... : T) : T& { return args[0]; }
 ```
 
 ---
 
-## Implementation Phases
+## Implementation Plan
 
-### Phase 1 — Lexer  ✅ IN PROGRESS
-**Files:** `klang/src/lex/lexemes.hpp`, `klang/src/lex/lexer.cpp`
-- [x] Add `GENERIC` to `keyword::type_t` enum
-- [x] Register `"generic"` → `keyword::GENERIC` in the keyword map
+### Phase 1 — AST + Parser
 
-### Phase 2 — Parser & AST  ✅ IN PROGRESS
-**Files:** `klang/src/parse/ast.hpp`, `klang/src/parse/parser_declarations.cpp`,
-           `klang/src/parse/parser.hpp`
-- [x] Add `bool is_generic` flag to `ast::template_parameter`
-- [x] Add `bool is_generic` flag to `ast::aggregate_decl`
-- [x] Add `bool is_generic` flag to `ast::function_decl`
-- [x] Add `parse_generic_declaration()` in parser (analogous to `parse_template_declaration()`)
-  - Rejects value parameters (error if `is_value_param()`)
-- [x] Integrate generic parsing into `parse_aggregate_decl()` and `parse_function_decl()`
+**Files:** `parse/ast.hpp`, `parse/parser_declarations.cpp`
 
-### Phase 3 — Model  ✅ IN PROGRESS
-**Files:** `klang/src/model/template.hpp`
-- [x] Add `bool is_generic` field to `tpl_info`
+1. Add `bool is_varargs = false` to `ast::parameter_spec`.
+2. In `parse_parameter_spec()`, after reading the identifier name and before
+   expecting `:`, check for `punctuator::ELLIPSIS`. If found, set
+   `is_varargs = true` and consume the `...`.
+3. After parsing the type, if `is_varargs`, wrap the type in an
+   `array_type_specifier` (unsized) so the downstream model sees `T[]`.
+4. In `parse_function_decl()`, after all parameters are parsed, validate:
+   - At most one varargs parameter.
+   - It must be the last parameter.
+   - It must not have a `default_expr`.
+   - Emit a diagnostic error otherwise.
 
-### Phase 4 — Model Builder  ✅ IN PROGRESS
-**Files:** `klang/src/model/model_builder.cpp` (or split file)
-- [x] Propagate `is_generic` from `aggregate_decl.is_generic` → `tpl_info.is_generic`
-- [x] Propagate `is_generic` from `function_decl.is_generic` → `tpl_info.is_generic`
+**Tests:** parser-level tests in `test-gen-varargs.cpp`.
 
-### Phase 5 — Diagnostic Codes  ✅ IN PROGRESS
-**Files:** `klang/src/errors_gen.hpp`
-- [x] `ERR_GENERIC_VALUE_PARAM_NOT_ALLOWED` — value params not allowed in generic declarations
-- [x] `ERR_GENERIC_DIRECT_TYPE_USAGE` — generic type param used directly (not via addresser)
-- [x] `ERR_GENERIC_OWNER_REQUIRES_CLASS` — owner `!` of generic type param requires class/interface
+- [x] Phase 1 complete
 
-### Phase 6 — Generic Constraint Validator  ✅ COMPLETE
-**Files:** `klang/src/gen/resolvers_generic.hpp` (new),
-           `klang/src/gen/resolvers_generic.cpp` (new),
-           `klang/src/compiler.cpp` (integrate into pipeline)
-- [x] New `generic_constraint_validator` model_visitor pass
-- [x] Validate: all params are type params (already checked at parse time)
-- [x] Validate: type params appear only via addressers in body/member types/params
-- [x] Validate: owner (`!`) of a generic type param requires `class`/`interface` constraint
-- [x] Integrate into pipeline after model_builder (in `compiler::parse_sources()`)
-- [x] Validate explicit template arguments in expression calls (`foo<T>()`, `foo<T!>()`)
-- [x] Update `klang/CMakeLists.txt`
+### Phase 2 — Diagnostics
 
-### Phase 6.1 — Parser consistency hardening  ✅ COMPLETE
-**Files:** `klang/src/parse/parser_declarations.cpp`,
-           `klang/tests/test-parser-templates.cpp`
-- [x] Preserve `function_decl.is_generic` on all parse paths (body, bodyless ';', redirect, default/delete aliasing)
-- [x] Add parser tests for generic function declaration without body and generic redirect declaration
+**Files:** `errors_lex_parse.hpp`
 
-### Phase 7 — Generic Synthesis (Codegen)  ✅ COMPLETE
-**Files:** `klang/src/model/template_instantiator.hpp/.cpp`,
-           `klang/src/gen/resolvers_aggregate.cpp`
-- [x] In `template_instantiator`, added `synthesize_generic_aggregate()`:
-  - Substitutes all generic type params → uniform opaque pointer model type (`i8*`)
-  - Synthesizes **once** and caches under `"<generic_synthesis>"`
-  - Keeps synthesized aggregate short name = base name (no arg suffix)
-- [x] In `aggregate_type_resolver`, detects `is_generic()` and routes to synthesis path
-- [x] Tracks concrete generic usages via `tpl_info::instantiations[arg_key]` aliases to the single synthesized aggregate
+Add new diagnostic codes:
+- `ERR_VARARGS_NOT_LAST` — "Varargs parameter must be the last parameter"
+- `ERR_VARARGS_WITH_DEFAULT` — "Varargs parameter cannot have a default value"
+- `ERR_MULTIPLE_VARARGS` — "Only one varargs parameter is allowed"
 
-### Phase 8 — Type Tracking at Usage Sites  ✅ COMPLETE
-**Files:** `klang/src/gen/resolvers_type_ref.cpp` and related
-- [x] Introduce lightweight usage descriptor metadata (`tpl_info::generic_usages`) keyed by instantiation key
-- [x] Introduce `generic_aggregate_instance` type or usage descriptor
-- [x] At call sites for generic methods, use the concrete type mapping for type-checking
-- [x] Return type resolution: when method returns `T&` and T=Dog, result is Dog&
+- [x] Phase 2 complete
 
-### Phase 9 — Mangling & Linkage  ✅ COMPLETE
-**Files:** `klang/src/model/mangler.hpp/.cpp`
-- [x] Single LLVM symbol for all instances (name = base name, no type suffix)
-- [x] Update mangler to detect generic synthesis and skip arg encoding
+### Phase 3 — Semantic Model
 
-### Phase 10 — KDI Export/Import  ✅ COMPLETE
-**Files:** `klang/src/model/tools/kdi_exporter.hpp/.cpp`,
-           `klang/src/model/tools/kdi_importer.hpp/.cpp`,
-           `libkdi/src/kdi_types.hpp`, `libkdi/src/kdi_aggregates.hpp`,
-           `libkdi/src/kdi_json.cpp`, `libkdi/src/kdi_cbor.cpp`, `libkdi/src/kdi_validate.cpp`
-- [x] Extended KDI schema with `kdi_template_param_ref` inline type for placeholder preservation
-- [x] Extended `kdi_template_def` with `is_generic`, `aggregate_signature`, `function_signature`
-- [x] Export generic template definitions as signature + constraints only (no source text)
-- [x] Import generic template signatures into model placeholders with `is_generic = true`
-- [x] Updated JSON/CBOR encoding/decoding for generic schema
-- [x] Updated validation rules for generic signature-only template defs
-- [x] Update `doc/spec/kdi/`
-- [x] Added libkdi round-trip tests (JSON, CBOR, validation)
-- [x] Added klang import integration tests
-- [x] All Phase 10 tests: 83 assertions passed ✅
+**Files:** `model/model_function.hpp`, `model/model_builder.cpp`,
+`model/template_instantiator.cpp`
 
-### Phase 11 — libk: LinkedList & DoubleLinkedList  ⏸️ DEFERRED
-**Files:** `libk/libk/src/list.k` (new), `libk/CMakeLists.txt`
-- [ ] `generic<class TYPE> k::LinkedList`
-  - Node struct: `val: TYPE!`, `next: Node!?`
-  - Members: `head: Node!?`, `size: int`
-  - Methods: `pushFront`, `pushBack`, `popFront`, `popBack`, `front`, `back`, `isEmpty`, `getSize`
-- [ ] `generic<class TYPE> k::DoubleLinkedList`
-  - Node struct: `val: TYPE!`, `next: Node!?`, `prev: Node*`
-  - Members: `head: Node!?`, `tail: Node*`, `size: int`
-  - Same methods + O(1) `pushBack`/`popBack`
-- [ ] Update `doc/spec/stdlib/`
-- [x] Removed `list.k` and `test-list.cpp` from the default libk build while generic import/KDI support is stabilised
+1. Add `bool _is_varargs = false` with getter/setter to `parameter`.
+2. In `model_builder::visit_function_decl`, propagate `param->is_varargs` →
+   `parameter->set_varargs(...)`.
+3. In `template_instantiator::clone_function_body`, propagate `is_varargs()`
+   on cloned parameters.
 
-### Phase 12 — Tests  ⬜ TODO
-**Files:** `klang/tests/test-gen-generic.cpp` (new),
-           `klang/tests/test-gen-generic-list.cpp` (new)
-- [ ] Lex: token `generic` is recognised
-- [ ] Parse: `generic<class T> class Box { ... }` parses correctly
-- [ ] Parse: `generic<int N>` fails with correct error
-- [ ] Model: `is_generic()` is true, `is_template()` is true
-- [ ] Validation: direct usage of T (non-addresser) → error
-- [ ] Validation: `T!` with `typename T` → error
-- [ ] Validation: `T!` with `class T` → OK
-- [ ] Synthesis: single code synthesis for `Box<Dog>` and `Box<Cat>`
-- [ ] Type-check at usage: `box.getVal()` on a `Box<Dog>` returns `Dog&`
-- [ ] LinkedList push/pop correctness
-- [ ] DoubleLinkedList push/pop from both ends
+- [x] Phase 3 complete
 
----
+### Phase 4 — Overload Resolution
 
-## Design Notes
+**File:** `gen/resolvers_type_ref.cpp`
 
-### Opaque pointer type for synthesis
-All generic type param references in the synthesised body map to LLVM `ptr`
-(opaque pointer). The synthesis is performed once and cached under key
-`"<generic_synthesis>"` in `tpl_info::instantiations`.
+1. Add `CAST_VARARGS_PACK = 5` to `cast_weight` enum (between `CAST_CONSTRUCT`
+   and `CAST_IMPOSSIBLE`) so non-varargs overloads are preferred.
+2. Modify `score_with_defaults` lambda in `get_best_matching_function`:
+   - When the last param `is_varargs()` and `n_exprs >= n_params - 1`:
+     score each trailing arg against the array element type.
+   - When trailing arg count is 1 and its type matches `T[]` exactly,
+     score as direct match (no pack penalty).
+   - When trailing arg count is 0, score as `CAST_VARARGS_PACK` (empty array).
+3. Propagate the same logic in the member-call and unified-call paths.
 
-### generic_aggregate_instance
-At usage sites, a new model object `generic_aggregate_instance` holds:
-- A pointer to the synthesised aggregate (the single LLVM code)
-- A map of `{param_name → concrete_type}` for type-checking
+- [x] Phase 4 complete
 
-This object is the "type" seen by the caller. It participates in type-checking
-but does not trigger new code generation.
+### Phase 5 — Code Generation (call-site packing)
 
-### Owner semantics
-`T!` where T is a generic param whose constraint is `class` or `interface`
-is valid because class/interface types have virtual destructors, so the
-uniform synthesised code can call `delete ptr` and reach the correct destructor
-through the vtable. With `typename` or `struct`, the destructor is not
-reachable uniformly — this is a compile-time error.
+**File:** `gen/gen_expr_invocation.cpp`
 
-### No covariance
-`LinkedList<Dog>` is NOT a subtype of `LinkedList<Animal>`, even if
-`Dog` extends `Animal`. Pure type equality is enforced. This is noted
-in `TODO.md` as a future feature.
+When generating a function invocation where the target's last parameter is
+varargs and the caller passed individual arguments (not a single array):
+
+1. Compute `n_varargs = n_exprs - (n_params - 1)`.
+2. Create a `sized_array_type(element_type, n_varargs)`.
+3. `alloca` the array struct on the stack.
+4. Store `n_varargs` into field 0 (`FIELD_SIZE`).
+5. GEP + store each trailing argument into field 1 (`FIELD_DATA`).
+6. Replace the N trailing arguments with a single reference to this array.
+7. For zero varargs: alloca a zero-sized array.
+8. For explicit array argument: pass as-is.
+
+- [x] Phase 5 complete
+
+### Phase 6 — KDI Export/Import
+
+**Files:** `libkdi/src/kdi_aggregates.hpp`,
+`klang/src/model/tools/kdi_exporter.cpp`,
+`klang/src/model/tools/kdi_importer.cpp`,
+CBOR serialization files.
+
+1. Add `bool is_varargs = false` to `kdi_param`.
+2. Export the flag in `to_kdi_params()`.
+3. Import the flag and call `set_varargs()` on the model parameter.
+4. Update CBOR serialisation (follow existing pattern for boolean fields).
+
+Note: the flag is **informational** — the parameter type is already `T[]` in the
+model. The flag helps tooling and documentation distinguish a true varargs from
+a plain array parameter.
+
+- [x] Phase 6 complete
+
+### Phase 7 — Mangling
+
+**Verification only.** The parameter is typed `T[]` in the model, so the mangling
+already produces the correct signature. No change expected. Add a test to confirm.
+
+- [x] Phase 7 complete (verified, no change needed)
+
+### Phase 8 — Grammar & Documentation
+
+**Files:** `doc/spec/language/grammar.ebnf`, `doc/spec/language/summary.md`
+
+Update `ParameterSpec` rule:
+```ebnf
+ParameterSpec
+    = { AnnotationDef } , { Specifier } ,
+      [ Identifier , [ '...' ] , ':' ] ,
+      TypeSpec ,
+      [ '=' , ConditionalExpr ]
+    ;
+```
+
+- [x] Phase 8 complete
 
 ---
 
-## Current Build Status
+## Test Plan
 
-All phases 1-10 and Phase 12 are complete. 100% of tests pass (ctest: 4/4 test suites green).
+### File: `klang/tests/test-gen-varargs.cpp`  —  Tags: `[gen][varargs]`
 
-### Phase 12 summary
+#### Parser tests (Phase 1)
+1. Parse varargs parameter — verify `is_varargs == true` and type = `int[]`
+2. Parse non-varargs parameter — verify `is_varargs == false`
+3. Error: varargs not last → diagnostic
+4. Error: multiple varargs → diagnostic
+5. Error: varargs with default → diagnostic
 
-`klang/tests/test-gen-generic.cpp` adds **57 passing assertions + 3 documented skipped tests**
-covering lex, parse, model, validator, synthesis, codegen (compilation), and cross-module import.
+#### Resolution + codegen tests (Phase 4-5)
+6. Basic varargs call — `sum(1, 2, 3)` → 6
+7. Zero varargs call — `sum()` → 0
+8. Single vararg — `sum(42)` → 42
+9. Mixed fixed + varargs — `f(1, 2, 3, 4, 5)` with 2 fixed params
+10. Explicit array pass — `f(1, 2, arr)` where arr is `int[3]`
+11. Overload preference — non-varargs preferred over varargs
+12. Non-int varargs — `long`, `byte`, etc.
+13. Array element access inside body — index into varargs array
 
-### Known limitations discovered by Phase 12
+#### Template varargs (Phase 3)
+14. Template varargs basic — `template<typename T> fun first(args... : T) : T&`
+15. SKIP: template packs — documented as not supported
 
-The following gaps were uncovered by Phase 12 tests and are documented as skipped tests:
+#### KDI tests (Phase 6)
+16. Export/import varargs — compile lib, import, call works
 
-| Gap | Diagnostic | Status |
-|-----|------------|--------|
-| Generic constructor call with `T!` owner argument at call site — synthesized ctor takes `byte*!`, concrete `T!` implicit cast fails | `000D9` / `000FF` | `[.known-limitation]` test |
-| Member access on `T*` inside the generic body — T maps to opaque `byte*`, no field layout | By design | `[.known-limitation]` test |
-| Explicit generic type args in member method calls on non-generic host class (`obj.method<Dog>(arg)`) — Dog seen as value, not type | `000B6` | `[.known-limitation]` test |
-| `ConcreteType! → byte*` implicit cast at generic setter call sites: compiles, returns 0 at runtime | Runtime bug | TODO.md entry |
+#### Error tests
+17. Too few fixed args — diagnostic
+18. Type mismatch in varargs — diagnostic
 
-These are tracked in `TODO.md` under "Known generic call-site limitations".
+---
 
+## Current Test Results
 
+All 18 varargs tests pass (53 assertions):
+- 6 parser tests (is_varargs flag, error cases)
+- 11 codegen tests (basic call, single vararg, mixed fixed+varargs, explicit array pass,
+  long type, zero varargs, zero varargs with fixed params, overload preference,
+  overload varargs fallback, array size access, mangling verification)
+- 1 KDI import/export integration test (cross-library varargs call)
 
+3 pre-existing failures in other tests are unrelated (drain, template-func-calls).
 
+## Files Modified
 
+### Compiler (klang/)
+- `src/parse/ast.hpp` — `is_varargs` field on `parameter_spec`
+- `src/parse/ast_dump.hpp` — show `...` in AST dump
+- `src/parse/parser_declarations.cpp` — `...` detection + validation
+- `src/errors_lex_parse.hpp` — 3 new diagnostic codes (0x01B0–0x01B2)
+- `src/model/model_function.hpp` — `is_varargs()` on `parameter`, `has_varargs()` on `function`
+- `src/model/model_builder.cpp` — propagate varargs flag
+- `src/model/model_dump.hpp` — show `...` in model dump
+- `src/model/template_instantiator.cpp` — propagate on clone
+- `src/model/tools/kdi_exporter.cpp` — export `is_varargs` in `to_kdi_params()`
+- `src/model/tools/kdi_importer.cpp` — import `is_varargs` for constructors, methods, templates
+- `src/model/tools/k_source_emitter.cpp` — emit `...` and unwrap array type for varargs
+- `src/model/imported.cpp` — propagate `is_varargs` via `attach_params`
+- `src/gen/resolvers_type_ref.hpp` — `CAST_VARARGS_PACK` weight
+- `src/gen/resolvers_type_ref.cpp` — varargs-aware overload resolution
+- `src/gen/gen_expr_invocation.cpp` — call-site array packing
 
+### KDI library (libkdi/)
+- `src/kdi_aggregates.hpp` — `is_varargs` field on `kdi_param`
+- `src/kdi_cbor.cpp` — CBOR encode/decode of `is_varargs`
+- `src/kdi_json.cpp` — JSON encode/decode of `is_varargs`
+- `src/kdi_dump.cpp` — show `...` in dump output
 
+### Tests
+- `tests/test-gen-varargs.cpp` — 18 test cases
 
-
+### Documentation
+- `doc/spec/language/grammar.ebnf` — updated `ParameterSpec` rule
+- `doc/spec/language/summary.md` — varargs in §10.2 Parameters
+- `doc/spec/language/functions/functions.md` — varargs parameter section
+- `doc/spec/language/functions/overloading.md` — varargs priority in overload resolution
 

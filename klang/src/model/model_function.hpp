@@ -40,6 +40,9 @@ protected:
      */
     bool _is_ffi_cstring = false;
 
+    /** True if this parameter was declared with '...' (varargs). Informational flag. */
+    bool _is_varargs = false;
+
     parameter(std::shared_ptr<function> func, size_t pos);
 
     static std::shared_ptr<parameter> make_shared(std::shared_ptr<function> func, size_t pos);
@@ -69,6 +72,11 @@ public:
     bool is_ffi_cstring() const { return _is_ffi_cstring; }
     /** Mark this parameter as @ffi::CString. */
     void set_ffi_cstring(bool v) { _is_ffi_cstring = v; }
+
+    /** True if this parameter was declared with '...' (varargs). */
+    bool is_varargs() const { return _is_varargs; }
+    /** Mark this parameter as varargs. */
+    void set_varargs(bool v) { _is_varargs = v; }
 
     /** Set the AST parameter_spec node this parameter was built from. */
     void set_ast_parameter_spec(std::shared_ptr<k::parse::ast::parameter_spec> ast) {
@@ -239,6 +247,10 @@ public:
 
     size_t get_parameter_size() const {return _parameters.size();}
     bool has_parameter()const {return !_parameters.empty();}
+    /** True if the last parameter is a varargs parameter. */
+    bool has_varargs() const {
+        return !_parameters.empty() && _parameters.back()->is_varargs();
+    }
     std::shared_ptr<parameter> get_parameter(size_t index);
     std::shared_ptr<const parameter> get_parameter(size_t index)const;
 

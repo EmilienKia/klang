@@ -183,6 +183,7 @@ add_executable(klang-tests
         tests/test-gen-template-value-params.cpp
         tests/test-gen-template-comprehensive.cpp
         tests/test-gen-generic.cpp
+        tests/test-gen-varargs.cpp
         tests/test-template-instantiator.cpp
         tests/test-gen-if-link-softfail.cpp
         tests/test-gen-if-local-var.cpp

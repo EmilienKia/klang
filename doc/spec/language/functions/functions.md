@@ -34,7 +34,7 @@ FunctionBody: (one of)
 ParameterList:
     ParameterSpec { ',' ParameterSpec }
 ParameterSpec:
-    { Specifier } [ Identifier ':' ] TypeSpec [ '=' ConditionalExpr ]
+    { Specifier } [ Identifier [ '...' ] ':' ] TypeSpec [ '=' ConditionalExpr ]
 Specifier: (one of)
     'public'  'protected'  'private'  'static'
 ```
@@ -54,7 +54,7 @@ If the name is omitted, the parameter is anonymous (can be used for signature ma
 ### Grammar
 ```
 ParameterSpec:
-    { Specifier } [ Identifier ':' ] TypeSpec [ '=' ConditionalExpr ]
+    { Specifier } [ Identifier [ '...' ] ':' ] TypeSpec [ '=' ConditionalExpr ]
 ```
 **Examples:**
 ```k
@@ -79,6 +79,50 @@ assign(var: int&, val: int) : int {
     return var;
 }
 ```
+
+### Varargs parameters
+
+A parameter declared with `...` after its name is a **varargs** (variable-length argument list)
+parameter. It is syntactic sugar for an unsized array parameter (`T[]`):
+
+```k
+fun sum(values... : int) : int {
+    // 'values' is of type int[] inside the body
+    return values[0] + values[1] + values[2];
+}
+```
+
+**Rules:**
+
+- Must be the **last** parameter of the function.
+- Only **one** varargs parameter per function.
+- Cannot have a default value.
+- At the call site, trailing arguments are automatically packed into a stack-allocated array:
+  ```k
+  sum(1, 2, 3);        // compiler creates int[3]{1, 2, 3} and passes it
+  ```
+- An explicit array of the matching type may be passed directly (no packing):
+  ```k
+  arr : int[3]{1, 2, 3};
+  sum(arr);             // arr passed directly as int[]
+  ```
+- Zero arguments for the varargs position is valid (an empty array is created):
+  ```k
+  fun count(values... : int) : int { return values.size; }
+  count();              // returns 0
+  ```
+- Non-varargs overloads are preferred over varargs overloads during resolution.
+- Template varargs are supported:
+  ```k
+  template<typename T>
+  fun first(args... : T) : T& { return args[0]; }
+  ```
+- Template parameter packs, expansion, and fold expressions are **not** supported.
+
+**Errors** (compile-time):
+- `0x01B0` — Varargs parameter is not the last parameter.
+- `0x01B1` — Varargs parameter has a default value.
+- `0x01B2` — Multiple varargs parameters in a single function.
 ---
 ## 3. Return type
 The return type follows `:` after the parameter list.  

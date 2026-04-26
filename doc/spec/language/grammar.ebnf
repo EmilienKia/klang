@@ -426,7 +426,7 @@ ParameterList
 
 ParameterSpec
     = { AnnotationDef } , { Specifier } ,
-      [ Identifier , ':' ] ,
+      [ Identifier , [ '...' ] , ':' ] ,
       TypeSpec ,
       [ '=' , ConditionalExpr ]
     ;

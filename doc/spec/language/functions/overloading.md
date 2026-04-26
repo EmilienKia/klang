@@ -39,7 +39,30 @@ The resolution applies to:
 When no exact match exists, the compiler considers implicit conversions:
 - **Widening** (preferred): e.g., `short` argument matched to `int` parameter.
 - **Narrowing** (accepted): e.g., `int` argument matched to `short` parameter.
+- **Varargs packing** (lowest priority): when a varargs overload is the only match.
+
 See [Types — Implicit conversions](../basic/types.md#7-implicit-conversions) for the full list.
+
+### Overload priority order
+
+| Priority | Category | Example |
+|----------|----------|---------|
+| 1 (best) | Exact match | `int` → `int` |
+| 2 | Reference conversion | `T&` → `const T&` |
+| 3 | Widening | `short` → `int` |
+| 4 | Narrowing | `int` → `short` |
+| 5 | Construction | `int` → `Wrapper(int)` |
+| 6 (worst) | Varargs packing | `int, int, int` → `int[]` via varargs |
+
+Non-varargs overloads are always preferred over varargs overloads when both match:
+
+```k
+fun pick(a: int, b: int) : int { return 1; }
+fun pick(args... : int) : int  { return 2; }
+
+pick(10, 20);       // calls pick(int, int) → 1 (exact match preferred)
+pick(10, 20, 30);   // calls pick(args... : int) → 2 (only varargs matches)
+```
 **Example:**
 ```k
 add(a: int, b: int) : int { return a + b; }
