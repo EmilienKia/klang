@@ -256,9 +256,18 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             }
         }
 
+        void visit_pack_expansion_expr(ast::pack_expansion_expr& expr) override {
+            prefix() << "pack_expansion" << std::endl;
+            if (expr.inner) {
+                inc();
+                expr.inner->visit(*this);
+                dec();
+            }
+        }
+
         void visit_template_parameter(ast::template_parameter& param) override {
             if (param.kind_kw.has_value()) {
-                prefix() << "template_param(type) " << param.name.content << std::endl;
+                prefix() << "template_param(type" << (param.is_pack ? "..." : "") << ") " << param.name.content << std::endl;
             } else {
                 prefix() << "template_param(value) " << param.name.content << std::endl;
             }

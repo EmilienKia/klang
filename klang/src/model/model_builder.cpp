@@ -392,6 +392,7 @@ namespace k::model {
                     } else {
                         desc.kind = template_param_kind::TYPENAME;
                     }
+                    desc.is_pack = tp->is_pack;
                     // Store constraint type if present (e.g. class T : Base)
                     if (tp->constraint_type) {
                         desc.constraint_type = _context->from_type_specifier(*tp->constraint_type);
@@ -837,6 +838,7 @@ namespace k::model {
                     } else {
                         desc.kind = template_param_kind::TYPENAME;
                     }
+                    desc.is_pack = tp->is_pack;
                     // Store constraint type if present (e.g. class T : Base)
                     if (tp->constraint_type) {
                         desc.constraint_type = _context->from_type_specifier(*tp->constraint_type);
@@ -1159,6 +1161,16 @@ namespace k::model {
             std::shared_ptr<model::parameter> parameter = function->append_parameter(std::string{param->name->content}, param_type);
             parameter->set_const(param_is_const);
             parameter->set_varargs(param->is_varargs);
+            parameter->set_pack_expansion(param->is_pack_expansion);
+            // For pack expansion parameters, extract the pack param name from the type
+            if (param->is_pack_expansion) {
+                // The type specifier should be a simple identifier referencing the template pack param
+                if (auto ident_type = std::dynamic_pointer_cast<parse::ast::identified_type_specifier>(param->type)) {
+                    if (!ident_type->name.names.empty()) {
+                        parameter->set_pack_param_name(std::string{ident_type->name.names.back().content});
+                    }
+                }
+            }
             parameter->set_ast_parameter_spec(param);
 
             // Populate annotation instances from the AST annotation list
@@ -1939,6 +1951,24 @@ namespace k::model {
                 }
             }
         }
+    }
+
+    void model_builder::visit_pack_expansion_expr(parse::ast::pack_expansion_expr &expr) {
+        // Visit the inner expression to get the symbol
+        _expr = nullptr;
+        if (expr.inner) {
+            expr.inner->visit(*this);
+        }
+        auto inner_expr = _expr;
+        // Extract the pack name from the inner symbol expression
+        std::string pack_name;
+        if (auto sym = std::dynamic_pointer_cast<model::symbol_expression>(inner_expr)) {
+            if (sym->get_name().size() == 1) {
+                pack_name = sym->get_name().front();
+            }
+        }
+        _expr = std::make_shared<model::pack_expansion_expression>(inner_expr, pack_name);
+        _expr->set_ast_expression(expr.shared_as<parse::ast::pack_expansion_expr>());
     }
 
     void model_builder::visit_new_expr(parse::ast::new_expr& expr) {

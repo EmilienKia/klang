@@ -43,6 +43,12 @@ protected:
     /** True if this parameter was declared with '...' (varargs). Informational flag. */
     bool _is_varargs = false;
 
+    /** True if this parameter is a pack expansion (e.g. Ts... args in a template function). */
+    bool _is_pack_expansion = false;
+
+    /** Name of the template parameter pack this expansion refers to (e.g. "Ts"). */
+    std::string _pack_param_name;
+
     parameter(std::shared_ptr<function> func, size_t pos);
 
     static std::shared_ptr<parameter> make_shared(std::shared_ptr<function> func, size_t pos);
@@ -77,6 +83,16 @@ public:
     bool is_varargs() const { return _is_varargs; }
     /** Mark this parameter as varargs. */
     void set_varargs(bool v) { _is_varargs = v; }
+
+    /** True if this parameter is a pack expansion (Ts... args). */
+    bool is_pack_expansion() const { return _is_pack_expansion; }
+    /** Mark this parameter as a pack expansion. */
+    void set_pack_expansion(bool v) { _is_pack_expansion = v; }
+
+    /** Get the name of the template parameter pack this refers to. */
+    const std::string& pack_param_name() const { return _pack_param_name; }
+    /** Set the name of the template parameter pack. */
+    void set_pack_param_name(const std::string& name) { _pack_param_name = name; }
 
     /** Set the AST parameter_spec node this parameter was built from. */
     void set_ast_parameter_spec(std::shared_ptr<k::parse::ast::parameter_spec> ast) {

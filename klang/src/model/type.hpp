@@ -1071,6 +1071,9 @@ using type_substitution_map = std::unordered_map<std::string, std::shared_ptr<ty
 /** Map from template value parameter name to concrete primitive value. */
 using value_substitution_map = std::unordered_map<std::string, k::value_type>;
 
+/** Map from template pack parameter name to a list of concrete types. */
+using pack_substitution_map = std::unordered_map<std::string, std::vector<std::shared_ptr<type>>>;
+
 /**
  * Recursively substitute types through wrapper chains.
  *

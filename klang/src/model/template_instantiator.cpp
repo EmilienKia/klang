@@ -150,12 +150,24 @@ type_substitution_map template_instantiator::build_substitution_map(
     const std::vector<template_argument>& args)
 {
     type_substitution_map result;
-    size_t count = std::min(ti.params.size(), args.size());
-    for (size_t i = 0; i < count; ++i) {
-        if (args[i].is_type() && args[i].type_arg) {
-            result[ti.params[i].name] = args[i].type_arg;
+    size_t arg_idx = 0;
+    for (size_t i = 0; i < ti.params.size() && arg_idx < args.size(); ++i) {
+        if (ti.params[i].is_pack) {
+            // Skip pack params — handled by build_pack_substitution_map.
+            // Consume the args that belong to this pack.
+            size_t remaining_params_after = 0;
+            for (size_t j = i + 1; j < ti.params.size(); ++j) {
+                if (!ti.params[j].is_pack) remaining_params_after++;
+            }
+            size_t remaining_args = args.size() - arg_idx;
+            size_t pack_count = remaining_args > remaining_params_after ? remaining_args - remaining_params_after : 0;
+            arg_idx += pack_count;
+        } else if (args[arg_idx].is_type() && args[arg_idx].type_arg) {
+            result[ti.params[i].name] = args[arg_idx].type_arg;
+            arg_idx++;
+        } else {
+            arg_idx++;
         }
-        // Value parameters: handled by build_value_substitution_map
     }
     return result;
 }
@@ -169,6 +181,42 @@ value_substitution_map template_instantiator::build_value_substitution_map(
     for (size_t i = 0; i < count; ++i) {
         if (args[i].is_value() && args[i].value_arg.has_value()) {
             result[ti.params[i].name] = *args[i].value_arg;
+        }
+    }
+    return result;
+}
+
+pack_substitution_map template_instantiator::build_pack_substitution_map(
+    const tpl_info& ti,
+    const std::vector<template_argument>& args)
+{
+    pack_substitution_map result;
+    size_t arg_idx = 0;
+    for (size_t i = 0; i < ti.params.size(); ++i) {
+        if (ti.params[i].is_pack) {
+            std::vector<std::shared_ptr<type>> pack_types;
+            if (arg_idx < args.size() && args[arg_idx].is_pack()) {
+                // Already packed into a single argument
+                pack_types = args[arg_idx].pack_types;
+                arg_idx++;
+            } else {
+                // Consume individual type args until we run out or hit the next non-pack param
+                size_t remaining_params_after = 0;
+                for (size_t j = i + 1; j < ti.params.size(); ++j) {
+                    if (!ti.params[j].is_pack) remaining_params_after++;
+                }
+                size_t remaining_args = args.size() - arg_idx;
+                size_t pack_count = remaining_args > remaining_params_after ? remaining_args - remaining_params_after : 0;
+                for (size_t j = 0; j < pack_count && arg_idx < args.size(); ++j) {
+                    if (args[arg_idx].is_type() && args[arg_idx].type_arg) {
+                        pack_types.push_back(args[arg_idx].type_arg);
+                    }
+                    arg_idx++;
+                }
+            }
+            result[ti.params[i].name] = std::move(pack_types);
+        } else {
+            if (arg_idx < args.size()) arg_idx++;
         }
     }
     return result;
@@ -569,6 +617,143 @@ void template_instantiator::clone_member_variable(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Pack expansion helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+namespace {
+
+using pack_names_map = std::unordered_map<std::string, std::vector<std::string>>;
+
+/**
+ * Expand pack_expansion_expression arguments in a function_invocation_expression.
+ * Replaces `f(args...)` with `f(args_0, args_1, ..., args_N)`.
+ */
+void expand_pack_in_invocation_args(
+    std::vector<std::shared_ptr<expression>>& args,
+    const pack_names_map& pack_expansion_names)
+{
+    std::vector<std::shared_ptr<expression>> new_args;
+    bool expanded = false;
+    for (auto& arg : args) {
+        if (auto pe = std::dynamic_pointer_cast<pack_expansion_expression>(arg)) {
+            // Look up the pack name in the expansion map
+            const auto& pack_name = pe->pack_name();
+            auto it = pack_expansion_names.find(pack_name);
+            if (it != pack_expansion_names.end()) {
+                // Replace with symbol expressions referencing each concrete parameter
+                for (const auto& concrete_name : it->second) {
+                    auto sym = symbol_expression::from_identifier(
+                        name(false, {concrete_name}));
+                    new_args.push_back(sym);
+                }
+                expanded = true;
+            } else {
+                new_args.push_back(arg);
+            }
+        } else {
+            new_args.push_back(arg);
+        }
+    }
+    if (expanded) {
+        args = std::move(new_args);
+    }
+}
+
+/**
+ * Recursively walk an expression tree and expand pack expressions in invocations.
+ */
+void expand_pack_in_expr(
+    std::shared_ptr<expression>& expr,
+    const pack_names_map& pack_expansion_names)
+{
+    if (!expr) return;
+
+    if (auto fie = std::dynamic_pointer_cast<function_invocation_expression>(expr)) {
+        auto callee = std::const_pointer_cast<expression>(fie->callee_expr());
+        expand_pack_in_expr(callee, pack_expansion_names);
+        // Expand packs in arguments
+        std::vector<std::shared_ptr<expression>> args;
+        for (auto& a : fie->arguments()) {
+            args.push_back(std::const_pointer_cast<expression>(a));
+        }
+        expand_pack_in_invocation_args(args, pack_expansion_names);
+        fie->arguments(args);
+    } else if (auto cie = std::dynamic_pointer_cast<constructor_invocation_expression>(expr)) {
+        std::vector<std::shared_ptr<expression>> args;
+        for (auto& a : cie->arguments()) {
+            args.push_back(std::const_pointer_cast<expression>(a));
+        }
+        expand_pack_in_invocation_args(args, pack_expansion_names);
+        cie->arguments(args);
+    } else if (auto ne = std::dynamic_pointer_cast<new_expression>(expr)) {
+        std::vector<std::shared_ptr<expression>> args;
+        for (auto& a : ne->arguments()) {
+            args.push_back(std::const_pointer_cast<expression>(a));
+        }
+        expand_pack_in_invocation_args(args, pack_expansion_names);
+        ne->assign_arguments(args);
+    }
+}
+
+/**
+ * Walk all statements in a block and expand pack expressions in invocations.
+ */
+void expand_pack_in_block(
+    std::shared_ptr<block> blk,
+    const pack_names_map& pack_expansion_names);
+
+void expand_pack_in_statement(
+    std::shared_ptr<statement> stmt,
+    const pack_names_map& pack_expansion_names)
+{
+    if (!stmt) return;
+
+    if (auto es = std::dynamic_pointer_cast<expression_statement>(stmt)) {
+        auto expr = es->get_expression();
+        expand_pack_in_expr(expr, pack_expansion_names);
+        es->set_expression(expr);
+    } else if (auto rs = std::dynamic_pointer_cast<return_statement>(stmt)) {
+        auto expr = rs->get_expression();
+        expand_pack_in_expr(expr, pack_expansion_names);
+        if (expr) rs->set_expression(expr);
+    } else if (auto bs = std::dynamic_pointer_cast<block>(stmt)) {
+        expand_pack_in_block(bs, pack_expansion_names);
+    } else if (auto ifs = std::dynamic_pointer_cast<if_else_statement>(stmt)) {
+        expand_pack_in_statement(std::const_pointer_cast<statement>(ifs->get_then_stmt()), pack_expansion_names);
+        expand_pack_in_statement(std::const_pointer_cast<statement>(ifs->get_else_stmt()), pack_expansion_names);
+    } else if (auto ws = std::dynamic_pointer_cast<while_statement>(stmt)) {
+        expand_pack_in_statement(std::const_pointer_cast<statement>(ws->get_nested_stmt()), pack_expansion_names);
+    } else if (auto fs = std::dynamic_pointer_cast<for_statement>(stmt)) {
+        expand_pack_in_statement(std::const_pointer_cast<statement>(fs->get_nested_stmt()), pack_expansion_names);
+    } else if (auto vs = std::dynamic_pointer_cast<variable_statement>(stmt)) {
+        auto expr = vs->get_init_expr();
+        if (expr) {
+            expand_pack_in_expr(expr, pack_expansion_names);
+            vs->variable_definition::set_init_expr(expr);
+        }
+    }
+}
+
+void expand_pack_in_block(
+    std::shared_ptr<block> blk,
+    const pack_names_map& pack_expansion_names)
+{
+    if (!blk) return;
+    for (auto& stmt : blk->get_statements()) {
+        expand_pack_in_statement(stmt, pack_expansion_names);
+    }
+}
+
+} // anonymous namespace
+
+void template_instantiator::expand_pack_expressions_in_block(
+    std::shared_ptr<block> blk,
+    const std::unordered_map<std::string, std::vector<std::string>>& pack_expansion_names)
+{
+    expand_pack_in_block(blk, pack_expansion_names);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Populate function from template source
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -576,7 +761,8 @@ void template_instantiator::populate_function_from_template(
     std::shared_ptr<function> dst,
     const function& src,
     const type_substitution_map& subst,
-    const value_substitution_map& val_subst)
+    const value_substitution_map& val_subst,
+    const pack_substitution_map& pack_subst)
 {
     // Set return type
     if (src.has_return_type()) {
@@ -585,14 +771,34 @@ void template_instantiator::populate_function_from_template(
     }
 
     // Clone parameters (skip 'this' — will be recreated by resolution passes)
+    // Map from original pack param names to generated concrete param names
+    std::unordered_map<std::string, std::vector<std::string>> pack_expansion_names;
     for (auto& param : src.parameters()) {
         if (param == src.get_this_parameter()) continue;
-        auto param_type = substitute_type(
-            std::const_pointer_cast<type>(param->get_type()), subst);
-        auto new_param = dst->append_parameter(param->get_short_name(), param_type);
-        new_param->set_const(param->is_const());
-        new_param->set_varargs(param->is_varargs());
-        new_param->_ast_node = param->get_ast_node(); // diagnostics
+
+        if (param->is_pack_expansion() && !param->pack_param_name().empty()) {
+            // Expand pack parameter into N concrete parameters
+            auto it = pack_subst.find(param->pack_param_name());
+            if (it != pack_subst.end()) {
+                const auto& pack_types = it->second;
+                std::vector<std::string> generated_names;
+                for (size_t i = 0; i < pack_types.size(); ++i) {
+                    std::string concrete_name = param->get_short_name() + "_" + std::to_string(i);
+                    auto new_param = dst->append_parameter(concrete_name, pack_types[i]);
+                    new_param->set_const(param->is_const());
+                    new_param->_ast_node = param->get_ast_node();
+                    generated_names.push_back(concrete_name);
+                }
+                pack_expansion_names[param->get_short_name()] = std::move(generated_names);
+            }
+        } else {
+            auto param_type = substitute_type(
+                std::const_pointer_cast<type>(param->get_type()), subst);
+            auto new_param = dst->append_parameter(param->get_short_name(), param_type);
+            new_param->set_const(param->is_const());
+            new_param->set_varargs(param->is_varargs());
+            new_param->_ast_node = param->get_ast_node(); // diagnostics
+        }
     }
 
     // Clone body only when the source function actually has one.
@@ -602,6 +808,10 @@ void template_instantiator::populate_function_from_template(
         auto dst_block = dst->get_block();
         if (dst_block) {
             clone_block_contents(*src_block, dst_block, subst, val_subst);
+            // Post-process: expand pack_expansion_expression in function/constructor invocations
+            if (!pack_expansion_names.empty()) {
+                expand_pack_expressions_in_block(dst_block, pack_expansion_names);
+            }
         }
     }
 
@@ -984,6 +1194,7 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
     // Build type substitution map
     auto subst = build_substitution_map(*ti, args);
     auto val_subst = build_value_substitution_map(*ti, args);
+    auto pack_subst = build_pack_substitution_map(*ti, args);
 
     // 1. Create a new concrete function in the parent namespace
     auto concrete = parent_ns->define_function(inst_name, tpl_def.is_static());
@@ -997,7 +1208,7 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
     concrete->set_compiler_generated(tpl_def.is_compiler_generated());
 
     // 2. Populate from template (params, return type, body)
-    populate_function_from_template(concrete, tpl_def, subst, val_subst);
+    populate_function_from_template(concrete, tpl_def, subst, val_subst, pack_subst);
 
     // Store template instantiation info for mangling (I…E encoding)
     concrete->set_tpl_instantiation_info(base_name, args);

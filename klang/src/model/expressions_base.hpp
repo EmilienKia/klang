@@ -337,5 +337,33 @@ public:
     }
 };
 
+/**
+ * Pack expansion expression — represents `expr...` in a function call.
+ * During template instantiation, this is expanded into multiple arguments.
+ * After instantiation, no pack_expansion_expression should remain in the model.
+ */
+class pack_expansion_expression : public expression {
+protected:
+    /** The inner expression being expanded (typically a symbol referencing a pack param). */
+    std::shared_ptr<expression> _inner;
+
+    /** The name of the pack parameter being expanded. */
+    std::string _pack_name;
+
+public:
+    pack_expansion_expression(std::shared_ptr<expression> inner, std::string pack_name)
+        : _inner(std::move(inner)), _pack_name(std::move(pack_name)) {}
+
+    const std::shared_ptr<expression>& inner() const { return _inner; }
+    const std::string& pack_name() const { return _pack_name; }
+
+    void accept(model_visitor& visitor) override;
+
+    std::shared_ptr<expression> clone() const override {
+        auto cloned_inner = _inner ? _inner->clone() : nullptr;
+        return std::make_shared<pack_expansion_expression>(cloned_inner, _pack_name);
+    }
+};
+
 } // namespace k::model
 #endif //KLANG_MODEL_EXPRESSIONS_BASE_HPP

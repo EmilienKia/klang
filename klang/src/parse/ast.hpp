@@ -896,16 +896,32 @@ namespace k::parse {
         };
 
         /**
-         * Annotation initializer expression — wraps an annotation_def for use
-         * inside expression contexts (brace-init lists, argument lists).
-         * Syntax: '@' QualifiedIdentifier [ '(' [ExpressionList] ')' | DesignatedBraceInitList ]
-         * Example: @Tag("hello") used as an element of an array literal.
-         */
+          * Annotation initializer expression — wraps an annotation_def for use
+          * inside expression contexts (brace-init lists, argument lists).
+          * Syntax: '@' QualifiedIdentifier [ '(' [ExpressionList] ')' | DesignatedBraceInitList ]
+          * Example: @Tag("hello") used as an element of an array literal.
+          */
         struct annotation_init_expr : public expression {
             std::shared_ptr<annotation_def> annotation;
 
             annotation_init_expr(std::shared_ptr<annotation_def> annotation)
                 : annotation(std::move(annotation)) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
+        /**
+         * Pack expansion expression — wraps an expression followed by '...'.
+         * Used in function call arguments to expand a parameter pack.
+         * Syntax: expr '...'
+         * Example: args... in f(args...)
+         */
+        struct pack_expansion_expr : public expression {
+            /** The inner expression being expanded (typically an identifier). */
+            expr_ptr inner;
+
+            pack_expansion_expr(expr_ptr inner)
+                : inner(std::move(inner)) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -932,14 +948,17 @@ namespace k::parse {
             std::shared_ptr<type_specifier> default_type_spec;
             /** For value parameters: the explicit type specifier (e.g. 'unsigned int'). */
             std::shared_ptr<type_specifier> value_type;
+            /** True if this is a parameter pack (e.g. typename... Ts). Only valid for type params. */
+            bool is_pack = false;
 
             // Type parameter constructor
             template_parameter(const lex::keyword& kind_kw,
                                const lex::identifier& name,
                                std::shared_ptr<type_specifier> constraint_type = nullptr,
-                               std::shared_ptr<type_specifier> default_type_spec = nullptr)
+                               std::shared_ptr<type_specifier> default_type_spec = nullptr,
+                               bool is_pack = false)
                 : kind_kw(kind_kw), name(name), constraint_type(std::move(constraint_type)),
-                  default_type_spec(std::move(default_type_spec)) {}
+                  default_type_spec(std::move(default_type_spec)), is_pack(is_pack) {}
 
             // Value parameter constructor
             template_parameter(std::shared_ptr<type_specifier> value_type,
@@ -1154,20 +1173,22 @@ namespace k::parse {
             expr_ptr default_expr;
             /** True when declared with '...' (varargs parameter). */
             bool is_varargs = false;
+            /** True when declared as a pack expansion parameter (e.g. Ts... args). */
+            bool is_pack_expansion = false;
 
             parameter_spec(annotation_def_list annotations,
                            const std::vector <lex::keyword> &specifiers, const std::optional <lex::identifier> &name,
                            const std::shared_ptr<ast::type_specifier> &type, expr_ptr default_expr = nullptr,
-                           bool is_varargs = false) :
+                           bool is_varargs = false, bool is_pack_expansion = false) :
                     annotations(std::move(annotations)), specifiers(specifiers), name(name), type(type),
-                    default_expr(std::move(default_expr)), is_varargs(is_varargs) {}
+                    default_expr(std::move(default_expr)), is_varargs(is_varargs), is_pack_expansion(is_pack_expansion) {}
 
             parameter_spec(annotation_def_list annotations,
                            std::vector <lex::keyword> &&specifiers, std::optional <lex::identifier> &&name,
                            std::shared_ptr<ast::type_specifier> &&type, expr_ptr default_expr = nullptr,
-                           bool is_varargs = false) :
+                           bool is_varargs = false, bool is_pack_expansion = false) :
                     annotations(std::move(annotations)), specifiers(specifiers), name(name), type(type),
-                    default_expr(std::move(default_expr)), is_varargs(is_varargs) {}
+                    default_expr(std::move(default_expr)), is_varargs(is_varargs), is_pack_expansion(is_pack_expansion) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -1444,6 +1465,7 @@ namespace k::parse {
 
         virtual void visit_annotation_def(ast::annotation_def &) = 0;
         virtual void visit_annotation_init_expr(ast::annotation_init_expr &) = 0;
+        virtual void visit_pack_expansion_expr(ast::pack_expansion_expr &) = 0;
 
         virtual void visit_template_parameter(ast::template_parameter &) = 0;
         virtual void visit_template_arg(ast::template_arg &) = 0;
@@ -1511,6 +1533,7 @@ namespace k::parse {
 
         void visit_annotation_def(ast::annotation_def &) override;
         void visit_annotation_init_expr(ast::annotation_init_expr &) override;
+        void visit_pack_expansion_expr(ast::pack_expansion_expr &) override;
 
         void visit_template_parameter(ast::template_parameter &) override;
         void visit_template_arg(ast::template_arg &) override;

@@ -179,6 +179,14 @@ private:
         const std::vector<template_argument>& args);
 
     /**
+     * Build the pack substitution map from template params and concrete args.
+     * Maps pack parameter names to their list of concrete types.
+     */
+    static pack_substitution_map build_pack_substitution_map(
+        const tpl_info& ti,
+        const std::vector<template_argument>& args);
+
+    /**
      * Build the value substitution map from template params and concrete args.
      * Maps value parameter names to their concrete integer values.
      */
@@ -231,7 +239,8 @@ private:
         std::shared_ptr<function> dst,
         const function& src,
         const type_substitution_map& subst,
-        const value_substitution_map& val_subst);
+        const value_substitution_map& val_subst,
+        const pack_substitution_map& pack_subst = {});
 
     /**
      * Clone the contents of a block (statements) from source to destination,
@@ -303,6 +312,19 @@ private:
         std::shared_ptr<aggregate> target,
         const type_substitution_map& subst,
         const value_substitution_map& val_subst);
+
+    /**
+     * Walk all statements in a block and expand pack_expansion_expression
+     * arguments in function/constructor invocations into concrete parameter
+     * symbol references.
+     *
+     * @param blk                   The block to process.
+     * @param pack_expansion_names  Map from original pack param name to the
+     *                              list of generated concrete parameter names.
+     */
+    static void expand_pack_expressions_in_block(
+        std::shared_ptr<block> blk,
+        const std::unordered_map<std::string, std::vector<std::string>>& pack_expansion_names);
 };
 
 } // namespace k::model

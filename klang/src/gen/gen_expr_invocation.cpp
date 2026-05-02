@@ -25,6 +25,7 @@
 #include "../model/imported.hpp"
 #include "../model/template.hpp"
 #include "../model/template_instantiator.hpp"
+#include "../model/template_deduction.hpp"
 #include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 #include "llvm/Support/raw_os_ostream.h"
@@ -764,7 +765,10 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             }
             if (tpl_func) {
                 auto* ti = tpl_func->get_tpl_info();
-                if (ti && ast_args.size() <= ti->params.size()) {
+                // Allow more args than params if any param is a pack
+                bool has_pack = ti && std::any_of(ti->params.begin(), ti->params.end(),
+                    [](const template_param_descriptor& p) { return p.is_pack; });
+                if (ti && (ast_args.size() <= ti->params.size() || has_pack)) {
                     // Convert AST template args to model template_arguments
                     std::vector<template_argument> model_args;
                     bool args_ok = true;
@@ -789,9 +793,13 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             args_ok = false; break;
                         }
                     }
-                    // Fill defaults for trailing params
+                    // Fill defaults for trailing non-pack params
                     for (size_t i = ast_args.size(); i < ti->params.size() && args_ok; ++i) {
                         auto& param = ti->params[i];
+                        if (param.is_pack) {
+                            // Pack params with no remaining args get an empty pack — nothing to push
+                            continue;
+                        }
                         if (param.is_type_param() && param.default_type) {
                             auto def = param.default_type;
                             if (!type::is_resolved(def)) def = _context->resolve_type(def);
@@ -800,7 +808,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                             } else { args_ok = false; }
                         } else if (param.is_value_param() && param.default_value.has_value()) {
                             model_args.push_back(template_argument::make_value(*param.default_value));
-                        } else { args_ok = false; }
+                        } else if (!param.is_pack) { args_ok = false; }
                     }
                     // Resolve constraint types in template params if still unresolved
                     if (args_ok) {
@@ -852,6 +860,99 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         }
                     }
                 }
+            }
+        }
+
+        // ── Template argument deduction (implicit template args) ──────────────
+        // If the callee does NOT carry explicit template arguments, but there are
+        // template candidates among all_candidates, attempt to deduce the template
+        // arguments from the call-site argument types and instantiate.
+        // Deduced instantiations compete with non-template candidates in overload
+        // resolution (Step 5), but non-template candidates are always preferred
+        // over deduced templates when both are viable with the same arity.
+        if (callee && !callee->has_ast_template_args()) {
+            // Collect template candidates
+            std::vector<std::shared_ptr<function>> tpl_candidates;
+            for (auto& cand : all_candidates) {
+                if (cand->is_template()) {
+                    tpl_candidates.push_back(cand);
+                }
+            }
+            if (!tpl_candidates.empty()) {
+                // Collect argument types from already-resolved argument expressions
+                std::vector<std::shared_ptr<type>> arg_types;
+                for (auto& arg : args) {
+                    arg_types.push_back(arg ? arg->get_type() : nullptr);
+                }
+
+                // Check if a non-template candidate with matching arity exists
+                size_t call_arity = arg_types.size();
+                bool has_viable_non_template = false;
+                for (auto& cand : all_candidates) {
+                    if (!cand->is_template()) {
+                        // Count non-this parameters
+                        size_t param_count = 0;
+                        for (auto& p : cand->parameters()) {
+                            if (p != cand->get_this_parameter()) param_count++;
+                        }
+                        if (param_count == call_arity) {
+                            has_viable_non_template = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!has_viable_non_template) {
+                    for (auto& tpl_func : tpl_candidates) {
+                        auto* ti = tpl_func->get_tpl_info();
+                        if (!ti) continue;
+
+                        auto deduction = k::model::deduce_template_arguments(*ti, tpl_func->parameters(), arg_types);
+                        if (!deduction.success) continue;
+
+                        // Validate constraints
+                        size_t err_idx;
+                        std::string err_reason;
+                        if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
+                            continue; // Constraint violation — skip this candidate
+                        }
+
+                        // Instantiate the function with deduced arguments
+                        auto parent_ns = _unit.get_root_namespace();
+                        if (auto parent_elem = tpl_func->parent<element>()) {
+                            if (auto owner_ns = std::dynamic_pointer_cast<ns>(parent_elem)) {
+                                parent_ns = owner_ns;
+                            }
+                        }
+                        auto concrete = template_instantiator::instantiate_function(
+                            *tpl_func, deduction.deduced_args, parent_ns, _unit, _context, *this);
+                        if (concrete) {
+                            // Run through resolver pipeline
+                            {
+                                symbol_resolver sr(*this, _context, _unit);
+                                concrete->accept(sr);
+                            }
+                            {
+                                signature_resolver sigr(*this, _context, _unit);
+                                concrete->accept(sigr);
+                            }
+                            concrete->accept(*this);
+
+                            // Replace template candidate with concrete instance
+                            callee->set_target(concrete);
+                            all_candidates.erase(
+                                std::remove(all_candidates.begin(), all_candidates.end(), tpl_func),
+                                all_candidates.end());
+                            all_candidates.push_back(concrete);
+                            break; // Use first successful deduction
+                        }
+                    }
+                }
+                // Remove remaining uninstantiated template candidates
+                all_candidates.erase(
+                    std::remove_if(all_candidates.begin(), all_candidates.end(),
+                        [](const std::shared_ptr<function>& f) { return f->is_template(); }),
+                    all_candidates.end());
             }
         }
 

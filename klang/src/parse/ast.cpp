@@ -225,6 +225,10 @@ void ast::annotation_init_expr::visit(ast_visitor &visitor) {
     visitor.visit_annotation_init_expr(*this);
 }
 
+void ast::pack_expansion_expr::visit(ast_visitor &visitor) {
+    visitor.visit_pack_expansion_expr(*this);
+}
+
 void ast::template_parameter::visit(ast_visitor &visitor) {
     visitor.visit_template_parameter(*this);
 }
@@ -436,6 +440,10 @@ void default_ast_visitor::visit_annotation_def(ast::annotation_def &) {
 }
 
 void default_ast_visitor::visit_annotation_init_expr(ast::annotation_init_expr &) {
+
+}
+
+void default_ast_visitor::visit_pack_expansion_expr(ast::pack_expansion_expr &) {
 
 }
 

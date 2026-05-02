@@ -310,6 +310,10 @@ void function_invocation_expression::accept(model_visitor &visitor) {
     visitor.visit_function_invocation_expression(*this);
 }
 
+void pack_expansion_expression::accept(model_visitor &visitor) {
+    visitor.visit_pack_expansion_expression(*this);
+}
+
 void function_invocation_expression::assign(const std::shared_ptr<expression> &callee_expr, const std::vector<std::shared_ptr<expression>> &args) {
     _callee_expr = callee_expr;
     _arguments = args;

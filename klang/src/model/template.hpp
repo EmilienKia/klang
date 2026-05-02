@@ -68,6 +68,9 @@ struct template_param_descriptor {
     /** Parameter name (e.g. "T", "N"). */
     std::string name;
 
+    /** True if this is a parameter pack (e.g. typename... Ts). Only valid for type params. */
+    bool is_pack = false;
+
     /**
      * For type parameters: optional constraint type (e.g. the "Base" in
      * "template<class T : Base>"). nullptr if unconstrained.
@@ -118,25 +121,36 @@ struct template_argument {
      *  Holds the concrete primitive value (int, long, float, double, bool, char, …). */
     std::optional<k::value_type> value_arg;
 
+    /** For pack arguments: the list of type arguments in the pack. */
+    std::vector<std::shared_ptr<type>> pack_types;
+
     /** True if this is a type argument. */
-    bool is_type() const { return type_arg != nullptr; }
+    bool is_type() const { return type_arg != nullptr && pack_types.empty(); }
 
     /** True if this is a value argument. */
     bool is_value() const { return value_arg.has_value(); }
 
+    /** True if this is a parameter pack argument (holds multiple types). */
+    bool is_pack() const { return !pack_types.empty(); }
+
     /** Create a type argument. */
     static template_argument make_type(std::shared_ptr<type> t) {
-        return {std::move(t), std::nullopt};
+        return {std::move(t), std::nullopt, {}};
     }
 
     /** Create a value argument from any primitive value. */
     static template_argument make_value(k::value_type v) {
-        return {nullptr, std::move(v)};
+        return {nullptr, std::move(v), {}};
     }
 
     /** Create a value argument from an integer (convenience overload, stores as int). */
     static template_argument make_value(int64_t v) {
-        return {nullptr, k::value_type{static_cast<int>(v)}};
+        return {nullptr, k::value_type{static_cast<int>(v)}, {}};
+    }
+
+    /** Create a pack argument from a list of types. */
+    static template_argument make_pack(std::vector<std::shared_ptr<type>> types) {
+        return {nullptr, std::nullopt, std::move(types)};
     }
 
     /**

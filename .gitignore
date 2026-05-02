@@ -2,3 +2,5 @@
 cmake-*/
 *.workspace
 build/
+
+IN-PROGRESS.md

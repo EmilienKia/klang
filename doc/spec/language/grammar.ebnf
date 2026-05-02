@@ -223,12 +223,14 @@ TemplateParameterList
     ;
 
 TemplateParameter
-    = TemplateParameterKind , Identifier , [ ':' , TypeSpec ] , [ '=' , ConditionalExpr ]
+    = TemplateParameterKind , [ '...' ] , Identifier , [ ':' , TypeSpec ] , [ '=' , ConditionalExpr ]
     ;
     (* For type parameters: the optional ':' TypeSpec is a base-type constraint.     *)
     (* For type parameters: the optional '=' ConditionalExpr is a default type.      *)
     (* For value parameters: the optional '=' ConditionalExpr is a default value.    *)
     (* Once a parameter has a default, all subsequent parameters must also have one.  *)
+    (* '...' makes this a parameter pack (only valid for type parameters).           *)
+    (* Pack parameters cannot have constraints or defaults.                          *)
 
 TemplateParameterKind
     = 'typename'                                                 (* any type *)
@@ -428,8 +430,12 @@ ParameterSpec
     = { AnnotationDef } , { Specifier } ,
       [ Identifier , [ '...' ] , ':' ] ,
       TypeSpec ,
+      [ '...' , Identifier ] ,                                   (* pack expansion: Type... name *)
       [ '=' , ConditionalExpr ]
     ;
+    (* The first '...' form (name... : Type) is varargs.                     *)
+    (* The second '...' form (Type ... name, no colon) is pack expansion —   *)
+    (* the Type must refer to a template parameter pack.                     *)
 
 (* ---------- Variables ---------------------------------------------------- *)
 
@@ -672,6 +678,7 @@ PostfixExpr
 PostfixOp
     = '++'
     | '--'
+    | '...'                                                      (* pack expansion *)
     | '[' , Expression , ']'
     | '(' , [ ExpressionList ] , ')'
     | ( '.' | '->' ) , IdentifierExpr

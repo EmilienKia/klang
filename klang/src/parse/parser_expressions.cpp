@@ -709,6 +709,9 @@ ast::expr_ptr parser::parse_postfix_expr()
                 _lexer.unget();
                 break;
             }
+        } else if(lop == lex::punctuator::ELLIPSIS) {
+            // Pack expansion: expr...
+            any = std::make_shared<ast::pack_expansion_expr>(any);
         } else {
             _lexer.unget();
             break;

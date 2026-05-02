@@ -580,12 +580,42 @@ std::shared_ptr<ast::template_parameter> parser::parse_template_parameter()
         || lkind == lex::keyword::CLASS || lkind == lex::keyword::INTERFACE) {
         auto kind_kw = lex::as<lex::keyword>(lkind);
 
+        // Check for '...' (parameter pack)
+        bool is_pack = false;
+        {
+            lex::lex_holder ellipsis_holder(_lexer);
+            auto maybe_ellipsis = _lexer.get();
+            if (maybe_ellipsis == lex::punctuator::ELLIPSIS) {
+                is_pack = true;
+            } else {
+                ellipsis_holder.rollback();
+            }
+        }
+
         // Expect parameter name
         auto lname = _lexer.get();
         if (lex::is_not<lex::identifier>(lname)) {
             throw_error(0x10044, _lexer.pick_current(), "Expected template parameter name");
         }
         auto param_name = lex::as<lex::identifier>(lname);
+
+        // Pack parameters cannot have constraints or defaults
+        if (is_pack) {
+            lex::lex_holder check_holder(_lexer);
+            auto next = _lexer.get();
+            if (next == lex::operator_::COLON) {
+                throw_error(0x10047, _lexer.pick_current(),
+                    "Parameter pack '{}' cannot have a type constraint",
+                    {std::string{param_name.content}});
+            } else if (next == lex::operator_::EQUAL) {
+                throw_error(0x10048, _lexer.pick_current(),
+                    "Parameter pack '{}' cannot have a default type",
+                    {std::string{param_name.content}});
+            } else {
+                check_holder.rollback();
+            }
+            return std::make_shared<ast::template_parameter>(kind_kw, param_name, nullptr, nullptr, true);
+        }
 
         // Optional constraint: ':' TypeSpec
         std::shared_ptr<ast::type_specifier> constraint;
@@ -1874,6 +1904,24 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
         return {};
     }
 
+    // Check for pack expansion: TYPE '...' name (no colon separator)
+    bool is_pack_expansion = false;
+    if (!name.has_value()) {
+        lex::lex_holder pack_holder(_lexer);
+        auto maybe_ellipsis = _lexer.get();
+        if (maybe_ellipsis == lex::punctuator::ELLIPSIS) {
+            auto maybe_name = _lexer.get();
+            if (lex::is<lex::identifier>(maybe_name)) {
+                name = lex::as<lex::identifier>(maybe_name);
+                is_pack_expansion = true;
+            } else {
+                pack_holder.rollback();
+            }
+        } else {
+            pack_holder.rollback();
+        }
+    }
+
     // If varargs, wrap the declared type in an unsized array type specifier
     if(is_varargs) {
         lex::punctuator br_open(std::string_view("["), lex::punctuator::BRACKET_OPEN);
@@ -1895,7 +1943,7 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
         }
     }
 
-    return std::make_shared<ast::parameter_spec>(std::move(annotations), specifiers, name, type, std::move(default_expr), is_varargs);
+    return std::make_shared<ast::parameter_spec>(std::move(annotations), specifiers, name, type, std::move(default_expr), is_varargs, is_pack_expansion);
 }
 
 } // k::parse

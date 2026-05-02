@@ -413,6 +413,9 @@ void default_model_visitor::visit_function_invocation_expression(function_invoca
     visit_expression(expr);
 }
 
+void default_model_visitor::visit_pack_expansion_expression(pack_expansion_expression &expr) {
+    visit_expression(expr);
+}
 
 
 

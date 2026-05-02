@@ -78,6 +78,7 @@ add_library(klang
         src/model/tools/kdi_type_converter.hpp
         src/model/tools/kdi_type_converter.cpp
         src/model/template_instantiator.cpp
+        src/model/template_deduction.cpp
         src/model/template.cpp
 )
 
@@ -183,6 +184,8 @@ add_executable(klang-tests
         tests/test-gen-template-value-params.cpp
         tests/test-gen-template-comprehensive.cpp
         tests/test-gen-generic.cpp
+        tests/test-gen-template-packs.cpp
+        tests/test-gen-template-deduction.cpp
         tests/test-gen-varargs.cpp
         tests/test-template-instantiator.cpp
         tests/test-gen-if-link-softfail.cpp

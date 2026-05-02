@@ -150,6 +150,7 @@ public:
 
     virtual void visit_subscript_expression(subscript_expression&) =0;
     virtual void visit_function_invocation_expression(function_invocation_expression&) =0;
+    virtual void visit_pack_expansion_expression(pack_expansion_expression&) =0;
 };
 
 
@@ -265,6 +266,7 @@ public:
 
     void visit_subscript_expression(subscript_expression&) override;
     void visit_function_invocation_expression(function_invocation_expression&) override;
+    void visit_pack_expansion_expression(pack_expansion_expression&) override;
 };
 
 } // namespace k::model
