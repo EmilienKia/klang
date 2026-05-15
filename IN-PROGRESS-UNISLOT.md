@@ -61,8 +61,9 @@ constructors/destructors/methods.
 
 ## Open items (deferred)
 
-1. **Variadic construct** — `construct(args...)` with argument forwarding to T's constructor.
-   Currently only zero-arg `construct()` is supported.
+1. ~~**Variadic construct** — `construct(args...)` with argument forwarding to T's constructor.~~
+   **DONE**: `template<typename...Args> construct(Args...args)` — member template function with
+   pack forwarding to T's constructor. Works with both explicit `<int, int>` and implicit deduction.
 2. **`operator() : T&`** — Deferred pending grammar verification.
 3. **MultiSlot<T>** — Array-based variant for collections.
 4. **KDI export** — Template intrinsics are not yet exportable through KDI.
@@ -85,3 +86,4 @@ constructors/destructors/methods.
 | `klang/src/model/template_instantiator.cpp` | Copy annotations during instantiation |
 | `klang/CMakeLists.txt` | Added `gen_intrinsics.cpp` + test file |
 | `klang/tests/test-gen-intrinsic.cpp` | **New** — 6 test cases |
+

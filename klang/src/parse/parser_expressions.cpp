@@ -690,6 +690,46 @@ ast::expr_ptr parser::parse_postfix_expr()
             if(!ident_expr) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_STRUCT_MISSING_OPEN_BRACE), _lexer.pick_current(), "Member access postfix expression expects an identifier after the '.' or '->' operator");
             }
+            // ── Template argument disambiguation on member access ────────────
+            // If the member identifier is followed by '<', try to parse template
+            // arguments. If successful AND followed by '(', this is a member
+            // template call (e.g. obj.method<int>(42)). Otherwise, roll back.
+            {
+                lex::lex_holder tpl_holder(_lexer);
+                size_t save_tpl = _lexer.tell();
+                auto peek_lt = _lexer.get();
+                if (peek_lt == lex::operator_::CHEVRON_OPEN) {
+                    _lexer.unget(); // put '<' back for parse_template_arg_list
+                    bool was_explicit = false;
+                    auto tpl_args = parse_template_arg_list(&was_explicit);
+                    if (was_explicit && !tpl_args.empty()) {
+                        auto peek_paren = _lexer.get();
+                        if (peek_paren == lex::punctuator::PARENTHESIS_OPEN) {
+                            _lexer.unget(); // put '(' back for the postfix loop
+                            ident_expr->template_args = std::move(tpl_args);
+                            ident_expr->explicit_template_args = true;
+                        } else {
+                            _lexer.seek(save_tpl);
+                            tpl_holder.rollback();
+                        }
+                    } else if (was_explicit && tpl_args.empty()) {
+                        auto peek_paren = _lexer.get();
+                        if (peek_paren == lex::punctuator::PARENTHESIS_OPEN) {
+                            _lexer.unget();
+                            ident_expr->template_args = {};
+                            ident_expr->explicit_template_args = true;
+                        } else {
+                            _lexer.seek(save_tpl);
+                            tpl_holder.rollback();
+                        }
+                    } else {
+                        _lexer.seek(save_tpl);
+                        tpl_holder.rollback();
+                    }
+                } else {
+                    tpl_holder.rollback();
+                }
+            }
             any = std::make_shared<ast::member_access_postfix_expr>(lex::as<lex::operator_>(lop), any, ident_expr);
         } else if(lop == lex::punctuator::BRACE_OPEN
                   && std::dynamic_pointer_cast<ast::identifier_expr>(any)) {

@@ -33,6 +33,11 @@ module k;
  *   slot.destruct();           // calls MyClass destructor on _slot
  *   // UniSlot goes out of scope — no double-destruct
  *
+ * With argument forwarding:
+ *   slot : UniSlot<Point>;
+ *   slot.construct<int, int>(10, 20);  // forwards to Point(int, int)
+ *   slot.destruct();
+ *
  * Calling destruct() without a prior construct(), or double-construct without
  * an intervening destruct(), is undefined behaviour.
  */
@@ -49,7 +54,8 @@ struct UniSlot {
     ~UniSlot();
 
     @annotations::Intrinsic("UniSlot::construct")
-    construct();
+    template<typename...Args>
+    construct(Args...args);
 
     @annotations::Intrinsic("UniSlot::destruct")
     destruct();

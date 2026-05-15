@@ -170,6 +170,31 @@ public:
      */
     static void inject_constructor_member_inits(std::shared_ptr<aggregate> concrete);
 
+    /**
+     * Public wrappers for member template instantiation from gen code.
+     * These delegate to the private static methods.
+     */
+    static type_substitution_map build_substitution_map_public(
+        const tpl_info& ti,
+        const std::vector<template_argument>& args) { return build_substitution_map(ti, args); }
+
+    static value_substitution_map build_value_substitution_map_public(
+        const tpl_info& ti,
+        const std::vector<template_argument>& args) { return build_value_substitution_map(ti, args); }
+
+    static pack_substitution_map build_pack_substitution_map_public(
+        const tpl_info& ti,
+        const std::vector<template_argument>& args) { return build_pack_substitution_map(ti, args); }
+
+    static void populate_function_from_template_public(
+        std::shared_ptr<function> dst,
+        const function& src,
+        const type_substitution_map& subst,
+        const value_substitution_map& val_subst,
+        const pack_substitution_map& pack_subst = {}) {
+        populate_function_from_template(dst, src, subst, val_subst, pack_subst);
+    }
+
 private:
     /**
      * Build the type substitution map from template params and concrete args.

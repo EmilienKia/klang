@@ -848,6 +848,22 @@ void template_instantiator::clone_method(
     new_func->set_aliasing(src.get_aliasing());
     new_func->set_compiler_generated(src.is_compiler_generated());
 
+    // If the source method is itself a template (member template function),
+    // preserve its tpl_info on the cloned method. The method's own template
+    // parameters remain unresolved — they will be instantiated when the member
+    // template is invoked with explicit template arguments.
+    if (src.get_tpl_info()) {
+        auto* src_ti = src.get_tpl_info();
+        auto new_ti = std::make_unique<tpl_info>();
+        new_ti->params = src_ti->params;
+        new_ti->is_generic = src_ti->is_generic;
+        new_ti->source_text = src_ti->source_text;
+        new_func->set_tpl_info(std::move(new_ti));
+        // For member templates, apply outer-struct type substitution to the
+        // return type and body, but do NOT expand the method's own template params.
+        // We still need to populate the function signature/body with the outer subst applied.
+    }
+
     populate_function_from_template(new_func, src, subst, val_subst);
 }
 

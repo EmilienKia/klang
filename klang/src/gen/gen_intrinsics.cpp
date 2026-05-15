@@ -104,10 +104,15 @@ std::optional<std::string> get_intrinsic_name(const function& fn) {
                 const_cast<function&>(fn).shared_as<function>())) {
             return std::string("UniSlot::destructor");
         }
-        if (fn.get_short_name() == "construct") {
+        // Check both the short name and the template base name (for instantiated member templates)
+        std::string check_name = fn.get_short_name();
+        if (fn.has_tpl_args() && !fn.get_tpl_base_name().empty()) {
+            check_name = fn.get_tpl_base_name();
+        }
+        if (check_name == "construct") {
             return std::string("UniSlot::construct");
         }
-        if (fn.get_short_name() == "destruct") {
+        if (check_name == "destruct") {
             return std::string("UniSlot::destruct");
         }
 
@@ -301,6 +306,7 @@ void implementation_generator::emit_intrinsic_unislot_destruct(function& functio
 }
 
 } // namespace k::model::gen
+
 
 
 
