@@ -817,6 +817,11 @@ void template_instantiator::populate_function_from_template(
 
     // Copy AST node (optional, for diagnostics)
     dst->_ast_node = src.get_ast_node();
+
+    // Copy annotations (preserves @Intrinsic and other compile-time annotations)
+    for (auto& ann : src.get_annotations()) {
+        dst->add_annotation(ann);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -59,6 +59,7 @@ add_library(klang
         src/gen/gen_class.cpp
         src/gen/gen_function.cpp
         src/gen/gen_constructor.cpp
+        src/gen/gen_intrinsics.cpp
         src/gen/gen_variable_definition.cpp
         src/gen/gen_adapt_type.cpp
         src/compiler.hpp
@@ -194,6 +195,7 @@ add_executable(klang-tests
         tests/test-gen-if-cond-var-test.cpp
         tests/test-gen-if-multi-cond-var.cpp
         tests/test-gen-if-multi-softfail.cpp
+        tests/test-gen-intrinsic.cpp
 )
 target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
 # Export symbols from the test executable so that the JIT's

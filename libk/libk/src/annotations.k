@@ -114,4 +114,19 @@ annotation Target {
     value : ElementType[];
 }
 
+/*
+ * Marks a function or constructor as compiler-intrinsic.
+ *
+ * When @Intrinsic is applied, the compiler does NOT generate the normal
+ * body for the annotated function/constructor. Instead, it dispatches to a
+ * built-in code generation path identified by 'name'.
+ *
+ * This annotation is source-only: never exported in KDI or RTTI.
+ */
+@Retention(Policy::SOURCE)
+@Target({ElementType::FUNCTION, ElementType::CONSTRUCTOR})
+annotation Intrinsic {
+    name : const char[];
+}
+
 } // namespace annotations

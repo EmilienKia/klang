@@ -320,6 +320,16 @@ public:
     void emit_destructor_cleanup(function& function);
 
     /**
+     * Emit intrinsic body for UniSlot::construct — placement constructor call on _slot.
+     */
+    void emit_intrinsic_unislot_construct(function& function, llvm::Function* func);
+
+    /**
+     * Emit intrinsic body for UniSlot::destruct — destructor call on _slot without free.
+     */
+    void emit_intrinsic_unislot_destruct(function& function, llvm::Function* func);
+
+    /**
      * Emit function return epilogue: owner/struct parameter cleanup, return instruction,
      * NRVO alloca→sret replacement, dead instruction elimination, and verification.
      */

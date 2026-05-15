@@ -25,6 +25,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "gen_intrinsics.hpp"
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
 #include "../model/imported.hpp"
@@ -326,6 +327,13 @@ void type_reference_resolver::visit_constructor(constructor& ctor) {
 
     auto blck = ctor.get_block();
 
+    // Intrinsic constructors: skip all member init injection — the body will be
+    // generated entirely by the intrinsic codegen path in implementation_generator.
+    if (get_intrinsic_name(ctor).has_value()) {
+        visit_function(ctor);
+        return;
+    }
+
     // For compiler-generated copy constructor: do NOT inject model-level statements.
     // The memberwise copy will be emitted directly at IR level in implementation_generator::visit_function.
     if (ctor.is_copy_constructor() && ctor.is_compiler_generated()) {
@@ -435,6 +443,13 @@ void type_reference_resolver::visit_destructor(destructor& dtor) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F004), dtor_lexeme,
             "Internal error: destructor has no owner structure; "
             "every destructor must belong to a struct — this indicates a compiler bug");
+    }
+
+    // Intrinsic destructors: skip all member/base destructor injection — the body will
+    // be generated entirely by the intrinsic codegen path in implementation_generator.
+    if (get_intrinsic_name(dtor).has_value()) {
+        visit_function(dtor);
+        return;
     }
 
     auto blck = dtor.get_block();
