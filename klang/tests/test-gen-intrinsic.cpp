@@ -230,3 +230,57 @@ TEST_CASE("UniSlot full lifecycle", "[gen][intrinsic]") {
     REQUIRE(fn != nullptr);
     CHECK(fn() == 13);
 }
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  7. UniSlot construct with arguments (perfect forwarding fallback)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("UniSlot construct with arguments", "[gen][intrinsic][forwarding]") {
+    std::string src = std::string("module __intrinsic_07__;\n") + UNISLOT_PREAMBLE + R"SRC(
+
+        struct Point {
+            x : int;
+            y : int;
+            Point(px : int, py : int) { x = px; y = py; }
+        }
+
+        test_construct_args() : int {
+            slot : UniSlot<Point>;
+            slot.construct(10, 20);
+            return slot.get().x + slot.get().y;
+        }
+    )SRC";
+    auto jit = gen_jit(src);
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_construct_args");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 30);
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  8. UniSlot construct with single argument
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("UniSlot construct with single argument", "[gen][intrinsic][forwarding]") {
+    std::string src = std::string("module __intrinsic_08__;\n") + UNISLOT_PREAMBLE + R"SRC(
+
+        struct Value {
+            n : int;
+            Value(v : int) { n = v; }
+        }
+
+        test_construct_one_arg() : int {
+            slot : UniSlot<Value>;
+            slot.construct(77);
+            return slot.get().n;
+        }
+    )SRC";
+    auto jit = gen_jit(src);
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_construct_one_arg");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 77);
+}
+

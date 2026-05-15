@@ -20,6 +20,7 @@
 #include "resolvers_signature.hpp"
 #include "resolvers_scope_lookup.hpp"
 #include "gen_helpers.hpp"
+#include "gen_intrinsics.hpp"
 #include "../model/imported.hpp"
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
@@ -2164,6 +2165,31 @@ type_reference_resolver::get_best_matching_function(
         bool func_has_varargs = func->has_varargs();
         const auto concrete_member_param_types = build_concrete_member_param_types(func);
         const auto* member_param_types = concrete_member_param_types.empty() ? nullptr : &concrete_member_param_types;
+
+        // ── Intrinsic magic: accept any arguments for intrinsic functions ────────
+        // Intrinsic functions bypass normal parameter matching — they accept whatever
+        // arguments the call site provides. The intrinsic codegen handler reads the
+        // actual arguments directly.
+        if (func->is_member() && !func->is_static() && this_expr && get_intrinsic_name(*func).has_value()) {
+            // Dynamically add parameters matching the call-site argument types
+            // so LLVM function signature matches.
+            if (args.size() > params.size()) {
+                for (size_t i = params.size(); i < args.size(); ++i) {
+                    auto arg_type = args[i]->get_type();
+                    if (arg_type) {
+                        func->append_parameter("__intrinsic_arg_" + std::to_string(i), arg_type);
+                    }
+                }
+            }
+            // Re-read params after dynamic addition
+            const auto& new_params = func->parameters();
+            std::vector<std::shared_ptr<expression>> adapted_args;
+            for (size_t i = 0; i < args.size(); ++i) {
+                adapted_args.push_back(args[i]);
+            }
+            valid.push_back({func, std::move(adapted_args), CAST_NONE, false, nullptr, 0, 0});
+            continue;
+        }
 
         if (func->is_member() && !func->is_static() && this_expr) {
             if (args.size() <= params.size() || func_has_varargs) {

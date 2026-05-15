@@ -172,20 +172,60 @@ void implementation_generator::emit_intrinsic_unislot_construct(function& functi
 
     auto target_struct = slot_st_type->get_struct();
 
-    // Find the default constructor (zero args)
-    std::shared_ptr<constructor> default_ctor;
-    for (auto& ctor : target_struct->constructors()) {
-        if (ctor->is_deleted()) continue;
-        if (ctor->get_parameter_size() == 0) {
-            default_ctor = ctor;
-            break;
+    // Collect call-site argument values from the function's explicit parameters
+    std::vector<llvm::Value*> ctor_args = {slot_ptr};
+    std::vector<std::shared_ptr<type>> arg_types;
+    for (const auto& param : function.parameters()) {
+        auto param_it = _context->_parameter_variables.find(param);
+        if (param_it != _context->_parameter_variables.end()) {
+            auto* param_ty = _context->get_llvm_type(param->get_type());
+            auto loaded = _builder->CreateLoad(param_ty, param_it->second, param->get_short_name());
+            ctor_args.push_back(loaded);
+            arg_types.push_back(param->get_type());
         }
     }
 
-    if (default_ctor) {
-        auto ctor_it = _context->_functions.find(default_ctor->shared_as<model::function>());
+    // Find the best matching constructor for the argument types
+    std::shared_ptr<constructor> best_ctor;
+    if (arg_types.empty()) {
+        // Zero-arg: find default constructor
+        for (auto& ctor : target_struct->constructors()) {
+            if (ctor->is_deleted()) continue;
+            if (ctor->get_parameter_size() == 0) {
+                best_ctor = ctor;
+                break;
+            }
+        }
+    } else {
+        // Match by parameter count and types (simplified matching)
+        for (auto& ctor : target_struct->constructors()) {
+            if (ctor->is_deleted()) continue;
+            if (ctor->get_parameter_size() != arg_types.size()) continue;
+            // Check type compatibility (simple exact-match check)
+            bool match = true;
+            for (size_t i = 0; i < arg_types.size(); ++i) {
+                auto param_type = ctor->parameters()[i]->get_type();
+                if (param_type && arg_types[i] && param_type != arg_types[i]) {
+                    // Allow if both are the same primitive type
+                    auto p1 = std::dynamic_pointer_cast<primitive_type>(param_type);
+                    auto p2 = std::dynamic_pointer_cast<primitive_type>(arg_types[i]);
+                    if (!p1 || !p2 || p1->get_type() != p2->get_type()) {
+                        match = false;
+                        break;
+                    }
+                }
+            }
+            if (match) {
+                best_ctor = ctor;
+                break;
+            }
+        }
+    }
+
+    if (best_ctor) {
+        auto ctor_it = _context->_functions.find(best_ctor->shared_as<model::function>());
         if (ctor_it != _context->_functions.end()) {
-            _builder->CreateCall(ctor_it->second, {slot_ptr});
+            _builder->CreateCall(ctor_it->second, ctor_args);
         }
     }
 
@@ -261,6 +301,7 @@ void implementation_generator::emit_intrinsic_unislot_destruct(function& functio
 }
 
 } // namespace k::model::gen
+
 
 
 
