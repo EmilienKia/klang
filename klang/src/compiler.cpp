@@ -52,6 +52,7 @@
 #include "gen/generators.hpp"
 #include "parse/ast_dump.hpp"
 #include "model/model_builder.hpp"
+#include "model/context.hpp"
 #include "model/model_dump.hpp"
 #include "model/tools/kdi_exporter.hpp"
 #include "model/tools/kdi_importer.hpp"
@@ -423,15 +424,24 @@ void compiler::parse_sources(std::vector<std::pair<std::string, std::string>> so
         importer.check_unused_imports();
 
         process_generation(optimize, dump);
+    } catch (k::model::context_resolution_error& e) {
+        report(e.get_diagnostic());
+        _has_compilation_error = true;
+        throw;
     } catch (k::log::compiler_error&) {
         // Diagnostic already reported via logger_relay::report() before the throw.
         // Mark compilation as failed, then propagate to the caller.
         _has_compilation_error = true;
         throw;
     } catch (std::exception& e) {
-        std::cerr << "Unexpected exception : " << e.what() << std::endl;
+        auto diag = k::log::diagnostic::make_fatal(
+            static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F001),
+            "Unexpected compiler exception: {0}",
+            {e.what()}
+        );
+        report(diag);
         _has_compilation_error = true;
-        throw;
+        throw k::log::compiler_error(std::move(diag));
     }
 }
 

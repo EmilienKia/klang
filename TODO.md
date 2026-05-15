@@ -20,13 +20,15 @@
     - [x] Phase 8: Type tracking at usage sites (generic_aggregate_instance)
     - [x] Phase 9: Mangling for generic synthesis (single symbol, no arg suffix)
     - [x] Phase 10: KDI export/import of generics (signature only, no source text)
-    - [ ] Phase 11: libk LinkedList and DoubleLinkedList (deferred — pending libk stabilisation)
+    - [ ] Phase 11: libk template collections (`UniSlot<T>`, `MultiSlot<T>`, `LinkedList<T>`, `DoubleLinkedList<T>`, `Vector<T>`) (deferred — pending libk stabilisation)
     - [x] Phase 12: Full test suite for generics (test-gen-generic.cpp, 57 pass + 3 documented skip)
   - Known generic call-site limitations (found by Phase 12, tracked for future fix):
     - [ ] Generic constructor call with owner `T!` argument: synthesized ctor takes `byte*!`, call site `ConcreteType!` implicit cast not supported
     - [ ] Member access on `T*` inside generic body (opaque pointer — by design; workaround: access at call site)
     - [ ] Explicit generic type args in generic member method call on non-generic host class (`obj.method<Dog>(arg)`)
     - [ ] `ConcreteType! → byte*` implicit cast at generic setter sites (runtime returns 0 instead of value)
+    - [ ] Nested-node template collection runtime remains unstable under JIT for non-trivial list patterns (allocation/link/destruction path)
+    - [ ] Imported template aggregate methods from KDI/signature-only metadata do not yet materialize executable bodies in consumer modules; this currently blocks re-enabling template stdlib collections end-to-end
   - Covariance for generics (invariant only in Phase 1; co/contra-variance is a future feature)
 
 - Review casting algorithm and implicit casting strategy (char[]! -> const char[]?  ou  char[]! -> const char[], etc.)

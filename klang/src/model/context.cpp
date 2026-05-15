@@ -19,9 +19,11 @@
 #include "context.hpp"
 
 #include <unordered_set>
+#include <string_view>
 
 #include "expressions.hpp"
 #include "model.hpp"
+#include "../errors.hpp"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Type.h"
@@ -547,13 +549,119 @@ void context::pop_template_param_scope() {
 
 void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
                                    std::unordered_set<struct_type*>& in_progress) {
-    if (st_type->is_resolved()) return;
+    auto throw_context_error = [](unsigned int code, const std::string& msg) -> void {
+        throw context_resolution_error(k::log::diagnostic::make_error(code, msg));
+    };
+
+    if (st_type->is_resolved()) {
+        auto* existing = llvm::dyn_cast_or_null<llvm::StructType>(st_type->get_llvm_type());
+        if (existing && !existing->isOpaque() && st_type->fields_size() > 0) {
+            return;
+        }
+    }
 
     // Cycle detection
     if (in_progress.count(st_type.get())) {
-        throw std::runtime_error("Cyclic dependency between struct types: " + st_type->name());
+        throw_context_error(
+            static_cast<unsigned int>(k::diag::structure_diag::ERR_STRUCT_RECURSIVE_FORBIDDEN),
+            "Cyclic dependency between struct types while resolving '" + st_type->name() +
+            "'. Recursive fields are only supported through '*', '!' and '?'.");
     }
     in_progress.insert(st_type.get());
+    struct in_progress_guard {
+        std::unordered_set<struct_type*>& set;
+        struct_type* st;
+        ~in_progress_guard() { set.erase(st); }
+    } guard{in_progress, st_type.get()};
+
+    // Create (or reuse) a forward-declared LLVM struct type first, so legal
+    // recursive fields (ptr/owner/view to this or in-progress structs) can map
+    // to a concrete LLVM pointer type before the final body is known.
+    auto* llvm_struct = llvm::dyn_cast_or_null<llvm::StructType>(st_type->get_llvm_type());
+    if (!llvm_struct) {
+        llvm_struct = llvm::StructType::getTypeByName(llvm_context(), st_type->name());
+        if (!llvm_struct) {
+            llvm_struct = llvm::StructType::create(llvm_context(), st_type->name());
+        }
+        st_type->set_llvm_type({}, llvm_struct, nullptr);
+    }
+
+    enum class recursive_field_policy {
+        none,
+        allowed,   // pointer/owner/view chain to in-progress struct
+        forbidden  // by-value, reference, link, drain chain to in-progress struct
+    };
+
+    auto build_forbidden_cycle_message = [](const std::string& owner_name,
+                                            std::string_view field_name,
+                                            const std::shared_ptr<type>& field_type,
+                                            const std::string& dep_name) {
+        std::string message =
+            "Forbidden recursive indirection in struct '" + owner_name + "', field '" + std::string(field_name) +
+            "' (type '" + (field_type ? field_type->to_string() : std::string{"<null>"}) +
+            "') targeting in-progress struct '" + dep_name +
+            "'. Allowed recursive indirections are '*', '!' and '?' only.";
+        return message;
+    };
+
+    auto classify_recursive_policy = [](const std::shared_ptr<type>& field_type,
+                                        const struct_type* dep_struct) -> recursive_field_policy {
+        auto walk = field_type;
+        bool saw_allowed_indirection = false;
+        bool saw_forbidden_indirection = false;
+
+        while (walk) {
+            if (type::is_const(walk) || type::is_array(walk)) {
+                walk = walk->get_subtype();
+                continue;
+            }
+            if (type::is_pointer(walk) || type::is_owner(walk) || type::is_view(walk)) {
+                saw_allowed_indirection = true;
+                walk = walk->get_subtype();
+                continue;
+            }
+            if (type::is_reference(walk) || type::is_link(walk) || type::is_drain(walk)) {
+                saw_forbidden_indirection = true;
+                walk = walk->get_subtype();
+                continue;
+            }
+
+            auto st = std::dynamic_pointer_cast<struct_type>(walk);
+            if (!st || st.get() != dep_struct) {
+                // Some unresolved wrappers can still carry the target struct id.
+                auto unresolved = std::dynamic_pointer_cast<unresolved_type>(walk);
+                if (!unresolved) {
+                    return recursive_field_policy::none;
+                }
+                const auto& type_id = unresolved->type_id();
+                if (type_id.empty() || type_id.back() != dep_struct->name()) {
+                    return recursive_field_policy::none;
+                }
+            }
+            if (saw_forbidden_indirection || !saw_allowed_indirection) {
+                return recursive_field_policy::forbidden;
+            }
+            return recursive_field_policy::allowed;
+        }
+
+        return recursive_field_policy::none;
+    };
+
+    auto resolve_dep_struct = [&](const std::shared_ptr<struct_type>& dep_st,
+                                  const std::shared_ptr<type>& field_type,
+                                  std::string_view field_name) {
+        if (!dep_st) return;
+        if (in_progress.count(dep_st.get())) {
+            auto policy = classify_recursive_policy(field_type, dep_st.get());
+            if (policy == recursive_field_policy::allowed) {
+                return;
+            }
+            throw_context_error(
+                static_cast<unsigned int>(k::diag::structure_diag::ERR_STRUCT_RECURSIVE_FORBIDDEN),
+                build_forbidden_cycle_message(st_type->name(), field_name, field_type, dep_st->name()));
+        }
+        resolve_struct_type(dep_st, in_progress);
+    };
 
     auto st = st_type->get_struct();
     std::vector<struct_type::field> fields;
@@ -590,21 +698,26 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
                     var->set_type(res_type);
                     effective_type = res_type;
                     // If the resolved type's leaf is a struct_type, resolve it.
-                    if (auto dep_st = std::dynamic_pointer_cast<struct_type>(res_type)) {
-                        resolve_struct_type(dep_st, in_progress);
+                    auto walk = res_type;
+                    while (walk) {
+                        if (auto dep_st = std::dynamic_pointer_cast<struct_type>(walk)) {
+                            resolve_dep_struct(dep_st, res_type, var_name);
+                            break;
+                        }
+                        walk = walk->get_subtype();
                     }
                 }
             } else {
                 auto sub = type->get_subtype();
                 if (sub) {
                     if (auto dep_st = std::dynamic_pointer_cast<struct_type>(sub)) {
-                        resolve_struct_type(dep_st, in_progress);
+                        resolve_dep_struct(dep_st, effective_type, var_name);
                     } else if (!sub->is_resolved()) {
                         // Try resolving the sub-type first
                         auto resolved_sub = resolve_type(sub);
                         if (resolved_sub) {
                             if (auto dep_st = std::dynamic_pointer_cast<struct_type>(resolved_sub)) {
-                                resolve_struct_type(dep_st, in_progress);
+                                resolve_dep_struct(dep_st, effective_type, var_name);
                             }
                         }
                     }
@@ -632,7 +745,7 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
                         auto walk = res_type;
                         while (walk) {
                             if (auto dep_st_type = std::dynamic_pointer_cast<struct_type>(walk)) {
-                                resolve_struct_type(dep_st_type, in_progress);
+                                resolve_dep_struct(dep_st_type, res_type, var_name);
                                 break;
                             }
                             walk = walk->get_subtype();
@@ -640,7 +753,6 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
                         handled = true;
                     } else {
                         // Still unresolved — bail out
-                        in_progress.erase(st_type.get());
                         return; // Will be resolved in a later pass
                     }
                 }
@@ -648,7 +760,9 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
             if (!handled) {
             auto res_type = resolve_type(type);
             if (!res_type) {
-                throw std::runtime_error("Cannot resolve structure field type: " + type->to_string());
+                throw_context_error(
+                    static_cast<unsigned int>(k::diag::type_diag::ERR_UNRESOLVED_TYPE_EXPR),
+                    "Cannot resolve structure field type: " + type->to_string());
             }
             // If the resolved type is itself a struct_type not yet fully resolved,
             // recursively resolve it now (handles any declaration order).
@@ -658,7 +772,7 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
                 auto walk = res_type;
                 while (walk) {
                     if (auto dep_st_type = std::dynamic_pointer_cast<struct_type>(walk)) {
-                        resolve_struct_type(dep_st_type, in_progress);
+                        resolve_dep_struct(dep_st_type, res_type, var_name);
                         break;
                     }
                     walk = walk->get_subtype();
@@ -669,16 +783,18 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
             }
         } else if (auto dep_st_type = std::dynamic_pointer_cast<struct_type>(type)) {
             // Already a struct_type but may not have its LLVM type yet (e.g. forward reference).
-            resolve_struct_type(dep_st_type, in_progress);
+            resolve_dep_struct(dep_st_type, type, var_name);
         }
         fields.emplace_back(fields.size(), var_name, effective_type);
         types.push_back(get_llvm_type(effective_type));
     }
-    auto llvm_type = llvm::StructType::create(llvm_context(), llvm::ArrayRef<llvm::Type*>(types), st_type->name());
-    auto default_const_value = llvm::ConstantAggregateZero::get(llvm_type);
-    st_type->set_llvm_type(std::move(fields), llvm_type, default_const_value);
 
-    in_progress.erase(st_type.get());
+    if (llvm_struct->isOpaque()) {
+        llvm_struct->setBody(llvm::ArrayRef<llvm::Type*>(types));
+    }
+    auto default_const_value = llvm::ConstantAggregateZero::get(llvm_struct);
+    st_type->set_llvm_type(std::move(fields), llvm_struct, default_const_value);
+
 }
 
 void context::resolve_types() {

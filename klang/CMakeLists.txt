@@ -126,6 +126,7 @@ add_executable(klang-tests
         tests/test-gen-visibility.cpp
         tests/test-gen-inheritance.cpp
         tests/test-gen-indirection.cpp
+        tests/test-gen-recursive-indirection.cpp
         tests/test-gen-const.cpp
         tests/test-gen-class-basic.cpp
         tests/test-gen-virtual-inheritance.cpp

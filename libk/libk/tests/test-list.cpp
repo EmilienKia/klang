@@ -20,7 +20,6 @@
 
 #include "helpers.hpp"
 
-// Compile-time paths injected by CMake (see libk/libk/CMakeLists.txt).
 #ifndef LIBK_KDI_DIR
 #error "LIBK_KDI_DIR must be defined — check CMakeLists.txt"
 #endif
@@ -30,23 +29,18 @@
 
 namespace {
 
-/// Compile K source against libk and JIT it.
 std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
     return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
 }
 
 } // anonymous namespace
 
-// ═════════════════════════════════════════════════════════════════════════════
-// 1. LinkedList — basic operations
-// ═════════════════════════════════════════════════════════════════════════════
-
 TEST_CASE("LinkedList — empty list is empty", "[libk][list][linked]") {
     auto j = jit_k(R"SRC(
         module __ll_empty__;
 
         test() : bool {
-            lst : LinkedList<Object>! = new LinkedList<Object>();
+            lst : LinkedList<Object>;
             return lst.isEmpty();
         }
     )SRC");
@@ -56,116 +50,110 @@ TEST_CASE("LinkedList — empty list is empty", "[libk][list][linked]") {
     REQUIRE(fn() == true);
 }
 
-TEST_CASE("LinkedList — getSize after pushFront", "[libk][list][linked]") {
+TEST_CASE("LinkedList — pushFront and pushBack update size and peeks", "[libk][list][linked]") {
     auto j = jit_k(R"SRC(
-        module __ll_size__;
+        module __ll_push_peek__;
 
         test() : int {
-            lst : LinkedList<Object>! = new LinkedList<Object>();
-            o1 : Object! = new Object();
-            o2 : Object! = new Object();
-            lst.pushFront(o1);
-            lst.pushFront(o2);
-            return lst.getSize();
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == 2);
-}
-
-TEST_CASE("LinkedList — isEmpty after pushFront", "[libk][list][linked]") {
-    auto j = jit_k(R"SRC(
-        module __ll_not_empty__;
-
-        test() : bool {
-            lst : LinkedList<Object>! = new LinkedList<Object>();
-            o : Object! = new Object();
-            lst.pushFront(o);
-            return lst.isEmpty();
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<bool(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == false);
-}
-
-TEST_CASE("LinkedList — pushFront / popFront decrements size", "[libk][list][linked]") {
-    auto j = jit_k(R"SRC(
-        module __ll_lifo__;
-
-        test() : int {
-            lst : LinkedList<Object>! = new LinkedList<Object>();
-            o1 : Object! = new Object();
-            o2 : Object! = new Object();
-            lst.pushFront(o1);
-            lst.pushFront(o2);
-            v2 : Object!? = lst.popFront();
-            if (v2 == null) { return -1; }
-            return lst.getSize();
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == 1);
-}
-
-TEST_CASE("LinkedList — pushBack / popFront FIFO order", "[libk][list][linked]") {
-    auto j = jit_k(R"SRC(
-        module __ll_fifo__;
-
-        test() : int {
-            lst : LinkedList<Object>! = new LinkedList<Object>();
+            lst : LinkedList<Object>;
             o1 : Object! = new Object();
             o2 : Object! = new Object();
             o3 : Object! = new Object();
+
+            lst.pushFront(o1);
+            lst.pushBack(o2);
+            lst.pushFront(o3);
+
+            result : int = 0;
+            if (lst.getSize() == 3) result = result + 1;
+            if (lst.peekFront() == o3) result = result + 10;
+            if (lst.peekBack() == o2) result = result + 100;
+
+            lst.clear();
+            delete o1;
+            delete o2;
+            delete o3;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 111);
+}
+
+TEST_CASE("LinkedList — removeFront and removeBack shrink the list", "[libk][list][linked]") {
+    auto j = jit_k(R"SRC(
+        module __ll_remove_ends__;
+
+        test() : int {
+            lst : LinkedList<Object>;
+            o1 : Object! = new Object();
+            o2 : Object! = new Object();
+            o3 : Object! = new Object();
+
             lst.pushBack(o1);
             lst.pushBack(o2);
             lst.pushBack(o3);
-            v : Object!? = lst.popFront();
-            if (v == null) { return -1; }
-            return lst.getSize();
+
+            result : int = 0;
+            if (lst.removeFront()) result = result + 1;
+            if (lst.removeBack()) result = result + 10;
+            if (lst.getSize() == 1) result = result + 100;
+            if (lst.peekFront() == o2) result = result + 1000;
+
+            lst.clear();
+            delete o1;
+            delete o2;
+            delete o3;
+            return result;
         }
     )SRC");
     REQUIRE(j);
     auto fn = j->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 2);
+    REQUIRE(fn() == 1111);
 }
 
-TEST_CASE("LinkedList — clear empties the list", "[libk][list][linked]") {
+TEST_CASE("LinkedList — remove by value identity removes the matching node", "[libk][list][linked]") {
     auto j = jit_k(R"SRC(
-        module __ll_clear__;
+        module __ll_remove_value__;
 
         test() : int {
-            lst : LinkedList<Object>! = new LinkedList<Object>();
+            lst : LinkedList<Object>;
             o1 : Object! = new Object();
             o2 : Object! = new Object();
-            lst.pushFront(o1);
-            lst.pushFront(o2);
+            o3 : Object! = new Object();
+
+            lst.pushBack(o1);
+            lst.pushBack(o2);
+            lst.pushBack(o3);
+
+            result : int = 0;
+            if (lst.remove(o2)) result = result + 1;
+            if (lst.getSize() == 2) result = result + 10;
+            if (lst.peekFront() == o1) result = result + 100;
+            if (lst.peekBack() == o3) result = result + 1000;
+
             lst.clear();
-            return lst.getSize();
+            delete o1;
+            delete o2;
+            delete o3;
+            return result;
         }
     )SRC");
     REQUIRE(j);
     auto fn = j->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 0);
+    REQUIRE(fn() == 1111);
 }
-
-// ═════════════════════════════════════════════════════════════════════════════
-// 2. DoubleLinkedList — basic operations
-// ═════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("DoubleLinkedList — empty list is empty", "[libk][list][double]") {
     auto j = jit_k(R"SRC(
         module __dll_empty__;
 
         test() : bool {
-            lst : DoubleLinkedList<Object>! = new DoubleLinkedList<Object>();
+            lst : DoubleLinkedList<Object>;
             return lst.isEmpty();
         }
     )SRC");
@@ -175,67 +163,103 @@ TEST_CASE("DoubleLinkedList — empty list is empty", "[libk][list][double]") {
     REQUIRE(fn() == true);
 }
 
-TEST_CASE("DoubleLinkedList — getSize after pushFront and pushBack",
-          "[libk][list][double]") {
+TEST_CASE("DoubleLinkedList — mixed pushes preserve front and back", "[libk][list][double]") {
     auto j = jit_k(R"SRC(
-        module __dll_size__;
+        module __dll_push_peek__;
 
         test() : int {
-            lst : DoubleLinkedList<Object>! = new DoubleLinkedList<Object>();
+            lst : DoubleLinkedList<Object>;
             o1 : Object! = new Object();
             o2 : Object! = new Object();
             o3 : Object! = new Object();
+
             lst.pushFront(o1);
             lst.pushBack(o2);
             lst.pushFront(o3);
-            return lst.getSize();
+
+            result : int = 0;
+            if (lst.getSize() == 3) result = result + 1;
+            if (lst.peekFront() == o3) result = result + 10;
+            if (lst.peekBack() == o2) result = result + 100;
+
+            lst.clear();
+            delete o1;
+            delete o2;
+            delete o3;
+            return result;
         }
     )SRC");
     REQUIRE(j);
     auto fn = j->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 3);
+    REQUIRE(fn() == 111);
 }
 
-TEST_CASE("DoubleLinkedList — pushBack / popBack round-trip", "[libk][list][double]") {
+TEST_CASE("DoubleLinkedList — removeFront and removeBack keep tail and head consistent", "[libk][list][double]") {
     auto j = jit_k(R"SRC(
-        module __dll_back__;
+        module __dll_remove_ends__;
 
         test() : int {
-            lst : DoubleLinkedList<Object>! = new DoubleLinkedList<Object>();
+            lst : DoubleLinkedList<Object>;
             o1 : Object! = new Object();
             o2 : Object! = new Object();
+            o3 : Object! = new Object();
+
             lst.pushBack(o1);
             lst.pushBack(o2);
-            v : Object!? = lst.popBack();
-            if (v == null) { return -1; }
-            return lst.getSize();
+            lst.pushBack(o3);
+
+            result : int = 0;
+            if (lst.removeFront()) result = result + 1;
+            if (lst.removeBack()) result = result + 10;
+            if (lst.getSize() == 1) result = result + 100;
+            if (lst.peekFront() == o2) result = result + 1000;
+            if (lst.peekBack() == o2) result = result + 10000;
+
+            lst.clear();
+            delete o1;
+            delete o2;
+            delete o3;
+            return result;
         }
     )SRC");
     REQUIRE(j);
     auto fn = j->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1);
+    REQUIRE(fn() == 11111);
 }
 
-TEST_CASE("DoubleLinkedList — clear empties the list", "[libk][list][double]") {
+TEST_CASE("DoubleLinkedList — remove by value identity unlinks middle node", "[libk][list][double]") {
     auto j = jit_k(R"SRC(
-        module __dll_clear__;
+        module __dll_remove_value__;
 
         test() : int {
-            lst : DoubleLinkedList<Object>! = new DoubleLinkedList<Object>();
+            lst : DoubleLinkedList<Object>;
             o1 : Object! = new Object();
             o2 : Object! = new Object();
-            lst.pushFront(o1);
+            o3 : Object! = new Object();
+
+            lst.pushBack(o1);
             lst.pushBack(o2);
+            lst.pushBack(o3);
+
+            result : int = 0;
+            if (lst.remove(o2)) result = result + 1;
+            if (lst.getSize() == 2) result = result + 10;
+            if (lst.peekFront() == o1) result = result + 100;
+            if (lst.peekBack() == o3) result = result + 1000;
+
             lst.clear();
-            return lst.getSize();
+            delete o1;
+            delete o2;
+            delete o3;
+            return result;
         }
     )SRC");
     REQUIRE(j);
     auto fn = j->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 0);
+    REQUIRE(fn() == 1111);
 }
 
 

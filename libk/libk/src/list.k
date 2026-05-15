@@ -1,5 +1,5 @@
 /*
- * K Language standard library — linked list collections (retired placeholder)
+ * K Language standard library — legacy collection draft placeholder
  *
  * Copyright 2023-2026 Emilien Kia
  *
@@ -18,8 +18,11 @@
 
 module k;
 
-/*
- * LinkedList and DoubleLinkedList are temporarily retired from the default
- * standard library build. They will be reintroduced once the collection API
- * is redesigned on top of the stabilised generic import/KDI pipeline.
+/**
+ * Legacy placeholder kept for history.
+ *
+ * Collection code has been split into:
+ * - `memory.k` (UniSlot<T>, MultiSlot<T>)
+ * - `collections.k` (LinkedList<T>, DoubleLinkedList<T>, Vector<T>)
  */
+

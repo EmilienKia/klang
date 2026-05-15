@@ -29,6 +29,7 @@
 #include "../parse/ast.hpp"
 #include "../parse/parser.hpp"
 #include "../common/common.hpp"
+#include "../common/logger.hpp"
 #include "type.hpp"
 
 
@@ -43,6 +44,13 @@ class compiler;
 }
 
 namespace k::model {
+
+class context_resolution_error : public k::log::compiler_error {
+public:
+    explicit context_resolution_error(k::log::diagnostic diag)
+        : k::log::compiler_error(std::move(diag)) {}
+};
+
 class value_expression;
 class variable_statement;
 class parameter;
