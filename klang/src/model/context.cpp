@@ -579,10 +579,12 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
     // to a concrete LLVM pointer type before the final body is known.
     auto* llvm_struct = llvm::dyn_cast_or_null<llvm::StructType>(st_type->get_llvm_type());
     if (!llvm_struct) {
-        llvm_struct = llvm::StructType::getTypeByName(llvm_context(), st_type->name());
-        if (!llvm_struct) {
-            llvm_struct = llvm::StructType::create(llvm_context(), st_type->name());
-        }
+        // Always create a fresh LLVM StructType — do NOT use getTypeByName() here.
+        // Multiple model struct_types can share the same short name (e.g. a locally
+        // defined 'Retention' and an imported 'k::annotations::Retention'). Using
+        // getTypeByName would pick up the wrong one, leading to mismatched bodies.
+        // LLVM automatically suffixes the name to keep it unique.
+        llvm_struct = llvm::StructType::create(llvm_context(), st_type->name());
         st_type->set_llvm_type({}, llvm_struct, nullptr);
     }
 
