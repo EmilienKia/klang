@@ -1353,24 +1353,38 @@ kdi::kdi_template_def kdi_builder::build_template_def(
     def.is_generic = is_generic;
 
     if (!is_generic) {
-        // Use model-based source reconstruction with fallback to raw source_text
-        std::string emitted;
+        // Determine if using-alias resolution is needed (emitter resolves aliases
+        // to their canonical names so the consumer can find the types).
+        std::unordered_map<std::string, std::string> alias_map;
         if (entity) {
-            k_source_emitter emitter;
-            auto alias_map = build_using_alias_map(entity);
-            if (!alias_map.empty()) {
-                emitter.set_alias_map(std::move(alias_map));
-            }
-            if (auto agg_ptr = dynamic_cast<const aggregate*>(entity)) {
-                emitted = emitter.emit_template_aggregate(*agg_ptr);
-            } else if (auto fn_ptr = dynamic_cast<const function*>(entity)) {
-                emitted = emitter.emit_template_function(*fn_ptr);
-            }
+            alias_map = build_using_alias_map(entity);
         }
-        if (!emitted.empty()) {
-            def.source = std::move(emitted);
-        } else {
+
+        if (!ti.source_text.empty() && alias_map.empty()) {
+            // Prefer raw source_text (captured verbatim from the parser) when no
+            // alias resolution is needed. It preserves annotations, member template
+            // clauses, and other syntax that k_source_emitter may not reconstruct.
             def.source = ti.source_text;
+        } else {
+            // Use model-based reconstruction (resolves using-aliases to canonical names)
+            // with fallback to raw source_text.
+            std::string emitted;
+            if (entity) {
+                k_source_emitter emitter;
+                if (!alias_map.empty()) {
+                    emitter.set_alias_map(std::move(alias_map));
+                }
+                if (auto agg_ptr = dynamic_cast<const aggregate*>(entity)) {
+                    emitted = emitter.emit_template_aggregate(*agg_ptr);
+                } else if (auto fn_ptr = dynamic_cast<const function*>(entity)) {
+                    emitted = emitter.emit_template_function(*fn_ptr);
+                }
+            }
+            if (!emitted.empty()) {
+                def.source = std::move(emitted);
+            } else {
+                def.source = ti.source_text;
+            }
         }
     } else {
         if (auto agg_ptr = dynamic_cast<const aggregate*>(entity)) {

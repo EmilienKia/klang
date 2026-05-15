@@ -3180,5 +3180,156 @@ TEST_CASE("cross-module template — consumer calls value-param template functio
     REQUIRE( result.exit_code == 42 );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-intrinsic] Template struct with @Intrinsic-annotated constructor,
+// destructor, and methods across module boundary. Consumer instantiates the
+// template with its own type and calls intrinsic methods.
+//
+// lib:  template<typename T> struct Slot { @Intrinsic ctor/dtor/construct/destruct }
+// exe:  main() → Slot<Widget>.construct(); .get().v = 42; .destruct(); return 42
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — intrinsic UniSlot consumer instantiation",
+          "[import][e2e][template][cross-tpl][consumer-inst][intrinsic]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module intrlib;
+
+            namespace annotations {
+                annotation Intrinsic {
+                    name : int;
+                }
+            }
+
+            template<typename T>
+            struct Slot {
+                private:
+                _slot : T;
+
+                public:
+                @annotations::Intrinsic(0)
+                Slot();
+
+                @annotations::Intrinsic(0)
+                ~Slot();
+
+                @annotations::Intrinsic(1)
+                construct();
+
+                @annotations::Intrinsic(2)
+                destruct();
+
+                get() : T& { return _slot; }
+            }
+
+            // Force at least one lib-side instantiation for linkage
+            lib_test() : int {
+                s : Slot<int>;
+                s.construct();
+                s.get() = 77;
+                result : int = s.get();
+                s.destruct();
+                return result;
+            }
+        )K",
+        R"K(
+            module intrexec;
+            import intrlib;
+
+            struct Widget {
+                v : int;
+                Widget() { v = 42; }
+            }
+
+            main() : int {
+                s : Slot<Widget>;
+                s.construct();
+                result : int = s.get().v;
+                s.destruct();
+                return result;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [cross-tpl-intrinsic][member-template] Template struct with member template
+// method (variadic pack) and @Intrinsic annotation across module boundary.
+// This mirrors the real UniSlot<T>::construct<Args...>(Args...args) pattern.
+//
+// lib:  template<typename T> struct Slot { template<typename...Args> construct(Args...args); }
+// exe:  main() → Slot<Point>.construct<int,int>(10,32); return .get().x + .get().y
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("cross-module template — intrinsic member template with variadic pack",
+          "[import][e2e][template][cross-tpl][consumer-inst][intrinsic][member-template]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module mtlib;
+
+            namespace annotations {
+                annotation Intrinsic {
+                    name : int;
+                }
+            }
+
+            template<typename T>
+            struct Slot {
+                private:
+                _slot : T;
+
+                public:
+                @annotations::Intrinsic(0)
+                Slot();
+
+                @annotations::Intrinsic(0)
+                ~Slot();
+
+                @annotations::Intrinsic(1)
+                template<typename...Args>
+                construct(Args...args);
+
+                @annotations::Intrinsic(2)
+                destruct();
+
+                get() : T& { return _slot; }
+            }
+
+            // Force at least one lib-side instantiation for linkage
+            lib_test() : int {
+                s : Slot<int>;
+                s.construct();
+                s.get() = 77;
+                result : int = s.get();
+                s.destruct();
+                return result;
+            }
+        )K",
+        R"K(
+            module mtexec;
+            import mtlib;
+
+            struct Point {
+                x : int;
+                y : int;
+                Point(ax : int, ay : int) { x = ax; y = ay; }
+            }
+
+            main() : int {
+                s : Slot<Point>;
+                s.construct<int, int>(10, 32);
+                result : int = s.get().x + s.get().y;
+                s.destruct();
+                return result;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
 
 

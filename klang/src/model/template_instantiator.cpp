@@ -790,6 +790,16 @@ void template_instantiator::populate_function_from_template(
                     generated_names.push_back(concrete_name);
                 }
                 pack_expansion_names[param->get_short_name()] = std::move(generated_names);
+            } else {
+                // Pack param not in pack_subst — preserve as-is for member templates
+                // whose inner template parameters haven't been instantiated yet.
+                auto param_type = substitute_type(
+                    std::const_pointer_cast<type>(param->get_type()), subst);
+                auto new_param = dst->append_parameter(param->get_short_name(), param_type);
+                new_param->set_const(param->is_const());
+                new_param->set_pack_expansion(true);
+                new_param->set_pack_param_name(param->pack_param_name());
+                new_param->_ast_node = param->get_ast_node();
             }
         } else {
             auto param_type = substitute_type(
