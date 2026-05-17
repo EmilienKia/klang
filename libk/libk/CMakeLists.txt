@@ -150,6 +150,7 @@ add_executable(libk-tests
     tests/test-io-stdio.cpp
     tests/test-math.cpp
     tests/test-list.cpp
+    tests/test-vector.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)
