@@ -777,3 +777,68 @@ TEST_CASE("Vector<AggPoint> — emplace at index aggregate init", "[libk][vector
     REQUIRE(fn);
     CHECK(fn() == 11111);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  7. Collection<T> interface — polymorphism
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Collection<int> — Vector through interface reference", "[libk][vector][collection]") {
+    auto j = jit_k(R"SRC(
+        module __vec_coll_iface__;
+
+        fillAndSum(coll : Collection<int>&) : int {
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            coll.pushBack(a);
+            coll.pushBack(b);
+            coll.pushBack(c);
+            sum : int = 0;
+            sum = sum + coll.peekFront();
+            sum = sum + coll.peekBack();
+            return sum;
+        }
+
+        test() : int {
+            vec : Vector<int>;
+            total : int = fillAndSum(vec);
+
+            result : int = 0;
+            if (vec.getSize() == 3)  result = result + 1;
+            if (total == 40)         result = result + 10;
+            if (vec.isEmpty() == false) result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("Collection<int> — LinkedList through interface reference", "[libk][list][collection]") {
+    auto j = jit_k(R"SRC(
+        module __ll_coll_iface__;
+
+        getCollSize(coll : Collection<int>&) : int {
+            return coll.getSize();
+        }
+
+        test() : int {
+            lst : LinkedList<int>;
+            a : int = 1;
+            b : int = 2;
+            lst.pushBack(a);
+            lst.pushBack(b);
+
+            result : int = 0;
+            if (getCollSize(lst) == 2)  result = result + 1;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+

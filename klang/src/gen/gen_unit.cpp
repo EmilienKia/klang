@@ -180,6 +180,9 @@ void symbol_resolver::visit_unit(unit& unit)
                     // Resolve base names for this aggregate
                     for (auto& bs : st->get_bases_mutable()) {
                         if (!bs.base) { // not yet resolved
+                            // Skip template base names (e.g. "Collection<T>") —
+                            // they require type resolution and will be handled in visit_structure.
+                            if (bs.raw_name.find('<') != std::string::npos) continue;
                             auto base_st = scope_lookup::lookup_structure(st->shared_as<element>(), bs.raw_name);
                             if (base_st) bs.base = base_st;
                             // Errors (not found, final, cross-type) will be caught properly in visit_structure

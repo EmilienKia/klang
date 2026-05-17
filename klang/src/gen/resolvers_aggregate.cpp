@@ -305,6 +305,73 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         }
     }
 
+    // 5e. Build vtable for class/interface instantiations (symbol_resolver didn't
+    //     visit them because they didn't exist yet during Pass A).
+    if (auto kl = std::dynamic_pointer_cast<model::klass>(concrete)) {
+        if (!kl->has_vtable()) {
+            auto vt = std::make_shared<vtable_layout>();
+            size_t next_slot = 0;
+
+            // Inherit vtable entries from primary base (first base with a vtable)
+            for (auto& bs : kl->get_bases()) {
+                if (!bs.base) continue;
+                if (auto base_kl = std::dynamic_pointer_cast<model::klass>(bs.base)) {
+                    if (base_kl->has_vtable()) {
+                        for (auto& entry : base_kl->get_vtable()->entries) {
+                            vtable_entry inherited;
+                            inherited.slot_index = entry.slot_index;
+                            inherited.introducing_func = entry.introducing_func;
+                            inherited.func = entry.func;
+                            vt->entries.push_back(inherited);
+                            next_slot = std::max(next_slot, entry.slot_index + 1);
+                        }
+                        break; // Only primary base
+                    }
+                }
+            }
+
+            // Process own functions
+            for (auto& child : kl->get_children()) {
+                auto func = std::dynamic_pointer_cast<function>(child);
+                if (!func) continue;
+                if (func->is_static()) continue;
+                if (std::dynamic_pointer_cast<constructor>(func)) continue;
+                if (std::dynamic_pointer_cast<destructor>(func)) continue;
+                if (func->get_visibility() == PRIVATE) continue;
+
+                // Check if this method overrides an existing vtable slot
+                bool found_override = false;
+                for (auto& entry : vt->entries) {
+                    if (entry.introducing_func
+                        && func->get_short_name() == entry.introducing_func->get_short_name()
+                        && func->parameters().size() == entry.introducing_func->parameters().size()) {
+                        func->set_virtual(true);
+                        func->set_vtable_slot((int)entry.slot_index);
+                        func->set_overrides(entry.func);
+                        entry.func = func;
+                        found_override = true;
+                        break;
+                    }
+                }
+
+                if (!found_override) {
+                    // New virtual slot
+                    func->set_virtual(true);
+                    func->set_vtable_slot((int)next_slot);
+                    vtable_entry new_entry;
+                    new_entry.slot_index = next_slot++;
+                    new_entry.introducing_func = func;
+                    new_entry.func = func;
+                    vt->entries.push_back(new_entry);
+                }
+            }
+
+            if (!vt->entries.empty()) {
+                kl->set_vtable(vt);
+            }
+        }
+    }
+
     // 6. Resolve the LLVM struct type immediately (member types are already
     //    concrete thanks to the instantiator's type substitution).
     std::unordered_set<struct_type*> in_progress;
@@ -722,6 +789,71 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
 
 void aggregate_type_resolver::visit_klass(klass& klass) {
     visit_aggregate(klass);
+
+    // If vtable is missing (e.g. template instantiation created after symbol_resolver),
+    // build it now. This replicates the essential logic of symbol_resolver::visit_klass.
+    if (!klass.has_vtable() && (klass.is_class() || std::dynamic_pointer_cast<model::interface>(klass.shared_as<element>()))) {
+        auto vt = std::make_shared<vtable_layout>();
+        size_t next_slot = 0;
+
+        // Inherit vtable entries from primary base (first base with a vtable)
+        for (auto& bs : klass.get_bases()) {
+            if (!bs.base) continue;
+            if (auto base_kl = std::dynamic_pointer_cast<model::klass>(bs.base)) {
+                if (base_kl->has_vtable()) {
+                    for (auto& entry : base_kl->get_vtable()->entries) {
+                        vtable_entry inherited;
+                        inherited.slot_index = entry.slot_index;
+                        inherited.introducing_func = entry.introducing_func;
+                        inherited.func = entry.func;
+                        vt->entries.push_back(inherited);
+                        next_slot = std::max(next_slot, entry.slot_index + 1);
+                    }
+                    break; // Only primary base
+                }
+            }
+        }
+
+        // Process own functions
+        for (auto& child : klass.get_children()) {
+            auto func = std::dynamic_pointer_cast<function>(child);
+            if (!func) continue;
+            if (func->is_static()) continue;
+            if (std::dynamic_pointer_cast<constructor>(func)) continue;
+            if (std::dynamic_pointer_cast<destructor>(func)) continue;
+            if (func->get_visibility() == PRIVATE) continue;
+
+            // Check if this method overrides an existing vtable slot
+            bool found_override = false;
+            for (auto& entry : vt->entries) {
+                if (entry.introducing_func
+                    && func->get_short_name() == entry.introducing_func->get_short_name()
+                    && func->parameters().size() == entry.introducing_func->parameters().size()) {
+                    func->set_virtual(true);
+                    func->set_vtable_slot((int)entry.slot_index);
+                    func->set_overrides(entry.func);
+                    entry.func = func;
+                    found_override = true;
+                    break;
+                }
+            }
+
+            if (!found_override) {
+                // New virtual slot
+                func->set_virtual(true);
+                func->set_vtable_slot((int)next_slot);
+                vtable_entry new_entry;
+                new_entry.slot_index = next_slot++;
+                new_entry.introducing_func = func;
+                new_entry.func = func;
+                vt->entries.push_back(new_entry);
+            }
+        }
+
+        if (!vt->entries.empty()) {
+            klass.set_vtable(vt);
+        }
+    }
 
     // Build the LLVM struct type for the vtable (mirrors type_reference_resolver::visit_klass)
     if (!klass.has_vtable()) return;

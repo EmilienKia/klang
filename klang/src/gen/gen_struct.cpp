@@ -26,6 +26,7 @@
 #include "../common/operator_names.hpp"
 
 #include "../model/imported.hpp"
+#include "../model/template_instantiator.hpp"
 #include "../parse/ast.hpp"
 
 #include <llvm/IR/Constants.h>
@@ -280,8 +281,106 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             // Resolve the base name from the current structure scope upward.
             // bs.raw_name may be a simple name ("Base") or a qualified name
             // ("ns::Base") if the base comes from an imported module.
+            // It may also contain template arguments ("Collection<int>").
             std::shared_ptr<aggregate> base_st;
 
+            // Check if the raw_name contains template arguments
+            auto lt_pos = bs.raw_name.find('<');
+            if (lt_pos != std::string::npos) {
+                // Template base class: "Name<Arg1,Arg2,...>"
+                auto gt_pos = bs.raw_name.rfind('>');
+                if (gt_pos != std::string::npos && gt_pos > lt_pos) {
+                    std::string tpl_base_name = bs.raw_name.substr(0, lt_pos);
+                    std::string args_str = bs.raw_name.substr(lt_pos + 1, gt_pos - lt_pos - 1);
+
+                    // Look up the template aggregate by name
+                    std::shared_ptr<aggregate> tpl_agg = scope_lookup::lookup_structure(st.shared_as<element>(), tpl_base_name);
+
+                    // Fallback: search imported modules
+                    if (!tpl_agg) {
+                        k::name qname{false, {tpl_base_name}};
+                        if (auto root_ns_ptr = scope_lookup::root_namespace(st)) {
+                            for (const auto& imp : _unit.get_imports()) {
+                                if (imp.module_name.empty()) continue;
+                                auto imported_name = imp.module_name.with_back(tpl_base_name);
+                                if (auto res = aggregate_type_resolver::resolve_struct_from(*root_ns_ptr, imported_name)) {
+                                    tpl_agg = res;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (tpl_agg && tpl_agg->is_template()) {
+                        auto* ti = tpl_agg->get_tpl_info();
+                        if (ti) {
+                            // Parse comma-separated arg names and resolve to types
+                            std::vector<std::string> arg_names;
+                            {
+                                size_t pos = 0;
+                                while (pos < args_str.size()) {
+                                    auto comma = args_str.find(',', pos);
+                                    std::string arg = (comma == std::string::npos)
+                                        ? args_str.substr(pos)
+                                        : args_str.substr(pos, comma - pos);
+                                    while (!arg.empty() && arg.front() == ' ') arg.erase(arg.begin());
+                                    while (!arg.empty() && arg.back() == ' ') arg.pop_back();
+                                    arg_names.push_back(arg);
+                                    pos = (comma == std::string::npos) ? args_str.size() : comma + 1;
+                                }
+                            }
+
+                            // Resolve each arg name to a model type
+                            std::vector<template_argument> model_args;
+                            bool all_resolved = true;
+                            for (const auto& arg_name : arg_names) {
+                                std::shared_ptr<type> arg_type;
+                                // Try primitive type names
+                                static const std::unordered_map<std::string, primitive_type::PRIMITIVE_TYPE> prim_map = {
+                                    {"bool", primitive_type::BOOL}, {"byte", primitive_type::BYTE},
+                                    {"char", primitive_type::CHAR}, {"short", primitive_type::SHORT},
+                                    {"int", primitive_type::INT}, {"long", primitive_type::LONG},
+                                    {"float", primitive_type::FLOAT}, {"double", primitive_type::DOUBLE},
+                                };
+                                auto prim_it = prim_map.find(arg_name);
+                                if (prim_it != prim_map.end()) {
+                                    arg_type = _context->from_type(prim_it->second);
+                                } else {
+                                    // Try as user-defined aggregate type
+                                    auto agg = scope_lookup::lookup_structure(st.shared_as<element>(), arg_name);
+                                    if (agg && agg->get_struct_type()) {
+                                        arg_type = agg->get_struct_type();
+                                    }
+                                }
+                                if (arg_type && type::is_resolved(arg_type)) {
+                                    model_args.push_back(template_argument::make_type(arg_type));
+                                } else {
+                                    all_resolved = false;
+                                    break;
+                                }
+                            }
+
+                            if (all_resolved && !model_args.empty()) {
+                                // Find the parent namespace of the template
+                                auto parent_ns = std::dynamic_pointer_cast<ns>(tpl_agg->parent<element>());
+                                if (!parent_ns) parent_ns = _unit.get_root_namespace();
+                                base_st = template_instantiator::instantiate_aggregate(
+                                    *tpl_agg, model_args, parent_ns, _unit, _context, _log);
+                                // Ensure the instantiated base has a struct_type so that
+                                // context::resolve_types() can materialize its LLVM type.
+                                if (base_st && !base_st->get_struct_type()) {
+                                    auto st_type = std::make_shared<struct_type>(
+                                        base_st->get_short_name(), base_st->shared_as<aggregate>());
+                                    _context->add_struct(st_type);
+                                    base_st->set_struct_type(st_type);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!base_st) {
             // Try scope-local lookup first (simple name or namespace-qualified)
             if (bs.raw_name.find("::") == std::string::npos) {
                 // Simple name: standard scope-chain lookup
@@ -328,6 +427,7 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                     base_st = std::dynamic_pointer_cast<aggregate>(imp_agg);
                 }
             }
+            } // end if (!base_st) — template base was already resolved above
 
             if (!base_st) {
                 throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_BASE_NOT_FOUND), st_lexeme,

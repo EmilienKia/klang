@@ -71,6 +71,12 @@ void populate_template_signature_aggregate(aggregate& agg,
                                            const kdi::kdi_aggregate& sig,
                                            unit& owner,
                                            const std::shared_ptr<context>& ctx) {
+    // Restore base class declarations (raw_name only — resolved during instantiation)
+    for (const auto& kb : sig.bases) {
+        visibility vis = (kb.visibility == kdi::kdi_visibility::protected_) ? PROTECTED : PUBLIC;
+        agg.add_base(kb.fq_name, vis);
+    }
+
     for (const auto& field : sig.layout) {
         auto* member = std::get_if<kdi::kdi_layout_member>(&field);
         if (!member) continue;

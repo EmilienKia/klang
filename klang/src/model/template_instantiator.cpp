@@ -163,6 +163,54 @@ void record_generic_usage(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Substitute template params in base class raw names
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Given a base class raw_name that may contain template arguments
+ * (e.g. "Collection<T>"), substitute type parameter names using the
+ * substitution map (e.g. T→int → "Collection<int>").
+ */
+std::string substitute_base_name(const std::string& raw_name,
+                                  const type_substitution_map& subst) {
+    // Find '<' — if absent, no substitution needed
+    auto lt_pos = raw_name.find('<');
+    if (lt_pos == std::string::npos) return raw_name;
+    auto gt_pos = raw_name.rfind('>');
+    if (gt_pos == std::string::npos || gt_pos <= lt_pos) return raw_name;
+
+    std::string prefix = raw_name.substr(0, lt_pos + 1); // "Collection<"
+    std::string args_str = raw_name.substr(lt_pos + 1, gt_pos - lt_pos - 1); // "T" or "T,U"
+
+    // Split by ',' and substitute each arg
+    std::string result = prefix;
+    size_t pos = 0;
+    bool first = true;
+    while (pos < args_str.size()) {
+        if (!first) result += ",";
+        first = false;
+        auto comma = args_str.find(',', pos);
+        std::string arg = (comma == std::string::npos)
+            ? args_str.substr(pos)
+            : args_str.substr(pos, comma - pos);
+        // Trim whitespace
+        while (!arg.empty() && arg.front() == ' ') arg.erase(arg.begin());
+        while (!arg.empty() && arg.back() == ' ') arg.pop_back();
+
+        // Check if this arg name is a template parameter to substitute
+        auto it = subst.find(arg);
+        if (it != subst.end() && it->second) {
+            result += it->second->to_string();
+        } else {
+            result += arg;
+        }
+        pos = (comma == std::string::npos) ? args_str.size() : comma + 1;
+    }
+    result += ">";
+    return result;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Build substitution map
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -987,8 +1035,9 @@ void template_instantiator::clone_nested_aggregate(
     nested->_ast_node = src.get_ast_node();
 
     // Copy base class specs (raw names — resolved later by resolution passes)
+    // Substitute template type parameters in base names (e.g. "Collection<T>" → "Collection<int>")
     for (auto& bs : src.get_bases()) {
-        nested->add_base(bs.raw_name, bs.vis);
+        nested->add_base(substitute_base_name(bs.raw_name, subst), bs.vis);
     }
 
     // Clone all children with type substitution
@@ -1052,7 +1101,9 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
 
     // 1. Create a new concrete aggregate in the parent namespace
     std::shared_ptr<aggregate> concrete;
-    if (tpl_def.is_class()) {
+    if (std::dynamic_pointer_cast<model::interface>(tpl_def.shared_as<element>())) {
+        concrete = parent_ns->define_interface(inst_name);
+    } else if (tpl_def.is_class()) {
         concrete = parent_ns->define_class(inst_name);
     } else if (tpl_def.is_annotation()) {
         concrete = parent_ns->define_annotation(inst_name);
@@ -1073,9 +1124,95 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     // Store template instantiation info for mangling (I…E encoding)
     concrete->set_tpl_instantiation_info(base_name, args);
 
-    // Copy bases
+    // Copy bases (with template parameter substitution in raw names)
     for (auto& bs : tpl_def.get_bases()) {
-        concrete->add_base(bs.raw_name, bs.vis);
+        concrete->add_base(substitute_base_name(bs.raw_name, subst), bs.vis);
+    }
+
+    // Resolve template base classes immediately (e.g. "Collection<int>")
+    for (auto& bs : concrete->get_bases_mutable()) {
+        if (bs.base) continue; // Already resolved
+        auto lt_pos = bs.raw_name.find('<');
+        if (lt_pos != std::string::npos) {
+            auto gt_pos = bs.raw_name.rfind('>');
+            if (gt_pos != std::string::npos && gt_pos > lt_pos) {
+                std::string tpl_base_name = bs.raw_name.substr(0, lt_pos);
+                std::string args_str = bs.raw_name.substr(lt_pos + 1, gt_pos - lt_pos - 1);
+
+                // Look up the template aggregate by name in parent namespace
+                std::shared_ptr<aggregate> tpl_base_agg;
+                if (auto found = parent_ns->get_aggregate(tpl_base_name)) {
+                    tpl_base_agg = found;
+                }
+
+                if (tpl_base_agg && tpl_base_agg->is_template()) {
+                    auto* base_ti = tpl_base_agg->get_tpl_info();
+                    if (base_ti) {
+                        // Parse comma-separated arg names and resolve to types
+                        std::vector<std::string> arg_names;
+                        {
+                            size_t pos = 0;
+                            while (pos < args_str.size()) {
+                                auto comma = args_str.find(',', pos);
+                                std::string arg = (comma == std::string::npos)
+                                    ? args_str.substr(pos)
+                                    : args_str.substr(pos, comma - pos);
+                                while (!arg.empty() && arg.front() == ' ') arg.erase(arg.begin());
+                                while (!arg.empty() && arg.back() == ' ') arg.pop_back();
+                                arg_names.push_back(arg);
+                                pos = (comma == std::string::npos) ? args_str.size() : comma + 1;
+                            }
+                        }
+
+                        // Resolve each arg name to a model type
+                        std::vector<template_argument> base_args;
+                        bool all_resolved = true;
+                        static const std::unordered_map<std::string, primitive_type::PRIMITIVE_TYPE> prim_map = {
+                            {"bool", primitive_type::BOOL}, {"byte", primitive_type::BYTE},
+                            {"char", primitive_type::CHAR}, {"short", primitive_type::SHORT},
+                            {"int", primitive_type::INT}, {"long", primitive_type::LONG},
+                            {"float", primitive_type::FLOAT}, {"double", primitive_type::DOUBLE},
+                        };
+                        for (const auto& arg_name : arg_names) {
+                            std::shared_ptr<type> arg_type;
+                            auto prim_it = prim_map.find(arg_name);
+                            if (prim_it != prim_map.end()) {
+                                arg_type = ctx->from_type(prim_it->second);
+                            } else {
+                                // Try as user-defined aggregate type
+                                auto agg = parent_ns->get_aggregate(arg_name);
+                                if (agg && agg->get_struct_type()) {
+                                    arg_type = agg->get_struct_type();
+                                }
+                            }
+                            if (arg_type && type::is_resolved(arg_type)) {
+                                base_args.push_back(template_argument::make_type(arg_type));
+                            } else {
+                                all_resolved = false;
+                                break;
+                            }
+                        }
+
+                        if (all_resolved && !base_args.empty()) {
+                            bs.base = instantiate_aggregate(
+                                *tpl_base_agg, base_args, parent_ns, unit, ctx, logger);
+                            // Ensure the instantiated base has a struct_type
+                            if (bs.base && !bs.base->get_struct_type()) {
+                                auto st = std::make_shared<struct_type>(
+                                    bs.base->get_short_name(), bs.base->shared_as<aggregate>());
+                                ctx->add_struct(st);
+                                bs.base->set_struct_type(st);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Simple (non-template) base name: look up directly
+            if (auto found = parent_ns->get_aggregate(bs.raw_name)) {
+                bs.base = found;
+            }
+        }
     }
 
     // 2. Clone children from the template aggregate
@@ -1158,7 +1295,9 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
     value_substitution_map val_subst;
 
     std::shared_ptr<aggregate> concrete;
-    if (tpl_def.is_class()) {
+    if (std::dynamic_pointer_cast<model::interface>(tpl_def.shared_as<element>())) {
+        concrete = parent_ns->define_interface(base_name);
+    } else if (tpl_def.is_class()) {
         concrete = parent_ns->define_class(base_name);
     } else if (tpl_def.is_annotation()) {
         concrete = parent_ns->define_annotation(base_name);
@@ -1179,7 +1318,7 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
     // Keep the synthesized symbol on the base aggregate name (no arg suffix).
 
     for (auto& bs : tpl_def.get_bases()) {
-        concrete->add_base(bs.raw_name, bs.vis);
+        concrete->add_base(substitute_base_name(bs.raw_name, subst), bs.vis);
     }
 
     for (auto& child : tpl_def.get_children()) {

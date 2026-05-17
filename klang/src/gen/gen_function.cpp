@@ -618,6 +618,24 @@ void type_reference_resolver::visit_function(function& fn) {
     trace("[type_reference_resolver::visit_function] '{}'", {fn.get_short_name()});
 
     if (fn.is_member() && !fn.is_static()) {
+        if (!fn.get_this_parameter()) {
+            // Ensure the owning aggregate has a resolved struct_type (needed for 'this' type).
+            // This can happen for template-instantiated base interfaces whose struct_type
+            // was not yet created or resolved (e.g. Collection<int> instantiated as base of LinkedList<int>).
+            auto owner = fn.get_owner();
+            if (owner) {
+                if (!owner->get_struct_type()) {
+                    auto st = std::make_shared<struct_type>(
+                        owner->get_short_name(), owner->shared_as<aggregate>());
+                    _context->add_struct(st);
+                    owner->set_struct_type(st);
+                }
+                if (!owner->get_struct_type()->is_resolved()) {
+                    _context->resolve_types();
+                }
+            }
+            fn.create_this_parameter();
+        }
         fn.get_this_parameter()->accept(*this);
     }
 

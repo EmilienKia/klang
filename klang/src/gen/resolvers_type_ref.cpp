@@ -994,7 +994,78 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
 
     // 5. If the concrete aggregate already has a struct_type, it was fully
     //    processed by a previous (possibly recursive) call — return it.
+    //    But first ensure its vtable is built (may have been skipped if created
+    //    by the template instantiator's base resolution or aggregate_type_resolver).
     if (concrete_agg->get_struct_type()) {
+        if (auto kl = std::dynamic_pointer_cast<model::klass>(concrete_agg)) {
+            if (!kl->has_vtable()) {
+                auto vt_early = std::make_shared<vtable_layout>();
+                size_t next_slot = 0;
+
+                // Ensure base vtable exists first
+                for (auto& bs : kl->get_bases()) {
+                    if (!bs.base) continue;
+                    if (auto base_kl = std::dynamic_pointer_cast<model::klass>(bs.base)) {
+                        if (!base_kl->has_vtable()) {
+                            // Build base vtable (simple: all non-private non-static methods)
+                            auto bvt = std::make_shared<vtable_layout>();
+                            size_t bslot = 0;
+                            for (auto& bc : base_kl->get_children()) {
+                                auto bf = std::dynamic_pointer_cast<function>(bc);
+                                if (!bf || bf->is_static()) continue;
+                                if (std::dynamic_pointer_cast<constructor>(bf)) continue;
+                                if (std::dynamic_pointer_cast<destructor>(bf)) continue;
+                                if (bf->get_visibility() == PRIVATE) continue;
+                                bf->set_virtual(true);
+                                bf->set_vtable_slot((int)bslot);
+                                vtable_entry be; be.slot_index = bslot++; be.introducing_func = bf; be.func = bf;
+                                bvt->entries.push_back(be);
+                            }
+                            if (!bvt->entries.empty()) base_kl->set_vtable(bvt);
+                        }
+                        if (base_kl->has_vtable()) {
+                            for (auto& entry : base_kl->get_vtable()->entries) {
+                                vtable_entry inherited;
+                                inherited.slot_index = entry.slot_index;
+                                inherited.introducing_func = entry.introducing_func;
+                                inherited.func = entry.func;
+                                vt_early->entries.push_back(inherited);
+                                next_slot = std::max(next_slot, entry.slot_index + 1);
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                for (auto& child : kl->get_children()) {
+                    auto func = std::dynamic_pointer_cast<function>(child);
+                    if (!func || func->is_static()) continue;
+                    if (std::dynamic_pointer_cast<constructor>(func)) continue;
+                    if (std::dynamic_pointer_cast<destructor>(func)) continue;
+                    if (func->get_visibility() == PRIVATE) continue;
+                    bool found = false;
+                    for (auto& entry : vt_early->entries) {
+                        if (entry.introducing_func
+                            && func->get_short_name() == entry.introducing_func->get_short_name()
+                            && func->parameters().size() == entry.introducing_func->parameters().size()) {
+                            func->set_virtual(true);
+                            func->set_vtable_slot((int)entry.slot_index);
+                            func->set_overrides(entry.func);
+                            entry.func = func;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        func->set_virtual(true);
+                        func->set_vtable_slot((int)next_slot);
+                        vtable_entry ne; ne.slot_index = next_slot++; ne.introducing_func = func; ne.func = func;
+                        vt_early->entries.push_back(ne);
+                    }
+                }
+                if (!vt_early->entries.empty()) kl->set_vtable(vt_early);
+            }
+        }
         return concrete_agg->get_struct_type();
     }
 
@@ -1222,6 +1293,96 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     for (auto& child : concrete_agg->get_children()) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
             resolve_member_vars(*nested);
+        }
+    }
+
+    // 7b. Build vtable for class/interface instantiations (symbol_resolver didn't
+    //     visit them because they didn't exist yet during Pass A).
+    if (auto kl = std::dynamic_pointer_cast<model::klass>(concrete_agg)) {
+        if (!kl->has_vtable()) {
+            auto vt_inst = std::make_shared<vtable_layout>();
+            size_t next_slot = 0;
+
+            // Inherit vtable entries from primary base (first base with a vtable).
+            // Recursively build base vtable if needed.
+            for (auto& bs : kl->get_bases()) {
+                if (!bs.base) continue;
+                if (auto base_kl = std::dynamic_pointer_cast<model::klass>(bs.base)) {
+                    // Recursively ensure base vtable exists
+                    if (!base_kl->has_vtable()) {
+                        auto base_vt = std::make_shared<vtable_layout>();
+                        size_t base_next_slot = 0;
+                        for (auto& base_child : base_kl->get_children()) {
+                            auto func = std::dynamic_pointer_cast<function>(base_child);
+                            if (!func) continue;
+                            if (func->is_static()) continue;
+                            if (std::dynamic_pointer_cast<constructor>(func)) continue;
+                            if (std::dynamic_pointer_cast<destructor>(func)) continue;
+                            if (func->get_visibility() == PRIVATE) continue;
+                            func->set_virtual(true);
+                            func->set_vtable_slot((int)base_next_slot);
+                            vtable_entry ne;
+                            ne.slot_index = base_next_slot++;
+                            ne.introducing_func = func;
+                            ne.func = func;
+                            base_vt->entries.push_back(ne);
+                        }
+                        if (!base_vt->entries.empty()) {
+                            base_kl->set_vtable(base_vt);
+                        }
+                    }
+                    if (base_kl->has_vtable()) {
+                        for (auto& entry : base_kl->get_vtable()->entries) {
+                            vtable_entry inherited;
+                            inherited.slot_index = entry.slot_index;
+                            inherited.introducing_func = entry.introducing_func;
+                            inherited.func = entry.func;
+                            vt_inst->entries.push_back(inherited);
+                            next_slot = std::max(next_slot, entry.slot_index + 1);
+                        }
+                        break; // Only primary base
+                    }
+                }
+            }
+
+            // Process own functions
+            for (auto& child : kl->get_children()) {
+                auto func = std::dynamic_pointer_cast<function>(child);
+                if (!func) continue;
+                if (func->is_static()) continue;
+                if (std::dynamic_pointer_cast<constructor>(func)) continue;
+                if (std::dynamic_pointer_cast<destructor>(func)) continue;
+                if (func->get_visibility() == PRIVATE) continue;
+
+                // Check if this method overrides an existing vtable slot
+                bool found_override = false;
+                for (auto& entry : vt_inst->entries) {
+                    if (entry.introducing_func
+                        && func->get_short_name() == entry.introducing_func->get_short_name()
+                        && func->parameters().size() == entry.introducing_func->parameters().size()) {
+                        func->set_virtual(true);
+                        func->set_vtable_slot((int)entry.slot_index);
+                        func->set_overrides(entry.func);
+                        entry.func = func;
+                        found_override = true;
+                        break;
+                    }
+                }
+
+                if (!found_override) {
+                    func->set_virtual(true);
+                    func->set_vtable_slot((int)next_slot);
+                    vtable_entry new_entry;
+                    new_entry.slot_index = next_slot++;
+                    new_entry.introducing_func = func;
+                    new_entry.func = func;
+                    vt_inst->entries.push_back(new_entry);
+                }
+            }
+
+            if (!vt_inst->entries.empty()) {
+                kl->set_vtable(vt_inst);
+            }
         }
     }
 

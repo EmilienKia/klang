@@ -19,6 +19,39 @@
 module k;
 
 /**
+ * Collection<T> — abstract interface for all collections.
+ *
+ * Defines the common contract shared by all ordered, iterable
+ * collection types: size queries, back-insertion, peek, removal,
+ * and clearing.
+ *
+ * Implementing classes: LinkedList<T>, DoubleLinkedList<T>, Vector<T>.
+ */
+template<typename T>
+interface Collection {
+    /** Return the number of elements in the collection. */
+    getSize() : int;
+
+    /** Return true if the collection contains no elements. */
+    isEmpty() : bool;
+
+    /** Insert a copy of value at the back of the collection. */
+    pushBack(value : T&);
+
+    /** Return a mutable reference to the front element. Undefined if empty. */
+    peekFront() : T&;
+
+    /** Return a mutable reference to the back element. Undefined if empty. */
+    peekBack() : T&;
+
+    /** Remove the last element. Returns true if an element was removed. */
+    removeBack() : bool;
+
+    /** Remove all elements. */
+    clear();
+}
+
+/**
  * LinkedList<T> — a singly-linked list storing elements by value.
  *
  * Each element is embedded in a heap-allocated LinkedListNode.
@@ -40,8 +73,8 @@ module k;
  *   lst.clear();
  */
 template<typename T>
-struct LinkedList {
-    protected:
+class LinkedList : public Collection<T> {
+    private:
     /**
      * LinkedListNode — internal node for the singly-linked list.
      *
@@ -371,8 +404,8 @@ struct LinkedList {
  *   lst.clear();
  */
 template<typename T>
-struct DoubleLinkedList {
-    protected:
+class DoubleLinkedList : public Collection<T> {
+    private:
     /**
      * DoubleLinkedListNode — internal node for the doubly-linked list.
      *
@@ -801,7 +834,7 @@ struct DoubleLinkedList {
  *   vec.clear();
  */
 template<typename T>
-struct Vector {
+class Vector : public Collection<T> {
     private:
     _slot : MultiSlot<T>;
     _size : int;

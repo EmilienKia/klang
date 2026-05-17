@@ -871,6 +871,78 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
                         break;
                     }
                 }
+                // Try to parse optional template arguments: '<' type (',' type)* '>'
+                // If successful, encode them into the qualified name as "Name<Arg1,Arg2,...>"
+                {
+                    lex::lex_holder tpl_holder(_lexer);
+                    auto maybe_lt = _lexer.get();
+                    if (maybe_lt == lex::operator_::CHEVRON_OPEN) {
+                        // Tentatively parse template args
+                        std::vector<std::string> tpl_arg_names;
+                        bool tpl_ok = true;
+                        try {
+                            // Check for empty arg list <>
+                            {
+                                lex::lex_holder empty_holder(_lexer);
+                                auto maybe_gt = _lexer.get();
+                                if (maybe_gt == lex::operator_::CHEVRON_CLOSE) {
+                                    // Empty template args: Name<>
+                                    qualified += "<>";
+                                    tpl_ok = true;
+                                    goto tpl_done;
+                                }
+                                empty_holder.rollback();
+                            }
+                            // Parse first arg as identifier (type name)
+                            {
+                                auto targ = _lexer.get();
+                                if (lex::is<lex::identifier>(targ)) {
+                                    tpl_arg_names.push_back(std::string{lex::as<lex::identifier>(targ).content});
+                                } else {
+                                    tpl_ok = false;
+                                }
+                            }
+                            // Parse remaining args
+                            while (tpl_ok) {
+                                lex::lex_holder sep_holder(_lexer);
+                                auto maybe_sep = _lexer.get();
+                                if (maybe_sep == lex::punctuator::COMMA) {
+                                    auto targ = _lexer.get();
+                                    if (lex::is<lex::identifier>(targ)) {
+                                        tpl_arg_names.push_back(std::string{lex::as<lex::identifier>(targ).content});
+                                    } else {
+                                        tpl_ok = false;
+                                    }
+                                } else {
+                                    sep_holder.rollback();
+                                    break;
+                                }
+                            }
+                            // Expect '>'
+                            if (tpl_ok) {
+                                auto maybe_gt = _lexer.get();
+                                if (maybe_gt != lex::operator_::CHEVRON_CLOSE) {
+                                    tpl_ok = false;
+                                }
+                            }
+                        } catch (...) {
+                            tpl_ok = false;
+                        }
+                        if (tpl_ok) {
+                            qualified += "<";
+                            for (size_t ti = 0; ti < tpl_arg_names.size(); ++ti) {
+                                if (ti > 0) qualified += ",";
+                                qualified += tpl_arg_names[ti];
+                            }
+                            qualified += ">";
+                        } else {
+                            tpl_holder.rollback();
+                        }
+                    } else {
+                        tpl_holder.rollback();
+                    }
+                    tpl_done:;
+                }
                 ast::aggregate_decl::base_clause_entry entry{vis_kw, first_id, qualified};
                 bases.push_back(std::move(entry));
                 // Check for ',' to continue

@@ -334,6 +334,17 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
     sig.is_const_struct = agg.is_const_struct();
     sig.is_static_nested = agg.is_static_nested();
 
+    // Export base classes (for templates, use raw_name as identifier)
+    for (const auto& bs : agg.get_bases()) {
+        kdi::kdi_base kb;
+        kb.fq_name          = bs.raw_name;  // raw_name contains e.g. "Collection<T>"
+        kb.visibility       = to_kdi_vis(bs.vis);
+        kb.is_virtual       = bs.is_virtual;
+        kb.base_field_index = -1;
+        kb.byte_offset      = 0;
+        sig.bases.push_back(std::move(kb));
+    }
+
     uint32_t field_index = 0;
     for (const auto& [name, var] : agg.variables()) {
         auto mv = std::dynamic_pointer_cast<member_variable_definition>(var);
