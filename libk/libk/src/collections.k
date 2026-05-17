@@ -153,9 +153,10 @@ struct LinkedList {
     /** Return a mutable reference to the element at the given index. O(n). Undefined if out of bounds. */
     get(index : int) : T& {
         current : LinkedListNode* = _head;
-        while (index > 0) {
+        i : int = 0;
+        while (i < index) {
             current = current->_next;
-            index = index - 1;
+            i = i + 1;
         }
         return current->getValue();
     }
@@ -163,9 +164,10 @@ struct LinkedList {
     /** Subscript operator — mutable access by index. O(n). Undefined if out of bounds. */
     operator [](index : int) : T& {
         current : LinkedListNode* = _head;
-        while (index > 0) {
+        i : int = 0;
+        while (i < index) {
             current = current->_next;
-            index = index - 1;
+            i = i + 1;
         }
         return current->getValue();
     }
@@ -173,9 +175,10 @@ struct LinkedList {
     /** Subscript operator — const access by index. O(n). Undefined if out of bounds. */
     const operator [](index : int) : const T& {
         current : LinkedListNode* = _head;
-        while (index > 0) {
+        i : int = 0;
+        while (i < index) {
             current = current->_next;
-            index = index - 1;
+            i = i + 1;
         }
         return current->getValue();
     }

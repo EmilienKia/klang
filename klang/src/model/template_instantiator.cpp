@@ -511,9 +511,19 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
         new_vs->set_const(vs->is_const());
         if (vs->get_init_expr()) {
             // variable_definition::set_init_expr(shared_ptr<expression>) is the base version
-            static_cast<variable_definition*>(new_vs.get())->set_init_expr(
-                clone_and_substitute_expr(
-                    std::const_pointer_cast<expression>(vs->get_init_expr()), subst, val_subst));
+            auto cloned_init = clone_and_substitute_expr(
+                    std::const_pointer_cast<expression>(vs->get_init_expr()), subst, val_subst);
+            // If the init expression is a constructor_invocation_expression, retarget its
+            // constructed_symbol to the new cloned variable.  Without this, the CIE would
+            // still reference the original template's variable_statement, which was never
+            // registered in the LLVM codegen context.
+            if (auto cie = std::dynamic_pointer_cast<constructor_invocation_expression>(cloned_init)) {
+                auto new_sym = symbol_expression::from_variable(
+                    std::static_pointer_cast<variable_definition>(new_vs));
+                new_sym->set_parent_expression(cie);
+                cie->constructed_symbol(new_sym);
+            }
+            static_cast<variable_definition*>(new_vs.get())->set_init_expr(cloned_init);
         }
         // Register in the block's variable holder if parent is a block
         if (auto blk = std::dynamic_pointer_cast<block>(parent_stmt)) {
@@ -1379,6 +1389,13 @@ static void resolve_symbols_in_stmt(const std::shared_ptr<statement>& stmt) {
         if (es->get_expression())
             resolve_symbols_in_expr(es->get_expression());
     } else if (auto vs = std::dynamic_pointer_cast<variable_statement>(stmt)) {
+        // Compute the fully-qualified name for the variable (equivalent to
+        // symbol_resolver::visit_named_element) so that codegen can find it.
+        if (vs->get_fq_name().empty() && !vs->get_short_name().empty()) {
+            if (auto ancestor = vs->ancestor<named_element>()) {
+                vs->assign_name(ancestor->get_name().with_back(vs->get_short_name()));
+            }
+        }
         if (vs->get_init_expr())
             resolve_symbols_in_expr(
                 std::const_pointer_cast<expression>(vs->get_init_expr()));
@@ -1417,6 +1434,34 @@ void template_instantiator::resolve_body_symbols(
     std::shared_ptr<aggregate> concrete)
 {
     if (!concrete) return;
+
+    // ── Assign fully-qualified names to all children (functions, nested aggregates)
+    //    and their local variable statements.  The symbol_resolver normally does this,
+    //    but template-instantiated aggregates are created after that pass finishes.
+    auto assign_names_recursive = [](aggregate& agg) {
+        for (auto& child : agg.get_children()) {
+            if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+                // Assign FQ name to the function itself
+                if (fn->get_fq_name().empty() && !fn->get_short_name().empty()) {
+                    if (auto anc = fn->ancestor<named_element>()) {
+                        fn->assign_name(anc->get_name().with_back(fn->get_short_name()));
+                    }
+                }
+                // Assign FQ names to parameters
+                for (auto& param : fn->parameters()) {
+                    if (param && param->get_fq_name().empty() && !param->get_short_name().empty()) {
+                        param->assign_name(fn->get_name().with_back(param->get_short_name()));
+                    }
+                }
+            }
+        }
+    };
+    assign_names_recursive(*concrete);
+    for (auto& child : concrete->get_children()) {
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            assign_names_recursive(*nested);
+        }
+    }
 
     auto resolve_fn_bodies = [](aggregate& agg) {
         for (auto& child : agg.get_children()) {

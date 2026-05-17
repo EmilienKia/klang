@@ -360,3 +360,33 @@ TEST_CASE("Nested static struct inside template: constructor with init value", "
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 99);
 }
+
+TEST_CASE("Template struct method with while loop and local variable", "[gen][nested][while-bug]") {
+    auto jit = gen_jit(R"SRC(
+module __while_tpl_bug__;
+
+template<typename T>
+struct Container {
+    _data : T;
+
+    Container() { _data = 0; }
+
+    countTo(n : int) : int {
+        i : int = 0;
+        while (i < n) {
+            i = i + 1;
+        }
+        return i;
+    }
+}
+
+test() : int {
+    c : Container<int>;
+    return c.countTo(3);
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 3);
+}
