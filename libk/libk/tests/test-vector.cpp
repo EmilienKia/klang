@@ -713,3 +713,67 @@ TEST_CASE("Vector<Point> — emplace at index with args", "[libk][vector][emplac
     CHECK(fn() == 11111);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  6. Aggregate emplace — Vector<T> with structs without explicit constructors
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<AggPoint> — emplaceBack aggregate init", "[libk][vector][emplace][aggregate]") {
+    auto j = jit_k(R"SRC(
+        module __vec_emplace_agg__;
+
+        struct AggPoint {
+            x : int;
+            y : int;
+        }
+
+        test() : int {
+            vec : Vector<AggPoint>;
+            vec.emplaceBack(10, 20);
+            vec.emplaceBack(30, 40);
+            vec.emplaceBack(50, 60);
+
+            result : int = 0;
+            if (vec.getSize() == 3)  result = result + 1;
+            if (vec[0].x == 10)      result = result + 10;
+            if (vec[0].y == 20)      result = result + 100;
+            if (vec[1].x == 30)      result = result + 1000;
+            if (vec[2].y == 60)      result = result + 10000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11111);
+}
+
+TEST_CASE("Vector<AggPoint> — emplace at index aggregate init", "[libk][vector][emplace][aggregate]") {
+    auto j = jit_k(R"SRC(
+        module __vec_emplace_agg_idx__;
+
+        struct AggPoint {
+            x : int;
+            y : int;
+        }
+
+        test() : int {
+            vec : Vector<AggPoint>;
+            vec.emplaceBack(1, 2);
+            vec.emplaceBack(5, 6);
+            vec.emplace(1, 3, 4);
+            // vec: AggPoint{1,2}, AggPoint{3,4}, AggPoint{5,6}
+
+            result : int = 0;
+            if (vec.getSize() == 3)  result = result + 1;
+            if (vec[0].x == 1)       result = result + 10;
+            if (vec[1].x == 3)       result = result + 100;
+            if (vec[1].y == 4)       result = result + 1000;
+            if (vec[2].x == 5)       result = result + 10000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11111);
+}

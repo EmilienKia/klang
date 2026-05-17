@@ -277,6 +277,19 @@ void implementation_generator::emit_intrinsic_unislot_construct(function& functi
         if (ctor_it != _context->_functions.end()) {
             _builder->CreateCall(ctor_it->second, ctor_args);
         }
+    } else if (!arg_types.empty()) {
+        // No matching constructor found — try aggregate initialization:
+        // store each argument directly into the corresponding struct field.
+        auto st_type = slot_st_type;
+        if (st_type && arg_types.size() <= st_type->fields_size()) {
+            auto* llvm_st = _context->get_llvm_type(slot_type);
+            auto field_it = st_type->fields_begin();
+            for (size_t i = 0; i < arg_types.size(); ++i, ++field_it) {
+                auto field_ptr = _builder->CreateStructGEP(llvm_st, slot_ptr, (unsigned)field_it->index, field_it->name + "_ptr");
+                // ctor_args[0] is slot_ptr (this), ctor_args[1..] are the values
+                _builder->CreateStore(ctor_args[i + 1], field_ptr);
+            }
+        }
     }
 
     _builder->CreateRetVoid();
@@ -700,6 +713,18 @@ void implementation_generator::emit_intrinsic_multislot_construct(function& func
         auto ctor_it = _context->_functions.find(best_ctor->shared_as<model::function>());
         if (ctor_it != _context->_functions.end()) {
             _builder->CreateCall(ctor_it->second, ctor_args);
+        }
+    } else if (!arg_types.empty()) {
+        // No matching constructor found — try aggregate initialization:
+        // store each argument directly into the corresponding struct field.
+        auto st_type = slot_st_type;
+        if (st_type && arg_types.size() <= st_type->fields_size()) {
+            auto field_it = st_type->fields_begin();
+            for (size_t i = 0; i < arg_types.size(); ++i, ++field_it) {
+                auto field_ptr = _builder->CreateStructGEP(llvm_elem_type, elem_ptr, (unsigned)field_it->index, field_it->name + "_ptr");
+                // ctor_args[0] is elem_ptr (this), ctor_args[1..] are the values
+                _builder->CreateStore(ctor_args[i + 1], field_ptr);
+            }
         }
     }
 
