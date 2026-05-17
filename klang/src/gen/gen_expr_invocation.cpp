@@ -1585,6 +1585,17 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 {callee ? callee->get_name().to_string() : "<unknown>"});
         }
 
+        // If the object is an owner (ref<owner<T>>), load the owned pointer
+        // so we pass the actual object address (not the alloca of the owner slot).
+        auto sub_type = member_callee->sub_expr()->get_type();
+        if (type::is_reference(sub_type)) {
+            auto inner = std::dynamic_pointer_cast<reference_type>(sub_type)->get_subtype();
+            if (type::is_owner(inner)) {
+                _value = _builder->CreateLoad(
+                    llvm::PointerType::get(_builder->getContext(), 0), _value, "owner_this_load");
+            }
+        }
+
         args.push_back(_value);
     }
     // Save outer _sret_destination — it's meant for the call result, not for arguments

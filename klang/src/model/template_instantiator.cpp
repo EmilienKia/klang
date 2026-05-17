@@ -1417,14 +1417,26 @@ void template_instantiator::resolve_body_symbols(
     std::shared_ptr<aggregate> concrete)
 {
     if (!concrete) return;
-    for (auto& child : concrete->get_children()) {
-        if (auto fn = std::dynamic_pointer_cast<function>(child)) {
-            auto blk = fn->get_block();
-            if (blk) {
-                for (auto& stmt : blk->get_statements()) {
-                    resolve_symbols_in_stmt(stmt);
+
+    auto resolve_fn_bodies = [](aggregate& agg) {
+        for (auto& child : agg.get_children()) {
+            if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+                auto blk = fn->_block;
+                if (blk) {
+                    for (auto& stmt : blk->get_statements()) {
+                        resolve_symbols_in_stmt(stmt);
+                    }
                 }
             }
+        }
+    };
+
+    resolve_fn_bodies(*concrete);
+
+    // Also resolve body symbols in nested aggregates
+    for (auto& child : concrete->get_children()) {
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            resolve_fn_bodies(*nested);
         }
     }
 }
@@ -1490,66 +1502,68 @@ static void retarget_param_refs(
 void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggregate> concrete) {
     if (!concrete) return;
 
-    for (auto& ctor : concrete->constructors()) {
-        if (!ctor || ctor->is_compiler_generated()) continue;
-        if (ctor->member_inits().empty()) continue;
+    auto inject_for_aggregate = [](std::shared_ptr<aggregate> agg) {
+        for (auto& ctor : agg->constructors()) {
+            if (!ctor || ctor->is_compiler_generated()) continue;
+            if (ctor->member_inits().empty()) continue;
 
-        auto blck = ctor->get_block();
-        if (!blck) continue;
+            auto blck = ctor->get_block();
+            if (!blck) continue;
 
-        // Build a lookup map from member name to mem_init_spec
-        std::unordered_map<std::string, const constructor::member_init_spec*> init_by_name;
-        for (auto& mi : ctor->member_inits()) {
-            if (!mi.is_base_init) init_by_name[mi.member_name] = &mi;
-        }
-
-        // Build a map from old parameter names to new concrete parameters for re-targeting.
-        std::unordered_map<std::string, std::shared_ptr<parameter>> param_by_name;
-        for (auto& p : ctor->parameters()) {
-            if (p == ctor->get_this_parameter()) continue;
-            param_by_name[p->get_short_name()] = p;
-        }
-
-        // Insert member-init statements at the front of the block, in member
-        // declaration order (same logic as symbol_resolver::visit_constructor step 2).
-        size_t insert_idx = 0;
-        for (auto& var_entry : concrete->variables()) {
-            if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
-                // Skip synthetic fields
-                if (var->get_short_name() == "__parent__") continue;
-                if (var->get_short_name().rfind("__base_", 0) == 0) continue;
-                if (var->get_short_name().rfind("__vbptr_", 0) == 0) continue;
-                if (var->get_short_name().rfind("__vbase_", 0) == 0) continue;
-                if (var->get_short_name().rfind("__vptr", 0) == 0) continue;
-
-                auto it = init_by_name.find(var->get_short_name());
-                if (it == init_by_name.end()) continue;
-                const auto& mi = *it->second;
-
-                // Build argument expressions by re-creating them from the
-                // concrete constructor's parameter list.  The cloned member_init
-                // args reference the template constructor's parameter definitions
-                // which are not visible in the concrete context.
-                //
-                // For each arg that is a symbol_expression referencing a parameter,
-                // create a fresh symbol_expression pointing to the concrete ctor's
-                // parameter.  For other expressions (literals, binary ops, etc.),
-                // clone normally.
-                std::vector<std::shared_ptr<expression>> args;
-                args.reserve(mi.args.size());
-                for (auto& arg : mi.args) {
-                    auto cloned = arg->clone();
-                    retarget_param_refs(cloned, param_by_name);
-                    args.push_back(cloned);
-                }
-                auto init_expr = constructor_invocation_expression::make_shared(var, args);
-                auto stmt = std::make_shared<expression_statement>(blck);
-                stmt->set_expression(init_expr);
-                auto pos = blck->begin();
-                std::advance(pos, insert_idx);
-                blck->insert_statement(pos, stmt);
-                ++insert_idx;
+            // Build a lookup map from member name to mem_init_spec
+            std::unordered_map<std::string, const constructor::member_init_spec*> init_by_name;
+            for (auto& mi : ctor->member_inits()) {
+                if (!mi.is_base_init) init_by_name[mi.member_name] = &mi;
             }
+
+            // Build a map from old parameter names to new concrete parameters for re-targeting.
+            std::unordered_map<std::string, std::shared_ptr<parameter>> param_by_name;
+            for (auto& p : ctor->parameters()) {
+                if (p == ctor->get_this_parameter()) continue;
+                param_by_name[p->get_short_name()] = p;
+            }
+
+            // Insert member-init statements at the front of the block, in member
+            // declaration order (same logic as symbol_resolver::visit_constructor step 2).
+            size_t insert_idx = 0;
+            for (auto& var_entry : agg->variables()) {
+                if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
+                    // Skip synthetic fields
+                    if (var->get_short_name() == "__parent__") continue;
+                    if (var->get_short_name().rfind("__base_", 0) == 0) continue;
+                    if (var->get_short_name().rfind("__vbptr_", 0) == 0) continue;
+                    if (var->get_short_name().rfind("__vbase_", 0) == 0) continue;
+                    if (var->get_short_name().rfind("__vptr", 0) == 0) continue;
+
+                    auto it = init_by_name.find(var->get_short_name());
+                    if (it == init_by_name.end()) continue;
+                    const auto& mi = *it->second;
+
+                    std::vector<std::shared_ptr<expression>> args;
+                    args.reserve(mi.args.size());
+                    for (auto& arg : mi.args) {
+                        auto cloned = arg->clone();
+                        retarget_param_refs(cloned, param_by_name);
+                        args.push_back(cloned);
+                    }
+                    auto init_expr = constructor_invocation_expression::make_shared(var, args);
+                    auto stmt = std::make_shared<expression_statement>(blck);
+                    stmt->set_expression(init_expr);
+                    auto pos = blck->begin();
+                    std::advance(pos, insert_idx);
+                    blck->insert_statement(pos, stmt);
+                    ++insert_idx;
+                }
+            }
+        }
+    };
+
+    inject_for_aggregate(concrete);
+
+    // Also inject for nested aggregates
+    for (auto& child : concrete->get_children()) {
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            inject_for_aggregate(nested);
         }
     }
 }

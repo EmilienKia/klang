@@ -36,4 +36,3 @@ std::optional<std::string> get_intrinsic_name(const function& fn);
 } // namespace k::model::gen
 
 #endif // KLANG_GEN_INTRINSICS_HPP
-

@@ -164,11 +164,11 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
 
     auto source_type = right->get_type();
 
-    // Unwrap ref<link/ptr/pin> for source-side checks
+    // Unwrap ref<link/ptr/pin/owner> for source-side checks
     auto effective_source_type = source_type;
     if (type::is_reference(source_type)) {
         auto inner = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
-        if (type::is_link(inner) || type::is_pointer(inner) || type::is_view(inner)) {
+        if (type::is_link(inner) || type::is_pointer(inner) || type::is_view(inner) || type::is_owner(inner)) {
             effective_source_type = inner;
         }
     }
@@ -180,7 +180,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             return;
         }
         if(type::is_pointer(effective_source_type) || type::is_link(effective_source_type)
-           || type::is_view(effective_source_type)) {
+           || type::is_view(effective_source_type) || type::is_owner(effective_source_type)) {
             auto src_sub = effective_source_type->get_subtype();
             auto tgt_sub = target_type->get_subtype();
             // Strip const from both sides for structural comparison

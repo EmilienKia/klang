@@ -560,6 +560,19 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
         }
     }
 
+    // Skip struct_types whose owning aggregate lives inside a template definition.
+    // Their member variable types may contain unresolved template parameters (e.g. T)
+    // that will only be substituted during template instantiation.
+    if (auto agg = st_type->get_struct()) {
+        for (auto p = agg->parent<element>(); p; p = p->parent<element>()) {
+            if (auto parent_agg = std::dynamic_pointer_cast<const aggregate>(p)) {
+                if (parent_agg->is_template()) {
+                    return;
+                }
+            }
+        }
+    }
+
     // Cycle detection
     if (in_progress.count(st_type.get())) {
         throw_context_error(
@@ -687,11 +700,12 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
             continue;
         }
 
-        // For pointer/reference types whose immediate subtype is a struct_type,
-        // resolve the underlying struct first so get_llvm_type() on the pointer/ref succeeds.
-        // This handles the __parent__ field (reference to outer struct).
+        // For pointer/reference/owner/link/view types whose subtype is a struct_type,
+        // resolve the underlying struct first so get_llvm_type() on the wrapper succeeds.
+        // This handles the __parent__ field (reference to outer struct) and owner fields.
         auto effective_type = type;
-        if (type::is_pointer(type) || type::is_reference(type) || type::is_drain(type)) {
+        if (type::is_pointer(type) || type::is_reference(type) || type::is_drain(type)
+            || type::is_owner(type) || type::is_link(type) || type::is_view(type)) {
             if (type::contains_unresolved(type)) {
                 // The pointer/reference chain contains stale unresolved_type
                 // wrappers.  Re-resolve the entire type to get a clean chain.
@@ -806,6 +820,19 @@ void context::resolve_types() {
     // Resolve structures in dependency order (recursive, handles any declaration order).
     std::unordered_set<struct_type*> in_progress;
     for (auto& [st_name, st_type] : _struct_types) {
+        // Skip struct_types whose owning aggregate lives inside a template definition.
+        if (auto agg = st_type->get_struct()) {
+            bool inside_template = false;
+            for (auto p = agg->parent<element>(); p; p = p->parent<element>()) {
+                if (auto parent_agg = std::dynamic_pointer_cast<const aggregate>(p)) {
+                    if (parent_agg->is_template()) {
+                        inside_template = true;
+                        break;
+                    }
+                }
+            }
+            if (inside_template) continue;
+        }
         resolve_struct_type(st_type, in_progress);
     }
 }

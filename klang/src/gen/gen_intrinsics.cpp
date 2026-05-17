@@ -98,10 +98,21 @@ std::optional<std::string> get_intrinsic_name(const function& fn) {
         // (e.g. integer discriminator in test code).
         if (auto ctor = std::dynamic_pointer_cast<constructor>(
                 const_cast<function&>(fn).shared_as<function>())) {
+            // Determine owner struct prefix for intrinsic name
+            auto owner = fn.get_owner();
+            std::string owner_name = owner ? owner->get_short_name() : "";
+            if (owner_name.find("MultiSlot") != std::string::npos) {
+                return std::string("MultiSlot::constructor");
+            }
             return std::string("UniSlot::constructor");
         }
         if (auto dtor = std::dynamic_pointer_cast<destructor>(
                 const_cast<function&>(fn).shared_as<function>())) {
+            auto owner = fn.get_owner();
+            std::string owner_name = owner ? owner->get_short_name() : "";
+            if (owner_name.find("MultiSlot") != std::string::npos) {
+                return std::string("MultiSlot::destructor");
+            }
             return std::string("UniSlot::destructor");
         }
         // Check both the short name and the template base name (for instantiated member templates)
@@ -109,11 +120,22 @@ std::optional<std::string> get_intrinsic_name(const function& fn) {
         if (fn.has_tpl_args() && !fn.get_tpl_base_name().empty()) {
             check_name = fn.get_tpl_base_name();
         }
+        // Determine if this is a MultiSlot or UniSlot method
+        auto owner = fn.get_owner();
+        std::string owner_name = owner ? owner->get_short_name() : "";
+        bool is_multislot = owner_name.find("MultiSlot") != std::string::npos;
+        std::string prefix = is_multislot ? "MultiSlot" : "UniSlot";
         if (check_name == "construct") {
-            return std::string("UniSlot::construct");
+            return prefix + "::construct";
         }
         if (check_name == "destruct") {
-            return std::string("UniSlot::destruct");
+            return prefix + "::destruct";
+        }
+        if (check_name == "get") {
+            return prefix + "::get";
+        }
+        if (check_name == "resize") {
+            return prefix + "::resize";
         }
 
         // Unknown intrinsic — return empty name to signal "is intrinsic but no body needed"

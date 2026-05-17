@@ -670,8 +670,12 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             wrapped_src = tdef.source;
         }
 
-        // Keep wrapped_src alive — k::source copies the content.
-        k::source ksrc(std::string_view("lib.k"), std::string_view(wrapped_src));
+        // Store the source in the unit so lexer tokens (string_views into the
+        // source buffer) remain valid throughout compilation.
+        auto ksrc_ptr = std::make_unique<k::source>(std::string_view("lib.k"), std::string_view(wrapped_src));
+        auto& ksrc = *ksrc_ptr;
+        _unit._imported_template_sources.push_back(std::move(ksrc_ptr));
+
         k::parse::parser parser(_logger, ksrc);
         auto ast_unit = parser.parse_unit();
 

@@ -151,6 +151,30 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
                     if (resolved && type::is_resolved(resolved)) {
                         arg_type = resolved;
                     }
+                } else if (arg_type) {
+                    // Wrapper type (pointer, owner, reference, etc.) around an unresolved inner type.
+                    // Peel the wrapper, resolve the inner type, then rebuild.
+                    auto resolved = _context->resolve_type(arg_type);
+                    if (resolved && type::is_resolved(resolved)) {
+                        arg_type = resolved;
+                    } else {
+                        // Try resolve_type_by_name on the innermost unresolved type
+                        auto inner = arg_type;
+                        while (inner && inner->get_subtype() && !std::dynamic_pointer_cast<unresolved_type>(inner))
+                            inner = inner->get_subtype();
+                        if (auto unres_inner = std::dynamic_pointer_cast<unresolved_type>(inner)) {
+                            auto resolved_inner = resolve_type_by_name(unres_inner->type_id(), context_elem);
+                            if (resolved_inner && type::is_resolved(resolved_inner)) {
+                                // Rebuild wrapper chain around resolved inner
+                                // Use context->resolve_type which should now succeed
+                                // since the inner type is resolved in the cache
+                                auto retry = _context->resolve_type(arg_type);
+                                if (retry && type::is_resolved(retry)) {
+                                    arg_type = retry;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             if (!arg_type || !type::is_resolved(arg_type)) return {};
@@ -606,6 +630,45 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
         // placeholders (is_template_param_placeholder) remain unresolved by
         // design — resolve_one_type / resolve_type_by_name will simply return
         // nullptr for those, leaving them as-is.
+
+        // Visit nested aggregate children first (depth-first), so their types
+        // are available before we process members of the outer template.
+        // This is needed for e.g. a nested static struct with self-referential
+        // owner fields (like a LinkedListNode inside a LinkedList template).
+        // Because the symbol_resolver skips template aggregates entirely,
+        // non-template nested aggregates inside templates never get their
+        // struct_type created. We pre-create it here before visiting.
+        for (auto& child : st.get_children()) {
+            if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+                if (!nested->is_template() && !nested->get_struct_type()) {
+                    std::shared_ptr<struct_type> nested_st_type{
+                        new struct_type(nested->get_short_name(), nested->shared_as<aggregate>())};
+                    _context->add_struct(nested_st_type);
+                    nested->set_struct_type(nested_st_type);
+
+                    // Create 'this' parameters for member functions
+                    // (normally done by symbol_resolver, which skips templates).
+                    for (auto& nc : nested->get_children()) {
+                        if (auto fn = std::dynamic_pointer_cast<function>(nc)) {
+                            if (fn->is_member() && !fn->is_static()) {
+                                fn->create_this_parameter();
+                            }
+                        }
+                    }
+                    for (auto& ctor : nested->constructors()) {
+                        if (ctor && !ctor->get_this_parameter()) {
+                            ctor->create_this_parameter();
+                        }
+                    }
+                    if (auto dtor = nested->get_destructor()) {
+                        if (!dtor->get_this_parameter()) {
+                            dtor->create_this_parameter();
+                        }
+                    }
+                }
+                nested->accept(*this);
+            }
+        }
 
         // Member variables and static members
         for (auto& child : st.get_children()) {

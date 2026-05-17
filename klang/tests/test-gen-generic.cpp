@@ -599,7 +599,90 @@ TEST_CASE("Cross-module: import non-generic functions from a module that has a g
 }
 
 
+TEST_CASE("Template struct with nested struct and self-referencing pointer", "[gen][generic][nested-struct]") {
+    // Exercises template instantiation where a nested struct contains a T member
+    // and a self-referencing pointer (linked-list node pattern).  The outer struct
+    // holds a pointer to the nested struct and uses it in method bodies.
+    auto jit = gen_jit(R"K(
+        module __nested_struct_ll__;
+
+        template<typename T>
+        struct Container {
+            static struct Node {
+                _val : T;
+                _next : Node*;
+            }
+            _head : Node*;
+            _size : int;
+
+            pushFront(value : T&) {
+                node : Node* = new Node();
+                (*node)._val = value;
+                (*node)._next = _head;
+                _head = node;
+                _size = _size + 1;
+            }
+
+            getSize() : int {
+                return _size;
+            }
+
+            front() : T {
+                return (*_head)._val;
+            }
+        }
+
+        getResult() : int {
+            c : Container<int>;
+            v1 : int = 42;
+            v2 : int = 7;
+            c.pushFront(v1);
+            c.pushFront(v2);
+            return front(c) * 100 + getSize(c);
+        }
+    )K");
+
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("getResult");
+    REQUIRE(fn);
+    // front() should return 7 (last pushed), getSize() should return 2
+    REQUIRE(fn() == 7 * 100 + 2);
+}
 
 
+TEST_CASE("Template struct with nested struct - null pointer member", "[gen][generic][nested-struct]") {
+    // Simpler case: nested struct member used with null assignment
+    auto jit = gen_jit(R"K(
+        module __nested_struct_null__;
+
+        template<typename T>
+        struct Wrapper {
+            static struct Inner {
+                _data : T;
+            }
+            _ptr : Inner*;
+
+            reset() {
+                _ptr = null;
+            }
+
+            isNull() : bool {
+                return _ptr == null;
+            }
+        }
+
+        checkNull() : int {
+            w : Wrapper<int>;
+            w.reset();
+            if(w.isNull()) return 1;
+            return 0;
+        }
+    )K");
+
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("checkNull");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
 
 

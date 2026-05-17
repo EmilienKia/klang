@@ -171,6 +171,13 @@ protected:
 
     std::shared_ptr<global_main_function> _global_main_func;
 
+    /**
+     * Source objects for re-parsed template definitions imported from KDI.
+     * Lexer tokens in template model elements hold string_views into these
+     * buffers, so they must stay alive for the unit's lifetime.
+     */
+    std::vector<std::unique_ptr<k::source>> _imported_template_sources;
+
     friend class k::model::gen::symbol_resolver;
     friend class k::model::gen::aggregate_type_resolver;
     friend class k::model::gen::model_materializer;
@@ -178,6 +185,7 @@ protected:
     friend class k::model::gen::declaration_generator;
     friend class k::model::gen::implementation_generator;
     friend class k::model::gen::init_order_resolver;
+    friend class kdi_importer;
 
     global_constructor_function& get_global_constructor_function() {return *_global_constructor_func;}
     global_destructor_function& get_global_destructor_function() {return *_global_destructor_func;}

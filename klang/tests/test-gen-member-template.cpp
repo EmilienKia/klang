@@ -220,4 +220,3 @@ TEST_CASE("Member template with implicit deduction", "[gen][member-template][ded
     REQUIRE(fn != nullptr);
     CHECK(fn() == 123);
 }
-

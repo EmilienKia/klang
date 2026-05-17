@@ -123,6 +123,37 @@ protected:
         const std::shared_ptr<unresolved_type>& unres,
         const element& context_elem);
 
+    /**
+     * Recursively resolve a type chain, triggering template instantiation
+     * for any inner unresolved_type that carries template arguments.
+     *
+     * Walks through wrapper types (pointer, reference, owner, link, view,
+     * drain, const, array), resolves the leaf unresolved_type via
+     * resolve_inner_type (which can trigger try_instantiate_template_type),
+     * then rebuilds the wrapper chain with the resolved inner type.
+     *
+     * @param t           The type to resolve (may be a wrapper or leaf).
+     * @param scope_elem  The element used as starting scope for name lookups.
+     * @return The resolved type, or the original type if resolution failed.
+     */
+    std::shared_ptr<type> resolve_type_chain(
+        const std::shared_ptr<type>& t,
+        const element* scope_elem);
+
+    /**
+     * Post-instantiation: resolve all internal types of a freshly instantiated
+     * template aggregate so that code generation can proceed.
+     *
+     * Steps:
+     *   1. Resolve member variable types (transitive template instantiation).
+     *   2. Resolve function signature types (parameters + return types).
+     *   3. Visit the aggregate (expressions in method bodies).
+     *
+     * Called from try_instantiate_template_type after the struct_type and
+     * LLVM struct body are created.
+     */
+    void resolve_instantiated_aggregate(aggregate& agg);
+
     /** Return captured generic usage bindings for a declaration site, if any. */
     const tpl_info::generic_usage_descriptor* find_generic_usage_for_site(const variable_definition* site) const;
 

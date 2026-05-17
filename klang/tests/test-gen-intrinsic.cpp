@@ -283,4 +283,3 @@ TEST_CASE("UniSlot construct with single argument", "[gen][intrinsic][forwarding
     REQUIRE(fn != nullptr);
     CHECK(fn() == 77);
 }
-

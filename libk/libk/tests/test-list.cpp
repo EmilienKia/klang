@@ -1,7 +1,7 @@
 /*
- * K Language standard library — Generic list tests
+ * K Language standard library — LinkedList tests
  *
- * Copyright 2026 Emilien Kia
+ * Copyright 2023-2026 Emilien Kia
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,232 +35,330 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 
 } // anonymous namespace
 
-TEST_CASE("LinkedList — empty list is empty", "[libk][list][linked]") {
-    auto j = jit_k(R"SRC(
-        module __ll_empty__;
+// ═══════════════════════════════════════════════════════════════════════════════
+//  1. Primitive type — LinkedList<int>
+// ═══════════════════════════════════════════════════════════════════════════════
 
-        test() : bool {
-            lst : LinkedList<Object>;
-            return lst.isEmpty();
+TEST_CASE("LinkedList<int> — empty list", "[libk][list][int]") {
+    auto result = build_and_exec(R"SRC(
+        module __ll_e2e_empty__;
+        main() : int {
+            lst : LinkedList<int>;
+            if (lst.isEmpty()) return 1;
+            return 0;
         }
     )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<bool(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == true);
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 1);
 }
 
-TEST_CASE("LinkedList — pushFront and pushBack update size and peeks", "[libk][list][linked]") {
+TEST_CASE("LinkedList<int> — pushBack and peek", "[libk][list][int]") {
     auto j = jit_k(R"SRC(
-        module __ll_push_peek__;
+        module __ll_int_push__;
 
         test() : int {
-            lst : LinkedList<Object>;
-            o1 : Object! = new Object();
-            o2 : Object! = new Object();
-            o3 : Object! = new Object();
-
-            lst.pushFront(o1);
-            lst.pushBack(o2);
-            lst.pushFront(o3);
+            lst : LinkedList<int>;
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.pushBack(c);
 
             result : int = 0;
-            if (lst.getSize() == 3) result = result + 1;
-            if (lst.peekFront() == o3) result = result + 10;
-            if (lst.peekBack() == o2) result = result + 100;
-
-            lst.clear();
-            delete o1;
-            delete o2;
-            delete o3;
+            if (lst.getSize() == 3)      result = result + 1;
+            if (lst.peekFront() == 10)   result = result + 10;
+            if (lst.peekBack() == 30)    result = result + 100;
             return result;
         }
     )SRC");
     REQUIRE(j);
     auto fn = j->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 111);
+    CHECK(fn() == 111);
 }
 
-TEST_CASE("LinkedList — removeFront and removeBack shrink the list", "[libk][list][linked]") {
+TEST_CASE("LinkedList<int> — pushFront ordering", "[libk][list][int]") {
     auto j = jit_k(R"SRC(
-        module __ll_remove_ends__;
+        module __ll_int_front__;
 
         test() : int {
-            lst : LinkedList<Object>;
+            lst : LinkedList<int>;
+            a : int = 1;
+            b : int = 2;
+            c : int = 3;
+            lst.pushFront(a);
+            lst.pushFront(b);
+            lst.pushFront(c);
+            // order: 3, 2, 1
+
+            result : int = 0;
+            if (lst.peekFront() == 3)  result = result + 1;
+            if (lst.peekBack() == 1)   result = result + 10;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11);
+}
+
+TEST_CASE("LinkedList<int> — removeFront", "[libk][list][int]") {
+    auto j = jit_k(R"SRC(
+        module __ll_int_rmfront__;
+
+        test() : int {
+            lst : LinkedList<int>;
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.pushBack(c);
+            lst.removeFront();
+            // list: 20, 30
+
+            result : int = 0;
+            if (lst.getSize() == 2)      result = result + 1;
+            if (lst.peekFront() == 20)   result = result + 10;
+            if (lst.peekBack() == 30)    result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("LinkedList<int> — removeBack", "[libk][list][int]") {
+    auto j = jit_k(R"SRC(
+        module __ll_int_rmback__;
+
+        test() : int {
+            lst : LinkedList<int>;
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.pushBack(c);
+            lst.removeBack();
+            // list: 10, 20
+
+            result : int = 0;
+            if (lst.getSize() == 2)      result = result + 1;
+            if (lst.peekFront() == 10)   result = result + 10;
+            if (lst.peekBack() == 20)    result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("LinkedList<int> — clear empties", "[libk][list][int]") {
+    auto j = jit_k(R"SRC(
+        module __ll_int_clear__;
+
+        test() : int {
+            lst : LinkedList<int>;
+            a : int = 1;
+            b : int = 2;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.clear();
+
+            result : int = 0;
+            if (lst.isEmpty())           result = result + 1;
+            if (lst.getSize() == 0)      result = result + 10;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  2. Aggregate type — LinkedList<Point>
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LinkedList<Point> — struct stored by value", "[libk][list][struct]") {
+    auto j = jit_k(R"SRC(
+        module __ll_struct_push__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 0; y = 0; }
+        }
+
+        test() : int {
+            lst : LinkedList<Point>;
+            p1 : Point;
+            p1.x = 10;
+            p1.y = 20;
+            p2 : Point;
+            p2.x = 30;
+            p2.y = 40;
+
+            lst.pushBack(p1);
+            lst.pushBack(p2);
+
+            result : int = 0;
+            if (lst.getSize() == 2) result = result + 1;
+            // front is a copy of p1
+            if (lst.peekFront().x == 10) result = result + 10;
+            if (lst.peekFront().y == 20) result = result + 100;
+            // back is a copy of p2
+            if (lst.peekBack().x == 30)  result = result + 1000;
+            if (lst.peekBack().y == 40)  result = result + 10000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11111);
+}
+
+TEST_CASE("LinkedList<Point> — value semantics (mutation does not affect list)", "[libk][list][struct]") {
+    auto j = jit_k(R"SRC(
+        module __ll_struct_val__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 0; y = 0; }
+        }
+
+        test() : int {
+            lst : LinkedList<Point>;
+            p : Point;
+            p.x = 5;
+            p.y = 7;
+            lst.pushBack(p);
+            // mutate original — list copy must be unaffected
+            p.x = 99;
+
+            result : int = 0;
+            if (lst.peekFront().x == 5) result = result + 1;
+            if (lst.peekFront().y == 7) result = result + 10;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11);
+}
+
+TEST_CASE("LinkedList<Point> — removeFront / removeBack", "[libk][list][struct]") {
+    auto j = jit_k(R"SRC(
+        module __ll_struct_rm__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 0; y = 0; }
+        }
+
+        test() : int {
+            lst : LinkedList<Point>;
+            p1 : Point; p1.x = 1;
+            p2 : Point; p2.x = 2;
+            p3 : Point; p3.x = 3;
+            lst.pushBack(p1);
+            lst.pushBack(p2);
+            lst.pushBack(p3);
+            lst.removeFront();
+            lst.removeBack();
+            // only p2 remains
+
+            result : int = 0;
+            if (lst.getSize() == 1)       result = result + 1;
+            if (lst.peekFront().x == 2)   result = result + 10;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  3. Pointer type — LinkedList storing pointers to heap objects
+//     (T = Object*, the list holds raw mutable pointers)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LinkedList<Object*> — store and retrieve heap object pointers", "[libk][list][pointer]") {
+    auto j = jit_k(R"SRC(
+        module __ll_ptr__;
+
+        test() : int {
+            own1 : Object! = new Object();
+            own2 : Object! = new Object();
+            o1 : Object* = own1;
+            o2 : Object* = own2;
+
+            lst : LinkedList<Object*>;
+            lst.pushBack(o1);
+            lst.pushBack(o2);
+
+            result : int = 0;
+            if (lst.getSize() == 2)       result = result + 1;
+            if (lst.peekFront() == o1)    result = result + 10;
+            if (lst.peekBack() == o2)     result = result + 100;
+
+            lst.clear();
+            delete own1;
+            delete own2;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  4. Owner type — LinkedList storing owners to heap objects
+//     (T = Object!, the list holds owned pointers)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LinkedList<Object!> — store and retrieve owners", "[libk][list][owner]") {
+    auto j = jit_k(R"SRC(
+        module __ll_owner__;
+
+        test() : int {
+            lst : LinkedList<Object!>;
             o1 : Object! = new Object();
             o2 : Object! = new Object();
-            o3 : Object! = new Object();
 
             lst.pushBack(o1);
             lst.pushBack(o2);
-            lst.pushBack(o3);
 
             result : int = 0;
-            if (lst.removeFront()) result = result + 1;
-            if (lst.removeBack()) result = result + 10;
-            if (lst.getSize() == 1) result = result + 100;
-            if (lst.peekFront() == o2) result = result + 1000;
-
+            if (lst.getSize() == 2) result = result + 1;
+            // owners were copied into the list by value,
+            // so the list owns its own copy of the pointer
             lst.clear();
             delete o1;
             delete o2;
-            delete o3;
             return result;
         }
     )SRC");
     REQUIRE(j);
     auto fn = j->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    REQUIRE(fn() == 1111);
+    CHECK(fn() == 1);
 }
-
-TEST_CASE("LinkedList — remove by value identity removes the matching node", "[libk][list][linked]") {
-    auto j = jit_k(R"SRC(
-        module __ll_remove_value__;
-
-        test() : int {
-            lst : LinkedList<Object>;
-            o1 : Object! = new Object();
-            o2 : Object! = new Object();
-            o3 : Object! = new Object();
-
-            lst.pushBack(o1);
-            lst.pushBack(o2);
-            lst.pushBack(o3);
-
-            result : int = 0;
-            if (lst.remove(o2)) result = result + 1;
-            if (lst.getSize() == 2) result = result + 10;
-            if (lst.peekFront() == o1) result = result + 100;
-            if (lst.peekBack() == o3) result = result + 1000;
-
-            lst.clear();
-            delete o1;
-            delete o2;
-            delete o3;
-            return result;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == 1111);
-}
-
-TEST_CASE("DoubleLinkedList — empty list is empty", "[libk][list][double]") {
-    auto j = jit_k(R"SRC(
-        module __dll_empty__;
-
-        test() : bool {
-            lst : DoubleLinkedList<Object>;
-            return lst.isEmpty();
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<bool(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == true);
-}
-
-TEST_CASE("DoubleLinkedList — mixed pushes preserve front and back", "[libk][list][double]") {
-    auto j = jit_k(R"SRC(
-        module __dll_push_peek__;
-
-        test() : int {
-            lst : DoubleLinkedList<Object>;
-            o1 : Object! = new Object();
-            o2 : Object! = new Object();
-            o3 : Object! = new Object();
-
-            lst.pushFront(o1);
-            lst.pushBack(o2);
-            lst.pushFront(o3);
-
-            result : int = 0;
-            if (lst.getSize() == 3) result = result + 1;
-            if (lst.peekFront() == o3) result = result + 10;
-            if (lst.peekBack() == o2) result = result + 100;
-
-            lst.clear();
-            delete o1;
-            delete o2;
-            delete o3;
-            return result;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == 111);
-}
-
-TEST_CASE("DoubleLinkedList — removeFront and removeBack keep tail and head consistent", "[libk][list][double]") {
-    auto j = jit_k(R"SRC(
-        module __dll_remove_ends__;
-
-        test() : int {
-            lst : DoubleLinkedList<Object>;
-            o1 : Object! = new Object();
-            o2 : Object! = new Object();
-            o3 : Object! = new Object();
-
-            lst.pushBack(o1);
-            lst.pushBack(o2);
-            lst.pushBack(o3);
-
-            result : int = 0;
-            if (lst.removeFront()) result = result + 1;
-            if (lst.removeBack()) result = result + 10;
-            if (lst.getSize() == 1) result = result + 100;
-            if (lst.peekFront() == o2) result = result + 1000;
-            if (lst.peekBack() == o2) result = result + 10000;
-
-            lst.clear();
-            delete o1;
-            delete o2;
-            delete o3;
-            return result;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == 11111);
-}
-
-TEST_CASE("DoubleLinkedList — remove by value identity unlinks middle node", "[libk][list][double]") {
-    auto j = jit_k(R"SRC(
-        module __dll_remove_value__;
-
-        test() : int {
-            lst : DoubleLinkedList<Object>;
-            o1 : Object! = new Object();
-            o2 : Object! = new Object();
-            o3 : Object! = new Object();
-
-            lst.pushBack(o1);
-            lst.pushBack(o2);
-            lst.pushBack(o3);
-
-            result : int = 0;
-            if (lst.remove(o2)) result = result + 1;
-            if (lst.getSize() == 2) result = result + 10;
-            if (lst.peekFront() == o1) result = result + 100;
-            if (lst.peekBack() == o3) result = result + 1000;
-
-            lst.clear();
-            delete o1;
-            delete o2;
-            delete o3;
-            return result;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    REQUIRE(fn() == 1111);
-}
-
-
 

@@ -293,3 +293,70 @@ TEST_CASE("Non-static inner struct: compiler-generated default constructor", "[g
     REQUIRE(fn() == 49);  // 42 + 7
 }
 
+// --------------------------------------------------------------------------
+// Nested struct inside a template aggregate
+// --------------------------------------------------------------------------
+
+TEST_CASE("Nested static struct inside template: member variable of nested type", "[gen][nested][template]") {
+    auto jit = gen_jit(R"SRC(
+        module __nested_tpl_static__;
+
+        template<typename T>
+        struct Wrapper {
+            protected:
+            static struct Inner {
+                _val : int;
+                Inner() { _val = 0; }
+                get() : int { return _val; }
+            }
+            private:
+            _inner : Inner;
+            public:
+            Wrapper() {}
+            getVal() : int {
+                return _inner.get();
+            }
+        }
+
+        test_nested_tpl() : int {
+            w : Wrapper<int>;
+            return w.getVal();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_nested_tpl");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 0);
+}
+
+TEST_CASE("Nested static struct inside template: constructor with init value", "[gen][nested][template]") {
+    auto jit = gen_jit(R"SRC(
+        module __nested_tpl_init__;
+
+        template<typename T>
+        struct Container {
+            protected:
+            static struct Node {
+                _data : int;
+                Node() { _data = 99; }
+                nodeData() : int { return _data; }
+            }
+            private:
+            _node : Node;
+            public:
+            Container() {}
+            getData() : int {
+                return _node.nodeData();
+            }
+        }
+
+        test_nested_tpl_init() : int {
+            c : Container<double>;
+            return c.getData();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_nested_tpl_init");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 99);
+}

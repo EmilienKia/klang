@@ -1503,7 +1503,6 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
     if (get_intrinsic_name(function).has_value()) return;
 
     auto st = dtor->get_owner();
-    std::clog << "[DEBUG] visit_function destructor for " << (st ? st->get_short_name() : "null") << std::endl;
     if (!st) return;
 
     auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
@@ -1538,8 +1537,6 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
     // Call member destructors in reverse declaration order
     for (auto it = dtor_members.rbegin(); it != dtor_members.rend(); ++it) {
         auto& [var, field_idx] = *it;
-        std::clog << "[DEBUG] Emitting member dtor call for " << var->get_short_name()
-                  << " (field_idx=" << field_idx << ") in " << st->get_short_name() << std::endl;
         auto m_st_type = std::dynamic_pointer_cast<struct_type>(var->get_type());
         auto m_dtor = m_st_type->get_struct()->get_destructor();
         auto m_dtor_it = _context->_functions.find(m_dtor->shared_as<k::model::function>());

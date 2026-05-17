@@ -330,6 +330,46 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
         if (auto st = resolve_struct_from(*current, type_name)) {
             return st->get_struct_type();
         }
+        // Check if this scope is a concrete template instantiation whose
+        // template parameter names match the sought type_name.  This allows
+        // nested structs inside a template to reference the outer template's
+        // type parameters (e.g. UniSlot<T> inside LinkedList<int>::Node).
+        if (type_name.size() == 1) {
+            if (auto agg = std::dynamic_pointer_cast<const aggregate>(current)) {
+                if (agg->has_tpl_args()) {
+                    const auto& args = agg->get_tpl_args();
+                    // Try AST template params first (available for locally-parsed templates)
+                    if (auto ast_agg = agg->get_ast_aggregate_decl()) {
+                        const auto& params = ast_agg->template_params;
+                        const size_t count = std::min(params.size(), args.size());
+                        for (size_t i = 0; i < count; ++i) {
+                            if (!params[i]) continue;
+                            if (std::string(params[i]->name.content) == type_name.front()) {
+                                if (args[i].is_type()) return args[i].type_arg;
+                                break;
+                            }
+                        }
+                    }
+                    // Fallback: find the original template by base name and use tpl_info
+                    if (!agg->get_tpl_base_name().empty()) {
+                        auto parent_elem = agg->parent<element>();
+                        if (parent_elem) {
+                            if (auto tpl_agg = resolve_struct_from(*parent_elem, k::name{agg->get_tpl_base_name()})) {
+                                if (auto* ti = tpl_agg->get_tpl_info()) {
+                                    const size_t count = std::min(ti->params.size(), args.size());
+                                    for (size_t i = 0; i < count; ++i) {
+                                        if (ti->params[i].name == type_name.front()) {
+                                            if (args[i].is_type()) return args[i].type_arg;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // Also look for enum types (simple names only for now)
         if (type_name.size() == 1) {
             if (auto eh = std::dynamic_pointer_cast<const enum_holder>(current)) {
@@ -841,6 +881,13 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                         if (resolved && type::is_resolved(resolved)) {
                             arg_type = resolved;
                         }
+                    } else {
+                        // Wrapper type (pointer, owner, reference, etc.) around an unresolved inner type.
+                        // Use resolve_type_chain to recursively resolve inner types.
+                        auto resolved = resolve_type_chain(arg_type, &context_elem);
+                        if (resolved && type::is_resolved(resolved)) {
+                            arg_type = resolved;
+                        }
                     }
                 }
             }
@@ -945,19 +992,23 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     //     definitions are skipped and the concrete ctors are created after that pass.
     template_instantiator::inject_constructor_member_inits(concrete_agg);
 
-    // 5. If the concrete aggregate already has a struct_type, return it
+    // 5. If the concrete aggregate already has a struct_type, it was fully
+    //    processed by a previous (possibly recursive) call — return it.
     if (concrete_agg->get_struct_type()) {
         return concrete_agg->get_struct_type();
     }
 
-    // 6. Create a struct_type for the freshly instantiated aggregate
-    //    (mimics what symbol_resolver::visit_aggregate does)
+    // 6. Create a struct_type EARLY — before resolving member types.
+    //    This is essential for self-referential types (e.g. _next : Node<T>*):
+    //    the recursive try_instantiate_template_type call hits step 5 above
+    //    and returns the already-created struct_type instead of recursing.
     std::shared_ptr<struct_type> st_type{
         new struct_type(concrete_agg->get_short_name(), concrete_agg->shared_as<aggregate>())};
     _context->add_struct(st_type);
     concrete_agg->set_struct_type(st_type);
 
-    // 6b. Create 'this' parameters for member functions (requires struct_type)
+    // 6b. Create 'this' parameters for member functions, constructors,
+    //     destructor, and nested struct members (requires struct_type).
     for (auto& child : concrete_agg->get_children()) {
         if (auto fn = std::dynamic_pointer_cast<function>(child)) {
             if (fn->is_member() && !fn->is_static()) {
@@ -965,11 +1016,45 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             }
         }
     }
+    for (auto& ctor : concrete_agg->constructors()) {
+        if (ctor && !ctor->get_this_parameter()) {
+            ctor->create_this_parameter();
+        }
+    }
+    if (auto dtor = concrete_agg->get_destructor()) {
+        if (!dtor->get_this_parameter()) {
+            dtor->create_this_parameter();
+        }
+    }
+    // Nested structs: create struct_type and 'this' parameters for their members
+    for (auto& child : concrete_agg->get_children()) {
+        auto nested = std::dynamic_pointer_cast<aggregate>(child);
+        if (!nested) continue;
+        if (!nested->get_struct_type()) {
+            auto nested_st_type = std::make_shared<struct_type>(
+                nested->get_short_name(), nested->shared_as<aggregate>());
+            _context->add_struct(nested_st_type);
+            nested->set_struct_type(nested_st_type);
+        }
+        for (auto& nc : nested->get_children()) {
+            if (auto fn = std::dynamic_pointer_cast<function>(nc)) {
+                if (fn->is_member() && !fn->is_static() && !fn->get_this_parameter()) {
+                    fn->create_this_parameter();
+                }
+            }
+        }
+        for (auto& nc : nested->constructors()) {
+            if (nc && !nc->get_this_parameter()) {
+                nc->create_this_parameter();
+            }
+        }
+        if (auto nd = nested->get_destructor()) {
+            if (!nd->get_this_parameter()) {
+                nd->create_this_parameter();
+            }
+        }
+    }
     // 6c. Assign FQ (fully-qualified) name to the concrete aggregate.
-    //     symbol_resolver::visit_named_element normally does this, but the
-    //     concrete aggregate was created after that pass already ran.
-    //     Without a root-prefixed FQ name, update_mangled_name() produces
-    //     an empty mangled name which breaks code generation and the JIT.
     if (concrete_agg->get_fq_name().empty() && !concrete_agg->get_short_name().empty()) {
         if (auto ancestor = concrete_agg->template ancestor<named_element>()) {
             concrete_agg->assign_name(ancestor->get_name().with_back(concrete_agg->get_short_name()));
@@ -978,24 +1063,276 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     concrete_agg->update_mangled_name();
 
     // 6d. Update FQ names and mangled names for children (functions, constructors, etc.)
+    auto update_children_names = [](aggregate& agg) {
+        for (auto& child : agg.get_children()) {
+            if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+                if (fn->get_fq_name().empty() && !fn->get_short_name().empty()) {
+                    if (auto parent_named = fn->template parent<named_element>()) {
+                        fn->assign_name(parent_named->get_name().with_back(fn->get_short_name()));
+                    }
+                }
+                fn->update_mangled_name();
+            }
+        }
+    };
+    update_children_names(*concrete_agg);
+
+    // Also update FQ/mangled names for nested aggregates and their children
     for (auto& child : concrete_agg->get_children()) {
-        if (auto fn = std::dynamic_pointer_cast<function>(child)) {
-            // Build FQ name from parent chain (mirrors symbol_resolver::visit_named_element)
-            if (fn->get_fq_name().empty() && !fn->get_short_name().empty()) {
-                if (auto parent_named = fn->template parent<named_element>()) {
-                    fn->assign_name(parent_named->get_name().with_back(fn->get_short_name()));
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            if (nested->get_fq_name().empty() && !nested->get_short_name().empty()) {
+                if (auto ancestor = nested->template ancestor<named_element>()) {
+                    nested->assign_name(ancestor->get_name().with_back(nested->get_short_name()));
                 }
             }
-            fn->update_mangled_name();
+            nested->update_mangled_name();
+            update_children_names(*nested);
         }
     }
 
-    // 7. Resolve the LLVM struct type immediately (member types are already
-    //    concrete thanks to the instantiator's type substitution)
+    // 7. Transitively resolve member variable types containing unresolved
+    //    template types (e.g. _head : LinkedListNode<T>* in LinkedList).
+    //    Self-referential pointers (e.g. _next : Node<T>*) safely resolve
+    //    because the struct_type was created in step 6 above — recursive
+    //    calls hit step 5 and return immediately.
+    //
+    //    Also remap struct_type references that point to a template's nested
+    //    aggregate to the corresponding cloned nested aggregate's struct_type.
+    //    This happens because aggregate_type_resolver resolves member types
+    //    inside the template body before instantiation.
+
+    // Build a map from template nested aggregate → cloned nested aggregate's struct_type
+    // for quick remapping of already-resolved types.
+    std::unordered_map<aggregate*, std::shared_ptr<struct_type>> nested_remap;
+    if (tpl_agg) {
+        for (auto& tpl_child : tpl_agg->get_children()) {
+            auto tpl_nested = std::dynamic_pointer_cast<aggregate>(tpl_child);
+            if (!tpl_nested) continue;
+            // Find the corresponding cloned nested in concrete_agg
+            for (auto& conc_child : concrete_agg->get_children()) {
+                auto conc_nested = std::dynamic_pointer_cast<aggregate>(conc_child);
+                if (!conc_nested) continue;
+                if (conc_nested->get_short_name() == tpl_nested->get_short_name()) {
+                    // Create struct_type for the cloned nested if it doesn't have one yet
+                    if (!conc_nested->get_struct_type()) {
+                        auto nested_st = std::make_shared<struct_type>(
+                            conc_nested->get_short_name(), conc_nested->shared_as<aggregate>());
+                        _context->add_struct(nested_st);
+                        conc_nested->set_struct_type(nested_st);
+                    }
+                    nested_remap[tpl_nested.get()] = conc_nested->get_struct_type();
+                    break;
+                }
+            }
+        }
+    }
+
+    auto remap_nested_type = [&](const std::shared_ptr<type>& t) -> std::shared_ptr<type> {
+        if (!t || nested_remap.empty()) return t;
+        // Unwrap unresolved types that have been resolved
+        std::shared_ptr<type> effective = t;
+        if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
+            if (ut->is_resolved()) effective = ut->get_resolved();
+        }
+        // Direct struct_type match
+        if (auto st = std::dynamic_pointer_cast<struct_type>(effective)) {
+            auto agg = st->get_struct();
+            if (agg) {
+                auto it = nested_remap.find(agg.get());
+                if (it != nested_remap.end()) return it->second;
+            }
+            return t;
+        }
+        // Wrapped struct_type (owner, pointer, reference, etc.)
+        auto inner = effective->get_subtype();
+        if (!inner) return t;
+        // Recursive peel
+        std::function<std::shared_ptr<type>(const std::shared_ptr<type>&)> remap_recursive;
+        remap_recursive = [&](const std::shared_ptr<type>& ty) -> std::shared_ptr<type> {
+            if (!ty) return ty;
+            if (auto st = std::dynamic_pointer_cast<struct_type>(ty)) {
+                auto agg = st->get_struct();
+                if (agg) {
+                    auto it = nested_remap.find(agg.get());
+                    if (it != nested_remap.end()) return it->second;
+                }
+                return ty;
+            }
+            // Handle resolved unresolved_types — unwrap to see if they point
+            // to a template-internal struct that needs remapping.
+            if (auto ut = std::dynamic_pointer_cast<unresolved_type>(ty)) {
+                if (ut->is_resolved()) {
+                    auto resolved = ut->get_resolved();
+                    if (auto st = std::dynamic_pointer_cast<struct_type>(resolved)) {
+                        auto agg = st->get_struct();
+                        if (agg) {
+                            auto it = nested_remap.find(agg.get());
+                            if (it != nested_remap.end()) return it->second;
+                        }
+                    }
+                }
+                return ty;
+            }
+            auto sub = ty->get_subtype();
+            if (!sub) return ty;
+            auto new_sub = remap_recursive(sub);
+            if (new_sub == sub) return ty;
+            if (type::is_reference(ty))   return new_sub->get_reference();
+            if (type::is_pointer(ty))     return new_sub->get_pointer();
+            if (type::is_link(ty))        return new_sub->get_link();
+            if (type::is_view(ty))        return new_sub->get_view();
+            if (type::is_owner(ty))       return new_sub->get_owner();
+            if (type::is_drain(ty))       return new_sub->get_drain();
+            if (type::is_const(ty))       return new_sub->get_const();
+            if (type::is_array(ty)) {
+                if (auto sa = std::dynamic_pointer_cast<sized_array_type>(ty))
+                    return new_sub->get_array(sa->get_size());
+                return new_sub->get_array();
+            }
+            return ty;
+        };
+        auto remapped = remap_recursive(effective);
+        if (remapped != effective) return remapped;
+        return t;
+    };
+
+    auto resolve_member_vars = [&](aggregate& agg) {
+        for (auto& child : agg.get_children()) {
+            auto mv = std::dynamic_pointer_cast<member_variable_definition>(child);
+            if (!mv) continue;
+            auto var_type = mv->get_type();
+            if (!var_type) continue;
+            // Always try remap first — type objects may be shared between template
+            // and clone (same shared_ptr), so even "resolved" types may point to
+            // template-internal structs that need remapping to cloned counterparts.
+            auto remapped = remap_nested_type(var_type);
+            if (remapped != var_type) {
+                mv->set_type(remapped);
+                continue;
+            }
+            if (type::is_resolved(var_type)) continue;
+            auto resolved = resolve_type_chain(var_type, &agg);
+            if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved)
+                             || (resolved->get_subtype() && std::dynamic_pointer_cast<struct_type>(resolved->get_subtype())))) {
+                mv->set_type(resolved);
+            }
+        }
+    };
+    resolve_member_vars(*concrete_agg);
+    for (auto& child : concrete_agg->get_children()) {
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            resolve_member_vars(*nested);
+        }
+    }
+
+    // 8. Resolve the LLVM struct type immediately (member types are now
+    //    concrete thanks to step 7 + the instantiator's type substitution)
     std::unordered_set<struct_type*> in_progress;
+    // Resolve nested struct types first
+    for (auto& child : concrete_agg->get_children()) {
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            if (auto nst = nested->get_struct_type()) {
+                _context->resolve_struct_type(nst, in_progress);
+            }
+        }
+    }
     _context->resolve_struct_type(st_type, in_progress);
 
+    // 9. Fully resolve internal types of the newly instantiated aggregate.
+    //    Templates instantiated during type_reference_resolver are added to
+    //    namespaces that were already fully visited.  Their method bodies must
+    //    be type-resolved before code generation can proceed.
+    resolve_instantiated_aggregate(*concrete_agg);
+
     return st_type;
+}
+
+std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
+    const std::shared_ptr<type>& t,
+    const element* scope_elem)
+{
+    if (!t || type::is_resolved(t)) return t;
+    // A struct_type is semantically resolved even before its LLVM type is materialized.
+    if (std::dynamic_pointer_cast<struct_type>(t)) return t;
+
+    // Leaf: unresolved_type — delegate to resolve_inner_type which can
+    // trigger template instantiation via try_instantiate_template_type.
+    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        return resolve_inner_type(t, scope_elem);
+    }
+
+    // Wrapper: peel one layer, resolve the subtype recursively, then
+    // rebuild the wrapper around the resolved subtype.
+    auto sub = t->get_subtype();
+    if (!sub) return t;
+
+    auto resolved_sub = resolve_type_chain(sub, scope_elem);
+    if (!resolved_sub || (!type::is_resolved(resolved_sub) && !std::dynamic_pointer_cast<struct_type>(resolved_sub))) return t;
+
+    if (std::dynamic_pointer_cast<pointer_type>(t))   return resolved_sub->get_pointer();
+    if (std::dynamic_pointer_cast<reference_type>(t))  return resolved_sub->get_reference();
+    if (std::dynamic_pointer_cast<owner_type>(t))      return resolved_sub->get_owner();
+    if (std::dynamic_pointer_cast<link_type>(t))       return resolved_sub->get_link();
+    if (std::dynamic_pointer_cast<view_type>(t))       return resolved_sub->get_view();
+    if (std::dynamic_pointer_cast<drain_type>(t))      return resolved_sub->get_drain();
+    if (std::dynamic_pointer_cast<const_type>(t))      return resolved_sub->get_const();
+    if (auto sarr = std::dynamic_pointer_cast<sized_array_type>(t))
+        return resolved_sub->get_array(sarr->get_size());
+    if (std::dynamic_pointer_cast<array_type>(t))      return resolved_sub->get_array();
+
+    return t;
+}
+
+void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
+    // Step 1: Resolve function parameter and return types that contain
+    //         unresolved template types.  This is needed because the
+    //         signature_resolver pre-pass only runs on namespaces, and the
+    //         aggregate was created after that pass finished.
+    auto resolve_fn_types = [&](function& fn) {
+        // Resolve return type
+        if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
+            auto resolved = resolve_type_chain(fn.get_return_type(), &agg);
+            if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) {
+                fn.set_return_type(resolved);
+            }
+        }
+        // Resolve parameter types
+        for (auto& param : fn.parameters()) {
+            if (param && param->get_type() && !type::is_resolved(param->get_type())) {
+                auto resolved = resolve_type_chain(param->get_type(), &agg);
+                if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) {
+                    param->set_type(resolved);
+                }
+            }
+        }
+    };
+
+    auto resolve_agg_fn_types = [&](aggregate& a) {
+        for (auto& child : a.get_children()) {
+            if (auto fn = std::dynamic_pointer_cast<function>(child)) {
+                resolve_fn_types(*fn);
+            }
+        }
+        for (auto& ctor : a.constructors()) {
+            if (ctor) resolve_fn_types(*ctor);
+        }
+        if (auto dtor = a.get_destructor()) {
+            resolve_fn_types(*dtor);
+        }
+    };
+
+    resolve_agg_fn_types(agg);
+
+    // Also resolve function types in nested aggregates
+    for (auto& child : agg.get_children()) {
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            resolve_agg_fn_types(*nested);
+        }
+    }
+
+    // Step 2: Visit the aggregate with type_reference_resolver to resolve
+    //         all expressions and statements in method bodies.
+    visit_aggregate(agg);
 }
 
 std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
@@ -1020,14 +1357,14 @@ std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
         if (scope_elem) {
             resolved = resolve_type_by_name(unres_inner->type_id(), *scope_elem);
         }
-        if (!resolved || !type::is_resolved(resolved)) {
+        if (!resolved || (!type::is_resolved(resolved) && !std::dynamic_pointer_cast<struct_type>(resolved))) {
             resolved = _context->from_string(unres_inner->type_id());
         }
-        if (!resolved || !type::is_resolved(resolved)) {
+        if (!resolved || (!type::is_resolved(resolved) && !std::dynamic_pointer_cast<struct_type>(resolved))) {
             auto imported_agg = _unit.get_or_create_imported_aggregate(unres_inner->type_id(), _context);
             if (imported_agg && imported_agg->get_struct_type()) resolved = imported_agg->get_struct_type();
         }
-        if (!resolved || !type::is_resolved(resolved)) {
+        if (!resolved || (!type::is_resolved(resolved) && !std::dynamic_pointer_cast<struct_type>(resolved))) {
             auto imported_en = _unit.get_or_create_imported_enum(unres_inner->type_id(), _context);
             if (imported_en && imported_en->get_enum_type()) resolved = imported_en->get_enum_type();
         }

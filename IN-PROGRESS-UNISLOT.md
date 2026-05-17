@@ -86,4 +86,3 @@ constructors/destructors/methods.
 | `klang/src/model/template_instantiator.cpp` | Copy annotations during instantiation |
 | `klang/CMakeLists.txt` | Added `gen_intrinsics.cpp` + test file |
 | `klang/tests/test-gen-intrinsic.cpp` | **New** — 6 test cases |
-
