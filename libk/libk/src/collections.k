@@ -150,6 +150,36 @@ struct LinkedList {
         return _tail->getValue();
     }
 
+    /** Return a mutable reference to the element at the given index. O(n). Undefined if out of bounds. */
+    get(index : int) : T& {
+        current : LinkedListNode* = _head;
+        while (index > 0) {
+            current = current->_next;
+            index = index - 1;
+        }
+        return current->getValue();
+    }
+
+    /** Subscript operator — mutable access by index. O(n). Undefined if out of bounds. */
+    operator [](index : int) : T& {
+        current : LinkedListNode* = _head;
+        while (index > 0) {
+            current = current->_next;
+            index = index - 1;
+        }
+        return current->getValue();
+    }
+
+    /** Subscript operator — const access by index. O(n). Undefined if out of bounds. */
+    const operator [](index : int) : const T& {
+        current : LinkedListNode* = _head;
+        while (index > 0) {
+            current = current->_next;
+            index = index - 1;
+        }
+        return current->getValue();
+    }
+
     /**
      * Remove the front element. Returns true if an element was removed.
      * The old head node is destroyed via owner reassignment: its _next

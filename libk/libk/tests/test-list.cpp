@@ -294,6 +294,88 @@ TEST_CASE("LinkedList<Point> — removeFront / removeBack", "[libk][list][struct
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  2b. Indexed access — get() and operator[]
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LinkedList<int> — get by index", "[libk][list][int][index]") {
+    auto j = jit_k(R"SRC(
+        module __ll_get__;
+
+        test() : int {
+            lst : LinkedList<int>;
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.pushBack(c);
+
+            result : int = 0;
+            if (lst.get(0) == 10) result = result + 1;
+            if (lst.get(1) == 20) result = result + 10;
+            if (lst.get(2) == 30) result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("LinkedList<int> — operator[] read", "[libk][list][int][index]") {
+    auto j = jit_k(R"SRC(
+        module __ll_subscript__;
+
+        test() : int {
+            lst : LinkedList<int>;
+            a : int = 5;
+            b : int = 15;
+            c : int = 25;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.pushBack(c);
+
+            result : int = 0;
+            if (lst[0] == 5)  result = result + 1;
+            if (lst[1] == 15) result = result + 10;
+            if (lst[2] == 25) result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("LinkedList<int> — operator[] write", "[libk][list][int][index]") {
+    auto j = jit_k(R"SRC(
+        module __ll_subscript_w__;
+
+        test() : int {
+            lst : LinkedList<int>;
+            a : int = 0;
+            b : int = 0;
+            c : int = 0;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.pushBack(c);
+
+            lst[0] = 42;
+            lst[1] = 77;
+            lst[2] = 99;
+
+            return lst[0] + lst[1] + lst[2];
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 218);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  3. Pointer type — LinkedList storing pointers to heap objects
 //     (T = Object*, the list holds raw mutable pointers)
 // ═══════════════════════════════════════════════════════════════════════════════
