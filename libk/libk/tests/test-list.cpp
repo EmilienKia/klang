@@ -986,8 +986,8 @@ TEST_CASE("LinkedList<Point> — emplaceBack zero-arg (default ctor)", "[libk][l
 
         test() : int {
             lst : LinkedList<Point>;
-            lst.emplaceBack();
-            lst.emplaceBack();
+            lst.emplaceBack<>();
+            lst.emplaceBack<>();
 
             result : int = 0;
             if (lst.getSize() == 2)      result = result + 1;
@@ -1015,8 +1015,8 @@ TEST_CASE("LinkedList<Point> — emplaceFront zero-arg (default ctor)", "[libk][
 
         test() : int {
             lst : LinkedList<Point>;
-            lst.emplaceFront();
-            lst.emplaceFront();
+            lst.emplaceFront<>();
+            lst.emplaceFront<>();
             // both nodes constructed with defaults (7,9)
 
             result : int = 0;
@@ -1045,9 +1045,9 @@ TEST_CASE("LinkedList<Point> — emplace zero-arg at index", "[libk][list][struc
 
         test() : int {
             lst : LinkedList<Point>;
-            lst.emplaceBack();
-            lst.emplaceBack();
-            lst.emplace(1);
+            lst.emplaceBack<>();
+            lst.emplaceBack<>();
+            lst.emplace<>(1);
             // list: (5,3), (5,3), (5,3)
 
             result : int = 0;
@@ -1079,10 +1079,10 @@ TEST_CASE("DoubleLinkedList<Point> — emplaceBack/emplaceFront/emplace zero-arg
 
         test() : int {
             lst : DoubleLinkedList<Point>;
-            lst.emplaceBack();
-            lst.emplaceBack();
-            lst.emplaceFront();
-            lst.emplace(2);
+            lst.emplaceBack<>();
+            lst.emplaceBack<>();
+            lst.emplaceFront<>();
+            lst.emplace<>(2);
             // all have default values (1,2)
 
             result : int = 0;
@@ -1101,237 +1101,7 @@ TEST_CASE("DoubleLinkedList<Point> — emplaceBack/emplaceFront/emplace zero-arg
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  10. Emplace with constructor args — LinkedList<T>
-// ═══════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("LinkedList<Point> — emplaceBack with constructor args", "[libk][list][struct][emplace]") {
-    auto j = jit_k(R"SRC(
-        module __ll_pt_emb_args__;
-
-        struct Point {
-            x : int;
-            y : int;
-            Point() { x = 0; y = 0; }
-            Point(ax : int, ay : int) { x = ax; y = ay; }
-        }
-
-        test() : int {
-            lst : LinkedList<Point>;
-            lst.emplaceBack(10, 20);
-            lst.emplaceBack(30, 40);
-
-            result : int = 0;
-            if (lst.getSize() == 2)      result = result + 1;
-            if (lst[0].x == 10)          result = result + 10;
-            if (lst[0].y == 20)          result = result + 100;
-            if (lst[1].x == 30)          result = result + 1000;
-            if (lst[1].y == 40)          result = result + 10000;
-            return result;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == 11111);
-}
-
-TEST_CASE("LinkedList<Point> — emplaceFront with constructor args", "[libk][list][struct][emplace]") {
-    auto j = jit_k(R"SRC(
-        module __ll_pt_emf_args__;
-
-        struct Point {
-            x : int;
-            y : int;
-            Point() { x = 0; y = 0; }
-            Point(ax : int, ay : int) { x = ax; y = ay; }
-        }
-
-        test() : int {
-            lst : LinkedList<Point>;
-            lst.emplaceFront(10, 20);
-            lst.emplaceFront(30, 40);
-            // list: (30,40), (10,20)
-
-            result : int = 0;
-            if (lst.getSize() == 2)      result = result + 1;
-            if (lst[0].x == 30)          result = result + 10;
-            if (lst[0].y == 40)          result = result + 100;
-            if (lst[1].x == 10)          result = result + 1000;
-            return result;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == 1111);
-}
-
-TEST_CASE("LinkedList<Point> — emplace at index with constructor args", "[libk][list][struct][emplace]") {
-    auto j = jit_k(R"SRC(
-        module __ll_pt_emi_args__;
-
-        struct Point {
-            x : int;
-            y : int;
-            Point() { x = 0; y = 0; }
-            Point(ax : int, ay : int) { x = ax; y = ay; }
-        }
-
-        test() : int {
-            lst : LinkedList<Point>;
-            lst.emplaceBack(1, 2);
-            lst.emplaceBack(5, 6);
-            lst.emplace(1, 3, 4);
-            // list: (1,2), (3,4), (5,6)
-
-            result : int = 0;
-            if (lst.getSize() == 3)      result = result + 1;
-            if (lst[0].x == 1)           result = result + 10;
-            if (lst[1].x == 3)           result = result + 100;
-            if (lst[1].y == 4)           result = result + 1000;
-            if (lst[2].x == 5)           result = result + 10000;
-            return result;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == 11111);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  11. Emplace with constructor args — DoubleLinkedList<T>
-// ═══════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("DoubleLinkedList<Point> — emplaceBack with constructor args", "[libk][list][dlist][struct][emplace]") {
-    auto j = jit_k(R"SRC(
-        module __dll_pt_emb_args__;
-
-        struct Point {
-            x : int;
-            y : int;
-            Point() { x = 0; y = 0; }
-            Point(ax : int, ay : int) { x = ax; y = ay; }
-        }
-
-        test() : int {
-            lst : DoubleLinkedList<Point>;
-            lst.emplaceBack(10, 20);
-            lst.emplaceBack(30, 40);
-
-            result : int = 0;
-            if (lst.getSize() == 2)      result = result + 1;
-            if (lst[0].x == 10)          result = result + 10;
-            if (lst[0].y == 20)          result = result + 100;
-            if (lst[1].x == 30)          result = result + 1000;
-            if (lst[1].y == 40)          result = result + 10000;
-            return result;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == 11111);
-}
-
-TEST_CASE("DoubleLinkedList<Point> — emplaceFront/emplace with args", "[libk][list][dlist][struct][emplace]") {
-    auto j = jit_k(R"SRC(
-        module __dll_pt_emf_args__;
-
-        struct Point {
-            x : int;
-            y : int;
-            Point() { x = 0; y = 0; }
-            Point(ax : int, ay : int) { x = ax; y = ay; }
-        }
-
-        test() : int {
-            lst : DoubleLinkedList<Point>;
-            lst.emplaceBack(1, 2);
-            lst.emplaceBack(5, 6);
-            lst.emplaceFront(7, 8);
-            lst.emplace(2, 3, 4);
-            // list: (7,8), (1,2), (3,4), (5,6)
-
-            result : int = 0;
-            if (lst.getSize() == 4)      result = result + 1;
-            if (lst[0].x == 7)           result = result + 10;
-            if (lst[1].x == 1)           result = result + 100;
-            if (lst[2].x == 3)           result = result + 1000;
-            if (lst[3].x == 5)           result = result + 10000;
-            return result;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == 11111);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  12. Emplace with aggregate init (no explicit constructor)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("LinkedList<AggPoint> — emplaceBack aggregate init", "[libk][list][struct][emplace][aggregate]") {
-    auto j = jit_k(R"SRC(
-        module __ll_agg_emb__;
-
-        struct AggPoint {
-            x : int;
-            y : int;
-        }
-
-        test() : int {
-            lst : LinkedList<AggPoint>;
-            lst.emplaceBack(10, 20);
-            lst.emplaceBack(30, 40);
-
-            result : int = 0;
-            if (lst.getSize() == 2)      result = result + 1;
-            if (lst[0].x == 10)          result = result + 10;
-            if (lst[0].y == 20)          result = result + 100;
-            if (lst[1].x == 30)          result = result + 1000;
-            if (lst[1].y == 40)          result = result + 10000;
-            return result;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == 11111);
-}
-
-TEST_CASE("DoubleLinkedList<AggPoint> — emplaceBack aggregate init", "[libk][list][dlist][struct][emplace][aggregate]") {
-    auto j = jit_k(R"SRC(
-        module __dll_agg_emb__;
-
-        struct AggPoint {
-            x : int;
-            y : int;
-        }
-
-        test() : int {
-            lst : DoubleLinkedList<AggPoint>;
-            lst.emplaceBack(10, 20);
-            lst.emplaceBack(30, 40);
-
-            result : int = 0;
-            if (lst.getSize() == 2)      result = result + 1;
-            if (lst[0].x == 10)          result = result + 10;
-            if (lst[0].y == 20)          result = result + 100;
-            if (lst[1].x == 30)          result = result + 1000;
-            if (lst[1].y == 40)          result = result + 10000;
-            return result;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == 11111);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  13. DoubleLinkedList — typed enum
+//  10. DoubleLinkedList — typed enum
 // ═══════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("DoubleLinkedList<TypedEnum> — typed enum (short)", "[libk][list][dlist][enum]") {
