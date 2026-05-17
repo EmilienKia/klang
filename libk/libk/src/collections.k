@@ -69,6 +69,10 @@ struct LinkedList {
             return _slot.get();
         }
 
+        const getValue() : const T& {
+            return _slot.get();
+        }
+
         setValue(value : T&) {
             _slot.get() = value;
         }
@@ -91,12 +95,12 @@ struct LinkedList {
     }
 
     /** Return true if the list contains no elements. */
-    isEmpty() : bool {
+    const isEmpty() : bool {
         return _size == 0;
     }
 
     /** Return the number of elements in the list. */
-    getSize() : int {
+    const getSize() : int {
         return _size;
     }
 
@@ -126,13 +130,23 @@ struct LinkedList {
         _size = _size + 1;
     }
 
-    /** Return a reference to the front element. Undefined if empty. */
+    /** Return a mutable reference to the front element. Undefined if empty. */
     peekFront() : T& {
         return _head.getValue();
     }
 
-    /** Return a reference to the back element. Undefined if empty. */
+    /** Return a const reference to the front element. Undefined if empty. */
+    const peekFront() : const T& {
+        return _head.getValue();
+    }
+
+    /** Return a mutable reference to the back element. Undefined if empty. */
     peekBack() : T& {
+        return _tail->getValue();
+    }
+
+    /** Return a const reference to the back element. Undefined if empty. */
+    const peekBack() : const T& {
         return _tail->getValue();
     }
 
