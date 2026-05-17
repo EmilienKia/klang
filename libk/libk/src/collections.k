@@ -35,14 +35,30 @@ interface Collection {
     /** Return true if the collection contains no elements. */
     isEmpty() : bool;
 
+    /** Insert a copy of value at the front of the collection. */
+    pushFront(value : T&);
+
     /** Insert a copy of value at the back of the collection. */
     pushBack(value : T&);
+
+    /**
+     * Insert a copy of value at the given index.
+     * If index <= 0, inserts at the front.
+     * If index >= size, inserts at the back.
+     */
+    insert(index : int, value : T&);
 
     /** Return a mutable reference to the front element. Undefined if empty. */
     peekFront() : T&;
 
     /** Return a mutable reference to the back element. Undefined if empty. */
     peekBack() : T&;
+
+    /** Return a mutable reference to the element at the given index. Undefined if out of bounds. */
+    get(index : int) : T&;
+
+    /** Remove the front element. Returns true if an element was removed. */
+    removeFront() : bool;
 
     /** Remove the last element. Returns true if an element was removed. */
     removeBack() : bool;
@@ -896,6 +912,11 @@ class Vector : public Collection<T> {
         _size = _size + 1;
     }
 
+    /** Insert a copy of value at the front of the vector. O(n). */
+    pushFront(value : T&) {
+        insert(0, value);
+    }
+
     /** Construct an element in-place at the back of the vector. */
     template<typename...Args>
     emplaceBack(Args...args) {
@@ -1007,6 +1028,11 @@ class Vector : public Collection<T> {
     /** Subscript operator — const access by index. O(1). Undefined if out of bounds. */
     const operator [](index : int) : const T& {
         return _slot.get(index);
+    }
+
+    /** Remove the front element. O(n). Returns true if an element was removed. */
+    removeFront() : bool {
+        return removeAt(0);
     }
 
     /** Remove the last element. Returns true if an element was removed. */
