@@ -96,13 +96,14 @@ TEST_CASE("LinkedList<int> — pushFront ordering", "[libk][list][int]") {
             result : int = 0;
             if (lst.peekFront() == 3)  result = result + 1;
             if (lst.peekBack() == 1)   result = result + 10;
+            if (lst[1] == 2)           result = result + 100;
             return result;
         }
     )SRC");
     REQUIRE(j);
     auto fn = j->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
-    CHECK(fn() == 11);
+    CHECK(fn() == 111);
 }
 
 TEST_CASE("LinkedList<int> — removeFront", "[libk][list][int]") {
@@ -648,3 +649,316 @@ TEST_CASE("LinkedList<Object!> — store and retrieve owners", "[libk][list][own
     CHECK(fn() == 1);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DoubleLinkedList<T> tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("DoubleLinkedList<int> — pushBack and peek", "[libk][list][dlist][int]") {
+    auto j = jit_k(R"SRC(
+        module __dll_int_push__;
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.pushBack(c);
+
+            result : int = 0;
+            if (lst.getSize() == 3)      result = result + 1;
+            if (lst.peekFront() == 10)   result = result + 10;
+            if (lst.peekBack() == 30)    result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("DoubleLinkedList<int> — pushFront ordering", "[libk][list][dlist][int]") {
+    auto j = jit_k(R"SRC(
+        module __dll_int_front__;
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            a : int = 1;
+            b : int = 2;
+            c : int = 3;
+            lst.pushFront(a);
+            lst.pushFront(b);
+            lst.pushFront(c);
+            // order: 3, 2, 1
+
+            result : int = 0;
+            if (lst.peekFront() == 3)  result = result + 1;
+            if (lst.peekBack() == 1)   result = result + 10;
+            if (lst[1] == 2)           result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("DoubleLinkedList<int> — insert at beginning, middle, end", "[libk][list][dlist][int][insert]") {
+    auto j = jit_k(R"SRC(
+        module __dll_int_insert__;
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            a : int = 10;
+            b : int = 30;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            // list: 10, 30
+
+            c : int = 20;
+            lst.insert(1, c);
+            // list: 10, 20, 30
+
+            d : int = 5;
+            lst.insert(0, d);
+            // list: 5, 10, 20, 30
+
+            e : int = 40;
+            lst.insert(100, e);
+            // list: 5, 10, 20, 30, 40
+
+            result : int = 0;
+            if (lst.getSize() == 5)  result = result + 1;
+            if (lst[0] == 5)         result = result + 10;
+            if (lst[1] == 10)        result = result + 100;
+            if (lst[2] == 20)        result = result + 1000;
+            if (lst[3] == 30)        result = result + 10000;
+            if (lst[4] == 40)        result = result + 100000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111111);
+}
+
+TEST_CASE("DoubleLinkedList<int> — insert near end uses backward search", "[libk][list][dlist][int][insert]") {
+    auto j = jit_k(R"SRC(
+        module __dll_int_insert_back__;
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            a : int = 1;
+            b : int = 2;
+            c : int = 3;
+            d : int = 4;
+            e : int = 5;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.pushBack(c);
+            lst.pushBack(d);
+            lst.pushBack(e);
+            // list: 1, 2, 3, 4, 5
+
+            // Insert at index 4 (near end, should search from back)
+            f : int = 99;
+            lst.insert(4, f);
+            // list: 1, 2, 3, 4, 99, 5
+
+            result : int = 0;
+            if (lst.getSize() == 6)   result = result + 1;
+            if (lst[3] == 4)          result = result + 10;
+            if (lst[4] == 99)         result = result + 100;
+            if (lst[5] == 5)          result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+TEST_CASE("DoubleLinkedList<int> — removeFront", "[libk][list][dlist][int]") {
+    auto j = jit_k(R"SRC(
+        module __dll_int_rmfront__;
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.pushBack(c);
+            lst.removeFront();
+            // list: 20, 30
+
+            result : int = 0;
+            if (lst.getSize() == 2)      result = result + 1;
+            if (lst.peekFront() == 20)   result = result + 10;
+            if (lst.peekBack() == 30)    result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("DoubleLinkedList<int> — removeBack O(1)", "[libk][list][dlist][int]") {
+    auto j = jit_k(R"SRC(
+        module __dll_int_rmback__;
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.pushBack(c);
+            lst.removeBack();
+            // list: 10, 20
+
+            result : int = 0;
+            if (lst.getSize() == 2)      result = result + 1;
+            if (lst.peekFront() == 10)   result = result + 10;
+            if (lst.peekBack() == 20)    result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+TEST_CASE("DoubleLinkedList<int> — clear", "[libk][list][dlist][int]") {
+    auto j = jit_k(R"SRC(
+        module __dll_int_clear__;
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            a : int = 1;
+            b : int = 2;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.clear();
+
+            result : int = 0;
+            if (lst.isEmpty())           result = result + 1;
+            if (lst.getSize() == 0)      result = result + 10;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11);
+}
+
+TEST_CASE("DoubleLinkedList<int> — indexed access from both ends", "[libk][list][dlist][int][index]") {
+    auto j = jit_k(R"SRC(
+        module __dll_int_idx__;
+
+        test() : int {
+            lst : DoubleLinkedList<int>;
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            d : int = 40;
+            e : int = 50;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            lst.pushBack(c);
+            lst.pushBack(d);
+            lst.pushBack(e);
+            // list: 10, 20, 30, 40, 50
+
+            result : int = 0;
+            // Access from front (index 0,1 <= size/2=2)
+            if (lst[0] == 10)  result = result + 1;
+            if (lst[1] == 20)  result = result + 10;
+            // Access from back (index 3,4 > size/2=2)
+            if (lst[3] == 40)  result = result + 100;
+            if (lst[4] == 50)  result = result + 1000;
+            // Middle
+            if (lst[2] == 30)  result = result + 10000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11111);
+}
+
+TEST_CASE("DoubleLinkedList<Point> — struct stored by value", "[libk][list][dlist][struct]") {
+    auto j = jit_k(R"SRC(
+        module __dll_struct_push__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 0; y = 0; }
+        }
+
+        test() : int {
+            lst : DoubleLinkedList<Point>;
+            p1 : Point; p1.x = 10; p1.y = 20;
+            p2 : Point; p2.x = 30; p2.y = 40;
+            lst.pushBack(p1);
+            lst.pushBack(p2);
+
+            result : int = 0;
+            if (lst.getSize() == 2)         result = result + 1;
+            if (lst.peekFront().x == 10)    result = result + 10;
+            if (lst.peekBack().x == 30)     result = result + 100;
+            if (lst[1].y == 40)             result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+TEST_CASE("DoubleLinkedList<Color> — enum type", "[libk][list][dlist][enum]") {
+    auto j = jit_k(R"SRC(
+        module __dll_enum__;
+
+        enum Color {
+            RED = 0;
+            GREEN = 1;
+            BLUE = 2;
+        };
+
+        test() : int {
+            lst : DoubleLinkedList<Color>;
+            r : Color = Color::RED;
+            g : Color = Color::GREEN;
+            b : Color = Color::BLUE;
+            lst.pushBack(r);
+            lst.pushBack(g);
+            lst.pushBack(b);
+
+            result : int = 0;
+            if (lst.getSize() == 3)            result = result + 1;
+            if (lst[0] == Color::RED)          result = result + 10;
+            if (lst[1] == Color::GREEN)        result = result + 100;
+            if (lst.peekBack() == Color::BLUE) result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
