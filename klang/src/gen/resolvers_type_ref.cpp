@@ -2522,7 +2522,13 @@ type_reference_resolver::get_best_matching_function(
             const auto& new_params = func->parameters();
             std::vector<std::shared_ptr<expression>> adapted_args;
             for (size_t i = 0; i < args.size(); ++i) {
-                adapted_args.push_back(args[i]);
+                // Adapt arguments to match declared parameter types (load from reference, etc.)
+                if (i < new_params.size() && new_params[i]->get_type()) {
+                    auto a = adapt_type(args[i], new_params[i]->get_type());
+                    adapted_args.push_back(a ? a : args[i]);
+                } else {
+                    adapted_args.push_back(args[i]);
+                }
             }
             valid.push_back({func, std::move(adapted_args), CAST_NONE, false, nullptr, 0, 0});
             continue;
