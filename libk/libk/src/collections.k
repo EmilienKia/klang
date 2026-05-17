@@ -65,6 +65,12 @@ struct LinkedList {
             _slot.destruct();
         }
 
+        template<typename...Args>
+        emplaceValue(Args...args) {
+            _slot.destruct();
+            _slot.construct(args...);
+        }
+
         getValue() : T& {
             return _slot.get();
         }
@@ -127,6 +133,113 @@ struct LinkedList {
             _tail = node;
             _head = node;
         }
+        _size = _size + 1;
+    }
+
+    /**
+     * Insert a copy of value at the given index. O(n).
+     * If index <= 0, inserts at the front.
+     * If index >= size, inserts at the back.
+     */
+    insert(index : int, value : T&) {
+        node : LinkedListNode! = new LinkedListNode();
+        node.setValue(value);
+        if (index <= 0) {
+            node._next = _head;
+            if (_tail == null) {
+                _tail = node;
+            }
+            _head = node;
+            _size = _size + 1;
+            return;
+        }
+        if (index >= _size) {
+            if (_tail != null) {
+                _tail->_next = node;
+                _tail = _tail->_next;
+            } else {
+                _tail = node;
+                _head = node;
+            }
+            _size = _size + 1;
+            return;
+        }
+        prev : LinkedListNode* = _head;
+        i : int = 1;
+        while (i < index) {
+            prev = prev->_next;
+            i = i + 1;
+        }
+        node._next = prev->_next;
+        prev->_next = node;
+        _size = _size + 1;
+    }
+
+    /** Construct an element in-place at the front of the list. */
+    template<typename...Args>
+    emplaceFront(Args...args) {
+        node : LinkedListNode! = new LinkedListNode();
+        node.emplaceValue(args...);
+        node._next = _head;
+        if (_tail == null) {
+            _tail = node;
+        }
+        _head = node;
+        _size = _size + 1;
+    }
+
+    /** Construct an element in-place at the back of the list. */
+    template<typename...Args>
+    emplaceBack(Args...args) {
+        node : LinkedListNode! = new LinkedListNode();
+        node.emplaceValue(args...);
+        if (_tail != null) {
+            _tail->_next = node;
+            _tail = _tail->_next;
+        } else {
+            _tail = node;
+            _head = node;
+        }
+        _size = _size + 1;
+    }
+
+    /**
+     * Construct an element in-place at the given index. O(n).
+     * If index <= 0, inserts at the front.
+     * If index >= size, inserts at the back.
+     */
+    template<typename...Args>
+    emplace(index : int, Args...args) {
+        node : LinkedListNode! = new LinkedListNode();
+        node.emplaceValue(args...);
+        if (index <= 0) {
+            node._next = _head;
+            if (_tail == null) {
+                _tail = node;
+            }
+            _head = node;
+            _size = _size + 1;
+            return;
+        }
+        if (index >= _size) {
+            if (_tail != null) {
+                _tail->_next = node;
+                _tail = _tail->_next;
+            } else {
+                _tail = node;
+                _head = node;
+            }
+            _size = _size + 1;
+            return;
+        }
+        prev : LinkedListNode* = _head;
+        i : int = 1;
+        while (i < index) {
+            prev = prev->_next;
+            i = i + 1;
+        }
+        node._next = prev->_next;
+        prev->_next = node;
         _size = _size + 1;
     }
 

@@ -416,6 +416,95 @@ TEST_CASE("LinkedList<Object*> — store and retrieve heap object pointers", "[l
 //     (T = Object!, the list holds owned pointers)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  5. insert — LinkedList<int>
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LinkedList<int> — insert at beginning, middle, end", "[libk][list][int][insert]") {
+    auto j = jit_k(R"SRC(
+        module __ll_int_insert__;
+
+        test() : int {
+            lst : LinkedList<int>;
+            a : int = 10;
+            b : int = 30;
+            lst.pushBack(a);
+            lst.pushBack(b);
+            // list: 10, 30
+
+            c : int = 20;
+            lst.insert(1, c);
+            // list: 10, 20, 30
+
+            d : int = 5;
+            lst.insert(0, d);
+            // list: 5, 10, 20, 30
+
+            e : int = 40;
+            lst.insert(100, e);
+            // list: 5, 10, 20, 30, 40
+
+            result : int = 0;
+            if (lst.getSize() == 5)  result = result + 1;
+            if (lst[0] == 5)         result = result + 10;
+            if (lst[1] == 10)        result = result + 100;
+            if (lst[2] == 20)        result = result + 1000;
+            if (lst[3] == 30)        result = result + 10000;
+            if (lst[4] == 40)        result = result + 100000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111111);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  6. insert — LinkedList<struct>
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LinkedList<Point> — insert struct at index", "[libk][list][struct][insert]") {
+    auto j = jit_k(R"SRC(
+        module __ll_struct_insert__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 0; y = 0; }
+        }
+
+        test() : int {
+            lst : LinkedList<Point>;
+            p1 : Point; p1.x = 1; p1.y = 2;
+            p3 : Point; p3.x = 5; p3.y = 6;
+            lst.pushBack(p1);
+            lst.pushBack(p3);
+            // list: (1,2), (5,6)
+
+            p2 : Point; p2.x = 3; p2.y = 4;
+            lst.insert(1, p2);
+            // list: (1,2), (3,4), (5,6)
+
+            result : int = 0;
+            if (lst.getSize() == 3)    result = result + 1;
+            if (lst[0].x == 1)         result = result + 10;
+            if (lst[1].x == 3)         result = result + 100;
+            if (lst[1].y == 4)         result = result + 1000;
+            if (lst[2].x == 5)         result = result + 10000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11111);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Existing owner tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
 TEST_CASE("LinkedList<Object!> — store and retrieve owners", "[libk][list][owner]") {
     auto j = jit_k(R"SRC(
         module __ll_owner__;

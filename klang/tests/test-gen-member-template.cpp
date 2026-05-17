@@ -220,3 +220,154 @@ TEST_CASE("Member template with implicit deduction", "[gen][member-template][ded
     REQUIRE(fn != nullptr);
     CHECK(fn() == 123);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  7. emplaceFront/emplaceBack/emplace — same-module LinkedList with struct
+// ════════════════════════════════════════════════════════════════════════════
+
+static constexpr const char* LINKEDLIST_EMPLACE_PREAMBLE = R"SRC(
+        namespace annotations {
+            annotation Intrinsic {
+                name : int;
+            }
+        }
+
+        template<typename T>
+        struct UniSlot {
+            private:
+            _slot : T;
+
+            public:
+            @annotations::Intrinsic(0)
+            UniSlot();
+
+            @annotations::Intrinsic(0)
+            ~UniSlot();
+
+            @annotations::Intrinsic(1)
+            template<typename...Args>
+            construct(Args...args);
+
+            @annotations::Intrinsic(2)
+            destruct();
+
+            get() : T& { return _slot; }
+        }
+
+        template<typename T>
+        struct SimpleList {
+            protected:
+            static struct Node {
+                _slot : UniSlot<T>;
+                _next : Node! = null;
+
+                Node() { _slot.construct(); }
+                ~Node() { _slot.destruct(); }
+
+                template<typename...Args>
+                emplaceValue(Args...args) {
+                    _slot.destruct();
+                    _slot.construct(args...);
+                }
+
+                getValue() : T& { return _slot.get(); }
+                setValue(value : T&) { _slot.get() = value; }
+            }
+
+            private:
+            _head : Node!;
+            _size : int;
+
+            public:
+            SimpleList() { _head = null; _size = 0; }
+            ~SimpleList() { clear(); }
+
+            const getSize() : int { return _size; }
+
+            pushFront(value : T&) {
+                node : Node! = new Node();
+                node.setValue(value);
+                node._next = _head;
+                _head = node;
+                _size = _size + 1;
+            }
+
+            template<typename...Args>
+            emplaceFront(Args...args) {
+                node : Node! = new Node();
+                node.emplaceValue(args...);
+                node._next = _head;
+                _head = node;
+                _size = _size + 1;
+            }
+
+            template<typename...Args>
+            emplaceBack(Args...args) {
+                node : Node! = new Node();
+                node.emplaceValue(args...);
+                if (_head == null) {
+                    _head = node;
+                } else {
+                    cur : Node* = _head;
+                    while (cur->_next != null) {
+                        cur = cur->_next;
+                    }
+                    cur->_next = node;
+                }
+                _size = _size + 1;
+            }
+
+            get(index : int) : T& {
+                cur : Node* = _head;
+                i : int = 0;
+                while (i < index) {
+                    cur = cur->_next;
+                    i = i + 1;
+                }
+                return cur->getValue();
+            }
+
+            clear() {
+                while (_head != null) {
+                    next : Node! = _head._next;
+                    _head = next;
+                }
+                _size = 0;
+            }
+        }
+)SRC";
+
+TEST_CASE("SimpleList emplaceFront with default constructor (zero args)", "[gen][member-template][emplace]") {
+    std::string src = std::string("module __mt_emplace_zero__;\n") + LINKEDLIST_EMPLACE_PREAMBLE + R"SRC(
+
+        struct Widget {
+            value : int;
+            Widget() { value = 77; }
+        }
+
+        test_emplace_zero() : int {
+            lst : SimpleList<Widget>;
+            lst.emplaceFront<>();
+            lst.emplaceBack<>();
+
+            result : int = 0;
+            if (lst.getSize() == 2)       result = result + 1;
+            if (lst.get(0).value == 77)   result = result + 10;
+            if (lst.get(1).value == 77)   result = result + 100;
+            return result;
+        }
+    )SRC";
+    auto jit = gen_jit(src);
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_emplace_zero");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 111);
+}
+
+// Note: emplaceFront/emplaceBack with explicit constructor args (e.g.
+// lst.emplaceFront<int, int>(10, 20)) is currently blocked by a compiler
+// limitation: nested variadic template pack forwarding does not correctly
+// deduce the inner template's parameter pack from the outer pack expansion.
+// The generated code selects the zero-arg construct intrinsic instead of
+// the arg-forwarding variant. This will be fixed in a future compiler update.
+
