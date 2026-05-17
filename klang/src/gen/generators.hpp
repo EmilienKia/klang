@@ -329,6 +329,16 @@ public:
      */
     void emit_intrinsic_unislot_destruct(function& function, llvm::Function* func);
 
+    // ── MultiSlot<T> intrinsic emitters ──────────────────────────────────────
+    void emit_intrinsic_multislot_constructor(function& function, llvm::Function* func);
+    void emit_intrinsic_multislot_destructor(function& function, llvm::Function* func);
+    void emit_intrinsic_multislot_allocate(function& function, llvm::Function* func);
+    void emit_intrinsic_multislot_reallocate(function& function, llvm::Function* func);
+    void emit_intrinsic_multislot_deallocate(function& function, llvm::Function* func);
+    void emit_intrinsic_multislot_construct(function& function, llvm::Function* func);
+    void emit_intrinsic_multislot_destruct(function& function, llvm::Function* func);
+    void emit_intrinsic_multislot_get(function& function, llvm::Function* func);
+
     /**
      * Emit function return epilogue: owner/struct parameter cleanup, return instruction,
      * NRVO alloca→sret replacement, dead instruction elimination, and verification.

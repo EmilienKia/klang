@@ -134,6 +134,15 @@ std::optional<std::string> get_intrinsic_name(const function& fn) {
         if (check_name == "get") {
             return prefix + "::get";
         }
+        if (check_name == "allocate") {
+            return prefix + "::allocate";
+        }
+        if (check_name == "reallocate") {
+            return prefix + "::reallocate";
+        }
+        if (check_name == "deallocate") {
+            return prefix + "::deallocate";
+        }
         if (check_name == "resize") {
             return prefix + "::resize";
         }
@@ -324,6 +333,469 @@ void implementation_generator::emit_intrinsic_unislot_destruct(function& functio
     }
 
     _builder->CreateRetVoid();
+    llvm::verifyFunction(*func);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiSlot::constructor — zero-init _data and _capacity
+// ─────────────────────────────────────────────────────────────────────────────
+
+void implementation_generator::emit_intrinsic_multislot_constructor(function& function, llvm::Function* func) {
+    // The constructor pre-block already does memset(this, 0, sizeof(struct)),
+    // which sets _data = null and _capacity = 0. Nothing extra needed.
+    _builder->CreateRetVoid();
+    llvm::verifyFunction(*func);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiSlot::destructor — free(_data) if non-null
+// ─────────────────────────────────────────────────────────────────────────────
+
+void implementation_generator::emit_intrinsic_multislot_destructor(function& function, llvm::Function* func) {
+    auto owner_st = function.get_owner();
+    if (!owner_st) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+    if (this_param_it == _context->_function_this_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto this_ptr = _builder->CreateLoad(
+        owner_st->get_struct_type()->get_reference()->get_llvm_type(),
+        this_param_it->second, "this_ptr");
+    if (!this_ptr) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    // GEP to _data field
+    auto data_field = owner_st->get_struct_type()->get_member("_data");
+    if (!data_field) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto data_ptr_ptr = _builder->CreateStructGEP(
+        _context->get_llvm_type(owner_st->get_struct_type()),
+        this_ptr, (unsigned)data_field->index, "data_ptr_ptr");
+
+    auto ptr_type = llvm::PointerType::get(_context->llvm_context(), 0);
+    auto data_ptr = _builder->CreateLoad(ptr_type, data_ptr_ptr, "data_ptr");
+
+    // if (data_ptr != null) free(data_ptr)
+    auto null_ptr = llvm::ConstantPointerNull::get(ptr_type);
+    auto is_not_null = _builder->CreateICmpNE(data_ptr, null_ptr, "is_not_null");
+
+    auto free_bb = llvm::BasicBlock::Create(_context->llvm_context(), "free_bb", func);
+    auto end_bb = llvm::BasicBlock::Create(_context->llvm_context(), "end_bb", func);
+    _builder->CreateCondBr(is_not_null, free_bb, end_bb);
+
+    _builder->SetInsertPoint(free_bb);
+    // Call free
+    auto free_func = _context->module().getOrInsertFunction("free",
+        llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {ptr_type}, false));
+    _builder->CreateCall(free_func, {data_ptr});
+    _builder->CreateBr(end_bb);
+
+    _builder->SetInsertPoint(end_bb);
+    _builder->CreateRetVoid();
+    llvm::verifyFunction(*func);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiSlot::allocate — malloc(capacity * sizeof(T)), store to _data/_capacity
+// ─────────────────────────────────────────────────────────────────────────────
+
+void implementation_generator::emit_intrinsic_multislot_allocate(function& function, llvm::Function* func) {
+    auto owner_st = function.get_owner();
+    if (!owner_st) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+    if (this_param_it == _context->_function_this_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto this_ptr = _builder->CreateLoad(
+        owner_st->get_struct_type()->get_reference()->get_llvm_type(),
+        this_param_it->second, "this_ptr");
+    if (!this_ptr) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    // Get the capacity parameter
+    auto& params = function.parameters();
+    if (params.empty()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto param_it = _context->_parameter_variables.find(params[0]);
+    if (param_it == _context->_parameter_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto capacity_val = _builder->CreateLoad(
+        llvm::Type::getInt32Ty(_context->llvm_context()), param_it->second, "capacity");
+
+    // Get T's LLVM type from _data member type
+    auto data_field = owner_st->get_struct_type()->get_member("_data");
+    auto cap_field = owner_st->get_struct_type()->get_member("_capacity");
+    if (!data_field || !cap_field) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    // Get element type T from the pointer type of _data
+    auto data_var = owner_st->variables().find("_data");
+    if (data_var == owner_st->variables().end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto data_type = data_var->second->get_type();
+    auto ptr_t = std::dynamic_pointer_cast<pointer_type>(data_type);
+    if (!ptr_t) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto elem_type = ptr_t->get_subtype();
+    auto* llvm_elem_type = _context->get_llvm_type(elem_type);
+
+    // sizeof(T)
+    auto& dl = _context->module().getDataLayout();
+    uint64_t elem_size = dl.getTypeAllocSize(llvm_elem_type);
+
+    // total_size = capacity * sizeof(T)
+    auto elem_size_val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(_context->llvm_context()), elem_size);
+    auto cap_i64 = _builder->CreateZExt(capacity_val, llvm::Type::getInt64Ty(_context->llvm_context()), "cap_i64");
+    auto total_size = _builder->CreateMul(cap_i64, elem_size_val, "total_size");
+
+    // Call malloc
+    auto ptr_type = llvm::PointerType::get(_context->llvm_context(), 0);
+    auto malloc_func = _context->module().getOrInsertFunction("malloc",
+        llvm::FunctionType::get(ptr_type, {llvm::Type::getInt64Ty(_context->llvm_context())}, false));
+    auto new_ptr = _builder->CreateCall(malloc_func, {total_size}, "new_data");
+
+    // Store _data
+    auto data_ptr_ptr = _builder->CreateStructGEP(
+        _context->get_llvm_type(owner_st->get_struct_type()),
+        this_ptr, (unsigned)data_field->index, "data_ptr_ptr");
+    _builder->CreateStore(new_ptr, data_ptr_ptr);
+
+    // Store _capacity
+    auto cap_ptr = _builder->CreateStructGEP(
+        _context->get_llvm_type(owner_st->get_struct_type()),
+        this_ptr, (unsigned)cap_field->index, "cap_ptr");
+    _builder->CreateStore(capacity_val, cap_ptr);
+
+    _builder->CreateRetVoid();
+    llvm::verifyFunction(*func);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiSlot::reallocate — realloc(_data, newCapacity * sizeof(T))
+// ─────────────────────────────────────────────────────────────────────────────
+
+void implementation_generator::emit_intrinsic_multislot_reallocate(function& function, llvm::Function* func) {
+    auto owner_st = function.get_owner();
+    if (!owner_st) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+    if (this_param_it == _context->_function_this_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto this_ptr = _builder->CreateLoad(
+        owner_st->get_struct_type()->get_reference()->get_llvm_type(),
+        this_param_it->second, "this_ptr");
+    if (!this_ptr) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    // Get the newCapacity parameter
+    auto& params = function.parameters();
+    if (params.empty()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto param_it = _context->_parameter_variables.find(params[0]);
+    if (param_it == _context->_parameter_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto new_cap_val = _builder->CreateLoad(
+        llvm::Type::getInt32Ty(_context->llvm_context()), param_it->second, "new_capacity");
+
+    auto data_field = owner_st->get_struct_type()->get_member("_data");
+    auto cap_field = owner_st->get_struct_type()->get_member("_capacity");
+    if (!data_field || !cap_field) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    // Get element type T
+    auto data_var = owner_st->variables().find("_data");
+    if (data_var == owner_st->variables().end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto data_type = data_var->second->get_type();
+    auto ptr_t = std::dynamic_pointer_cast<pointer_type>(data_type);
+    if (!ptr_t) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto elem_type = ptr_t->get_subtype();
+    auto* llvm_elem_type = _context->get_llvm_type(elem_type);
+
+    // sizeof(T)
+    auto& dl = _context->module().getDataLayout();
+    uint64_t elem_size = dl.getTypeAllocSize(llvm_elem_type);
+    auto elem_size_val = llvm::ConstantInt::get(llvm::Type::getInt64Ty(_context->llvm_context()), elem_size);
+    auto cap_i64 = _builder->CreateZExt(new_cap_val, llvm::Type::getInt64Ty(_context->llvm_context()), "cap_i64");
+    auto total_size = _builder->CreateMul(cap_i64, elem_size_val, "total_size");
+
+    // Load current _data
+    auto ptr_type = llvm::PointerType::get(_context->llvm_context(), 0);
+    auto data_ptr_ptr = _builder->CreateStructGEP(
+        _context->get_llvm_type(owner_st->get_struct_type()),
+        this_ptr, (unsigned)data_field->index, "data_ptr_ptr");
+    auto old_ptr = _builder->CreateLoad(ptr_type, data_ptr_ptr, "old_data");
+
+    // Call realloc
+    auto realloc_func = _context->module().getOrInsertFunction("realloc",
+        llvm::FunctionType::get(ptr_type, {ptr_type, llvm::Type::getInt64Ty(_context->llvm_context())}, false));
+    auto new_ptr = _builder->CreateCall(realloc_func, {old_ptr, total_size}, "new_data");
+
+    // Store new _data
+    _builder->CreateStore(new_ptr, data_ptr_ptr);
+
+    // Store new _capacity
+    auto cap_ptr = _builder->CreateStructGEP(
+        _context->get_llvm_type(owner_st->get_struct_type()),
+        this_ptr, (unsigned)cap_field->index, "cap_ptr");
+    _builder->CreateStore(new_cap_val, cap_ptr);
+
+    _builder->CreateRetVoid();
+    llvm::verifyFunction(*func);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiSlot::deallocate — free(_data), _data = null, _capacity = 0
+// ─────────────────────────────────────────────────────────────────────────────
+
+void implementation_generator::emit_intrinsic_multislot_deallocate(function& function, llvm::Function* func) {
+    auto owner_st = function.get_owner();
+    if (!owner_st) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+    if (this_param_it == _context->_function_this_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto this_ptr = _builder->CreateLoad(
+        owner_st->get_struct_type()->get_reference()->get_llvm_type(),
+        this_param_it->second, "this_ptr");
+    if (!this_ptr) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto data_field = owner_st->get_struct_type()->get_member("_data");
+    auto cap_field = owner_st->get_struct_type()->get_member("_capacity");
+    if (!data_field || !cap_field) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto ptr_type = llvm::PointerType::get(_context->llvm_context(), 0);
+    auto data_ptr_ptr = _builder->CreateStructGEP(
+        _context->get_llvm_type(owner_st->get_struct_type()),
+        this_ptr, (unsigned)data_field->index, "data_ptr_ptr");
+    auto data_ptr = _builder->CreateLoad(ptr_type, data_ptr_ptr, "data_ptr");
+
+    // Call free
+    auto free_func = _context->module().getOrInsertFunction("free",
+        llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {ptr_type}, false));
+    _builder->CreateCall(free_func, {data_ptr});
+
+    // Store null to _data
+    _builder->CreateStore(llvm::ConstantPointerNull::get(ptr_type), data_ptr_ptr);
+
+    // Store 0 to _capacity
+    auto cap_ptr = _builder->CreateStructGEP(
+        _context->get_llvm_type(owner_st->get_struct_type()),
+        this_ptr, (unsigned)cap_field->index, "cap_ptr");
+    _builder->CreateStore(llvm::ConstantInt::get(llvm::Type::getInt32Ty(_context->llvm_context()), 0), cap_ptr);
+
+    _builder->CreateRetVoid();
+    llvm::verifyFunction(*func);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiSlot::construct — placement new on _data[index] with forwarded args
+// ─────────────────────────────────────────────────────────────────────────────
+
+void implementation_generator::emit_intrinsic_multislot_construct(function& function, llvm::Function* func) {
+    auto owner_st = function.get_owner();
+    if (!owner_st) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+    if (this_param_it == _context->_function_this_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto this_ptr = _builder->CreateLoad(
+        owner_st->get_struct_type()->get_reference()->get_llvm_type(),
+        this_param_it->second, "this_ptr");
+    if (!this_ptr) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    // Parameters: first is 'index', rest are constructor args
+    auto& params = function.parameters();
+    if (params.empty()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    // Load index parameter
+    auto idx_it = _context->_parameter_variables.find(params[0]);
+    if (idx_it == _context->_parameter_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto index_val = _builder->CreateLoad(
+        llvm::Type::getInt32Ty(_context->llvm_context()), idx_it->second, "index");
+
+    // Get _data pointer
+    auto data_field = owner_st->get_struct_type()->get_member("_data");
+    if (!data_field) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto data_ptr_ptr = _builder->CreateStructGEP(
+        _context->get_llvm_type(owner_st->get_struct_type()),
+        this_ptr, (unsigned)data_field->index, "data_ptr_ptr");
+
+    // Get element type T
+    auto data_var = owner_st->variables().find("_data");
+    if (data_var == owner_st->variables().end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto data_type = data_var->second->get_type();
+    auto ptr_t = std::dynamic_pointer_cast<pointer_type>(data_type);
+    if (!ptr_t) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto elem_type = ptr_t->get_subtype();
+    auto* llvm_elem_type = _context->get_llvm_type(elem_type);
+
+    auto ptr_type = llvm::PointerType::get(_context->llvm_context(), 0);
+    auto data_ptr = _builder->CreateLoad(ptr_type, data_ptr_ptr, "data_ptr");
+
+    // GEP to _data[index]
+    auto elem_ptr = _builder->CreateGEP(llvm_elem_type, data_ptr, {index_val}, "elem_ptr");
+
+    // Check if T is a struct type with constructors
+    auto slot_st_type = std::dynamic_pointer_cast<struct_type>(elem_type);
+    if (!slot_st_type || !slot_st_type->get_struct()) {
+        // Primitive type — nothing to construct
+        _builder->CreateRetVoid();
+        llvm::verifyFunction(*func);
+        return;
+    }
+
+    auto target_struct = slot_st_type->get_struct();
+
+    // Collect constructor args (parameters after index)
+    std::vector<llvm::Value*> ctor_args = {elem_ptr};
+    std::vector<std::shared_ptr<type>> arg_types;
+    for (size_t i = 1; i < params.size(); ++i) {
+        auto param_it = _context->_parameter_variables.find(params[i]);
+        if (param_it != _context->_parameter_variables.end()) {
+            auto* param_ty = _context->get_llvm_type(params[i]->get_type());
+            auto loaded = _builder->CreateLoad(param_ty, param_it->second, params[i]->get_short_name());
+            ctor_args.push_back(loaded);
+            arg_types.push_back(params[i]->get_type());
+        }
+    }
+
+    // Find matching constructor
+    std::shared_ptr<constructor> best_ctor;
+    if (arg_types.empty()) {
+        for (auto& ctor : target_struct->constructors()) {
+            if (ctor->is_deleted()) continue;
+            if (ctor->get_parameter_size() == 0) { best_ctor = ctor; break; }
+        }
+    } else {
+        for (auto& ctor : target_struct->constructors()) {
+            if (ctor->is_deleted()) continue;
+            if (ctor->get_parameter_size() != arg_types.size()) continue;
+            bool match = true;
+            for (size_t i = 0; i < arg_types.size(); ++i) {
+                auto param_type = ctor->parameters()[i]->get_type();
+                if (param_type && arg_types[i] && param_type != arg_types[i]) {
+                    auto p1 = std::dynamic_pointer_cast<primitive_type>(param_type);
+                    auto p2 = std::dynamic_pointer_cast<primitive_type>(arg_types[i]);
+                    if (!p1 || !p2 || p1->get_type() != p2->get_type()) {
+                        match = false; break;
+                    }
+                }
+            }
+            if (match) { best_ctor = ctor; break; }
+        }
+    }
+
+    if (best_ctor) {
+        auto ctor_it = _context->_functions.find(best_ctor->shared_as<model::function>());
+        if (ctor_it != _context->_functions.end()) {
+            _builder->CreateCall(ctor_it->second, ctor_args);
+        }
+    }
+
+    _builder->CreateRetVoid();
+    llvm::verifyFunction(*func);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiSlot::destruct — call destructor on _data[index]
+// ─────────────────────────────────────────────────────────────────────────────
+
+void implementation_generator::emit_intrinsic_multislot_destruct(function& function, llvm::Function* func) {
+    auto owner_st = function.get_owner();
+    if (!owner_st) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+    if (this_param_it == _context->_function_this_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto this_ptr = _builder->CreateLoad(
+        owner_st->get_struct_type()->get_reference()->get_llvm_type(),
+        this_param_it->second, "this_ptr");
+    if (!this_ptr) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    // Get index parameter
+    auto& params = function.parameters();
+    if (params.empty()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto idx_it = _context->_parameter_variables.find(params[0]);
+    if (idx_it == _context->_parameter_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto index_val = _builder->CreateLoad(
+        llvm::Type::getInt32Ty(_context->llvm_context()), idx_it->second, "index");
+
+    // Get _data pointer
+    auto data_field = owner_st->get_struct_type()->get_member("_data");
+    if (!data_field) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto data_ptr_ptr = _builder->CreateStructGEP(
+        _context->get_llvm_type(owner_st->get_struct_type()),
+        this_ptr, (unsigned)data_field->index, "data_ptr_ptr");
+
+    // Get element type T
+    auto data_var = owner_st->variables().find("_data");
+    if (data_var == owner_st->variables().end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto data_type = data_var->second->get_type();
+    auto ptr_t = std::dynamic_pointer_cast<pointer_type>(data_type);
+    if (!ptr_t) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto elem_type = ptr_t->get_subtype();
+    auto* llvm_elem_type = _context->get_llvm_type(elem_type);
+
+    auto ptr_type = llvm::PointerType::get(_context->llvm_context(), 0);
+    auto data_ptr = _builder->CreateLoad(ptr_type, data_ptr_ptr, "data_ptr");
+
+    // GEP to _data[index]
+    auto elem_ptr = _builder->CreateGEP(llvm_elem_type, data_ptr, {index_val}, "elem_ptr");
+
+    // Check if T is a struct type with a destructor
+    auto slot_st_type = std::dynamic_pointer_cast<struct_type>(elem_type);
+    if (!slot_st_type || !slot_st_type->get_struct()) {
+        _builder->CreateRetVoid();
+        llvm::verifyFunction(*func);
+        return;
+    }
+
+    auto target_struct = slot_st_type->get_struct();
+    auto target_dtor = target_struct->get_destructor();
+    if (target_dtor) {
+        auto dtor_it = _context->_functions.find(target_dtor->shared_as<model::function>());
+        if (dtor_it != _context->_functions.end()) {
+            _builder->CreateCall(dtor_it->second, {elem_ptr});
+        }
+    }
+
+    _builder->CreateRetVoid();
+    llvm::verifyFunction(*func);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiSlot::get — return reference to _data[index]
+// ─────────────────────────────────────────────────────────────────────────────
+
+void implementation_generator::emit_intrinsic_multislot_get(function& function, llvm::Function* func) {
+    auto owner_st = function.get_owner();
+    if (!owner_st) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto this_param_it = _context->_function_this_variables.find(function.shared_as<model::function>());
+    if (this_param_it == _context->_function_this_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto this_ptr = _builder->CreateLoad(
+        owner_st->get_struct_type()->get_reference()->get_llvm_type(),
+        this_param_it->second, "this_ptr");
+    if (!this_ptr) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    // Get index parameter
+    auto& params = function.parameters();
+    if (params.empty()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto idx_it = _context->_parameter_variables.find(params[0]);
+    if (idx_it == _context->_parameter_variables.end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto index_val = _builder->CreateLoad(
+        llvm::Type::getInt32Ty(_context->llvm_context()), idx_it->second, "index");
+
+    // Get _data pointer
+    auto data_field = owner_st->get_struct_type()->get_member("_data");
+    if (!data_field) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+
+    auto data_ptr_ptr = _builder->CreateStructGEP(
+        _context->get_llvm_type(owner_st->get_struct_type()),
+        this_ptr, (unsigned)data_field->index, "data_ptr_ptr");
+
+    // Get element type T
+    auto data_var = owner_st->variables().find("_data");
+    if (data_var == owner_st->variables().end()) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto data_type = data_var->second->get_type();
+    auto ptr_t = std::dynamic_pointer_cast<pointer_type>(data_type);
+    if (!ptr_t) { _builder->CreateRetVoid(); llvm::verifyFunction(*func); return; }
+    auto elem_type = ptr_t->get_subtype();
+    auto* llvm_elem_type = _context->get_llvm_type(elem_type);
+
+    auto ptr_type = llvm::PointerType::get(_context->llvm_context(), 0);
+    auto data_ptr = _builder->CreateLoad(ptr_type, data_ptr_ptr, "data_ptr");
+
+    // GEP to _data[index]
+    auto elem_ptr = _builder->CreateGEP(llvm_elem_type, data_ptr, {index_val}, "elem_ptr");
+
+    // Return the pointer as reference
+    _builder->CreateRet(elem_ptr);
     llvm::verifyFunction(*func);
 }
 

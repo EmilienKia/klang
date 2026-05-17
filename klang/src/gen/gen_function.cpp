@@ -1109,6 +1109,30 @@ void implementation_generator::visit_function(function &function) {
         } else if (*intrinsic == "UniSlot::destruct") {
             emit_intrinsic_unislot_destruct(function, func);
             return;
+        } else if (*intrinsic == "MultiSlot::constructor") {
+            emit_intrinsic_multislot_constructor(function, func);
+            return;
+        } else if (*intrinsic == "MultiSlot::destructor") {
+            emit_intrinsic_multislot_destructor(function, func);
+            return;
+        } else if (*intrinsic == "MultiSlot::allocate") {
+            emit_intrinsic_multislot_allocate(function, func);
+            return;
+        } else if (*intrinsic == "MultiSlot::reallocate") {
+            emit_intrinsic_multislot_reallocate(function, func);
+            return;
+        } else if (*intrinsic == "MultiSlot::deallocate") {
+            emit_intrinsic_multislot_deallocate(function, func);
+            return;
+        } else if (*intrinsic == "MultiSlot::construct") {
+            emit_intrinsic_multislot_construct(function, func);
+            return;
+        } else if (*intrinsic == "MultiSlot::destruct") {
+            emit_intrinsic_multislot_destruct(function, func);
+            return;
+        } else if (*intrinsic == "MultiSlot::get") {
+            emit_intrinsic_multislot_get(function, func);
+            return;
         }
         // Unknown intrinsic — fall through to normal codegen (may fail)
     }

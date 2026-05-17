@@ -63,3 +63,64 @@ struct UniSlot {
     get() : T& { return _slot; }
 }
 
+
+/**
+ * MultiSlot<T> — raw storage for a dynamically-allocated array of T objects.
+ *
+ * Memory is allocated via malloc/realloc/free but objects are NOT
+ * automatically constructed or destroyed. The user must explicitly call
+ * construct(index) / destruct(index) for each element's lifetime.
+ *
+ * This is the array counterpart to UniSlot<T>: it manages a buffer of
+ * uninitialized storage that can hold up to 'capacity' objects of type T.
+ *
+ * Usage:
+ *   slots : MultiSlot<Point>;
+ *   slots.allocate(10);                   // allocate buffer for 10 Points
+ *   slots.construct<int, int>(0, 1, 2);   // construct Point(1,2) at index 0
+ *   slots.get(0).doSomething();
+ *   slots.destruct(0);                    // destroy Point at index 0
+ *   slots.deallocate();                   // free the buffer
+ *
+ * Reallocate preserves raw memory content (but not object validity beyond
+ * the old capacity — the caller must track which indices are alive):
+ *   slots.reallocate(20);                 // grow buffer to 20 elements
+ *
+ * Calling destruct() on an unconstructed index, or construct() on an
+ * already-constructed index without intervening destruct(), is undefined
+ * behaviour.
+ */
+template<typename T>
+struct MultiSlot {
+    private:
+    _data : T*;
+    _capacity : int;
+
+    public:
+    @annotations::Intrinsic("MultiSlot::constructor")
+    MultiSlot();
+
+    @annotations::Intrinsic("MultiSlot::destructor")
+    ~MultiSlot();
+
+    @annotations::Intrinsic("MultiSlot::allocate")
+    allocate(capacity : int);
+
+    @annotations::Intrinsic("MultiSlot::reallocate")
+    reallocate(newCapacity : int);
+
+    @annotations::Intrinsic("MultiSlot::deallocate")
+    deallocate();
+
+    @annotations::Intrinsic("MultiSlot::construct")
+    template<typename...Args>
+    construct(index : int, Args...args);
+
+    @annotations::Intrinsic("MultiSlot::destruct")
+    destruct(index : int);
+
+    @annotations::Intrinsic("MultiSlot::get")
+    get(index : int) : T&;
+
+    const getCapacity() : int { return _capacity; }
+}
