@@ -45,7 +45,15 @@ std::string build_instantiation_key(const std::vector<template_argument>& args) 
     oss << "<";
     for (size_t i = 0; i < args.size(); ++i) {
         if (i > 0) oss << ",";
-        if (args[i].is_type()) {
+        if (args[i].is_pack()) {
+            // Pack argument: encode as "{type1,type2,...}" to distinguish different pack sizes
+            oss << "{";
+            for (size_t j = 0; j < args[i].pack_types.size(); ++j) {
+                if (j > 0) oss << ",";
+                oss << type_display_name(args[i].pack_types[j]);
+            }
+            oss << "}";
+        } else if (args[i].is_type()) {
             oss << type_display_name(args[i].type_arg);
         } else if (args[i].value_arg.has_value()) {
             std::visit([&oss](auto&& v) {
@@ -76,7 +84,20 @@ std::string build_instantiated_name(const std::string& base_name,
     oss << base_name << "__";
     for (size_t i = 0; i < args.size(); ++i) {
         if (i > 0) oss << "_";
-        if (args[i].is_type()) {
+        if (args[i].is_pack()) {
+            // Pack argument: encode count and types
+            for (size_t j = 0; j < args[i].pack_types.size(); ++j) {
+                if (j > 0) oss << "_";
+                std::string tn = type_display_name(args[i].pack_types[j]);
+                for (char& c : tn) {
+                    if (!std::isalnum(c)) c = '_';
+                }
+                oss << tn;
+            }
+            if (args[i].pack_types.empty()) {
+                oss << "0"; // empty pack
+            }
+        } else if (args[i].is_type()) {
             std::string tn = type_display_name(args[i].type_arg);
             for (char& c : tn) {
                 if (!std::isalnum(c)) c = '_';

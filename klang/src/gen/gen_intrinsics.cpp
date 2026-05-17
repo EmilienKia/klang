@@ -200,7 +200,21 @@ void implementation_generator::emit_intrinsic_unislot_construct(function& functi
     auto slot_type = slot_var->second->get_type();
     auto slot_st_type = std::dynamic_pointer_cast<struct_type>(slot_type);
     if (!slot_st_type || !slot_st_type->get_struct()) {
-        // Primitive type — nothing to construct
+        // Primitive type — handle zero-init or direct store
+        auto& uni_params = function.parameters();
+        if (!uni_params.empty()) {
+            // Has constructor arg: store first arg into _slot
+            auto param_it = _context->_parameter_variables.find(uni_params[0]);
+            if (param_it != _context->_parameter_variables.end()) {
+                auto* param_ty = _context->get_llvm_type(uni_params[0]->get_type());
+                auto loaded = _builder->CreateLoad(param_ty, param_it->second, "arg_val");
+                _builder->CreateStore(loaded, slot_ptr);
+            }
+        } else {
+            // No args: zero-initialize
+            auto* llvm_slot_type = _context->get_llvm_type(slot_type);
+            _builder->CreateStore(llvm::Constant::getNullValue(llvm_slot_type), slot_ptr);
+        }
         _builder->CreateRetVoid();
         llvm::verifyFunction(*func);
         return;
@@ -623,7 +637,19 @@ void implementation_generator::emit_intrinsic_multislot_construct(function& func
     // Check if T is a struct type with constructors
     auto slot_st_type = std::dynamic_pointer_cast<struct_type>(elem_type);
     if (!slot_st_type || !slot_st_type->get_struct()) {
-        // Primitive type — nothing to construct
+        // Primitive type — handle zero-init or direct store
+        if (params.size() > 1) {
+            // Has constructor arg(s): store the first one into _data[index]
+            auto param_it = _context->_parameter_variables.find(params[1]);
+            if (param_it != _context->_parameter_variables.end()) {
+                auto* param_ty = _context->get_llvm_type(params[1]->get_type());
+                auto loaded = _builder->CreateLoad(param_ty, param_it->second, "arg_val");
+                _builder->CreateStore(loaded, elem_ptr);
+            }
+        } else {
+            // No args: zero-initialize
+            _builder->CreateStore(llvm::Constant::getNullValue(llvm_elem_type), elem_ptr);
+        }
         _builder->CreateRetVoid();
         llvm::verifyFunction(*func);
         return;

@@ -870,7 +870,7 @@ struct Vector {
             grow(_size + 1);
         }
         idx : int = _size;
-        _slot.construct<Args...>(idx, args...);
+        _slot.construct(idx, args...);
         _size = _size + 1;
     }
 
@@ -930,7 +930,7 @@ struct Vector {
             // Destruct existing element before re-constructing in place
             _slot.destruct(index);
         }
-        _slot.construct<Args...>(index, args...);
+        _slot.construct(index, args...);
         _size = _size + 1;
     }
 

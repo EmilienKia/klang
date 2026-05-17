@@ -564,14 +564,152 @@ TEST_CASE("Vector<Derived> — derived enum", "[libk][vector][enum]") {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  5. Emplace operations — Vector<T>
-//
-//  Note: ALL emplace operations on Vector<T> are currently blocked by a compiler
-//  limitation. Unlike LinkedList/DoubleLinkedList (which route through
-//  UniSlot::construct via LinkedListNode::emplaceValue), Vector directly calls
-//  MultiSlot::construct<Args...>(index, args...). Even the zero-arg instantiation
-//  triggers a type resolution error because the variadic template forwarding
-//  chain to the intrinsic fails at the MultiSlot level.
-//  See test-gen-member-template.cpp for related variadic template limitations.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("Vector<int> — emplaceBack zero-arg", "[libk][vector][emplace]") {
+    auto j = jit_k(R"SRC(
+        module __vec_emplace_int0__;
+
+        test() : int {
+            vec : Vector<int>;
+            vec.emplaceBack();
+            vec.emplaceBack();
+            vec.emplaceBack();
+
+            result : int = 0;
+            if (vec.getSize() == 3)  result = result + 1;
+            // Default-constructed ints are 0 (zero-initialized by MultiSlot)
+            if (vec[0] == 0)         result = result + 10;
+            if (vec[1] == 0)         result = result + 100;
+            if (vec[2] == 0)         result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+TEST_CASE("Vector<Point> — emplaceBack with constructor args", "[libk][vector][emplace]") {
+    auto j = jit_k(R"SRC(
+        module __vec_emplace_pt__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 0; y = 0; }
+            Point(ax : int, ay : int) { x = ax; y = ay; }
+        }
+
+        test() : int {
+            vec : Vector<Point>;
+            vec.emplaceBack(10, 20);
+            vec.emplaceBack(30, 40);
+            vec.emplaceBack(50, 60);
+
+            result : int = 0;
+            if (vec.getSize() == 3)  result = result + 1;
+            if (vec[0].x == 10)      result = result + 10;
+            if (vec[0].y == 20)      result = result + 100;
+            if (vec[1].x == 30)      result = result + 1000;
+            if (vec[2].y == 60)      result = result + 10000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11111);
+}
+
+TEST_CASE("Vector<Point> — emplaceBack zero-arg (default ctor)", "[libk][vector][emplace]") {
+    auto j = jit_k(R"SRC(
+        module __vec_emplace_pt0__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 99; y = 77; }
+        }
+
+        test() : int {
+            vec : Vector<Point>;
+            vec.emplaceBack();
+            vec.emplaceBack();
+
+            result : int = 0;
+            if (vec.getSize() == 2)  result = result + 1;
+            if (vec[0].x == 99)      result = result + 10;
+            if (vec[0].y == 77)      result = result + 100;
+            if (vec[1].x == 99)      result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+TEST_CASE("Vector<int> — emplace at index zero-arg", "[libk][vector][emplace]") {
+    auto j = jit_k(R"SRC(
+        module __vec_emplace_idx__;
+
+        test() : int {
+            vec : Vector<int>;
+            a : int = 10;
+            b : int = 30;
+            vec.pushBack(a);
+            vec.pushBack(b);
+            // Emplace at index 1 — default int (0)
+            vec.emplace(1);
+            // vec: 10, 0, 30
+
+            result : int = 0;
+            if (vec.getSize() == 3)  result = result + 1;
+            if (vec[0] == 10)        result = result + 10;
+            if (vec[1] == 0)         result = result + 100;
+            if (vec[2] == 30)        result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+TEST_CASE("Vector<Point> — emplace at index with args", "[libk][vector][emplace]") {
+    auto j = jit_k(R"SRC(
+        module __vec_emplace_pt_idx__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 0; y = 0; }
+            Point(ax : int, ay : int) { x = ax; y = ay; }
+        }
+
+        test() : int {
+            vec : Vector<Point>;
+            vec.emplaceBack(1, 2);
+            vec.emplaceBack(5, 6);
+            vec.emplace(1, 3, 4);
+            // vec: Point(1,2), Point(3,4), Point(5,6)
+
+            result : int = 0;
+            if (vec.getSize() == 3)  result = result + 1;
+            if (vec[0].x == 1)       result = result + 10;
+            if (vec[1].x == 3)       result = result + 100;
+            if (vec[1].y == 4)       result = result + 1000;
+            if (vec[2].x == 5)       result = result + 10000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11111);
+}
 

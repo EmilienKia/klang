@@ -121,7 +121,14 @@ deduction_result deduce_template_arguments(
             const std::string& pack_name = param->pack_param_name();
             std::vector<std::shared_ptr<type>> pack_types;
             while (arg_idx < arg_types.size()) {
-                pack_types.push_back(arg_types[arg_idx]);
+                // Strip reference/drain wrappers — like C++ deduction stripping
+                // top-level references.  The call-site expression type for a
+                // variable access is T& but the deduced pack type should be T.
+                auto at = arg_types[arg_idx];
+                if (at && (type::is_reference(at) || type::is_drain(at))) {
+                    at = at->get_subtype();
+                }
+                pack_types.push_back(at);
                 ++arg_idx;
             }
             pack_deductions[pack_name] = std::move(pack_types);
