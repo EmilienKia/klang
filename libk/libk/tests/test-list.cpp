@@ -502,6 +502,121 @@ TEST_CASE("LinkedList<Point> — insert struct at index", "[libk][list][struct][
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  7. Enum type — LinkedList<Color>
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LinkedList<Color> — pushBack, insert, peek with enum", "[libk][list][enum]") {
+    auto j = jit_k(R"SRC(
+        module __ll_enum_full__;
+
+        enum Color {
+            RED = 0;
+            GREEN = 1;
+            BLUE = 2;
+        };
+
+        test() : int {
+            lst : LinkedList<Color>;
+            r : Color = Color::RED;
+            g : Color = Color::GREEN;
+            b : Color = Color::BLUE;
+            lst.pushBack(r);
+            lst.pushBack(b);
+            lst.insert(1, g);
+            // order: RED, GREEN, BLUE
+
+            result : int = 0;
+            if (lst.getSize() == 3)              result = result + 1;
+            if (lst.peekFront() == Color::RED)   result = result + 10;
+            if (lst[1] == Color::GREEN)          result = result + 100;
+            if (lst.peekBack() == Color::BLUE)   result = result + 1000;
+
+            lst.removeFront();
+            if (lst.peekFront() == Color::GREEN) result = result + 10000;
+
+            lst.clear();
+            if (lst.isEmpty())                   result = result + 100000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111111);
+}
+
+TEST_CASE("LinkedList<Direction> — plain enum with auto values", "[libk][list][enum]") {
+    auto j = jit_k(R"SRC(
+        module __ll_enum_plain__;
+
+        enum Direction {
+            NORTH;
+            SOUTH;
+            EAST;
+            WEST;
+        };
+
+        test() : int {
+            lst : LinkedList<Direction>;
+            n : Direction = Direction::NORTH;
+            s : Direction = Direction::SOUTH;
+            e : Direction = Direction::EAST;
+            lst.pushBack(n);
+            lst.pushBack(e);
+            lst.insert(1, s);
+            // order: NORTH, SOUTH, EAST
+
+            result : int = 0;
+            if (lst.getSize() == 3)              result = result + 1;
+            if (lst[0] == Direction::NORTH)      result = result + 10;
+            if (lst[1] == Direction::SOUTH)      result = result + 100;
+            if (lst[2] == Direction::EAST)       result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+TEST_CASE("LinkedList<Derived> — derived enum insert and access", "[libk][list][enum]") {
+    auto j = jit_k(R"SRC(
+        module __ll_derived_enum__;
+
+        enum Base {
+            A = 0;
+            B = 1;
+        };
+        enum Derived : Base {
+            C = 2;
+        };
+
+        test() : int {
+            lst : LinkedList<Derived>;
+            a : Derived = Derived::A;
+            b : Derived = Derived::B;
+            c : Derived = Derived::C;
+            lst.pushBack(a);
+            lst.pushBack(c);
+            lst.insert(1, b);
+            // order: A(0), B(1), C(2)
+
+            result : int = 0;
+            if (lst.getSize() == 3)            result = result + 1;
+            if (lst[0] == Derived::A)          result = result + 10;
+            if (lst[1] == Derived::B)          result = result + 100;
+            if (lst[2] == Derived::C)          result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  Existing owner tests
 // ═══════════════════════════════════════════════════════════════════════════════
 

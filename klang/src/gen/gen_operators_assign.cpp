@@ -459,7 +459,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             expr.assign_right(right);
         }
         return;
-    } else if(!type::is_primitive(target_type)) {
+    } else if(!type::is_primitive(target_type) && !type::is_enum(target_type)) {
         throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_MAIN_WRONG_PARAMS), expr.first_lexeme(),
             "Assignment to a non-primitive, non-pointer type is not yet supported: "
             "the target has type '{}'; only assignments to primitive types, pointers and arrays are supported",
