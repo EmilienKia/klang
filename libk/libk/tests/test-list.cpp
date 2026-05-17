@@ -962,3 +962,182 @@ TEST_CASE("DoubleLinkedList<Color> — enum type", "[libk][list][dlist][enum]") 
     REQUIRE(fn);
     CHECK(fn() == 1111);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  8. Emplace operations — zero-arg (default constructor)
+//
+//  Note: emplace with explicit constructor args (e.g. lst.emplaceBack<int>(10))
+//  is currently blocked by a compiler limitation: nested variadic template pack
+//  forwarding does not correctly deduce the inner template's parameter pack from
+//  the outer pack expansion. The generated code selects the zero-arg construct
+//  intrinsic instead of the arg-forwarding variant.
+//  See test-gen-member-template.cpp for the canonical documentation of this limitation.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("LinkedList<Point> — emplaceBack zero-arg (default ctor)", "[libk][list][struct][emplace]") {
+    auto j = jit_k(R"SRC(
+        module __ll_pt_emb0__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 0; y = 0; }
+        }
+
+        test() : int {
+            lst : LinkedList<Point>;
+            lst.emplaceBack<>();
+            lst.emplaceBack<>();
+
+            result : int = 0;
+            if (lst.getSize() == 2)      result = result + 1;
+            if (lst[0].x == 0)           result = result + 10;
+            if (lst[0].y == 0)           result = result + 100;
+            if (lst[1].x == 0)           result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+TEST_CASE("LinkedList<Point> — emplaceFront zero-arg (default ctor)", "[libk][list][struct][emplace]") {
+    auto j = jit_k(R"SRC(
+        module __ll_pt_emf0__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 7; y = 9; }
+        }
+
+        test() : int {
+            lst : LinkedList<Point>;
+            lst.emplaceFront<>();
+            lst.emplaceFront<>();
+            // both nodes constructed with defaults (7,9)
+
+            result : int = 0;
+            if (lst.getSize() == 2)      result = result + 1;
+            if (lst[0].x == 7)           result = result + 10;
+            if (lst[0].y == 9)           result = result + 100;
+            if (lst[1].x == 7)           result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+TEST_CASE("LinkedList<Point> — emplace zero-arg at index", "[libk][list][struct][emplace]") {
+    auto j = jit_k(R"SRC(
+        module __ll_pt_emi0__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 5; y = 3; }
+        }
+
+        test() : int {
+            lst : LinkedList<Point>;
+            lst.emplaceBack<>();
+            lst.emplaceBack<>();
+            lst.emplace<>(1);
+            // list: (5,3), (5,3), (5,3)
+
+            result : int = 0;
+            if (lst.getSize() == 3)      result = result + 1;
+            if (lst[1].x == 5)           result = result + 10;
+            if (lst[1].y == 3)           result = result + 100;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  9. DoubleLinkedList — zero-arg emplace operations
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("DoubleLinkedList<Point> — emplaceBack/emplaceFront/emplace zero-arg", "[libk][list][dlist][struct][emplace]") {
+    auto j = jit_k(R"SRC(
+        module __dll_pt_emp0__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point() { x = 1; y = 2; }
+        }
+
+        test() : int {
+            lst : DoubleLinkedList<Point>;
+            lst.emplaceBack<>();
+            lst.emplaceBack<>();
+            lst.emplaceFront<>();
+            lst.emplace<>(2);
+            // all have default values (1,2)
+
+            result : int = 0;
+            if (lst.getSize() == 4)  result = result + 1;
+            if (lst[0].x == 1)       result = result + 10;
+            if (lst[1].x == 1)       result = result + 100;
+            if (lst[2].x == 1)       result = result + 1000;
+            if (lst[3].y == 2)       result = result + 10000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11111);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  10. DoubleLinkedList — typed enum
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("DoubleLinkedList<TypedEnum> — typed enum (short)", "[libk][list][dlist][enum]") {
+    auto j = jit_k(R"SRC(
+        module __dll_tenum__;
+
+        enum Priority : short {
+            LOW = 1;
+            MED = 2;
+            HIGH = 3;
+        };
+
+        test() : int {
+            lst : DoubleLinkedList<Priority>;
+            l : Priority = Priority::LOW;
+            m : Priority = Priority::MED;
+            h : Priority = Priority::HIGH;
+            lst.pushBack(l);
+            lst.pushBack(h);
+            lst.insert(1, m);
+            // order: LOW, MED, HIGH
+
+            result : int = 0;
+            if (lst.getSize() == 3)              result = result + 1;
+            if (lst[0] == Priority::LOW)         result = result + 10;
+            if (lst[1] == Priority::MED)         result = result + 100;
+            if (lst[2] == Priority::HIGH)        result = result + 1000;
+
+            lst.removeFront();
+            if (lst.peekFront() == Priority::MED) result = result + 10000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 11111);
+}
+

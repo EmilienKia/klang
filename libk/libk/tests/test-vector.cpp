@@ -404,3 +404,174 @@ TEST_CASE("Vector<int> — e2e build and exec", "[libk][vector][run]") {
     REQUIRE(result.exit_code == 0);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  3. Enum type — Vector<Color>
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<Color> — pushBack, insert, peek with enum", "[libk][vector][enum]") {
+    auto j = jit_k(R"SRC(
+        module __vec_enum_full__;
+
+        enum Color {
+            RED = 0;
+            GREEN = 1;
+            BLUE = 2;
+        };
+
+        test() : int {
+            vec : Vector<Color>;
+            r : Color = Color::RED;
+            g : Color = Color::GREEN;
+            b : Color = Color::BLUE;
+            vec.pushBack(r);
+            vec.pushBack(b);
+            vec.insert(1, g);
+            // order: RED, GREEN, BLUE
+
+            result : int = 0;
+            if (vec.getSize() == 3)              result = result + 1;
+            if (vec.peekFront() == Color::RED)   result = result + 10;
+            if (vec[1] == Color::GREEN)          result = result + 100;
+            if (vec.peekBack() == Color::BLUE)   result = result + 1000;
+
+            vec.removeBack();
+            if (vec.peekBack() == Color::GREEN)  result = result + 10000;
+
+            vec.clear();
+            if (vec.isEmpty())                   result = result + 100000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111111);
+}
+
+TEST_CASE("Vector<Direction> — plain enum with auto values", "[libk][vector][enum]") {
+    auto j = jit_k(R"SRC(
+        module __vec_enum_plain__;
+
+        enum Direction {
+            NORTH;
+            SOUTH;
+            EAST;
+            WEST;
+        };
+
+        test() : int {
+            vec : Vector<Direction>;
+            n : Direction = Direction::NORTH;
+            s : Direction = Direction::SOUTH;
+            e : Direction = Direction::EAST;
+            vec.pushBack(n);
+            vec.pushBack(e);
+            vec.insert(1, s);
+            // order: NORTH, SOUTH, EAST
+
+            result : int = 0;
+            if (vec.getSize() == 3)              result = result + 1;
+            if (vec[0] == Direction::NORTH)      result = result + 10;
+            if (vec[1] == Direction::SOUTH)      result = result + 100;
+            if (vec[2] == Direction::EAST)       result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  4. Typed enum — Vector<TypedEnum>
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Vector<TypedEnum> — typed enum (byte)", "[libk][vector][enum]") {
+    auto j = jit_k(R"SRC(
+        module __vec_tenum__;
+
+        enum Status : byte {
+            OK = 0;
+            WARN = 1;
+            ERR = 2;
+        };
+
+        test() : int {
+            vec : Vector<Status>;
+            o : Status = Status::OK;
+            w : Status = Status::WARN;
+            e : Status = Status::ERR;
+            vec.pushBack(o);
+            vec.pushBack(e);
+            vec.insert(1, w);
+            // order: OK, WARN, ERR
+
+            result : int = 0;
+            if (vec.getSize() == 3)          result = result + 1;
+            if (vec[0] == Status::OK)        result = result + 10;
+            if (vec[1] == Status::WARN)      result = result + 100;
+            if (vec[2] == Status::ERR)       result = result + 1000;
+
+            vec.removeAt(1);
+            // order: OK, ERR
+            if (vec[1] == Status::ERR)       result = result + 10000;
+            if (vec.getSize() == 2)          result = result + 100000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 111111);
+}
+
+TEST_CASE("Vector<Derived> — derived enum", "[libk][vector][enum]") {
+    auto j = jit_k(R"SRC(
+        module __vec_derived_enum__;
+
+        enum Base {
+            A = 0;
+            B = 1;
+        };
+        enum Derived : Base {
+            C = 2;
+        };
+
+        test() : int {
+            vec : Vector<Derived>;
+            a : Derived = Derived::A;
+            b : Derived = Derived::B;
+            c : Derived = Derived::C;
+            vec.pushBack(a);
+            vec.pushBack(c);
+            vec.insert(1, b);
+            // order: A(0), B(1), C(2)
+
+            result : int = 0;
+            if (vec.getSize() == 3)        result = result + 1;
+            if (vec[0] == Derived::A)      result = result + 10;
+            if (vec[1] == Derived::B)      result = result + 100;
+            if (vec[2] == Derived::C)      result = result + 1000;
+            return result;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1111);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  5. Emplace operations — Vector<T>
+//
+//  Note: ALL emplace operations on Vector<T> are currently blocked by a compiler
+//  limitation. Unlike LinkedList/DoubleLinkedList (which route through
+//  UniSlot::construct via LinkedListNode::emplaceValue), Vector directly calls
+//  MultiSlot::construct<Args...>(index, args...). Even the zero-arg instantiation
+//  triggers a type resolution error because the variadic template forwarding
+//  chain to the intrinsic fails at the MultiSlot level.
+//  See test-gen-member-template.cpp for related variadic template limitations.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+
