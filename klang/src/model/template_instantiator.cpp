@@ -666,6 +666,13 @@ void template_instantiator::clone_member_variable(
 {
     // Skip the synthetic __parent__ field
     if (src.get_short_name() == "__parent__") return;
+    // Skip synthetic vptr fields (__vptr__) — they are re-injected by the
+    // resolution passes via klass::inject_vptr_field after vtable building.
+    if (src.get_short_name().rfind("__vptr", 0) == 0) return;
+    // Skip synthetic base sub-object fields (__base_X__, __vbptr_X__, __vbase_X__)
+    if (src.get_short_name().rfind("__base_", 0) == 0) return;
+    if (src.get_short_name().rfind("__vbptr_", 0) == 0) return;
+    if (src.get_short_name().rfind("__vbase_", 0) == 0) return;
 
     bool is_static = false;
     auto new_var = target->append_variable(src.get_short_name(), is_static);

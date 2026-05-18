@@ -30,6 +30,8 @@ protected:
     friend class gen::implementation_generator;
     friend class gen::symbol_resolver;
     friend class gen::declaration_generator;
+    friend class gen::aggregate_type_resolver;
+    friend class gen::type_reference_resolver;
 
     /** Declared visibility of this member variable. PUBLIC by default. */
     visibility _visibility = PUBLIC;

@@ -374,6 +374,13 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                                     _context->add_struct(st_type);
                                     base_st->set_struct_type(st_type);
                                 }
+                                // Visit the instantiated base to build its vtable
+                                // (interfaces/classes need vtable layout resolved
+                                // before the derived class's vtable can inherit slots).
+                                if (base_st && !base_st->has_vtable()
+                                    && std::dynamic_pointer_cast<klass>(base_st)) {
+                                    base_st->accept(*this);
+                                }
                             }
                         }
                     }

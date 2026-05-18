@@ -305,17 +305,76 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         }
     }
 
-    // 5e. Build vtable for class/interface instantiations (symbol_resolver didn't
+    // 5e. Inject base sub-object fields (__base_X__) for resolved bases.
+    //     symbol_resolver::visit_aggregate normally does this (gen_struct.cpp:508-528)
+    //     but template instantiations bypass that pass entirely.
+    if (concrete->has_bases()) {
+        auto& bases_mutable = concrete->get_bases_mutable();
+        for (auto it = bases_mutable.rbegin(); it != bases_mutable.rend(); ++it) {
+            auto& bs = *it;
+            if (!bs.base || !bs.base->get_struct_type()) continue;
+            if (bs.is_virtual) {
+                std::string vbptr_name = "__vbptr_" + bs.sanitised_name() + "__";
+                if (!concrete->_vars.count(vbptr_name)) {
+                    auto vbptr_field = member_variable_definition::make_shared(concrete->shared_as<aggregate>(), vbptr_name);
+                    concrete->_vars.insert({vbptr_name, vbptr_field});
+                    concrete->_children.insert(concrete->_children.begin(), vbptr_field);
+                }
+            } else {
+                std::string subobj_name = "__base_" + bs.sanitised_name() + "__";
+                if (!concrete->_vars.count(subobj_name)) {
+                    auto subobj_field = member_variable_definition::make_shared(concrete->shared_as<aggregate>(), subobj_name);
+                    subobj_field->set_type(bs.base->get_struct_type());
+                    concrete->_vars.insert({subobj_name, subobj_field});
+                    concrete->_children.insert(concrete->_children.begin(), subobj_field);
+                }
+            }
+        }
+    }
+
+    // 5f. Build vtable for class/interface instantiations (symbol_resolver didn't
     //     visit them because they didn't exist yet during Pass A).
     if (auto kl = std::dynamic_pointer_cast<model::klass>(concrete)) {
         if (!kl->has_vtable()) {
             auto vt = std::make_shared<vtable_layout>();
             size_t next_slot = 0;
 
-            // Inherit vtable entries from primary base (first base with a vtable)
+            // Inherit vtable entries from primary base (first base with a vtable).
+            // If the base is a klass/interface that doesn't have a vtable yet
+            // (e.g. a template interface instantiated by the template_instantiator
+            // but not yet resolved), build its vtable first.
             for (auto& bs : kl->get_bases()) {
                 if (!bs.base) continue;
                 if (auto base_kl = std::dynamic_pointer_cast<model::klass>(bs.base)) {
+                    // Build base vtable if missing (recursive for template bases)
+                    if (!base_kl->has_vtable()) {
+                        auto base_vt = std::make_shared<vtable_layout>();
+                        size_t base_next_slot = 0;
+                        // The base interface/class has no parent vtable to inherit,
+                        // so all its non-private, non-static, non-ctor methods become new slots.
+                        for (auto& base_child : base_kl->get_children()) {
+                            auto base_func = std::dynamic_pointer_cast<function>(base_child);
+                            if (!base_func) continue;
+                            if (base_func->is_static()) continue;
+                            if (std::dynamic_pointer_cast<constructor>(base_func)) continue;
+                            if (std::dynamic_pointer_cast<destructor>(base_func)) continue;
+                            if (base_func->get_visibility() == PRIVATE) continue;
+                            base_func->set_virtual(true);
+                            base_func->set_vtable_slot((int)base_next_slot);
+                            vtable_entry base_entry;
+                            base_entry.slot_index = base_next_slot++;
+                            base_entry.introducing_func = base_func;
+                            base_entry.func = base_func;
+                            base_vt->entries.push_back(base_entry);
+                        }
+                        if (!base_vt->entries.empty()) {
+                            base_kl->set_vtable(base_vt);
+                            // Inject vptr field if not already present
+                            if (base_kl->get_vptrs().empty()) {
+                                base_kl->inject_vptr_field("__vptr__");
+                            }
+                        }
+                    }
                     if (base_kl->has_vtable()) {
                         for (auto& entry : base_kl->get_vtable()->entries) {
                             vtable_entry inherited;
@@ -368,6 +427,10 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
 
             if (!vt->entries.empty()) {
                 kl->set_vtable(vt);
+                // Inject __vptr__ as first synthetic member (same as symbol_resolver::visit_klass)
+                if (kl->get_vptrs().empty()) {
+                    kl->inject_vptr_field("__vptr__");
+                }
             }
         }
     }
