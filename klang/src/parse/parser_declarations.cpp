@@ -812,8 +812,8 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
     std::optional<lex::keyword> st;
     std::optional<lex::punctuator> open_brace, close_brace;
 
-    // Accept "struct", "class", "interface" or "annotation" keyword
-    if(lex::opt_ref_any_lexeme lstruct = _lexer.get(); lstruct==lex::keyword::STRUCT || lstruct==lex::keyword::CLASS || lstruct==lex::keyword::INTERFACE || lstruct==lex::keyword::ANNOTATION) {
+    // Accept "struct", "class", "interface", "annotation" or "union" keyword
+    if(lex::opt_ref_any_lexeme lstruct = _lexer.get(); lstruct==lex::keyword::STRUCT || lstruct==lex::keyword::CLASS || lstruct==lex::keyword::INTERFACE || lstruct==lex::keyword::ANNOTATION || lstruct==lex::keyword::UNION) {
         st = lex::as<lex::keyword>(lstruct);
     } else {
         holder.rollback();

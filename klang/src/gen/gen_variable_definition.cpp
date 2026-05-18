@@ -430,6 +430,17 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
 
     // Structure, try to find the right constructor
     auto struct_model = st_type->get_struct();
+
+    // Union types have no aggregate/constructor — skip constructor resolution.
+    if (!struct_model) {
+        // Null constructor signals that codegen should handle default init (zero-init + discriminant=0).
+        ctx.var.set_var_constructor(nullptr);
+        if (ctx.init_expr) {
+            ctx.init_expr->set_constructor(nullptr);
+        }
+        return;
+    }
+
     std::vector<std::shared_ptr<expression>> ctor_args =
         ctx.init_expr ? ctx.init_expr->arguments() : std::vector<std::shared_ptr<expression>>{};
 

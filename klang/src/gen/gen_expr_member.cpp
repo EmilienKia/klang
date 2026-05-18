@@ -152,6 +152,45 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         const k::name& sym_name = member_name.get_name();
         const std::string& name_str = sym_name.to_string();
 
+        // ── Union alternative access ──
+        // If the struct_type has no owning aggregate, it's a union type.
+        // Look up the alternative by name and set the expression type to a reference
+        // to that alternative's type.
+        if (!struct_subtype->get_struct()) {
+            // Find the union_type_def for this struct_type
+            std::shared_ptr<union_type_def> union_def;
+            auto root_ns = _unit.get_root_namespace();
+            if (root_ns) {
+                for (auto& [uname, udef] : root_ns->unions()) {
+                    if (udef->get_struct_type() == struct_subtype) {
+                        union_def = udef;
+                        break;
+                    }
+                }
+            }
+            if (!union_def) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_NOT_FOUND_ON_TYPE), expr.first_lexeme(),
+                    "Cannot resolve union type for member access '{}'",
+                    {name_str});
+                return;
+            }
+            auto* alt = union_def->get_alternative_by_name(name_str);
+            if (!alt) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_NOT_FOUND_ON_TYPE), expr.first_lexeme(),
+                    "No alternative named '{}' in union '{}'",
+                    {name_str, union_def->get_short_name()});
+                return;
+            }
+            // The member access result type is a reference to the alternative's type
+            // (const reference if the alternative is const-qualified)
+            auto result_type = alt->resolved_type;
+            if (alt->is_const) {
+                result_type = result_type->get_const();
+            }
+            expr.set_type(result_type->get_reference());
+            return;
+        }
+
         // ── Detect qualified member access (e.g. d.A::v where sym_name has parts ["A", "v"]) ──
         // If the name has more than one part, the last part is the member name and
         // the preceding parts form the qualifier (base class name).
@@ -574,6 +613,45 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
         // For qualified names like A::v, use only the last part (the field name)
         const k::name& sym_name = member_name.get_name();
         std::string simple_name = sym_name.size() > 1 ? sym_name.back() : sym_name.to_string();
+
+        // ── Union alternative access ──
+        // If the struct_type has no owning aggregate, it's a union type.
+        // GEP to the storage field (index 1) and bitcast to the alternative's type pointer.
+        if (!struct_subtype->get_struct()) {
+            // Find the union_type_def
+            std::shared_ptr<union_type_def> union_def;
+            auto root_ns = _unit.get_root_namespace();
+            if (root_ns) {
+                for (auto& [uname, udef] : root_ns->unions()) {
+                    if (udef->get_struct_type() == struct_subtype) {
+                        union_def = udef;
+                        break;
+                    }
+                }
+            }
+            if (!union_def) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), expr.first_lexeme(),
+                    "Internal error: cannot find union definition for codegen of member '{}'",
+                    {simple_name});
+                return;
+            }
+            auto* alt = union_def->get_alternative_by_name(simple_name);
+            if (!alt || !alt->resolved_type) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), expr.first_lexeme(),
+                    "Internal error: union '{}' has no alternative named '{}' during codegen",
+                    {union_def->get_short_name(), simple_name});
+                return;
+            }
+            // _value is a pointer to the union struct { i32, [N x i8] }
+            // GEP to the storage field (index 1)
+            auto* union_llvm_type = struct_subtype->get_llvm_type();
+            auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, _value, 1, "union_storage");
+            // The storage pointer is i8*; cast it to a pointer to the alternative's type
+            // In LLVM opaque pointers mode, no bitcast needed — just use the pointer directly
+            _value = storage_ptr;
+            return;
+        }
+
         // Step 4: Handle nested struct-in-struct member chains
         if(auto field = struct_subtype->get_member(simple_name); field) {
             _value = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), _value, field->index);

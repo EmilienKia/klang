@@ -1108,6 +1108,52 @@ void declaration_generator::visit_enumeration(enumeration& en) {
     en.set_table_global(gv);
 }
 
+// declaration_generator::visit_union
+// -----------------------------------
+// Finalize the LLVM struct body for a union type.
+// The opaque struct type was created in aggregate_type_resolver; here we set its body
+// now that the LLVM module (and DataLayout) is available.
+void declaration_generator::visit_union(union_type_def& un) {
+    auto st_type = un.get_struct_type();
+    if (!st_type) return;
+
+    auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(st_type->get_llvm_type());
+    if (!llvm_st) return;
+
+    // If body already set, skip
+    if (!llvm_st->isOpaque()) {
+        trace("[declaration_generator::visit_union] union '{}' already has body",
+            {un.get_short_name()});
+        return;
+    }
+
+    auto& llvm_ctx = _context->llvm_context();
+    auto& data_layout = _context->module().getDataLayout();
+
+    // Compute max size of all alternatives
+    uint64_t max_size = 0;
+    for (auto& alt : un.alternatives()) {
+        if (alt.resolved_type && type::is_resolved(alt.resolved_type)) {
+            auto* llvm_type = alt.resolved_type->get_llvm_type();
+            if (llvm_type) {
+                uint64_t alt_size = data_layout.getTypeAllocSize(llvm_type);
+                if (alt_size > max_size) max_size = alt_size;
+            }
+        }
+    }
+
+    // Minimum storage of 1 byte
+    if (max_size == 0) max_size = 1;
+
+    // Set body: { i32 discriminant, [max_size x i8] storage }
+    auto* disc_type = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* storage_type = llvm::ArrayType::get(llvm::Type::getInt8Ty(llvm_ctx), max_size);
+    llvm_st->setBody({disc_type, storage_type}, /*isPacked=*/false);
+
+    trace("[declaration_generator::visit_union] finalized union '{}': storage={} bytes",
+        {un.get_short_name(), std::to_string(max_size)});
+}
+
 // symbol_resolver::visit_enumeration
 // ------------------------------------
 // Resolves an enumeration: base lookup, entry value resolution, underlying type
@@ -1487,6 +1533,18 @@ void implementation_generator::visit_aggregate(aggregate& st) {
     // Note: vtable filling is done in visit_klass
 
     _struct_stack.pop();
+}
+
+// symbol_resolver::visit_union
+// ------------------------------------
+// Resolves a union type definition: validates alternatives and names.
+// Type resolution (LLVM layout) is done in the aggregate_type_resolver pass.
+void symbol_resolver::visit_union(union_type_def& un) {
+    visit_named_element(un);
+    // Union alternatives have their types already stored from model building.
+    // Full type resolution will happen in aggregate_type_resolver.
+    trace("[symbol_resolver::visit_union] resolved union '{}' with {} alternatives",
+        {un.get_short_name(), std::to_string(un.alternative_count())});
 }
 
 } // namespace k::model::gen

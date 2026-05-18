@@ -84,6 +84,7 @@ protected:
     void visit_klass(klass&) override;
     void visit_interface(interface&) override;
     void visit_annotation_type(annotation_type&) override;
+    void visit_union(union_type_def&) override;
     void visit_member_variable_definition(member_variable_definition&) override;
     void visit_global_variable_definition(global_variable_definition&) override;
     void visit_parameter(parameter&) override;

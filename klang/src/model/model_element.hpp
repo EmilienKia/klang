@@ -316,6 +316,26 @@ protected:
 
 
 /**
+ * Interface for holding union type definitions (like ns and aggregates).
+ */
+class union_holder
+{
+public:
+    virtual std::shared_ptr<union_type_def> define_union(const std::string& name);
+    virtual std::shared_ptr<union_type_def> get_union(const std::string& name) const;
+
+    const std::map<std::string, std::shared_ptr<union_type_def>>& unions() const { return _unions; }
+
+protected:
+    /** Map of all defined unions. */
+    std::map<std::string, std::shared_ptr<union_type_def>> _unions;
+
+    virtual std::shared_ptr<union_type_def> do_create_union(const std::string& name) = 0;
+    virtual void on_union_defined(std::shared_ptr<union_type_def>) = 0;
+};
+
+
+/**
  * Describes a single 'using' directive in a scope.
  *
  * A using directive makes elements from another scope resolvable as if they

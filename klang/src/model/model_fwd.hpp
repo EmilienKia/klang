@@ -66,6 +66,7 @@ class enumeration;
 class klass;
 class interface;
 class annotation_type;
+class union_type_def;
 class ns;
 class unit;
 

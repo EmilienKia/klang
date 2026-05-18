@@ -25,5 +25,7 @@
 //   model_aggregate.hpp — member_variable_definition, base_spec, aggregate hierarchy
 //   model_function.hpp  — parameter, function, constructors/destructors, global functions
 //   model_ns.hpp        — global_variable_definition, ns, unit
+//   model_union.hpp     — union_alternative, union_type_def
 #include "model_ns.hpp"
+#include "model_union.hpp"
 #endif //KLANG_MODEL_HPP

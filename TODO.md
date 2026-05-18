@@ -42,7 +42,34 @@
 - Add typed enums
   - Motivation: support enum entries backed by non-integer constant objects with deterministic index-based runtime representation.
   - Related tests: `klang/tests/test-gen-enum.cpp` (tag `[gen][enum][typed][expected]`)
-- Add unions, typed unions
+- Add unions, typed unions (discriminated/tagged unions à la std::variant)
+  - See `IN-PROGRESS.md` for the full implementation plan.
+  - [ ] Phase 1: Lexer — `union` keyword
+  - [ ] Phase 2: Parser — union declaration parsing
+  - [ ] Phase 3: Model — `union_type_def` class
+  - [ ] Phase 4: Model Visitor — `visit_union()`
+  - [ ] Phase 5: Model Builder — AST → model
+  - [ ] Phase 6: Holder mixins (namespace/aggregate can contain unions)
+  - [ ] Phase 7: Symbol resolution (resolve alternative types)
+  - [ ] Phase 8: Type resolution (LLVM struct type: discriminant + storage)
+  - [ ] Phase 9: Type reference resolution (member access expressions)
+  - [ ] Phase 10: Declaration generation (LLVM type + fatal helper)
+  - [ ] Phase 11: Construction codegen
+  - [ ] Phase 12: Member access codegen (discriminant check + GEP + bitcast)
+  - [ ] Phase 13: Assignment codegen (destroy old + construct new + update discriminant)
+  - [ ] Phase 14: Destruction codegen (switch on discriminant, destroy active)
+  - [ ] Phase 15: Mangling
+  - [ ] Phase 16: KDI export/import
+  - [ ] Phase 17: Documentation (grammar, spec, AGENTS.md)
+  - [ ] Phase 18: Error diagnostics
+  - Deferred:
+    - [ ] Enum-based discriminant interrogation (`u.type()` → enum)
+    - [ ] Union extension / inheritance (derive union from another union)
+    - [ ] Polymorphic access when all alternatives share a common base class/interface
+    - [ ] Cast union to alternative type (`(int) myUnion`)
+    - [ ] Pattern matching / `match` expression on union alternatives
+    - [ ] Template unions (`template<T> union Optional { ... }`)
+    - [ ] RTTI-only discriminant optimization (all-class alternatives)
 - Add state classes
 - Better private visibility support
 - Improve log and debug messages

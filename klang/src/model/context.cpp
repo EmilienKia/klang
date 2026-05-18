@@ -679,6 +679,11 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
     };
 
     auto st = st_type->get_struct();
+    if (!st) {
+        // struct_type with no owning aggregate (e.g. union types) — skip field iteration.
+        // The LLVM body has already been set externally (or will be set later).
+        return;
+    }
     std::vector<struct_type::field> fields;
     std::vector<llvm::Type*> types;
 

@@ -140,6 +140,16 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
         auto st = st_type->get_struct();
         std::vector<std::shared_ptr<expression>> ctor_args = expr.arguments();
 
+        // Union types: no constructors; default construction sets discriminant = 0.
+        // The implementation_generator handles the actual code emission.
+        if (!st) {
+            // This is a union type (struct_type with no owning aggregate).
+            // Mark the constructor invocation as null (no real constructor to call).
+            expr.set_constructor(nullptr);
+            expr.arguments(ctor_args);
+            return;
+        }
+
         // For non-static inner structs: auto-inject __parent__ if constructing from the outer struct context
         if (st && st->is_inner()) {
             auto outer_struct = st->get_enclosing_structure();
@@ -378,6 +388,83 @@ void implementation_generator::visit_constructor_invocation_expression(construct
     } else if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
         auto st = st_type->get_struct();
         auto function = expr.get_constructor();
+
+        // ── Union type (struct_type with no aggregate): zero-init ──
+        if (!st) {
+            // Union construction
+            auto* llvm_struct_ty = _context->get_llvm_type(st_type);
+            if (!llvm_struct_ty) {
+                _value = object_ref;
+                return;
+            }
+
+            if (expr.empty()) {
+                // Default construction: zero-initialize the entire struct (discriminant=0, storage=0)
+                auto* zero_val = llvm::ConstantAggregateZero::get(llvm_struct_ty);
+                _builder->CreateStore(zero_val, object_ref);
+            } else {
+                // Typed construction: find matching alternative by type and store the value
+                // First, zero-init the storage
+                auto* zero_val = llvm::ConstantAggregateZero::get(llvm_struct_ty);
+                _builder->CreateStore(zero_val, object_ref);
+
+                // Evaluate the argument
+                _value = nullptr;
+                expr.argument(0)->accept(*this);
+                llvm::Value* init_val = _value;
+
+                if (init_val) {
+                    // Find the matching alternative by type
+                    // For now, match by the first alternative with a compatible LLVM type
+                    std::shared_ptr<union_type_def> union_def;
+                    auto root_ns = _unit.get_root_namespace();
+                    if (root_ns) {
+                        for (auto& [uname, udef] : root_ns->unions()) {
+                            if (udef->get_struct_type() == st_type) {
+                                union_def = udef;
+                                break;
+                            }
+                        }
+                    }
+
+                    uint32_t disc_value = 0;
+                    if (union_def) {
+                        auto arg_type = expr.argument(0)->get_type();
+                        // Strip reference if the argument is a reference (lvalue)
+                        if (type::is_reference(arg_type)) {
+                            arg_type = arg_type->get_subtype();
+                        }
+                        for (auto& alt : union_def->alternatives()) {
+                            if (alt.resolved_type == arg_type || alt.resolved_type == type::remove_const(arg_type)) {
+                                disc_value = static_cast<uint32_t>(alt.index);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Store discriminant
+                    auto* disc_ptr = _builder->CreateStructGEP(llvm_struct_ty, object_ref, 0, "union_disc");
+                    _builder->CreateStore(
+                        llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()), disc_value),
+                        disc_ptr);
+
+                    // Store value in storage
+                    auto* storage_ptr = _builder->CreateStructGEP(llvm_struct_ty, object_ref, 1, "union_storage");
+                    // If init_val is a pointer (reference to value), load the value first
+                    if (type::is_reference(expr.argument(0)->get_type())) {
+                        auto* alt_llvm_type = init_val->getType();
+                        // init_val is already a pointer to the value type, load it
+                        if (union_def && disc_value < union_def->alternative_count()) {
+                            auto* val_type = union_def->alternatives()[disc_value].resolved_type->get_llvm_type();
+                            init_val = _builder->CreateLoad(val_type, init_val, "init_load");
+                        }
+                    }
+                    _builder->CreateStore(init_val, storage_ptr);
+                }
+            }
+            _value = object_ref;
+            return;
+        }
 
         // ── Direct struct copy (no constructor): aggregate load+store ──
         if (!function && expr.size() == 1) {

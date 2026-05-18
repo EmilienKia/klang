@@ -74,7 +74,8 @@ namespace k::lex {
         {"override", keyword::OVERRIDE},
         {"template", keyword::TEMPLATE},
         {"typename", keyword::TYPENAME},
-        {"generic", keyword::GENERIC}
+        {"generic", keyword::GENERIC},
+        {"union", keyword::UNION}
     };
 
     const std::map<std::string, punctuator::type_t> punctuators {

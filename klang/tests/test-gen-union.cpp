@@ -1,0 +1,390 @@
+/*
+ * K Language compiler
+ *
+ * Copyright 2023-2026 Emilien Kia
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#include <catch2/catch_all.hpp>
+
+#include "helpers.hpp"
+
+using namespace k::model;
+using namespace k::model::gen;
+using namespace k::parse;
+using namespace k::parse::ast;
+
+// ============================================================
+// Phase 1: Basic union declaration — parsing and type creation
+// ============================================================
+
+TEST_CASE("Union basic declaration compiles", "[gen][union]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union MyUnion {
+            first: int;
+            second: long;
+        }
+        fun get_size() : int {
+            return 1;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("get_size");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("Union variable declaration and default construction", "[gen][union]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union MyUnion {
+            first: int;
+            second: long;
+        }
+        fun test_default() : int {
+            u : MyUnion;
+            return 0;
+        }
+    )", false);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_default");
+    REQUIRE(fn);
+    REQUIRE(fn() == 0);
+}
+
+TEST_CASE("Union explicit member write and read", "[gen][union]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union MyUnion {
+            first: int;
+            second: long;
+        }
+        fun test_write_read() : int {
+            u : MyUnion;
+            u.first = 42;
+            return u.first;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_write_read");
+    REQUIRE(fn);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("Union typed construction with initializer", "[gen][union]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union MyUnion {
+            first: int;
+            second: long;
+        }
+        fun test_init() : int {
+            u : MyUnion = 25;
+            return u.first;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_init");
+    REQUIRE(fn);
+    REQUIRE(fn() == 25);
+}
+
+TEST_CASE("Union second alternative access", "[gen][union]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union MyUnion {
+            first: int;
+            second: long;
+        }
+        fun test_second() : long {
+            u : MyUnion;
+            u.second = 100;
+            return u.second;
+        }
+    )", false, false);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<long(*)()>("test_second");
+    REQUIRE(fn);
+    REQUIRE(fn() == 100L);
+}
+
+TEST_CASE("Union drain addresser rejected", "[gen][union]") {
+    REQUIRE(compile_should_fail(R"(
+        module test;
+        union MyUnion {
+            first: int;
+            second: int#;
+        }
+        fun dummy() : int { return 0; }
+    )", nullptr));
+}
+
+TEST_CASE("Union multiple alternatives different sizes", "[gen][union]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union NumUnion {
+            i: int;
+            l: long;
+            b: byte;
+        }
+        fun test_int() : int {
+            u : NumUnion;
+            u.i = 42;
+            return u.i;
+        }
+        fun test_long() : long {
+            u : NumUnion;
+            u.l = 1000000;
+            return u.l;
+        }
+        fun test_byte() : byte {
+            u : NumUnion;
+            u.b = 7;
+            return u.b;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn_int = jit->lookup_symbol<int(*)()>("test_int");
+    REQUIRE(fn_int);
+    REQUIRE(fn_int() == 42);
+    auto fn_long = jit->lookup_symbol<long(*)()>("test_long");
+    REQUIRE(fn_long);
+    REQUIRE(fn_long() == 1000000L);
+    auto fn_byte = jit->lookup_symbol<int8_t(*)()>("test_byte");
+    REQUIRE(fn_byte);
+    REQUIRE(fn_byte() == 7);
+}
+
+TEST_CASE("Union passed to function by reference", "[gen][union]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union MyUnion {
+            first: int;
+            second: long;
+        }
+        fun read_first(u: MyUnion&) : int {
+            return u.first;
+        }
+        fun test_ref() : int {
+            u : MyUnion;
+            u.first = 99;
+            return read_first(u);
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_ref");
+    REQUIRE(fn);
+    REQUIRE(fn() == 99);
+}
+
+// ============================================================
+// Phase 2: Union with struct alternatives
+// ============================================================
+
+TEST_CASE("Union with struct alternative — write and read fields", "[gen][union][structs]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Point {
+            x: int = 0;
+            y: int = 0;
+        }
+        union ShapeData {
+            point: Point;
+            radius: int;
+        }
+        fun test_struct_alt() : int {
+            u : ShapeData;
+            p : Point;
+            p.x = 10;
+            p.y = 20;
+            u.point = p;
+            return u.point.x + u.point.y;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_struct_alt");
+    REQUIRE(fn);
+    REQUIRE(fn() == 30);
+}
+
+TEST_CASE("Union with struct alternative — default construction", "[gen][union][structs]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Pair {
+            a: int = 5;
+            b: int = 7;
+        }
+        union PairOrInt {
+            pair: Pair;
+            value: int;
+        }
+        fun test_default_struct() : int {
+            u : PairOrInt;
+            return u.pair.a + u.pair.b;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_default_struct");
+    REQUIRE(fn);
+    // Default-initialized union has discriminant=0, first alt (Pair) is zero-initialized memory
+    // struct fields are zero because storage is zero-inited, not default-constructed
+    REQUIRE(fn() == 0);
+}
+
+TEST_CASE("Union with struct — switch between struct and primitive", "[gen][union][structs]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Vec2 {
+            x: int = 0;
+            y: int = 0;
+        }
+        union VecOrScalar {
+            vec: Vec2;
+            scalar: int;
+        }
+        fun test_switch() : int {
+            u : VecOrScalar;
+            u.scalar = 42;
+            return u.scalar;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_switch");
+    REQUIRE(fn);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("Union with struct — struct field modification via reference", "[gen][union][structs]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Rect {
+            w: int = 0;
+            h: int = 0;
+        }
+        union Shape {
+            rect: Rect;
+            radius: int;
+        }
+        fun test_struct_ref() : int {
+            u : Shape;
+            r : Rect;
+            r.w = 3;
+            r.h = 4;
+            u.rect = r;
+            return u.rect.w * u.rect.h;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_struct_ref");
+    REQUIRE(fn);
+    REQUIRE(fn() == 12);
+}
+
+// ============================================================
+// Phase 3: Union with class alternatives
+// ============================================================
+
+TEST_CASE("Union with class alternative — basic instantiation", "[gen][union][class]") {
+    auto jit = gen_jit(R"(
+        module test;
+        class Counter {
+            count: int;
+            Counter() : count(0) {}
+            increment() { count = count + 1; }
+            get() : int { return count; }
+        }
+        union ValueOrCounter {
+            value: int;
+            counter: Counter;
+        }
+        fun test_class_alt() : int {
+            u : ValueOrCounter;
+            u.value = 77;
+            return u.value;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_class_alt");
+    REQUIRE(fn);
+    REQUIRE(fn() == 77);
+}
+
+TEST_CASE("Union with struct and class mixed — access different alts", "[gen][union][class][structs]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Coords {
+            x: int = 0;
+            y: int = 0;
+        }
+        class Label {
+            id: int;
+            Label() : id(0) {}
+            Label(v: int) : id(v) {}
+            get_id() : int { return id; }
+        }
+        union Element {
+            coords: Coords;
+            label: Label;
+            tag: int;
+        }
+        fun test_mixed_tag() : int {
+            u : Element;
+            u.tag = 123;
+            return u.tag;
+        }
+        fun test_mixed_coords() : int {
+            u : Element;
+            c : Coords;
+            c.x = 5;
+            c.y = 8;
+            u.coords = c;
+            return u.coords.x + u.coords.y;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn_tag = jit->lookup_symbol<int(*)()>("test_mixed_tag");
+    REQUIRE(fn_tag);
+    REQUIRE(fn_tag() == 123);
+    auto fn_coords = jit->lookup_symbol<int(*)()>("test_mixed_coords");
+    REQUIRE(fn_coords);
+    REQUIRE(fn_coords() == 13);
+}
+
+TEST_CASE("Union with pointer alternative", "[gen][union][structs]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Data {
+            val: int = 0;
+        }
+        union PtrOrVal {
+            ptr: Data*;
+            val: int;
+        }
+        fun test_ptr_alt() : int {
+            u : PtrOrVal;
+            u.val = 55;
+            return u.val;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_ptr_alt");
+    REQUIRE(fn);
+    REQUIRE(fn() == 55);
+}
+
+
+
+
+

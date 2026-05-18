@@ -1035,6 +1035,7 @@ namespace k::parse {
             bool is_struct() const { return kw_aggregate_type.type == lex::keyword::STRUCT; }
             bool is_interface() const { return kw_aggregate_type.type == lex::keyword::INTERFACE; }
             bool is_annotation() const { return kw_aggregate_type.type == lex::keyword::ANNOTATION; }
+            bool is_union() const { return kw_aggregate_type.type == lex::keyword::UNION; }
             bool is_template() const { return !template_params.empty(); }
 
             aggregate_decl(const std::vector <lex::keyword>& specifiers,

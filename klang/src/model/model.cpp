@@ -243,6 +243,46 @@ void enumeration::accept(model_visitor& visitor) {
 
 
 //
+// Union holder
+//
+
+std::shared_ptr<union_type_def> union_holder::define_union(const std::string &name) {
+    std::shared_ptr<union_type_def> un = do_create_union(name);
+    _unions.insert({name, un});
+    on_union_defined(un);
+    return un;
+}
+
+std::shared_ptr<union_type_def> union_holder::get_union(const std::string &name) const {
+    auto it = _unions.find(name);
+    if (it != _unions.end()) {
+        return it->second;
+    } else {
+        return {};
+    }
+}
+
+
+//
+// Union type definition
+//
+
+std::shared_ptr<union_type_def> union_type_def::make_shared(std::shared_ptr<element> parent, const std::string& name) {
+    auto un = std::shared_ptr<union_type_def>(new union_type_def(parent));
+    un->assign_name(name);
+    return un;
+}
+
+void union_type_def::update_mangled_name() {
+    _mangled_name = std::to_string(_short_name.size()) + _short_name;
+}
+
+void union_type_def::accept(model_visitor& visitor) {
+    visitor.visit_union(*this);
+}
+
+
+//
 // Variable definition
 //
 
@@ -1152,6 +1192,14 @@ std::shared_ptr<enumeration> ns::do_create_enum(const std::string &name) {
 
 void ns::on_enum_defined(std::shared_ptr<enumeration> en) {
     _children.push_back(en);
+}
+
+std::shared_ptr<union_type_def> ns::do_create_union(const std::string &name) {
+    return union_type_def::make_shared(std::dynamic_pointer_cast<ns>(shared_from_this()), name);
+}
+
+void ns::on_union_defined(std::shared_ptr<union_type_def> un) {
+    _children.push_back(un);
 }
 
 

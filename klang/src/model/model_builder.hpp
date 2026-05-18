@@ -146,6 +146,9 @@ protected:
     void visit_variable_decl(parse::ast::variable_decl &) override;
     void visit_function_decl(parse::ast::function_decl &) override;
 
+    /** Build a union_type_def from an aggregate_decl AST node with is_union()==true. */
+    void build_union_from_ast(parse::ast::aggregate_decl& st);
+
     void visit_block_statement(parse::ast::block_statement &) override;
     void visit_return_statement(parse::ast::return_statement &) override;
     void visit_break_statement(parse::ast::break_statement &) override;

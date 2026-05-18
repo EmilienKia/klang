@@ -240,6 +240,14 @@ namespace k::model {
     }
 
     void model_builder::visit_aggregate_decl(parse::ast::aggregate_decl& st) {
+        // ── Union handling ──
+        // Unions are parsed via the same aggregate_decl AST node but have
+        // completely different model semantics, so we dispatch early.
+        if (st.is_union()) {
+            build_union_from_ast(st);
+            return;
+        }
+
         std::shared_ptr<model::aggregate_holder> parent_scope = current_context_content<model::aggregate_holder>();
         if(!parent_scope){
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STRUCT_BAD_SCOPE), st.kw_aggregate_type, "Structure '{}' cannot be declared here; structures are only allowed at namespace or structure scope", {std::string{st.name.content}});
@@ -464,6 +472,85 @@ namespace k::model {
         if (st.is_template()) {
             _context->pop_template_param_scope();
         }
+    }
+
+    void model_builder::build_union_from_ast(parse::ast::aggregate_decl& st) {
+        trace("[model_builder::build_union_from_ast] union '{}'", {std::string{st.name.content}});
+
+        // Determine parent scope (must be a union_holder — currently only ns)
+        std::shared_ptr<model::union_holder> parent_scope = current_context_content<model::union_holder>();
+        if (!parent_scope) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STRUCT_BAD_SCOPE), st.kw_aggregate_type,
+                "Union '{}' cannot be declared here; unions are only allowed at namespace scope",
+                {std::string{st.name.content}});
+        }
+
+        // Unions do not support templates (for now)
+        if (st.is_template()) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STRUCT_BAD_SCOPE), st.kw_aggregate_type,
+                "Template unions are not yet supported: '{}'",
+                {std::string{st.name.content}});
+        }
+
+        // Unions do not support inheritance
+        if (!st.bases.empty()) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STRUCT_BAD_SCOPE), st.kw_aggregate_type,
+                "Union '{}' cannot have base classes; union inheritance is not supported",
+                {std::string{st.name.content}});
+        }
+
+        auto un = parent_scope->define_union(std::string{st.name.content});
+        un->set_ast_aggregate_decl(st.shared_as<parse::ast::aggregate_decl>());
+
+        // Resolve visibility
+        model::visibility vis = model::PUBLIC;
+        if (auto vctx = current_context<visibility_context>()) {
+            if (vctx->visibility != model::DEFAULT) {
+                vis = vctx->visibility;
+            }
+        }
+        if (lex::keyword::has(st.specifiers, lex::keyword::PUBLIC)) {
+            vis = model::PUBLIC;
+        } else if (lex::keyword::has(st.specifiers, lex::keyword::PROTECTED)) {
+            vis = model::PROTECTED;
+        } else if (lex::keyword::has(st.specifiers, lex::keyword::PRIVATE)) {
+            vis = model::PRIVATE;
+        }
+        un->set_visibility(vis);
+
+        // Process member declarations — they must all be variable_decl (alternatives)
+        for (auto& decl : st.declarations) {
+            auto var_decl = std::dynamic_pointer_cast<parse::ast::variable_decl>(decl);
+            if (!var_decl) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STRUCT_BAD_SCOPE), st.kw_aggregate_type,
+                    "Union '{}' can only contain variable (alternative) declarations; functions and nested types are not allowed",
+                    {std::string{st.name.content}});
+            }
+
+            // Check for drain addresser ('#') — forbidden on union alternatives
+            auto alt_type = _context->from_type_specifier(*var_decl->type);
+            if (alt_type && type::is_drain(alt_type)) {
+                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_STRUCT_RECURSIVE_FORBIDDEN),
+                    var_decl->name,
+                    "Drain addresser '#' is not allowed on union alternatives (alternative '{}' in union '{}')",
+                    {std::string{var_decl->name.content}, std::string{st.name.content}});
+            }
+
+            bool is_const = lex::keyword::has(var_decl->specifiers, lex::keyword::CONST);
+            std::string alt_name = std::string{var_decl->name.content};
+
+            // Get raw type name from the type specifier for later resolution
+            std::string raw_type_name = alt_type ? alt_type->to_string() : "";
+
+            un->add_alternative(alt_name, raw_type_name, is_const);
+
+            // Store the resolved type reference on the alternative for later resolution
+            auto& alt = un->alternatives_mutable().back();
+            alt.resolved_type = alt_type;
+        }
+
+        debug("[model_builder::build_union_from_ast] defined union '{}' with {} alternatives",
+            {std::string{st.name.content}, std::to_string(un->alternative_count())});
     }
 
     void model_builder::visit_enum_decl(parse::ast::enum_decl &decl) {

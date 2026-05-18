@@ -469,9 +469,17 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
         if (prim && type::is_resolved(prim)) return prim;
     }
 
-    // Step 3: Walk up the scope chain looking for aggregates and enumerations
+    // Step 3: Walk up the scope chain looking for aggregates, unions, and enumerations
     for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
         if (auto st = resolve_struct_from(*current, type_name)) return st->get_struct_type();
+        // Look for union types (simple names only for now)
+        if (type_name.size() == 1) {
+            if (auto uh_ptr = std::dynamic_pointer_cast<const union_holder>(current)) {
+                if (auto un = uh_ptr->get_union(type_name.front())) {
+                    return un->get_struct_type();
+                }
+            }
+        }
         // Also look for enum types (simple names only for now)
         if (type_name.size() == 1) {
             if (auto eh = std::dynamic_pointer_cast<const enum_holder>(current)) {
@@ -496,6 +504,11 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
                     if (target_elem) {
                         if (auto st = resolve_struct_from(*target_elem, type_name)) return st->get_struct_type();
                         if (type_name.size() == 1) {
+                            if (auto uh_ptr = std::dynamic_pointer_cast<const union_holder>(target_elem)) {
+                                if (auto un = uh_ptr->get_union(type_name.front())) {
+                                    return un->get_struct_type();
+                                }
+                            }
                             if (auto eh = std::dynamic_pointer_cast<const enum_holder>(target_elem)) {
                                 if (auto en = eh->get_enum(type_name.front())) {
                                     return en->get_enum_type();
@@ -1223,6 +1236,42 @@ void aggregate_type_resolver::visit_global_destructor_function(global_destructor
 
 void aggregate_type_resolver::visit_global_main_function(global_main_function& /*func*/) {
     // Nothing to do — global_main_function is created and resolved in type_reference_resolver
+}
+
+void aggregate_type_resolver::visit_union(union_type_def& un) {
+    // Resolve each alternative's type
+    for (auto& alt : un.alternatives_mutable()) {
+        if (alt.resolved_type && !type::is_resolved(alt.resolved_type)) {
+            // First try context->resolve_type (handles primitive wrappers, pointers, etc.)
+            auto resolved = _context->resolve_type(alt.resolved_type);
+            if (resolved && type::is_resolved(resolved)) {
+                alt.resolved_type = resolved;
+            } else {
+                // Try resolve_type_by_name for aggregate/enum types
+                if (auto unres = std::dynamic_pointer_cast<unresolved_type>(alt.resolved_type)) {
+                    auto by_name = resolve_type_by_name(unres->type_id(), un);
+                    if (by_name && type::is_resolved(by_name)) {
+                        alt.resolved_type = by_name;
+                    }
+                }
+            }
+        }
+    }
+
+    // Create an opaque LLVM struct type for the union.
+    // The body will be set in declaration_generator::visit_union() once the
+    // LLVM module (and DataLayout) is available.
+    auto& llvm_ctx = _context->llvm_context();
+    auto* union_llvm_type = llvm::StructType::create(llvm_ctx, un.get_mangled_name() + "_union");
+
+    // Create a struct_type wrapping this opaque LLVM type and register with context
+    auto st_type = std::make_shared<struct_type>(un.get_short_name(), std::weak_ptr<aggregate>{});
+    _context->attach_llvm_struct_type(st_type, union_llvm_type);
+    un.set_struct_type(st_type);
+    _context->add_struct(st_type);
+
+    trace("[aggregate_type_resolver::visit_union] resolved union '{}' (opaque LLVM type created)",
+        {un.get_short_name()});
 }
 
 //

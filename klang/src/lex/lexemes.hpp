@@ -150,7 +150,8 @@ struct keyword : public lexeme {
         OVERRIDE,
         TEMPLATE,
         TYPENAME,
-        GENERIC
+        GENERIC,
+        UNION
     };
 
     type_t type;
