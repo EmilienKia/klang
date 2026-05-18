@@ -29,6 +29,39 @@
 
 namespace k::model::gen {
 
+namespace {
+
+/**
+ * Detect the generic opaque pointer type: pointer<byte>.
+ * This is what type parameter T maps to in synthesized generic code.
+ */
+bool is_generic_opaque_ptr(const std::shared_ptr<type>& t) {
+    auto ptr = std::dynamic_pointer_cast<pointer_type>(type::remove_const(t));
+    if (!ptr) return false;
+    auto inner = type::remove_const(ptr->get_subtype());
+    auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
+    return prim && prim->get_type() == primitive_type::BYTE;
+}
+
+/**
+ * Check if a type conversion represents generic erasure:
+ * ConcreteClass ↔ pointer<byte> (the opaque representation of T).
+ * Used when comparing sub-types inside addressers (owner, ptr, link, view).
+ */
+bool is_generic_erasure_pair(const std::shared_ptr<type>& a, const std::shared_ptr<type>& b) {
+    auto a_nc = type::remove_const(a);
+    auto b_nc = type::remove_const(b);
+    // a is concrete class, b is the opaque byte*
+    if (std::dynamic_pointer_cast<struct_type>(a_nc) && is_generic_opaque_ptr(b_nc))
+        return true;
+    // a is the opaque byte*, b is concrete class
+    if (is_generic_opaque_ptr(a_nc) && std::dynamic_pointer_cast<struct_type>(b_nc))
+        return true;
+    return false;
+}
+
+} // anonymous namespace
+
 
 // ── adapt_function_ref_type ──────────────────────────────────────────────────
 
@@ -128,6 +161,12 @@ type_reference_resolver::adapt_from_pointer(
                     upcast->set_type(type_nc);
                     return upcast;
                 }
+            }
+            // Generic erasure: ptr<Concrete> ↔ ptr<byte*> or ptr<byte*> ↔ ptr<Concrete>
+            if (is_generic_erasure_pair(src_sub_nc, tgt_sub_nc)) {
+                auto cast = cast_expression::make_shared(expr, type_nc);
+                cast->set_type(type_nc);
+                return cast;
             }
             return {};
         }
@@ -302,6 +341,12 @@ type_reference_resolver::adapt_from_owner(
             auto upcast = cast_expression::make_shared(expr, type_nc);
             upcast->set_type(type_nc);
             return upcast;
+        }
+        // Generic erasure: owner<Concrete> ↔ owner<byte*> (no-op at IR level)
+        if (is_generic_erasure_pair(src_sub_nc, tgt_sub_nc)) {
+            auto cast = cast_expression::make_shared(expr, type_nc);
+            cast->set_type(type_nc);
+            return cast;
         }
         return {};
     }
@@ -486,6 +531,14 @@ type_reference_resolver::adapt_from_ref_owner(
             auto upcast = cast_expression::make_shared(move, type_nc);
             upcast->set_type(type_nc);
             return upcast;
+        }
+        // Generic erasure: ref<owner<Concrete>> → owner<byte*> (move + bitcast)
+        if (is_generic_erasure_pair(own_sub_nc, tgt_sub_nc)) {
+            auto move = owner_move_expression::make_shared(expr);
+            move->set_type(inner);  // owner<Concrete>
+            auto cast = cast_expression::make_shared(move, type_nc);
+            cast->set_type(type_nc);
+            return cast;
         }
     }
     if (type::is_pointer(type_nc)) {

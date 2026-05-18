@@ -943,6 +943,18 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 
     // Step 2: Primitive-to-primitive: emit trunc/zext/sext/fptrunc/fpext/sitofp/fptosi
     if(!type::is_primitive(source_type) || !type::is_primitive(target_type)) {
+        // ── Generic erasure: both sides are indirection types (all `ptr` in LLVM IR) ──
+        // When generic synthesis maps T to byte*, we get casts like byte** → IntBox*
+        // which are no-ops at LLVM IR level (opaque pointers).
+        bool both_indirections =
+            (type::is_any_indirection(source_type) || type::is_reference(source_type)) &&
+            (type::is_any_indirection(target_type) || type::is_reference(target_type));
+        if (both_indirections) {
+            // All indirections are `ptr` at LLVM IR level — just emit the sub-expression.
+            _value = nullptr;
+            expr.sub_expr()->accept(*this);
+            return;
+        }
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_CAST_NOT_SUPPORTED), expr.first_lexeme(),
             "Casting between non-primitive types is not yet supported: "
             "cannot cast from '{}' to '{}'; only casts between primitive types are currently implemented",

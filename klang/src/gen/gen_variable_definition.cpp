@@ -141,6 +141,26 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
         return true;
     }
 
+    // Step 3b: Generic erasure — struct_type ↔ pointer<byte> (opaque ptr for generic T)
+    {
+        auto is_generic_opaque_ptr = [](const std::shared_ptr<type>& t) -> bool {
+            auto ptr = std::dynamic_pointer_cast<pointer_type>(type::remove_const(t));
+            if (!ptr) return false;
+            auto inner = type::remove_const(ptr->get_subtype());
+            auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
+            return prim && prim->get_type() == primitive_type::BYTE;
+        };
+        bool erasure = false;
+        if (src_st && is_generic_opaque_ptr(tgt_sub_nc)) erasure = true;
+        if (tgt_st && is_generic_opaque_ptr(src_sub_nc)) erasure = true;
+        if (erasure) {
+            auto cast = cast_expression::make_shared(arg, target_type);
+            cast->set_type(target_type);
+            assign_arg(cast);
+            return true;
+        }
+    }
+
     // Step 4: Otherwise return false (incompatible types)
     return false;  // incompatible
 }

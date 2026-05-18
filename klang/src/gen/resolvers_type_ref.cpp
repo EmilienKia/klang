@@ -1570,6 +1570,21 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     return CAST_REF_CONV;
                 }
             }
+            // Generic erasure: ptr<Concrete> ↔ ptr<byte*> or ptr<byte*> ↔ ptr<Concrete>
+            {
+                auto is_generic_opaque_sub = [](const std::shared_ptr<k::model::type>& sub) -> bool {
+                    auto ptr = std::dynamic_pointer_cast<pointer_type>(type::remove_const(sub));
+                    if (!ptr) return false;
+                    auto inner = type::remove_const(ptr->get_subtype());
+                    auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
+                    return prim && prim->get_type() == primitive_type::BYTE;
+                };
+                if ((src_st_type && is_generic_opaque_sub(tgt_sub_nc)) ||
+                    (tgt_st_type && is_generic_opaque_sub(src_sub_nc)) ||
+                    (is_generic_opaque_sub(src_sub_nc) && is_generic_opaque_sub(tgt_sub_nc))) {
+                    return CAST_WIDENING;
+                }
+            }
             return CAST_IMPOSSIBLE;
         }
         // ptr<T> → ref<T>: borrow pointer target as reference (same LLVM representation)
@@ -1668,6 +1683,20 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
                 src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
                 return CAST_REF_CONV;
+            }
+            // Generic erasure: owner<Concrete> ↔ owner<byte*>
+            {
+                auto is_generic_opaque_sub = [](const std::shared_ptr<k::model::type>& sub) -> bool {
+                    auto ptr = std::dynamic_pointer_cast<pointer_type>(type::remove_const(sub));
+                    if (!ptr) return false;
+                    auto inner = type::remove_const(ptr->get_subtype());
+                    auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
+                    return prim && prim->get_type() == primitive_type::BYTE;
+                };
+                if ((std::dynamic_pointer_cast<struct_type>(src_sub_nc) && is_generic_opaque_sub(tgt_sub_nc)) ||
+                    (is_generic_opaque_sub(src_sub_nc) && std::dynamic_pointer_cast<struct_type>(tgt_sub_nc))) {
+                    return CAST_WIDENING;
+                }
             }
             return CAST_IMPOSSIBLE;
         }
@@ -1797,6 +1826,18 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 // Move from ref<owner>: allowed (load the owner, move it)
                 auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
                 if (own_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+                // Generic erasure: ref<owner<Concrete>> → owner<byte*>
+                {
+                    auto is_generic_opaque_sub = [](const std::shared_ptr<k::model::type>& sub) -> bool {
+                        auto ptr = std::dynamic_pointer_cast<pointer_type>(type::remove_const(sub));
+                        if (!ptr) return false;
+                        auto inner = type::remove_const(ptr->get_subtype());
+                        auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
+                        return prim && prim->get_type() == primitive_type::BYTE;
+                    };
+                    if (std::dynamic_pointer_cast<struct_type>(own_sub_nc) && is_generic_opaque_sub(tgt_sub_nc))
+                        return CAST_WIDENING;
+                }
             }
             // ref<owner<T>> → lnk<T> / view<T>: load owner, borrow as link or view
             if (type::is_link(tgt_nc) || type::is_view(tgt_nc)) {
@@ -2129,6 +2170,59 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     return CAST_CONSTRUCT; // copy constructor
                 }
             }
+        }
+    }
+
+    // ── Generic erasure: addresser<ConcreteClass> ↔ addresser<byte*> ────────
+    // When a generic is synthesized, type parameter T is mapped to byte*
+    // (opaque pointer). At the call site, we have ConcreteType wrapped in
+    // the same addresser kind. Since all pointers are `ptr` in LLVM IR
+    // (opaque pointers), this is a no-op bitcast.
+    {
+        auto is_generic_opaque = [](const std::shared_ptr<k::model::type>& sub) -> bool {
+            auto ptr = std::dynamic_pointer_cast<pointer_type>(type::remove_const(sub));
+            if (!ptr) return false;
+            auto inner = type::remove_const(ptr->get_subtype());
+            auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
+            return prim && prim->get_type() == primitive_type::BYTE;
+        };
+
+        auto check_generic_erasure = [&](const std::shared_ptr<k::model::type>& src,
+                                          const std::shared_ptr<k::model::type>& tgt_t) -> bool {
+            auto src_sub = type::remove_const(src->get_subtype());
+            auto tgt_sub = type::remove_const(tgt_t->get_subtype());
+            // ConcreteClass → byte* (calling generic method)
+            if (std::dynamic_pointer_cast<struct_type>(src_sub) && is_generic_opaque(tgt_sub))
+                return true;
+            // byte* → ConcreteClass (return from generic method)
+            if (is_generic_opaque(src_sub) && std::dynamic_pointer_cast<struct_type>(tgt_sub))
+                return true;
+            return false;
+        };
+
+        // Same addresser kind on both sides
+        if ((type::is_owner(type_src) && type::is_owner(tgt_nc)) ||
+            (type::is_pointer(type_src) && type::is_pointer(tgt_nc)) ||
+            (type::is_link(type_src) && type::is_link(tgt_nc)) ||
+            (type::is_view(type_src) && type::is_view(tgt_nc))) {
+            if (check_generic_erasure(type_src, tgt_nc)) {
+                return CAST_WIDENING;
+            }
+        }
+        // ref<owner<Concrete>> → owner<byte*> (owner move into generic method)
+        if (type::is_reference(type_src) && type::is_owner(tgt_nc)) {
+            auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
+            auto inner_nc = type::remove_const(ref_src->get_subtype());
+            if (type::is_owner(inner_nc)) {
+                auto own_sub_nc = type::remove_const(inner_nc->get_subtype());
+                auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+                if (std::dynamic_pointer_cast<struct_type>(own_sub_nc) && is_generic_opaque(tgt_sub_nc))
+                    return CAST_WIDENING;
+            }
+        }
+        // pointer<byte*> → pointer<Concrete> (return value from generic)
+        if (type::is_pointer(type_src) && type::is_pointer(tgt_nc)) {
+            // Already handled above
         }
     }
 
