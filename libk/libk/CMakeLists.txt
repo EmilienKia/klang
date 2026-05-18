@@ -16,6 +16,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/object.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/memory.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/shared.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/collections.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/string.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/stream.k
@@ -151,6 +152,7 @@ add_executable(libk-tests
     tests/test-math.cpp
     tests/test-list.cpp
     tests/test-vector.cpp
+    tests/test-shared.cpp
 )
 target_link_libraries(libk-tests klang-test-helpers Catch2::Catch2WithMain dl)
 add_dependencies(libk-tests libk_stdlib)
