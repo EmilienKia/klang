@@ -971,6 +971,44 @@ void kdi_builder::visit_enumeration(enumeration& en) {
         _ns_stack.back()->enums.push_back(std::move(ke));
 }
 
+void kdi_builder::visit_union(union_type_def& un) {
+    if (!is_exported(un.get_visibility())) return;
+
+    kdi::kdi_union ku;
+    ku.name        = un.get_short_name();
+    ku.fq_name     = [&]() {
+        const std::string& fq = un.get_fq_name();
+        return (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':')
+               ? fq.substr(2) : fq;
+    }();
+    ku.mangled_name = un.get_mangled_name();
+    ku.visibility   = to_kdi_vis(un.get_visibility());
+
+    for (auto& alt : un.alternatives()) {
+        kdi::kdi_union_alternative ka;
+        ka.name     = alt.name;
+        ka.is_const = alt.is_const;
+        if (alt.resolved_type) {
+            ka.type = to_kdi_type(alt.resolved_type);
+        }
+        ku.alternatives.push_back(std::move(ka));
+    }
+
+    // LLVM struct type definition string
+    if (auto st = un.get_struct_type()) {
+        if (auto* llvm_st = st->get_llvm_type()) {
+            std::string llvm_str;
+            llvm::raw_string_ostream os(llvm_str);
+            llvm_st->print(os);
+            os.flush();
+            ku.llvm_def = std::move(llvm_str);
+        }
+    }
+
+    if (!_ns_stack.empty())
+        _ns_stack.back()->unions.push_back(std::move(ku));
+}
+
 void kdi_builder::visit_function(function& fn) {
     // Skip compiler-generated and internal functions
     if (fn.is_compiler_generated()) return;

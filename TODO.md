@@ -44,23 +44,23 @@
   - Related tests: `klang/tests/test-gen-enum.cpp` (tag `[gen][enum][typed][expected]`)
 - Add unions, typed unions (discriminated/tagged unions à la std::variant)
   - See `IN-PROGRESS.md` for the full implementation plan.
-  - [ ] Phase 1: Lexer — `union` keyword
-  - [ ] Phase 2: Parser — union declaration parsing
-  - [ ] Phase 3: Model — `union_type_def` class
-  - [ ] Phase 4: Model Visitor — `visit_union()`
-  - [ ] Phase 5: Model Builder — AST → model
-  - [ ] Phase 6: Holder mixins (namespace/aggregate can contain unions)
-  - [ ] Phase 7: Symbol resolution (resolve alternative types)
-  - [ ] Phase 8: Type resolution (LLVM struct type: discriminant + storage)
-  - [ ] Phase 9: Type reference resolution (member access expressions)
-  - [ ] Phase 10: Declaration generation (LLVM type + fatal helper)
-  - [ ] Phase 11: Construction codegen
-  - [ ] Phase 12: Member access codegen (discriminant check + GEP + bitcast)
-  - [ ] Phase 13: Assignment codegen (destroy old + construct new + update discriminant)
-  - [ ] Phase 14: Destruction codegen (switch on discriminant, destroy active)
-  - [ ] Phase 15: Mangling
-  - [ ] Phase 16: KDI export/import
-  - [ ] Phase 17: Documentation (grammar, spec, AGENTS.md)
+  - [x] Phase 1: Lexer — `union` keyword
+  - [x] Phase 2: Parser — union declaration parsing
+  - [x] Phase 3: Model — `union_type_def` class
+  - [x] Phase 4: Model Visitor — `visit_union()`
+  - [x] Phase 5: Model Builder — AST → model
+  - [x] Phase 6: Holder mixins (namespace/aggregate can contain unions)
+  - [x] Phase 7: Symbol resolution (resolve alternative types)
+  - [x] Phase 8: Type resolution (LLVM struct type: discriminant + storage)
+  - [x] Phase 9: Type reference resolution (member access expressions)
+  - [x] Phase 10: Declaration generation (LLVM type + fatal helper)
+  - [x] Phase 11: Construction codegen
+  - [x] Phase 12: Member access codegen (discriminant check + GEP + bitcast)
+  - [x] Phase 13: Assignment codegen (update discriminant on member assign)
+  - [x] Phase 14: Destruction codegen (switch on discriminant, destroy active)
+  - [x] Phase 15: Mangling (union struct_type in function signatures)
+  - [x] Phase 16: KDI export/import (kdi_union, CBOR encode/decode, materialise)
+  - [x] Phase 17: Documentation (grammar, spec, AGENTS.md)
   - [ ] Phase 18: Error diagnostics
   - Deferred:
     - [ ] Enum-based discriminant interrogation (`u.type()` → enum)

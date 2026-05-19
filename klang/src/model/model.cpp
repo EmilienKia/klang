@@ -274,7 +274,11 @@ std::shared_ptr<union_type_def> union_type_def::make_shared(std::shared_ptr<elem
 }
 
 void union_type_def::update_mangled_name() {
-    _mangled_name = std::to_string(_short_name.size()) + _short_name;
+    if (!_name.has_root_prefix()) {
+        _mangled_name = "";
+        return;
+    }
+    _mangled_name = mangler::mangle_structure(_name);
 }
 
 void union_type_def::accept(model_visitor& visitor) {

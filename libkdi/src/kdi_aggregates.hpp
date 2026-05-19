@@ -416,6 +416,28 @@ struct kdi_enum {
     std::vector<kdi_enum_entry>   entries;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Union
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A single alternative in an exported union definition. */
+struct kdi_union_alternative {
+    std::string name;          ///< alternative name (e.g. "first")
+    kdi_type    type;          ///< resolved type of this alternative
+    bool        is_const = false; ///< true if the alternative is const-qualified
+};
+
+/** An exported discriminated (tagged) union. */
+struct kdi_union {
+    std::string                       name;          ///< short name
+    std::string                       fq_name;       ///< fully-qualified K name
+    std::string                       mangled_name;  ///< mangled LLVM symbol name
+    kdi_visibility                    visibility = kdi_visibility::public_;
+    std::vector<kdi_union_alternative> alternatives; ///< alternatives in declaration order
+    /// LLVM IR struct type definition, e.g. "{ i32, [8 x i8] }".
+    std::string                       llvm_def;
+};
+
 } // namespace kdi
 
 #endif // LIBKDI_AGGREGATES_HPP

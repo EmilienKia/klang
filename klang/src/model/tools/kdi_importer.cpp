@@ -465,6 +465,11 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
         materialise_enum(en, ctx);
     }
 
+    // Pass 2b — unions in this namespace
+    for (const auto& un : ns.unions) {
+        materialise_union(un, ctx);
+    }
+
     // Pass 3 — free functions in this namespace
     for (const auto& fn : ns.functions) {
         materialise_function(fn, ctx);
@@ -539,6 +544,85 @@ void kdi_importer::materialise_enum(const kdi::kdi_enum& en,
     }
 
     _unit.get_or_create_imported_enum(k::name{false, std::move(parts)}, ctx);
+}
+
+void kdi_importer::materialise_union(const kdi::kdi_union& un,
+                                      std::shared_ptr<context> ctx)
+{
+    const std::string& fq = un.fq_name.empty() ? un.name : un.fq_name;
+    const std::string normalised = (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':')
+                                   ? fq.substr(2) : fq;
+
+    // Parse fq_name into name parts to locate / create the target namespace
+    std::vector<std::string> parts;
+    std::size_t pos = 0;
+    while (true) {
+        auto sep = normalised.find("::", pos);
+        if (sep == std::string::npos) { parts.push_back(normalised.substr(pos)); break; }
+        parts.push_back(normalised.substr(pos, sep - pos));
+        pos = sep + 2;
+    }
+
+    // Navigate to parent namespace (all parts except the last)
+    auto target_ns = _unit.get_root_namespace();
+    for (size_t i = 0; i + 1 < parts.size(); ++i) {
+        target_ns = target_ns->get_child_namespace(parts[i]);
+    }
+
+    // Check if union already exists
+    const std::string& union_name = parts.back();
+    for (auto& [uname, udef] : target_ns->unions()) {
+        if (uname == union_name) return; // already materialised
+    }
+
+    // Create the union in the target namespace
+    auto udef = target_ns->define_union(union_name);
+    if (!udef) return;
+
+    udef->set_visibility(un.visibility == kdi::kdi_visibility::public_ ? PUBLIC :
+                         un.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PRIVATE);
+
+    // Add alternatives (type resolution will happen during aggregate_type_resolver pass)
+    for (auto& alt : un.alternatives) {
+        // Convert kdi_type to a raw type name for deferred resolution
+        std::string raw_type_name;
+        std::visit([&](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, kdi::kdi_int_type>) {
+                // Map bit width + signedness to K type name
+                if (arg.is_signed) {
+                    switch (arg.bits) {
+                        case 8:  raw_type_name = "byte"; break;
+                        case 16: raw_type_name = "short"; break;
+                        case 32: raw_type_name = "int"; break;
+                        case 64: raw_type_name = "long"; break;
+                        default: raw_type_name = "int"; break;
+                    }
+                } else {
+                    switch (arg.bits) {
+                        case 8:  raw_type_name = "ubyte"; break;
+                        case 16: raw_type_name = "ushort"; break;
+                        case 32: raw_type_name = "uint"; break;
+                        case 64: raw_type_name = "ulong"; break;
+                        default: raw_type_name = "uint"; break;
+                    }
+                }
+            } else if constexpr (std::is_same_v<T, kdi::kdi_float_type>) {
+                raw_type_name = (arg.bits == 64) ? "double" : "float";
+            } else if constexpr (std::is_same_v<T, kdi::kdi_bool_type>) {
+                raw_type_name = "bool";
+            } else if constexpr (std::is_same_v<T, kdi::kdi_char_type>) {
+                raw_type_name = "char";
+            } else if constexpr (std::is_same_v<T, kdi::kdi_aggregate_ref>) {
+                raw_type_name = arg.fq_name;
+            } else if constexpr (std::is_same_v<T, kdi::kdi_enum_ref>) {
+                raw_type_name = arg.fq_name;
+            } else {
+                raw_type_name = "?"; // placeholder for complex types
+            }
+        }, alt.type.value);
+        udef->add_alternative(alt.name, raw_type_name, alt.is_const);
+    }
 }
 
 void kdi_importer::materialise_variable(const kdi::kdi_variable& var,

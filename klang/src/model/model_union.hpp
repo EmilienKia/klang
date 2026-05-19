@@ -110,6 +110,22 @@ public:
     std::shared_ptr<struct_type> get_struct_type() const { return _type; }
     void set_struct_type(std::shared_ptr<struct_type> t) { _type = std::move(t); }
 
+    /**
+     * Returns true if any alternative has a non-trivial destructor
+     * (i.e., is a struct/class aggregate with a destructor defined).
+     * Used to decide whether cleanup codegen is needed at scope exit.
+     */
+    bool has_nontrivial_destructor_alternative() const {
+        for (auto& alt : _alternatives) {
+            if (auto st = std::dynamic_pointer_cast<struct_type>(alt.resolved_type)) {
+                if (auto agg = st->get_struct()) {
+                    if (agg->get_destructor()) return true;
+                }
+            }
+        }
+        return false;
+    }
+
     //
     // Visibility
     //
@@ -133,4 +149,3 @@ public:
 } // namespace k::model
 
 #endif //KLANG_MODEL_UNION_HPP
-

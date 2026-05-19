@@ -95,6 +95,9 @@ public:
     // Enum declarations
     void visit_enumeration(enumeration&) override;
 
+    // Union declarations
+    void visit_union(union_type_def&) override;
+
     // Compiler-internal nodes — silently ignored
     void visit_static_constructor(static_constructor&)               override {}
     void visit_static_destructor(static_destructor&)                 override {}

@@ -333,6 +333,27 @@ void type_reference_resolver::resolve_variable_type(
         }
     }
     if (!resolved || !type::is_resolved(resolved)) {
+        // Step 5e: Union type lookup (search all namespaces for a union with this name)
+        auto type_name = unres_type->type_id();
+        std::vector<std::string> parts;
+        for (size_t i = 0; i < type_name.size(); ++i) {
+            parts.push_back(type_name[i]);
+        }
+        // Navigate to the correct namespace and find the union
+        auto ns = _unit.get_root_namespace();
+        for (size_t i = 0; ns && i + 1 < parts.size(); ++i) {
+            ns = ns->get_child_namespace(parts[i]);
+        }
+        if (ns && !parts.empty()) {
+            for (auto& [uname, udef] : ns->unions()) {
+                if (uname == parts.back()) {
+                    resolved = udef->get_struct_type();
+                    break;
+                }
+            }
+        }
+    }
+    if (!resolved || !type::is_resolved(resolved)) {
         // Step 6: If all resolution attempts fail, throw a diagnostic error
         throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_TYPE_UNRESOLVED), var_lexeme,
             "Unknown type '{}' for variable '{}': no type with this name could be found in scope",

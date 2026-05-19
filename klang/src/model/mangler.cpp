@@ -659,8 +659,13 @@ std::string mangler::mangle_type(const type& ty) const {
     } else if (auto struct_ty = dynamic_cast<const struct_type*>(&ty)) {
         auto st = struct_ty->get_struct();
         if (!st) {
-            // TODO throw exception : struct type not resolved
-            return "";
+            // Union type (struct_type with no owning aggregate): mangle by name.
+            // The struct_type name is the short name; we need to construct a
+            // fully-qualified name. For now, use the name stored on the struct_type.
+            std::string sname = struct_ty->name();
+            if (sname.empty()) return "";
+            // Build a simple qualified name for mangling
+            return std::to_string(sname.size()) + sname;
         }
         if (st->has_tpl_args()) {
             return mangle_structure(*st);

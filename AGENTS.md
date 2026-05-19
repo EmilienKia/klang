@@ -171,8 +171,9 @@ The semantic model — all classes after parsing.
 | File | Contents |
 |------|---------|
 | `model_fwd.hpp` | STL/LLVM includes, all `namespace k::model` forward decls, `visibility` enum, vtable structs |
-| `model_element.hpp` | `element`, `named_element`, `variable_definition`, holder mixins (`variable_holder`, `function_holder`, `aggregate_holder`, `enum_holder`, `using_holder`, `friend_holder`, `annotation_holder`) |
+| `model_element.hpp` | `element`, `named_element`, `variable_definition`, holder mixins (`variable_holder`, `function_holder`, `aggregate_holder`, `enum_holder`, `union_holder`, `using_holder`, `friend_holder`, `annotation_holder`) |
 | `model_enum.hpp` | `enum_entry_def`, `enum_raw_entry_def`, `enumeration` |
+| `model_union.hpp` | `union_alternative`, `union_type_def` — discriminated union model class |
 | `model_aggregate.hpp` | `member_variable_definition`, `base_spec`, `aggregate`, `structure`, `klass`, `interface`, `annotation_type` |
 | `model_function.hpp` | `parameter`, `function`, `constructor`, `destructor`, `static_constructor`, `static_destructor`, `init_item`, `global_tool_function`, `global_constructor/destructor/main_function` |
 | `model_ns.hpp` | `global_variable_definition`, `ns`, `unit` |
@@ -294,7 +295,7 @@ production code. Include sub-headers only when editing a specific class.
 
 | Umbrella | Sub-header chain |
 |----------|-----------------|
-| `model.hpp` | `model_fwd` → `model_element` → `model_enum` → `model_aggregate` → `model_function` → `model_ns` |
+| `model.hpp` | `model_fwd` → `model_element` → `model_enum` → `model_union` → `model_aggregate` → `model_function` → `model_ns` |
 | `expressions.hpp` | `expressions_base` → `expressions_unary` → `expressions_invocation` → `expressions_init` |
 | `resolvers.hpp` | All `resolvers_*.hpp` individually |
 | `errors.hpp` | `errors_lex_parse` → `errors_model` → `errors_gen` |
@@ -397,6 +398,7 @@ The `.kdi` file format describes the public interface of a compiled K library
 | Understand template instantiation | `model/template_instantiator.cpp`, called from `resolvers_aggregate.cpp` |
 | Understand name mangling | `model/mangler.cpp` |
 | Understand import system | `model/tools/kdi_importer.cpp`, `model/imported.hpp` |
+| Understand union types | `model/model_union.hpp`, `gen/gen_struct.cpp` (visit_union), `gen/gen_expr_member.cpp` (union access), `gen/gen_statements.cpp` (emit_union_cleanup) |
 | Add a test | `klang/tests/test-gen-*.cpp` (follow existing pattern with `helpers.cpp`) |
 
 ---
@@ -545,6 +547,13 @@ fun identity(x: T) : T { return x; }
 
 // Enums
 enum Color { Red; Green; Blue; }
+
+// Unions (discriminated/tagged)
+union Value {
+    i: int;
+    d: double;
+    s: String;
+}
 
 // Interfaces
 interface Drawable {

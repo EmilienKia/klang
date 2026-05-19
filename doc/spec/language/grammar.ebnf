@@ -72,7 +72,7 @@ Keyword
     | 'public' | 'protected' | 'private'
     | 'this'   | 'return'
     | 'if'     | 'else'    | 'while'     | 'for'    | 'break'
-    | 'new'    | 'delete'  | 'default'   | 'enum'
+    | 'new'    | 'delete'  | 'default'   | 'enum'   | 'union'
     | 'operator'
     | 'template' | 'typename'
     ;
@@ -330,6 +330,28 @@ EnumEntry
        - constructor/default-init form: NAME(args...), NAME()
        - implicit value form: NAME
     *)
+
+(* ---------- Annotations ------------------------------------------------- *)
+
+(* ---------- Unions ------------------------------------------------------- *)
+
+UnionDecl
+    = { AnnotationDef } , { Specifier } ,
+      'union' , Identifier ,
+      '{' , { UnionMemberDecl } , '}'
+    ;
+    (* A discriminated (tagged) union.  At runtime a hidden uint32 discriminant
+       tracks which alternative is active.  Member access performs a runtime
+       check; assignment to a different alternative updates the discriminant.
+
+       Restrictions:
+       - No functions, constructors, nested types inside a union body.
+       - Drain addresser (#) is forbidden on alternative types.
+       - No inheritance clause. *)
+
+UnionMemberDecl
+    = [ 'const' ] , Identifier , ':' , TypeSpec , ';'
+    ;
 
 (* ---------- Annotations ------------------------------------------------- *)
 

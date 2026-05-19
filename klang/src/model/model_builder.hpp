@@ -142,12 +142,10 @@ protected:
     void visit_using_decl(parse::ast::using_decl &) override;
     void visit_friend_decl(parse::ast::friend_decl &) override;
     void visit_aggregate_decl(parse::ast::aggregate_decl &) override;
+    void build_union_from_ast(parse::ast::aggregate_decl &);
     void visit_enum_decl(parse::ast::enum_decl &) override;
     void visit_variable_decl(parse::ast::variable_decl &) override;
     void visit_function_decl(parse::ast::function_decl &) override;
-
-    /** Build a union_type_def from an aggregate_decl AST node with is_union()==true. */
-    void build_union_from_ast(parse::ast::aggregate_decl& st);
 
     void visit_block_statement(parse::ast::block_statement &) override;
     void visit_return_statement(parse::ast::return_statement &) override;

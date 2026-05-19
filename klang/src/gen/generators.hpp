@@ -457,6 +457,14 @@ public:
      */
     void emit_cond_var_cleanup(const std::shared_ptr<variable_statement>& var_stmt);
 
+    /**
+     * Emit union scope-exit cleanup: switch on the discriminant and call the
+     * destructor of the active alternative if it has one.
+     * @param alloca  The alloca for the union variable (points to { i32, [N x i8] }).
+     * @param udef    The union type definition.
+     */
+    void emit_union_cleanup(llvm::AllocaInst* alloca, union_type_def& udef);
+
     void generate();
 
 protected:

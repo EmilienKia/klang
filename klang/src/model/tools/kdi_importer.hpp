@@ -37,6 +37,7 @@ namespace kdi {
     struct kdi_function;
     struct kdi_variable;
     struct kdi_template_def;
+    struct kdi_union;
 }
 
 namespace k::model {
@@ -202,6 +203,13 @@ private:
      */
     void materialise_variable(const kdi::kdi_variable& var,
                               std::shared_ptr<context> ctx);
+
+    /**
+     * Materialise a single discriminated union.
+     * Creates a union_type_def in the target namespace with resolved alternatives.
+     */
+    void materialise_union(const kdi::kdi_union& un,
+                           std::shared_ptr<context> ctx);
 
     /**
      * Materialise a template definition by re-parsing its source text and

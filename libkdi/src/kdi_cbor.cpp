@@ -1186,6 +1186,53 @@ kdi_template_def decode_template_def(cbor_item_t* item, const std::string& path)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Union DTOs
+// ─────────────────────────────────────────────────────────────────────────────
+
+cbor_item_t* encode_union(const kdi_union& u) {
+    cbor_item_t* m = cbor_new_indefinite_map();
+    map_push(m, "name",         cbor_str(u.name));
+    map_push(m, "fq_name",      cbor_str(u.fq_name));
+    map_push(m, "mangled_name", cbor_str(u.mangled_name));
+    map_push(m, "visibility",   encode_visibility(u.visibility));
+    if (!u.llvm_def.empty())
+        map_push(m, "llvm_def", cbor_str(u.llvm_def));
+    cbor_item_t* alts = cbor_new_indefinite_array();
+    for (auto& a : u.alternatives) {
+        cbor_item_t* am = cbor_new_indefinite_map();
+        map_push(am, "name", cbor_str(a.name));
+        map_push(am, "type", encode_type(a.type));
+        if (a.is_const) map_push(am, "is_const", cbor_bool(true));
+        cbor_array_push(alts, cbor_move(am));
+    }
+    map_push(m, "alternatives", alts);
+    return m;
+}
+
+kdi_union decode_union(cbor_item_t* item, const std::string& path) {
+    kdi_union u;
+    u.name         = req_string(item, "name", path);
+    u.fq_name      = req_string(item, "fq_name", path);
+    u.mangled_name = opt_string(item, "mangled_name");
+    u.visibility   = decode_visibility(item, "visibility", path);
+    u.llvm_def     = opt_string(item, "llvm_def");
+    auto* aa = map_get(item, "alternatives");
+    if (aa && cbor_isa_array(aa)) {
+        size_t n = cbor_array_size(aa);
+        for (size_t i = 0; i < n; ++i) {
+            auto* ai = cbor_array_get(aa, i);
+            auto ap = path + ".alternatives[" + std::to_string(i) + "]";
+            kdi_union_alternative a;
+            a.name     = req_string(ai, "name", ap);
+            a.type     = decode_type(map_get(ai, "type"), ap + ".type");
+            a.is_const = opt_bool(ai, "is_const");
+            u.alternatives.push_back(std::move(a));
+        }
+    }
+    return u;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Namespace
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1204,6 +1251,12 @@ cbor_item_t* encode_namespace(const kdi_namespace& ns) {
     cbor_item_t* enums = cbor_new_indefinite_array();
     for (auto& e : ns.enums) cbor_array_push(enums, cbor_move(encode_enum(e)));
     map_push(m, "enums", enums);
+
+    if (!ns.unions.empty()) {
+        cbor_item_t* unions = cbor_new_indefinite_array();
+        for (auto& u : ns.unions) cbor_array_push(unions, cbor_move(encode_union(u)));
+        map_push(m, "unions", unions);
+    }
 
     cbor_item_t* fns = cbor_new_indefinite_array();
     for (auto& f : ns.functions) cbor_array_push(fns, cbor_move(encode_function(f)));
@@ -1244,6 +1297,13 @@ kdi_namespace decode_namespace(cbor_item_t* item, const std::string& path) {
         for (size_t i = 0; i < n; ++i)
             ns.enums.push_back(decode_enum(cbor_array_get(ea, i),
                                            path + ".enums[" + std::to_string(i) + "]"));
+    }
+    auto* ua = map_get(item, "unions");
+    if (ua && cbor_isa_array(ua)) {
+        size_t n = cbor_array_size(ua);
+        for (size_t i = 0; i < n; ++i)
+            ns.unions.push_back(decode_union(cbor_array_get(ua, i),
+                                            path + ".unions[" + std::to_string(i) + "]"));
     }
     auto* fa = map_get(item, "functions");
     if (fa && cbor_isa_array(fa)) {

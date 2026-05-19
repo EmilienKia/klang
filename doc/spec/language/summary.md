@@ -65,7 +65,7 @@ static   const    abstract   final   override
 public   protected   private
 this     return
 if       else     while    for      break
-new      delete   default  enum
+new      delete   default  enum     union
 operator
 template typename
 ```
@@ -1054,6 +1054,43 @@ With an explicit primitive type (`enum E : unsigned byte`), that explicit primit
 - Construction: `Color(GREEN)`, `Color(2)`, `Color` (default).
 - Implicit conversion enum ↔ primitive integer.
 - Six comparison operators supported.
+
+---
+
+## 19b. Unions (`union`)
+
+### 19b.1 Declaration
+
+```
+{ Specifier } 'union' Identifier '{' { UnionMemberDecl } '}'
+UnionMemberDecl = [ 'const' ] Identifier ':' TypeSpec ';'
+```
+
+### 19b.2 Semantics
+
+A discriminated (tagged) union holds one active alternative at a time. A hidden
+`uint32` discriminant tracks which alternative is active.
+
+| Operation | Behaviour |
+|-----------|-----------|
+| Default construction | Constructs alternative 0; storage is zero-initialized. |
+| Explicit member assignment (`u.alt = x`) | Stores value, updates discriminant. |
+| Member access (`u.alt`) | Returns a reference to the alternative's storage (bitcast). |
+| Destruction | Switch on discriminant; calls destructor of active alternative if non-trivial. |
+
+### 19b.3 Memory Layout
+
+```
+{ uint32 discriminant, [max_size x i8] storage }
+```
+
+Storage is sized to the largest alternative. All alternatives alias the same memory.
+
+### 19b.4 Restrictions
+
+- No functions, constructors, nested types, or inheritance.
+- Drain addresser (`#`) is forbidden on alternative types.
+- Unions can be passed by value or by reference to functions.
 
 ---
 

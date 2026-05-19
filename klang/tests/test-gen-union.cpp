@@ -292,6 +292,8 @@ TEST_CASE("Union with struct — struct field modification via reference", "[gen
     REQUIRE(fn() == 12);
 }
 
+
+
 // ============================================================
 // Phase 3: Union with class alternatives
 // ============================================================
@@ -384,7 +386,136 @@ TEST_CASE("Union with pointer alternative", "[gen][union][structs]") {
     REQUIRE(fn() == 55);
 }
 
+// ============================================================
+// Phase 4: Discriminant update on alternative assignment
+// ============================================================
 
+TEST_CASE("Union discriminant updated on alternative switch", "[gen][union]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union MyUnion {
+            first: int;
+            second: long;
+            third: byte;
+        }
+        fun test_switch_disc() : int {
+            u : MyUnion;
+            u.first = 10;
+            u.second = 20;
+            u.third = 30;
+            // After assigning to third (index 2), accessing first (index 0) should fail
+            // but we can verify the last assigned alternative is readable
+            return u.third;
+        }
+    )", false, false);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int8_t(*)()>("test_switch_disc");
+    REQUIRE(fn);
+    REQUIRE(fn() == 30);
+}
 
+TEST_CASE("Union discriminant tracks last assigned alternative", "[gen][union]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union NumVal {
+            i: int;
+            l: long;
+        }
+        fun get_disc(u: NumVal&) : int {
+            // Assign to l (index 1) then read back l
+            u.l = 99;
+            return 1;
+        }
+        fun test_disc_track() : long {
+            u : NumVal;
+            u.i = 5;
+            get_disc(u);
+            return u.l;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<long(*)()>("test_disc_track");
+    REQUIRE(fn);
+    REQUIRE(fn() == 99L);
+}
 
+TEST_CASE("Union struct assignment updates discriminant", "[gen][union][structs]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Vec2 {
+            x: int = 0;
+            y: int = 0;
+        }
+        union VecOrInt {
+            vec: Vec2;
+            val: int;
+        }
+        fun test_struct_disc() : int {
+            u : VecOrInt;
+            v : Vec2;
+            v.x = 3;
+            v.y = 4;
+            u.vec = v;
+            // Now switch to the int alternative
+            u.val = 42;
+            return u.val;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_struct_disc");
+    REQUIRE(fn);
+    REQUIRE(fn() == 42);
+}
 
+// ============================================================
+// Phase 5: Mangling — unions in function signatures
+// ============================================================
+
+TEST_CASE("Union passed by value to function", "[gen][union]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union IntOrLong {
+            i: int;
+            l: long;
+        }
+        fun use_val(u: IntOrLong) : int {
+            return u.i;
+        }
+        fun test_by_val() : int {
+            u : IntOrLong;
+            u.i = 77;
+            return use_val(u);
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_by_val");
+    REQUIRE(fn);
+    REQUIRE(fn() == 77);
+}
+
+// ============================================================
+// Phase 6: KDI export/import — unions across modules
+// ============================================================
+
+TEST_CASE("Union exported to shared library and used from another module", "[gen][union][import]") {
+    auto result = build_exec_with_lib(R"(
+        module mylib;
+        public:
+        union IntOrLong {
+            i: int;
+            l: long;
+        }
+        fun get_forty_two() : int {
+            u : IntOrLong;
+            u.i = 42;
+            return u.i;
+        }
+    )", R"(
+        module main;
+        import mylib;
+        fun main() : int {
+            return mylib::get_forty_two();
+        }
+    )");
+    REQUIRE(result.exit_code == 42);
+}

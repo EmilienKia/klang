@@ -26,6 +26,23 @@ namespace k::model::gen {
 
 using namespace k::model;
 
+/**
+ * Find the union_type_def whose struct_type matches the given type.
+ * Searches all namespaces in the unit (currently only root namespace).
+ * Returns nullptr if not found or if the struct_type belongs to a regular aggregate.
+ */
+static std::shared_ptr<union_type_def> find_union_for_struct_type(
+    unit& u, const std::shared_ptr<struct_type>& st)
+{
+    if (!st || st->get_struct()) return nullptr; // has owning aggregate → not a union
+    auto root_ns = u.get_root_namespace();
+    if (!root_ns) return nullptr;
+    for (auto& [uname, udef] : root_ns->unions()) {
+        if (udef->get_struct_type() == st) return udef;
+    }
+    return nullptr;
+}
+
 //
 // Expression temporaries cleanup
 //
@@ -103,7 +120,8 @@ void implementation_generator::visit_block(block& blk) {
     }
 
     // Collect local variable_statements whose type is a struct with a destructor,
-    // or an owner type (owner variables must be freed at scope exit), in declaration order.
+    // an owner type (owner variables must be freed at scope exit), or a union with
+    // non-trivially-destructible alternatives, in declaration order.
     std::vector<std::shared_ptr<variable_statement>> dtor_vars;
     for (auto& stmt : blk.get_statements()) {
         if (auto var_stmt = std::dynamic_pointer_cast<variable_statement>(stmt)) {
@@ -112,6 +130,14 @@ void implementation_generator::visit_block(block& blk) {
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
                 if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
                     dtor_vars.push_back(var_stmt);
+                }
+                // Union with non-trivial alternative(s)
+                else if (!st_type->get_struct()) {
+                    if (auto udef = find_union_for_struct_type(_unit, st_type)) {
+                        if (udef->has_nontrivial_destructor_alternative()) {
+                            dtor_vars.push_back(var_stmt);
+                        }
+                    }
                 }
             }
             // Owner type — always needs cleanup (destroy + free on scope exit)
@@ -162,14 +188,21 @@ void implementation_generator::visit_block(block& blk) {
             if (var_it == _context->_variables.end()) continue;
             llvm::AllocaInst* alloca = var_it->second;
 
-            // Step 3: On block exit: emit destructor calls for all block-scoped struct/owner variables
+            // Step 3: On block exit: emit destructor calls for all block-scoped struct/owner/union variables
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-                // Struct destructor
-                auto dtor = st_type->get_struct()->get_destructor();
-                if (!dtor) continue;
-                auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                if (dtor_it == _context->_functions.end()) continue;
-                _builder->CreateCall(dtor_it->second, {alloca});
+                if (st_type->get_struct()) {
+                    // Struct destructor
+                    auto dtor = st_type->get_struct()->get_destructor();
+                    if (!dtor) continue;
+                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                    if (dtor_it == _context->_functions.end()) continue;
+                    _builder->CreateCall(dtor_it->second, {alloca});
+                } else {
+                    // Union with non-trivial alternatives: switch on discriminant
+                    auto udef = find_union_for_struct_type(_unit, st_type);
+                    if (!udef) continue;
+                    emit_union_cleanup(alloca, *udef);
+                }
             } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
                 // Owner: emit conditional destroy+free (only if non-null)
                 emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
@@ -405,11 +438,17 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
 
                 // Step 3: For sret functions: store result into sret pointer
                 if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-                    auto dtor = st_type->get_struct()->get_destructor();
-                    if (!dtor) continue;
-                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                    if (dtor_it == _context->_functions.end()) continue;
-                    _builder->CreateCall(dtor_it->second, {alloca});
+                    if (st_type->get_struct()) {
+                        auto dtor = st_type->get_struct()->get_destructor();
+                        if (!dtor) continue;
+                        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                        if (dtor_it == _context->_functions.end()) continue;
+                        _builder->CreateCall(dtor_it->second, {alloca});
+                    } else {
+                        // Union with non-trivial alternatives
+                        auto udef = find_union_for_struct_type(_unit, st_type);
+                        if (udef) emit_union_cleanup(alloca, *udef);
+                    }
                 } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
                     emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
                         alloca, own_type->get_owned_type(), "ret_owner");
@@ -771,11 +810,17 @@ void implementation_generator::emit_cond_var_cleanup(
     llvm::AllocaInst* alloca = var_it->second;
 
     if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-        auto dtor = st_type->get_struct()->get_destructor();
-        if (!dtor) return;
-        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-        if (dtor_it == _context->_functions.end()) return;
-        _builder->CreateCall(dtor_it->second, {alloca});
+        if (st_type->get_struct()) {
+            auto dtor = st_type->get_struct()->get_destructor();
+            if (!dtor) return;
+            auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+            if (dtor_it == _context->_functions.end()) return;
+            _builder->CreateCall(dtor_it->second, {alloca});
+        } else {
+            // Union with non-trivial alternatives
+            auto udef = find_union_for_struct_type(_unit, st_type);
+            if (udef) emit_union_cleanup(alloca, *udef);
+        }
     } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
         emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
             alloca, own_type->get_owned_type(), "if_cond_var_cleanup");
@@ -1595,6 +1640,57 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     // Step 7: Emit expression temporaries cleanup
     emit_expression_temporaries_cleanup();
 
+}
+
+void implementation_generator::emit_union_cleanup(llvm::AllocaInst* alloca, union_type_def& udef) {
+    // Layout: { i32 discriminant, [N x i8] storage }
+    auto* union_llvm_type = udef.get_struct_type()->get_llvm_type();
+    auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, alloca, 0, "union_dtor_disc_ptr");
+    auto* disc_val = _builder->CreateLoad(llvm::Type::getInt32Ty(**_context), disc_ptr, "union_dtor_disc");
+
+    auto* cur_fn = _builder->GetInsertBlock()->getParent();
+    auto* merge_bb = llvm::BasicBlock::Create(**_context, "union_dtor_done", cur_fn);
+
+    // Count how many alternatives actually need destruction
+    std::vector<std::pair<size_t, std::shared_ptr<function>>> alt_dtors;
+    for (auto& alt : udef.alternatives()) {
+        if (auto st = std::dynamic_pointer_cast<struct_type>(alt.resolved_type)) {
+            if (auto agg = st->get_struct()) {
+                if (auto dtor = agg->get_destructor()) {
+                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                    if (dtor_it != _context->_functions.end()) {
+                        alt_dtors.emplace_back(alt.index, dtor);
+                    }
+                }
+            }
+        }
+    }
+
+    if (alt_dtors.empty()) {
+        // No alternatives actually have destructors — just branch to merge
+        _builder->CreateBr(merge_bb);
+        _builder->SetInsertPoint(merge_bb);
+        return;
+    }
+
+    auto* switch_inst = _builder->CreateSwitch(disc_val, merge_bb, alt_dtors.size());
+
+    for (auto& [alt_idx, dtor] : alt_dtors) {
+        auto* case_bb = llvm::BasicBlock::Create(**_context,
+            "union_dtor_alt" + std::to_string(alt_idx), cur_fn);
+        switch_inst->addCase(
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), alt_idx),
+            case_bb);
+
+        _builder->SetInsertPoint(case_bb);
+        // GEP to storage, bitcast to alternative struct pointer, call destructor
+        auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, alloca, 1, "union_dtor_storage");
+        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+        _builder->CreateCall(dtor_it->second, {storage_ptr});
+        _builder->CreateBr(merge_bb);
+    }
+
+    _builder->SetInsertPoint(merge_bb);
 }
 
 

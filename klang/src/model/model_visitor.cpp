@@ -55,12 +55,12 @@ void default_model_visitor::visit_annotation_type(annotation_type &ann) {
     visit_aggregate(ann);
 }
 
-void default_model_visitor::visit_union(union_type_def &un) {
-    visit_element(un);
-}
-
 void default_model_visitor::visit_enumeration(enumeration &en) {
     visit_element(en);
+}
+
+void default_model_visitor::visit_union(union_type_def &un) {
+    visit_element(un);
 }
 
 void default_model_visitor::visit_function(function &func) {
