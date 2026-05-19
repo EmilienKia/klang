@@ -143,6 +143,18 @@ enum class structure_diag : unsigned int {
 };
 
 // ────────────────────────────────────────────────────────────────────────────
+// Union type diagnostics (alternatives, construction, member access)
+// ────────────────────────────────────────────────────────────────────────────
+enum class union_diag : unsigned int {
+    ERR_UNION_DRAIN_ADDRESSER                     = 0x0180,  ///< Drain '#' on union alternative
+    ERR_UNION_MEMBER_NOT_FOUND                    = 0x0181,  ///< Unknown alternative name
+    ERR_UNION_INVALID_MEMBER                      = 0x0182,  ///< Non-variable decl inside union body
+    ERR_UNION_TYPE_MISMATCH                       = 0x0183,  ///< Wrong alternative access (compile-time)
+    ERR_UNION_AMBIGUOUS_IMPLICIT_ASSIGN           = 0x0184,  ///< Multiple alternatives match RHS type
+    ERR_UNION_NO_DEFAULT_CTOR                     = 0x0185,  ///< First alternative not default-constructible
+};
+
+// ────────────────────────────────────────────────────────────────────────────
 // Function & parameter diagnostics (signatures, return types, abstract, access)
 // ────────────────────────────────────────────────────────────────────────────
 enum class function_diag : unsigned int {

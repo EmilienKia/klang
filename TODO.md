@@ -61,7 +61,7 @@
   - [x] Phase 15: Mangling (union struct_type in function signatures)
   - [x] Phase 16: KDI export/import (kdi_union, CBOR encode/decode, materialise)
   - [x] Phase 17: Documentation (grammar, spec, AGENTS.md)
-  - [ ] Phase 18: Error diagnostics
+  - [x] Phase 18: Error diagnostics (union_diag enum with dedicated codes)
   - Deferred:
     - [ ] Enum-based discriminant interrogation (`u.type()` → enum)
     - [ ] Union extension / inheritance (derive union from another union)

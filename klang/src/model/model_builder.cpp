@@ -522,7 +522,7 @@ namespace k::model {
         for (auto& decl : st.declarations) {
             auto var_decl = std::dynamic_pointer_cast<parse::ast::variable_decl>(decl);
             if (!var_decl) {
-                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STRUCT_BAD_SCOPE), st.kw_aggregate_type,
+                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_INVALID_MEMBER), st.kw_aggregate_type,
                     "Union '{}' can only contain variable (alternative) declarations; functions and nested types are not allowed",
                     {std::string{st.name.content}});
             }
@@ -530,7 +530,7 @@ namespace k::model {
             // Check for drain addresser ('#') — forbidden on union alternatives
             auto alt_type = _context->from_type_specifier(*var_decl->type);
             if (alt_type && type::is_drain(alt_type)) {
-                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_STRUCT_RECURSIVE_FORBIDDEN),
+                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_DRAIN_ADDRESSER),
                     var_decl->name,
                     "Drain addresser '#' is not allowed on union alternatives (alternative '{}' in union '{}')",
                     {std::string{var_decl->name.content}, std::string{st.name.content}});
