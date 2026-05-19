@@ -37,10 +37,7 @@ static std::shared_ptr<union_type_def> find_union_for_struct_type(
     if (!st || st->get_struct()) return nullptr; // has owning aggregate → not a union
     auto root_ns = u.get_root_namespace();
     if (!root_ns) return nullptr;
-    for (auto& [uname, udef] : root_ns->unions()) {
-        if (udef->get_struct_type() == st) return udef;
-    }
-    return nullptr;
+    return find_union_by_struct_type(root_ns, st);
 }
 
 //

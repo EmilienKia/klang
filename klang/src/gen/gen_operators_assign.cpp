@@ -689,12 +689,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
                     std::shared_ptr<union_type_def> union_def;
                     auto root_ns = _unit.get_root_namespace();
                     if (root_ns) {
-                        for (auto& [uname, udef] : root_ns->unions()) {
-                            if (udef->get_struct_type() == st_type) {
-                                union_def = udef;
-                                break;
-                            }
-                        }
+                        union_def = find_union_by_struct_type(root_ns, st_type);
                     }
                     if (union_def) {
                         const k::name& sym_name = moe->symbol().get_name();

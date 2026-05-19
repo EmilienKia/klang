@@ -161,12 +161,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
             std::shared_ptr<union_type_def> union_def;
             auto root_ns = _unit.get_root_namespace();
             if (root_ns) {
-                for (auto& [uname, udef] : root_ns->unions()) {
-                    if (udef->get_struct_type() == struct_subtype) {
-                        union_def = udef;
-                        break;
-                    }
-                }
+                union_def = find_union_by_struct_type(root_ns, struct_subtype);
             }
             if (!union_def) {
                 throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_NOT_FOUND_ON_TYPE), expr.first_lexeme(),
@@ -622,12 +617,7 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
             std::shared_ptr<union_type_def> union_def;
             auto root_ns = _unit.get_root_namespace();
             if (root_ns) {
-                for (auto& [uname, udef] : root_ns->unions()) {
-                    if (udef->get_struct_type() == struct_subtype) {
-                        union_def = udef;
-                        break;
-                    }
-                }
+                union_def = find_union_by_struct_type(root_ns, struct_subtype);
             }
             if (!union_def) {
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), expr.first_lexeme(),

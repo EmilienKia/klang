@@ -582,6 +582,17 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
     udef->set_visibility(un.visibility == kdi::kdi_visibility::public_ ? PUBLIC :
                          un.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PRIVATE);
 
+    // Create an opaque LLVM struct type immediately so that imported function
+    // parameters referencing this union resolve to the same struct_type instance.
+    {
+        auto& llvm_ctx = ctx->llvm_context();
+        auto* union_llvm_type = llvm::StructType::create(llvm_ctx, un.mangled_name + "_union");
+        auto st_type = std::make_shared<struct_type>(normalised, std::weak_ptr<aggregate>{});
+        ctx->attach_llvm_struct_type(st_type, union_llvm_type);
+        udef->set_struct_type(st_type);
+        ctx->add_struct(st_type);
+    }
+
     // Add alternatives (type resolution will happen during aggregate_type_resolver pass)
     for (auto& alt : un.alternatives) {
         // Convert kdi_type to a raw type name for deferred resolution

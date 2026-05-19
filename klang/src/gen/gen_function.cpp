@@ -600,9 +600,21 @@ void signature_resolver::visit_function(function& fn) {
 
     // Resolve return type if still unresolved
     if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
-        auto resolved = _context->resolve_type(fn.get_return_type());
-        if (resolved && type::is_resolved(resolved)) {
-            fn.set_return_type(resolved);
+        // Explicit "void" return type: normalize to null (same as omitting the return type)
+        if (auto unres = std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type())) {
+            if (unres->type_id().to_string() == "void") {
+                fn.set_return_type(nullptr);
+            } else {
+                auto resolved = _context->resolve_type(fn.get_return_type());
+                if (resolved && type::is_resolved(resolved)) {
+                    fn.set_return_type(resolved);
+                }
+            }
+        } else {
+            auto resolved = _context->resolve_type(fn.get_return_type());
+            if (resolved && type::is_resolved(resolved)) {
+                fn.set_return_type(resolved);
+            }
         }
     }
 
@@ -645,9 +657,21 @@ void type_reference_resolver::visit_function(function& fn) {
 
     // Resolve return type if still unresolved (e.g. member functions returning StructType&)
     if (fn.get_return_type() && !type::is_resolved(fn.get_return_type())) {
-        auto resolved = _context->resolve_type(fn.get_return_type());
-        if (resolved && type::is_resolved(resolved)) {
-            fn.set_return_type(resolved);
+        // Explicit "void" return type: normalize to null (same as omitting the return type)
+        if (auto unres = std::dynamic_pointer_cast<unresolved_type>(fn.get_return_type())) {
+            if (unres->type_id().to_string() == "void") {
+                fn.set_return_type(nullptr);
+            } else {
+                auto resolved = _context->resolve_type(fn.get_return_type());
+                if (resolved && type::is_resolved(resolved)) {
+                    fn.set_return_type(resolved);
+                }
+            }
+        } else {
+            auto resolved = _context->resolve_type(fn.get_return_type());
+            if (resolved && type::is_resolved(resolved)) {
+                fn.set_return_type(resolved);
+            }
         }
     }
 
@@ -761,13 +785,21 @@ void declaration_generator::visit_function(function &function) {
     llvm::Type* ret_type = nullptr;
     bool use_sret = false;
     if(const auto& ret = function.get_return_type()) {
-        if (needs_sret_return(ret)) {
-            // sret ABI: prepend a pointer parameter for the return value, actual return is void
-            param_types.insert(param_types.begin(), llvm::PointerType::get(**_context, 0));
-            ret_type = llvm::Type::getVoidTy(**_context);
-            use_sret = true;
-        } else {
-            ret_type = _context->get_llvm_type(ret);
+        // Check for unresolved "void" — treat as void (no LLVM type)
+        if (auto unres = std::dynamic_pointer_cast<unresolved_type>(ret)) {
+            if (unres->type_id().to_string() == "void") {
+                ret_type = llvm::Type::getVoidTy(**_context);
+            }
+        }
+        if (!ret_type) {
+            if (needs_sret_return(ret)) {
+                // sret ABI: prepend a pointer parameter for the return value, actual return is void
+                param_types.insert(param_types.begin(), llvm::PointerType::get(**_context, 0));
+                ret_type = llvm::Type::getVoidTy(**_context);
+                use_sret = true;
+            } else {
+                ret_type = _context->get_llvm_type(ret);
+            }
         }
     } else {
         ret_type = llvm::Type::getVoidTy(**_context);

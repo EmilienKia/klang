@@ -1241,6 +1241,11 @@ void aggregate_type_resolver::visit_global_main_function(global_main_function& /
 void aggregate_type_resolver::visit_union(union_type_def& un) {
     // Resolve each alternative's type
     for (auto& alt : un.alternatives_mutable()) {
+        if (!alt.resolved_type && !alt.raw_type_name.empty()) {
+            // Imported union: create an unresolved type from the raw_type_name
+            // so that it can be resolved through the normal path below.
+            alt.resolved_type = _context->from_string(alt.raw_type_name);
+        }
         if (alt.resolved_type && !type::is_resolved(alt.resolved_type)) {
             // First try context->resolve_type (handles primitive wrappers, pointers, etc.)
             auto resolved = _context->resolve_type(alt.resolved_type);
@@ -1261,11 +1266,22 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
     // Create an opaque LLVM struct type for the union.
     // The body will be set in declaration_generator::visit_union() once the
     // LLVM module (and DataLayout) is available.
+    // If the struct_type already exists (e.g. imported via KDI), skip creation.
+    if (un.get_struct_type()) {
+        trace("[aggregate_type_resolver::visit_union] union '{}' already has struct_type (imported)",
+            {un.get_short_name()});
+        return;
+    }
     auto& llvm_ctx = _context->llvm_context();
     auto* union_llvm_type = llvm::StructType::create(llvm_ctx, un.get_mangled_name() + "_union");
 
     // Create a struct_type wrapping this opaque LLVM type and register with context
-    auto st_type = std::make_shared<struct_type>(un.get_short_name(), std::weak_ptr<aggregate>{});
+    // Use the FQ name (without leading "::") so the KDI exporter can identify the type
+    // when serializing function parameter types referencing this union.
+    std::string fq_name = un.get_fq_name();
+    if (fq_name.size() >= 2 && fq_name[0] == ':' && fq_name[1] == ':')
+        fq_name = fq_name.substr(2);
+    auto st_type = std::make_shared<struct_type>(fq_name, std::weak_ptr<aggregate>{});
     _context->attach_llvm_struct_type(st_type, union_llvm_type);
     un.set_struct_type(st_type);
     _context->add_struct(st_type);

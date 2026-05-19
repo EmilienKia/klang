@@ -96,6 +96,22 @@ convert_aggregate_ref(const kdi::kdi_aggregate_ref& ref, unit& owner,
     }
     k::name kname(false, std::move(parts));
 
+    // Check if this name refers to an already-materialised union type.
+    // Unions are stored in the namespace hierarchy; navigate to the parent
+    // namespace and look for a union with the leaf name.
+    {
+        auto target_ns = owner.get_root_namespace();
+        for (size_t i = 0; i + 1 < kname.size(); ++i) {
+            target_ns = target_ns->get_child_namespace(kname[i]);
+        }
+        if (auto udef = target_ns->get_union(kname.back())) {
+            if (auto st = udef->get_struct_type()) {
+                std::cerr << "[DEBUG convert_aggregate_ref] found union struct_type!" << std::endl;
+                return st;
+            }
+        }
+    }
+
     // Delegate to unit — creates or retrieves the imported_aggregate node.
     auto agg = owner.get_or_create_imported_aggregate(kname, ctx);
     if (!agg) return nullptr;

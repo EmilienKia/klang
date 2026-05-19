@@ -519,3 +519,26 @@ TEST_CASE("Union exported to shared library and used from another module", "[gen
     )");
     REQUIRE(result.exit_code == 42);
 }
+
+TEST_CASE("Union passed by reference across modules", "[gen][union][import]") {
+    auto result = build_exec_with_lib(R"(
+        module mylib;
+        public:
+        union IntOrLong {
+            i: int;
+            l: long;
+        }
+        fun read_int(u: IntOrLong&) : int {
+            return u.i;
+        }
+    )", R"(
+        module main;
+        import mylib;
+        fun main() : int {
+            u : mylib::IntOrLong;
+            u.i = 99;
+            return mylib::read_int(u);
+        }
+    )");
+    REQUIRE(result.exit_code == 99);
+}

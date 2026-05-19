@@ -399,6 +399,28 @@ inline void emit_array_bounds_check(
     builder->SetInsertPoint(ok_bb);
 }
 
+/**
+ * Find a union_type_def by its struct_type, searching recursively through all
+ * namespaces starting from the given namespace.
+ */
+inline std::shared_ptr<union_type_def> find_union_by_struct_type(
+    const std::shared_ptr<ns>& start_ns,
+    const std::shared_ptr<struct_type>& st)
+{
+    if (!start_ns || !st) return nullptr;
+    // Check unions in this namespace
+    for (auto& [uname, udef] : start_ns->unions()) {
+        if (udef->get_struct_type() == st) return udef;
+    }
+    // Recurse into child namespaces
+    for (auto& child : start_ns->get_children()) {
+        if (auto child_ns = std::dynamic_pointer_cast<ns>(child)) {
+            if (auto found = find_union_by_struct_type(child_ns, st)) return found;
+        }
+    }
+    return nullptr;
+}
+
 } // namespace k::model::gen
 
 template<typename STM>
