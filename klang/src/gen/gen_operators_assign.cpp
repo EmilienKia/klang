@@ -668,14 +668,9 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         }
     }
 
-    // Step 5: For primitives/pointers: emit store instruction
-    _value = right;
-    _value = _builder->CreateStore(_value, left);
-    _value = left;
-
-    // ── Union discriminant update ──────────────────────────────────────────
-    // If the LHS is a member access on a union, update the discriminant
-    // to reflect the newly-active alternative.
+    // ── Union: destroy old alternative before reassignment ──────────────────
+    // If the LHS is a member access on a union, destroy the previously-active
+    // alternative (if it has a destructor) then update the discriminant.
     {
         // Unwrap load_value_expression wrappers on the left side
         auto lhs_expr = expr.left();
@@ -711,20 +706,31 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
                             moe->sub_expr()->accept(*this);
                             llvm::Value* union_base = _value;
                             if (union_base) {
+                                // Destroy old alternative if needed
+                                emit_union_cleanup_on_reassign(union_base, *union_def, alt->index);
+                                // Store the new value
+                                _builder->CreateStore(right, left);
+                                // Update the discriminant
                                 auto* union_llvm_type = st_type->get_llvm_type();
                                 auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_disc_upd");
                                 _builder->CreateStore(
                                     llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()), alt->index),
                                     disc_ptr);
                             }
+                            _value = left;
+                            return;
                         }
                     }
                 }
             }
         }
-        _value = left;
     }
     // ───────────────────────────────────────────────────────────────────────
+
+    // Step 5: For primitives/pointers: emit store instruction
+    _value = right;
+    _value = _builder->CreateStore(_value, left);
+    _value = left;
 
 }
 

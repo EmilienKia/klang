@@ -1694,4 +1694,61 @@ void implementation_generator::emit_union_cleanup(llvm::AllocaInst* alloca, unio
 }
 
 
+void implementation_generator::emit_union_cleanup_on_reassign(llvm::Value* union_base, union_type_def& udef, size_t new_alt_idx) {
+    // Destroy the currently-active alternative (if it has a destructor and it
+    // differs from the new one being assigned).
+    auto* union_llvm_type = udef.get_struct_type()->get_llvm_type();
+    auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_reassign_disc_ptr");
+    auto* disc_val = _builder->CreateLoad(llvm::Type::getInt32Ty(**_context), disc_ptr, "union_reassign_disc");
+
+    // Collect alternatives that have destructors and are NOT the new alternative
+    std::vector<std::pair<size_t, std::shared_ptr<function>>> alt_dtors;
+    for (auto& alt : udef.alternatives()) {
+        if (alt.index == new_alt_idx) continue;
+        if (auto st = std::dynamic_pointer_cast<struct_type>(alt.resolved_type)) {
+            if (auto agg = st->get_struct()) {
+                if (auto dtor = agg->get_destructor()) {
+                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                    if (dtor_it != _context->_functions.end()) {
+                        alt_dtors.emplace_back(alt.index, dtor);
+                    }
+                }
+            }
+        }
+    }
+
+    if (alt_dtors.empty()) {
+        // No alternatives with destructors to clean up — nothing to do
+        return;
+    }
+
+    auto* cur_fn = _builder->GetInsertBlock()->getParent();
+    auto* merge_bb = llvm::BasicBlock::Create(**_context, "union_reassign_done", cur_fn);
+
+    // If the discriminant already matches the new target, skip destruction
+    auto* already_new = _builder->CreateICmpEQ(disc_val,
+        llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), new_alt_idx), "union_already_new");
+    auto* need_cleanup_bb = llvm::BasicBlock::Create(**_context, "union_reassign_cleanup", cur_fn);
+    _builder->CreateCondBr(already_new, merge_bb, need_cleanup_bb);
+
+    _builder->SetInsertPoint(need_cleanup_bb);
+    auto* switch_inst = _builder->CreateSwitch(disc_val, merge_bb, alt_dtors.size());
+
+    for (auto& [alt_idx, dtor] : alt_dtors) {
+        auto* case_bb = llvm::BasicBlock::Create(**_context,
+            "union_reassign_dtor_alt" + std::to_string(alt_idx), cur_fn);
+        switch_inst->addCase(
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), alt_idx),
+            case_bb);
+
+        _builder->SetInsertPoint(case_bb);
+        auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 1, "union_reassign_storage");
+        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+        _builder->CreateCall(dtor_it->second, {storage_ptr});
+        _builder->CreateBr(merge_bb);
+    }
+
+    _builder->SetInsertPoint(merge_bb);
+}
+
 } // namespace k::model::gen

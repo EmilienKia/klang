@@ -469,6 +469,7 @@ public:
      * @param udef    The union type definition.
      */
     void emit_union_cleanup(llvm::AllocaInst* alloca, union_type_def& udef);
+    void emit_union_cleanup_on_reassign(llvm::Value* union_base, union_type_def& udef, size_t new_alt_idx);
 
     void generate();
 
