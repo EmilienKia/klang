@@ -643,8 +643,31 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
                 return;
             }
             // _value is a pointer to the union struct { i32, [N x i8] }
-            // GEP to the storage field (index 1)
             auto* union_llvm_type = struct_subtype->get_llvm_type();
+            // ── Runtime discriminant check (read-only accesses) ──
+            // Skip the check when this access is the LHS of an assignment (we're about
+            // to switch the active alternative — the discriminant will be updated after).
+            if (!_skip_union_disc_check) {
+                auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, _value, 0, "union_rd_disc_ptr");
+                auto* disc_val = _builder->CreateLoad(llvm::Type::getInt32Ty(_builder->getContext()), disc_ptr, "union_rd_disc");
+                auto* expected = llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()), alt->index);
+                auto* cmp = _builder->CreateICmpNE(disc_val, expected, "union_disc_cmp");
+
+                auto* cur_fn = _builder->GetInsertBlock()->getParent();
+                auto* fail_bb = llvm::BasicBlock::Create(_builder->getContext(), "union_access_fail", cur_fn);
+                auto* ok_bb = llvm::BasicBlock::Create(_builder->getContext(), "union_access_ok", cur_fn);
+                _builder->CreateCondBr(cmp, fail_bb, ok_bb);
+
+                // Fail branch: call trap and unreachable
+                _builder->SetInsertPoint(fail_bb);
+                auto* trap_fn = llvm::Intrinsic::getDeclaration(&_context->module(), llvm::Intrinsic::trap);
+                _builder->CreateCall(trap_fn);
+                _builder->CreateUnreachable();
+
+                // OK branch: continue with member access
+                _builder->SetInsertPoint(ok_bb);
+            }
+            // GEP to the storage field (index 1)
             auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, _value, 1, "union_storage");
             // The storage pointer is i8*; cast it to a pointer to the alternative's type
             // In LLVM opaque pointers mode, no bitcast needed — just use the pointer directly

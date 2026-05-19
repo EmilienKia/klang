@@ -520,8 +520,27 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
 void implementation_generator::visit_simple_assignation_expression(simple_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
+    // ── Skip the union discriminant check when evaluating the LHS of an assignment
+    //    to a union alternative (we are about to switch the active alternative). ──
+    {
+        auto lhs_e = std::shared_ptr<expression>(expr.left());
+        while (auto lve = std::dynamic_pointer_cast<load_value_expression>(lhs_e)) {
+            lhs_e = lve->sub_expr();
+        }
+        if (auto moe = std::dynamic_pointer_cast<member_of_object_expression>(lhs_e)) {
+            auto sub_type = moe->sub_expr()->get_type();
+            if (type::is_reference(sub_type))
+                sub_type = std::dynamic_pointer_cast<reference_type>(sub_type)->get_subtype();
+            if (auto st = std::dynamic_pointer_cast<struct_type>(sub_type)) {
+                if (!st->get_struct())
+                    _skip_union_disc_check = true;
+            }
+        }
+    }
+
     // Step 1: Evaluate left and right operands
     auto [left, right] = process_binary_expression(expr);
+    _skip_union_disc_check = false;
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F035), expr.first_lexeme(),
             "Internal error: assignment expression produced a null left or right LLVM value; "
