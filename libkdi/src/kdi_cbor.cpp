@@ -1206,6 +1206,8 @@ cbor_item_t* encode_union(const kdi_union& u) {
         cbor_array_push(alts, cbor_move(am));
     }
     map_push(m, "alternatives", alts);
+    if (u.template_origin)
+        map_push(m, "template_origin", encode_template_origin(*u.template_origin));
     return m;
 }
 

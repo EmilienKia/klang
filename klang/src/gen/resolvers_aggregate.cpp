@@ -306,7 +306,18 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         // Create LLVM opaque struct type (body finalized in declaration_generator::visit_union)
         auto& llvm_ctx = _context->llvm_context();
         auto* union_llvm_type = llvm::StructType::create(llvm_ctx, concrete_union->get_mangled_name() + "_union");
-        auto st_type = std::make_shared<struct_type>(concrete_union->get_short_name(), std::weak_ptr<aggregate>{});
+        // Use the FQ name (stripped of leading "::") so that KDI type resolution
+        // (convert_aggregate_ref) can unambiguously locate the union in the namespace tree.
+        std::string st_name = concrete_union->get_short_name();
+        {
+            const std::string& fq = concrete_union->get_fq_name();
+            if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') {
+                st_name = fq.substr(2);
+            } else if (!fq.empty()) {
+                st_name = fq;
+            }
+        }
+        auto st_type = std::make_shared<struct_type>(st_name, std::weak_ptr<aggregate>{});
         _context->attach_llvm_struct_type(st_type, union_llvm_type);
         concrete_union->set_struct_type(st_type);
         _context->add_struct(st_type);

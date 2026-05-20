@@ -974,6 +974,22 @@ void kdi_builder::visit_enumeration(enumeration& en) {
 void kdi_builder::visit_union(union_type_def& un) {
     if (!is_exported(un.get_visibility())) return;
 
+    // Template definition: export as kdi_template_def, not as a regular union
+    if (un.is_template()) {
+        if (!_ns_stack.empty() && un.get_tpl_info()) {
+            std::string fq = un.get_fq_name();
+            if (fq.empty() || fq == "::") {
+                fq = _ns_stack.back()->fq_name.empty()
+                     ? un.get_short_name()
+                     : _ns_stack.back()->fq_name + "::" + un.get_short_name();
+            }
+            _ns_stack.back()->template_defs.push_back(
+                build_template_def(un.get_short_name(), fq, "union",
+                                   un.get_visibility(), *un.get_tpl_info(), nullptr));
+        }
+        return;
+    }
+
     kdi::kdi_union ku;
     ku.name        = un.get_short_name();
     ku.fq_name     = [&]() {
@@ -983,6 +999,18 @@ void kdi_builder::visit_union(union_type_def& un) {
     }();
     ku.mangled_name = un.get_mangled_name();
     ku.visibility   = to_kdi_vis(un.get_visibility());
+
+    // Template origin for concrete instantiations
+    if (un.has_tpl_args()) {
+        std::string inst_fq = un.get_fq_name();
+        std::string inst_name = un.get_short_name();
+        std::string base_fq = inst_fq;
+        auto pos = base_fq.rfind(inst_name);
+        if (pos != std::string::npos) {
+            base_fq.replace(pos, inst_name.size(), un.get_tpl_base_name());
+        }
+        ku.template_origin = build_template_origin(un.get_tpl_base_name(), base_fq, un.get_tpl_args());
+    }
 
     for (auto& alt : un.alternatives()) {
         kdi::kdi_union_alternative ka;

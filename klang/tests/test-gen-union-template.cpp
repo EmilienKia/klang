@@ -145,3 +145,53 @@ TEST_CASE("Template union pass by reference", "[gen][union][template]") {
     REQUIRE(fn);
     REQUIRE(fn() == 55);
 }
+
+// ============================================================
+// Cross-module template union import
+// ============================================================
+
+TEST_CASE("Template union exported and instantiated cross-module", "[gen][union][template][import]") {
+    auto result = build_exec_with_lib(R"(
+        module mylib;
+        public:
+        template<typename T>
+        union Optional {
+            value: T;
+            none: byte;
+        }
+        fun get_opt_value() : int {
+            o : Optional<int>;
+            o.value = 77;
+            return o.value;
+        }
+    )", R"(
+        module main;
+        import mylib;
+        fun main() : int {
+            return mylib::get_opt_value();
+        }
+    )");
+    REQUIRE(result.exit_code == 77);
+}
+
+TEST_CASE("Template union definition imported and instantiated by consumer", "[gen][union][template][import]") {
+    auto result = build_exec_with_lib(R"(
+        module mylib;
+        public:
+        template<typename T>
+        union Wrapper {
+            val: T;
+            empty: byte;
+        }
+        fun dummy() : int { return 0; }
+    )", R"(
+        module main;
+        import mylib;
+        fun main() : int {
+            w : Wrapper<int>;
+            w.val = 33;
+            return w.val;
+        }
+    )");
+    REQUIRE(result.exit_code == 33);
+}
