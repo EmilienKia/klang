@@ -614,8 +614,8 @@ A parameter declared with `...` after the name is a **varargs parameter** (varia
 argument list). It is syntactic sugar for an unsized array parameter (`T[]`):
 
 ```k
-fun sum(values... : int) : int { /* values is int[] */ }
-fun format(fmt: int, args... : int) : int { /* ... */ }
+sum(values... : int) : int { /* values is int[] */ }
+format(fmt: int, args... : int) : int { /* ... */ }
 ```
 
 Rules:
@@ -628,7 +628,7 @@ Rules:
   `arr : int[3]{1, 2, 3}; sum(arr);`
 - Zero arguments for the varargs position is valid: `sum()` → empty `int[0]` array.
 - Non-varargs overloads are preferred over varargs overloads during resolution.
-- Template varargs are supported: `template<typename T> fun first(args... : T) : T&`.
+- Template varargs are supported: `template<typename T> first(args... : T) : T&`.
 - Template parameter packs / expansion / fold expressions are **not** supported.
 
 ### 10.3 Function Overloading

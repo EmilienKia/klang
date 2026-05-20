@@ -38,7 +38,7 @@ using namespace k::parse::ast;
 
 TEST_CASE("Parse varargs parameter — is_varargs flag set", "[parse][varargs]") {
     test_logger log;
-    k::source src{"fun f(args... : int) : void {}"};
+    k::source src{"f(args... : int) : void {}"};
     k::parse::parser parser(log, src);
     auto func = parser.parse_function_decl();
     REQUIRE(func);
@@ -53,7 +53,7 @@ TEST_CASE("Parse varargs parameter — is_varargs flag set", "[parse][varargs]")
 
 TEST_CASE("Parse non-varargs parameter — is_varargs flag not set", "[parse][varargs]") {
     test_logger log;
-    k::source src{"fun f(a: int, b: int) : void {}"};
+    k::source src{"f(a: int, b: int) : void {}"};
     k::parse::parser parser(log, src);
     auto func = parser.parse_function_decl();
     REQUIRE(func);
@@ -64,7 +64,7 @@ TEST_CASE("Parse non-varargs parameter — is_varargs flag not set", "[parse][va
 
 TEST_CASE("Parse mixed fixed + varargs parameters", "[parse][varargs]") {
     test_logger log;
-    k::source src{"fun f(a: int, b: int, rest... : int) : void {}"};
+    k::source src{"f(a: int, b: int, rest... : int) : void {}"};
     k::parse::parser parser(log, src);
     auto func = parser.parse_function_decl();
     REQUIRE(func);
@@ -79,21 +79,21 @@ TEST_CASE("Parse mixed fixed + varargs parameters", "[parse][varargs]") {
 
 TEST_CASE("Parse error — varargs not last parameter", "[parse][varargs]") {
     test_logger log;
-    k::source src{"fun f(a... : int, b: int) : void {}"};
+    k::source src{"f(a... : int, b: int) : void {}"};
     k::parse::parser parser(log, src);
     REQUIRE_THROWS(parser.parse_function_decl());
 }
 
 TEST_CASE("Parse error — multiple varargs parameters", "[parse][varargs]") {
     test_logger log;
-    k::source src{"fun f(a... : int, b... : int) : void {}"};
+    k::source src{"f(a... : int, b... : int) : void {}"};
     k::parse::parser parser(log, src);
     REQUIRE_THROWS(parser.parse_function_decl());
 }
 
 TEST_CASE("Parse error — varargs with default value", "[parse][varargs]") {
     test_logger log;
-    k::source src{"fun f(a... : int = 42) : void {}"};
+    k::source src{"f(a... : int = 42) : void {}"};
     k::parse::parser parser(log, src);
     REQUIRE_THROWS(parser.parse_function_decl());
 }

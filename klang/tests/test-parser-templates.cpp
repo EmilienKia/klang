@@ -127,7 +127,7 @@ TEST_CASE("Parse generic public class with nested aggregate", "[parser][template
 
 TEST_CASE("Parse generic function with typename parameter", "[parser][template][generic]") {
     test_logger log;
-    k::source src{"generic<typename T> fun wrap(value: T&) : int { return 0; }"};
+    k::source src{"generic<typename T> wrap(value: T&) : int { return 0; }"};
     k::parse::parser parser(log, src);
     auto unit = parser.parse_unit();
 
@@ -142,7 +142,7 @@ TEST_CASE("Parse generic function with typename parameter", "[parser][template][
 
 TEST_CASE("Parse generic function declaration without body keeps generic flag", "[parser][template][generic]") {
     test_logger log;
-    k::source src{"generic<typename T> fun declare(value: T&) : int;"};
+    k::source src{"generic<typename T> declare(value: T&) : int;"};
     k::parse::parser parser(log, src);
     auto unit = parser.parse_unit();
 
@@ -156,7 +156,7 @@ TEST_CASE("Parse generic function declaration without body keeps generic flag", 
 
 TEST_CASE("Parse generic function redirect keeps generic flag", "[parser][template][generic]") {
     test_logger log;
-    k::source src{"generic<typename T> fun call(value: T&) : int -> target;"};
+    k::source src{"generic<typename T> call(value: T&) : int -> target;"};
     k::parse::parser parser(log, src);
     auto unit = parser.parse_unit();
 

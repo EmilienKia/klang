@@ -90,7 +90,7 @@ AggregateDecl
     ;
 
 FunctionDecl
-    = { AnnotationDef } , [ TemplateDeclaration ] , { Specifier } , [ 'fun' ] ,
+    = { AnnotationDef } , [ TemplateDeclaration ] , { Specifier } ,
       ( FunctionHead | OperatorFunctionHead | DestructorHead ) ,
       '(' , [ ParameterList ] , ')' ,
       [ NamedReturnVar ] ,

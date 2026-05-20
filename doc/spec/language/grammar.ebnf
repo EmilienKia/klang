@@ -364,7 +364,7 @@ AnnotationDef
 (* ---------- Functions ---------------------------------------------------- *)
 
 FunctionDecl
-    = { AnnotationDef } , [ TemplateDeclaration | GenericDeclaration ] , { Specifier } , [ 'fun' ] ,
+    = { AnnotationDef } , [ TemplateDeclaration | GenericDeclaration ] , { Specifier } ,
       ( FunctionHead | OperatorFunctionHead | DestructorHead ) ,
       '(' , [ ParameterList ] , ')' ,
       [ NamedReturnVar ] ,

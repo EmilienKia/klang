@@ -86,7 +86,7 @@ A parameter declared with `...` after its name is a **varargs** (variable-length
 parameter. It is syntactic sugar for an unsized array parameter (`T[]`):
 
 ```k
-fun sum(values... : int) : int {
+sum(values... : int) : int {
     // 'values' is of type int[] inside the body
     return values[0] + values[1] + values[2];
 }
@@ -108,14 +108,14 @@ fun sum(values... : int) : int {
   ```
 - Zero arguments for the varargs position is valid (an empty array is created):
   ```k
-  fun count(values... : int) : int { return values.size; }
+  count(values... : int) : int { return values.size; }
   count();              // returns 0
   ```
 - Non-varargs overloads are preferred over varargs overloads during resolution.
 - Template varargs are supported:
   ```k
   template<typename T>
-  fun first(args... : T) : T& { return args[0]; }
+  first(args... : T) : T& { return args[0]; }
   ```
 - Template parameter packs, expansion, and fold expressions are **not** supported.
 

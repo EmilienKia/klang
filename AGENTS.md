@@ -527,23 +527,23 @@ struct Point {
 
 class Animal {
     public:
-    fun name() : string -> default;  // default implementation
-    fun sound() : string -> delete;  // deleted
+    name() : string -> default;  // default implementation
+    sound() : string -> delete;  // deleted
 }
 
 class Dog : public Animal {
-    fun sound() override : string { return "woof"; }
+    sound() override : string { return "woof"; }
 }
 
-fun add(a: int, b: int) : int { return a + b; }
+add(a: int, b: int) : int { return a + b; }
 
 // Annotations
 @Deprecated
-fun old_func() : void { }
+old_func() : void { }
 
 // Templates
 template<T>
-fun identity(x: T) : T { return x; }
+identity(x: T) : T { return x; }
 
 // Enums
 enum Color { Red; Green; Blue; }
@@ -557,7 +557,7 @@ union Value {
 
 // Interfaces
 interface Drawable {
-    fun draw() : void -> delete;
+    draw() : void -> delete;
 }
 ```
 

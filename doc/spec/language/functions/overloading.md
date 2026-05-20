@@ -57,8 +57,8 @@ See [Types — Implicit conversions](../basic/types.md#7-implicit-conversions) f
 Non-varargs overloads are always preferred over varargs overloads when both match:
 
 ```k
-fun pick(a: int, b: int) : int { return 1; }
-fun pick(args... : int) : int  { return 2; }
+pick(a: int, b: int) : int { return 1; }
+pick(args... : int) : int  { return 2; }
 
 pick(10, 20);       // calls pick(int, int) → 1 (exact match preferred)
 pick(10, 20, 30);   // calls pick(args... : int) → 2 (only varargs matches)
