@@ -141,6 +141,25 @@ public:
         k::log::logger& logger);
 
     /**
+     * Instantiate a template union with concrete arguments.
+     *
+     * @param tpl_def     The template union definition (must be is_template()).
+     * @param args        Concrete template arguments.
+     * @param parent_ns   The namespace containing the template definition.
+     * @param unit        The compilation unit.
+     * @param ctx         The model context.
+     * @param logger      Logger for diagnostics.
+     * @return The concrete (non-template) union, or nullptr on failure.
+     */
+    static std::shared_ptr<union_type_def> instantiate_union(
+        union_type_def& tpl_def,
+        const std::vector<template_argument>& args,
+        std::shared_ptr<ns> parent_ns,
+        k::model::unit& unit,
+        std::shared_ptr<context> ctx,
+        k::log::logger& logger);
+
+    /**
      * Resolve unresolved symbol_expression nodes in the method bodies of a
      * freshly instantiated concrete aggregate.
      *

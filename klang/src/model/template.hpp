@@ -34,6 +34,7 @@ namespace k::model {
 class type;
 class aggregate;
 class function;
+class union_type_def;
 
 /**
  * Describes the kind of a template parameter.
@@ -259,7 +260,8 @@ struct tpl_info {
      */
     using instantiation_entry = std::variant<
         std::shared_ptr<aggregate>,
-        std::shared_ptr<function>
+        std::shared_ptr<function>,
+        std::shared_ptr<union_type_def>
     >;
     std::unordered_map<template_instantiation_key, instantiation_entry> instantiations;
 

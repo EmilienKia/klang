@@ -87,6 +87,7 @@ class destructor;
 class static_constructor;
 class static_destructor;
 class aggregate;
+class union_type_def;
 struct template_argument;
 
 class mangler {
@@ -239,6 +240,12 @@ public:
      * If the aggregate is a template instantiation, uses I…E encoding.
      */
     std::string mangle_structure(const aggregate& agg) const;
+
+    /**
+     * Non-static: mangle a union name with template awareness.
+     * If the union is a template instantiation, uses I…E encoding.
+     */
+    std::string mangle_union(const union_type_def& un) const;
 
 
 };

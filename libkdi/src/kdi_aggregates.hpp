@@ -436,9 +436,10 @@ struct kdi_union {
     std::vector<kdi_union_alternative> alternatives; ///< alternatives in declaration order
     /// LLVM IR struct type definition, e.g. "{ i32, [8 x i8] }".
     std::string                       llvm_def;
+    /// Template origin (set when this union is a concrete template instantiation).
+    std::optional<kdi_template_origin> template_origin;
 };
 
 } // namespace kdi
 
 #endif // LIBKDI_AGGREGATES_HPP
-

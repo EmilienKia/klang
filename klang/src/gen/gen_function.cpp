@@ -278,8 +278,15 @@ void type_reference_resolver::visit_parameter(parameter& param) {
             if (auto unres = std::dynamic_pointer_cast<unresolved_type>(inner);
                 unres && !unres->type_id().empty())
             {
-                if (auto imp_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context)) {
+                // Try template instantiation first (e.g. Opt<int>&)
+                const element* scope_elem = &param;
+                auto resolved_inner = resolve_inner_type(inner, scope_elem);
+                if (resolved_inner && type::is_resolved(resolved_inner)) {
+                    res_type = resolved_inner;
+                } else if (auto imp_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context)) {
                     res_type = imp_agg->get_struct_type();
+                }
+                if (res_type && type::is_resolved(res_type)) {
                     for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
                         switch (*it) {
                             case WrapKind::Ref:   res_type = res_type->get_reference(); break;

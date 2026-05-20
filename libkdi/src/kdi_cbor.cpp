@@ -1216,6 +1216,9 @@ kdi_union decode_union(cbor_item_t* item, const std::string& path) {
     u.mangled_name = opt_string(item, "mangled_name");
     u.visibility   = decode_visibility(item, "visibility", path);
     u.llvm_def     = opt_string(item, "llvm_def");
+    auto* to = map_get(item, "template_origin");
+    if (to)
+        u.template_origin = decode_template_origin(to, path + ".template_origin");
     auto* aa = map_get(item, "alternatives");
     if (aa && cbor_isa_array(aa)) {
         size_t n = cbor_array_size(aa);

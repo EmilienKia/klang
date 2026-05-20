@@ -1783,4 +1783,85 @@ void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggr
 } // namespace k::model
 
 
+// ═══════════════════════════════════════════════════════════════════════════
+// instantiate_union
+// ═══════════════════════════════════════════════════════════════════════════
+
+namespace k::model {
+
+std::shared_ptr<union_type_def> template_instantiator::instantiate_union(
+    union_type_def& tpl_def,
+    const std::vector<template_argument>& args,
+    std::shared_ptr<ns> parent_ns,
+    k::model::unit& unit,
+    std::shared_ptr<context> ctx,
+    k::log::logger& logger)
+{
+    auto* ti = tpl_def.get_tpl_info();
+    if (!ti) return nullptr;
+
+    // Check instantiation cache
+    std::string key = build_instantiation_key(args);
+    auto it = ti->instantiations.find(key);
+    if (it != ti->instantiations.end()) {
+        if (auto* un_ptr = std::get_if<std::shared_ptr<union_type_def>>(&it->second)) {
+            return *un_ptr;
+        }
+    }
+
+    // Build the instantiated name
+    std::string base_name = tpl_def.get_short_name();
+    std::string inst_name = build_instantiated_name(base_name, args);
+
+    // Build type substitution map
+    auto subst = build_substitution_map(*ti, args);
+    auto val_subst = build_value_substitution_map(*ti, args);
+
+    // Create a new concrete union in the parent namespace
+    auto concrete = parent_ns->define_union(inst_name);
+    if (!concrete) return nullptr;
+
+    concrete->set_visibility(tpl_def.get_visibility());
+
+    // Copy alternatives with type substitution
+    for (const auto& alt : tpl_def.alternatives()) {
+        std::string raw = alt.raw_type_name;
+        // Apply type substitution to the raw_type_name (for template params like "T")
+        auto subst_it = subst.find(raw);
+        if (subst_it != subst.end() && subst_it->second) {
+            raw = subst_it->second->to_string();
+        }
+        concrete->add_alternative(alt.name, raw, alt.is_const);
+
+        // Substitute the resolved type as well
+        auto& new_alt = concrete->alternatives_mutable().back();
+        if (alt.resolved_type) {
+            new_alt.resolved_type = substitute_type(alt.resolved_type, subst);
+        } else if (!raw.empty()) {
+            // Try to get model type from substitution map or context
+            auto from_ctx = ctx->from_string(raw);
+            if (from_ctx) new_alt.resolved_type = from_ctx;
+        }
+    }
+
+    // Store template instantiation info for mangling
+    concrete->set_tpl_instantiation_info(base_name, args);
+
+    // Cache the instantiation
+    ti->instantiations[key] = concrete;
+
+    // Assign FQ name
+    if (concrete->get_fq_name().empty() && !concrete->get_short_name().empty()) {
+        if (auto ancestor = concrete->template ancestor<named_element>()) {
+            concrete->assign_name(ancestor->get_name().with_back(concrete->get_short_name()));
+        }
+    }
+    concrete->update_mangled_name();
+
+    return concrete;
+}
+
+} // namespace k::model
+
+
 

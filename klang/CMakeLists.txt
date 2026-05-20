@@ -118,6 +118,7 @@ add_executable(klang-tests
         tests/test-parser-templates.cpp
         tests/test-gen-enum.cpp
         tests/test-gen-union.cpp
+        tests/test-gen-union-template.cpp
         tests/test-gen-arithmetic.cpp
         tests/test-gen-statements.cpp
         tests/test-gen.cpp

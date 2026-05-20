@@ -1114,6 +1114,9 @@ void declaration_generator::visit_enumeration(enumeration& en) {
 // The opaque struct type was created in aggregate_type_resolver; here we set its body
 // now that the LLVM module (and DataLayout) is available.
 void declaration_generator::visit_union(union_type_def& un) {
+    // Skip template definitions — only instantiations produce LLVM types
+    if (un.is_template()) return;
+
     auto st_type = un.get_struct_type();
     if (!st_type) return;
 
@@ -1540,6 +1543,9 @@ void implementation_generator::visit_aggregate(aggregate& st) {
 // Resolves a union type definition: validates alternatives and names.
 // Type resolution (LLVM layout) is done in the aggregate_type_resolver pass.
 void symbol_resolver::visit_union(union_type_def& un) {
+    // Skip template definitions — only instantiations are resolved
+    if (un.is_template()) return;
+
     visit_named_element(un);
     // Union alternatives have their types already stored from model building.
     // Full type resolution will happen in aggregate_type_resolver.

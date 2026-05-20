@@ -18,6 +18,7 @@
 #ifndef KLANG_MODEL_UNION_HPP
 #define KLANG_MODEL_UNION_HPP
 #include "model_aggregate.hpp"
+#include "template.hpp"
 namespace k::model {
 
 /**
@@ -54,6 +55,7 @@ protected:
     friend class gen::type_reference_resolver;
     friend class gen::aggregate_type_resolver;
     friend class gen::declaration_generator;
+    friend class template_instantiator;
 
     /** All alternatives in declaration order. */
     std::vector<union_alternative> _alternatives;
@@ -64,6 +66,15 @@ protected:
     /** Declared visibility. */
     visibility _visibility = PUBLIC;
 
+    /** Template information (nullptr if this is not a template union). */
+    std::unique_ptr<tpl_info> _tpl_info;
+
+    /** For concrete instantiations of template unions: original template base name. */
+    std::string _tpl_base_name;
+
+    /** For concrete instantiations: the concrete template arguments used. */
+    std::vector<template_argument> _tpl_args;
+
     union_type_def(std::shared_ptr<element> parent)
         : element(parent) {}
 
@@ -73,6 +84,37 @@ protected:
 
 public:
     void accept(model_visitor& visitor) override;
+
+    //
+    // Template
+    //
+
+    /** True if this is a template union definition (not yet instantiated). */
+    bool is_template() const { return _tpl_info != nullptr; }
+
+    /** True if this template uses the 'generic' keyword. */
+    bool is_generic() const { return _tpl_info && _tpl_info->is_generic; }
+
+    /** Get template info (nullptr if not a template). */
+    tpl_info* get_tpl_info() const { return _tpl_info.get(); }
+
+    /** Set template info. */
+    void set_tpl_info(std::unique_ptr<tpl_info> ti) { _tpl_info = std::move(ti); }
+
+    /** True if this is a concrete instantiation of a template union. */
+    bool has_tpl_args() const { return !_tpl_base_name.empty(); }
+
+    /** Original template base name (e.g. "Optional" for Optional__int). */
+    const std::string& get_tpl_base_name() const { return _tpl_base_name; }
+
+    /** Concrete template arguments used to instantiate this union. */
+    const std::vector<template_argument>& get_tpl_args() const { return _tpl_args; }
+
+    /** Set template instantiation metadata. */
+    void set_tpl_instantiation_info(const std::string& base_name, std::vector<template_argument> args) {
+        _tpl_base_name = base_name;
+        _tpl_args = std::move(args);
+    }
 
     //
     // Alternatives

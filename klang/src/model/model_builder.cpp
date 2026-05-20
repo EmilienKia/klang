@@ -485,12 +485,8 @@ namespace k::model {
                 {std::string{st.name.content}});
         }
 
-        // Unions do not support templates (for now)
-        if (st.is_template()) {
-            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STRUCT_BAD_SCOPE), st.kw_aggregate_type,
-                "Template unions are not yet supported: '{}'",
-                {std::string{st.name.content}});
-        }
+        // Template unions: build tpl_info and attach to the union_type_def
+        bool is_template_union = st.is_template();
 
         // Unions do not support inheritance
         if (!st.bases.empty()) {
@@ -517,6 +513,64 @@ namespace k::model {
             vis = model::PRIVATE;
         }
         un->set_visibility(vis);
+
+        // If this is a template union, build tpl_info and push param scope
+        if (is_template_union) {
+            auto ti = std::make_unique<tpl_info>();
+            for (auto& tp : st.template_params) {
+                template_param_descriptor desc;
+                desc.name = std::string{tp->name.content};
+                if (tp->is_type_param()) {
+                    if (tp->kind_kw->type == lex::keyword::TYPENAME) {
+                        desc.kind = template_param_kind::TYPENAME;
+                    } else if (tp->kind_kw->type == lex::keyword::STRUCT) {
+                        desc.kind = template_param_kind::STRUCT;
+                    } else if (tp->kind_kw->type == lex::keyword::CLASS) {
+                        desc.kind = template_param_kind::CLASS;
+                    } else if (tp->kind_kw->type == lex::keyword::INTERFACE) {
+                        desc.kind = template_param_kind::INTERFACE;
+                    } else {
+                        desc.kind = template_param_kind::TYPENAME;
+                    }
+                    desc.is_pack = tp->is_pack;
+                    if (tp->constraint_type) {
+                        desc.constraint_type = _context->from_type_specifier(*tp->constraint_type);
+                    }
+                    if (tp->default_type_spec) {
+                        desc.default_type = _context->from_type_specifier(*tp->default_type_spec);
+                    }
+                } else {
+                    desc.kind = template_param_kind::VALUE;
+                    if (tp->value_type) {
+                        desc.value_type = _context->from_type_specifier(*tp->value_type);
+                    }
+                    if (tp->default_expr) {
+                        if (auto lit = dynamic_cast<parse::ast::literal_expr*>(tp->default_expr.get())) {
+                            auto val = lit->literal.value().value();
+                            std::visit([&desc](auto&& v) {
+                                using T = std::decay_t<decltype(v)>;
+                                if constexpr (std::is_same_v<T, std::monostate>) {
+                                } else if constexpr (std::is_same_v<T, std::nullptr_t>) {
+                                } else {
+                                    desc.default_value = k::value_type{v};
+                                }
+                            }, val);
+                        }
+                    }
+                }
+                ti->params.push_back(std::move(desc));
+            }
+            ti->source_text = st.template_source_text;
+            ti->is_generic = st.is_generic;
+            un->set_tpl_info(std::move(ti));
+
+            // Push template parameter names so from_type_specifier marks them as placeholders
+            std::unordered_set<std::string> param_names;
+            for (auto& p : un->get_tpl_info()->params) {
+                param_names.insert(p.name);
+            }
+            _context->push_template_param_scope(param_names);
+        }
 
         // Process member declarations — they must all be variable_decl (alternatives)
         for (auto& decl : st.declarations) {
@@ -551,6 +605,11 @@ namespace k::model {
 
         debug("[model_builder::build_union_from_ast] defined union '{}' with {} alternatives",
             {std::string{st.name.content}, std::to_string(un->alternative_count())});
+
+        // Pop template param scope if we pushed one
+        if (is_template_union) {
+            _context->pop_template_param_scope();
+        }
     }
 
     void model_builder::visit_enum_decl(parse::ast::enum_decl &decl) {

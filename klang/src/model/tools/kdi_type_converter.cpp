@@ -106,7 +106,6 @@ convert_aggregate_ref(const kdi::kdi_aggregate_ref& ref, unit& owner,
         }
         if (auto udef = target_ns->get_union(kname.back())) {
             if (auto st = udef->get_struct_type()) {
-                std::cerr << "[DEBUG convert_aggregate_ref] found union struct_type!" << std::endl;
                 return st;
             }
         }

@@ -410,6 +410,7 @@ inline std::shared_ptr<union_type_def> find_union_by_struct_type(
     if (!start_ns || !st) return nullptr;
     // Check unions in this namespace
     for (auto& [uname, udef] : start_ns->unions()) {
+        if (!udef->get_struct_type()) continue;
         if (udef->get_struct_type() == st) return udef;
     }
     // Recurse into child namespaces

@@ -374,6 +374,15 @@ std::string mangler::mangle_structure(const aggregate& agg) const {
     return mangle_structure(agg.get_name());
 }
 
+std::string mangler::mangle_union(const union_type_def& un) const {
+    if (un.has_tpl_args()) {
+        return mangle_fq_name_templated(
+            un.get_name(), un.get_short_name(),
+            un.get_tpl_base_name(), un.get_tpl_args(), true);
+    }
+    return mangle_structure(un.get_name());
+}
+
 std::string mangler::mangle_function(const function& func) const {
     auto name = func.get_name();
     if (!name.has_root_prefix()) {

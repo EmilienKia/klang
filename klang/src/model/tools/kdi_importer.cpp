@@ -593,14 +593,15 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
         ctx->add_struct(st_type);
     }
 
-    // Add alternatives (type resolution will happen during aggregate_type_resolver pass)
+    // Add alternatives and resolve their types immediately using kdi_type_to_model_type.
+    // This ensures that declaration_generator::visit_union can compute the correct
+    // union body layout (max alternative size) for imported unions.
     for (auto& alt : un.alternatives) {
-        // Convert kdi_type to a raw type name for deferred resolution
+        // Convert kdi_type to a raw type name (for display/debug)
         std::string raw_type_name;
         std::visit([&](auto&& arg) {
             using T = std::decay_t<decltype(arg)>;
             if constexpr (std::is_same_v<T, kdi::kdi_int_type>) {
-                // Map bit width + signedness to K type name
                 if (arg.is_signed) {
                     switch (arg.bits) {
                         case 8:  raw_type_name = "byte"; break;
@@ -633,6 +634,12 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
             }
         }, alt.type.value);
         udef->add_alternative(alt.name, raw_type_name, alt.is_const);
+
+        // Resolve the type immediately so declaration_generator can compute layout
+        auto resolved = kdi_type_to_model_type(alt.type, _unit, ctx);
+        if (resolved) {
+            udef->alternatives_mutable().back().resolved_type = resolved;
+        }
     }
 }
 
@@ -756,6 +763,9 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
     }
     if (auto existing_fn = target_ns->get_function(tdef.name)) {
         if (existing_fn->is_template()) return;
+    }
+    if (auto existing_un = target_ns->get_union(tdef.name)) {
+        if (existing_un->is_template()) return;
     }
 
     // ── 3. Parse the template source text ───────────────────────────────────

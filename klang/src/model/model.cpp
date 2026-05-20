@@ -278,7 +278,11 @@ void union_type_def::update_mangled_name() {
         _mangled_name = "";
         return;
     }
-    _mangled_name = mangler::mangle_structure(_name);
+    if (has_tpl_args()) {
+        _mangled_name = mangler(get_context()).mangle_union(*this);
+    } else {
+        _mangled_name = mangler::mangle_structure(_name);
+    }
 }
 
 void union_type_def::accept(model_visitor& visitor) {

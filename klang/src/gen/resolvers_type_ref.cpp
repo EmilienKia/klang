@@ -850,9 +850,44 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             }
         }
     }
-    if (!tpl_agg) return {};
+    // 1b. If no template aggregate found, look for template unions
+    std::shared_ptr<union_type_def> tpl_union;
+    if (!tpl_agg) {
+        for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
+            if (auto uh = std::dynamic_pointer_cast<const union_holder>(current)) {
+                if (base_name.size() == 1) {
+                    if (auto un = uh->get_union(base_name.front())) {
+                        if (un->is_template()) { tpl_union = un; break; }
+                        return {};
+                    }
+                }
+            }
+        }
+        if (!tpl_union) {
+            auto root_ns = _unit.get_root_namespace();
+            if (root_ns && base_name.size() == 1) {
+                if (auto un = root_ns->get_union(base_name.front())) {
+                    if (un->is_template()) tpl_union = un;
+                }
+            }
+        }
+        if (!tpl_union && base_name.size() == 1) {
+            for (const auto& imp : _unit.get_imports()) {
+                if (imp.module_name.empty()) continue;
+                auto imported_ns = _unit.get_root_namespace();
+                for (std::size_t i = 0; imported_ns && i < imp.module_name.size(); ++i) {
+                    imported_ns = imported_ns->get_child_namespace(imp.module_name[i]);
+                }
+                if (!imported_ns) continue;
+                if (auto un = imported_ns->get_union(base_name.front())) {
+                    if (un->is_template()) { tpl_union = un; break; }
+                }
+            }
+        }
+    }
+    if (!tpl_agg && !tpl_union) return {};
 
-    auto* ti = tpl_agg->get_tpl_info();
+    tpl_info* ti = tpl_agg ? tpl_agg->get_tpl_info() : tpl_union->get_tpl_info();
     if (!ti) return {};
 
     // 2. Validate argument count (allow fewer args if trailing params have defaults)
@@ -926,30 +961,77 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     }
 
     // 3c. Resolve constraint types in template params if still unresolved
-    for (auto& param : ti->params) {
-        if (param.is_type_param() && param.constraint_type && !type::is_resolved(param.constraint_type)) {
-            auto resolved = _context->resolve_type(param.constraint_type);
-            if (resolved && type::is_resolved(resolved)) {
-                param.constraint_type = resolved;
-            } else if (auto unres = std::dynamic_pointer_cast<unresolved_type>(param.constraint_type)) {
-                auto r = resolve_type_by_name(unres->type_id(), *tpl_agg);
-                if (r && type::is_resolved(r)) param.constraint_type = r;
+    {
+        const element& constraint_ctx = tpl_agg ? static_cast<const element&>(*tpl_agg) : static_cast<const element&>(*tpl_union);
+        for (auto& param : ti->params) {
+            if (param.is_type_param() && param.constraint_type && !type::is_resolved(param.constraint_type)) {
+                auto resolved = _context->resolve_type(param.constraint_type);
+                if (resolved && type::is_resolved(resolved)) {
+                    param.constraint_type = resolved;
+                } else if (auto unres = std::dynamic_pointer_cast<unresolved_type>(param.constraint_type)) {
+                    auto r = resolve_type_by_name(unres->type_id(), constraint_ctx);
+                    if (r && type::is_resolved(r)) param.constraint_type = r;
+                }
             }
         }
     }
 
     // 3d. Validate type constraints (kind filter + base-type constraint)
     {
+        std::string tpl_short_name = tpl_agg ? tpl_agg->get_short_name() : tpl_union->get_short_name();
         size_t err_idx;
         std::string err_reason;
         if (!validate_template_arg_constraints(ti->params, model_args, err_idx, err_reason)) {
             auto [code, msg] = format_constraint_error(
-                tpl_agg->get_short_name(), ti->params, model_args, err_idx, err_reason);
+                tpl_short_name, ti->params, model_args, err_idx, err_reason);
             throw_error(code, lex::opt_any_lexeme{}, msg);
         }
     }
 
-    // 4. Instantiate the template aggregate
+    // 4. Instantiate the template (aggregate or union)
+    if (tpl_union) {
+        // Template union instantiation
+        auto parent_ns_ptr = scope_lookup::enclosing_namespace(*tpl_union);
+        if (!parent_ns_ptr) return {};
+
+        auto concrete_union = template_instantiator::instantiate_union(
+            *tpl_union, model_args, parent_ns_ptr, _unit, _context, *this);
+        if (!concrete_union) return {};
+
+        // If the union already has an LLVM type (from cache), return it
+        if (concrete_union->get_struct_type()) return concrete_union->get_struct_type();
+
+        // Create a struct_type and run LLVM type resolution for it
+        auto& llvm_ctx = _context->llvm_context();
+        auto* union_llvm_type = llvm::StructType::create(llvm_ctx, concrete_union->get_mangled_name() + "_union");
+        auto st_type = std::make_shared<struct_type>(concrete_union->get_short_name(), std::weak_ptr<aggregate>{});
+        _context->attach_llvm_struct_type(st_type, union_llvm_type);
+        concrete_union->set_struct_type(st_type);
+        _context->add_struct(st_type);
+
+        // Resolve alternative types
+        for (auto& alt : concrete_union->alternatives_mutable()) {
+            if (alt.resolved_type && !type::is_resolved(alt.resolved_type)) {
+                auto resolved = _context->resolve_type(alt.resolved_type);
+                if (resolved && type::is_resolved(resolved)) {
+                    alt.resolved_type = resolved;
+                } else if (auto unres_alt = std::dynamic_pointer_cast<unresolved_type>(alt.resolved_type)) {
+                    auto by_name = resolve_type_by_name(unres_alt->type_id(), context_elem);
+                    if (by_name && type::is_resolved(by_name)) {
+                        alt.resolved_type = by_name;
+                    }
+                }
+            }
+        }
+
+        // Body finalization (discriminant + storage) is deferred to
+        // declaration_generator::visit_union, which runs after the LLVM module
+        // is initialized.
+
+        return st_type;
+    }
+
+    // Template aggregate instantiation
     auto parent_ns_ptr = scope_lookup::enclosing_namespace(*tpl_agg);
     if (!parent_ns_ptr) return {};
 
