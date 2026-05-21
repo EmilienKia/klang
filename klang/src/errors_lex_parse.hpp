@@ -191,6 +191,8 @@ enum class parser_diag : unsigned int {
     ERR_VARARGS_NOT_LAST                          = 0x01B0,
     ERR_VARARGS_WITH_DEFAULT                      = 0x01B1,
     ERR_MULTIPLE_VARARGS                          = 0x01B2,
+    // Warnings (0x01C0–0x01CF)
+    WARN_SPURIOUS_FUN_PREFIX                      = 0x01C0,
 };
 
 } // namespace k::diag

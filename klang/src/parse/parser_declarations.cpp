@@ -1269,12 +1269,14 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
 
     std::vector<lex::keyword> specifiers = parse_specifiers();
 
-    // Consume optional 'fun' keyword (lexed as identifier) — syntactic sugar for function declarations
+    // Consume spurious 'fun' prefix (not part of K syntax) and emit a warning
     {
         lex::lex_holder fun_holder(_lexer);
         auto lfun = _lexer.get();
         if (lex::is<lex::identifier>(lfun) && std::string{lex::as<lex::identifier>(lfun).content} == "fun") {
             fun_holder.sync(); // consume 'fun'
+            warn(static_cast<unsigned int>(k::diag::parser_diag::WARN_SPURIOUS_FUN_PREFIX),
+                 lfun, "'fun' is not a K keyword and should be removed from function declarations");
         } else {
             fun_holder.rollback();
         }
