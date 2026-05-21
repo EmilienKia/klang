@@ -289,6 +289,24 @@ void union_type_def::accept(model_visitor& visitor) {
     visitor.visit_union(*this);
 }
 
+void union_type_def::synthesize_kind_enum() {
+    if (_kind_enum) return; // already synthesized
+
+    // Create the enum as a child of the same parent as the union
+    _kind_enum = std::shared_ptr<enumeration>(new enumeration(_parent));
+    // Name it "Kind" qualified under the union's name
+    k::name kind_name = _name.with_back("Kind");
+    _kind_enum->assign_name(kind_name);
+    _kind_enum->set_visibility(_visibility);
+
+    // Add one entry per alternative, value = zero-based index
+    for (size_t i = 0; i < _alternatives.size(); ++i) {
+        _kind_enum->add_entry(_alternatives[i].name, static_cast<int64_t>(i),
+                              /*is_default=*/(i == 0));
+    }
+    _kind_enum->set_resolved(true);
+}
+
 
 //
 // Variable definition

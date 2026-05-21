@@ -25,10 +25,11 @@ module k;
  * Inspired by C++23's std::expected and Rust's Result<T, E>.
  *
  * The underlying storage is a nested template union with two alternatives:
- * - `result` (index 0): holds the success value of type R
- * - `error`  (index 1): holds the error value of type E
+ * - `result` (Kind::result = 0): holds the success value of type R
+ * - `error`  (Kind::error  = 1): holds the error value of type E
  *
- * A boolean flag `_hasResult` tracks which alternative is active.
+ * The active alternative is tracked by the union's built-in discriminant,
+ * queryable via _storage.index().
  *
  * Usage:
  *   // Create a successful Expected
@@ -59,6 +60,9 @@ struct Expected {
      *
      * This union holds either a result value (alternative index 0) or an error
      * value (alternative index 1). It is not intended for direct use.
+     * The Kind enum is automatically generated:
+     *   Storage::Kind::result = 0
+     *   Storage::Kind::error  = 1
      */
     union Storage {
         result: R;
@@ -66,7 +70,6 @@ struct Expected {
     }
 
     _storage : Storage;
-    _hasResult : bool;
 
     public:
     /**
@@ -74,21 +77,20 @@ struct Expected {
      * Caller must immediately call setResult() or setError().
      */
     Expected() {
-        _hasResult = false;
     }
 
     /**
      * Return true if this Expected holds a successful result.
      */
     const hasResult() : bool {
-        return _hasResult;
+        return _storage.index() == Storage::Kind::result;
     }
 
     /**
      * Return true if this Expected holds an error.
      */
     const hasError() : bool {
-        return !_hasResult;
+        return _storage.index() == Storage::Kind::error;
     }
 
     /**
@@ -97,7 +99,6 @@ struct Expected {
      */
     setResult(value : R&) {
         _storage.result = value;
-        _hasResult = true;
     }
 
     /**
@@ -106,7 +107,6 @@ struct Expected {
      */
     setError(value : E&) {
         _storage.error = value;
-        _hasResult = false;
     }
 
     /**
@@ -131,7 +131,7 @@ struct Expected {
      * Return the result value, or the provided default if this holds an error.
      */
     const getResultOr(defaultValue : R&) : R {
-        if (_hasResult) {
+        if (_storage.index() == Storage::Kind::result) {
             return _storage.result;
         }
         return defaultValue;
@@ -141,7 +141,7 @@ struct Expected {
      * Return the error value, or the provided default if this holds a result.
      */
     const getErrorOr(defaultValue : E&) : E {
-        if (!_hasResult) {
+        if (_storage.index() == Storage::Kind::error) {
             return _storage.error;
         }
         return defaultValue;

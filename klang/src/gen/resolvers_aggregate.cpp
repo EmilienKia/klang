@@ -1408,6 +1408,17 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
     if (un.get_struct_type() && un.get_struct_type()->get_llvm_type()) {
         trace("[aggregate_type_resolver::visit_union] union '{}' already has struct_type with LLVM type, skipping",
             {un.get_short_name()});
+        // Still need to set up Kind enum for this union
+        un.synthesize_kind_enum();
+        if (auto kind_enum = un.get_kind_enum()) {
+            if (!kind_enum->get_enum_type()) {
+                auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
+                kind_enum->set_underlying_type(uint_type);
+                auto et = std::shared_ptr<enum_type>(new enum_type(kind_enum, uint_type));
+                kind_enum->set_enum_type(et);
+                _context->add_enum(kind_enum->get_fq_name(), et);
+            }
+        }
         return;
     }
 
@@ -1441,6 +1452,22 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
 
     trace("[aggregate_type_resolver::visit_union] resolved union '{}' (opaque LLVM type created)",
         {un.get_short_name()});
+
+    // Synthesize the Kind enum after the union struct type is established
+    un.synthesize_kind_enum();
+    if (auto kind_enum = un.get_kind_enum()) {
+        if (!kind_enum->get_enum_type()) {
+            // Set underlying type to uint32 (matches discriminant field)
+            auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
+            kind_enum->set_underlying_type(uint_type);
+            // Create and register the enum_type in context
+            auto et = std::shared_ptr<enum_type>(new enum_type(kind_enum, uint_type));
+            kind_enum->set_enum_type(et);
+            std::string fq = kind_enum->get_fq_name();
+            if (fq.empty()) fq = kind_enum->get_short_name();
+            _context->add_enum(fq, et);
+        }
+    }
 }
 
 //

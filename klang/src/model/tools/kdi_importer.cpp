@@ -653,6 +653,21 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
             udef->alternatives_mutable().back().resolved_type = resolved;
         }
     }
+
+    // Synthesize the Kind enum for the imported union so that
+    // UnionName::Kind::entry syntax works across modules.
+    udef->synthesize_kind_enum();
+    if (auto kind_enum = udef->get_kind_enum()) {
+        if (!kind_enum->get_enum_type()) {
+            auto uint_type = ctx->from_type(primitive_type::UNSIGNED_INT);
+            kind_enum->set_underlying_type(uint_type);
+            auto et = std::shared_ptr<enum_type>(new enum_type(kind_enum, uint_type));
+            kind_enum->set_enum_type(et);
+            std::string efq = kind_enum->get_fq_name();
+            if (efq.empty()) efq = kind_enum->get_short_name();
+            ctx->add_enum(efq, et);
+        }
+    }
 }
 
 void kdi_importer::materialise_variable(const kdi::kdi_variable& var,

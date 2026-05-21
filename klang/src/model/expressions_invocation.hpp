@@ -99,6 +99,12 @@ public:
     bool is_non_virtual_qualified_call() const { return _non_virtual_qualified_call; }
     void set_non_virtual_qualified_call(bool v) { _non_virtual_qualified_call = v; }
 
+    /** True when this invocation is the union index() intrinsic. */
+    bool _union_index_intrinsic = false;
+
+    bool is_union_index_intrinsic() const { return _union_index_intrinsic; }
+    void set_union_index_intrinsic(bool v) { _union_index_intrinsic = v; }
+
     /**
      * Phase-3 dispatch annotation set by type_reference_resolver.
      * Describes exactly how this call should be dispatched (direct or vtable).
@@ -122,6 +128,7 @@ public:
         std::shared_ptr<function_invocation_expression> c{new function_invocation_expression()};
         c->_type = _type;
         c->_non_virtual_qualified_call = _non_virtual_qualified_call;
+        c->_union_index_intrinsic = _union_index_intrinsic;
         c->_dispatch_info = _dispatch_info;
         std::vector<std::shared_ptr<expression>> args;
         for (auto& a : _arguments) args.push_back(a->clone());

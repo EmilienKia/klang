@@ -63,6 +63,9 @@ protected:
     /** The LLVM struct type representing this union (discriminant + storage). */
     std::shared_ptr<struct_type> _type;
 
+    /** Synthesized Kind enum (entries mirror alternatives, values 0..N-1). */
+    std::shared_ptr<enumeration> _kind_enum;
+
     /** Declared visibility. */
     visibility _visibility = PUBLIC;
 
@@ -151,6 +154,17 @@ public:
 
     std::shared_ptr<struct_type> get_struct_type() const { return _type; }
     void set_struct_type(std::shared_ptr<struct_type> t) { _type = std::move(t); }
+
+    //
+    // Kind enum
+    //
+
+    /** Get (or lazily synthesize) the Kind enum for this union. */
+    std::shared_ptr<enumeration> get_kind_enum() const { return _kind_enum; }
+
+    /** Synthesize the Kind enum from the current alternatives list.
+     *  Should be called after all alternatives are finalized (e.g. during aggregate resolution). */
+    void synthesize_kind_enum();
 
     /**
      * Returns true if any alternative has a non-trivial destructor

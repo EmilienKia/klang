@@ -296,6 +296,39 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // Use the short (unqualified) name for function lookup
         std::string func_short_name = callee->get_name().back();
 
+        // ── Union intrinsic: index() ──────────────────────────────────────────
+        // If the struct_type belongs to a union (no owning aggregate), handle
+        // the built-in index() method that returns the Kind enum value.
+        if (!st && func_short_name == "index" && expr.arguments().empty()) {
+            auto root_ns = _unit.get_root_namespace();
+            auto union_def = find_union_by_struct_type(root_ns, struct_subtype);
+            if (union_def) {
+                // Ensure Kind enum is synthesized (may not be for template instantiations)
+                union_def->synthesize_kind_enum();
+                auto kind_enum = union_def->get_kind_enum();
+                if (kind_enum) {
+                    // Ensure enum_type is created
+                    if (!kind_enum->get_enum_type()) {
+                        auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
+                        kind_enum->set_underlying_type(uint_type);
+                        auto et = std::shared_ptr<enum_type>(new enum_type(kind_enum, uint_type));
+                        kind_enum->set_enum_type(et);
+                    }
+                    expr.set_type(kind_enum->get_enum_type());
+                    expr.set_union_index_intrinsic(true);
+                    return;
+                }
+            }
+        }
+
+        // If st is null (union type, not a struct/class), and we didn't resolve
+        // index() above, throw an error since unions don't have regular methods.
+        if (!st) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_NOT_CALLABLE), expr.first_lexeme(),
+                "Cannot call method '{}' on a union type; unions only support the built-in 'index()' method",
+                {func_short_name});
+        }
+
         // ── Qualified member call: obj.Base::method(args) or this->Base::method(args) ──
         // If the callee symbol has more than one name component (e.g. Base::method), it is
         // an explicit qualification: bypass virtual dispatch and call the exact named class.
@@ -1320,6 +1353,31 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
  *   7. Set _value to the call result.
  */
 void implementation_generator::visit_function_invocation_expression(function_invocation_expression &expr) {
+    // ── Union index() intrinsic ─────────────────────────────────────────────
+    // Load the discriminant (uint32 at struct index 0) and return it as the
+    // Kind enum value (same underlying representation).
+    if (expr.is_union_index_intrinsic()) {
+        auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
+        if (member_callee) {
+            // Visit the sub-expression to get a pointer to the union struct
+            member_callee->sub_expr()->accept(*this);
+            auto* union_ptr = _value;
+            // If _value is a load (not a pointer), we need the address
+            // The sub_expr should yield a pointer to the union struct { i32, [N x i8] }
+            // Load the discriminant at GEP index 0
+            auto* union_llvm_type = llvm::cast<llvm::StructType>(
+                std::dynamic_pointer_cast<struct_type>(
+                    type::remove_const(
+                        type::is_reference(member_callee->sub_expr()->get_type())
+                        ? member_callee->sub_expr()->get_type()->get_subtype()
+                        : member_callee->sub_expr()->get_type())
+                )->get_llvm_type());
+            auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_ptr, 0, "union_idx_ptr");
+            _value = _builder->CreateLoad(llvm::Type::getInt32Ty(_builder->getContext()), disc_ptr, "union_idx");
+        }
+        return;
+    }
+
     auto callee = std::dynamic_pointer_cast<symbol_expression>(expr.callee_expr());
     auto member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
     auto pm_callee = std::dynamic_pointer_cast<pm_expression>(expr.callee_expr());

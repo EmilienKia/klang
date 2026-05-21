@@ -171,6 +171,11 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
             }
             auto* alt = union_def->get_alternative_by_name(name_str);
             if (!alt) {
+                // "index" is a built-in intrinsic on unions — skip; it will be
+                // resolved by the function_invocation_expression visitor.
+                if (name_str == "index") {
+                    return;
+                }
                 throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_MEMBER_NOT_FOUND), expr.first_lexeme(),
                     "No alternative named '{}' in union '{}'",
                     {name_str, union_def->get_short_name()});

@@ -653,3 +653,167 @@ TEST_CASE("Nested union type used as function parameter type", "[gen][union][nes
     REQUIRE(fn() == 33);
 }
 
+
+// ============================================================
+// Phase 7: Union Kind enum and index() intrinsic
+// ============================================================
+
+TEST_CASE("union Kind enum basic values", "[gen][union][kind]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union Value {
+            i: int;
+            d: double;
+            s: byte;
+        }
+        get_first_kind() : int {
+            k : int = Value::Kind::i;
+            return k;
+        }
+        get_second_kind() : int {
+            k : int = Value::Kind::d;
+            return k;
+        }
+        get_third_kind() : int {
+            k : int = Value::Kind::s;
+            return k;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn0 = jit->lookup_symbol<int(*)()>("get_first_kind");
+    auto fn1 = jit->lookup_symbol<int(*)()>("get_second_kind");
+    auto fn2 = jit->lookup_symbol<int(*)()>("get_third_kind");
+    REQUIRE(fn0);
+    REQUIRE(fn1);
+    REQUIRE(fn2);
+    REQUIRE(fn0() == 0);
+    REQUIRE(fn1() == 1);
+    REQUIRE(fn2() == 2);
+}
+
+TEST_CASE("union index() basic", "[gen][union][kind]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union Value {
+            i: int;
+            d: double;
+        }
+        test_index_int() : int {
+            v : Value;
+            v.i = 42;
+            idx : int = v.index();
+            return idx;
+        }
+        test_index_double() : int {
+            v : Value;
+            v.d = 3.14;
+            idx : int = v.index();
+            return idx;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn_i = jit->lookup_symbol<int(*)()>("test_index_int");
+    auto fn_d = jit->lookup_symbol<int(*)()>("test_index_double");
+    REQUIRE(fn_i);
+    REQUIRE(fn_d);
+    REQUIRE(fn_i() == 0);
+    REQUIRE(fn_d() == 1);
+}
+
+TEST_CASE("union index() after reassignment", "[gen][union][kind]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union Value {
+            i: int;
+            d: double;
+        }
+        test_reassign() : int {
+            v : Value;
+            v.i = 10;
+            v.d = 2.5;
+            idx : int = v.index();
+            return idx;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_reassign");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1); // last assignment was .d (index 1)
+}
+
+TEST_CASE("union index() compared with Kind enum", "[gen][union][kind]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union Value {
+            i: int;
+            d: double;
+            b: bool;
+        }
+        test_compare() : int {
+            v : Value;
+            v.d = 1.0;
+            if(v.index() == Value::Kind::d) {
+                return 1;
+            }
+            return 0;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_compare");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("union index() on nested union in struct", "[gen][union][kind]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Container {
+            union Inner {
+                a: int;
+                b: double;
+            }
+            val: Inner;
+        }
+        test_nested_index() : int {
+            c : Container;
+            c.val.b = 2.0;
+            idx : int = c.val.index();
+            return idx;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_nested_index");
+    REQUIRE(fn);
+    REQUIRE(fn() == 1);
+}
+
+TEST_CASE("template union Kind enum and index()", "[gen][union][kind][template]") {
+    auto jit = gen_jit(R"(
+        module test;
+        template<typename T>
+        union Optional {
+            some: T;
+            none: byte;
+        }
+        test_optional_some() : int {
+            o : Optional<int>;
+            o.some = 42;
+            idx : int = o.index();
+            return idx;
+        }
+        test_optional_none() : int {
+            o : Optional<int>;
+            o.none = 0;
+            idx : int = o.index();
+            return idx;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn_some = jit->lookup_symbol<int(*)()>("test_optional_some");
+    auto fn_none = jit->lookup_symbol<int(*)()>("test_optional_none");
+    REQUIRE(fn_some);
+    REQUIRE(fn_none);
+    REQUIRE(fn_some() == 0);
+    REQUIRE(fn_none() == 1);
+}
+

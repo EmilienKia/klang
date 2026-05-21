@@ -63,6 +63,7 @@ class enumeration : public element, public named_element {
 protected:
     friend class ns;
     friend class aggregate;
+    friend class union_type_def;
     friend class unit;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;

@@ -1575,6 +1575,11 @@ void symbol_resolver::visit_union(union_type_def& un) {
 
     // Union alternatives have their types already stored from model building.
     // Full type resolution will happen in aggregate_type_resolver.
+
+    // Synthesize the Kind enum early so that symbol_resolver can resolve
+    // references like UnionName::Kind::entry during Phase A.
+    un.synthesize_kind_enum();
+
     trace("[symbol_resolver::visit_union] resolved union '{}' with {} alternatives",
         {un.get_short_name(), std::to_string(un.alternative_count())});
 }

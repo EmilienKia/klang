@@ -51,9 +51,11 @@ namespace k::model {
 
 namespace gen {
     class symbol_resolver;
+    class aggregate_type_resolver;
     class type_reference_resolver;
 }
 
+class kdi_importer;
 
 class context;
 
@@ -919,7 +921,9 @@ protected:
     friend class model_builder;
     friend class unit;
     friend class gen::symbol_resolver;
+    friend class gen::aggregate_type_resolver;
     friend class gen::type_reference_resolver;
+    friend class kdi_importer;
 
     std::weak_ptr<enumeration> _enumeration;
     std::shared_ptr<primitive_type> _underlying_type;

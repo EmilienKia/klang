@@ -174,6 +174,19 @@ void symbol_resolver::visit_symbol_expression(symbol_expression& symbol)
                     }
                 }
 
+                // UnionName::Kind::entryName — look for union Kind enum
+                if (!found_enum && sym_name.size() == 3 && sym_name[1] == "Kind") {
+                    const std::string& union_name = sym_name.front();
+                    for (auto current = symbol.shared_as<element>(); current; current = current->parent<element>()) {
+                        if (auto uh = std::dynamic_pointer_cast<union_holder>(current)) {
+                            if (auto un = uh->get_union(union_name)) {
+                                found_enum = un->get_kind_enum();
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 // If not found locally, try imported enums (works for both 2-part and N-part names)
                 if (!found_enum) {
                     std::vector<std::string> enum_parts(sym_name.parts().begin(),
@@ -552,7 +565,9 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
         auto en = target.enum_def;
         auto& entry = en->entries()[target.entry_index];
         auto et = en->get_enum_type();
-        llvm::Type* llvm_ty = et->get_llvm_type();
+        llvm::Type* llvm_ty = (et && et->get_llvm_type())
+            ? et->get_llvm_type()
+            : llvm::Type::getInt32Ty(_builder->getContext());
         _value = llvm::ConstantInt::get(llvm_ty, static_cast<uint64_t>(entry.value), /*isSigned=*/entry.value < 0);
     } else if (symbol.is_annotation_type_rtti()) {
         // AnnotationName::annotation → pointer to the RTTI global (AnnotationType instance).
