@@ -781,9 +781,10 @@ void context::resolve_struct_type(std::shared_ptr<struct_type> st_type,
             if (!handled) {
             auto res_type = resolve_type(type);
             if (!res_type) {
-                throw_context_error(
-                    static_cast<unsigned int>(k::diag::type_diag::ERR_UNRESOLVED_TYPE_EXPR),
-                    "Cannot resolve structure field type: " + type->to_string());
+                // Type not yet resolvable — defer to a later pass (e.g.
+                // nested union types are only fully registered after
+                // aggregate_type_resolver runs).
+                return;
             }
             // If the resolved type is itself a struct_type not yet fully resolved,
             // recursively resolve it now (handles any declaration order).

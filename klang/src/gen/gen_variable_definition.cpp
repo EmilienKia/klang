@@ -303,10 +303,16 @@ void type_reference_resolver::resolve_variable_type(
     if (unres_type->type_id().has_root_prefix()) {
         resolved = resolve_type_from_root(unres_type->type_id().without_root_prefix());
     } else {
-        // Walk up from unit root namespace for global variables
-        auto root_ns = _unit.get_root_namespace();
-        if (root_ns) {
-            resolved = resolve_type_by_name(unres_type->type_id(), *root_ns);
+        // Walk up from the variable's scope (preferred) or root namespace for global variables
+        const element* var_elem = dynamic_cast<const element*>(&var);
+        if (var_elem) {
+            resolved = resolve_type_by_name(unres_type->type_id(), *var_elem);
+        }
+        if (!resolved || !type::is_resolved(resolved)) {
+            auto root_ns = _unit.get_root_namespace();
+            if (root_ns) {
+                resolved = resolve_type_by_name(unres_type->type_id(), *root_ns);
+            }
         }
     }
     if (!resolved || !type::is_resolved(resolved)) {

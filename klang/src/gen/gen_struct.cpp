@@ -259,6 +259,8 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
     for(auto& child : st.get_children()) {
         if(auto nested_st = std::dynamic_pointer_cast<aggregate>(child)) {
             nested_st->accept(*this);
+        } else if(auto nested_un = std::dynamic_pointer_cast<union_type_def>(child)) {
+            nested_un->accept(*this);
         }
     }
 
@@ -839,16 +841,19 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
     if (auto ast_ad = st.get_ast_aggregate_decl()) st_lexeme = lex::any_lexeme{ast_ad->name};
     // Note: const-struct method promotion is already done in symbol_resolver phase.
 
-    // Visit nested aggregate children first
+    // Visit nested aggregate and union children first
     for(auto& child : st.get_children()) {
         if(auto nested_st = std::dynamic_pointer_cast<aggregate>(child)) {
             nested_st->accept(*this);
+        } else if(auto nested_un = std::dynamic_pointer_cast<union_type_def>(child)) {
+            nested_un->accept(*this);
         }
     }
 
-    // Visit all other children (functions, constructors, destructors), skip nested aggregates.
+    // Visit all other children (functions, constructors, destructors), skip nested aggregates and unions.
     for(auto& child : st.get_children()) {
         if(std::dynamic_pointer_cast<aggregate>(child)) continue;
+        if(std::dynamic_pointer_cast<union_type_def>(child)) continue;
         child->accept(*this);
     }
 
@@ -1541,12 +1546,33 @@ void implementation_generator::visit_aggregate(aggregate& st) {
 // symbol_resolver::visit_union
 // ------------------------------------
 // Resolves a union type definition: validates alternatives and names.
-// Type resolution (LLVM layout) is done in the aggregate_type_resolver pass.
+// Creates an early struct_type so that context::resolve_types() (run after
+// Pass A) can find nested union types used as member variable types.
+// LLVM layout (body) is finalised later in aggregate_type_resolver + declaration_generator.
 void symbol_resolver::visit_union(union_type_def& un) {
     // Skip template definitions — only instantiations are resolved
     if (un.is_template()) return;
 
     visit_named_element(un);
+
+    // Create an opaque struct_type early (like we do for aggregates) so that
+    // context::resolve_types() can resolve member variable types that reference
+    // this union before aggregate_type_resolver runs.
+    if (!un.get_struct_type()) {
+        std::string st_name = un.get_short_name();
+        {
+            const std::string& fq = un.get_fq_name();
+            if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') {
+                st_name = fq.substr(2);
+            } else if (!fq.empty()) {
+                st_name = fq;
+            }
+        }
+        auto st_type = std::make_shared<struct_type>(st_name, std::weak_ptr<aggregate>{});
+        _context->add_struct(st_type);
+        un.set_struct_type(st_type);
+    }
+
     // Union alternatives have their types already stored from model building.
     // Full type resolution will happen in aggregate_type_resolver.
     trace("[symbol_resolver::visit_union] resolved union '{}' with {} alternatives",

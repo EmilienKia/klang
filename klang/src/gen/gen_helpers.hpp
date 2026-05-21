@@ -405,18 +405,51 @@ inline void emit_array_bounds_check(
  */
 inline std::shared_ptr<union_type_def> find_union_by_struct_type(
     const std::shared_ptr<ns>& start_ns,
+    const std::shared_ptr<struct_type>& st);
+
+// Helper: search a union_holder (namespace or aggregate) and its children recursively
+inline std::shared_ptr<union_type_def> find_union_by_struct_type_in_holder(
+    const union_holder& holder,
+    const std::shared_ptr<struct_type>& st)
+{
+    for (auto& [uname, udef] : holder.unions()) {
+        if (!udef->get_struct_type()) continue;
+        if (udef->get_struct_type() == st) return udef;
+    }
+    return nullptr;
+}
+
+inline std::shared_ptr<union_type_def> find_union_by_struct_type_in_aggregate(
+    const std::shared_ptr<aggregate>& agg,
+    const std::shared_ptr<struct_type>& st)
+{
+    if (!agg) return nullptr;
+    // Check unions directly in this aggregate
+    if (auto found = find_union_by_struct_type_in_holder(*agg, st)) return found;
+    // Recurse into nested aggregates
+    for (auto& child : agg->get_children()) {
+        if (auto nested_agg = std::dynamic_pointer_cast<aggregate>(child)) {
+            if (auto found = find_union_by_struct_type_in_aggregate(nested_agg, st)) return found;
+        }
+    }
+    return nullptr;
+}
+
+inline std::shared_ptr<union_type_def> find_union_by_struct_type(
+    const std::shared_ptr<ns>& start_ns,
     const std::shared_ptr<struct_type>& st)
 {
     if (!start_ns || !st) return nullptr;
     // Check unions in this namespace
-    for (auto& [uname, udef] : start_ns->unions()) {
-        if (!udef->get_struct_type()) continue;
-        if (udef->get_struct_type() == st) return udef;
-    }
+    if (auto found = find_union_by_struct_type_in_holder(*start_ns, st)) return found;
     // Recurse into child namespaces
     for (auto& child : start_ns->get_children()) {
         if (auto child_ns = std::dynamic_pointer_cast<ns>(child)) {
             if (auto found = find_union_by_struct_type(child_ns, st)) return found;
+        }
+        // Also search inside aggregates for nested unions
+        if (auto child_agg = std::dynamic_pointer_cast<aggregate>(child)) {
+            if (auto found = find_union_by_struct_type_in_aggregate(child_agg, st)) return found;
         }
     }
     return nullptr;

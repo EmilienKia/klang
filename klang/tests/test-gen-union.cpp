@@ -542,3 +542,114 @@ TEST_CASE("Union passed by reference across modules", "[gen][union][import]") {
     )");
     REQUIRE(result.exit_code == 99);
 }
+
+// ============================================================
+// Nested unions inside aggregates
+// ============================================================
+
+TEST_CASE("Nested union inside struct - basic declaration and usage", "[gen][union][nested]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Container {
+            union Value {
+                i: int;
+                l: long;
+            }
+            v: Value;
+            tag: int;
+        }
+        test_nested_union() : int {
+            c : Container;
+            c.v.i = 42;
+            c.tag = 1;
+            return c.v.i;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_nested_union");
+    REQUIRE(fn);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("Nested union inside struct - multiple alternatives", "[gen][union][nested]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Wrapper {
+            union Data {
+                x: int;
+                y: long;
+                z: double;
+            }
+            data: Data;
+        }
+        test_int() : int {
+            w : Wrapper;
+            w.data.x = 7;
+            return w.data.x;
+        }
+        test_long() : long {
+            w : Wrapper;
+            w.data.y = 123L;
+            return w.data.y;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn_int = jit->lookup_symbol<int(*)()>("test_int");
+    REQUIRE(fn_int);
+    REQUIRE(fn_int() == 7);
+    auto fn_long = jit->lookup_symbol<long(*)()>("test_long");
+    REQUIRE(fn_long);
+    REQUIRE(fn_long() == 123L);
+}
+
+TEST_CASE("Nested union inside class", "[gen][union][nested]") {
+    auto jit = gen_jit(R"(
+        module test;
+        class MyClass {
+            public:
+            union Result {
+                value: int;
+                error: long;
+            }
+            result: Result;
+            getResult() : int {
+                return result.value;
+            }
+        }
+        test_class_nested_union() : int {
+            obj : MyClass;
+            obj.result.value = 55;
+            return obj.getResult();
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_class_nested_union");
+    REQUIRE(fn);
+    REQUIRE(fn() == 55);
+}
+
+TEST_CASE("Nested union type used as function parameter type", "[gen][union][nested]") {
+    auto jit = gen_jit(R"(
+        module test;
+        struct Outer {
+            union Inner {
+                a: int;
+                b: long;
+            }
+        }
+        read_inner(u: Outer::Inner&) : int {
+            return u.a;
+        }
+        test_param() : int {
+            o : Outer;
+            inner : Outer::Inner;
+            inner.a = 33;
+            return read_inner(inner);
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test_param");
+    REQUIRE(fn);
+    REQUIRE(fn() == 33);
+}
+

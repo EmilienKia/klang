@@ -324,11 +324,60 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
         }
     }
 
-    // Step 3: Walk the scope chain: aggregates, enums, using directives
+    // Step 3: Walk the scope chain: aggregates, enums, unions, using directives
     // Walk up the scope chain looking for the type
     for (auto current = context_elem.shared_as<const element>(); current; current = current->parent<element>()) {
         if (auto st = resolve_struct_from(*current, type_name)) {
             return st->get_struct_type();
+        }
+        // Look for union types (single-part name)
+        if (type_name.size() == 1) {
+            if (auto uh_ptr = std::dynamic_pointer_cast<const union_holder>(current)) {
+                if (auto un = uh_ptr->get_union(type_name.front())) {
+                    return un->get_struct_type();
+                }
+            }
+        } else {
+            // Multi-part union name: navigate through namespaces
+            if (auto nspc = std::dynamic_pointer_cast<const ns>(current)) {
+                auto target_ns = nspc;
+                bool found_path = true;
+                for (size_t i = 0; i + 1 < type_name.size(); ++i) {
+                    auto child = target_ns->get_child_namespace(type_name[i]);
+                    if (child) {
+                        target_ns = child;
+                    } else {
+                        found_path = false;
+                        break;
+                    }
+                }
+                if (found_path) {
+                    if (auto un = target_ns->get_union(type_name.back())) {
+                        return un->get_struct_type();
+                    }
+                }
+            }
+            // Multi-part union name: navigate through aggregates
+            if (auto ah_ptr = std::dynamic_pointer_cast<const aggregate_holder>(current)) {
+                if (auto first_agg = ah_ptr->get_aggregate(type_name.front())) {
+                    std::shared_ptr<const aggregate> nav_agg = first_agg;
+                    bool found_path = true;
+                    for (size_t i = 1; i + 1 < type_name.size(); ++i) {
+                        auto nested = nav_agg->get_aggregate(type_name[i]);
+                        if (nested) {
+                            nav_agg = nested;
+                        } else {
+                            found_path = false;
+                            break;
+                        }
+                    }
+                    if (found_path) {
+                        if (auto un = nav_agg->get_union(type_name.back())) {
+                            return un->get_struct_type();
+                        }
+                    }
+                }
+            }
         }
         // Check if this scope is a concrete template instantiation whose
         // template parameter names match the sought type_name.  This allows

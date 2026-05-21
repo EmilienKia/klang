@@ -590,6 +590,29 @@ aggregate_type_resolver::resolve_type_by_name(const k::name& type_name, const el
                     }
                 }
             }
+            // Multi-part union name: navigate through aggregates to find the union
+            // e.g. Outer::Inner where Outer is a struct and Inner is a nested union
+            if (auto ah_ptr = std::dynamic_pointer_cast<const aggregate_holder>(current)) {
+                if (auto first_agg = ah_ptr->get_aggregate(type_name.front())) {
+                    // Navigate through intermediate aggregates
+                    std::shared_ptr<const aggregate> nav_agg = first_agg;
+                    bool found_path = true;
+                    for (size_t i = 1; i + 1 < type_name.size(); ++i) {
+                        auto nested = nav_agg->get_aggregate(type_name[i]);
+                        if (nested) {
+                            nav_agg = nested;
+                        } else {
+                            found_path = false;
+                            break;
+                        }
+                    }
+                    if (found_path) {
+                        if (auto un = nav_agg->get_union(type_name.back())) {
+                            return un->get_struct_type();
+                        }
+                    }
+                }
+            }
         }
         // Also look for enum types (simple names only for now)
         if (type_name.size() == 1) {
@@ -921,6 +944,8 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
                     }
                 }
                 nested->accept(*this);
+            } else if (auto nested_un = std::dynamic_pointer_cast<union_type_def>(child)) {
+                nested_un->accept(*this);
             }
         }
 
@@ -953,11 +978,13 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
         return;
     }
 
-    // Visit nested aggregate children first (depth-first), so their types are available
+    // Visit nested aggregate and union children first (depth-first), so their types are available
     // before we process members of the outer aggregate.
     for (auto& child : st.get_children()) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
             nested->accept(*this);
+        } else if (auto nested_un = std::dynamic_pointer_cast<union_type_def>(child)) {
+            nested_un->accept(*this);
         }
     }
 
@@ -1372,11 +1399,14 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
         }
     }
 
-    // If the union already has a struct_type (set during template instantiation
-    // or KDI import materialisation), skip LLVM type creation to avoid replacing
-    // the struct_type pointer that other type references (e.g. parameters) use.
-    if (un.get_struct_type()) {
-        trace("[aggregate_type_resolver::visit_union] union '{}' already has struct_type, skipping",
+    // If the union already has a struct_type with an LLVM type attached
+    // (set during template instantiation or KDI import materialisation),
+    // skip LLVM type creation to avoid replacing the struct_type pointer
+    // that other type references (e.g. parameters) use.
+    // However, if struct_type exists but has NO LLVM type (created early by
+    // symbol_resolver for nested union resolution), we must still attach one.
+    if (un.get_struct_type() && un.get_struct_type()->get_llvm_type()) {
+        trace("[aggregate_type_resolver::visit_union] union '{}' already has struct_type with LLVM type, skipping",
             {un.get_short_name()});
         return;
     }
@@ -1387,22 +1417,27 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
     auto& llvm_ctx = _context->llvm_context();
     auto* union_llvm_type = llvm::StructType::create(llvm_ctx, un.get_mangled_name() + "_union");
 
-    // Create a struct_type wrapping this opaque LLVM type and register with context.
-    // Use the FQ name (stripped of leading "::") so that the KDI exporter can produce
-    // a fully-qualified aggregate_ref for function parameter types referencing this union.
-    std::string st_name = un.get_short_name();
-    {
-        const std::string& fq = un.get_fq_name();
-        if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') {
-            st_name = fq.substr(2);
-        } else if (!fq.empty()) {
-            st_name = fq;
+    if (un.get_struct_type()) {
+        // struct_type was created early by symbol_resolver; attach the LLVM type to it.
+        _context->attach_llvm_struct_type(un.get_struct_type(), union_llvm_type);
+    } else {
+        // Create a struct_type wrapping this opaque LLVM type and register with context.
+        // Use the FQ name (stripped of leading "::") so that the KDI exporter can produce
+        // a fully-qualified aggregate_ref for function parameter types referencing this union.
+        std::string st_name = un.get_short_name();
+        {
+            const std::string& fq = un.get_fq_name();
+            if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') {
+                st_name = fq.substr(2);
+            } else if (!fq.empty()) {
+                st_name = fq;
+            }
         }
+        auto st_type = std::make_shared<struct_type>(st_name, std::weak_ptr<aggregate>{});
+        _context->attach_llvm_struct_type(st_type, union_llvm_type);
+        un.set_struct_type(st_type);
+        _context->add_struct(st_type);
     }
-    auto st_type = std::make_shared<struct_type>(st_name, std::weak_ptr<aggregate>{});
-    _context->attach_llvm_struct_type(st_type, union_llvm_type);
-    un.set_struct_type(st_type);
-    _context->add_struct(st_type);
 
     trace("[aggregate_type_resolver::visit_union] resolved union '{}' (opaque LLVM type created)",
         {un.get_short_name()});
