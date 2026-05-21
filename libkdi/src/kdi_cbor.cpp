@@ -843,6 +843,8 @@ kdi_base decode_base(cbor_item_t* item, const std::string& path) {
 
 cbor_item_t* encode_aggregate(const kdi_aggregate& agg);
 kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path);
+cbor_item_t* encode_union(const kdi_union& u);
+kdi_union decode_union(cbor_item_t* item, const std::string& path);
 
 cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     cbor_item_t* m = cbor_new_indefinite_map();
@@ -899,6 +901,13 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     cbor_item_t* nested = cbor_new_indefinite_array();
     for (auto& n : agg.nested) cbor_array_push(nested, cbor_move(encode_aggregate(n)));
     map_push(m, "nested", nested);
+
+    // nested_unions
+    if (!agg.nested_unions.empty()) {
+        cbor_item_t* nested_uns = cbor_new_indefinite_array();
+        for (auto& u : agg.nested_unions) cbor_array_push(nested_uns, cbor_move(encode_union(u)));
+        map_push(m, "nested_unions", nested_uns);
+    }
 
     // llvm_def
     map_push(m, "llvm_def", cbor_str(agg.llvm_def));
@@ -979,6 +988,13 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
         for (size_t i = 0; i < n; ++i)
             agg.nested.push_back(decode_aggregate(cbor_array_get(na, i),
                                                   path + ".nested[" + std::to_string(i) + "]"));
+    }
+    auto* nua = map_get(item, "nested_unions");
+    if (nua && cbor_isa_array(nua)) {
+        size_t n = cbor_array_size(nua);
+        for (size_t i = 0; i < n; ++i)
+            agg.nested_unions.push_back(decode_union(cbor_array_get(nua, i),
+                                                     path + ".nested_unions[" + std::to_string(i) + "]"));
     }
     agg.llvm_def = req_string(item, "llvm_def", path);
     agg.default_constructor_mangled_name = opt_string(item, "default_constructor_mangled_name");

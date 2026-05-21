@@ -957,6 +957,14 @@ void aggregate::on_enum_defined(std::shared_ptr<enumeration> en) {
     _children.push_back(en);
 }
 
+std::shared_ptr<union_type_def> aggregate::do_create_union(const std::string &name) {
+    return union_type_def::make_shared(shared_as<aggregate>(), name);
+}
+
+void aggregate::on_union_defined(std::shared_ptr<union_type_def> un) {
+    _children.push_back(un);
+}
+
 bool aggregate::is_derived_from(const std::shared_ptr<aggregate>& base_st) const {
     for (auto& bs : _bases) {
         if (!bs.base) continue;

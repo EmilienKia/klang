@@ -477,11 +477,11 @@ namespace k::model {
     void model_builder::build_union_from_ast(parse::ast::aggregate_decl& st) {
         trace("[model_builder::build_union_from_ast] union '{}'", {std::string{st.name.content}});
 
-        // Determine parent scope (must be a union_holder — currently only ns)
+        // Determine parent scope (must be a union_holder — ns or aggregate)
         std::shared_ptr<model::union_holder> parent_scope = current_context_content<model::union_holder>();
         if (!parent_scope) {
             throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STRUCT_BAD_SCOPE), st.kw_aggregate_type,
-                "Union '{}' cannot be declared here; unions are only allowed at namespace scope",
+                "Union '{}' cannot be declared here; unions are only allowed at namespace or aggregate scope",
                 {std::string{st.name.content}});
         }
 

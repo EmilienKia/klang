@@ -1033,7 +1033,10 @@ void kdi_builder::visit_union(union_type_def& un) {
         }
     }
 
-    if (!_ns_stack.empty())
+    // Deposit into enclosing aggregate or namespace
+    if (!_agg_stack.empty())
+        _agg_stack.back()->nested_unions.push_back(std::move(ku));
+    else if (!_ns_stack.empty())
         _ns_stack.back()->unions.push_back(std::move(ku));
 }
 

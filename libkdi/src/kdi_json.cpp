@@ -641,6 +641,22 @@ static json to_json(const kdi_aggregate& a) {
     json nested = json::array();
     for (auto& n : a.nested) nested.push_back(to_json(n));
 
+    json nested_uns = json::array();
+    for (auto& u : a.nested_unions) {
+        json uobj = {{"name", u.name}, {"fq_name", u.fq_name}, {"mangled_name", u.mangled_name},
+                     {"visibility", vis_to_str(u.visibility)}};
+        json alts = json::array();
+        for (auto& alt : u.alternatives) {
+            json aobj = {{"name", alt.name}, {"is_const", alt.is_const},
+                         {"type", to_json(alt.type)}};
+            alts.push_back(std::move(aobj));
+        }
+        uobj["alternatives"] = std::move(alts);
+        if (!u.llvm_def.empty()) uobj["llvm_def"] = u.llvm_def;
+        if (u.template_origin) uobj["template_origin"] = to_json(*u.template_origin);
+        nested_uns.push_back(std::move(uobj));
+    }
+
     json obj = {
         {"kind",          agg_kind_to_str(a.kind)},
         {"name",          a.name},
@@ -657,6 +673,7 @@ static json to_json(const kdi_aggregate& a) {
         {"methods",       methods},
         {"static_vars",   static_vars},
         {"nested",        nested},
+        {"nested_unions", nested_uns},
         {"llvm_def",      a.llvm_def},
     };
     if (!a.default_constructor_mangled_name.empty())
@@ -705,6 +722,23 @@ static kdi_aggregate from_json_aggregate(const json& j) {
         a.vtable = from_json_vtable(j.at("vtable"));
     for (auto& n : j.value("nested", json::array()))
         a.nested.push_back(from_json_aggregate(n));
+    for (auto& u : j.value("nested_unions", json::array())) {
+        kdi_union ku;
+        ku.name         = u.at("name");
+        ku.fq_name      = u.value("fq_name", "");
+        ku.mangled_name = u.value("mangled_name", "");
+        ku.visibility   = vis_from_str(u.value("visibility", "public"));
+        for (auto& alt : u.value("alternatives", json::array())) {
+            kdi_union_alternative ka;
+            ka.name     = alt.at("name");
+            ka.is_const = alt.value("is_const", false);
+            if (alt.contains("type")) ka.type = from_json_type(alt.at("type"));
+            ku.alternatives.push_back(std::move(ka));
+        }
+        ku.llvm_def = u.value("llvm_def", "");
+        if (u.contains("template_origin")) ku.template_origin = from_json_template_origin(u.at("template_origin"));
+        a.nested_unions.push_back(std::move(ku));
+    }
     a.llvm_def = j.at("llvm_def");
     a.default_constructor_mangled_name = j.value("default_constructor_mangled_name", "");
     if (j.contains("template_origin")) a.template_origin = from_json_template_origin(j.at("template_origin"));

@@ -336,6 +336,7 @@ enum class kdi_aggregate_kind : uint8_t {
 };
 
 struct kdi_aggregate; // forward for nested aggregates
+struct kdi_union;     // forward for nested unions
 
 struct kdi_aggregate {
     // Identity
@@ -377,6 +378,9 @@ struct kdi_aggregate {
 
     // Nested aggregates (public/protected)
     std::vector<kdi_aggregate>    nested;
+
+    // Nested unions (public/protected)
+    std::vector<kdi_union>        nested_unions;
 
     /// LLVM IR struct type definition, e.g.
     /// "%struct.ns.Counter = type { i32*, i32 }".

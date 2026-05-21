@@ -235,6 +235,9 @@ static void collect_aggregate(const kdi_aggregate& agg,
     // Nested aggregates
     for (auto& nested : agg.nested)
         collect_aggregate(nested, out);
+
+    // Nested unions (unions currently don't have mangled symbols, but iterate for completeness)
+    // No symbols to collect for unions at this point
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/memory.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/shared.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/expected.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/collections.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/string.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/io/stream.k

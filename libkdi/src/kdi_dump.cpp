@@ -248,6 +248,14 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
     }
     // nested
     for (auto& n : agg.nested) dump_aggregate(n, out, depth + 1);
+    // nested unions
+    for (auto& u : agg.nested_unions) {
+        out << indent(depth + 1) << "union " << u.name << " {\n";
+        for (auto& alt : u.alternatives) {
+            out << indent(depth + 2) << alt.name << ": " << type_str(alt.type) << ";\n";
+        }
+        out << indent(depth + 1) << "}\n";
+    }
 
     out << indent(depth) << "}\n";
 }

@@ -275,6 +275,11 @@ void validate_aggregate(const kdi_aggregate& agg,
                            path + ".nested[" + std::to_string(i) + "]",
                            types, result);
     }
+    for (size_t i = 0; i < agg.nested_unions.size(); ++i) {
+        auto& u = agg.nested_unions[i];
+        std::string upath = path + ".nested_unions[" + std::to_string(i) + "]";
+        if (u.name.empty()) result.add(upath, "union name must not be empty");
+    }
 }
 
 void validate_namespace(const kdi_namespace& ns,

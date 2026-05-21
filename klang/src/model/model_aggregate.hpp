@@ -89,7 +89,7 @@ struct base_spec {
  * Holds all common member data: member variables, functions, constructors,
  * destructor, static ctor/dtor, nested aggregates, bases, vtable, vptrs, etc.
  */
-class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public using_holder, public friend_holder, public annotation_holder {
+class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public union_holder, public using_holder, public friend_holder, public annotation_holder {
 protected:
     friend class ns;
     friend class gen::implementation_generator;
@@ -170,6 +170,9 @@ protected:
 
     std::shared_ptr<enumeration> do_create_enum(const std::string &name) override;
     void on_enum_defined(std::shared_ptr<enumeration>) override;
+
+    std::shared_ptr<union_type_def> do_create_union(const std::string &name) override;
+    void on_union_defined(std::shared_ptr<union_type_def>) override;
 
     void set_struct_type(const std::shared_ptr<struct_type>& st_type) {
         _type = st_type;

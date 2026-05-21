@@ -402,6 +402,13 @@ static void collect_llvm_defs_from_namespace(const kdi::kdi_namespace& ns,
                 out += '\n';
             }
         }
+        // Nested unions (public/protected inner unions)
+        for (const auto& nested_un : agg.nested_unions) {
+            if (!nested_un.llvm_def.empty()) {
+                out += nested_un.llvm_def;
+                out += '\n';
+            }
+        }
     }
     for (const auto& child_ns : ns.namespaces) {
         collect_llvm_defs_from_namespace(child_ns, out);
@@ -518,6 +525,11 @@ void kdi_importer::materialise_aggregate(const kdi::kdi_aggregate& agg,
     // Materialise nested aggregates (public/protected nested types).
     for (const auto& nested : agg.nested) {
         materialise_aggregate(nested, ctx);
+    }
+
+    // Materialise nested unions (public/protected nested unions).
+    for (const auto& nested_un : agg.nested_unions) {
+        materialise_union(nested_un, ctx);
     }
 }
 
