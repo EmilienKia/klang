@@ -245,6 +245,15 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
         }
     }
 
+    // Handle primitive type materialization (rvalue-to-reference binding via adapt_type).
+    // When adapt_type creates a temporary_construction_expression for a primitive (e.g. int),
+    // no constructor resolution is needed — just confirm the ref<T> result type.
+    if (auto prim_type = std::dynamic_pointer_cast<primitive_type>(expr.constructed_type())) {
+        // Result type is ref<primitive>: the alloca will be used as a reference.
+        expr.set_type(prim_type->get_reference());
+        return;
+    }
+
     auto st_type = std::dynamic_pointer_cast<struct_type>(expr.constructed_type());
     if (!st_type || !st_type->get_struct()) {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_EXPECT_STRUCT_OR_PRIM), expr.first_lexeme(),
@@ -851,6 +860,26 @@ void implementation_generator::visit_constructor_invocation_expression(construct
 // Temporary construction expression (implementation_generator)
 //
 void implementation_generator::visit_temporary_construction_expression(temporary_construction_expression& expr) {
+    // ── Primitive type materialization: rvalue-to-reference binding ─────────────
+    // When passed a primitive value as a reference parameter, adapt_type creates a
+    // temporary_construction_expression<primitive_type>. Codegen: alloca + store.
+    if (auto prim_type = std::dynamic_pointer_cast<primitive_type>(expr.constructed_type())) {
+        llvm::Type* llvm_ty = _context->get_llvm_type(prim_type);
+        llvm::Function* current_fn = _builder->GetInsertBlock()->getParent();
+        llvm::IRBuilder<> entry_builder(&current_fn->getEntryBlock(),
+                                        current_fn->getEntryBlock().begin());
+        auto* temp_alloca = entry_builder.CreateAlloca(llvm_ty, nullptr, "tmp_prim_ref");
+        if (expr.size() == 1) {
+            _value = nullptr;
+            expr.argument(0)->accept(*this);
+            if (_value) {
+                _builder->CreateStore(_value, temp_alloca);
+            }
+        }
+        _value = temp_alloca;
+        return;
+    }
+
     auto st_type = std::dynamic_pointer_cast<struct_type>(expr.constructed_type());
     if (!st_type || !st_type->get_struct()) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),

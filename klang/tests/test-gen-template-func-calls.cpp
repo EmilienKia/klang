@@ -217,7 +217,32 @@ TEST_CASE("[G] M8: generic member return stays concrete through member receiver 
 
 TEST_CASE("[H] M8: generic nested-node linked-list pattern executes in one module",
           "[milestone8][generic][function][jit][collections]") {
-    SKIP("Nested-node generic collection runtime remains unstable under JIT; tracked as a follow-up blocker for collection development");
+    auto jit = gen_jit(R"SRC(
+        module __m8_generic_linked_list__;
+
+        template<typename T>
+        struct Node {
+            value : T;
+            next : Node<T>* = null;
+            Node(v : T&) { value = v; }
+        }
+
+        test() : int {
+            a : int = 10;
+            b : int = 20;
+            c : int = 30;
+            n1 : Node<int>* = new Node<int>(a);
+            n2 : Node<int>* = new Node<int>(b);
+            n3 : Node<int>* = new Node<int>(c);
+            n3->next = n2;
+            n2->next = n1;
+            return n3->value + n3->next->value + n3->next->next->value;
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn != nullptr);
+    CHECK(test_fn() == 60);
 }
 
 

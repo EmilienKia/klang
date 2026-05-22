@@ -202,6 +202,16 @@ protected:
      */
     bool _is_template_param_placeholder = false;
 
+    /**
+     * Pre-resolved model-level template arguments, set by substitute_type() when
+     * a template parameter name (e.g. "R") inside the AST arg list of an
+     * unresolved_type (e.g. Expected<R,E>) is substituted with a concrete type.
+     * When non-empty, try_instantiate_template_type() uses these directly instead
+     * of re-resolving the AST arg names — which would fail in a concrete function
+     * body where the original template params are no longer in scope.
+     */
+    std::vector<std::shared_ptr<type>> _model_template_args;
+
     friend class context;
 
     unresolved_type(const name& type_id): _type_id(type_id) {}
@@ -233,6 +243,24 @@ public:
     const std::vector<std::shared_ptr<k::parse::ast::template_arg>>& get_ast_template_args() const {
         return _ast_template_args;
     }
+
+    /** True if model-level template argument overrides are present (set by substitute_type). */
+    bool has_model_template_args() const { return !_model_template_args.empty(); }
+
+    /** Model-level template arguments, indexed parallel to get_ast_template_args().
+     *  A null entry means the corresponding AST arg was not substituted. */
+    const std::vector<std::shared_ptr<type>>& get_model_template_args() const {
+        return _model_template_args;
+    }
+
+    /**
+     * Create a clone of this unresolved_type with model-level template arg overrides
+     * derived from @p subst.  For each AST arg that is a simple identifier name found
+     * in the substitution map, the corresponding slot in _model_template_args is set
+     * to the substituted concrete type.  Returns nullptr if no arg was substituted.
+     */
+    std::shared_ptr<unresolved_type> clone_with_substituted_model_args(
+        const std::unordered_map<std::string, std::shared_ptr<type>>& subst) const;
 
     llvm::Type* get_llvm_type() const override {
         return _resolved ? _resolved->get_llvm_type() : nullptr;

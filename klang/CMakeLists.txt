@@ -208,6 +208,7 @@ target_link_options(klang-tests PRIVATE -rdynamic)
 add_dependencies(klang-tests libk_stdlib)
 
 add_test(NAME klang-tests COMMAND klang-tests)
+set_tests_properties(klang-tests PROPERTIES TIMEOUT 600)
 
 #
 # klangc executable integration tests

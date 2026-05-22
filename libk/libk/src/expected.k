@@ -80,6 +80,24 @@ struct Expected {
     }
 
     /**
+     * Copy constructor. Creates an Expected with the same state as other.
+     * - If other holds a result, this holds the same result value.
+     * - If other holds an error, this holds the same error value.
+     * - If other is in an undefined state, this is also left undefined.
+     */
+    Expected(other : Expected<R, E>&) {
+        if (other.hasResult()) {
+            r : R = other.getResult();
+            setResult(r);
+        } else {
+            if (other.hasError()) {
+                e : E = other.getError();
+                setError(e);
+            }
+        }
+    }
+
+    /**
      * Return true if this Expected holds a successful result.
      */
     const hasResult() : bool {

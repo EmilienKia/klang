@@ -139,6 +139,7 @@ add_executable(libk-tests
     tests/test-rtti.cpp
     tests/test-rtti-constructors.cpp
     tests/test-rtti-parameters.cpp
+    tests/test-expected.cpp
     tests/test-string.cpp
     tests/test-string-literal.cpp
     tests/test-string-search.cpp

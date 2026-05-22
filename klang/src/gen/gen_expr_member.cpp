@@ -259,9 +259,6 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         };
 
         auto hits = search_member(struct_subtype, simple_name, PUBLIC, true, false);
-        if (hits.size() > 1) {
-            std::cerr << "[DEBUG] Ambiguous: " << hits.size() << " hits for '" << simple_name << "' in '" << struct_subtype->name() << "'\n" << std::flush;
-        }
 
         // If qualified, filter hits to only those in the named base
         if (is_qualified && !hits.empty()) {

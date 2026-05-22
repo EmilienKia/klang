@@ -20,6 +20,7 @@
 #include "model.hpp"
 #include "context.hpp"
 #include "../common/tools.hpp"
+#include "../parse/ast.hpp"
 
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Constants.h>
@@ -141,6 +142,48 @@ llvm::Constant* type::generate_default_value_initializer() const {
 
 std::string unresolved_type::to_string() const {
     return "<<unresolved:" + _type_id.to_string() + ">>";
+}
+
+std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_args(
+    const std::unordered_map<std::string, std::shared_ptr<type>>& subst) const
+{
+    if (_ast_template_args.empty() || subst.empty()) return nullptr;
+
+    std::vector<std::shared_ptr<type>> model_args;
+    model_args.reserve(_ast_template_args.size());
+    bool any_substituted = false;
+
+    for (const auto& ast_arg : _ast_template_args) {
+        if (!ast_arg || !ast_arg->is_type() || !ast_arg->type_arg) {
+            model_args.push_back(nullptr);
+            continue;
+        }
+        // Only handle simple identified type specifiers (e.g. "R", "E") with no sub-args.
+        // More complex forms (e.g. Box<T>) are left for the normal AST resolution path.
+        auto id_spec = dynamic_cast<const k::parse::ast::identified_type_specifier*>(
+            ast_arg->type_arg.get());
+        if (!id_spec || id_spec->name.size() != 1 || id_spec->has_explicit_template_args) {
+            model_args.push_back(nullptr);
+            continue;
+        }
+        std::string arg_name{id_spec->name.names[0].content};
+        auto sit = subst.find(arg_name);
+        if (sit != subst.end() && sit->second) {
+            model_args.push_back(sit->second);
+            any_substituted = true;
+        } else {
+            model_args.push_back(nullptr);
+        }
+    }
+
+    if (!any_substituted) return nullptr;
+
+    // Create a new unresolved_type sharing the AST template args but with model overrides.
+    auto new_ut = std::shared_ptr<unresolved_type>(new unresolved_type(_type_id));
+    new_ut->_ast_template_args = _ast_template_args;
+    new_ut->_has_explicit_template_args = _has_explicit_template_args;
+    new_ut->_model_template_args = std::move(model_args);
+    return new_ut;
 }
 
 //

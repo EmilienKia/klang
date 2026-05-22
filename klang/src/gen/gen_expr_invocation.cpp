@@ -2479,7 +2479,14 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
     if (!type::is_resolved(alloc_type)) {
         // Try to resolve unresolved type
         if (auto unres = std::dynamic_pointer_cast<unresolved_type>(alloc_type)) {
-            auto resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
+            std::shared_ptr<type> resolved;
+            // Try template instantiation first (e.g. new Node<int>(...))
+            if (unres->has_template_args()) {
+                resolved = try_instantiate_template_type(unres, static_cast<const element&>(expr));
+            }
+            if (!resolved || !type::is_resolved(resolved)) {
+                resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
+            }
             if (!resolved || !type::is_resolved(resolved)) {
                 auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
                 if (imported_agg) resolved = imported_agg->get_struct_type();

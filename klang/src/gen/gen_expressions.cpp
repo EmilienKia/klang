@@ -256,10 +256,55 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
         if (std::dynamic_pointer_cast<constructor_invocation_expression>(parent)) {
             return; // defer to visit_constructor_invocation_expression
         }
-        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F003), symbol.first_lexeme(),
-            "Internal error: symbol '{}' reached type-resolution phase without being resolved; "
-            "symbol resolution must be run before type resolution",
-            {symbol.get_name().to_string()});
+
+        // Late resolution for "UnionName::Kind::entryName" symbols that were not resolved
+        // by symbol_resolver because they lived inside a template definition (which symbol_resolver
+        // skips).  When the template is instantiated during type_reference_resolver, the nested
+        // union's Kind enum may not have been synthesised yet.  We synthesise it here on demand
+        // and resolve the symbol before falling through to the normal enum-entry type assignment.
+        const auto& sym_name = symbol.get_name();
+        if (sym_name.size() == 3 && !sym_name.has_root_prefix() && sym_name[1] == "Kind") {
+            const std::string& union_name = sym_name.front();
+            const std::string& entry_name = sym_name.back();
+            // Walk up the element parent chain looking for a union_holder that owns the union.
+            for (auto cur = symbol.shared_as<element>(); cur; cur = cur->parent<element>()) {
+                if (auto* uh = dynamic_cast<union_holder*>(cur.get())) {
+                    if (auto un = uh->get_union(union_name)) {
+                        // Ensure the Kind enum is synthesised (idempotent call).
+                        un->synthesize_kind_enum();
+                        if (auto kind_enum = un->get_kind_enum()) {
+                            // Create and register the enum_type if it doesn't exist yet.
+                            if (!kind_enum->get_enum_type()) {
+                                auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
+                                kind_enum->set_underlying_type(uint_type);
+                                auto et = std::shared_ptr<enum_type>(new enum_type(kind_enum, uint_type));
+                                kind_enum->set_enum_type(et);
+                                std::string fq = kind_enum->get_fq_name();
+                                if (!fq.empty()) _context->add_enum(fq, et);
+                            }
+                            // Resolve the symbol to the matching enum entry.
+                            size_t idx = 0;
+                            bool found_entry = false;
+                            for (auto& e : kind_enum->entries()) {
+                                if (e.name == entry_name) { found_entry = true; break; }
+                                ++idx;
+                            }
+                            if (found_entry) {
+                                symbol.set_target(symbol_expression::enum_entry_target{kind_enum, idx});
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!symbol.is_resolved()) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F003), symbol.first_lexeme(),
+                "Internal error: symbol '{}' reached type-resolution phase without being resolved; "
+                "symbol resolution must be run before type resolution",
+                {symbol.get_name().to_string()});
+        }
     }
     if (symbol.is_variable_def()) {
         auto var_def = symbol.get_variable_def();

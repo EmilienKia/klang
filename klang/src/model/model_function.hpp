@@ -232,6 +232,16 @@ protected:
     std::string _tpl_base_name;
     std::vector<template_argument> _tpl_args;
 
+    /**
+     * Type substitution map used when this function was instantiated from a template
+     * (e.g. {"R"→int, "E"→int} for makeExpected__int_int).  Set by
+     * template_instantiator::populate_function_from_template() on the concrete function.
+     * Used by type_reference_resolver::try_instantiate_template_type() to resolve
+     * template-parameter names embedded in AST template arg lists (e.g. "R" in
+     * Expected<R,E>) that are no longer in scope in the concrete function body.
+     */
+    std::unordered_map<std::string, std::shared_ptr<type>> _tpl_instantiation_subst;
+
     function(std::shared_ptr<element> parent, bool is_static = false) :
         element(parent), _is_static(is_static) {}
 
@@ -435,6 +445,23 @@ public:
 
     /** Returns the concrete template arguments used to instantiate this function. */
     const std::vector<template_argument>& get_tpl_args() const { return _tpl_args; }
+
+    /**
+     * True if this function was instantiated from a template and carries a type substitution map.
+     * Used by type_reference_resolver to resolve template-param names embedded in
+     * inner AST template arg type specs (e.g. "R" in Expected<R,E>).
+     */
+    bool has_tpl_instantiation_subst() const { return !_tpl_instantiation_subst.empty(); }
+
+    /** Returns the type substitution map for this template instantiation (may be empty). */
+    const std::unordered_map<std::string, std::shared_ptr<type>>& get_tpl_instantiation_subst() const {
+        return _tpl_instantiation_subst;
+    }
+
+    /** Set the type substitution map (called by template_instantiator). */
+    void set_tpl_instantiation_subst(std::unordered_map<std::string, std::shared_ptr<type>> s) {
+        _tpl_instantiation_subst = std::move(s);
+    }
 
     /** Set the template instantiation metadata (base name + concrete args). */
     void set_tpl_instantiation_info(const std::string& base_name, std::vector<template_argument> args) {

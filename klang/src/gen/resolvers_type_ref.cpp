@@ -955,7 +955,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     for (size_t i = 0; i < ast_args.size(); ++i) {
         const auto& ast_arg = ast_args[i];
         if (ast_arg->is_type()) {
-            // Resolve the type argument through the context
+            // Resolve the type argument through the context (normal path)
             auto arg_type = _context->from_type_specifier(*ast_arg->type_arg);
             if (!arg_type || !type::is_resolved(arg_type)) {
                 // Try resolving it further through the resolver
@@ -964,6 +964,68 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                         auto resolved = resolve_type_by_name(unres_arg->type_id(), context_elem);
                         if (resolved && type::is_resolved(resolved)) {
                             arg_type = resolved;
+                        }
+                        // If still not resolved, check if we are inside a concrete template
+                        // function instantiation that carries the substitution map.  This
+                        // handles cases like  e : Expected<R,E>  in makeExpected__int_int where
+                        // "R" and "E" are no longer in scope but the subst map is stored on the
+                        // containing function.
+                        if (!type::is_resolved(arg_type)) {
+                            // Check if context_elem itself is the concrete function
+                            const function* owning_fn = dynamic_cast<const function*>(&context_elem);
+                            if (!owning_fn) {
+                                // Walk up to find the nearest enclosing function
+                                if (auto parent_fn = context_elem.ancestor<function>()) {
+                                    owning_fn = parent_fn.get();
+                                }
+                            }
+                            if (owning_fn && owning_fn->has_tpl_instantiation_subst()) {
+                                const auto& fn_subst = owning_fn->get_tpl_instantiation_subst();
+                                auto sit = fn_subst.find(unres_arg->type_id().to_string());
+                                if (sit == fn_subst.end() && !unres_arg->type_id().empty()) {
+                                    sit = fn_subst.find(unres_arg->type_id().back());
+                                }
+                                if (sit != fn_subst.end() && sit->second && type::is_resolved(sit->second)) {
+                                    arg_type = sit->second;
+                                }
+                            }
+                            // If still not resolved, check if context is inside a
+                            // template-instantiated aggregate that carries param→arg mapping.
+                            if (!type::is_resolved(arg_type)) {
+                                const aggregate* owning_agg = dynamic_cast<const aggregate*>(&context_elem);
+                                if (!owning_agg) {
+                                    if (auto parent_agg = context_elem.ancestor<aggregate>()) {
+                                        owning_agg = parent_agg.get();
+                                    }
+                                }
+                                if (owning_agg && owning_agg->has_tpl_args()) {
+                                    // Reconstruct subst map from template params and args
+                                    auto tpl_base_name = owning_agg->get_tpl_base_name();
+                                    // Find the template definition to get param names
+                                    std::shared_ptr<aggregate> tpl_def;
+                                    if (auto parent_ns = owning_agg->parent<ns>()) {
+                                        tpl_def = parent_ns->get_aggregate(tpl_base_name);
+                                    }
+                                    if (tpl_def && tpl_def->get_tpl_info()) {
+                                        const auto& params = tpl_def->get_tpl_info()->params;
+                                        const auto& args = owning_agg->get_tpl_args();
+                                        for (size_t pi = 0; pi < params.size() && pi < args.size(); ++pi) {
+                                            if (params[pi].is_type_param() && args[pi].is_type()) {
+                                                std::string pname = params[pi].name;
+                                                if (pname == unres_arg->type_id().to_string() ||
+                                                    (!unres_arg->type_id().empty() && pname == unres_arg->type_id().back())) {
+                                                    if (args[pi].type_arg && type::is_resolved(args[pi].type_arg)) {
+                                                        arg_type = args[pi].type_arg;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                    }
+                                } else {
+                                }
+                            }
                         }
                     } else {
                         // Wrapper type (pointer, owner, reference, etc.) around an unresolved inner type.
@@ -1540,6 +1602,18 @@ std::shared_ptr<type> type_reference_resolver::resolve_type_chain(
 }
 
 void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
+    // Step 0: Resolve member variable types that contain unresolved template types.
+    //         After template instantiation, member fields like `next : Node<T>*` may
+    //         still carry unresolved inner types that need template instantiation.
+    for (auto& [name, var] : agg.variables()) {
+        if (var && var->get_type() && !type::is_resolved(var->get_type())) {
+            auto resolved = resolve_type_chain(var->get_type(), &agg);
+            if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) {
+                var->set_type(resolved);
+            }
+        }
+    }
+
     // Step 1: Resolve function parameter and return types that contain
     //         unresolved template types.  This is needed because the
     //         signature_resolver pre-pass only runs on namespaces, and the
@@ -1604,7 +1678,7 @@ std::shared_ptr<type> type_reference_resolver::resolve_inner_type(
         // template_argument values, instantiate, and return the concrete type.
         if (unres_inner->has_template_args() && scope_elem) {
             auto resolved = try_instantiate_template_type(unres_inner, *scope_elem);
-            if (resolved && type::is_resolved(resolved)) return resolved;
+            if (resolved && (type::is_resolved(resolved) || std::dynamic_pointer_cast<struct_type>(resolved))) return resolved;
             // If instantiation failed (e.g. not a template), fall through
             // to normal resolution for a better error message.
         }
@@ -2482,7 +2556,30 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         }
     }
 
-    // Step 6: Null → pointer/link/view/owner
+    // Step 6: value T → ref<T>: rvalue-to-reference binding (materialize a temporary).
+    // Enables passing primitive or struct values to reference parameters (like C++ const T&).
+    if (!type::is_reference(effective_src) && type::is_reference(tgt_nc)) {
+        auto tgt_ref = std::dynamic_pointer_cast<reference_type>(tgt_nc);
+        auto tgt_sub_nc = type::remove_const(tgt_ref->get_subtype());
+        auto eff_src_nc = type::remove_const(effective_src);
+        // primitive value → ref<primitive>
+        if (auto p_src = std::dynamic_pointer_cast<primitive_type>(eff_src_nc)) {
+            if (auto p_tgt = std::dynamic_pointer_cast<primitive_type>(tgt_sub_nc)) {
+                if (*p_src == *p_tgt) return CAST_REF_CONV;
+                // Widening: same signedness/float category, target is wider
+                if (p_src->is_integer() && p_tgt->is_integer() &&
+                    p_src->is_unsigned() == p_tgt->is_unsigned() &&
+                    p_tgt->type_size() >= p_src->type_size()) return CAST_WIDENING;
+            }
+        }
+        // struct value → ref<same struct>: copy-materialize
+        if (auto st_src = std::dynamic_pointer_cast<struct_type>(eff_src_nc)) {
+            if (auto st_tgt = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc)) {
+                if (st_src == st_tgt) return CAST_REF_CONV;
+            }
+        }
+    }
+
     return CAST_IMPOSSIBLE;
 }
 
@@ -3133,6 +3230,40 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     // ── Enum implicit conversions ──────────────────────────────────────────────
     auto enum_result = adapt_enum_type(expr, type_nc);
     if (enum_result) return enum_result;
+
+    // ── value T → ref<T>: rvalue-to-reference binding (materialize a stack temporary) ──
+    // Allows passing a primitive/struct value to a reference parameter.
+    // Equivalent to C++ const T& binding to an rvalue.
+    if (type::is_reference(type_nc) && !type::is_reference(type_src)) {
+        auto tgt_ref = std::dynamic_pointer_cast<reference_type>(type_nc);
+        auto tgt_sub_nc = type::remove_const(tgt_ref->get_subtype());
+        auto src_nc = type::remove_const(type_src);
+        // Primitive → ref<primitive>
+        if (auto p_src = std::dynamic_pointer_cast<primitive_type>(src_nc)) {
+            if (auto p_tgt = std::dynamic_pointer_cast<primitive_type>(tgt_sub_nc)) {
+                std::shared_ptr<expression> converted = expr;
+                // Widen the primitive if necessary (e.g. int → ref<long>)
+                if (*p_src != *p_tgt) {
+                    auto cast_expr = cast_expression::make_shared(expr, p_tgt);
+                    cast_expr->set_type(p_tgt);
+                    converted = cast_expr;
+                }
+                auto temp = temporary_construction_expression::make_shared(p_tgt, {converted});
+                temp->set_type(p_tgt->get_reference());
+                return temp;
+            }
+        }
+        // Struct value → ref<same struct>: materialize a copy
+        if (auto st_src = std::dynamic_pointer_cast<struct_type>(src_nc)) {
+            if (auto st_tgt = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc)) {
+                if (st_src == st_tgt) {
+                    auto temp = temporary_construction_expression::make_shared(st_tgt, {expr});
+                    temp->set_type(st_tgt->get_reference());
+                    return temp;
+                }
+            }
+        }
+    }
 
     // ── Primitive / struct fallback ─────────────────────────────────────────────
     return adapt_primitive_or_struct_type(expr, type_nc);
