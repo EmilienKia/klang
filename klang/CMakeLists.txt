@@ -112,75 +112,155 @@ target_compile_definitions(klang-test-helpers PUBLIC
     KLANG_STDLIB_LIB_DIR="${KLANG_STDLIB_LIB_DIR}"
 )
 
-add_executable(klang-tests
+# ---------------------------------------------------------------------------
+# Helper macro: register a standard codegen test executable.
+# All JIT-based gen test executables share the same setup:
+#   - link against klang-test-helpers and Catch2
+#   - export symbols with -rdynamic (needed by test-gen-extern JIT dlsym)
+#   - depend on libk_stdlib (K compilation auto-imports the stdlib)
+# Usage: klang_gen_test(<target> <timeout_s> <source1> [<source2> ...])
+# ---------------------------------------------------------------------------
+macro(klang_gen_test TARGET TIMEOUT)
+    add_executable(${TARGET} ${ARGN})
+    target_link_libraries(${TARGET} klang-test-helpers Catch2::Catch2WithMain)
+    target_link_options(${TARGET} PRIVATE -rdynamic)
+    add_dependencies(${TARGET} libk_stdlib)
+    add_test(NAME ${TARGET} COMMAND ${TARGET})
+    set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
+endmacro()
+
+# ---------------------------------------------------------------------------
+# Group 1 — Frontend: lexer, parser, file-resolver, process
+# No JIT, no libk dependency — runnable even before libk is built.
+# ---------------------------------------------------------------------------
+add_executable(klang-tests-frontend
         tests/test-lexer.cpp
         tests/test-parser.cpp
         tests/test-parser-templates.cpp
+        tests/test-file-resolver.cpp
+        tests/test-process.cpp
+)
+target_link_libraries(klang-tests-frontend klang-test-helpers Catch2::Catch2WithMain)
+add_test(NAME klang-tests-frontend COMMAND klang-tests-frontend)
+set_tests_properties(klang-tests-frontend PROPERTIES TIMEOUT 30)
+
+# ---------------------------------------------------------------------------
+# Group 2 — Model: model analysis, template instantiator, phase pipeline
+# Compile-only tests — no heavy JIT execution.
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-model 60
+        tests/test-model-annotation.cpp
+        tests/test-model-constructor-rtti.cpp
+        tests/test-model-materializer.cpp
+        tests/test-template-instantiator.cpp
+        tests/test-phase3-dispatch.cpp
+        tests/test-phase4-gen.cpp
+        tests/test-gen-template-aggregates.cpp
+        tests/test-gen-annotation-members.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 3 — Codegen core: functions, statements, control flow, init order
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-core 90
+        tests/test-gen.cpp
+        tests/test-gen-statements.cpp
+        tests/test-gen-resolution.cpp
+        tests/test-gen-visibility.cpp
+        tests/test-gen-varargs.cpp
+        tests/test-gen-extern.cpp
+        tests/test-gen-func-ref.cpp
+        tests/test-gen-intrinsic.cpp
+        tests/test-gen-string-literal.cpp
+        tests/test-gen-init-order.cpp
+        tests/test-gen-static-ctor-dtor.cpp
+        tests/test-gen-static-local.cpp
+        tests/test-gen-if-link-softfail.cpp
+        tests/test-gen-if-local-var.cpp
+        tests/test-gen-if-cond-var-test.cpp
+        tests/test-gen-if-multi-cond-var.cpp
+        tests/test-gen-if-multi-softfail.cpp
+        tests/test-multi-source.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 4 — Arithmetic, operators, casts
+# Isolated because test-gen-arithmetic.cpp alone takes ~20s.
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-arithmetic 180
+        tests/test-gen-arithmetic.cpp
+        tests/test-gen-operator-overload.cpp
+        tests/test-gen-assign-operator.cpp
+        tests/test-gen-cast.cpp
+        tests/test-gen-cast-indirection.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 5 — Algebraic and special types: enums, unions, const, null, annotations
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-types 120
         tests/test-gen-enum.cpp
         tests/test-gen-union.cpp
         tests/test-gen-union-template.cpp
         tests/test-gen-union-inheritance.cpp
-        tests/test-gen-arithmetic.cpp
-        tests/test-gen-statements.cpp
-        tests/test-gen.cpp
-        tests/test-gen-resolution.cpp
-        tests/test-gen-static-ctor-dtor.cpp
-        tests/test-gen-init-order.cpp
-        tests/test-gen-nested-structs.cpp
-        tests/test-gen-visibility.cpp
-        tests/test-gen-inheritance.cpp
-        tests/test-gen-indirection.cpp
-        tests/test-gen-recursive-indirection.cpp
         tests/test-gen-const.cpp
+        tests/test-gen-null-semantics.cpp
+        tests/test-gen-annotation-meta.cpp
+        tests/test-gen-designated-init.cpp
+        tests/test-gen-redirector.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 6 — Classes, inheritance, virtuality, interfaces
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-classes 120
+        tests/test-gen-nested-structs.cpp
+        tests/test-gen-inheritance.cpp
         tests/test-gen-class-basic.cpp
-        tests/test-gen-virtual-inheritance.cpp
-        tests/test-gen-class-virtuality.cpp
         tests/test-gen-class-abstract.cpp
-        tests/test-gen-override.cpp
-        tests/test-gen-interface.cpp
-        tests/test-model-materializer.cpp
-        tests/test-model-annotation.cpp
-        tests/test-phase3-dispatch.cpp
-        tests/test-phase4-gen.cpp
+        tests/test-gen-class-upcast.cpp
+        tests/test-gen-class-virtuality.cpp
+        tests/test-gen-virtual-inheritance.cpp
         tests/test-gen-virtuality-coverage.cpp
         tests/test-gen-multi-diamond.cpp
-        tests/test-gen-indirection-downcast.cpp
-        tests/test-gen-class-upcast.cpp
+        tests/test-gen-override.cpp
         tests/test-gen-upcast.cpp
-        tests/test-gen-cast-indirection.cpp
-        tests/test-prod-lib.cpp
-        tests/test-process.cpp
-        tests/test-file-resolver.cpp
-        tests/test-import.cpp
-        tests/test-gen-func-ref.cpp
+        tests/test-gen-interface.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 7 — Memory model: ownership, indirection, arrays, drain
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-memory 90
         tests/test-gen-owner.cpp
-        tests/test-gen-null-semantics.cpp
+        tests/test-gen-drain.cpp
+        tests/test-gen-indirection.cpp
+        tests/test-gen-indirection-downcast.cpp
+        tests/test-gen-recursive-indirection.cpp
         tests/test-gen-array-init.cpp
         tests/test-gen-new-array.cpp
         tests/test-gen-uniform-array-init.cpp
-        tests/test-gen-redirector.cpp
         tests/test-gen-array-subscript-indirection.cpp
         tests/test-gen-array-size.cpp
-        tests/test-gen-designated-init.cpp
-        tests/test-multi-source.cpp
-        tests/test-gen-operator-overload.cpp
-        tests/test-gen-assign-operator.cpp
-        tests/test-gen-cast.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 8 — OOP semantics: lifecycle, RVO, temporaries, using, friend
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-oop 90
         tests/test-gen-lifecycle.cpp
         tests/test-gen-rvo.cpp
         tests/test-gen-named-return.cpp
-        tests/test-gen-string-literal.cpp
-        tests/test-gen-drain.cpp
-        tests/test-gen-using.cpp
-        tests/test-gen-friend.cpp
-        tests/test-gen-extern.cpp
-        tests/test-gen-annotation-members.cpp
-        tests/test-gen-annotation-meta.cpp
-        tests/test-model-constructor-rtti.cpp
-        tests/test-gen-static-local.cpp
         tests/test-gen-temporary-construction.cpp
         tests/test-gen-temporary-brace-init.cpp
-        tests/test-gen-template-aggregates.cpp
+        tests/test-gen-using.cpp
+        tests/test-gen-friend.cpp
+)
+
+# ---------------------------------------------------------------------------
+# Group 9 — Templates and generics
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-gen-templates 120
         tests/test-gen-template-functions.cpp
         tests/test-gen-template-instantiation.cpp
         tests/test-gen-template-mangling.cpp
@@ -191,25 +271,16 @@ add_executable(klang-tests
         tests/test-gen-generic.cpp
         tests/test-gen-template-packs.cpp
         tests/test-gen-template-deduction.cpp
-        tests/test-gen-varargs.cpp
-        tests/test-template-instantiator.cpp
-        tests/test-gen-if-link-softfail.cpp
-        tests/test-gen-if-local-var.cpp
-        tests/test-gen-if-cond-var-test.cpp
-        tests/test-gen-if-multi-cond-var.cpp
-        tests/test-gen-if-multi-softfail.cpp
-        tests/test-gen-intrinsic.cpp
         tests/test-gen-member-template.cpp
 )
-target_link_libraries(klang-tests klang-test-helpers Catch2::Catch2WithMain)
-# Export symbols from the test executable so that the JIT's
-# DynamicLibrarySearchGenerator (dlsym) can resolve extern "C" functions
-# defined in test source files (e.g. test-gen-extern.cpp).
-target_link_options(klang-tests PRIVATE -rdynamic)
-add_dependencies(klang-tests libk_stdlib)
 
-add_test(NAME klang-tests COMMAND klang-tests)
-set_tests_properties(klang-tests PROPERTIES TIMEOUT 600)
+# ---------------------------------------------------------------------------
+# Group 10 — KDI import, production libraries, multi-source
+# ---------------------------------------------------------------------------
+klang_gen_test(klang-tests-import 90
+        tests/test-import.cpp
+        tests/test-prod-lib.cpp
+)
 
 #
 # klangc executable integration tests
