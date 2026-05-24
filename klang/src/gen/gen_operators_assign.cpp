@@ -500,11 +500,6 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
             "Assignment to a non-primitive, non-pointer type is not yet supported: "
             "the target has type '{}'; only assignments to primitive types, pointers and arrays are supported",
             {target_type ? target_type->to_string() : "?"});
-    } else if(type::is_prim_bool(target_type)) {
-        throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH), expr.first_lexeme(),
-            "Direct arithmetic assignment to a boolean variable is not supported: "
-            "use a comparison or logical expression to produce a boolean value for '{}'",
-            {target_type ? target_type->to_string() : "?"});
     }
 
     // Type of an assignation is a reference

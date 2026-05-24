@@ -705,3 +705,71 @@ test() : int {
     CHECK(fn() == 42);
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+//  Boolean assignment — direct true/false assignment to bool variables
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Bool assignment — local variable", "[gen][assign][bool]") {
+    auto jit = gen_jit(R"SRC(
+module __bool_assign_local__;
+test() : int {
+    flag : bool = true;
+    if (!flag) return 1;
+    flag = false;
+    if (flag) return 2;
+    flag = true;
+    if (!flag) return 3;
+    return 0;
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Bool assignment — struct member", "[gen][assign][bool]") {
+    auto jit = gen_jit(R"SRC(
+module __bool_assign_member__;
+struct Toggle {
+    _on : bool;
+    Toggle() { _on = false; }
+    turnOn() { _on = true; }
+    turnOff() { _on = false; }
+    const isOn() : bool { return _on; }
+}
+test() : int {
+    t : Toggle;
+    if (t.isOn()) return 1;
+    t.turnOn();
+    if (!t.isOn()) return 2;
+    t.turnOff();
+    if (t.isOn()) return 3;
+    return 0;
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Bool assignment — from comparison expression", "[gen][assign][bool]") {
+    auto jit = gen_jit(R"SRC(
+module __bool_assign_cmp__;
+test(x : int) : int {
+    positive : bool = x > 0;
+    if (positive) return 1;
+    positive = x == 5;
+    if (positive) return 2;
+    return 0;
+}
+)SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)(int)>("test");
+    REQUIRE(fn != nullptr);
+    CHECK(fn(10) == 1);
+    CHECK(fn(-1) == 0);
+    CHECK(fn(5) == 1);  // x>0 is true, returns 1 before reaching x==5
+    CHECK(fn(0) == 0);  // x>0 is false, x==5 is false
+}

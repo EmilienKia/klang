@@ -125,12 +125,11 @@ provides:
 2. **Explicit lifetime control** — construction and destruction of `T` happen
    only when the optional transitions between empty and value-holding states.
 3. **Zero overhead when empty** — an empty optional is just a `UniSlot` (zeroed
-   storage) plus a zero-valued integer state flag.
+   storage) plus a `false` boolean.
 
-The integer `_state` field (0 = empty, 1 = has value) tracks whether the slot
-contains a live object. An `int` is used instead of `bool` because K does not
-currently support direct boolean assignment. All mutating operations (`set`,
-`reset`, destructor) check this flag to ensure correct construction/destruction
-sequencing.
+The boolean `_hasValue` flag tracks whether the slot contains a live object.
+All mutating operations (`set`, `reset`, destructor) check this flag to ensure
+correct construction/destruction sequencing.
+
 
 

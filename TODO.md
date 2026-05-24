@@ -117,7 +117,7 @@
 - Add support for cross-compilation to different target architectures and platforms
 
 ### K language limitations (compiler bugs / missing features)
-- [ ] Direct boolean assignment (`_flag = false;` / `_flag = true;`) is rejected by the compiler — workaround: use `int` with 0/1 and compare (`_state != 0`)
+- [x] ~~Direct boolean assignment (`_flag = false;` / `_flag = true;`) is rejected by the compiler~~ — **fixed**: removed erroneous check in `gen_operators_assign.cpp`
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts — workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
 
 ### libk

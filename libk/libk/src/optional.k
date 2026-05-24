@@ -54,14 +54,14 @@ template<typename T>
 struct Optional {
     private:
     _slot : UniSlot<T>;
-    _state : int;
+    _hasValue : bool;
 
     public:
     /**
      * Default constructor. Creates an empty Optional (no value).
      */
     Optional() {
-        _state = 0;
+        _hasValue = false;
     }
 
     /**
@@ -69,7 +69,7 @@ struct Optional {
      */
     Optional(value : T&) {
         _slot.construct(value);
-        _state = 1;
+        _hasValue = true;
     }
 
     /**
@@ -80,9 +80,9 @@ struct Optional {
     Optional(other : Optional<T>&) {
         if (other.hasValue()) {
             _slot.construct(other.get());
-            _state = 1;
+            _hasValue = true;
         } else {
-            _state = 0;
+            _hasValue = false;
         }
     }
 
@@ -90,7 +90,7 @@ struct Optional {
      * Destructor. If this Optional holds a value, destroys it.
      */
     ~Optional() {
-        if (_state != 0) {
+        if (_hasValue) {
             _slot.destruct();
         }
     }
@@ -99,7 +99,7 @@ struct Optional {
      * Return true if this Optional holds a value.
      */
     const hasValue() : bool {
-        return _state != 0;
+        return _hasValue;
     }
 
     /**
@@ -115,7 +115,7 @@ struct Optional {
      * Return the contained value if present, or defaultValue otherwise.
      */
     const getOr(defaultValue : T&) : T {
-        if (_state != 0) {
+        if (_hasValue) {
             return _slot.get();
         }
         return defaultValue;
@@ -126,11 +126,11 @@ struct Optional {
      * If a value was already present, it is destroyed first.
      */
     set(value : T&) {
-        if (_state != 0) {
+        if (_hasValue) {
             _slot.destruct();
         }
         _slot.construct(value);
-        _state = 1;
+        _hasValue = true;
     }
 
     /**
@@ -138,9 +138,9 @@ struct Optional {
      * After reset(), hasValue() returns false.
      */
     reset() {
-        if (_state != 0) {
+        if (_hasValue) {
             _slot.destruct();
-            _state = 0;
+            _hasValue = false;
         }
     }
 }
@@ -162,6 +162,7 @@ makeEmpty() : Optional<T> {
     o : Optional<T>;
     return o;
 }
+
 
 
 
