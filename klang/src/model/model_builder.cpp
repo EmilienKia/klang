@@ -488,15 +488,27 @@ namespace k::model {
         // Template unions: build tpl_info and attach to the union_type_def
         bool is_template_union = st.is_template();
 
-        // Unions do not support inheritance
-        if (!st.bases.empty()) {
-            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_STRUCT_BAD_SCOPE), st.kw_aggregate_type,
-                "Union '{}' cannot have base classes; union inheritance is not supported",
+        // Validate union inheritance clause
+        if (!st.bases.empty() && is_template_union) {
+            throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_TEMPLATE_INHERITANCE_NOT_SUPPORTED),
+                st.kw_aggregate_type,
+                "Template union '{}' cannot have a base union; union inheritance is not supported for templates",
+                {std::string{st.name.content}});
+        }
+        if (st.bases.size() > 1) {
+            throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_MULTIPLE_INHERITANCE),
+                st.kw_aggregate_type,
+                "Union '{}' cannot inherit from more than one parent union",
                 {std::string{st.name.content}});
         }
 
         auto un = parent_scope->define_union(std::string{st.name.content});
         un->set_ast_aggregate_decl(st.shared_as<parse::ast::aggregate_decl>());
+
+        // Store raw base union name for resolution in the symbol resolver
+        if (st.bases.size() == 1) {
+            un->set_base_union_raw_name(st.bases[0].qualified_name);
+        }
 
         // Resolve visibility
         model::visibility vis = model::PUBLIC;

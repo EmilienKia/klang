@@ -61,7 +61,7 @@ void symbol_resolver::resolve_and_validate_annotations(
     const lex::opt_any_lexeme& err_lexeme,
     const std::string& element_kind)
 {
-    // ── Phase 1: resolve each annotation_instance to a concrete annotation_type
+    //── Phase 1: resolve each annotation_instance to a concrete annotation_type
     for (auto& ann_inst : holder.get_annotations_mutable()) {
         if (ann_inst.resolved_type) continue; // already resolved
 
@@ -140,7 +140,7 @@ void symbol_resolver::resolve_and_validate_annotations(
     }
 
     // Step 2: Validate that the resolved type is an annotation_type
-    // ── Phase 2: validate @Target constraints on resolved annotations
+    //── Phase 2: validate @Target constraints on resolved annotations
     for (auto& ann_inst : holder.get_annotations_mutable()) {
         if (!ann_inst.resolved_type) continue;
 
@@ -1138,11 +1138,18 @@ void declaration_generator::visit_union(union_type_def& un) {
     auto& llvm_ctx = _context->llvm_context();
     auto& data_layout = _context->module().getDataLayout();
 
-    // Compute max size of all alternatives
+    // Ensure the base union's body is set first (so DataLayout sees its types correctly)
+    if (un.has_base_union()) {
+        if (auto base = un.get_base_union()) {
+            visit_union(*base); // no-op if body already set
+        }
+    }
+
+    // Compute max size of ALL alternatives in the full inheritance chain
     uint64_t max_size = 0;
-    for (auto& alt : un.alternatives()) {
-        if (alt.resolved_type && type::is_resolved(alt.resolved_type)) {
-            auto* llvm_type = alt.resolved_type->get_llvm_type();
+    for (const auto* alt_ptr : un.all_alternatives_ptrs()) {
+        if (alt_ptr->resolved_type && type::is_resolved(alt_ptr->resolved_type)) {
+            auto* llvm_type = alt_ptr->resolved_type->get_llvm_type();
             if (llvm_type) {
                 uint64_t alt_size = data_layout.getTypeAllocSize(llvm_type);
                 if (alt_size > max_size) max_size = alt_size;
@@ -1573,15 +1580,83 @@ void symbol_resolver::visit_union(union_type_def& un) {
         un.set_struct_type(st_type);
     }
 
+    // ── Resolve base union (if any) ──────────────────────────────────────────
+    if (un.has_base_union() && !un.get_base_union()) {
+        // Cycle detection: if we are already resolving this union, it means
+        // the base chain has a cycle.
+        if (un._resolving) {
+            lex::opt_any_lexeme un_lexeme;
+            if (auto ast_decl = un.get_ast_aggregate_decl()) {
+                un_lexeme = lex::any_lexeme{ast_decl->kw_aggregate_type};
+            }
+            throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_CIRCULAR_INHERITANCE),
+                un_lexeme,
+                "Circular union inheritance detected involving union '{}'",
+                {un.get_short_name()});
+        }
+        un._resolving = true;
+
+        const std::string& raw = un.get_base_union_raw_name();
+        auto base_un = scope_lookup::lookup_union(un.shared_as<element>(), raw);
+        // Fallback: search imported modules' namespaces
+        if (!base_un) {
+            auto root_ns = scope_lookup::root_namespace(un);
+            if (root_ns) {
+                for (const auto& imp : _unit.get_imports()) {
+                    if (imp.module_name.empty()) continue;
+                    // Navigate to the imported module's namespace
+                    std::shared_ptr<ns> cur_ns = root_ns;
+                    for (size_t i = 0; i < imp.module_name.size() && cur_ns; ++i) {
+                        cur_ns = cur_ns->get_child_namespace(imp.module_name[i]);
+                    }
+                    if (cur_ns) {
+                        base_un = cur_ns->get_union(raw);
+                        if (base_un) break;
+                    }
+                }
+            }
+        }
+        if (!base_un) {
+            lex::opt_any_lexeme un_lexeme;
+            if (auto ast_decl = un.get_ast_aggregate_decl()) {
+                un_lexeme = lex::any_lexeme{ast_decl->kw_aggregate_type};
+            }
+            un._resolving = false;
+            throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_BASE_NOT_UNION),
+                un_lexeme,
+                "Base '{}' of union '{}' is not a known union type",
+                {raw, un.get_short_name()});
+        }
+        // Circularity check via already-resolved chain or via _resolving flag on base
+        if (scope_lookup::is_base_union_of(un, *base_un) || base_un.get() == &un || base_un->_resolving) {
+            lex::opt_any_lexeme un_lexeme;
+            if (auto ast_decl = un.get_ast_aggregate_decl()) {
+                un_lexeme = lex::any_lexeme{ast_decl->kw_aggregate_type};
+            }
+            un._resolving = false;
+            throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_CIRCULAR_INHERITANCE),
+                un_lexeme,
+                "Circular union inheritance detected involving union '{}'",
+                {un.get_short_name()});
+        }
+        // Recursively resolve the base if not yet done
+        if (!base_un->get_struct_type()) {
+            visit_union(*base_un);
+        }
+        un.set_base_union(base_un);
+        un.reindex_own_alternatives();
+        un._resolving = false;
+    }
+
     // Union alternatives have their types already stored from model building.
     // Full type resolution will happen in aggregate_type_resolver.
 
-    // Synthesize the Kind enum early so that symbol_resolver can resolve
-    // references like UnionName::Kind::entry during Phase A.
+    // Synthesize the Kind enum (now includes full inheritance chain)
     un.synthesize_kind_enum();
 
-    trace("[symbol_resolver::visit_union] resolved union '{}' with {} alternatives",
-        {un.get_short_name(), std::to_string(un.alternative_count())});
+    trace("[symbol_resolver::visit_union] resolved union '{}' with {} alternatives ({} own)",
+        {un.get_short_name(), std::to_string(un.total_alternative_count()),
+         std::to_string(un.alternative_count())});
 }
 
 } // namespace k::model::gen

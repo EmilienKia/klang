@@ -70,6 +70,20 @@ public:
     static std::shared_ptr<enumeration>
     lookup_enumeration(std::shared_ptr<element> elem, const std::string& name);
 
+    /**
+     * Look up a union_type_def by simple or qualified name, starting from elem
+     * and walking up the scope chain.
+     */
+    static std::shared_ptr<union_type_def>
+    lookup_union(std::shared_ptr<element> elem, const std::string& name);
+
+    /**
+     * Return true if candidate_base is an ancestor (direct or transitive) of
+     * candidate_derived in the union inheritance chain, or if they are the same union.
+     */
+    static bool is_base_union_of(const union_type_def& candidate_base,
+                                  const union_type_def& candidate_derived);
+
     //
     // Visibility helpers
     //

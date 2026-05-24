@@ -366,12 +366,8 @@ private:
      * union (e.g. Expected<R,E>::Storage).  Without this, the Kind enum
      * synthesized for the inner union cannot be found during type-reference
      * resolution of method bodies that reference UnionName::Kind::entry.
-     *
-     * @return The fresh struct_type created for the cloned union, or nullptr when
-     *         ctx is null.  Callers should use this to fix up any member-variable
-     *         types that still reference the template's old struct_type pointer.
      */
-    static std::shared_ptr<struct_type> clone_nested_union(
+    static void clone_nested_union(
         const union_type_def& src,
         std::shared_ptr<aggregate> target,
         const type_substitution_map& subst,

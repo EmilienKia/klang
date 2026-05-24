@@ -399,6 +399,7 @@ The `.kdi` file format describes the public interface of a compiled K library
 | Understand name mangling | `model/mangler.cpp` |
 | Understand import system | `model/tools/kdi_importer.cpp`, `model/imported.hpp` |
 | Understand union types | `model/model_union.hpp`, `gen/gen_struct.cpp` (visit_union), `gen/gen_expr_member.cpp` (union access), `gen/gen_statements.cpp` (emit_union_cleanup) |
+| Understand union inheritance | `model/model_union.hpp` (base_union, reindex, all_alternatives_ptrs), `gen/gen_struct.cpp` (symbol_resolver::visit_union base resolution), `gen/gen_operators_assign.cpp` (upcast/downcast codegen), `gen/resolvers_scope_lookup.cpp` (is_base_union_of, lookup_union) |
 | Add a test | `klang/tests/test-gen-*.cpp` (follow existing pattern with `helpers.cpp`) |
 
 ---

@@ -299,9 +299,12 @@ void union_type_def::synthesize_kind_enum() {
     _kind_enum->assign_name(kind_name);
     _kind_enum->set_visibility(_visibility);
 
-    // Add one entry per alternative, value = zero-based index
-    for (size_t i = 0; i < _alternatives.size(); ++i) {
-        _kind_enum->add_entry(_alternatives[i].name, static_cast<int64_t>(i),
+    // Iterate the FULL inheritance chain (parent alternatives first, own last)
+    // so that the Kind enum covers all global discriminant values.
+    auto all_alts = all_alternatives_ptrs();
+    for (size_t i = 0; i < all_alts.size(); ++i) {
+        _kind_enum->add_entry(all_alts[i]->name,
+                              static_cast<int64_t>(all_alts[i]->index),
                               /*is_default=*/(i == 0));
     }
     _kind_enum->set_resolved(true);

@@ -438,9 +438,11 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                         if (type::is_reference(arg_type)) {
                             arg_type = arg_type->get_subtype();
                         }
-                        for (auto& alt : union_def->alternatives()) {
-                            if (alt.resolved_type == arg_type || alt.resolved_type == type::remove_const(arg_type)) {
-                                disc_value = static_cast<uint32_t>(alt.index);
+                        // Search the FULL inheritance chain for a matching alternative
+                        for (const auto* alt_ptr : union_def->all_alternatives_ptrs()) {
+                            if (alt_ptr->resolved_type == arg_type ||
+                                alt_ptr->resolved_type == type::remove_const(arg_type)) {
+                                disc_value = static_cast<uint32_t>(alt_ptr->index);
                                 break;
                             }
                         }
@@ -456,11 +458,15 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                     auto* storage_ptr = _builder->CreateStructGEP(llvm_struct_ty, object_ref, 1, "union_storage");
                     // If init_val is a pointer (reference to value), load the value first
                     if (type::is_reference(expr.argument(0)->get_type())) {
-                        auto* alt_llvm_type = init_val->getType();
-                        // init_val is already a pointer to the value type, load it
-                        if (union_def && disc_value < union_def->alternative_count()) {
-                            auto* val_type = union_def->alternatives()[disc_value].resolved_type->get_llvm_type();
-                            init_val = _builder->CreateLoad(val_type, init_val, "init_load");
+                        // Look up the alternative by global index to get its LLVM type
+                        if (union_def) {
+                            const auto* alt_ptr = union_def->get_alternative_by_global_index(disc_value);
+                            if (alt_ptr && alt_ptr->resolved_type) {
+                                auto* val_type = alt_ptr->resolved_type->get_llvm_type();
+                                if (val_type) {
+                                    init_val = _builder->CreateLoad(val_type, init_val, "init_load");
+                                }
+                            }
                         }
                     }
                     _builder->CreateStore(init_val, storage_ptr);

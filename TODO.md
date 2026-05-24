@@ -39,9 +39,29 @@
 - Add temporary object explicit construction (incl in return expr) — **struct form done**, **struct designated init done** (`S{.x=val}`), array temporary `T[]{init}` pending
 - Add return type covariance
 - Add "virtual" symbols (parent, self, etc.)
-- Add typed enums
-  - Motivation: support enum entries backed by non-integer constant objects with deterministic index-based runtime representation.
-  - Related tests: `klang/tests/test-gen-enum.cpp` (tag `[gen][enum][typed][expected]`)
+- Enumerations
+  - [x] Basic enums (explicit values, auto-increment, aliases, default entry)
+  - [x] Qualified access (`Color::RED`) and constructor forms (`Color(GREEN)`, `Color(2)`)
+  - [x] Comparison operators (==, !=, <, >, <=, >=) between enums and with int
+  - [x] Implicit enum ↔ int conversions (assign, pass as param, return)
+  - [x] Explicit cast `(int) enumValue`
+  - [x] Enum derivation (single inheritance, multi-level, auto-increment from base, alias to base entries)
+  - [x] Derivation: cycle detection, base-not-found error, Derived→Base implicit conversion
+  - [x] Typed enums with explicit integer underlying type (`enum Small : unsigned byte { ... }`)
+  - [x] Object-backed typed enums (`enum Dir : Vec2 { UP{.x=0,.y=1}; ... }`)
+    - [x] Designated struct init entries, constructor-style entries, zero-init entries
+    - [x] Auto-increment from previous for object-backed entries (index-based)
+    - [x] Alias entries sharing backing-table slot
+    - [x] Object→enum conversion with equality matching (hard-fail / soft-fail in if)
+    - [x] Compilation error when underlying type lacks `equals`/`==` for conversion
+  - [x] KDI export/import of enums (basic, derived, typed, object-backed)
+  - [x] Annotation fields with enum type
+  - Remaining / future:
+    - [ ] Enum methods (functions declared inside enum body)
+    - [ ] Standalone template enum declarations (`template<T> enum ...`)
+    - [ ] Pattern matching / `match` expression on enum values (depends on switch/case)
+    - [ ] Bitflags / combined enum values (bitwise operations on enums)
+    - [ ] `values()` / `count()` / `name()` intrinsics on enums
 - Add unions, typed unions (discriminated/tagged unions à la std::variant)
   - See `IN-PROGRESS.md` for the full implementation plan.
   - [x] Phase 1: Lexer — `union` keyword

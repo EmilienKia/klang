@@ -19,6 +19,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "resolvers_scope_lookup.hpp"
 #include "../common/operator_names.hpp"
 #include "../parse/ast.hpp"
 
@@ -447,6 +448,41 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                     }
                     return;
                 }
+            } else {
+                // No owning aggregate → this is a union struct type.
+                // Check if the source is also a union type and if there is an inheritance
+                // relationship (upcast: derived→base, or downcast: base→derived).
+                auto src_inner = source_type;
+                if (type::is_reference(src_inner)) {
+                    src_inner = std::dynamic_pointer_cast<reference_type>(src_inner)->get_subtype();
+                }
+                if (auto src_st = std::dynamic_pointer_cast<struct_type>(src_inner)) {
+                    if (!src_st->get_struct() && src_st != st_type) {
+                        // Both are union struct types and they differ: check inheritance.
+                        auto root_ns = _unit.get_root_namespace();
+                        std::shared_ptr<union_type_def> lhs_udef, rhs_udef;
+                        if (root_ns) {
+                            lhs_udef = find_union_by_struct_type(root_ns, st_type);
+                            rhs_udef = find_union_by_struct_type(root_ns, src_st);
+                        }
+                        if (lhs_udef && rhs_udef) {
+                            bool upcast   = scope_lookup::is_base_union_of(*lhs_udef, *rhs_udef);
+                            bool downcast = scope_lookup::is_base_union_of(*rhs_udef, *lhs_udef);
+                            if (!upcast && !downcast) {
+                                throw_error(static_cast<unsigned int>(k::diag::union_diag::ERR_UNION_ASSIGN_TYPE_MISMATCH),
+                                    expr.first_lexeme(),
+                                    "Cannot assign union of type '{}' to union of type '{}': "
+                                    "the two union types are unrelated (no inheritance relationship)",
+                                    {src_inner->to_string(), target_type->to_string()});
+                            }
+                            // Allow the assignment; do NOT wrap the source in load_value_expression
+                            // so that codegen sees both as pointers (needed for field-by-field copy).
+                            // Keep source_type as ref<union> so codegen receives the pointer.
+                            expr.set_type(ref_target_type);
+                            return;
+                        }
+                    }
+                }
             }
         }
         // No operator overload found — fall through to default struct assignment (memcpy/store).
@@ -715,6 +751,104 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
                             _value = left;
                             return;
                         }
+                    }
+                }
+            }
+        }
+    }
+    // ───────────────────────────────────────────────────────────────────────
+
+    // ── Union inherited assignment (upcast: derived→base, downcast: base→derived) ──
+    // Detected when both LHS and RHS are union struct types with different struct types.
+    // In this case `right` is still a pointer (the ref wrapper was NOT stripped by the type
+    // resolver), so we can use it directly for field-by-field copy.
+    {
+        auto lhs_type = target_type;
+        auto rhs_model_type = expr.right()->get_type();
+        // source is still ref<union_T> (the type resolver kept it as a reference)
+        auto rhs_inner = rhs_model_type;
+        if (type::is_reference(rhs_inner)) {
+            rhs_inner = std::dynamic_pointer_cast<reference_type>(rhs_inner)->get_subtype();
+        }
+        if (auto lhs_st = std::dynamic_pointer_cast<struct_type>(lhs_type)) {
+            if (auto rhs_st = std::dynamic_pointer_cast<struct_type>(rhs_inner)) {
+                if (!lhs_st->get_struct() && !rhs_st->get_struct() && lhs_st != rhs_st) {
+                    // Both are union struct types and they differ — do inherited copy
+                    auto root_ns = _unit.get_root_namespace();
+                    std::shared_ptr<union_type_def> lhs_udef, rhs_udef;
+                    if (root_ns) {
+                        lhs_udef = find_union_by_struct_type(root_ns, lhs_st);
+                        rhs_udef = find_union_by_struct_type(root_ns, rhs_st);
+                    }
+                    if (lhs_udef && rhs_udef) {
+                        bool upcast   = scope_lookup::is_base_union_of(*lhs_udef, *rhs_udef);
+                        bool downcast = scope_lookup::is_base_union_of(*rhs_udef, *lhs_udef);
+
+                        auto& llvm_ctx = _builder->getContext();
+                        auto* i32_ty   = llvm::Type::getInt32Ty(llvm_ctx);
+                        auto* i64_ty   = llvm::Type::getInt64Ty(llvm_ctx);
+                        auto& dl       = _context->module().getDataLayout();
+
+                        // `right` is the pointer to the source union (kept as ref by type resolver)
+                        llvm::Value* src_ptr = right;
+                        auto* lhs_llvm = lhs_st->get_llvm_type();
+                        auto* rhs_llvm = rhs_st->get_llvm_type();
+
+                        // Compute source storage size (field 1 of the rhs struct)
+                        uint64_t rhs_storage_size = 0;
+                        if (auto* rhs_arr_ty = llvm::dyn_cast<llvm::ArrayType>(
+                                rhs_llvm->getStructElementType(1))) {
+                            rhs_storage_size = rhs_arr_ty->getNumElements();
+                        }
+                        uint64_t lhs_storage_size = 0;
+                        if (auto* lhs_arr_ty = llvm::dyn_cast<llvm::ArrayType>(
+                                lhs_llvm->getStructElementType(1))) {
+                            lhs_storage_size = lhs_arr_ty->getNumElements();
+                        }
+                        uint64_t copy_storage = std::min(lhs_storage_size, rhs_storage_size);
+
+                        if (upcast) {
+                            // derived→base: runtime check that discriminant is in base's range
+                            auto* disc_src_ptr = _builder->CreateStructGEP(rhs_llvm, src_ptr, 0, "upcast_disc_ptr");
+                            auto* disc_val     = _builder->CreateLoad(i32_ty, disc_src_ptr, "upcast_disc");
+                            auto* limit        = llvm::ConstantInt::get(i32_ty,
+                                                    lhs_udef->total_alternative_count());
+                            auto* in_range     = _builder->CreateICmpULT(disc_val, limit, "upcast_in_range");
+
+                            auto* cur_fn  = _builder->GetInsertBlock()->getParent();
+                            auto* fail_bb = llvm::BasicBlock::Create(llvm_ctx, "union_upcast_fail", cur_fn);
+                            auto* ok_bb   = llvm::BasicBlock::Create(llvm_ctx, "union_upcast_ok",   cur_fn);
+                            _builder->CreateCondBr(in_range, ok_bb, fail_bb);
+
+                            // Fail: discriminant is out of range — call trap
+                            _builder->SetInsertPoint(fail_bb);
+                            auto* trap_fn = llvm::Intrinsic::getDeclaration(
+                                &_context->module(), llvm::Intrinsic::trap);
+                            _builder->CreateCall(trap_fn);
+                            _builder->CreateUnreachable();
+
+                            _builder->SetInsertPoint(ok_bb);
+                            // Copy discriminant
+                            auto* disc_dst_ptr = _builder->CreateStructGEP(lhs_llvm, left, 0, "upcast_dst_disc");
+                            _builder->CreateStore(disc_val, disc_dst_ptr);
+                        } else {
+                            // base→derived (downcast): always valid — copy discriminant
+                            auto* disc_src_ptr = _builder->CreateStructGEP(rhs_llvm, src_ptr, 0, "downcast_disc_ptr");
+                            auto* disc_val     = _builder->CreateLoad(i32_ty, disc_src_ptr, "downcast_disc");
+                            auto* disc_dst_ptr = _builder->CreateStructGEP(lhs_llvm, left, 0, "downcast_dst_disc");
+                            _builder->CreateStore(disc_val, disc_dst_ptr);
+                        }
+
+                        // Copy storage bytes (min of both sides)
+                        if (copy_storage > 0) {
+                            auto* src_storage = _builder->CreateStructGEP(rhs_llvm, src_ptr, 1, "union_inh_src_storage");
+                            auto* dst_storage = _builder->CreateStructGEP(lhs_llvm, left,    1, "union_inh_dst_storage");
+                            _builder->CreateMemCpy(dst_storage, llvm::MaybeAlign(1),
+                                                   src_storage, llvm::MaybeAlign(1),
+                                                   llvm::ConstantInt::get(i64_ty, copy_storage));
+                        }
+                        _value = left;
+                        return;
                     }
                 }
             }

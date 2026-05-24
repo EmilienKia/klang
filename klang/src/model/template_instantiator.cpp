@@ -918,13 +918,6 @@ void template_instantiator::populate_function_from_template(
     for (auto& ann : src.get_annotations()) {
         dst->add_annotation(ann);
     }
-
-    // Store the type substitution map so that type_reference_resolver can resolve
-    // template-parameter names embedded in AST template arg lists (e.g. "R" in
-    // Expected<R,E>) even after the template parameter scope has been discarded.
-    if (!subst.empty()) {
-        dst->set_tpl_instantiation_subst(subst);
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1056,9 +1049,6 @@ void template_instantiator::clone_nested_aggregate(
     }
 
     // Clone all children with type substitution
-    // Collect old→new struct_type mappings for nested unions so that member-variable
-    // types referencing the template's union struct_type can be updated afterwards.
-    std::unordered_map<const struct_type*, std::shared_ptr<struct_type>> un_st_fixup;
     for (auto& child : src.get_children()) {
         if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
             clone_member_variable(*mv, nested, subst, val_subst);
@@ -1073,25 +1063,7 @@ void template_instantiator::clone_nested_aggregate(
             clone_nested_aggregate(*inner, nested, subst, val_subst, ctx);
         } else if (auto inner_un = std::dynamic_pointer_cast<union_type_def>(child)) {
             // Clone nested union types (e.g. an inner union inside a nested struct)
-            auto old_st = inner_un->get_struct_type();
-            auto new_st = clone_nested_union(*inner_un, nested, subst, ctx);
-            if (old_st && new_st && old_st.get() != new_st.get()) {
-                un_st_fixup[old_st.get()] = new_st;
-            }
-        }
-    }
-
-    // Fix up member-variable types that still reference the template union's struct_type.
-    if (!un_st_fixup.empty()) {
-        for (auto& ch : nested->get_children()) {
-            if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(ch)) {
-                if (auto old_st = std::dynamic_pointer_cast<struct_type>(mv->get_type())) {
-                    auto it = un_st_fixup.find(old_st.get());
-                    if (it != un_st_fixup.end()) {
-                        mv->set_type(it->second);
-                    }
-                }
-            }
+            clone_nested_union(*inner_un, nested, subst, ctx);
         }
     }
 
@@ -1118,7 +1090,7 @@ void template_instantiator::clone_nested_aggregate(
  * define_union()), making it visible to scope lookups that search for
  * "UnionName::Kind::entry" inside method bodies of the concrete aggregate.
  */
-std::shared_ptr<struct_type> template_instantiator::clone_nested_union(
+void template_instantiator::clone_nested_union(
     const union_type_def& src,
     std::shared_ptr<aggregate> target,
     const type_substitution_map& subst,
@@ -1126,29 +1098,22 @@ std::shared_ptr<struct_type> template_instantiator::clone_nested_union(
 {
     // Create the nested union inside target (registers it in _unions).
     auto nested = target->define_union(src.get_short_name());
-    if (!nested) return nullptr;
+    if (!nested) return;
 
     nested->set_visibility(src.get_visibility());
 
-    // Create a FRESH struct_type for the cloned union — never share the template's.
-    // Sharing would cause find_union_by_struct_type to return the template union
-    // (whose alternatives still carry unresolved 'R'/'E' types) instead of this
-    // concrete clone (whose alternatives are substituted to e.g. 'int').
-    std::shared_ptr<struct_type> old_st = src.get_struct_type();
-    std::shared_ptr<struct_type> new_st;
-    if (ctx) {
-        // Build a name: prefer FQ name of src union, fall back to short name.
-        std::string st_name = src.get_short_name();
-        if (old_st) {
-            st_name = old_st->name();
-        }
-        new_st = std::make_shared<struct_type>(st_name, std::weak_ptr<aggregate>{});
-        // Register in context (insert only — does not overwrite an existing key).
-        ctx->add_struct(new_st);
-        // Create an opaque LLVM struct so declaration_generator::visit_union can
-        // later compute the correct body using the substituted alternative types.
-        ctx->materialise_opaque_struct_type(new_st);
-        nested->set_struct_type(new_st);
+    // Reuse the source union's struct_type (if it has one) so that any member-variable
+    // type references that were already resolved against the source struct_type continue
+    // to match in find_union_by_struct_type lookups.  The LLVM layout is shared with the
+    // template definition; concrete size computations happen in declaration_generator.
+    if (src.get_struct_type()) {
+        nested->set_struct_type(src.get_struct_type());
+    } else if (ctx) {
+        // Source has no struct_type yet (uncommon): create an opaque one for type-lookup purposes.
+        auto st_name = src.get_short_name();
+        auto st_type = std::make_shared<struct_type>(st_name, std::weak_ptr<aggregate>{});
+        ctx->add_struct(st_type);
+        nested->set_struct_type(st_type);
     }
 
     // Clone alternatives with type substitution.
@@ -1172,9 +1137,6 @@ std::shared_ptr<struct_type> template_instantiator::clone_nested_union(
     }
 
     nested->update_mangled_name();
-    // Return the new struct_type so callers can fix up member-variable types that
-    // still point to the template's old struct_type.
-    return new_st;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1326,9 +1288,6 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     }
 
     // 2. Clone children from the template aggregate
-    // Collect old→new struct_type mappings for nested unions so that member-variable
-    // types referencing the template's union struct_type can be updated afterwards.
-    std::unordered_map<const struct_type*, std::shared_ptr<struct_type>> un_st_fixup;
     for (auto& child : tpl_def.get_children()) {
         if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
             clone_member_variable(*mv, concrete, subst, val_subst);
@@ -1360,27 +1319,9 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
             clone_nested_aggregate(*inner, concrete, subst, val_subst, ctx);
         } else if (auto inner_un = std::dynamic_pointer_cast<union_type_def>(child)) {
             // Clone nested union types (e.g. Expected<R,E>::Storage)
-            auto old_st = inner_un->get_struct_type();
-            auto new_st = clone_nested_union(*inner_un, concrete, subst, ctx);
-            if (old_st && new_st && old_st.get() != new_st.get()) {
-                un_st_fixup[old_st.get()] = new_st;
-            }
+            clone_nested_union(*inner_un, concrete, subst, ctx);
         }
         // Enums and using declarations — handled as needed in future
-    }
-
-    // Fix up member-variable types that still reference the template union's struct_type.
-    if (!un_st_fixup.empty()) {
-        for (auto& ch : concrete->get_children()) {
-            if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(ch)) {
-                if (auto old_st = std::dynamic_pointer_cast<struct_type>(mv->get_type())) {
-                    auto it = un_st_fixup.find(old_st.get());
-                    if (it != un_st_fixup.end()) {
-                        mv->set_type(it->second);
-                    }
-                }
-            }
-        }
     }
 
     // 3. Post-instantiation: generate default constructor and set up this parameters
@@ -1455,9 +1396,6 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
         concrete->add_base(substitute_base_name(bs.raw_name, subst), bs.vis);
     }
 
-    // Collect old→new struct_type mappings for nested unions so that member-variable
-    // types referencing the template's union struct_type can be updated afterwards.
-    std::unordered_map<const struct_type*, std::shared_ptr<struct_type>> un_st_fixup;
     for (auto& child : tpl_def.get_children()) {
         if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
             clone_member_variable(*mv, concrete, subst, val_subst);
@@ -1488,25 +1426,7 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
             clone_nested_aggregate(*inner, concrete, subst, val_subst);
         } else if (auto inner_un = std::dynamic_pointer_cast<union_type_def>(child)) {
             // Clone nested union types
-            auto old_st = inner_un->get_struct_type();
-            auto new_st = clone_nested_union(*inner_un, concrete, subst, ctx);
-            if (old_st && new_st && old_st.get() != new_st.get()) {
-                un_st_fixup[old_st.get()] = new_st;
-            }
-        }
-    }
-
-    // Fix up member-variable types that still reference the template union's struct_type.
-    if (!un_st_fixup.empty()) {
-        for (auto& ch : concrete->get_children()) {
-            if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(ch)) {
-                if (auto old_st = std::dynamic_pointer_cast<struct_type>(mv->get_type())) {
-                    auto it = un_st_fixup.find(old_st.get());
-                    if (it != un_st_fixup.end()) {
-                        mv->set_type(it->second);
-                    }
-                }
-            }
+            clone_nested_union(*inner_un, concrete, subst, ctx);
         }
     }
 

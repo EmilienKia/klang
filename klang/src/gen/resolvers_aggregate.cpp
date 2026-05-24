@@ -1380,7 +1380,18 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
     // Skip template definitions — only instantiations are resolved
     if (un.is_template()) return;
 
-    // Resolve each alternative's type
+    // ── Ensure base union is fully resolved first ─────────────────────────────
+    if (un.has_base_union() && un.get_base_union()) {
+        auto base = un.get_base_union();
+        if (!base->get_struct_type() || !base->get_struct_type()->get_llvm_type()) {
+            visit_union(*base);
+        }
+        // Re-apply reindex (idempotent) in case the base gained more alternatives
+        // from its own base resolution during this same pass.
+        un.reindex_own_alternatives();
+    }
+
+    // Resolve each own alternative's type
     for (auto& alt : un.alternatives_mutable()) {
         if (alt.resolved_type && !type::is_resolved(alt.resolved_type)) {
             // First try context->resolve_type (handles primitive wrappers, pointers, etc.)
@@ -1409,7 +1420,7 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
         trace("[aggregate_type_resolver::visit_union] union '{}' already has struct_type with LLVM type, skipping",
             {un.get_short_name()});
         // Still need to set up Kind enum for this union
-        un.synthesize_kind_enum();
+        un.resynthesise_kind_enum();
         if (auto kind_enum = un.get_kind_enum()) {
             if (!kind_enum->get_enum_type()) {
                 auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
@@ -1454,7 +1465,8 @@ void aggregate_type_resolver::visit_union(union_type_def& un) {
         {un.get_short_name()});
 
     // Synthesize the Kind enum after the union struct type is established
-    un.synthesize_kind_enum();
+    // (force resynthesis to include the full inheritance chain)
+    un.resynthesise_kind_enum();
     if (auto kind_enum = un.get_kind_enum()) {
         if (!kind_enum->get_enum_type()) {
             // Set underlying type to uint32 (matches discriminant field)

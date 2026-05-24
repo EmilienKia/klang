@@ -437,7 +437,9 @@ struct kdi_union {
     std::string                       fq_name;       ///< fully-qualified K name
     std::string                       mangled_name;  ///< mangled LLVM symbol name
     kdi_visibility                    visibility = kdi_visibility::public_;
-    std::vector<kdi_union_alternative> alternatives; ///< alternatives in declaration order
+    std::vector<kdi_union_alternative> alternatives; ///< OWN (directly declared) alternatives
+    /// Fully-qualified name of the parent union (empty = root union).
+    std::string                       base_union_fq_name;
     /// LLVM IR struct type definition, e.g. "{ i32, [8 x i8] }".
     std::string                       llvm_def;
     /// Template origin (set when this union is a concrete template instantiation).

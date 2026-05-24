@@ -1648,15 +1648,15 @@ void implementation_generator::emit_union_cleanup(llvm::AllocaInst* alloca, unio
     auto* cur_fn = _builder->GetInsertBlock()->getParent();
     auto* merge_bb = llvm::BasicBlock::Create(**_context, "union_dtor_done", cur_fn);
 
-    // Count how many alternatives actually need destruction
+    // Count how many alternatives in the FULL CHAIN actually need destruction
     std::vector<std::pair<size_t, std::shared_ptr<function>>> alt_dtors;
-    for (auto& alt : udef.alternatives()) {
-        if (auto st = std::dynamic_pointer_cast<struct_type>(alt.resolved_type)) {
+    for (const auto* alt_ptr : udef.all_alternatives_ptrs()) {
+        if (auto st = std::dynamic_pointer_cast<struct_type>(alt_ptr->resolved_type)) {
             if (auto agg = st->get_struct()) {
                 if (auto dtor = agg->get_destructor()) {
                     auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
                     if (dtor_it != _context->_functions.end()) {
-                        alt_dtors.emplace_back(alt.index, dtor);
+                        alt_dtors.emplace_back(alt_ptr->index, dtor);
                     }
                 }
             }
@@ -1698,16 +1698,16 @@ void implementation_generator::emit_union_cleanup_on_reassign(llvm::Value* union
     auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_reassign_disc_ptr");
     auto* disc_val = _builder->CreateLoad(llvm::Type::getInt32Ty(**_context), disc_ptr, "union_reassign_disc");
 
-    // Collect alternatives that have destructors and are NOT the new alternative
+    // Collect alternatives in the FULL CHAIN that have destructors and are NOT the new alternative
     std::vector<std::pair<size_t, std::shared_ptr<function>>> alt_dtors;
-    for (auto& alt : udef.alternatives()) {
-        if (alt.index == new_alt_idx) continue;
-        if (auto st = std::dynamic_pointer_cast<struct_type>(alt.resolved_type)) {
+    for (const auto* alt_ptr : udef.all_alternatives_ptrs()) {
+        if (alt_ptr->index == new_alt_idx) continue;
+        if (auto st = std::dynamic_pointer_cast<struct_type>(alt_ptr->resolved_type)) {
             if (auto agg = st->get_struct()) {
                 if (auto dtor = agg->get_destructor()) {
                     auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
                     if (dtor_it != _context->_functions.end()) {
-                        alt_dtors.emplace_back(alt.index, dtor);
+                        alt_dtors.emplace_back(alt_ptr->index, dtor);
                     }
                 }
             }

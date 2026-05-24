@@ -257,6 +257,58 @@ scope_lookup::lookup_enumeration(std::shared_ptr<element> elem, const std::strin
     return {};
 }
 
+std::shared_ptr<union_type_def>
+scope_lookup::lookup_union(std::shared_ptr<element> elem, const std::string& name) {
+    // Handle qualified names (e.g. "ns::MyUnion") by splitting on "::"
+    auto sep = name.find("::");
+    if (sep != std::string::npos) {
+        // Qualified: walk from root namespace
+        std::vector<std::string> parts;
+        std::size_t pos = 0;
+        while (true) {
+            auto s = name.find("::", pos);
+            if (s == std::string::npos) { parts.push_back(name.substr(pos)); break; }
+            parts.push_back(name.substr(pos, s - pos));
+            pos = s + 2;
+        }
+        // Traverse from root
+        auto root = root_namespace(*elem);
+        if (!root) return {};
+        std::shared_ptr<element> current = root;
+        for (size_t i = 0; i + 1 < parts.size(); ++i) {
+            bool stepped = false;
+            if (auto nspc = std::dynamic_pointer_cast<ns>(current)) {
+                if (auto child = nspc->get_child_namespace(parts[i])) {
+                    current = child; stepped = true;
+                }
+            }
+            if (!stepped) return {};
+        }
+        // Last part: the union name
+        if (auto uh = std::dynamic_pointer_cast<union_holder>(current)) {
+            return uh->get_union(parts.back());
+        }
+        return {};
+    }
+    // Simple name: walk up scope chain
+    for (auto current = elem; current; current = current->parent<element>()) {
+        if (auto uh = std::dynamic_pointer_cast<union_holder>(current)) {
+            if (auto un = uh->get_union(name)) return un;
+        }
+    }
+    return {};
+}
+
+bool scope_lookup::is_base_union_of(const union_type_def& candidate_base,
+                                     const union_type_def& candidate_derived) {
+    const union_type_def* cur = candidate_derived.get_base_union().get();
+    while (cur) {
+        if (cur == &candidate_base) return true;
+        cur = cur->get_base_union().get();
+    }
+    return false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // resolve_using_target — free helper (declared in resolvers_common.hpp)
 // ─────────────────────────────────────────────────────────────────────────────

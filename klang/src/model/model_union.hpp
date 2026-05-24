@@ -57,13 +57,13 @@ protected:
     friend class gen::declaration_generator;
     friend class template_instantiator;
 
-    /** All alternatives in declaration order. */
+    /** All directly-declared alternatives (own only, not inherited). */
     std::vector<union_alternative> _alternatives;
 
     /** The LLVM struct type representing this union (discriminant + storage). */
     std::shared_ptr<struct_type> _type;
 
-    /** Synthesized Kind enum (entries mirror alternatives, values 0..N-1). */
+    /** Synthesized Kind enum (entries cover the full inheritance chain). */
     std::shared_ptr<enumeration> _kind_enum;
 
     /** Declared visibility. */
@@ -72,11 +72,22 @@ protected:
     /** Template information (nullptr if this is not a template union). */
     std::unique_ptr<tpl_info> _tpl_info;
 
+    // ── Union inheritance ────────────────────────────────────────────────────
+
+    /** Raw name of the parent union as written in source (empty = root union). */
+    std::string _base_union_raw_name;
+
+    /** Resolved parent union (nullptr = root union; set during symbol resolution). */
+    std::shared_ptr<union_type_def> _base_union;
+
     /** For concrete instantiations of template unions: original template base name. */
     std::string _tpl_base_name;
 
     /** For concrete instantiations: the concrete template arguments used. */
     std::vector<template_argument> _tpl_args;
+
+    /** True while this union is being resolved (cycle detection). */
+    bool _resolving = false;
 
     union_type_def(std::shared_ptr<element> parent)
         : element(parent) {}
@@ -123,30 +134,94 @@ public:
     // Alternatives
     //
 
-    /** Add a new alternative to this union. */
+    /** Add a new alternative to this union (index is set to local position; call
+     *  reindex_own_alternatives() after the base union is resolved to get global indices). */
     void add_alternative(const std::string& name, const std::string& raw_type_name, bool is_const) {
         union_alternative alt;
         alt.name = name;
         alt.raw_type_name = raw_type_name;
         alt.is_const = is_const;
-        alt.index = _alternatives.size();
+        alt.index = _alternatives.size(); // local index; will be adjusted for derived unions
         _alternatives.push_back(std::move(alt));
     }
 
-    /** Returns all alternatives in declaration order. */
+    /** Returns the directly-declared alternatives for this union (not inherited). */
     const std::vector<union_alternative>& alternatives() const { return _alternatives; }
     std::vector<union_alternative>& alternatives_mutable() { return _alternatives; }
 
-    /** Get an alternative by name. Returns nullptr if not found. */
+    /** Get an alternative by name; searches own alternatives first, then the base chain. */
     const union_alternative* get_alternative_by_name(const std::string& name) const {
-        for (auto& alt : _alternatives) {
+        for (const auto& alt : _alternatives) {
             if (alt.name == name) return &alt;
         }
+        if (_base_union) return _base_union->get_alternative_by_name(name);
         return nullptr;
     }
 
-    /** Get the number of alternatives. */
+    /** Get an alternative by its global discriminant index; searches the full chain. */
+    const union_alternative* get_alternative_by_global_index(size_t global_idx) const {
+        for (const auto& alt : _alternatives) {
+            if (alt.index == global_idx) return &alt;
+        }
+        if (_base_union) return _base_union->get_alternative_by_global_index(global_idx);
+        return nullptr;
+    }
+
+    /** Returns the number of directly-declared alternatives (not inherited). */
     size_t alternative_count() const { return _alternatives.size(); }
+
+    /** Returns the total number of alternatives in the full inheritance chain. */
+    size_t total_alternative_count() const {
+        return base_alternative_count() + _alternatives.size();
+    }
+
+    /** Number of alternatives contributed by the parent chain (0 if root). */
+    size_t base_alternative_count() const {
+        return _base_union ? _base_union->total_alternative_count() : 0u;
+    }
+
+    /** Collect pointers to all alternatives from root to this union (parent first, own last).
+     *  Indices in the returned alternatives are global discriminant values. */
+    std::vector<const union_alternative*> all_alternatives_ptrs() const {
+        std::vector<const union_alternative*> result;
+        if (_base_union) {
+            auto parent_alts = _base_union->all_alternatives_ptrs();
+            result.insert(result.end(), parent_alts.begin(), parent_alts.end());
+        }
+        for (const auto& alt : _alternatives) {
+            result.push_back(&alt);
+        }
+        return result;
+    }
+
+    /** Update own alternatives' index fields using the base chain count as offset.
+     *  Must be called after the base union is resolved. Idempotent. */
+    void reindex_own_alternatives() {
+        size_t offset = base_alternative_count();
+        for (size_t i = 0; i < _alternatives.size(); ++i) {
+            _alternatives[i].index = offset + i;
+        }
+    }
+
+    //
+    // Inheritance
+    //
+
+    /** True if this union has a base union (either raw name or resolved). */
+    bool has_base_union() const { return !_base_union_raw_name.empty(); }
+
+    const std::string& get_base_union_raw_name() const { return _base_union_raw_name; }
+    void set_base_union_raw_name(const std::string& n) { _base_union_raw_name = n; }
+
+    std::shared_ptr<union_type_def> get_base_union() const { return _base_union; }
+    void set_base_union(std::shared_ptr<union_type_def> base) { _base_union = std::move(base); }
+
+    /** Force-reset and re-synthesize the Kind enum (e.g. after the base is resolved
+     *  and indices have been updated). */
+    void resynthesise_kind_enum() {
+        _kind_enum.reset();
+        synthesize_kind_enum();
+    }
 
     //
     // Type
@@ -167,13 +242,12 @@ public:
     void synthesize_kind_enum();
 
     /**
-     * Returns true if any alternative has a non-trivial destructor
-     * (i.e., is a struct/class aggregate with a destructor defined).
+     * Returns true if any alternative (own or inherited) has a non-trivial destructor.
      * Used to decide whether cleanup codegen is needed at scope exit.
      */
     bool has_nontrivial_destructor_alternative() const {
-        for (auto& alt : _alternatives) {
-            if (auto st = std::dynamic_pointer_cast<struct_type>(alt.resolved_type)) {
+        for (const auto* alt_ptr : all_alternatives_ptrs()) {
+            if (auto st = std::dynamic_pointer_cast<struct_type>(alt_ptr->resolved_type)) {
                 if (auto agg = st->get_struct()) {
                     if (agg->get_destructor()) return true;
                 }

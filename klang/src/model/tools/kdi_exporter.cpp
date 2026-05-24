@@ -1000,6 +1000,13 @@ void kdi_builder::visit_union(union_type_def& un) {
     ku.mangled_name = un.get_mangled_name();
     ku.visibility   = to_kdi_vis(un.get_visibility());
 
+    // Export base union name (if this is a derived union)
+    if (un.has_base_union() && un.get_base_union()) {
+        const std::string& base_fq = un.get_base_union()->get_fq_name();
+        ku.base_union_fq_name = (base_fq.size() >= 2 && base_fq[0] == ':' && base_fq[1] == ':')
+                                ? base_fq.substr(2) : base_fq;
+    }
+
     // Template origin for concrete instantiations
     if (un.has_tpl_args()) {
         std::string inst_fq = un.get_fq_name();
@@ -1012,6 +1019,9 @@ void kdi_builder::visit_union(union_type_def& un) {
         ku.template_origin = build_template_origin(un.get_tpl_base_name(), base_fq, un.get_tpl_args());
     }
 
+    // Export only OWN (directly declared) alternatives; the importer will resolve the
+    // base union separately and chain the inheritance. This keeps the KDI compact and
+    // allows the consumer to reconstruct the full discriminant range via the base chain.
     for (auto& alt : un.alternatives()) {
         kdi::kdi_union_alternative ka;
         ka.name     = alt.name;

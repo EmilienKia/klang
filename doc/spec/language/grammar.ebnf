@@ -338,16 +338,29 @@ EnumEntry
 UnionDecl
     = { AnnotationDef } , { Specifier } ,
       'union' , Identifier ,
+      [ ':' , QualifiedIdentifier ]  (* optional single parent union *)
       '{' , { UnionMemberDecl } , '}'
     ;
     (* A discriminated (tagged) union.  At runtime a hidden uint32 discriminant
        tracks which alternative is active.  Member access performs a runtime
        check; assignment to a different alternative updates the discriminant.
 
+       Inheritance:
+       - A union may inherit from exactly one parent union.
+       - All parent alternatives are accessible with their original discriminant values.
+       - New alternatives are assigned discriminant values starting at
+         parent.total_alternative_count().
+       - The synthesised Kind enum covers the full inheritance chain.
+       - Assigning a derived union to a parent union variable (upcast) performs a
+         runtime discriminant check; if the active alternative is derived-only, a
+         fatal trap is emitted.
+       - Assigning a parent union to a derived union variable (downcast) is always
+         valid (parent discriminant values are a subset of derived's range).
+
        Restrictions:
        - No functions, constructors, nested types inside a union body.
        - Drain addresser (#) is forbidden on alternative types.
-       - No inheritance clause. *)
+       - Template unions cannot have an inheritance clause. *)
 
 UnionMemberDecl
     = [ 'const' ] , Identifier , ':' , TypeSpec , ';'

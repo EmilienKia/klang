@@ -668,6 +668,51 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
             ctx->add_enum(efq, et);
         }
     }
+
+    // ── Link the base union (if declared) ────────────────────────────────────
+    // The base union must already be materialised (transitive dependency loading
+    // guarantees this). If it can be found, set up the inheritance link and
+    // reindex own alternatives so global discriminant values are correct.
+    if (!un.base_union_fq_name.empty()) {
+        // Look up the base union in the root namespace by FQ name
+        auto root_ns = _unit.get_root_namespace();
+        if (root_ns) {
+            // Navigate the FQ name to find the base union_type_def
+            std::vector<std::string> base_parts;
+            std::size_t pos = 0;
+            while (true) {
+                auto s = un.base_union_fq_name.find("::", pos);
+                if (s == std::string::npos) { base_parts.push_back(un.base_union_fq_name.substr(pos)); break; }
+                base_parts.push_back(un.base_union_fq_name.substr(pos, s - pos));
+                pos = s + 2;
+            }
+            std::shared_ptr<ns> cur_ns = root_ns;
+            for (size_t i = 0; i + 1 < base_parts.size(); ++i) {
+                if (cur_ns) cur_ns = cur_ns->get_child_namespace(base_parts[i]);
+            }
+            if (cur_ns && !base_parts.empty()) {
+                auto base_udef = cur_ns->get_union(base_parts.back());
+                if (base_udef) {
+                    udef->set_base_union_raw_name(un.base_union_fq_name);
+                    udef->set_base_union(base_udef);
+                    udef->reindex_own_alternatives();
+                    // Re-synthesize Kind enum now that the full chain is known
+                    udef->resynthesise_kind_enum();
+                    if (auto kind_enum2 = udef->get_kind_enum()) {
+                        if (!kind_enum2->get_enum_type()) {
+                            auto uint_type = ctx->from_type(primitive_type::UNSIGNED_INT);
+                            kind_enum2->set_underlying_type(uint_type);
+                            auto et2 = std::shared_ptr<enum_type>(new enum_type(kind_enum2, uint_type));
+                            kind_enum2->set_enum_type(et2);
+                            std::string efq2 = kind_enum2->get_fq_name();
+                            if (efq2.empty()) efq2 = kind_enum2->get_short_name();
+                            ctx->add_enum(efq2, et2);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 void kdi_importer::materialise_variable(const kdi::kdi_variable& var,

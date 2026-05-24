@@ -152,6 +152,11 @@ enum class union_diag : unsigned int {
     ERR_UNION_TYPE_MISMATCH                       = 0x0183,  ///< Wrong alternative access (compile-time)
     ERR_UNION_AMBIGUOUS_IMPLICIT_ASSIGN           = 0x0184,  ///< Multiple alternatives match RHS type
     ERR_UNION_NO_DEFAULT_CTOR                     = 0x0185,  ///< First alternative not default-constructible
+    ERR_UNION_MULTIPLE_INHERITANCE                = 0x0186,  ///< More than one base union
+    ERR_UNION_BASE_NOT_UNION                      = 0x0187,  ///< Base type is not a union
+    ERR_UNION_TEMPLATE_INHERITANCE_NOT_SUPPORTED  = 0x0188,  ///< Template union with base not supported
+    ERR_UNION_CIRCULAR_INHERITANCE                = 0x0189,  ///< Circular union inheritance chain
+    ERR_UNION_ASSIGN_TYPE_MISMATCH                = 0x018A,  ///< Union assignment between unrelated types
 };
 
 // ────────────────────────────────────────────────────────────────────────────

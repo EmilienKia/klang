@@ -1062,7 +1062,7 @@ With an explicit primitive type (`enum E : unsigned byte`), that explicit primit
 ### 19b.1 Declaration
 
 ```
-{ Specifier } 'union' Identifier '{' { UnionMemberDecl } '}'
+{ Specifier } 'union' Identifier [ ':' QualifiedIdentifier ] '{' { UnionMemberDecl } '}'
 UnionMemberDecl = [ 'const' ] Identifier ':' TypeSpec ';'
 ```
 
@@ -1084,11 +1084,36 @@ A discriminated (tagged) union holds one active alternative at a time. A hidden
 { uint32 discriminant, [max_size x i8] storage }
 ```
 
-Storage is sized to the largest alternative. All alternatives alias the same memory.
+Storage is sized to the largest alternative (including all inherited alternatives
+when the union has a parent).
 
-### 19b.4 Restrictions
+### 19b.4 Inheritance
 
-- No functions, constructors, nested types, or inheritance.
+A union may inherit from exactly one parent union:
+
+```
+union Derived : Base { new_alt: SomeType; }
+```
+
+Rules:
+- A union may have at most one parent union (single inheritance only).
+- The parent must be a union type (not struct/class/enum).
+- All parent alternatives are accessible on the derived union with their original
+  discriminant values.
+- New alternatives in the derived union are assigned discriminant values starting
+  at `parent.total_alternative_count()`.
+- The synthesised `Kind` enum of the derived union covers the full inheritance chain.
+- Storage is sized to the largest alternative across the full chain.
+- **Downcast (parent → derived):** always valid — the discriminant value is
+  within the derived union's range by definition.
+- **Upcast (derived → parent):** requires a runtime discriminant check. If the
+  active alternative belongs to the derived-only range, a fatal trap is emitted.
+- Template unions with an inheritance clause are rejected (not yet supported).
+- Circular union inheritance is detected and rejected.
+
+### 19b.5 Restrictions
+
+- No functions, constructors, or nested types inside unions.
 - Drain addresser (`#`) is forbidden on alternative types.
 - Unions can be passed by value or by reference to functions.
 

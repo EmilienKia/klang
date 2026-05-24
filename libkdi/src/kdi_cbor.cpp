@@ -1211,6 +1211,8 @@ cbor_item_t* encode_union(const kdi_union& u) {
     map_push(m, "fq_name",      cbor_str(u.fq_name));
     map_push(m, "mangled_name", cbor_str(u.mangled_name));
     map_push(m, "visibility",   encode_visibility(u.visibility));
+    if (!u.base_union_fq_name.empty())
+        map_push(m, "base_union", cbor_str(u.base_union_fq_name));
     if (!u.llvm_def.empty())
         map_push(m, "llvm_def", cbor_str(u.llvm_def));
     cbor_item_t* alts = cbor_new_indefinite_array();
@@ -1229,11 +1231,12 @@ cbor_item_t* encode_union(const kdi_union& u) {
 
 kdi_union decode_union(cbor_item_t* item, const std::string& path) {
     kdi_union u;
-    u.name         = req_string(item, "name", path);
-    u.fq_name      = req_string(item, "fq_name", path);
-    u.mangled_name = opt_string(item, "mangled_name");
-    u.visibility   = decode_visibility(item, "visibility", path);
-    u.llvm_def     = opt_string(item, "llvm_def");
+    u.name               = req_string(item, "name", path);
+    u.fq_name            = req_string(item, "fq_name", path);
+    u.mangled_name       = opt_string(item, "mangled_name");
+    u.visibility         = decode_visibility(item, "visibility", path);
+    u.base_union_fq_name = opt_string(item, "base_union");
+    u.llvm_def           = opt_string(item, "llvm_def");
     auto* to = map_get(item, "template_origin");
     if (to)
         u.template_origin = decode_template_origin(to, path + ".template_origin");
