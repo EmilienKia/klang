@@ -302,6 +302,17 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         if (!st && func_short_name == "index" && expr.arguments().empty()) {
             auto root_ns = _unit.get_root_namespace();
             auto union_def = find_union_by_struct_type(root_ns, struct_subtype);
+            // If not found in global namespace tree, search parent aggregates
+            // (handles nested unions inside template instantiations whose struct_type
+            // may not match the global registration).
+            if (!union_def) {
+                for (auto cur = expr.shared_as<element>(); cur; cur = cur->parent<element>()) {
+                    if (auto agg = std::dynamic_pointer_cast<aggregate>(cur)) {
+                        union_def = find_union_by_struct_type_in_aggregate(agg, struct_subtype);
+                        if (union_def) break;
+                    }
+                }
+            }
             if (union_def) {
                 // Ensure Kind enum is synthesized (may not be for template instantiations)
                 union_def->synthesize_kind_enum();

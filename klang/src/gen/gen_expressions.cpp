@@ -385,7 +385,17 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
         // Enum entry: the type is the enum_type itself (not a reference — it's an rvalue constant).
         auto& target = symbol.get_enum_entry();
         auto en = target.enum_def;
-        if (en && en->get_enum_type()) {
+        if (en) {
+            // Lazily create the enum_type if it doesn't exist yet (can happen for
+            // union Kind enums resolved during symbol_resolver before aggregate_type_resolver).
+            if (!en->get_enum_type()) {
+                auto uint_type = _context->from_type(primitive_type::UNSIGNED_INT);
+                en->set_underlying_type(uint_type);
+                auto et = std::shared_ptr<enum_type>(new enum_type(en, uint_type));
+                en->set_enum_type(et);
+                std::string fq = en->get_fq_name();
+                if (!fq.empty()) _context->add_enum(fq, et);
+            }
             symbol.set_type(en->get_enum_type());
         }
     } else if (symbol.is_annotation_type_rtti()) {
