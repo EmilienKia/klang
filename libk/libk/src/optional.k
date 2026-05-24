@@ -60,8 +60,7 @@ struct Optional {
     /**
      * Default constructor. Creates an empty Optional (no value).
      */
-    Optional() {
-        _hasValue = false;
+    Optional() : _hasValue(false) {
     }
 
     /**
