@@ -1492,6 +1492,11 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
     // Store template instantiation info for mangling (I…E encoding)
     concrete->set_tpl_instantiation_info(base_name, args);
 
+    // Store the type substitution map so that type_reference_resolver can
+    // resolve template aggregate types (e.g. Expected<R,E>) used inside the
+    // function body where original template params are no longer in scope.
+    concrete->set_tpl_instantiation_subst(subst);
+
     // 3. Register in the instantiation cache
     ti->instantiations[key] = concrete;
 

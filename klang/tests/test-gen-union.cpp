@@ -817,3 +817,83 @@ TEST_CASE("template union Kind enum and index()", "[gen][union][kind][template]"
     REQUIRE(fn_none() == 1);
 }
 
+TEST_CASE("template struct with nested union — index and member access", "[gen][union][template][nested]") {
+    auto jit = gen_jit(R"(
+        module test;
+        template<typename R, typename E>
+        struct Expected {
+            union Storage {
+                result: R;
+                error: E;
+            }
+            _storage : Storage;
+
+            hasResult() : bool {
+                return _storage.index() == Storage::Kind::result;
+            }
+            setResult(value : R&) {
+                _storage.result = value;
+            }
+            getResult() : R {
+                return _storage.result;
+            }
+        }
+
+        test() : int {
+            e : Expected<int, int>;
+            e.setResult(42);
+            if (e.hasResult()) {
+                return e.getResult();
+            }
+            return 0;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("template struct with nested union — factory function", "[gen][union][template][nested][factory]") {
+    auto jit = gen_jit(R"(
+        module test;
+        template<typename R, typename E>
+        struct Expected {
+            union Storage {
+                result: R;
+                error: E;
+            }
+            _storage : Storage;
+
+            hasResult() : bool {
+                return _storage.index() == Storage::Kind::result;
+            }
+            setResult(value : R&) {
+                _storage.result = value;
+            }
+            getResult() : R {
+                return _storage.result;
+            }
+        }
+
+        template<typename R, typename E>
+        makeExpected(value : R&) : Expected<R, E> {
+            e : Expected<R, E>;
+            e.setResult(value);
+            return e;
+        }
+
+        test() : int {
+            e : Expected<int, int> = makeExpected<int, int>(42);
+            if (e.hasResult()) {
+                return e.getResult();
+            }
+            return 0;
+        }
+    )");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 42);
+}
+

@@ -157,11 +157,22 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
         // Look up the alternative by name and set the expression type to a reference
         // to that alternative's type.
         if (!struct_subtype->get_struct()) {
-            // Find the union_type_def for this struct_type
+            // Find the union_type_def for this struct_type.
+            // Search the containing aggregate first (handles template instantiations
+            // where the template and clone share the same struct_type pointer — we
+            // want the clone's union with resolved alternative types, not the template's).
             std::shared_ptr<union_type_def> union_def;
-            auto root_ns = _unit.get_root_namespace();
-            if (root_ns) {
-                union_def = find_union_by_struct_type(root_ns, struct_subtype);
+            for (auto cur = expr.shared_as<element>(); cur; cur = cur->parent<element>()) {
+                if (auto agg = std::dynamic_pointer_cast<aggregate>(cur)) {
+                    union_def = find_union_by_struct_type_in_aggregate(agg, struct_subtype);
+                    if (union_def) break;
+                }
+            }
+            if (!union_def) {
+                auto root_ns = _unit.get_root_namespace();
+                if (root_ns) {
+                    union_def = find_union_by_struct_type(root_ns, struct_subtype);
+                }
             }
             if (!union_def) {
                 throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_NOT_FOUND_ON_TYPE), expr.first_lexeme(),

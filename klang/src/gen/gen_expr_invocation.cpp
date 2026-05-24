@@ -300,18 +300,18 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // If the struct_type belongs to a union (no owning aggregate), handle
         // the built-in index() method that returns the Kind enum value.
         if (!st && func_short_name == "index" && expr.arguments().empty()) {
-            auto root_ns = _unit.get_root_namespace();
-            auto union_def = find_union_by_struct_type(root_ns, struct_subtype);
-            // If not found in global namespace tree, search parent aggregates
-            // (handles nested unions inside template instantiations whose struct_type
-            // may not match the global registration).
-            if (!union_def) {
-                for (auto cur = expr.shared_as<element>(); cur; cur = cur->parent<element>()) {
-                    if (auto agg = std::dynamic_pointer_cast<aggregate>(cur)) {
-                        union_def = find_union_by_struct_type_in_aggregate(agg, struct_subtype);
-                        if (union_def) break;
-                    }
+            // Search the containing aggregate first (handles template instantiations
+            // where template and clone share the same struct_type pointer).
+            std::shared_ptr<union_type_def> union_def;
+            for (auto cur = expr.shared_as<element>(); cur; cur = cur->parent<element>()) {
+                if (auto agg = std::dynamic_pointer_cast<aggregate>(cur)) {
+                    union_def = find_union_by_struct_type_in_aggregate(agg, struct_subtype);
+                    if (union_def) break;
                 }
+            }
+            if (!union_def) {
+                auto root_ns = _unit.get_root_namespace();
+                union_def = find_union_by_struct_type(root_ns, struct_subtype);
             }
             if (union_def) {
                 // Ensure Kind enum is synthesized (may not be for template instantiations)
