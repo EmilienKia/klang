@@ -77,6 +77,12 @@ Examples are included where they clarify the normative text.
 | [Destructors](structs/destructors.md) | Instance and static destructors; by-value parameter destruction; expression temporaries lifetime |
 | [Nested Structures](structs/nested.md) | Static nested and non-static inner structures |
 
+### Unions
+
+| Page | Description |
+|------|-------------|
+| [Unions](unions/unions.md) | Discriminated (tagged) unions: alternatives, discriminant, `index()`, Kind enum, destruction, nesting, union inheritance (upcast/downcast), template unions |
+
 ### Annotations
 
 | Page | Description |

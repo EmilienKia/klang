@@ -28,6 +28,7 @@
 17. [Nested Structures](#17-nested-structures)
 18. [Designated Initializers](#18-designated-initializers)
 19. [Enumerations (`enum`)](#19-enumerations-enum)
+19b. [Unions (`union`)](#19b-unions-union)
 20. [Annotations](#20-annotations)
 21. [Dynamic Allocation (`new` / `delete`)](#21-dynamic-allocation-new--delete)
 22. [Uniform Array Initialization](#22-uniform-array-initialization)
