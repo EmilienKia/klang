@@ -29,12 +29,12 @@ TEST_CASE("Template union basic instantiation", "[gen][union][template]") {
     auto jit = gen_jit(R"(
         module test;
         template<typename T>
-        union Optional {
+        union MaybeVal {
             value: T;
             none: byte;
         }
         fun get_value() : int {
-            o : Optional<int>;
+            o : MaybeVal<int>;
             o.value = 42;
             return o.value;
         }
@@ -155,12 +155,12 @@ TEST_CASE("Template union exported and instantiated cross-module", "[gen][union]
         module mylib;
         public:
         template<typename T>
-        union Optional {
+        union MaybeVal {
             value: T;
             none: byte;
         }
         fun get_opt_value() : int {
-            o : Optional<int>;
+            o : MaybeVal<int>;
             o.value = 77;
             return o.value;
         }

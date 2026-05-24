@@ -116,6 +116,10 @@
 - Add support for incremental compilation and caching of intermediate results to speed up subsequent builds
 - Add support for cross-compilation to different target architectures and platforms
 
+### K language limitations (compiler bugs / missing features)
+- [ ] Direct boolean assignment (`_flag = false;` / `_flag = true;`) is rejected by the compiler — workaround: use `int` with 0/1 and compare (`_state != 0`)
+- [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts — workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
+
 ### libk
 - Refactor libk C functions wrapping to reduce intermediate method counts
 - Add following to base libk:

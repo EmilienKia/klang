@@ -791,18 +791,18 @@ TEST_CASE("template union Kind enum and index()", "[gen][union][kind][template]"
     auto jit = gen_jit(R"(
         module test;
         template<typename T>
-        union Optional {
+        union MaybeVal {
             some: T;
             none: byte;
         }
         test_optional_some() : int {
-            o : Optional<int>;
+            o : MaybeVal<int>;
             o.some = 42;
             idx : int = o.index();
             return idx;
         }
         test_optional_none() : int {
-            o : Optional<int>;
+            o : MaybeVal<int>;
             o.none = 0;
             idx : int = o.index();
             return idx;
