@@ -474,6 +474,8 @@ Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result
 - **Member access `.`**: fields and methods. Works on temporaries (rvalues) — method chaining supported. `arr.size` = element count.
 - **Pointer access `→`**: equivalent to `(*p).member`, with null-check.
 - **Member function reference call**: `(obj.*mfp)(args)` and `(ptr->*mfp)(args)` — parentheses required.
+- **Template-qualified scope call**: `Type<T>::func(args...)` is supported in expressions.
+  It applies to static members and explicit non-virtual member calls (`Type<T>::method(obj, ...)`).
 
 ### 8.7 Temporary Construction
 
@@ -1478,6 +1480,9 @@ Phase 1 does **not** support:
 - Templates on constructors, destructors, operators, or enums independently.
 - `extern template` declarations.
 - Template aliases (`template<typename T> using Vec = Array<T, 16>`).
+- In expression scope calls, template arguments are currently supported on the
+  leading qualifier only (`Type<T>::member(...)`). Mid-chain forms such as
+  `ns::Type<T>::member(...)` are not yet supported.
 
 ---
 

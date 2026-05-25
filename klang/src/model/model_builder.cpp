@@ -2106,6 +2106,7 @@ namespace k::model {
                 auto sym = std::dynamic_pointer_cast<model::symbol_expression>(_expr);
                 if (sym) {
                     sym->set_ast_template_args(expr.template_args);
+                    sym->set_template_args_on_qualifier(expr.has_qualifier_template_args());
                 }
             }
         }

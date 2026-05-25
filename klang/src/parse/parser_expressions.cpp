@@ -802,6 +802,81 @@ ast::expr_ptr parser::parse_identifier_expr()
 {
     lex::lex_holder holder(_lexer);
 
+    // Parse Type<T>::member as a single identifier expression where template
+    // arguments belong to the leading qualifier, not to the terminal symbol.
+    {
+        lex::lex_holder qualified_tpl_holder(_lexer);
+
+        std::optional<lex::punctuator> initial_doublecolon;
+        if (auto linit = _lexer.get(); linit == lex::punctuator::DOUBLE_COLON) {
+            initial_doublecolon = lex::as<lex::punctuator>(linit);
+        } else {
+            _lexer.unget();
+        }
+
+        auto first_name = _lexer.get();
+        if (lex::is<lex::identifier>(first_name)) {
+            bool has_explicit_tpl = false;
+            auto qualifier_tpl_args = parse_template_arg_list(&has_explicit_tpl);
+            if (has_explicit_tpl) {
+                auto ldoublecolon = _lexer.get();
+                if (ldoublecolon == lex::punctuator::DOUBLE_COLON) {
+                    std::vector<lex::identifier> names;
+                    names.push_back(lex::as<lex::identifier>(first_name));
+
+                    auto push_name_after_separator = [&](const lex::opt_ref_any_lexeme& lname) -> bool {
+                        if (lex::is<lex::identifier>(lname)) {
+                            names.push_back(lex::as<lex::identifier>(lname));
+                            return true;
+                        }
+                        if (lex::is<lex::keyword>(lname)) {
+                            auto kw = lex::as<lex::keyword>(lname);
+                            if (kw.type == lex::keyword::ANNOTATION
+                                || kw.type == lex::keyword::CLASS
+                                || kw.type == lex::keyword::INTERFACE
+                                || kw.type == lex::keyword::STRUCT) {
+                                names.push_back(lex::identifier{kw.content});
+                                return true;
+                            }
+                        }
+                        return false;
+                    };
+
+                    auto lname = _lexer.get();
+                    if (!push_name_after_separator(lname)) {
+                        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_QNAME_AFTER_INTERMEDIATE_SEP),
+                                    _lexer.pick_current(),
+                                    "Qualified identifier expect an identifier after intermediate \"::\"");
+                    }
+
+                    while (true) {
+                        lex::lex_holder chain_holder(_lexer);
+                        auto maybe_dc = _lexer.get();
+                        if (maybe_dc != lex::punctuator::DOUBLE_COLON) {
+                            chain_holder.rollback();
+                            break;
+                        }
+                        auto next_name = _lexer.get();
+                        if (!push_name_after_separator(next_name)) {
+                            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_QNAME_AFTER_INTERMEDIATE_SEP),
+                                        _lexer.pick_current(),
+                                        "Qualified identifier expect an identifier after intermediate \"::\"");
+                        }
+                        chain_holder.sync();
+                    }
+
+                    auto qid = ast::qualified_identifier(initial_doublecolon, names);
+                    return std::make_shared<ast::identifier_expr>(qid,
+                                                                  std::move(qualifier_tpl_args),
+                                                                  true,
+                                                                  true);
+                }
+            }
+        }
+
+        qualified_tpl_holder.rollback();
+    }
+
     std::shared_ptr<ast::qualified_identifier> ident = parse_qualified_identifier();
     if(ident) {
         return std::make_shared<ast::identifier_expr>(*ident);

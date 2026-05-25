@@ -1,6 +1,15 @@
 ## TODO and wish list
 ### K Language
 
+- **Parser: support `Type<A,B>::method()` call syntax in expression context**
+  - Currently `Expected<int,int>::expected(42)` fails because the parser interprets `<` as a
+    comparison operator rather than the start of a template argument list when followed by `::`.
+  - The `parse_qualified_identifier()` function does not parse template args in intermediate
+    segments; template disambiguation in `parse_postfix_expr()` only covers `func<T>(...)`.
+  - Fix requires extending `parse_qualified_identifier()` (or `parse_postfix_expr()`) to handle
+    `Name<T1,T2>::rest` qualified names and representing per-segment template args in the AST.
+  - Reproducing tests: `[libk][expected][factory][!shouldfail]` in `libk/libk/tests/test-expected.cpp`.
+
 - Add templates advanced features (Phase 2+ — partial specialization, variadic templates, template template parameters, etc.)
   - [ ] Tests: name mangling tests for template entities
   - [ ] Partial and full template specialization

@@ -416,5 +416,52 @@ TEST_CASE("Parse type reference with empty template arg list <>", "[parser][temp
     CHECK(ident_ts->template_args.empty());
 }
 
+TEST_CASE("Parse qualified template type call Type<T>::foo(args)", "[parser][template][qualified-call]") {
+    test_logger log;
+    k::source src{R"SRC(
+        call() : int {
+            return Box<int>::make(42);
+        }
+    )SRC"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto fn = std::dynamic_pointer_cast<ast::function_decl>(unit->declarations[0]);
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn->content != nullptr);
+    REQUIRE(fn->content->statements.size() == 1);
+
+    auto ret = std::dynamic_pointer_cast<ast::return_statement>(fn->content->statements[0]);
+    REQUIRE(ret != nullptr);
+    auto call = std::dynamic_pointer_cast<ast::parenthesis_postifx_expr>(ret->expr);
+    REQUIRE(call != nullptr);
+
+    auto callee = std::dynamic_pointer_cast<ast::identifier_expr>(call->lexpr());
+    REQUIRE(callee != nullptr);
+    REQUIRE(callee->qident.names.size() == 2);
+    CHECK(std::string{callee->qident.names[0].content} == "Box");
+    CHECK(std::string{callee->qident.names[1].content} == "make");
+    CHECK(callee->has_qualifier_template_args());
+    REQUIRE(callee->template_args.size() == 1);
+    CHECK(callee->template_args[0]->is_type());
+}
+
+TEST_CASE("Relational expression still parses with '<' operator", "[parser][template][qualified-call]") {
+    test_logger log;
+    k::source src{R"SRC(
+        less(a: int, b: int) : int {
+            if (a < b) {
+                return 1;
+            }
+            return 0;
+        }
+    )SRC"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE(unit != nullptr);
+    REQUIRE(unit->declarations.size() == 1);
+}
+
 
 

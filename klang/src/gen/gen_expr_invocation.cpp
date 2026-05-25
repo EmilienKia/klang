@@ -773,7 +773,43 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         const bool is_qualified_call = (callee->get_name().size() > 1);
 
         std::vector<std::shared_ptr<function>> all_candidates;
-        if (is_qualified_call) {
+        if (is_qualified_call && callee->has_qualifier_template_args()) {
+            const auto qualifier_name = callee->get_name().without_back();
+
+            std::optional<lex::punctuator> root_prefix;
+            if (qualifier_name.has_root_prefix()) {
+                root_prefix = lex::punctuator{"::", lex::punctuator::DOUBLE_COLON};
+            }
+
+            std::vector<lex::identifier> qualifier_parts;
+            qualifier_parts.reserve(qualifier_name.size());
+            for (const auto& part : qualifier_name.parts()) {
+                qualifier_parts.emplace_back(std::string_view(part));
+            }
+
+            if (!qualifier_parts.empty()) {
+                parse::ast::qualified_identifier ast_qid(root_prefix, qualifier_parts);
+                parse::ast::identified_type_specifier ast_identified(ast_qid,
+                                                                     callee->get_ast_template_args(),
+                                                                     true);
+                auto qualifier_type = _context->from_type_specifier(ast_identified);
+                if (auto unres = std::dynamic_pointer_cast<unresolved_type>(qualifier_type)) {
+                    aggregate_type_resolver helper(_log, _context, _unit);
+                    auto resolved_type = helper.try_instantiate_template_type(unres, expr);
+                    if (auto st_type = std::dynamic_pointer_cast<struct_type>(resolved_type)) {
+                        if (auto owner_struct = st_type->get_struct()) {
+                            for (auto& fn : owner_struct->functions()) {
+                                if (fn && fn->get_short_name() == func_name) {
+                                    all_candidates.push_back(fn);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (is_qualified_call && all_candidates.empty()) {
             // For a qualified name (e.g. Base::value or point::get), collect ALL overloads
             // of the short name within the qualifying context (struct / namespace), not the
             // entire scope chain.  This prevents false ambiguity with functions of the same
@@ -796,7 +832,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     all_candidates.push_back(resolved_fn);
                 }
             }
-        } else {
+        } else if (!is_qualified_call) {
             all_candidates = scope_lookup::lookup_functions(callee, func_name);
         }
 

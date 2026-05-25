@@ -236,6 +236,12 @@ protected:
     /** True when '<>' or '<args>' was explicitly written (even if args is empty). */
     bool _has_explicit_template_args = false;
 
+    /**
+     * True when template args qualify the leading type in a qualified symbol
+     * (e.g. Type<T>::method), rather than the terminal callable symbol.
+     */
+    bool _template_args_on_qualifier = false;
+
     symbol_expression(const name &name);
 
     symbol_expression(const std::shared_ptr<variable_definition> &var);
@@ -245,7 +251,9 @@ protected:
     // Copy constructor
     symbol_expression(const symbol_expression& other)
         : expression(other), _name(other._name), _target(other._target),
-          _has_explicit_template_args(other._has_explicit_template_args) {}
+          _ast_template_args(other._ast_template_args),
+          _has_explicit_template_args(other._has_explicit_template_args),
+          _template_args_on_qualifier(other._template_args_on_qualifier) {}
 
 public:
     void accept(model_visitor &visitor) override;
@@ -326,6 +334,14 @@ public:
         _has_explicit_template_args = true;
     }
 
+    /** True when explicit template args apply to the leading qualifier (Type<T>::member). */
+    bool has_qualifier_template_args() const {
+        return has_ast_template_args() && _template_args_on_qualifier;
+    }
+
+    /** Mark whether explicit template args belong to the leading qualifier. */
+    void set_template_args_on_qualifier(bool v = true) { _template_args_on_qualifier = v; }
+
     /** Mark that explicit template args were provided (even if list is empty). */
     void set_has_explicit_template_args(bool v = true) { _has_explicit_template_args = v; }
 
@@ -333,6 +349,7 @@ public:
         auto c = std::shared_ptr<symbol_expression>(new symbol_expression(*this));
         c->_ast_template_args = _ast_template_args;
         c->_has_explicit_template_args = _has_explicit_template_args;
+        c->_template_args_on_qualifier = _template_args_on_qualifier;
         return c;
     }
 };

@@ -19,8 +19,15 @@
 /**
  * Tests for ::k::Expected<R,E>.
  *
- * These tests exercise the copy constructor of Expected<R,E> by
- * JIT-compiling small K programs that use the stdlib type.
+ * These tests exercise the static factory methods (expected(), unexpected(),
+ * error()) and the copy constructor of Expected<R,E> by JIT-compiling small
+ * K programs that use the stdlib type.
+ *
+ * The static factory method tests are marked [!shouldfail] because the K
+ * parser does not yet support the call syntax Type<A,B>::method() in
+ * expression context.  The copy-constructor tests use the free-function
+ * wrappers (makeExpected / makeUnexpected) which delegate to the static
+ * methods and work with the current parser.
  *
  * The base standard library (module "k") is implicitly imported by the
  * compiler — no explicit "import k;" is needed in the K sources.
@@ -46,7 +53,69 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 } // anonymous namespace
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  Static factory methods — direct call syntax (requires parser fix)
+//
+//  The K parser does not yet support Type<A,B>::method() call syntax in
+//  expression context (the '<' is mistaken for a comparison operator).
+//  These tests are tagged [!shouldfail] until the parser is fixed.
+//  See TODO.md: "Parser: support Type<A,B>::method() call syntax".
+// ═══════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Expected::expected() — static factory for result", "[libk][expected][factory][!shouldfail]") {
+    auto j = jit_k(R"SRC(
+        module __expected_factory_result__;
+        test() : int {
+            e : Expected<int, int> = Expected<int, int>::expected(42);
+            if (!e.hasResult()) return 0;
+            if (e.getResult() != 42) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("Expected::unexpected() — static factory for error", "[libk][expected][factory][!shouldfail]") {
+    auto j = jit_k(R"SRC(
+        module __expected_factory_unexpected__;
+        test() : int {
+            e : Expected<int, int> = Expected<int, int>::unexpected(-7);
+            if (!e.hasError()) return 0;
+            if (e.getError() != -7) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("Expected::error() — alias for unexpected()", "[libk][expected][factory][!shouldfail]") {
+    auto j = jit_k(R"SRC(
+        module __expected_factory_error__;
+        test() : int {
+            e : Expected<int, int> = Expected<int, int>::error(-99);
+            if (!e.hasError()) return 0;
+            if (e.getError() != -99) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  Copy constructor — copy of a result-holding Expected
+//
+//  The copy-constructor tests use makeExpected / makeUnexpected free functions.
+//  These are thin wrappers that call Expected<R,E>::expected / unexpected
+//  internally.  They are used here because the direct Type<A,B>::method()
+//  call syntax is not yet supported by the parser.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Expected copy constructor — copy result", "[libk][expected][copy]") {
@@ -162,4 +231,3 @@ TEST_CASE("Expected copy constructor — chained copies preserve result", "[libk
     REQUIRE(fn);
     CHECK(fn() == 111);
 }
-

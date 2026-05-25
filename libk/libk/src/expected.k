@@ -32,25 +32,30 @@ module k;
  * queryable via _storage.index().
  *
  * Usage:
- *   // Create a successful Expected
+ *   // Create a successful Expected via static factory
+ *   ok : Expected<int, int> = Expected<int, int>::expected(42);
+ *
+ *   // Create an error Expected via static factory
+ *   err : Expected<int, int> = Expected<int, int>::unexpected(-1);
+ *   // or, using the alias:
+ *   err2 : Expected<int, int> = Expected<int, int>::error(-1);
+ *
+ *   // Manual construction
  *   e : Expected<int, int>;
  *   e.setResult(42);
  *
- *   // Create an error Expected
- *   e2 : Expected<int, int>;
- *   e2.setError(-1);
- *
  *   // Query and access
- *   if (e.hasResult()) {
- *       val : int = e.getResult();
+ *   if (ok.hasResult()) {
+ *       val : int = ok.getResult();
  *   }
- *   if (e2.hasError()) {
- *       err : int = e2.getError();
+ *   if (err.hasError()) {
+ *       e : int = err.getError();
  *   }
  *
- * Factory functions:
- *   ok : Expected<int, int> = makeExpected<int, int>(42);
- *   err : Expected<int, int> = makeUnexpected<int, int>(-1);
+ * Static factory methods (preferred over direct construction):
+ *   Expected<R,E>::expected(value)    — wraps a successful result
+ *   Expected<R,E>::unexpected(value)  — wraps an error
+ *   Expected<R,E>::error(value)       — alias for unexpected()
  */
 template<typename R, typename E>
 struct Expected {
@@ -164,25 +169,55 @@ struct Expected {
         }
         return defaultValue;
     }
+
+    /**
+     * Static factory — create an Expected<R, E> holding a successful result.
+     */
+    public static expected(value : R&) : Expected<R, E> {
+        e : Expected<R, E>;
+        e.setResult(value);
+        return e;
+    }
+
+    /**
+     * Static factory — create an Expected<R, E> holding an error.
+     */
+    public static unexpected(value : E&) : Expected<R, E> {
+        e : Expected<R, E>;
+        e.setError(value);
+        return e;
+    }
+
+    /**
+     * Static factory — alias for unexpected().
+     * Provided for readability when the error type is an error code or exception.
+     */
+    public static error(value : E&) : Expected<R, E> {
+        return unexpected(value);
+    }
 }
 
 /**
  * Create an Expected<R, E> holding a successful result.
+ *
+ * Note: this free function is retained as a parser workaround.  The preferred
+ * API is Expected<R,E>::expected() but the K parser does not yet support
+ * Type<A,B>::method() call syntax in expression context.
  */
 template<typename R, typename E>
 makeExpected(value : R&) : Expected<R, E> {
-    e : Expected<R, E>;
-    e.setResult(value);
-    return e;
+    return Expected<R, E>::expected(value);
 }
 
 /**
  * Create an Expected<R, E> holding an error.
+ *
+ * Note: this free function is retained as a parser workaround.  The preferred
+ * API is Expected<R,E>::unexpected() but the K parser does not yet support
+ * Type<A,B>::method() call syntax in expression context.
  */
 template<typename R, typename E>
 makeUnexpected(value : E&) : Expected<R, E> {
-    e : Expected<R, E>;
-    e.setError(value);
-    return e;
+    return Expected<R, E>::unexpected(value);
 }
 

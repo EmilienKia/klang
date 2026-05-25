@@ -565,6 +565,12 @@ namespace k::parse {
             /** True when '<>' or '<args>' was explicitly written (even if template_args is empty). */
             bool explicit_template_args = false;
 
+            /**
+             * True when template_args qualify the leading type part in a qualified
+             * identifier expression, e.g. Type<T>::method.
+             */
+            bool qualifier_explicit_template_args = false;
+
             identifier_expr(const ast::qualified_identifier& qident) :
                     qident(qident) {}
 
@@ -572,8 +578,21 @@ namespace k::parse {
                     qident(qident), template_args(std::move(tpl_args)),
                     explicit_template_args(!tpl_args.empty()) {}
 
+            identifier_expr(const ast::qualified_identifier& qident,
+                            template_arg_list tpl_args,
+                            bool explicit_tpl,
+                            bool qualifier_tpl) :
+                    qident(qident), template_args(std::move(tpl_args)),
+                    explicit_template_args(explicit_tpl),
+                    qualifier_explicit_template_args(qualifier_tpl) {}
+
             /** True if this identifier carries explicit template arguments (including empty <>). */
             bool has_template_args() const { return explicit_template_args || !template_args.empty(); }
+
+            /** True if explicit template arguments qualify the leading type in 'Type<T>::member'. */
+            bool has_qualifier_template_args() const {
+                return qualifier_explicit_template_args && has_template_args();
+            }
 
             virtual void visit(ast_visitor &visitor) override;
         };

@@ -42,6 +42,7 @@ namespace k::model::gen {
 // (shared helpers moved to gen_helpers.hpp)
 
 
+
 //
 // Value expression
 //

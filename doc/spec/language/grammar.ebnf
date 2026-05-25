@@ -738,7 +738,16 @@ AnnotationInitExpr
 
 IdentifierExpr
     = QualifiedIdentifier
+    | TemplateQualifiedScopeExpr
     ;
+
+TemplateQualifiedScopeExpr
+    = [ '::' ] , Identifier , TemplateArgList , '::' , Identifier , { '::' , Identifier }
+    ;
+    (* Current implementation note: expression parsing only supports template arguments
+       on the leading qualifier segment in scope-qualified calls (Type<T>::member).
+       Mid-chain qualified template segments such as ns::Type<T>::member are not yet
+       supported in expression context. *)
 
 (* ---------- Brace Initializer Lists ------------------------------------- *)
 

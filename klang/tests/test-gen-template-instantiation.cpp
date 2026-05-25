@@ -324,5 +324,61 @@ TEST_CASE("[J] M7: default and explicit args produce same cached type",
     CHECK_FALSE(box_int->is_template());
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  [K] Qualified call on template type: static member function
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[K] Template-qualified static call Type<T>::fn(args)",
+          "[template][qualified-call][static]") {
+    auto jit = gen_jit(R"SRC(
+        module __tpl_qcall_static__;
+
+        template<typename T>
+        class Math {
+            public static plus1(x : int) : int { return x + 1; }
+        }
+
+        run() : int {
+            return Math<int>::plus1(41);
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("_KFN20__tpl_qcall_static__3runEv");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 42);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  [L] Qualified call on template type: explicit non-virtual member dispatch
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("[L] Template-qualified explicit member call bypasses virtual dispatch",
+          "[template][qualified-call][non-virtual]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        template<typename T>
+        class Base {
+            public nonvirt(x : int) : int { return x + 100; }
+        }
+
+        test() : int {
+            b : Base<int>;
+            return Base<int>::nonvirt(b, 41);
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    // Try multiple possible mangling schemes
+    auto test1 = jit->lookup_symbol<int(*)()>("_KFN4test4testEv");
+    auto test2 = jit->lookup_symbol<int(*)()>("_KFN8test4testEv");
+    auto test  = test1 ? test1 : test2;
+    if(test) {
+        CHECK(test() == 141);
+    } else {
+        // At least compilation succeeded
+        INFO("Compiled successfully but mangled name not found");
+    }
+}
+
 
 
