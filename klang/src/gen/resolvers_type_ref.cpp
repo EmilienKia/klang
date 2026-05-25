@@ -1032,7 +1032,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                         }
                         // If still not resolved, check if we are inside a concrete template
                         // function instantiation that carries the substitution map.  This
-                        // handles cases like  e : Expected<R,E>  in makeExpected__int_int where
+                        // handles cases like  e : Expected<R,E>  in expected__int_int where
                         // "R" and "E" are no longer in scope but the subst map is stored on the
                         // containing function.
                         if (!type::is_resolved(arg_type)) {

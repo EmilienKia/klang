@@ -675,7 +675,7 @@ void type_reference_resolver::visit_function(function& fn) {
                 } else if (unres->has_template_args()) {
                     // Template type (e.g. Expected<R,E>) — try to instantiate using the
                     // function's stored substitution map (set when this is a concrete
-                    // template instantiation, e.g. makeExpected__int_int).
+                    // template instantiation, e.g. expected__int_int).
                     auto tpl_resolved = try_instantiate_template_type(unres, fn);
                     if (tpl_resolved && type::is_resolved(tpl_resolved)) {
                         fn.set_return_type(tpl_resolved);

@@ -2,9 +2,8 @@
 ### K Language
 
 - **Template-qualified type references in non-expression contexts**
-  - Expression calls now support `Type<T>::method()`, `ns::Type<T>::method()`, and `::ns::Type<T>::method()`.
-  - Remaining follow-up: ensure equivalent support (with the same diagnostics quality) in every
-    context that accepts type names and deferred symbol references.
+  - Ensure support (with the same diagnostics quality) in every context that accepts
+    type names and deferred symbol references.
 
 - Add templates advanced features (Phase 2+ — partial specialization, variadic templates, template template parameters, etc.)
   - [ ] Tests: name mangling tests for template entities
