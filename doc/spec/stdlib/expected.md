@@ -67,6 +67,13 @@ These are the **preferred** way to construct an `Expected<R, E>`.
 | `Expected<R,E>::unexpected(value)` | Create an `Expected<R,E>` that holds an error copy of `value`. |
 | `Expected<R,E>::error(value)` | Alias for `unexpected(value)`. Useful when the error type is an error code or exception-like object. |
 
+The same calls are valid with explicit namespace qualification when desired:
+
+```k
+ok  : ::k::Expected<int, int> = ::k::Expected<int, int>::expected(42);
+err : ::k::Expected<int, int> = ::k::Expected<int, int>::unexpected(-1);
+```
+
 ---
 
 ## Query Methods
@@ -107,6 +114,9 @@ ok  : Expected<int, int> = Expected<int, int>::expected(42);
 err : Expected<int, int> = Expected<int, int>::unexpected(-1);
 // error() is an alias for unexpected():
 e2  : Expected<int, int> = Expected<int, int>::error(-1);
+
+// Explicit namespace-qualified form is also valid:
+ok2 : ::k::Expected<int, int> = ::k::Expected<int, int>::expected(42);
 
 // --- Querying the state ---
 
@@ -162,6 +172,9 @@ The static factory methods `expected()`, `unexpected()`, and `error()` are
 preferred over direct construction + manual `setResult()`/`setError()` calls
 because they express intent clearly and make code easier to read.
 
+Compatibility free functions (`makeExpected` and `makeUnexpected`) are retained
+for legacy code, but new code should prefer the static factories.
+
 `error()` is a pure alias for `unexpected()` — it exists so that call-sites
 using error codes or error objects can write more domain-appropriate code:
 
@@ -171,4 +184,3 @@ parseNumber(s : String&) : Expected<int, int> {
     return Expected<int, int>::error(-1);   // reads like "return an error"
 }
 ```
-

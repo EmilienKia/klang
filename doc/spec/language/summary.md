@@ -474,7 +474,8 @@ Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result
 - **Member access `.`**: fields and methods. Works on temporaries (rvalues) — method chaining supported. `arr.size` = element count.
 - **Pointer access `→`**: equivalent to `(*p).member`, with null-check.
 - **Member function reference call**: `(obj.*mfp)(args)` and `(ptr->*mfp)(args)` — parentheses required.
-- **Template-qualified scope call**: `Type<T>::func(args...)` is supported in expressions.
+- **Template-qualified scope call**: expression calls support `Type<T>::func(args...)`,
+  `ns::Type<T>::func(args...)`, and `::ns::Type<T>::func(args...)`.
   It applies to static members and explicit non-virtual member calls (`Type<T>::method(obj, ...)`).
 
 ### 8.7 Temporary Construction

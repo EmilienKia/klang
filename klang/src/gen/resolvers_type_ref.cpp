@@ -282,9 +282,32 @@ type_reference_resolver::resolve_type_from_root(const k::name& name_without_pref
     if (auto agg = _unit.get_or_create_imported_aggregate(name_without_prefix, _context)) {
         return agg->get_struct_type();
     }
+    // Strategy 3b: when an imported module is redundantly used as leading
+    // qualifier (e.g. ::k::Expected), retry after stripping that prefix.
+    for (const auto& imp : _unit.get_imports()) {
+        if (imp.module_name.empty()) continue;
+        if (name_without_prefix.size() <= imp.module_name.size()) continue;
+        if (!name_without_prefix.start_with(imp.module_name)) continue;
+        auto rest = name_without_prefix.without_front(imp.module_name.size());
+        if (auto st = resolve_struct_from(*root_ns, rest)) {
+            return st->get_struct_type();
+        }
+        if (auto agg = _unit.get_or_create_imported_aggregate(rest, _context)) {
+            return agg->get_struct_type();
+        }
+    }
     // Strategy 4: fallback — search imported enums.
     if (auto en = _unit.get_or_create_imported_enum(name_without_prefix, _context)) {
         return en->get_enum_type();
+    }
+    for (const auto& imp : _unit.get_imports()) {
+        if (imp.module_name.empty()) continue;
+        if (name_without_prefix.size() <= imp.module_name.size()) continue;
+        if (!name_without_prefix.start_with(imp.module_name)) continue;
+        auto rest = name_without_prefix.without_front(imp.module_name.size());
+        if (auto en = _unit.get_or_create_imported_enum(rest, _context)) {
+            return en->get_enum_type();
+        }
     }
 
     return {};
@@ -539,9 +562,27 @@ type_reference_resolver::resolve_type_by_name(const k::name& type_name, const el
     if (auto agg = _unit.get_or_create_imported_aggregate(type_name, _context)) {
         return agg->get_struct_type();
     }
+    for (const auto& imp : _unit.get_imports()) {
+        if (imp.module_name.empty()) continue;
+        if (type_name.size() <= imp.module_name.size()) continue;
+        if (!type_name.start_with(imp.module_name)) continue;
+        auto rest = type_name.without_front(imp.module_name.size());
+        if (auto agg = _unit.get_or_create_imported_aggregate(rest, _context)) {
+            return agg->get_struct_type();
+        }
+    }
     // Fallback: search imported enums
     if (auto en = _unit.get_or_create_imported_enum(type_name, _context)) {
         return en->get_enum_type();
+    }
+    for (const auto& imp : _unit.get_imports()) {
+        if (imp.module_name.empty()) continue;
+        if (type_name.size() <= imp.module_name.size()) continue;
+        if (!type_name.start_with(imp.module_name)) continue;
+        auto rest = type_name.without_front(imp.module_name.size());
+        if (auto en = _unit.get_or_create_imported_enum(rest, _context)) {
+            return en->get_enum_type();
+        }
     }
 
     return {};
@@ -893,6 +934,30 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
             if (!imported_ns) continue;
             if (auto st = imported_ns->get_aggregate(base_name.front())) {
                 if (st->is_template()) {
+                    tpl_agg = st;
+                    break;
+                }
+            }
+        }
+    }
+    if (!tpl_agg && base_name.size() > 1) {
+        for (const auto& imp : _unit.get_imports()) {
+            if (imp.module_name.empty()) continue;
+            if (!base_name.start_with(imp.module_name)) continue;
+            auto rest = base_name.without_front(imp.module_name.size());
+            if (rest.empty()) continue;
+            auto root_ns = _unit.get_root_namespace();
+            if (root_ns) {
+                if (auto st = resolve_struct_from(*root_ns, rest)) {
+                    if (st->is_template()) {
+                        tpl_agg = st;
+                        break;
+                    }
+                }
+            }
+            if (auto imp_st = _unit.get_or_create_imported_aggregate(rest, _context)) {
+                auto st = std::dynamic_pointer_cast<aggregate>(imp_st);
+                if (st && st->is_template()) {
                     tpl_agg = st;
                     break;
                 }

@@ -463,5 +463,78 @@ TEST_CASE("Relational expression still parses with '<' operator", "[parser][temp
     REQUIRE(unit->declarations.size() == 1);
 }
 
+TEST_CASE("Parse namespace-qualified template type call ns::Type<T>::foo(args)", "[parser][template][qualified-call]") {
+    test_logger log;
+    k::source src{R"SRC(
+        call() : int {
+            return math::Box<int>::make(42);
+        }
+    )SRC"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto fn = std::dynamic_pointer_cast<ast::function_decl>(unit->declarations[0]);
+    REQUIRE(fn != nullptr);
+    auto ret = std::dynamic_pointer_cast<ast::return_statement>(fn->content->statements[0]);
+    REQUIRE(ret != nullptr);
+    auto call = std::dynamic_pointer_cast<ast::parenthesis_postifx_expr>(ret->expr);
+    REQUIRE(call != nullptr);
+
+    auto callee = std::dynamic_pointer_cast<ast::identifier_expr>(call->lexpr());
+    REQUIRE(callee != nullptr);
+    REQUIRE(callee->qident.names.size() == 3);
+    CHECK(std::string{callee->qident.names[0].content} == "math");
+    CHECK(std::string{callee->qident.names[1].content} == "Box");
+    CHECK(std::string{callee->qident.names[2].content} == "make");
+    CHECK(callee->has_qualifier_template_args());
+    REQUIRE(callee->template_args.size() == 1);
+}
+
+TEST_CASE("Parse absolute namespace-qualified template type call ::k::Type<T>::foo(args)", "[parser][template][qualified-call]") {
+    test_logger log;
+    k::source src{R"SRC(
+        call() : int {
+            return ::k::Expected<int, int>::expected(42);
+        }
+    )SRC"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto fn = std::dynamic_pointer_cast<ast::function_decl>(unit->declarations[0]);
+    REQUIRE(fn != nullptr);
+    auto ret = std::dynamic_pointer_cast<ast::return_statement>(fn->content->statements[0]);
+    REQUIRE(ret != nullptr);
+    auto call = std::dynamic_pointer_cast<ast::parenthesis_postifx_expr>(ret->expr);
+    REQUIRE(call != nullptr);
+
+    auto callee = std::dynamic_pointer_cast<ast::identifier_expr>(call->lexpr());
+    REQUIRE(callee != nullptr);
+    CHECK(callee->qident.has_root_prefix());
+    REQUIRE(callee->qident.names.size() == 3);
+    CHECK(std::string{callee->qident.names[0].content} == "k");
+    CHECK(std::string{callee->qident.names[1].content} == "Expected");
+    CHECK(std::string{callee->qident.names[2].content} == "expected");
+    CHECK(callee->has_qualifier_template_args());
+    REQUIRE(callee->template_args.size() == 2);
+}
+
+TEST_CASE("Relational expression still parses with namespaced identifiers", "[parser][template][qualified-call]") {
+    test_logger log;
+    k::source src{R"SRC(
+        less() : int {
+            if (ns::a < ns::b) {
+                return 1;
+            }
+            return 0;
+        }
+    )SRC"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE(unit != nullptr);
+    REQUIRE(unit->declarations.size() == 1);
+}
+
 
 

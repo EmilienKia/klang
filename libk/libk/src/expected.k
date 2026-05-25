@@ -200,9 +200,8 @@ struct Expected {
 /**
  * Create an Expected<R, E> holding a successful result.
  *
- * Note: this free function is retained as a parser workaround.  The preferred
- * API is Expected<R,E>::expected() but the K parser does not yet support
- * Type<A,B>::method() call syntax in expression context.
+ * Compatibility helper kept for legacy code.
+ * Preferred API: Expected<R,E>::expected().
  */
 template<typename R, typename E>
 makeExpected(value : R&) : Expected<R, E> {
@@ -212,9 +211,8 @@ makeExpected(value : R&) : Expected<R, E> {
 /**
  * Create an Expected<R, E> holding an error.
  *
- * Note: this free function is retained as a parser workaround.  The preferred
- * API is Expected<R,E>::unexpected() but the K parser does not yet support
- * Type<A,B>::method() call syntax in expression context.
+ * Compatibility helper kept for legacy code.
+ * Preferred API: Expected<R,E>::unexpected().
  */
 template<typename R, typename E>
 makeUnexpected(value : E&) : Expected<R, E> {

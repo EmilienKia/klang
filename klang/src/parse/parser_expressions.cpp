@@ -802,8 +802,8 @@ ast::expr_ptr parser::parse_identifier_expr()
 {
     lex::lex_holder holder(_lexer);
 
-    // Parse Type<T>::member as a single identifier expression where template
-    // arguments belong to the leading qualifier, not to the terminal symbol.
+    // Parse [::]ns::...::Type<T>::member as a single identifier expression where
+    // template arguments belong to the qualifier part, not to the terminal symbol.
     {
         lex::lex_holder qualified_tpl_holder(_lexer);
 
@@ -814,36 +814,40 @@ ast::expr_ptr parser::parse_identifier_expr()
             _lexer.unget();
         }
 
+        std::vector<lex::identifier> names;
+
+        auto append_segment = [&](const lex::opt_ref_any_lexeme& lname) -> bool {
+            if (lex::is<lex::identifier>(lname)) {
+                names.push_back(lex::as<lex::identifier>(lname));
+                return true;
+            }
+            if (lex::is<lex::keyword>(lname)) {
+                auto kw = lex::as<lex::keyword>(lname);
+                if (kw.type == lex::keyword::ANNOTATION
+                    || kw.type == lex::keyword::CLASS
+                    || kw.type == lex::keyword::INTERFACE
+                    || kw.type == lex::keyword::STRUCT) {
+                    names.push_back(lex::identifier{kw.content});
+                    return true;
+                }
+            }
+            return false;
+        };
+
         auto first_name = _lexer.get();
-        if (lex::is<lex::identifier>(first_name)) {
-            bool has_explicit_tpl = false;
-            auto qualifier_tpl_args = parse_template_arg_list(&has_explicit_tpl);
-            if (has_explicit_tpl) {
-                auto ldoublecolon = _lexer.get();
-                if (ldoublecolon == lex::punctuator::DOUBLE_COLON) {
-                    std::vector<lex::identifier> names;
-                    names.push_back(lex::as<lex::identifier>(first_name));
+        if (append_segment(first_name)) {
+            while (true) {
+                bool has_explicit_tpl = false;
+                auto qualifier_tpl_args = parse_template_arg_list(&has_explicit_tpl);
+                if (has_explicit_tpl) {
+                    auto ldoublecolon = _lexer.get();
+                    if (ldoublecolon != lex::punctuator::DOUBLE_COLON) {
+                        // Not a qualified type call (likely func<T>(...)); let fallback parse it.
+                        break;
+                    }
 
-                    auto push_name_after_separator = [&](const lex::opt_ref_any_lexeme& lname) -> bool {
-                        if (lex::is<lex::identifier>(lname)) {
-                            names.push_back(lex::as<lex::identifier>(lname));
-                            return true;
-                        }
-                        if (lex::is<lex::keyword>(lname)) {
-                            auto kw = lex::as<lex::keyword>(lname);
-                            if (kw.type == lex::keyword::ANNOTATION
-                                || kw.type == lex::keyword::CLASS
-                                || kw.type == lex::keyword::INTERFACE
-                                || kw.type == lex::keyword::STRUCT) {
-                                names.push_back(lex::identifier{kw.content});
-                                return true;
-                            }
-                        }
-                        return false;
-                    };
-
-                    auto lname = _lexer.get();
-                    if (!push_name_after_separator(lname)) {
+                    auto member_name = _lexer.get();
+                    if (!append_segment(member_name)) {
                         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_QNAME_AFTER_INTERMEDIATE_SEP),
                                     _lexer.pick_current(),
                                     "Qualified identifier expect an identifier after intermediate \"::\"");
@@ -857,7 +861,7 @@ ast::expr_ptr parser::parse_identifier_expr()
                             break;
                         }
                         auto next_name = _lexer.get();
-                        if (!push_name_after_separator(next_name)) {
+                        if (!append_segment(next_name)) {
                             throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_QNAME_AFTER_INTERMEDIATE_SEP),
                                         _lexer.pick_current(),
                                         "Qualified identifier expect an identifier after intermediate \"::\"");
@@ -870,6 +874,19 @@ ast::expr_ptr parser::parse_identifier_expr()
                                                                   std::move(qualifier_tpl_args),
                                                                   true,
                                                                   true);
+                }
+
+                auto maybe_dc = _lexer.get();
+                if (maybe_dc != lex::punctuator::DOUBLE_COLON) {
+                    _lexer.unget();
+                    break;
+                }
+
+                auto next_name = _lexer.get();
+                if (!append_segment(next_name)) {
+                    throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_QNAME_AFTER_INTERMEDIATE_SEP),
+                                _lexer.pick_current(),
+                                "Qualified identifier expect an identifier after intermediate \"::\"");
                 }
             }
         }
