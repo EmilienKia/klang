@@ -232,14 +232,14 @@ protected:
     std::string _tpl_base_name;
     std::vector<template_argument> _tpl_args;
 
-    /**
-     * Type substitution map used when this function was instantiated from a template
-     * (e.g. {"R"→int, "E"→int} for makeExpected__int_int).  Set by
-     * template_instantiator::populate_function_from_template() on the concrete function.
-     * Used by type_reference_resolver::try_instantiate_template_type() to resolve
-     * template-parameter names embedded in AST template arg lists (e.g. "R" in
-     * Expected<R,E>) that are no longer in scope in the concrete function body.
-     */
+     /**
+      * Type substitution map used when this function was instantiated from a template
+      * (e.g. {"R"→int, "E"→int} for expected__int_int).  Set by
+      * template_instantiator::populate_function_from_template() on the concrete function.
+      * Used by type_reference_resolver::try_instantiate_template_type() to resolve
+      * template-parameter names embedded in AST template arg lists (e.g. "R" in
+      * Expected<R,E>) that are no longer in scope in the concrete function body.
+      */
     std::unordered_map<std::string, std::shared_ptr<type>> _tpl_instantiation_subst;
 
     function(std::shared_ptr<element> parent, bool is_static = false) :

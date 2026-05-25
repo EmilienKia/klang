@@ -130,6 +130,38 @@ TEST_CASE("::k::Expected::expected() — absolute-prefix static factory", "[libk
     CHECK(fn() == 1);
 }
 
+TEST_CASE("::k::Expected::unexpected() — absolute-prefix static factory", "[libk][expected][factory]") {
+    auto j = jit_k(R"SRC(
+        module __expected_factory_abs_unexpected__;
+        test() : int {
+            e : ::k::Expected<int, int> = ::k::Expected<int, int>::unexpected(-7);
+            if (!e.hasError()) return 0;
+            if (e.getError() != -7) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
+TEST_CASE("::k::Expected::error() — absolute-prefix alias", "[libk][expected][factory]") {
+    auto j = jit_k(R"SRC(
+        module __expected_factory_abs_error__;
+        test() : int {
+            e : ::k::Expected<int, int> = ::k::Expected<int, int>::error(-99);
+            if (!e.hasError()) return 0;
+            if (e.getError() != -99) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 1);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Copy constructor — copy of a result-holding Expected
 // ═══════════════════════════════════════════════════════════════════════════════

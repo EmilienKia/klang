@@ -244,34 +244,14 @@ TEST_CASE("Optional getOr without value", "[libk][optional]") {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  makeOptional() factory
+//  Optional<T>::empty() static factory
 // ═══════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("makeOptional factory", "[libk][optional]") {
+TEST_CASE("Optional::empty static factory", "[libk][optional]") {
     auto j = jit_k(R"SRC(
-        module __opt_make__;
+        module __opt_empty_static__;
         test() : int {
-            opt : Optional<int> = makeOptional<int>(100);
-            if (!opt.hasValue()) return 0;
-            if (opt.get() != 100) return 0;
-            return 1;
-        }
-    )SRC");
-    REQUIRE(j);
-    auto fn = j->lookup_symbol<int(*)()>("test");
-    REQUIRE(fn);
-    CHECK(fn() == 1);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  makeEmpty() factory
-// ═══════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("makeEmpty factory", "[libk][optional]") {
-    auto j = jit_k(R"SRC(
-        module __opt_empty_factory__;
-        test() : int {
-            opt : Optional<int> = makeEmpty<int>();
+            opt : Optional<int> = Optional<int>::empty();
             if (opt.hasValue()) return 0;
             return 1;
         }

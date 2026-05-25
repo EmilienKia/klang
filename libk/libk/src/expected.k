@@ -197,25 +197,3 @@ struct Expected {
     }
 }
 
-/**
- * Create an Expected<R, E> holding a successful result.
- *
- * Compatibility helper kept for legacy code.
- * Preferred API: Expected<R,E>::expected().
- */
-template<typename R, typename E>
-makeExpected(value : R&) : Expected<R, E> {
-    return Expected<R, E>::expected(value);
-}
-
-/**
- * Create an Expected<R, E> holding an error.
- *
- * Compatibility helper kept for legacy code.
- * Preferred API: Expected<R,E>::unexpected().
- */
-template<typename R, typename E>
-makeUnexpected(value : E&) : Expected<R, E> {
-    return Expected<R, E>::unexpected(value);
-}
-

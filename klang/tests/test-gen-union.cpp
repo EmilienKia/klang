@@ -874,17 +874,16 @@ TEST_CASE("template struct with nested union — factory function", "[gen][union
             getResult() : R {
                 return _storage.result;
             }
-        }
 
-        template<typename R, typename E>
-        makeExpected(value : R&) : Expected<R, E> {
-            e : Expected<R, E>;
-            e.setResult(value);
-            return e;
+            static expected(value : R&) : Expected<R, E> {
+                e : Expected<R, E>;
+                e.setResult(value);
+                return e;
+            }
         }
 
         test() : int {
-            e : Expected<int, int> = makeExpected<int, int>(42);
+            e : Expected<int, int> = Expected<int, int>::expected(42);
             if (e.hasResult()) {
                 return e.getResult();
             }

@@ -46,9 +46,9 @@ module k;
  *   // Safe access with default
  *   val : int = opt.getOr(0);  // returns 0 since opt is empty
  *
- * Factory functions:
- *   filled : Optional<int> = makeOptional<int>(42);
- *   empty  : Optional<int> = makeEmpty<int>();
+ * Static factory:
+ *   filled : Optional<int>(42);
+ *   empty  : Optional<int> = Optional<int>::empty();
  */
 template<typename T>
 struct Optional {
@@ -142,25 +142,20 @@ struct Optional {
             _hasValue = false;
         }
     }
+
+    /**
+     * Static factory: create an empty Optional<T>.
+     * Equivalent to the default constructor; provided for expressiveness.
+     *
+     * Usage:
+     *   opt : Optional<int> = Optional<int>::empty();
+     */
+    static empty() : Optional<T> {
+        o : Optional<T>;
+        return o;
+    }
 }
 
-/**
- * Create an Optional<T> holding a copy of value.
- */
-template<typename T>
-makeOptional(value : T&) : Optional<T> {
-    o : Optional<T>(value);
-    return o;
-}
-
-/**
- * Create an empty Optional<T>.
- */
-template<typename T>
-makeEmpty() : Optional<T> {
-    o : Optional<T>;
-    return o;
-}
 
 
 

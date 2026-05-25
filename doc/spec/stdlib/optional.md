@@ -32,6 +32,8 @@ struct Optional {
 
     set(value : T&);
     reset();
+
+    static empty() : Optional<T>;
 }
 ```
 
@@ -60,20 +62,11 @@ struct Optional {
 
 ---
 
-## Factory Functions
+## Static Factory
 
-```k
-template<typename T>
-makeOptional(value : T&) : Optional<T>;
-
-template<typename T>
-makeEmpty() : Optional<T>;
-```
-
-| Function | Description |
-|----------|-------------|
-| `makeOptional<T>(value)` | Create an `Optional<T>` holding a copy of `value`. |
-| `makeEmpty<T>()` | Create an empty `Optional<T>`. |
+| Method | Description |
+|--------|-------------|
+| `static empty() : Optional<T>` | Create an empty `Optional<T>`. Equivalent to the default constructor; provided for expressiveness at call sites. |
 
 ---
 
@@ -87,6 +80,10 @@ opt : Optional<int>;
 // Create with a value
 opt2 : Optional<int>(42);
 // opt2.hasValue() == true, opt2.get() == 42
+
+// Create an empty optional via static factory (explicit form)
+opt3 : Optional<int> = Optional<int>::empty();
+// opt3.hasValue() == false
 
 // Set a value on an empty optional
 opt.set(10);
@@ -102,10 +99,6 @@ opt.reset();
 
 // Safe access with default
 val : int = opt.getOr(0);  // returns 0 since opt is empty
-
-// Factory usage
-filled : Optional<int> = makeOptional<int>(42);
-empty  : Optional<int> = makeEmpty<int>();
 ```
 
 ---

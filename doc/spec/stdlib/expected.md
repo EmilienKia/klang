@@ -172,9 +172,6 @@ The static factory methods `expected()`, `unexpected()`, and `error()` are
 preferred over direct construction + manual `setResult()`/`setError()` calls
 because they express intent clearly and make code easier to read.
 
-Compatibility free functions (`makeExpected` and `makeUnexpected`) are retained
-for legacy code, but new code should prefer the static factories.
-
 `error()` is a pure alias for `unexpected()` — it exists so that call-sites
 using error codes or error objects can write more domain-appropriate code:
 
