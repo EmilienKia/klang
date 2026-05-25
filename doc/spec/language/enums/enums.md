@@ -79,8 +79,8 @@ Additional conversion rules for object-backed enums:
 - `E -> const T&` is always supported via backing-table lookup.
 - `T -> E` is supported when equality is available for `T`.
 - `T -> E` non-match is fatal outside soft-fail contexts.
-- In `if (e : E = value)` condition-variable form, `T -> E` non-match follows
-  soft-fail control flow and selects the `else` path.
+- In a classic `if-let` condition-variable declaration (`if (e : E = value)`),
+  `T -> E` non-match follows the soft-fail path and selects the `else` branch.
 
 ---
 
@@ -174,7 +174,7 @@ c : Color = 2;        // implicit int → Color conversion
 | primitive int | `E` | widening | Implicit |
 | `ref<E>` | `E` | ref-load | Load + identity |
 | `ref<E>` | primitive int | ref-load + widening | Load then convert |
-| `T` (typed enum object type) | `E` | widening | Runtime table lookup; fatal on non-match except soft-fail in `if` cond-var form |
+| `T` (typed enum object type) | `E` | widening | Runtime table lookup; fatal on non-match except soft-fail in a classic `if-let` condition-variable declaration |
 | `ref<T>` (typed enum object type) | `E` | widening | Runtime table lookup on loaded value |
 
 > **Note:** Implicit conversions between unrelated enums are **not** allowed.

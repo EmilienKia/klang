@@ -320,6 +320,118 @@ TEST_CASE("if-local-var: nested if-local-var",
 }
 
 
+// =============================================================================
+// [ILV-UNION] Union sub-type access soft-fail in if-local-var
+// =============================================================================
+
+TEST_CASE("if-local-var: union sub-type copy access mismatch enters else",
+          "[gen][if-local-var][union][softfail]") {
+    auto jit = gen_jit(R"SRC(
+        module __ilv_union1__;
+
+        union U {
+            first: int;
+            second: long;
+        }
+
+        test() : int {
+            u : U;
+            u.second = 9;
+            if(v : int = u.first) {
+                return v;
+            } else {
+                return -1;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == -1);
+}
+
+TEST_CASE("if-local-var: union sub-type with else-if chain and pointer null soft-fail",
+          "[gen][if-local-var][union][softfail][else-if]") {
+    auto jit = gen_jit(R"SRC(
+        module __ilv_union2__;
+
+        struct S {
+            x: int;
+        }
+
+        union U {
+            first: int;
+            second: S;
+            third: S*;
+        }
+
+        test() : int {
+            u : U;
+            u.third = null;
+
+            if(a : int = u.first) {
+                return 10;
+            } else if(b : S+ = &u.second) {
+                return 20;
+            } else if(c : S* = u.third) {
+                return 30;
+            } else {
+                return 40;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 40);
+}
+
+TEST_CASE("if-local-var: multi cond-vars union mismatch on second var soft-fails",
+          "[gen][if-local-var][union][softfail][multi]") {
+    auto jit = gen_jit(R"SRC(
+        module __ilv_union3__;
+
+        union U {
+            first: int;
+            second: long;
+        }
+
+        test() : int {
+            u : U;
+            u.first = 5;
+            if(a : int = u.first; b : long = u.second) {
+                return 1;
+            } else {
+                return 2;
+            }
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 2);
+}
+
+TEST_CASE("union mismatch remains fatal outside if-local-var",
+          "[gen][if-local-var][union][fatal]") {
+    auto result = build_and_exec(R"SRC(
+        module __ilv_union_fatal__;
+
+        union U {
+            first: int;
+            second: long;
+        }
+
+        main() : int {
+            u : U;
+            u.second = 9;
+            return u.first;
+        }
+    )SRC");
+    REQUIRE(result.exit_code != 0);
+}
+
+
 
 
 

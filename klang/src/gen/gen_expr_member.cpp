@@ -657,15 +657,19 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
                 auto* cmp = _builder->CreateICmpNE(disc_val, expected, "union_disc_cmp");
 
                 auto* cur_fn = _builder->GetInsertBlock()->getParent();
-                auto* fail_bb = llvm::BasicBlock::Create(_builder->getContext(), "union_access_fail", cur_fn);
                 auto* ok_bb = llvm::BasicBlock::Create(_builder->getContext(), "union_access_ok", cur_fn);
-                _builder->CreateCondBr(cmp, fail_bb, ok_bb);
+                if (_union_failure_bb) {
+                    _builder->CreateCondBr(cmp, _union_failure_bb, ok_bb);
+                } else {
+                    auto* fail_bb = llvm::BasicBlock::Create(_builder->getContext(), "union_access_fail", cur_fn);
+                    _builder->CreateCondBr(cmp, fail_bb, ok_bb);
 
-                // Fail branch: call trap and unreachable
-                _builder->SetInsertPoint(fail_bb);
-                auto* trap_fn = llvm::Intrinsic::getDeclaration(&_context->module(), llvm::Intrinsic::trap);
-                _builder->CreateCall(trap_fn);
-                _builder->CreateUnreachable();
+                    // Fail branch: call trap and unreachable
+                    _builder->SetInsertPoint(fail_bb);
+                    auto* trap_fn = llvm::Intrinsic::getDeclaration(&_context->module(), llvm::Intrinsic::trap);
+                    _builder->CreateCall(trap_fn);
+                    _builder->CreateUnreachable();
+                }
 
                 // OK branch: continue with member access
                 _builder->SetInsertPoint(ok_bb);

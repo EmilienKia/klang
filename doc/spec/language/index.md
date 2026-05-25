@@ -45,7 +45,7 @@ Examples are included where they clarify the normative text.
 | Page | Description |
 |------|-------------|
 | [Statements Overview](statements/statements.md) | Block, expression statement, variable declaration |
-| [If Statement](statements/if.md) | Conditional branching, condition variable declaration (if-let), link soft-fail |
+| [If Statement](statements/if.md) | Conditional branching, condition-variable declaration (`if-let`), link/union soft-fail |
 | [While Statement](statements/while.md) | Condition-controlled loop |
 | [For Statement](statements/for.md) | Counter-controlled loop |
 | [Return Statement](statements/return.md) | Function return |
@@ -81,7 +81,7 @@ Examples are included where they clarify the normative text.
 
 | Page | Description |
 |------|-------------|
-| [Unions](unions/unions.md) | Discriminated (tagged) unions: alternatives, discriminant, `index()`, Kind enum, destruction, nesting, union inheritance (upcast/downcast), template unions |
+| [Unions](unions/unions.md) | Discriminated (tagged) unions: alternatives, runtime-checked member access, discriminant, `index()`, Kind enum, destruction, nesting, union inheritance (upcast/downcast), template unions |
 
 ### Annotations
 

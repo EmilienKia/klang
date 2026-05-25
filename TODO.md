@@ -13,15 +13,6 @@
   - [ ] Template constructors (independent of aggregate template)
   - [ ] SFINAE-like overload filtering based on template constraints
   - export templates (Phase 3+ — separate compilation of template definitions and instantiations)
-  - Generics (template with uniform materialization whatever the arguments)
-    See IN-PROGRESS.md for the completed implementation plan (Phases 1-10, 12).
-    - [x] Phase 6: Generic constraint validator (direct usage of type param, owner constraint)
-    - [x] Phase 7: Generic synthesis (single LLVM IR for all type-arg combinations)
-    - [x] Phase 8: Type tracking at usage sites (generic_aggregate_instance)
-    - [x] Phase 9: Mangling for generic synthesis (single symbol, no arg suffix)
-    - [x] Phase 10: KDI export/import of generics (signature only, no source text)
-    - [ ] Phase 11: libk template collections (`UniSlot<T>`, `MultiSlot<T>`, `LinkedList<T>`, `DoubleLinkedList<T>`, `Vector<T>`) (deferred — pending libk stabilisation)
-    - [x] Phase 12: Full test suite for generics (test-gen-generic.cpp, 57 pass + 3 documented skip)
   - Known generic call-site limitations (found by Phase 12, tracked for future fix):
     - [ ] Generic constructor call with owner `T!` argument: synthesized ctor takes `byte*!`, call site `ConcreteType!` implicit cast not supported
     - [ ] Member access on `T*` inside generic body (opaque pointer — by design; workaround: access at call site)
@@ -40,49 +31,12 @@
 - Add return type covariance
 - Add "virtual" symbols (parent, self, etc.)
 - Enumerations
-  - [x] Basic enums (explicit values, auto-increment, aliases, default entry)
-  - [x] Qualified access (`Color::RED`) and constructor forms (`Color(GREEN)`, `Color(2)`)
-  - [x] Comparison operators (==, !=, <, >, <=, >=) between enums and with int
-  - [x] Implicit enum ↔ int conversions (assign, pass as param, return)
-  - [x] Explicit cast `(int) enumValue`
-  - [x] Enum derivation (single inheritance, multi-level, auto-increment from base, alias to base entries)
-  - [x] Derivation: cycle detection, base-not-found error, Derived→Base implicit conversion
-  - [x] Typed enums with explicit integer underlying type (`enum Small : unsigned byte { ... }`)
-  - [x] Object-backed typed enums (`enum Dir : Vec2 { UP{.x=0,.y=1}; ... }`)
-    - [x] Designated struct init entries, constructor-style entries, zero-init entries
-    - [x] Auto-increment from previous for object-backed entries (index-based)
-    - [x] Alias entries sharing backing-table slot
-    - [x] Object→enum conversion with equality matching (hard-fail / soft-fail in if)
-    - [x] Compilation error when underlying type lacks `equals`/`==` for conversion
-  - [x] KDI export/import of enums (basic, derived, typed, object-backed)
-  - [x] Annotation fields with enum type
-  - Remaining / future:
     - [ ] Enum methods (functions declared inside enum body)
     - [ ] Standalone template enum declarations (`template<T> enum ...`)
     - [ ] Pattern matching / `match` expression on enum values (depends on switch/case)
     - [ ] Bitflags / combined enum values (bitwise operations on enums)
     - [ ] `values()` / `count()` / `name()` intrinsics on enums
 - Add unions, typed unions (discriminated/tagged unions à la std::variant)
-  - See `IN-PROGRESS.md` for the full implementation plan.
-  - [x] Phase 1: Lexer — `union` keyword
-  - [x] Phase 2: Parser — union declaration parsing
-  - [x] Phase 3: Model — `union_type_def` class
-  - [x] Phase 4: Model Visitor — `visit_union()`
-  - [x] Phase 5: Model Builder — AST → model
-  - [x] Phase 6: Holder mixins (namespace/aggregate can contain unions)
-  - [x] Phase 7: Symbol resolution (resolve alternative types)
-  - [x] Phase 8: Type resolution (LLVM struct type: discriminant + storage)
-  - [x] Phase 9: Type reference resolution (member access expressions)
-  - [x] Phase 10: Declaration generation (LLVM type + fatal helper)
-  - [x] Phase 11: Construction codegen
-  - [x] Phase 12: Member access codegen (discriminant check + GEP + bitcast)
-  - [x] Phase 13: Assignment codegen (update discriminant on member assign)
-  - [x] Phase 14: Destruction codegen (switch on discriminant, destroy active)
-  - [x] Phase 15: Mangling (union struct_type in function signatures)
-  - [x] Phase 16: KDI export/import (kdi_union, CBOR encode/decode, materialise)
-  - [x] Phase 17: Documentation (grammar, spec, AGENTS.md)
-  - [x] Phase 18: Error diagnostics (union_diag enum with dedicated codes)
-  - Deferred:
     - [ ] Enum-based discriminant interrogation (`u.type()` → enum)
     - [ ] Union extension / inheritance (derive union from another union)
     - [ ] Polymorphic access when all alternatives share a common base class/interface
@@ -99,7 +53,7 @@
 - Add static conditional statements and static compiler value definitions
 - Add traits and compile-time type introspection capabilities
 - Add support for separate compilation and module interfaces (e.g. `export` keyword, module partitions)
-- Add concepts
+- Add concepts (and template constraints) for more expressive template programming and better error messages
 - Add traits (Rust like)
 - Exceptions
 - Switch/case statements and expression
@@ -118,6 +72,7 @@
 
 ### K language limitations (compiler bugs / missing features)
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts — workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
+- [ ] `if(var1; var2; ...; test)` still hard-fails during condition-variable initialization on union alternative mismatch / nullable addressor soft-fail cases; extend it to pattern-like semantics so a failed binding makes the whole condition `false` and skips evaluation of the trailing `test`
 
 ### libk
 - Refactor libk C functions wrapping to reduce intermediate method counts

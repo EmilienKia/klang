@@ -858,6 +858,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
     llvm::BasicBlock* fail_dest = has_else ? else_block : cont_block;
 
     auto* saved_null_failure_bb = _null_failure_bb;
+    auto* saved_union_failure_bb = _union_failure_bb;
 
     if(is_multi_softfail) {
         // =====================================================================
@@ -898,6 +899,10 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                 // (which is correct for ptr/view/owner: we'll check explicitly after init)
                 _null_failure_bb = saved_null_failure_bb;
             }
+
+            // Union alternative access mismatch in condition variable initializers
+            // should soft-fail like null-addressor checks in if-let mode.
+            _union_failure_bb = trampoline ? trampoline : fail_dest;
 
             // Emit the variable declaration
             var->accept(*this);
@@ -947,21 +952,9 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                 }
             }
 
-            // Fill the trampoline for ref/link failure at var i (created earlier)
-            // This trampoline cleans up vars 0..i-1 (the ref/link at i was never stored)
-            if(trampoline && is_ref_or_link) {
-                // Save current insert point
-                auto* saved_bb = _builder->GetInsertBlock();
-                func->insert(func->end(), trampoline);
-                _builder->SetInsertPoint(trampoline);
-                for(int j = (int)i - 1; j >= 0; --j) {
-                    emit_cond_var_cleanup(vars[j]);
-                }
-                _builder->CreateBr(fail_dest);
-                _builder->SetInsertPoint(saved_bb);
-            } else if(trampoline && !is_addressor) {
-                // Non-addressor: trampoline was created but won't be used. Drop it.
-                // Actually it might be used by a later ref/link. Let's fill it anyway.
+            // Fill the trampoline (if any): cleanup vars 0..i-1 then jump to fail destination.
+            // This is used by ref/link null-softfail and by union discriminant softfail.
+            if(trampoline) {
                 auto* saved_bb = _builder->GetInsertBlock();
                 func->insert(func->end(), trampoline);
                 _builder->SetInsertPoint(trampoline);
@@ -975,6 +968,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
         // All vars initialized successfully → go to then
         _null_failure_bb = saved_null_failure_bb;
+        _union_failure_bb = saved_union_failure_bb;
         _builder->CreateBr(then_block);
 
     } else if(has_cond_var_with_test) {
@@ -986,6 +980,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
             var->accept(*this);
         }
         _null_failure_bb = saved_null_failure_bb;
+        _union_failure_bb = saved_union_failure_bb;
 
         _value = nullptr;
         stmt.get_test_expr()->accept(*this);
@@ -1005,6 +1000,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         // Classic if-let: single var, no test expression
         // =====================================================================
         _null_failure_bb = fail_dest;
+        _union_failure_bb = fail_dest;
 
         stmt.get_cond_var()->accept(*this);
 
@@ -1015,12 +1011,14 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         if(is_ref_or_link) {
             // Soft-fail mechanism handled null → else. If we're here, success → then.
             _null_failure_bb = saved_null_failure_bb;
+            _union_failure_bb = saved_union_failure_bb;
             _builder->CreateBr(then_block);
         } else if(std::dynamic_pointer_cast<pointer_type>(var_type)
                || std::dynamic_pointer_cast<owner_type>(var_type)
                || std::dynamic_pointer_cast<view_type>(var_type)) {
             // Pointer/owner/view: explicit null-check → soft-fail
             _null_failure_bb = saved_null_failure_bb;
+            _union_failure_bb = saved_union_failure_bb;
             auto var_it = _context->_variables.find(stmt.get_cond_var());
             llvm::AllocaInst* alloca = var_it->second;
             auto& llvm_ctx = _builder->getContext();
@@ -1038,6 +1036,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
             }
         } else {
             _null_failure_bb = saved_null_failure_bb;
+            _union_failure_bb = saved_union_failure_bb;
 
             // Generate bool cast from the variable value (primitive, aggregate, etc.)
             auto var_it = _context->_variables.find(stmt.get_cond_var());
@@ -1088,6 +1087,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         // Classic form: if(expr) — no cond vars
         // =====================================================================
         _null_failure_bb = fail_dest;
+        _union_failure_bb = saved_union_failure_bb;
 
         _value = nullptr;
         stmt.get_test_expr()->accept(*this);
@@ -1095,6 +1095,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         _value = nullptr;
 
         _null_failure_bb = saved_null_failure_bb;
+        _union_failure_bb = saved_union_failure_bb;
 
         emit_expression_temporaries_cleanup();
 

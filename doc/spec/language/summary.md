@@ -529,10 +529,19 @@ Initializer: `= expr`, `(args…)` (constructor), `(args…)[N]` (uniform array 
 
 The test expression may be any type convertible to `bool`. `else if` chaining via nesting.
 
-**Condition variable declaration (if-let):** A local variable may be declared as the condition.
+**Condition-variable declaration (`if-let`):** A local variable may be declared as the condition.
 Its value, cast to `bool`, determines the branch. The variable is scoped to the `if` (destroyed
-at end of then/else). For non-nullable addressors (`&`, `+`), null triggers a soft-fail to `else`
-and the variable does not exist on that path.
+at end of then/else). Soft-fail applies in the classic `if-let` form and in the multi-variable
+soft-fail form (no trailing test expression):
+
+- for addressor initialization failures (for example null when binding a non-null addressor);
+- for explicit union alternative accesses used as initializers when the union does not currently
+  hold the requested alternative.
+
+On such a soft-fail, the condition is considered `false`, control goes to `else` (or continues
+after the `if`), and the condition variable does not exist on that path. The condition-variable
+forms with a trailing test expression (`if(var; test)` and `if(var1; ...; test)`) keep hard-fail
+initialization semantics.
 
 ### 9.5 While
 
@@ -1076,7 +1085,7 @@ A discriminated (tagged) union holds one active alternative at a time. A hidden
 |-----------|-----------|
 | Default construction | Constructs alternative 0; storage is zero-initialized. |
 | Explicit member assignment (`u.alt = x`) | Stores value, updates discriminant. |
-| Member access (`u.alt`) | Returns a reference to the alternative's storage (bitcast). |
+| Member access (`u.alt`) | Runtime-checks the discriminant; mismatch traps by default. In classic `if-let`, mismatch soft-fails to the false branch. |
 | Destruction | Switch on discriminant; calls destructor of active alternative if non-trivial. |
 
 ### 19b.3 Memory Layout

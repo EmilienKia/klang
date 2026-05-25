@@ -221,6 +221,11 @@ protected:
      *  Saved/restored for nested if-statements. */
     llvm::BasicBlock* _null_failure_bb = nullptr;
 
+    /** When non-null, union alternative discriminant mismatch checks branch to this
+     *  block instead of trapping. Used for if-condition variable soft-fail semantics
+     *  (if-let on union sub-type access), and saved/restored for nested if-statements. */
+    llvm::BasicBlock* _union_failure_bb = nullptr;
+
     /** When true, the next union member access will NOT emit a runtime
      *  discriminant check.  Set to true before evaluating the LHS of an
      *  assignment to a union alternative, and reset after evaluation. */

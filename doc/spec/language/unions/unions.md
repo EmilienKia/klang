@@ -139,10 +139,63 @@ v.d = 2.71;        // write alternative 'd'
   alternative's type.
 - **Write**: stores the value and updates the discriminant.
 
-> **Note:** Reading an alternative that is not currently active is valid at the
-> memory level (bitcast) but the value is meaningless. The language does not
-> insert a runtime check on read — the programmer is responsible for checking
-> `index()` before reading.
+### Runtime discriminant check on read
+
+Reading an alternative performs a **runtime discriminant check** before exposing
+the storage as the requested alternative type.
+
+- If the requested alternative is currently active, access succeeds.
+- If the active discriminant does not match the requested alternative, the
+  default behaviour is a **fatal trap**.
+
+```k
+union Value {
+    i: int;
+    d: double;
+}
+
+test() : int {
+    v : Value;
+    v.d = 3.14;
+    return v.i;    // fatal trap: active alternative is 'd', not 'i'
+}
+```
+
+### Special case: soft-fail inside classic `if-let`
+
+When an explicit union alternative access is used to initialize a condition-variable
+declaration in the classic `if-let` form, an alternative mismatch does **not** trap.
+Instead, it follows the `if-let` soft-fail path:
+
+- the condition evaluates to `false`,
+- control branches to `else` (or continues after the `if` when there is no `else`),
+- the condition variable is not created on that path.
+
+```k
+union Value {
+    i: int;
+    d: double;
+}
+
+test() : int {
+    v : Value;
+    v.d = 3.14;
+    if (x : int = v.i) {
+        return x;
+    } else {
+        return -1;   // entered because active alternative is 'd'
+    }
+}
+```
+
+This soft-fail exception applies to:
+
+- `if (var : T = u.alt)`
+- `if (var1 : T1 = ...; var2 : T2 = u.alt; ...)`
+
+It does **not** apply to condition-variable forms with a trailing test expression
+(`if(var; test)` / `if(var1; ...; test)`), where condition-variable initialization
+keeps ordinary fatal semantics.
 
 ---
 
