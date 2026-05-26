@@ -292,6 +292,9 @@ namespace k::parse {
         struct return_statement;
         struct break_statement;
         struct continue_statement;
+        struct throw_statement;
+        struct try_catch_statement;
+        struct catch_clause;
         typedef variable_decl declaration_statement;
         struct expression_statement;
         struct if_else_statement;
@@ -667,6 +670,47 @@ namespace k::parse {
             lex::keyword continue_kw;
 
             continue_statement(const lex::keyword& continue_kw) : continue_kw(continue_kw) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
+        struct throw_statement : public statement {
+            lex::keyword throw_kw;
+            ast::expr_ptr expr;
+
+            throw_statement(const lex::keyword& throw_kw, ast::expr_ptr expr)
+                : throw_kw(throw_kw), expr(std::move(expr)) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
+        struct catch_clause : public ast_node {
+            lex::keyword catch_kw;
+            bool is_const = false;
+            lex::identifier var_name;
+            std::shared_ptr<type_specifier> var_type;
+            std::shared_ptr<block_statement> body;
+
+            catch_clause(const lex::keyword& catch_kw, bool is_const,
+                         const lex::identifier& var_name,
+                         std::shared_ptr<type_specifier> var_type,
+                         std::shared_ptr<block_statement> body)
+                : catch_kw(catch_kw), is_const(is_const), var_name(var_name),
+                  var_type(std::move(var_type)), body(std::move(body)) {}
+
+            virtual void visit(ast_visitor &visitor) override;
+        };
+
+        struct try_catch_statement : public statement {
+            lex::keyword try_kw;
+            std::shared_ptr<block_statement> try_body;
+            std::vector<std::shared_ptr<catch_clause>> catch_clauses;
+
+            try_catch_statement(const lex::keyword& try_kw,
+                                std::shared_ptr<block_statement> try_body,
+                                std::vector<std::shared_ptr<catch_clause>> catch_clauses)
+                : try_kw(try_kw), try_body(std::move(try_body)),
+                  catch_clauses(std::move(catch_clauses)) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };
@@ -1279,6 +1323,12 @@ namespace k::parse {
             /** True when init is constructor-style (args...) vs assignment-style (= expr). */
             bool return_var_is_ctor_init = false;
 
+            /** Exception specification: list of exception types this function may throw.
+             *  Empty means the function is implicitly noexcept. */
+            std::vector<std::shared_ptr<qualified_identifier>> throws_spec;
+            /** True if a 'throws' clause was explicitly written. */
+            bool has_throws_clause = false;
+
             function_decl(const std::vector <lex::keyword> &specifiers, const lex::identifier &name,
                           const std::shared_ptr<ast::type_specifier> &type, const std::vector<std::shared_ptr<parameter_spec>> &params,
                           const std::shared_ptr <block_statement> &content, bool is_destructor = false) :
@@ -1456,6 +1506,9 @@ namespace k::parse {
         virtual void visit_return_statement(ast::return_statement &) = 0;
         virtual void visit_break_statement(ast::break_statement &) = 0;
         virtual void visit_continue_statement(ast::continue_statement &) = 0;
+        virtual void visit_throw_statement(ast::throw_statement &) = 0;
+        virtual void visit_try_catch_statement(ast::try_catch_statement &) = 0;
+        virtual void visit_catch_clause(ast::catch_clause &) = 0;
         virtual void visit_if_else_statement(ast::if_else_statement &) = 0;
         virtual void visit_while_statement(ast::while_statement &) = 0;
         virtual void visit_for_statement(ast::for_statement &) = 0;
@@ -1524,6 +1577,9 @@ namespace k::parse {
         void visit_return_statement(ast::return_statement &) override;
         void visit_break_statement(ast::break_statement &) override;
         void visit_continue_statement(ast::continue_statement &) override;
+        void visit_throw_statement(ast::throw_statement &) override;
+        void visit_try_catch_statement(ast::try_catch_statement &) override;
+        void visit_catch_clause(ast::catch_clause &) override;
         void visit_if_else_statement(ast::if_else_statement &) override;
         void visit_while_statement(ast::while_statement &) override;
         void visit_for_statement(ast::for_statement &) override;

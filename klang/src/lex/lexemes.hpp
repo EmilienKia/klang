@@ -151,7 +151,11 @@ struct keyword : public lexeme {
         TEMPLATE,
         TYPENAME,
         GENERIC,
-        UNION
+        UNION,
+        THROW,
+        TRY,
+        CATCH,
+        THROWS
     };
 
     type_t type;

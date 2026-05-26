@@ -193,6 +193,18 @@ enum class parser_diag : unsigned int {
     ERR_MULTIPLE_VARARGS                          = 0x01B2,
     // Warnings (0x01C0–0x01CF)
     WARN_SPURIOUS_FUN_PREFIX                      = 0x01C0,
+    // Exception-related parser errors (0x01D0–0x01DF)
+    ERR_THROW_EXPECT_EXPRESSION                   = 0x01D0,
+    ERR_THROW_MISSING_SEMICOLON                   = 0x01D1,
+    ERR_TRY_EXPECT_BODY                           = 0x01D2,
+    ERR_TRY_EXPECT_CATCH                          = 0x01D3,
+    ERR_CATCH_EXPECT_OPEN_PAREN                   = 0x01D4,
+    ERR_CATCH_EXPECT_IDENTIFIER                   = 0x01D5,
+    ERR_CATCH_EXPECT_COLON                        = 0x01D6,
+    ERR_CATCH_EXPECT_TYPE                         = 0x01D7,
+    ERR_CATCH_EXPECT_CLOSE_PAREN                  = 0x01D8,
+    ERR_CATCH_EXPECT_BODY                         = 0x01D9,
+    ERR_THROWS_EXPECT_TYPE                        = 0x01DA,
 };
 
 } // namespace k::diag

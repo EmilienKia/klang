@@ -117,6 +117,129 @@ std::shared_ptr<ast::continue_statement> parser::parse_continue_statement()
     return std::make_shared<ast::continue_statement>(lex::as<lex::keyword>(lcontinue));
 }
 
+std::shared_ptr<ast::throw_statement> parser::parse_throw_statement()
+{
+    lex::lex_holder holder(_lexer);
+
+    auto lthrow = _lexer.get();
+    if(lthrow != lex::keyword::THROW) {
+        holder.rollback();
+        return {};
+    }
+
+    auto expr = parse_expression();
+    if(!expr) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_THROW_EXPECT_EXPRESSION),
+                    _lexer.pick_current(), "Throw statement expects an expression");
+    }
+
+    auto lsemicolon = _lexer.get();
+    if(lsemicolon != lex::punctuator::SEMICOLON) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_THROW_MISSING_SEMICOLON),
+                    _lexer.pick_current(), "Throw statement expects a semicolon ';'");
+    }
+
+    return std::make_shared<ast::throw_statement>(lex::as<lex::keyword>(lthrow), expr);
+}
+
+std::shared_ptr<ast::catch_clause> parser::parse_catch_clause()
+{
+    lex::lex_holder holder(_lexer);
+
+    auto lcatch = _lexer.get();
+    if(lcatch != lex::keyword::CATCH) {
+        holder.rollback();
+        return {};
+    }
+
+    auto lpopen = _lexer.get();
+    if(lpopen != lex::punctuator::PARENTHESIS_OPEN) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CATCH_EXPECT_OPEN_PAREN),
+                    lpopen, "Catch clause expects an open parenthesis '('");
+    }
+
+    // Optional 'const'
+    bool is_const = false;
+    {
+        lex::lex_holder const_holder(_lexer);
+        auto lconst = _lexer.get();
+        if(lconst == lex::keyword::CONST) {
+            is_const = true;
+        } else {
+            const_holder.rollback();
+        }
+    }
+
+    // Identifier
+    auto lname = _lexer.get();
+    if(lex::is_not<lex::identifier>(lname)) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CATCH_EXPECT_IDENTIFIER),
+                    lname, "Catch clause expects a variable name");
+    }
+    auto var_name = lex::as<lex::identifier>(lname);
+
+    // Colon
+    auto lcolon = _lexer.get();
+    if(lcolon != lex::operator_::COLON) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CATCH_EXPECT_COLON),
+                    lcolon, "Catch clause expects ':' after variable name");
+    }
+
+    // Type specifier
+    auto var_type = parse_type_spec();
+    if(!var_type) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CATCH_EXPECT_TYPE),
+                    _lexer.pick_current(), "Catch clause expects a type specifier");
+    }
+
+    // Close parenthesis
+    auto lpclose = _lexer.get();
+    if(lpclose != lex::punctuator::PARENTHESIS_CLOSE) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CATCH_EXPECT_CLOSE_PAREN),
+                    lpclose, "Catch clause expects a close parenthesis ')'");
+    }
+
+    // Body block
+    auto body = parse_statement_block();
+    if(!body) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_CATCH_EXPECT_BODY),
+                    _lexer.pick_current(), "Catch clause expects a block statement body");
+    }
+
+    return std::make_shared<ast::catch_clause>(lex::as<lex::keyword>(lcatch), is_const,
+                                                var_name, var_type, body);
+}
+
+std::shared_ptr<ast::try_catch_statement> parser::parse_try_catch_statement()
+{
+    lex::lex_holder holder(_lexer);
+
+    auto ltry = _lexer.get();
+    if(ltry != lex::keyword::TRY) {
+        holder.rollback();
+        return {};
+    }
+
+    auto try_body = parse_statement_block();
+    if(!try_body) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TRY_EXPECT_BODY),
+                    _lexer.pick_current(), "Try statement expects a block statement body");
+    }
+
+    // Parse at least one catch clause
+    std::vector<std::shared_ptr<ast::catch_clause>> catch_clauses;
+    while(auto clause = parse_catch_clause()) {
+        catch_clauses.push_back(clause);
+    }
+
+    if(catch_clauses.empty()) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TRY_EXPECT_CATCH),
+                    _lexer.pick_current(), "Try statement requires at least one catch clause");
+    }
+
+    return std::make_shared<ast::try_catch_statement>(lex::as<lex::keyword>(ltry), try_body, catch_clauses);
+}
+
 std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {
     lex::lex_holder holder(_lexer);
 
@@ -494,6 +617,14 @@ std::shared_ptr<ast::statement> parser::parse_statement()
 
     if(auto cont = parse_continue_statement()) {
         return cont;
+    }
+
+    if(auto throw_stmt = parse_throw_statement()) {
+        return throw_stmt;
+    }
+
+    if(auto try_stmt = parse_try_catch_statement()) {
+        return try_stmt;
     }
 
     if(auto if_else = parse_if_else_statement()) {

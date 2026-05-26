@@ -131,6 +131,18 @@ void default_model_visitor::visit_continue_statement(continue_statement &stmt) {
     visit_statement(stmt);
 }
 
+void default_model_visitor::visit_throw_statement(throw_statement &stmt) {
+    visit_statement(stmt);
+}
+
+void default_model_visitor::visit_try_catch_statement(try_catch_statement &stmt) {
+    visit_statement(stmt);
+}
+
+void default_model_visitor::visit_catch_clause(catch_clause &stmt) {
+    visit_statement(stmt);
+}
+
 void default_model_visitor::visit_if_else_statement(if_else_statement &stmt) {
     visit_statement(stmt);
 }

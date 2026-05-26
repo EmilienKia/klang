@@ -75,7 +75,11 @@ namespace k::lex {
         {"template", keyword::TEMPLATE},
         {"typename", keyword::TYPENAME},
         {"generic", keyword::GENERIC},
-        {"union", keyword::UNION}
+        {"union", keyword::UNION},
+        {"throw", keyword::THROW},
+        {"try", keyword::TRY},
+        {"catch", keyword::CATCH},
+        {"throws", keyword::THROWS}
     };
 
     const std::map<std::string, punctuator::type_t> punctuators {

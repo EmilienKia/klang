@@ -125,6 +125,18 @@ void ast::continue_statement::visit(ast_visitor &visitor) {
     visitor.visit_continue_statement(*this);
 }
 
+void ast::throw_statement::visit(ast_visitor &visitor) {
+    visitor.visit_throw_statement(*this);
+}
+
+void ast::catch_clause::visit(ast_visitor &visitor) {
+    visitor.visit_catch_clause(*this);
+}
+
+void ast::try_catch_statement::visit(ast_visitor &visitor) {
+    visitor.visit_try_catch_statement(*this);
+}
+
 void ast::if_else_statement::visit(ast_visitor &visitor) {
     visitor.visit_if_else_statement(*this);
 }
@@ -344,6 +356,18 @@ void default_ast_visitor::visit_break_statement(ast::break_statement &) {
 }
 
 void default_ast_visitor::visit_continue_statement(ast::continue_statement &) {
+
+}
+
+void default_ast_visitor::visit_throw_statement(ast::throw_statement &) {
+
+}
+
+void default_ast_visitor::visit_try_catch_statement(ast::try_catch_statement &) {
+
+}
+
+void default_ast_visitor::visit_catch_clause(ast::catch_clause &) {
 
 }
 

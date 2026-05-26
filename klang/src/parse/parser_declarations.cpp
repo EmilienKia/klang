@@ -1714,7 +1714,8 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 peek_holder.rollback();
                 bool is_return_type = (next == lex::punctuator::BRACE_OPEN)
                     || (next == lex::punctuator::SEMICOLON)
-                    || (next == lex::operator_::ARROW);
+                    || (next == lex::operator_::ARROW)
+                    || (next == lex::keyword::THROWS);
                 if(is_return_type) {
                     // It really is a return type
                     restype = candidate_type;
@@ -1794,6 +1795,21 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     }
 
     parse_body:
+
+    // Parse optional throws clause: 'throws' QualifiedIdentifier { ',' QualifiedIdentifier }
+    std::vector<std::shared_ptr<ast::qualified_identifier>> throws_spec;
+    bool has_throws_clause = false;
+    {
+        lex::lex_holder throws_holder(_lexer);
+        auto maybe_throws = _lexer.get();
+        if (maybe_throws == lex::keyword::THROWS) {
+            has_throws_clause = true;
+            throws_spec = parse_throws_clause();
+        } else {
+            throws_holder.rollback();
+        }
+    }
+
     auto statements = parse_statement_block();
     if(!statements) {
         // Try to parse a function-aliasing declaration: -> ('default'|'delete'|qualifiedId) ';'
@@ -1905,6 +1921,10 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 decl->annotations = std::move(annotations);
                 decl->template_params = std::move(template_params);
                 decl->is_generic = fn_is_generic;
+                if (has_throws_clause) {
+                    decl->has_throws_clause = true;
+                    decl->throws_spec = std::move(throws_spec);
+                }
                 return decl;
             }
             semi_holder.rollback();
@@ -1922,6 +1942,10 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
         decl->return_var_name = return_var_name;
         decl->return_var_init_expr = return_var_init_expr;
         decl->return_var_is_ctor_init = return_var_is_ctor_init;
+    }
+    if (has_throws_clause) {
+        decl->has_throws_clause = true;
+        decl->throws_spec = std::move(throws_spec);
     }
 
     // Capture template source text for KDI export: from 'template' keyword through closing '}'
@@ -2018,6 +2042,37 @@ std::shared_ptr<ast::parameter_spec> parser::parse_parameter_spec()
     }
 
     return std::make_shared<ast::parameter_spec>(std::move(annotations), specifiers, name, type, std::move(default_expr), is_varargs, is_pack_expansion);
+}
+
+std::vector<std::shared_ptr<ast::qualified_identifier>> parser::parse_throws_clause()
+{
+    // Called after the 'throws' keyword has been consumed.
+    // Parse: QualifiedIdentifier { ',' QualifiedIdentifier }
+    std::vector<std::shared_ptr<ast::qualified_identifier>> types;
+
+    auto first = parse_qualified_identifier();
+    if (!first) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_TYPE),
+                    _lexer.pick_current(), "Throws clause expects at least one exception type name");
+    }
+    types.push_back(first);
+
+    while (true) {
+        lex::lex_holder comma_holder(_lexer);
+        auto maybe_comma = _lexer.get();
+        if (maybe_comma != lex::punctuator::COMMA) {
+            comma_holder.rollback();
+            break;
+        }
+        auto next_type = parse_qualified_identifier();
+        if (!next_type) {
+            throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_THROWS_EXPECT_TYPE),
+                        _lexer.pick_current(), "Throws clause expects an exception type name after ','");
+        }
+        types.push_back(next_type);
+    }
+
+    return types;
 }
 
 } // k::parse

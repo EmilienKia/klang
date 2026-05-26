@@ -380,6 +380,7 @@ protected:
     friend class block;
     friend class for_statement;
     friend class if_else_statement;
+    friend class catch_clause;
     friend class gen::implementation_generator;
     friend class template_instantiator;
 
@@ -430,6 +431,107 @@ public:
     }
 
     virtual variable_definition& set_init_expr(std::shared_ptr<constructor_invocation_expression> init_expr) override;
+};
+
+
+/**
+ * Throw statement — throws an exception object.
+ */
+class throw_statement : public statement
+{
+protected:
+    std::shared_ptr<expression> _expression;
+
+public:
+    throw_statement() = delete;
+    throw_statement(const std::shared_ptr<statement>& parent) :
+            statement(parent) {}
+    throw_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::throw_statement>& ast) :
+            statement(parent) { _ast_node = ast; }
+
+    void accept(model_visitor& visitor) override;
+
+    std::shared_ptr<expression> get_expression() { return _expression; }
+    std::shared_ptr<const expression> get_expression() const { return _expression; }
+
+    throw_statement& set_expression(std::shared_ptr<expression> expr) {
+        _expression = expr;
+        set_this_as_parent_to(_expression);
+        return *this;
+    }
+};
+
+/**
+ * Catch clause — a single handler in a try-catch statement.
+ * Declares a variable holding the caught exception reference.
+ */
+class catch_clause : public statement, public variable_holder
+{
+protected:
+    friend class block;
+
+    bool _is_const = false;
+    std::shared_ptr<variable_statement> _exception_var;
+    std::shared_ptr<block> _body;
+
+    std::shared_ptr<variable_definition> do_create_variable(const std::string &name, bool is_static) override;
+    void on_variable_defined(std::shared_ptr<variable_definition>) override;
+
+public:
+    catch_clause() = delete;
+    catch_clause(const std::shared_ptr<statement>& parent) :
+            statement(parent) {}
+
+    void accept(model_visitor& visitor) override;
+
+    bool is_const() const { return _is_const; }
+    void set_const(bool c) { _is_const = c; }
+
+    std::shared_ptr<variable_statement> get_exception_var() { return _exception_var; }
+    std::shared_ptr<const variable_statement> get_exception_var() const { return _exception_var; }
+    void set_exception_var(std::shared_ptr<variable_statement> var) { _exception_var = std::move(var); }
+
+    std::shared_ptr<block> get_body() { return _body; }
+    std::shared_ptr<const block> get_body() const { return _body; }
+    void set_body(std::shared_ptr<block> body) {
+        _body = std::move(body);
+        if (_body) set_this_as_parent_to(std::static_pointer_cast<statement>(_body));
+    }
+
+    std::shared_ptr<variable_holder> get_variable_holder() override;
+    std::shared_ptr<const variable_holder> get_variable_holder() const override;
+};
+
+/**
+ * Try-catch statement — exception handling block.
+ */
+class try_catch_statement : public statement
+{
+protected:
+    std::shared_ptr<block> _try_body;
+    std::vector<std::shared_ptr<catch_clause>> _catch_clauses;
+
+public:
+    try_catch_statement() = delete;
+    try_catch_statement(const std::shared_ptr<statement>& parent) :
+            statement(parent) {}
+    try_catch_statement(const std::shared_ptr<statement>& parent, const std::shared_ptr<k::parse::ast::try_catch_statement>& ast) :
+            statement(parent) { _ast_node = ast; }
+
+    void accept(model_visitor& visitor) override;
+
+    std::shared_ptr<block> get_try_body() { return _try_body; }
+    std::shared_ptr<const block> get_try_body() const { return _try_body; }
+    void set_try_body(std::shared_ptr<block> body) {
+        _try_body = std::move(body);
+        if (_try_body) set_this_as_parent_to(std::static_pointer_cast<statement>(_try_body));
+    }
+
+    const std::vector<std::shared_ptr<catch_clause>>& get_catch_clauses() const { return _catch_clauses; }
+    std::vector<std::shared_ptr<catch_clause>>& get_catch_clauses() { return _catch_clauses; }
+    void add_catch_clause(std::shared_ptr<catch_clause> clause) {
+        _catch_clauses.push_back(std::move(clause));
+    }
 };
 
 

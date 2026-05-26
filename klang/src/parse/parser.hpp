@@ -236,6 +236,12 @@ public:
     std::shared_ptr<ast::function_decl> parse_function_decl();
 
     /**
+     * ThrowsClause = 'throws' , QualifiedIdentifier , { ',' , QualifiedIdentifier } ;
+     * Returns the list of exception type names. Called after return type, before body.
+     */
+    std::vector<std::shared_ptr<ast::qualified_identifier>> parse_throws_clause();
+
+    /**
      * ParameterSpec = { AnnotationDef } , { Specifier } ,
      *                 [ Identifier , ':' ] , TypeSpec ,
      *                 [ '=' , ConditionalExpr ] ;
@@ -298,6 +304,21 @@ public:
       * ContinueStatement = 'continue' , ';' ;
       */
      std::shared_ptr<ast::continue_statement> parse_continue_statement();
+
+     /**
+      * ThrowStatement = 'throw' , Expression , ';' ;
+      */
+     std::shared_ptr<ast::throw_statement> parse_throw_statement();
+
+     /**
+      * TryCatchStatement = 'try' , BlockStatement , CatchClause , { CatchClause } ;
+      */
+     std::shared_ptr<ast::try_catch_statement> parse_try_catch_statement();
+
+     /**
+      * CatchClause = 'catch' , '(' , [ 'const' ] , Identifier , ':' , TypeSpec , ')' , BlockStatement ;
+      */
+     std::shared_ptr<ast::catch_clause> parse_catch_clause();
 
      /**
       * IfElseStatement = 'if' , '(' , Expression , ')' , Statement ,

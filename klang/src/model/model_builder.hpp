@@ -151,6 +151,9 @@ protected:
     void visit_return_statement(parse::ast::return_statement &) override;
     void visit_break_statement(parse::ast::break_statement &) override;
     void visit_continue_statement(parse::ast::continue_statement &) override;
+    void visit_throw_statement(parse::ast::throw_statement &) override;
+    void visit_try_catch_statement(parse::ast::try_catch_statement &) override;
+    void visit_catch_clause(parse::ast::catch_clause &) override;
     void visit_if_else_statement(parse::ast::if_else_statement &) override;
     void visit_while_statement(parse::ast::while_statement &) override;
     void visit_for_statement(parse::ast::for_statement &) override;

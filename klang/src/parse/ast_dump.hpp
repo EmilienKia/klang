@@ -438,6 +438,35 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             prefix() << "continue;" << std::endl;
         }
 
+        virtual void visit_throw_statement(ast::throw_statement& stmt) override {
+            prefix() << "throw ";
+            if(stmt.expr) stmt.expr->visit(*this);
+            _stm << ";" << std::endl;
+        }
+
+        virtual void visit_catch_clause(ast::catch_clause& clause) override {
+            prefix() << "catch (";
+            if(clause.is_const) _stm << "const ";
+            _stm << std::string(clause.var_name.content) << " : ";
+            if(clause.var_type) clause.var_type->visit(*this);
+            _stm << ") " << std::endl;
+            if(clause.body) {
+                auto h = prefix_inc();
+                clause.body->visit(*this);
+            }
+        }
+
+        virtual void visit_try_catch_statement(ast::try_catch_statement& stmt) override {
+            prefix() << "try " << std::endl;
+            if(stmt.try_body) {
+                auto h = prefix_inc();
+                stmt.try_body->visit(*this);
+            }
+            for(auto& clause : stmt.catch_clauses) {
+                clause->visit(*this);
+            }
+        }
+
         virtual void visit_if_else_statement(ast::if_else_statement& stmt) override {
             if(stmt.has_cond_var()) {
                 prefix() << "if ( ";

@@ -92,6 +92,47 @@ void continue_statement::accept(model_visitor &visitor) {
 
 
 //
+// Throw statement
+//
+void throw_statement::accept(model_visitor &visitor) {
+    visitor.visit_throw_statement(*this);
+}
+
+
+//
+// Catch clause
+//
+void catch_clause::accept(model_visitor &visitor) {
+    visitor.visit_catch_clause(*this);
+}
+
+std::shared_ptr<variable_definition> catch_clause::do_create_variable(const std::string &name, bool is_static) {
+    auto var = variable_statement::make_shared(shared_as<statement>(), name);
+    _exception_var = var;
+    return var;
+}
+
+void catch_clause::on_variable_defined(std::shared_ptr<variable_definition>) {
+}
+
+std::shared_ptr<variable_holder> catch_clause::get_variable_holder() {
+    return shared_as<variable_holder>();
+}
+
+std::shared_ptr<const variable_holder> catch_clause::get_variable_holder() const {
+    return shared_as<const variable_holder>();
+}
+
+
+//
+// Try-catch statement
+//
+void try_catch_statement::accept(model_visitor &visitor) {
+    visitor.visit_try_catch_statement(*this);
+}
+
+
+//
 // If then else statement
 //
 void if_else_statement::accept(model_visitor &visitor) {

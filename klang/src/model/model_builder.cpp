@@ -1278,6 +1278,13 @@ namespace k::model {
 
         // TODO add function specs
 
+        // Propagate exception specification (throws clause)
+        if (func.has_throws_clause) {
+            for (auto& qid : func.throws_spec) {
+                function->add_throws_spec_raw(qid->to_name().to_string());
+            }
+        }
+
         if(func.type) {
             if(std::dynamic_pointer_cast<constructor>(function)) {
                 throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_CTOR_HAS_RETURN_TYPE), func.name, "Constructor '{}' must not have a return type; constructors implicitly return an instance of their owning type", {func_name});
@@ -1533,6 +1540,80 @@ namespace k::model {
         std::shared_ptr<model::continue_statement> continue_stmt = std::make_shared<model::continue_statement>(parent_scope, stmt.shared_as<parse::ast::continue_statement>());
 
         _stmt = continue_stmt;
+    }
+
+    void model_builder::visit_throw_statement(parse::ast::throw_statement &stmt) {
+        auto parent_scope = current_context_content<statement>();
+        if(!parent_scope) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_BREAK_NOT_IN_LOOP), stmt.throw_kw, "'throw' statement cannot appear here; it must be inside a function body");
+        }
+
+        auto throw_stmt = std::make_shared<model::throw_statement>(parent_scope, stmt.shared_as<parse::ast::throw_statement>());
+
+        // Build expression
+        if(stmt.expr) {
+            stmt.expr->visit(*this);
+            throw_stmt->set_expression(_expr);
+        }
+
+        _stmt = throw_stmt;
+    }
+
+    void model_builder::visit_try_catch_statement(parse::ast::try_catch_statement &stmt) {
+        auto parent_scope = current_context_content<statement>();
+        if(!parent_scope) {
+            throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_BREAK_NOT_IN_LOOP), stmt.try_kw, "'try' statement cannot appear here; it must be inside a function body");
+        }
+
+        auto try_stmt = std::make_shared<model::try_catch_statement>(parent_scope, stmt.shared_as<parse::ast::try_catch_statement>());
+
+        // Build try body
+        if(stmt.try_body) {
+            auto block_model = std::make_shared<model::block>(try_stmt);
+            stack<block_context> push(_contexts, block_model);
+            for(auto& s : stmt.try_body->statements) {
+                s->visit(*this);
+                if(_stmt) {
+                    block_model->append_statement(_stmt);
+                }
+            }
+            try_stmt->set_try_body(block_model);
+        }
+
+        // Build catch clauses
+        for(auto& clause : stmt.catch_clauses) {
+            auto catch_model = std::make_shared<model::catch_clause>(try_stmt);
+            catch_model->set_const(clause->is_const);
+
+            // Create the exception variable
+            std::string var_name = std::string{clause->var_name.content};
+            auto var = catch_model->append_variable(var_name, false);
+            if(var && clause->var_type) {
+                var->set_type(_context->from_type_specifier(*clause->var_type));
+            }
+            catch_model->set_exception_var(std::dynamic_pointer_cast<model::variable_statement>(var));
+
+            // Build catch body
+            if(clause->body) {
+                auto body_block = std::make_shared<model::block>(catch_model);
+                stack<block_context> push2(_contexts, body_block);
+                for(auto& s : clause->body->statements) {
+                    s->visit(*this);
+                    if(_stmt) {
+                        body_block->append_statement(_stmt);
+                    }
+                }
+                catch_model->set_body(body_block);
+            }
+
+            try_stmt->add_catch_clause(catch_model);
+        }
+
+        _stmt = try_stmt;
+    }
+
+    void model_builder::visit_catch_clause(parse::ast::catch_clause &) {
+        // Catch clauses are handled directly by visit_try_catch_statement
     }
 
     void model_builder::visit_if_else_statement(parse::ast::if_else_statement &stmt) {

@@ -242,6 +242,12 @@ protected:
       */
     std::unordered_map<std::string, std::shared_ptr<type>> _tpl_instantiation_subst;
 
+    /** Raw unresolved exception type names from parser (consumed during resolution). */
+    std::vector<std::string> _throws_spec_raw;
+
+    /** Resolved exception types that this function may throw. Empty = noexcept. */
+    std::vector<std::shared_ptr<type>> _throws_spec;
+
     function(std::shared_ptr<element> parent, bool is_static = false) :
         element(parent), _is_static(is_static) {}
 
@@ -261,6 +267,18 @@ public:
     bool has_return_type() const {return _return_type != nullptr;}
     std::shared_ptr<type> get_return_type() {return _return_type;}
     std::shared_ptr<const type> get_return_type() const {return _return_type;}
+
+    // ── Exception specification ──────────────────────────────────────────────
+    /** True if this function has an explicit throws clause (even if empty after resolution). */
+    bool has_throws_spec() const { return !_throws_spec_raw.empty() || !_throws_spec.empty(); }
+    /** True if this function is guaranteed not to throw (no throws clause). */
+    bool is_noexcept() const { return _throws_spec_raw.empty() && _throws_spec.empty(); }
+    /** Raw unresolved exception type names (set by model builder, consumed by resolver). */
+    const std::vector<std::string>& get_throws_spec_raw() const { return _throws_spec_raw; }
+    void add_throws_spec_raw(const std::string& name) { _throws_spec_raw.push_back(name); }
+    /** Resolved exception types. */
+    const std::vector<std::shared_ptr<type>>& get_throws_spec() const { return _throws_spec; }
+    void add_throws_type(std::shared_ptr<type> t) { _throws_spec.push_back(std::move(t)); }
 
     const std::vector<std::shared_ptr<parameter>>& parameters() const {
         return _parameters;
