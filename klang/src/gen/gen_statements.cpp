@@ -677,6 +677,128 @@ void implementation_generator::visit_continue_statement(continue_statement& stmt
 }
 
 //
+// Throw statement
+//
+
+void symbol_resolver::visit_throw_statement(throw_statement& stmt)
+{
+    if(auto expr = stmt.get_expression()) {
+        expr->accept(*this);
+    }
+}
+
+void type_reference_resolver::visit_throw_statement(throw_statement& stmt)
+{
+    if(auto expr = stmt.get_expression()) {
+        _replacement_expr = nullptr;
+        expr->accept(*this);
+        if (_replacement_expr) {
+            stmt.set_expression(_replacement_expr);
+            _replacement_expr = nullptr;
+        }
+    }
+    // TODO: validate that the expression type derives from ::k::Exception
+}
+
+void declaration_generator::visit_throw_statement(throw_statement& stmt) {
+    // Nothing to do here
+}
+
+void implementation_generator::visit_throw_statement(throw_statement& stmt) {
+    // TODO: implement throw codegen (allocate exception, copy, __cxa_throw)
+    // For now, emit a trap to prevent silent miscompilation
+    auto* trap_fn = llvm::Intrinsic::getDeclaration(&_context->module(), llvm::Intrinsic::trap);
+    _builder->CreateCall(trap_fn);
+    _builder->CreateUnreachable();
+
+    // Create a new basic block for any code following the throw (unreachable)
+    auto* func = _builder->GetInsertBlock()->getParent();
+    auto* after_throw = llvm::BasicBlock::Create(_context->llvm_context(), "after_throw", func);
+    _builder->SetInsertPoint(after_throw);
+}
+
+//
+// Try-catch statement
+//
+
+void symbol_resolver::visit_try_catch_statement(try_catch_statement& stmt)
+{
+    if(auto body = stmt.get_try_body()) {
+        body->accept(*this);
+    }
+    for(auto& clause : stmt.get_catch_clauses()) {
+        if(auto var = clause->get_exception_var()) {
+            var->accept(*this);
+        }
+        if(auto body = clause->get_body()) {
+            body->accept(*this);
+        }
+    }
+}
+
+void type_reference_resolver::visit_try_catch_statement(try_catch_statement& stmt)
+{
+    if(auto body = stmt.get_try_body()) {
+        body->accept(*this);
+    }
+    for(auto& clause : stmt.get_catch_clauses()) {
+        if(auto var = clause->get_exception_var()) {
+            var->accept(*this);
+        }
+        if(auto body = clause->get_body()) {
+            body->accept(*this);
+        }
+    }
+    // TODO: validate catch clause types derive from ::k::Exception
+    // TODO: validate catch clause types use reference addresser
+}
+
+void declaration_generator::visit_try_catch_statement(try_catch_statement& stmt) {
+    // Nothing to do here
+}
+
+void implementation_generator::visit_try_catch_statement(try_catch_statement& stmt) {
+    // TODO: implement try-catch codegen (invoke, landingpad, type matching)
+    // For now, just generate the try body without exception handling
+    if(auto body = stmt.get_try_body()) {
+        body->accept(*this);
+    }
+    // Catch clauses are not yet generated
+}
+
+//
+// Catch clause
+//
+
+void symbol_resolver::visit_catch_clause(catch_clause& clause)
+{
+    if(auto var = clause.get_exception_var()) {
+        var->accept(*this);
+    }
+    if(auto body = clause.get_body()) {
+        body->accept(*this);
+    }
+}
+
+void type_reference_resolver::visit_catch_clause(catch_clause& clause)
+{
+    if(auto var = clause.get_exception_var()) {
+        var->accept(*this);
+    }
+    if(auto body = clause.get_body()) {
+        body->accept(*this);
+    }
+}
+
+void declaration_generator::visit_catch_clause(catch_clause& clause) {
+    // Nothing to do here
+}
+
+void implementation_generator::visit_catch_clause(catch_clause& clause) {
+    // TODO: implement catch clause codegen
+}
+
+//
 // If-then-else
 //
 

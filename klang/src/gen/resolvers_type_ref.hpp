@@ -309,6 +309,9 @@ protected:
     void visit_return_statement(return_statement&) override;
     void visit_break_statement(break_statement&) override;
     void visit_continue_statement(continue_statement&) override;
+    void visit_throw_statement(throw_statement&) override;
+    void visit_try_catch_statement(try_catch_statement&) override;
+    void visit_catch_clause(catch_clause&) override;
     void visit_if_else_statement(if_else_statement&) override;
     void visit_while_statement(while_statement&) override;
     void visit_for_statement(for_statement&) override;
