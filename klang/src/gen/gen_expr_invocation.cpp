@@ -1494,7 +1494,8 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     };
 
     // ── Helper lambda: emit a call with sret if needed ──────────────────────
-    // Wraps CreateCall: if the callee uses sret ABI, prepend the sret pointer.
+    // Wraps CreateCall/CreateInvoke: if the callee uses sret ABI, prepend the sret pointer.
+    // Uses invoke when inside a try-catch block for exception unwinding.
     // Returns the sret pointer (or nullptr if not sret).
     auto emit_sret_call = [&](llvm::FunctionType* fn_type, llvm::Value* callee_val,
                                std::vector<llvm::Value*>& call_args,
@@ -1513,11 +1514,11 @@ void implementation_generator::visit_function_invocation_expression(function_inv
             auto* sret_fn_type = llvm::FunctionType::get(
                 llvm::Type::getVoidTy(**_context), param_types, false);
 
-            _builder->CreateCall(sret_fn_type, callee_val, call_args);
+            create_call_or_invoke(sret_fn_type, callee_val, call_args);
             return sret_ptr;
         }
         // Non-sret call
-        _value = _builder->CreateCall(fn_type, callee_val, call_args,
+        _value = create_call_or_invoke(fn_type, callee_val, call_args,
             fn_type->getReturnType()->isVoidTy() ? "" : name);
         return nullptr;
     };
@@ -2063,10 +2064,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 llvm::Value* sret_alloca = get_sret_ptr_for_call();
                 // Step 4: If sret return: allocate temp or use _sret_destination, pass as first arg
                 args.insert(args.begin(), sret_alloca);
-                _builder->CreateCall(fn_type, fn_ptr, args);
+                create_call_or_invoke(fn_type, fn_ptr, args);
                 handle_sret_result(sret_alloca);
             } else {
-                _value = _builder->CreateCall(fn_type, fn_ptr, args,
+                _value = create_call_or_invoke(fn_type, fn_ptr, args,
                     fn_type->getReturnType()->isVoidTy() ? "" : "imp_vcall");
             }
             return;
@@ -2078,10 +2079,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     if (call_uses_sret) {
         llvm::Value* sret_alloca = get_sret_ptr_for_call();
         args.insert(args.begin(), sret_alloca);
-        _builder->CreateCall(llvm_func, args);
+        create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args);
         handle_sret_result(sret_alloca);
     } else {
-        _value = _builder->CreateCall(llvm_func, args);
+        _value = create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args);
     }
 }
 

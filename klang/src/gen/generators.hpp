@@ -241,6 +241,29 @@ protected:
      *  landing pad instead of using a plain call to __cxa_throw. */
     std::stack<llvm::BasicBlock*> _landing_pad_stack;
 
+    /**
+     * Emit a function call or invoke instruction depending on exception context.
+     * When inside a try-catch (_landing_pad_stack non-empty), emits an invoke
+     * instruction that unwinds to the current landing pad on exception.
+     * Otherwise, emits a plain call instruction.
+     *
+     * @param fn_type   The LLVM function type.
+     * @param callee    The callee value (function pointer).
+     * @param args      Arguments to the call.
+     * @param name      Optional name for the result value.
+     * @return          The call/invoke instruction's return value.
+     */
+    llvm::Value* create_call_or_invoke(llvm::FunctionType* fn_type, llvm::Value* callee,
+                                       llvm::ArrayRef<llvm::Value*> args,
+                                       const llvm::Twine& name = "");
+
+    /**
+     * Overload for FunctionCallee (from getOrInsertFunction).
+     */
+    llvm::Value* create_call_or_invoke(llvm::FunctionCallee callee,
+                                       llvm::ArrayRef<llvm::Value*> args,
+                                       const llvm::Twine& name = "");
+
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(code, message, args);
         if (lexeme) diag.at(*lexeme);

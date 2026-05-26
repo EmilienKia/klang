@@ -253,8 +253,75 @@ TEST_CASE("Exception: throw inside try-catch is caught at runtime", "[gen][excep
     REQUIRE(fn() == 77);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  5. Exception thrown by called function, caught by caller (invoke test)
+// ════════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("Exception: throw in called function caught by caller via invoke", "[gen][exceptions][run][invoke]") {
+    // The called function throws; the caller wraps it in try-catch.
+    // This verifies that invoke (not call) is used for the function call.
+    auto jit = gen_jit(R"(
+        module __test_exc_invoke_1__;
 
+        struct AppError {
+            code : int;
+        }
 
+        thrower() : void {
+            e : AppError;
+            e.code = 123;
+            throw e;
+        }
+
+        test_invoke_catch() : int {
+            result : int = 0;
+            try {
+                thrower();
+                result = 999;
+            } catch (p: AppError*) {
+                result = 42;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_invoke_catch");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  6. Nested try-catch: inner catches, outer not reached
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception: nested try-catch blocks", "[gen][exceptions][run][nested]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_nested_1__;
+
+        struct ErrA {
+            val : int;
+        }
+
+        test_nested() : int {
+            result : int = 0;
+            try {
+                try {
+                    e : ErrA;
+                    e.val = 10;
+                    throw e;
+                } catch (p: ErrA*) {
+                    result = 55;
+                }
+            } catch (p: ErrA*) {
+                result = 999;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_nested");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 55);
+}
 
 

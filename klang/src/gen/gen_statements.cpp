@@ -27,6 +27,38 @@ namespace k::model::gen {
 
 using namespace k::model;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Exception-aware call/invoke helper
+// ═══════════════════════════════════════════════════════════════════════════════
+
+llvm::Value* implementation_generator::create_call_or_invoke(
+    llvm::FunctionType* fn_type, llvm::Value* callee,
+    llvm::ArrayRef<llvm::Value*> args, const llvm::Twine& name)
+{
+    if (!_landing_pad_stack.empty()) {
+        // Inside a try-catch: use invoke so exceptions unwind to the landing pad
+        auto& llvm_ctx = _context->llvm_context();
+        auto* current_func = _builder->GetInsertBlock()->getParent();
+        auto* normal_bb = llvm::BasicBlock::Create(llvm_ctx, "invoke_cont", current_func);
+        auto* invoke_inst = _builder->CreateInvoke(
+            fn_type, callee, normal_bb, _landing_pad_stack.top(), args);
+        if (!fn_type->getReturnType()->isVoidTy() && !name.isTriviallyEmpty()) {
+            invoke_inst->setName(name);
+        }
+        _builder->SetInsertPoint(normal_bb);
+        return invoke_inst;
+    }
+    // Not inside try-catch: plain call
+    return _builder->CreateCall(fn_type, callee, args, name);
+}
+
+llvm::Value* implementation_generator::create_call_or_invoke(
+    llvm::FunctionCallee callee, llvm::ArrayRef<llvm::Value*> args,
+    const llvm::Twine& name)
+{
+    return create_call_or_invoke(callee.getFunctionType(), callee.getCallee(), args, name);
+}
+
 /**
  * Find the union_type_def whose struct_type matches the given type.
  * Searches all namespaces in the unit (currently only root namespace).
