@@ -696,6 +696,40 @@ void type_reference_resolver::visit_function(function& fn) {
         }
     }
 
+    // Resolve throws spec types from raw names
+    if (!fn.get_throws_spec_raw().empty() && fn.get_throws_spec().empty()) {
+        lex::opt_any_lexeme throws_lexeme;
+        if (auto ast_fd = fn.get_ast_function_decl()) throws_lexeme = lex::any_lexeme{ast_fd->name};
+
+        for (const auto& raw_name : fn.get_throws_spec_raw()) {
+            // Look up the type by name (it should resolve to a struct/class)
+            auto unres = _context->create_unresolved(k::name(raw_name));
+            auto resolved = _context->resolve_type(unres);
+            if (resolved && type::is_resolved(resolved)) {
+                fn.add_throws_type(resolved);
+            } else {
+                // Try scope lookup — the type may be in the same namespace
+                auto agg = scope_lookup::lookup_structure(fn.shared_as<element>(), raw_name);
+                if (agg) {
+                    auto st = agg->get_struct_type();
+                    if (st) {
+                        fn.add_throws_type(st);
+                    } else {
+                        // Create a struct_type for the aggregate
+                        st = std::make_shared<struct_type>(agg->get_short_name(), agg);
+                        _context->add_struct(st);
+                        agg->set_struct_type(st);
+                        fn.add_throws_type(st);
+                    }
+                } else {
+                    throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
+                                throws_lexeme, "Cannot resolve type '{}' in throws clause of function '{}'",
+                                {raw_name, fn.get_short_name()});
+                }
+            }
+        }
+    }
+
     // Redirected functions have no body to visit
     if (fn.is_redirected()) {
         return;

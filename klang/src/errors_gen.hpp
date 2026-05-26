@@ -253,6 +253,58 @@ enum class generic_diag : unsigned int {
     ERR_GENERIC_TOO_FEW_ARGS                      = 0x01B4,
 };
 
+// ────────────────────────────────────────────────────────────────────────────
+// Exception diagnostics (throw, try-catch, throws clause, contract verification)
+// ────────────────────────────────────────────────────────────────────────────
+enum class exception_diag : unsigned int {
+    /**
+     * The expression in a throw statement does not derive from ::k::Exception.
+     */
+    ERR_THROW_NOT_EXCEPTION_TYPE                  = 0x01C0,
+
+    /**
+     * A catch clause uses a type that does not derive from ::k::Exception.
+     */
+    ERR_CATCH_NOT_EXCEPTION_TYPE                  = 0x01C1,
+
+    /**
+     * A catch clause must catch by reference (&) addresser.
+     */
+    ERR_CATCH_MUST_BE_REFERENCE                   = 0x01C2,
+
+    /**
+     * A type name in a throws clause could not be resolved to a known type.
+     */
+    ERR_THROWS_TYPE_NOT_FOUND                     = 0x01C3,
+
+    /**
+     * A type in a throws clause does not derive from ::k::Exception.
+     */
+    ERR_THROWS_NOT_EXCEPTION_TYPE                 = 0x01C4,
+
+    /**
+     * A function throws an exception type not declared in its throws clause.
+     */
+    ERR_THROW_UNDECLARED_EXCEPTION                = 0x01C5,
+
+    /**
+     * A call to a throwing function is not inside a try-catch block and the
+     * calling function does not declare the exception in its own throws clause.
+     */
+    ERR_UNCAUGHT_EXCEPTION                        = 0x01C6,
+
+    /**
+     * A catch clause catches a type that is a supertype of a previous catch
+     * clause in the same try-catch — the later clause is unreachable.
+     */
+    WARN_CATCH_UNREACHABLE                        = 0x01C7,
+
+    /**
+     * Duplicate exception type in a throws clause.
+     */
+    WARN_THROWS_DUPLICATE_TYPE                    = 0x01C8,
+};
+
 
 } // namespace k::diag
 

@@ -181,6 +181,7 @@ klang_gen_test(klang-tests-gen-core 90
         tests/test-gen-if-multi-cond-var.cpp
         tests/test-gen-if-multi-softfail.cpp
         tests/test-multi-source.cpp
+        tests/test-gen-exceptions.cpp
 )
 
 # ---------------------------------------------------------------------------
