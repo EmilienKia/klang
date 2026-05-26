@@ -221,7 +221,37 @@ TEST_CASE("Exception: try-catch with throw in try body compiles", "[gen][excepti
     REQUIRE(fn(0) == 5);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  4. Runtime throw + catch (end-to-end)
+// ════════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("Exception: throw inside try-catch is caught at runtime", "[gen][exceptions][run]") {
+    // Full end-to-end test: throw inside a try block, caught by matching catch clause.
+    auto jit = gen_jit(R"(
+        module __test_exc_runtime_1__;
+
+        struct MyErr {
+            code : int;
+        }
+
+        test_throw_catch() : int {
+            result : int = 0;
+            try {
+                e : MyErr;
+                e.code = 42;
+                throw e;
+                result = 999;
+            } catch (p: MyErr*) {
+                result = 77;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_throw_catch");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 77);
+}
 
 
 

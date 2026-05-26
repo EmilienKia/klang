@@ -235,6 +235,12 @@ protected:
      *  assignment to a union alternative, and reset after evaluation. */
     bool _skip_union_disc_check = false;
 
+    /** Stack of landing pad basic blocks for try-catch exception handling.
+     *  When non-empty, top() is the landing pad for the innermost enclosing
+     *  try-catch — throw statements within the try body should invoke to this
+     *  landing pad instead of using a plain call to __cxa_throw. */
+    std::stack<llvm::BasicBlock*> _landing_pad_stack;
+
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(code, message, args);
         if (lexeme) diag.at(*lexeme);

@@ -20,6 +20,7 @@
 #include "gen_helpers.hpp"
 
 #include "../model/imported.hpp"
+#include "../model/mangler.hpp"
 #include "../errors.hpp"
 
 namespace k::model::gen {
@@ -705,16 +706,125 @@ void declaration_generator::visit_throw_statement(throw_statement& stmt) {
 }
 
 void implementation_generator::visit_throw_statement(throw_statement& stmt) {
-    // TODO: implement throw codegen (allocate exception, copy, __cxa_throw)
-    // For now, emit a trap to prevent silent miscompilation
-    auto* trap_fn = llvm::Intrinsic::getDeclaration(&_context->module(), llvm::Intrinsic::trap);
-    _builder->CreateCall(trap_fn);
-    _builder->CreateUnreachable();
+    auto expr = stmt.get_expression();
+    if (!expr) {
+        // Bare "throw;" (re-throw) — not yet supported
+        auto* trap_fn = llvm::Intrinsic::getDeclaration(&_context->module(), llvm::Intrinsic::trap);
+        _builder->CreateCall(trap_fn);
+        _builder->CreateUnreachable();
+        auto* func = _builder->GetInsertBlock()->getParent();
+        auto* after_throw = llvm::BasicBlock::Create(_context->llvm_context(), "after_throw", func);
+        _builder->SetInsertPoint(after_throw);
+        return;
+    }
 
-    // Create a new basic block for any code following the throw (unreachable)
-    auto* func = _builder->GetInsertBlock()->getParent();
-    auto* after_throw = llvm::BasicBlock::Create(_context->llvm_context(), "after_throw", func);
-    _builder->SetInsertPoint(after_throw);
+    // Evaluate the throw expression
+    _value = nullptr;
+    expr->accept(*this);
+    llvm::Value* throw_val = _value;
+    _value = nullptr;
+
+    if (!throw_val) {
+        // Fallback: trap if expression evaluation failed
+        auto* trap_fn = llvm::Intrinsic::getDeclaration(&_context->module(), llvm::Intrinsic::trap);
+        _builder->CreateCall(trap_fn);
+        _builder->CreateUnreachable();
+        auto* func = _builder->GetInsertBlock()->getParent();
+        auto* after_throw = llvm::BasicBlock::Create(_context->llvm_context(), "after_throw", func);
+        _builder->SetInsertPoint(after_throw);
+        return;
+    }
+
+    auto& llvm_ctx = _context->llvm_context();
+    auto& mod = _context->module();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+    auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+
+    // Determine the exception object's type and size
+    auto expr_type = expr->get_type();
+    llvm::Type* llvm_exc_type = _context->get_llvm_type(expr_type);
+    uint64_t exc_size = mod.getDataLayout().getTypeAllocSize(llvm_exc_type);
+
+    // 1. __cxa_allocate_exception(size_t) -> void*
+    auto cxa_alloc = mod.getOrInsertFunction("__cxa_allocate_exception",
+        llvm::FunctionType::get(ptr_ty, {i64_ty}, false));
+    llvm::Value* exc_mem = _builder->CreateCall(cxa_alloc,
+        {llvm::ConstantInt::get(i64_ty, exc_size)}, "exc_mem");
+
+    // 2. Copy the exception value into the allocated memory
+    if (llvm_exc_type->isAggregateType()) {
+        // For struct types, use memcpy
+        // If throw_val is a pointer/alloca, load from it; if it's a value, store then copy
+        if (throw_val->getType()->isPointerTy()) {
+            // Source is a pointer — memcpy from it
+            _builder->CreateMemCpy(exc_mem, llvm::MaybeAlign(1),
+                                   throw_val, llvm::MaybeAlign(1), exc_size);
+        } else {
+            // Have an aggregate value — store to temporary, then memcpy
+            auto* tmp = _builder->CreateAlloca(llvm_exc_type, nullptr, "exc_tmp");
+            _builder->CreateStore(throw_val, tmp);
+            _builder->CreateMemCpy(exc_mem, llvm::MaybeAlign(1),
+                                   tmp, llvm::MaybeAlign(1), exc_size);
+        }
+    } else {
+        // For primitive types, store directly
+        _builder->CreateStore(throw_val, exc_mem);
+    }
+
+    // 3. Build or retrieve the typeinfo global for this exception type.
+    //    We use a simple Itanium ABI compatible typeinfo: an external global
+    //    named _KTI<mangled_type> that serves as the type identifier.
+    //    For matching in the catch clause, both throw and catch must use the
+    //    same global — pointer equality is all that matters.
+    std::string typeinfo_name;
+    if (auto st = std::dynamic_pointer_cast<struct_type>(expr_type)) {
+        if (auto agg = st->get_struct()) {
+            typeinfo_name = mangler::mangle_rtti(agg->get_name());
+        } else {
+            typeinfo_name = "_KTI_" + st->name();
+        }
+    } else {
+        typeinfo_name = "_KTI_" + expr_type->to_string();
+    }
+    auto* typeinfo_gv = mod.getNamedGlobal(typeinfo_name);
+    if (!typeinfo_gv) {
+        typeinfo_gv = new llvm::GlobalVariable(
+            mod, ptr_ty, /*isConstant=*/true,
+            llvm::GlobalValue::LinkOnceODRLinkage,
+            llvm::ConstantPointerNull::get(ptr_ty),
+            typeinfo_name);
+    }
+
+    // 4. __cxa_throw(void* thrown_exception, void* tinfo, void (*dest)(void*))
+    //    The destructor pointer is null for now (no cleanup needed for plain structs).
+    auto cxa_throw = mod.getOrInsertFunction("__cxa_throw",
+        llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty, ptr_ty}, false));
+    auto* current_func = _builder->GetInsertBlock()->getParent();
+
+    if (!_landing_pad_stack.empty()) {
+        // Inside a try-catch: use invoke so exception unwinds to the landing pad
+        auto* after_throw = llvm::BasicBlock::Create(llvm_ctx, "after_throw", current_func);
+        auto* invoke_inst = _builder->CreateInvoke(
+            cxa_throw, after_throw, _landing_pad_stack.top(),
+            {exc_mem, typeinfo_gv, llvm::ConstantPointerNull::get(ptr_ty)});
+        invoke_inst->setDoesNotReturn();
+        // after_throw is unreachable but needed for LLVM well-formedness
+        _builder->SetInsertPoint(after_throw);
+        _builder->CreateUnreachable();
+        // Create a continuation block for any code after the throw statement
+        auto* cont_bb = llvm::BasicBlock::Create(llvm_ctx, "post_throw", current_func);
+        _builder->SetInsertPoint(cont_bb);
+    } else {
+        // Not inside try-catch: plain call (exception unwinds past this frame)
+        auto* call = _builder->CreateCall(cxa_throw,
+            {exc_mem, typeinfo_gv, llvm::ConstantPointerNull::get(ptr_ty)});
+        call->setDoesNotReturn();
+        _builder->CreateUnreachable();
+        // Create a new basic block for any code following the throw (unreachable)
+        auto* after_throw = llvm::BasicBlock::Create(llvm_ctx, "after_throw", current_func);
+        _builder->SetInsertPoint(after_throw);
+    }
 }
 
 //
@@ -758,12 +868,161 @@ void declaration_generator::visit_try_catch_statement(try_catch_statement& stmt)
 }
 
 void implementation_generator::visit_try_catch_statement(try_catch_statement& stmt) {
-    // TODO: implement try-catch codegen (invoke, landingpad, type matching)
-    // For now, just generate the try body without exception handling
-    if(auto body = stmt.get_try_body()) {
+    auto& llvm_ctx = _context->llvm_context();
+    auto& mod = _context->module();
+    auto* func = _builder->GetInsertBlock()->getParent();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+    // Set the personality function for C++ exception handling
+    if (!func->hasPersonalityFn()) {
+        auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
+            llvm::FunctionType::get(i32_ty, true));
+        func->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+    }
+
+    // Create basic blocks
+    auto* try_bb = llvm::BasicBlock::Create(llvm_ctx, "try", func);
+    auto* lpad_bb = llvm::BasicBlock::Create(llvm_ctx, "lpad", func);
+    auto* end_bb = llvm::BasicBlock::Create(llvm_ctx, "try_end", func);
+
+    // Create catch handler blocks
+    const auto& clauses = stmt.get_catch_clauses();
+    std::vector<llvm::BasicBlock*> catch_bbs;
+    for (size_t i = 0; i < clauses.size(); ++i) {
+        catch_bbs.push_back(llvm::BasicBlock::Create(llvm_ctx,
+            "catch_" + std::to_string(i), func));
+    }
+    auto* catch_fallthrough_bb = llvm::BasicBlock::Create(llvm_ctx, "catch_unmatched", func);
+
+    // Branch to try body
+    _builder->CreateBr(try_bb);
+    _builder->SetInsertPoint(try_bb);
+
+    // Push landing pad so throw statements within the try body use invoke
+    _landing_pad_stack.push(lpad_bb);
+
+    // Generate the try body
+    if (auto body = stmt.get_try_body()) {
         body->accept(*this);
     }
-    // Catch clauses are not yet generated
+
+    // Pop landing pad
+    _landing_pad_stack.pop();
+
+    // If we reach end of try body normally, branch to end
+    if (!_builder->GetInsertBlock()->getTerminator()) {
+        _builder->CreateBr(end_bb);
+    }
+
+    // Landing pad block — entered when an exception is thrown
+    _builder->SetInsertPoint(lpad_bb);
+
+    // Build the list of typeinfo globals for each catch clause
+    std::vector<llvm::Constant*> typeinfos;
+    for (auto& clause : clauses) {
+        auto var = clause->get_exception_var();
+        if (!var) {
+            typeinfos.push_back(nullptr);
+            continue;
+        }
+        auto var_type = var->get_type();
+        // Peel addresser wrappers to get the underlying struct type
+        auto inner_type = var_type;
+        while (inner_type && inner_type->get_subtype() &&
+               (type::is_pointer(inner_type) || type::is_reference(inner_type) ||
+                type::is_const(inner_type))) {
+            inner_type = inner_type->get_subtype();
+        }
+
+        std::string typeinfo_name;
+        if (auto st = std::dynamic_pointer_cast<struct_type>(inner_type)) {
+            if (auto agg = st->get_struct()) {
+                typeinfo_name = mangler::mangle_rtti(agg->get_name());
+            } else {
+                typeinfo_name = "_KTI_" + st->name();
+            }
+        } else {
+            typeinfo_name = "_KTI_" + (inner_type ? inner_type->to_string() : "unknown");
+        }
+
+        auto* ti_gv = mod.getNamedGlobal(typeinfo_name);
+        if (!ti_gv) {
+            ti_gv = new llvm::GlobalVariable(
+                mod, ptr_ty, /*isConstant=*/true,
+                llvm::GlobalValue::LinkOnceODRLinkage,
+                llvm::ConstantPointerNull::get(ptr_ty),
+                typeinfo_name);
+        }
+        typeinfos.push_back(ti_gv);
+    }
+
+    // Create the landingpad instruction
+    auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
+    auto* lpad = _builder->CreateLandingPad(lpad_type, static_cast<unsigned>(clauses.size()), "lpad_val");
+    // For now, use catch-all (null) to catch any exception.
+    // Type-based matching will be added in a later step.
+    lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+
+    // Extract exception pointer and selector
+    auto* exc_ptr = _builder->CreateExtractValue(lpad, 0, "exc_ptr");
+    auto* exc_sel = _builder->CreateExtractValue(lpad, 1, "exc_sel");
+
+    // Branch directly to the first catch handler (catch-all for now)
+    _builder->CreateBr(catch_bbs[0]);
+
+    // Generate catch handler bodies
+    // Declare __cxa_begin_catch and __cxa_end_catch
+    auto cxa_begin = mod.getOrInsertFunction("__cxa_begin_catch",
+        llvm::FunctionType::get(ptr_ty, {ptr_ty}, false));
+    auto cxa_end = mod.getOrInsertFunction("__cxa_end_catch",
+        llvm::FunctionType::get(llvm::Type::getVoidTy(llvm_ctx), {}, false));
+
+    for (size_t i = 0; i < clauses.size(); ++i) {
+        _builder->SetInsertPoint(catch_bbs[i]);
+
+        // Begin catch — returns pointer to the exception object
+        auto* caught_ptr = _builder->CreateCall(cxa_begin, {exc_ptr}, "caught");
+
+        // Bind the exception variable — create its alloca and store the caught pointer
+        auto var = clauses[i]->get_exception_var();
+        if (var) {
+            // Create alloca for the catch variable (pointer type)
+            auto var_type = var->get_type();
+            llvm::Type* llvm_var_type = _context->get_llvm_type(var_type);
+            auto* entry_bb = &catch_bbs[i]->getParent()->getEntryBlock();
+            llvm::IRBuilder<> alloca_builder(entry_bb, entry_bb->begin());
+            auto* alloca = alloca_builder.CreateAlloca(llvm_var_type, nullptr,
+                var->get_short_name() + "_exc");
+            // Register the variable in the context
+            _context->_variables[var] = alloca;
+            // Store the caught pointer
+            _builder->CreateStore(caught_ptr, alloca);
+        }
+
+        // Generate catch body
+        if (auto body = clauses[i]->get_body()) {
+            body->accept(*this);
+        }
+
+        // End catch
+        _builder->CreateCall(cxa_end);
+
+        // Branch to end
+        if (!_builder->GetInsertBlock()->getTerminator()) {
+            _builder->CreateBr(end_bb);
+        }
+    }
+
+    // Catch fallthrough — no match, resume unwinding
+    _builder->SetInsertPoint(catch_fallthrough_bb);
+    auto* resume_val = llvm::UndefValue::get(lpad_type);
+    auto* resume_val2 = _builder->CreateInsertValue(resume_val, exc_ptr, 0);
+    auto* resume_val3 = _builder->CreateInsertValue(resume_val2, exc_sel, 1);
+    _builder->CreateResume(resume_val3);
+
+    // Continue after try-catch
+    _builder->SetInsertPoint(end_bb);
 }
 
 //
