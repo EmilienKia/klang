@@ -382,11 +382,16 @@ FunctionDecl
       '(' , [ ParameterList ] , ')' ,
       [ NamedReturnVar ] ,
       [ ':' , ( ReturnTypeOrMemberInitList ) ] ,
+      [ ThrowsClause ] ,
       FunctionBody
     ;
 
 FunctionHead
     = Identifier
+    ;
+
+ThrowsClause
+    = 'throws' , TypeSpec , { ',' , TypeSpec }
     ;
 
 DestructorHead
@@ -536,6 +541,8 @@ Statement
     | IfElseStatement
     | WhileStatement
     | ForStatement
+    | ThrowStatement
+    | TryCatchStatement
     | UsingDecl
     | VariableDecl
     | ExpressionStatement
@@ -612,6 +619,18 @@ ForStatement
                      [ Expression ] , ';' ,
                      [ Expression ] ,
               ')' , Statement
+    ;
+
+ThrowStatement
+    = 'throw' , Expression , ';'
+    ;
+
+TryCatchStatement
+    = 'try' , BlockStatement , { CatchClause }
+    ;
+
+CatchClause
+    = 'catch' , '(' , ParameterDecl , ')' , BlockStatement
     ;
 
 ExpressionStatement

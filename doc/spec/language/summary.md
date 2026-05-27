@@ -1675,4 +1675,76 @@ their default (invariant) mode. Covariance and contravariance are future feature
 
 ---
 
+## 27. Exception Handling
+
+K provides structured exception handling via `throw`, `try-catch`, and `throws` clauses.
+
+### 27.1 Throw Statement
+
+```
+throw expression;
+```
+
+The expression must evaluate to a struct or class type. The runtime allocates
+exception storage, copies the value, and initiates stack unwinding.
+
+### 27.2 Try-Catch Statement
+
+```
+try {
+    // code that may throw
+} catch (varName: ExceptionType*) {
+    // handle ExceptionType
+} catch (varName: OtherType*) {
+    // handle OtherType
+}
+```
+
+- Multiple catch clauses are evaluated in order; the first matching type wins.
+- Match is by exact type or base class (if the thrown type derives from the
+  caught type).
+- Unmatched exceptions propagate to the next enclosing try-catch or out of the
+  function.
+- The catch variable receives a pointer to the exception object.
+
+### 27.3 Throws Clause
+
+```
+myFunc(a: int) : int throws ErrA, ErrB {
+    // ...
+}
+```
+
+The `throws` clause appears after the return type (or member-initializer list)
+and before the function body. It declares which exception types the function
+may propagate to its caller.
+
+### 27.4 Exception Contract Rules
+
+When a function declares a `throws` clause, the compiler enforces:
+
+1. **Throw check:** Any `throw` statement in the function body must throw a type
+   that is either declared in the `throws` clause or caught by an enclosing
+   `try-catch` within the same function.
+
+2. **Call check:** Any call to a function that itself has a `throws` clause must
+   have all its declared exception types either:
+   - Caught by an enclosing `try-catch`, or
+   - Declared in the caller's own `throws` clause (propagation).
+
+Functions **without** a `throws` clause are not checked — they may throw freely.
+This allows gradual adoption and FFI interop.
+
+### 27.5 Implementation Notes
+
+- Exceptions use the Itanium C++ ABI unwinding mechanism (`__cxa_allocate_exception`,
+  `__cxa_throw`, `__cxa_begin_catch`, `__cxa_end_catch`).
+- Type matching uses pointer equality on module-level typeinfo globals
+  (`_KTI<mangled_rtti_name>`), stored in a per-module `_k_thrown_typeinfo` global
+  before throwing.
+- Stack unwinding properly destroys local objects via cleanup landing pads.
+- Nested try-catch uses direct CFG branching for intra-function propagation.
+
+---
+
 *This summary is complete and self-contained. For detailed examples, edge cases, and error codes, consult the individual specification files referenced in each section, as well as the formal grammar in [`grammar.ebnf`](grammar.ebnf).*

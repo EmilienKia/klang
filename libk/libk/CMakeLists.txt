@@ -15,6 +15,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/annotations.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/object.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/exception.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/memory.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/shared.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/expected.k
