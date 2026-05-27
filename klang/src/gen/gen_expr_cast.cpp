@@ -1325,6 +1325,55 @@ void implementation_generator::emit_null_check(llvm::Value* ptr_value, llvm::Fun
     _builder->SetInsertPoint(ok_bb);
 }
 
+llvm::Function* implementation_generator::get_or_declare_fatal_memory_function() {
+    llvm::Module& mod = get_module();
+    const char* name = "__k_fatal_memory_allocation";
+    if (auto* existing = mod.getFunction(name)) {
+        return existing;
+    }
+    auto& llvm_ctx = mod.getContext();
+    auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+    auto* fn_type = llvm::FunctionType::get(void_ty, false);
+    auto* fn = llvm::Function::Create(fn_type, llvm::Function::ExternalLinkage, name, mod);
+    fn->addFnAttr(llvm::Attribute::NoReturn);
+    fn->addFnAttr(llvm::Attribute::Cold);
+    // NOTE: do NOT add NoUnwind — this function throws a K MemoryException!
+    return fn;
+}
+
+void implementation_generator::emit_alloc_null_check(llvm::Value* alloc_result, const std::string& label) {
+    auto* fn = _builder->GetInsertBlock()->getParent();
+    auto& ctx = _builder->getContext();
+    auto* ptr_ty = llvm::PointerType::get(ctx, 0);
+
+    auto* ok_bb   = llvm::BasicBlock::Create(ctx, label + "_ok", fn);
+    auto* fail_bb = llvm::BasicBlock::Create(ctx, label + "_fail", fn);
+
+    auto* is_null = _builder->CreateICmpEQ(
+        alloc_result, llvm::ConstantPointerNull::get(ptr_ty), label + "_is_null");
+    _builder->CreateCondBr(is_null, fail_bb, ok_bb);
+
+    // Fail block: call/invoke __k_fatal_memory_allocation (throws MemoryException)
+    _builder->SetInsertPoint(fail_bb);
+    auto* fatal_fn = get_or_declare_fatal_memory_function();
+    if (!_landing_pad_stack.empty()) {
+        // Inside try-catch: use invoke so the exception unwinds to the landing pad
+        auto* unreachable_bb = llvm::BasicBlock::Create(ctx, label + "_unreachable", fn);
+        _builder->CreateInvoke(
+            fatal_fn->getFunctionType(), fatal_fn,
+            unreachable_bb, _landing_pad_stack.top().lpad_bb, {});
+        _builder->SetInsertPoint(unreachable_bb);
+        _builder->CreateUnreachable();
+    } else {
+        // Not inside try-catch: plain call (exception propagates past this frame)
+        auto* call = _builder->CreateCall(fatal_fn, {});
+        call->setDoesNotReturn();
+        _builder->CreateUnreachable();
+    }
+
+    // Continue in the success block
+    _builder->SetInsertPoint(ok_bb);
+}
 
 
 } // namespace k::model::gen

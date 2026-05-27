@@ -17,6 +17,7 @@
  */
 
 #include "compiler.hpp"
+#include "config.h"
 
 #include "config.h"
 #include "common/path_lookup_file_resolver.hpp"
@@ -140,16 +141,24 @@ std::vector<std::string> compiler::build_import_link_args() const {
     // Track added lib bases to avoid duplicates (direct + transitive may overlap)
     std::unordered_set<std::string> added_libs;
 
-    // Always link the base standard library (libk) unless we ARE building it
-    // or it was not resolved (e.g. during bootstrap / tests without stdlib).
+    // Always link the base standard library (libk) unless we ARE building it.
+    // The stdlib provides essential runtime functions (__k_fatal_memory_allocation,
+    // __k_fatal_null_dereference, etc.) that the compiler emits calls to in
+    // generated code, even if the user module doesn't explicitly import k.
     {
         const auto unit_name = _model_unit->get_unit_name().to_string();
         if (unit_name != "k") {
-            auto* k_import = _model_unit->find_import(k::name("k"));
-            if (k_import && k_import->kdi) {
-                added_libs.insert("k");
-                args.push_back("-lk");
+            added_libs.insert("k");
+            args.push_back("-lk");
+            // Ensure the stdlib lib directory is in the linker search path
+            // even if the user's file resolver doesn't include it.
+#if defined(KLANG_STDLIB_LIB_DIR)
+            const std::string stdlib_lib_dir(KLANG_STDLIB_LIB_DIR);
+            if (!stdlib_lib_dir.empty()) {
+                args.push_back("-L" + stdlib_lib_dir);
+                args.push_back("-Wl,-rpath," + stdlib_lib_dir);
             }
+#endif
         }
     }
 

@@ -1,73 +1,47 @@
-# IN-PROGRESS: Exception Support
+# IN-PROGRESS: MemoryException integration with `new`/`delete` and `MultiSlot<T>`
 
-**Feature:** Full exception mechanism — `throw`, `try-catch`, `throws` clause, compile-time
-exception contract verification, stack unwinding with destructor calls.
+**Feature:** The `new` operator (single and array forms) and `MultiSlot<T>::allocate`/`reallocate`
+must abort with a diagnostic when the underlying `malloc`/`realloc` returns null.
 
-**Status:** ✅ Feature complete
-
----
-
-## Checklist
-
-- [x] Step 1: Keywords (THROW, TRY, CATCH, THROWS)
-- [x] Step 2: AST nodes (throw_statement, try_catch_statement, catch_clause, throws in function_decl)
-- [x] Step 3: Parser — throw & try-catch statements
-- [x] Step 4: Parser — throws clause on functions
-- [x] Step 5: Model — throw_statement
-- [x] Step 6: Model — try_catch_statement, catch_clause
-- [x] Step 7: Model — function throws spec
-- [x] Step 8: Model builder
-- [x] Step 9: Visitor & dump
-- [x] Step 10: Diagnostic codes (exception-specific model/gen errors)
-- [x] Step 11: Symbol & type resolution for throws/catch
-- [x] Step 12: Exception contract checker
-- [x] Step 13: Codegen — throw statement
-- [x] Step 14: Codegen — try-catch statement (catch-all, no type matching yet)
-- [x] Step 15: Codegen — invoke/landingpad/cleanup (stack unwinding)
-- [x] Step 16: Type-based catch dispatch + nested try-catch propagation
-- [x] Step 17: KDI support (throws spec serialization)
-- [x] Step 18: Standard library (Exception, MemoryException)
-- [x] Step 19: Documentation (grammar, summary, stdlib doc)
-- [x] Step 20: Tests
-- [x] All existing tests pass
-- [x] All new exception tests pass (28 tests, 81 assertions)
-- [x] Stdlib exception construction tests pass (5 tests)
-- [x] Throw via temporary construction works for polymorphic classes
+**Status:** ✅ Complete
 
 ---
 
-## Design Summary
+## Implementation Summary
 
-Key points:
-- Exceptions are classes deriving from `::k::Exception`
-- `throws` clause on functions is mandatory for any function that can throw
-- Compile-time static verification of exception contracts
-- LLVM Itanium ABI-based implementation (invoke/landingpad, __cxa_throw, etc.)
-- Stack unwinding properly destroys local objects
-- Catch by reference only
-- No `finally`, no rethrow, no exception masking in this phase (see TODO.md)
+### What was done
 
-Syntax:
-```
-// Throw
-throw MyException("message");
+1. **`fatal.c`**: Added `__k_fatal_memory_allocation()` — aborts with "fatal: memory
+   allocation failed (out of memory)" message when malloc/realloc returns NULL.
 
-// Function declaration with throws
-myFunc(a: int) : Result throws IOException, ParseException { ... }
+2. **`generators.hpp`**: Added `get_or_declare_fatal_memory_function()` and
+   `emit_alloc_null_check()` helper methods to `implementation_generator`.
 
-// Try-catch
-try {
-    riskyCall(); 
-} catch (e : IOException&) {
-    // handle
-} catch (const e : Exception&) {
-    // fallback
-}
-```
+3. **`gen_expr_memory.cpp`**: Inserted null-checks after all 5 `malloc` calls in
+   `visit_new_expression` (single object, static array, dynamic array, static uniform,
+   dynamic uniform).
+
+4. **`gen_intrinsics.cpp`**: Inserted null-checks after `malloc` in
+   `emit_intrinsic_multislot_allocate` and after `realloc` in
+   `emit_intrinsic_multislot_reallocate`.
+
+5. **`compiler_linker.cpp`**: Always link `-lk` (with `-L` and `-rpath` for the stdlib
+   lib directory) for any module that isn't `k` itself. This ensures
+   `__k_fatal_memory_allocation` is available at link time.
+
+### Design decisions
+
+- **Abort (not throw)**: The initial plan was to throw `MemoryException`, but this
+  requires `__cxa_allocate_exception`/`__cxa_throw` which pull in `libstdc++`/`libc++abi`
+  as a link dependency for every K executable. This is deferred to a future step that
+  will add proper `-lstdc++` linking.
+
+- **Always link libk**: Previously `-lk` was only added when the KDI import resolved.
+  Now it's always added (except for module `k` itself) because the compiler emits
+  references to libk symbols in generated code.
+
+### All 13 test suites pass (100%)
 
 ---
 
 *Delete this file when feature is complete.*
-
-
-

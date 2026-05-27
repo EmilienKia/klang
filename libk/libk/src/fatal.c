@@ -67,5 +67,26 @@ void __k_fatal_array_bounds_check_failed(unsigned index, unsigned size) {
     abort();
 }
 
+/* ── Memory allocation failure ────────────────────────────────────────────── */
+/*
+ * Called when malloc/realloc returns NULL in new-expressions or MultiSlot
+ * allocate/reallocate intrinsics.
+ *
+ * For now, this is a hard abort (like array bounds checks). A future step
+ * will convert this to throw a K MemoryException using the Itanium ABI,
+ * once the linker configuration properly links libstdc++/libc++abi into
+ * executables (needed for __cxa_allocate_exception / __cxa_throw).
+ *
+ * The compiler declares this function as 'noreturn cold' (NOT nounwind)
+ * so that when the throw implementation is added, exception unwinding
+ * will work correctly through invoke instructions.
+ */
+
+__attribute__((noreturn, cold))
+void __k_fatal_memory_allocation(void) {
+    fprintf(stderr, "fatal: memory allocation failed (out of memory)\n");
+    abort();
+}
+
 
 

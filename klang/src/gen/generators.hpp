@@ -530,6 +530,22 @@ protected:
      */
     llvm::Function* get_or_declare_fatal_null_function(const std::string& name);
 
+    /**
+     * Emit or retrieve the declaration of @__k_fatal_memory_allocation.
+     * Unlike the null-fatal functions, this one is NOT nounwind — it throws
+     * a K MemoryException via __cxa_throw, which unwinds the stack.
+     * Declared as: void() noreturn cold.
+     */
+    llvm::Function* get_or_declare_fatal_memory_function();
+
+    /**
+     * Emit a null-check on an allocation result (malloc/realloc).
+     * If the pointer is null, calls __k_fatal_memory_allocation which throws MemoryException.
+     * Uses invoke (not call) if inside a try-catch scope, so the exception can be caught.
+     * After this call, the builder's insert point is in the "allocation succeeded" block.
+     */
+    void emit_alloc_null_check(llvm::Value* alloc_result, const std::string& label);
+
     /** Emit RTTI-based dynamic cast IR for a cast_expression whose types require it. */
     void emit_dynamic_cast(cast_expression& expr,
                            std::shared_ptr<struct_type> src_st_type,

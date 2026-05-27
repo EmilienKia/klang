@@ -67,7 +67,7 @@
     - [ ] Exception specifications on function pointer/reference types
     - [ ] `noexcept` conditional expression (`noexcept(expr)`)
     - [ ] Exception handling in static constructors/destructors
-    - [ ] `MemoryException` integration with `new` operator and `MultiSlot<T>`
+    - [ ] `MemoryException` integration with `new` operator and `MultiSlot<T>` — **in progress** (see `IN-PROGRESS.md`)
     - [ ] Fatal exception types for internal runtime errors (second wave of stdlib exceptions)
 - Switch/case statements and expression
 - With-block - temporary change 'this' scope for a block of code (e.g. `with (obj) { ... }` to access members directly)
