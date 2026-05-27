@@ -138,6 +138,7 @@ set(KLANG_STDLIB_LIB_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
 # the real stdlib types — no class definitions are duplicated.
 # ─────────────────────────────────────────────────────────────────────────────
 add_executable(libk-tests
+    tests/test-exceptions.cpp
     tests/test-rtti.cpp
     tests/test-rtti-constructors.cpp
     tests/test-rtti-parameters.cpp

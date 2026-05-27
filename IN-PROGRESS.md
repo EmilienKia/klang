@@ -3,7 +3,7 @@
 **Feature:** Full exception mechanism — `throw`, `try-catch`, `throws` clause, compile-time
 exception contract verification, stack unwinding with destructor calls.
 
-**Status:** 🔧 Implementation in progress — Core codegen complete, KDI/stdlib/docs remaining
+**Status:** ✅ Feature complete — one known limitation (throw/catch of polymorphic classes)
 
 ---
 
@@ -27,10 +27,12 @@ exception contract verification, stack unwinding with destructor calls.
 - [x] Step 16: Type-based catch dispatch + nested try-catch propagation
 - [x] Step 17: KDI support (throws spec serialization)
 - [x] Step 18: Standard library (Exception, MemoryException)
-- [ ] Step 19: Documentation (grammar, summary, stdlib doc)
-- [ ] Step 20: Tests
+- [x] Step 19: Documentation (grammar, summary, stdlib doc)
+- [x] Step 20: Tests
 - [x] All existing tests pass
 - [x] All new exception tests pass (22 tests, 65 assertions)
+- [x] Stdlib exception construction tests pass (5 tests)
+- [ ] Known limitation: throw/catch of polymorphic classes (with vtables) via temporary construction not yet supported
 
 ---
 
