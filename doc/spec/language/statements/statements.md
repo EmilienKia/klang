@@ -207,5 +207,7 @@ For owner-typed local variables (`T!`, `T[N]!`):
 | `return`  | [Return Statement](return.md) |
 | `break`   | [Break Statement](break.md) |
 | `continue`| [Continue Statement](continue.md) |
+| `throw`   | [Exception Handling](exceptions.md) |
+| `try` / `catch` | [Exception Handling](exceptions.md) |
 ---
 *See also:* [Expressions](../expressions/expressions.md) · [Functions](../functions/functions.md) · [Types](../basic/types.md) · [Dynamic Allocation](../memory/new-delete.md)

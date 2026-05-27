@@ -39,10 +39,11 @@ Grammar notation used here:
     `static` `const` `abstract` `final` `override`
     `public` `protected` `private`
     `this` `return`
-    `if` `else` `while` `for`
-    `new` `delete` `default` `enum`
+    `if` `else` `while` `for` `break` `continue`
+    `new` `delete` `default` `enum` `union`
     `operator` `annotation`
-    `template` `typename`
+    `template` `typename` `generic`
+    `throw` `try` `catch` `throws`
 ### Literals
 *Full description:* [Literals](expressions/literals.md)
 <a id="literal"></a>**Literal:**
@@ -190,6 +191,7 @@ Grammar notation used here:
     `[` [Identifier](#identifier) `]`
     `[` `':'` [TypeSpec](#typespec) `[` [Initialiser](#initialiser) `]` `]`
     `[` `':'` `(` [MemberInitList](#memberinitlist) | [StaticDepList](#staticdeplist) `)` `]`
+    `[` [ThrowsClause](#throwsclause) `]`
     ( [BlockStatement](#blockstatement) | `'->'` `(` `'default'` | `'delete'` `)` `';'` | `';'` *(abstract only)* )
     | [OperatorFunctionDecl](#operatorfunctiondecl)
 
@@ -199,6 +201,11 @@ Grammar notation used here:
     When present, the function uses **named return variable** semantics: the variable is
     declared as a local at function entry, and is implicitly returned when the function
     falls off the closing `'}'` or executes a bare `'return'` `';'`.  See [Named Return Variables](functions/named-return.md).*
+
+<a id="throwsclause"></a>**ThrowsClause:**
+    `'throws'` [TypeSpec](#typespec) {{ `','` [TypeSpec](#typespec) }}
+
+    *Note: all types in the throws clause must derive from `::k::Exception`.*
 
 <a id="operatorfunctiondecl"></a>**OperatorFunctionDecl:**
     {{ [Specifier](#specifier) }} `'operator'` [OperatorSymbol](#operatorsymbol) `'('` `[` [ParameterList](#parameterlist) `]` `')'`
@@ -297,6 +304,8 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     | [IfElseStatement](#ifelsestatement)
     | [WhileStatement](#whilestatement)
     | [ForStatement](#forstatement)
+    | [ThrowStatement](#throwstatement)
+    | [TryCatchStatement](#trycatchstatement)
     | [UsingDecl](#usingdecl)
     | [VariableDecl](#variabledecl) `';'`
     | [ExpressionStatement](#expressionstatement)
@@ -327,6 +336,12 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     {{ [Specifier](#specifier) }} [Identifier](#identifier) `':'` [TypeSpec](#typespec) `[` [Initialiser](#initialiser) `]`
 <a id="expressionstatement"></a>**ExpressionStatement:**
     `[` [Expression](#expression) `]` `';'`
+<a id="throwstatement"></a>**ThrowStatement:**
+    `'throw'` [Expression](#expression) `';'`
+<a id="trycatchstatement"></a>**TryCatchStatement:**
+    `'try'` [BlockStatement](#blockstatement) {{ [CatchClause](#catchclause) }}
+<a id="catchclause"></a>**CatchClause:**
+    `'catch'` `'('` `[` `'const'` `]` [Identifier](#identifier) `':'` [TypeSpec](#typespec) `')'` [BlockStatement](#blockstatement)
 *Full description of each:* [If](statements/if.md) - [While](statements/while.md) - [For](statements/for.md) - [Return](statements/return.md) - [Break](statements/break.md)
 ### Expressions
 *Full description:* [Expressions](expressions/expressions.md)

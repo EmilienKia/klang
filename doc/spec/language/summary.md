@@ -65,10 +65,11 @@ struct   class    interface   annotation   namespace   module   import   using  
 static   const    abstract   final   override
 public   protected   private
 this     return
-if       else     while    for      break
+if       else     while    for      break    continue
 new      delete   default  enum     union
 operator
-template typename
+template typename generic
+throw    try      catch    throws
 ```
 
 All keywords are reserved and cannot be used as identifiers.
@@ -1678,72 +1679,159 @@ their default (invariant) mode. Covariance and contravariance are future feature
 ## 27. Exception Handling
 
 K provides structured exception handling via `throw`, `try-catch`, and `throws` clauses.
+Exceptions follow a class hierarchy rooted at `::k::Exception` (from the standard library).
 
-### 27.1 Throw Statement
+### 27.1 Exception Type Constraint
 
-```
-throw expression;
-```
+**Only classes derived from `::k::Exception` (or `Exception` itself) may be thrown.**
 
-The expression must evaluate to a struct or class type. The runtime allocates
-exception storage, copies the value, and initiates stack unwinding.
+- Throwing a struct or class that does not derive from `::k::Exception` → compile-time error `0x01C0`.
+- Throwing a non-class type (primitive, array, etc.) → compile-time error `0x01C0`.
+- This constraint is enforced whenever the stdlib is available (i.e. for all modules except `k` itself).
 
-### 27.2 Try-Catch Statement
+User-defined exception types must inherit from `Exception` or one of its subclass:
 
-```
-try {
-    // code that may throw
-} catch (varName: ExceptionType*) {
-    // handle ExceptionType
-} catch (varName: OtherType*) {
-    // handle OtherType
+```k
+class MyError : public Exception {
+    public:
+    MyError() : Exception(100) { }
 }
 ```
 
-- Multiple catch clauses are evaluated in order; the first matching type wins.
-- Match is by exact type or base class (if the thrown type derives from the
-  caught type).
-- Unmatched exceptions propagate to the next enclosing try-catch or out of the
-  function.
-- The catch variable receives a pointer to the exception object.
-
-### 27.3 Throws Clause
+### 27.2 Throw Statement
 
 ```
-myFunc(a: int) : int throws ErrA, ErrB {
+ThrowStatement:
+    'throw' Expression ';'
+```
+
+The expression must evaluate to a class type derived from `::k::Exception`.
+At runtime, the compiler:
+1. Allocates exception storage via `__cxa_allocate_exception`.
+2. Copies the value into the exception storage.
+3. Calls `__cxa_throw` to initiate stack unwinding.
+
+Stack unwinding destroys all local objects with destructors (in reverse declaration
+order) in each stack frame between the throw point and the matching catch handler.
+
+### 27.3 Try-Catch Statement
+
+```
+TryCatchStatement:
+    'try' BlockStatement { CatchClause }
+
+CatchClause:
+    'catch' '(' ParameterDecl ')' BlockStatement
+```
+
+Example:
+
+```k
+try {
+    riskyOperation();
+} catch (e: IOException*) {
+    handleIO(e);
+} catch (e: Exception*) {
+    handleGeneric(e);
+}
+```
+
+Rules:
+- Multiple catch clauses are evaluated in order; the **first matching type wins**.
+- Match is by exact type or base class (if the thrown type derives from the caught type).
+- Unmatched exceptions propagate to the next enclosing try-catch or out of the function.
+- The catch parameter receives a **pointer** (`T*`) to the exception object.
+- Catch parameter types must derive from `::k::Exception` (error `0x01C1` otherwise).
+- All function calls within a try block are compiled as LLVM `invoke` instructions
+  (instead of `call`) to enable unwinding through the landing pad.
+
+### 27.4 Throws Clause
+
+```
+ThrowsClause:
+    'throws' TypeSpec { ',' TypeSpec }
+```
+
+The `throws` clause appears after the return type and before the function body:
+
+```k
+myFunc(a: int) : int throws IOException, ParseException {
     // ...
 }
 ```
 
-The `throws` clause appears after the return type (or member-initializer list)
-and before the function body. It declares which exception types the function
-may propagate to its caller.
+Rules:
+- All types in the `throws` clause must derive from `::k::Exception` (error `0x01C4` otherwise).
+- A type in the `throws` clause that cannot be resolved → error `0x01C3`.
+- The throws clause is part of the function's public interface and exported in `.kdi` files.
 
-### 27.4 Exception Contract Rules
+### 27.5 Exception Contract Rules
 
-When a function declares a `throws` clause, the compiler enforces:
+When a function declares a `throws` clause, the compiler enforces static contract verification:
 
 1. **Throw check:** Any `throw` statement in the function body must throw a type
-   that is either declared in the `throws` clause or caught by an enclosing
-   `try-catch` within the same function.
+   that is either:
+   - Declared in the function's `throws` clause, **or**
+   - Caught by an enclosing `try-catch` within the same function.
+   
+   Violation → error `0x01C5`.
 
 2. **Call check:** Any call to a function that itself has a `throws` clause must
    have all its declared exception types either:
-   - Caught by an enclosing `try-catch`, or
+   - Caught by an enclosing `try-catch`, **or**
    - Declared in the caller's own `throws` clause (propagation).
+   
+   Violation → error `0x01C6`.
 
-Functions **without** a `throws` clause are not checked — they may throw freely.
-This allows gradual adoption and FFI interop.
+Functions **without** a `throws` clause are **not checked** — they may throw freely
+and are not required to handle exceptions from called functions. This allows gradual
+adoption and FFI interop.
 
-### 27.5 Implementation Notes
+### 27.6 Stack Unwinding and Cleanup
 
-- Exceptions use the Itanium C++ ABI unwinding mechanism (`__cxa_allocate_exception`,
+When an exception propagates through a stack frame:
+- All local variables with destructors are destroyed in reverse declaration order.
+- Owner variables (`T!`) are auto-deleted.
+- The cleanup is implemented via LLVM landing pads with cleanup clauses.
+- Nested try-catch blocks within the same function use direct CFG branching
+  (resume to outer handler if innerhandlers don't match).
+
+### 27.7 Implementation Details
+
+- Uses the **Itanium C++ ABI** unwinding mechanism (`__cxa_allocate_exception`,
   `__cxa_throw`, `__cxa_begin_catch`, `__cxa_end_catch`).
 - Type matching uses pointer equality on module-level typeinfo globals
-  (`_KTI<mangled_rtti_name>`), stored in a per-module `_k_thrown_typeinfo` global
-  before throwing.
+  (`_KTI<mangled_name>`). Before throwing, the compiler stores the typeinfo pointer
+  in a per-module `_k_thrown_typeinfo` thread-local global.
+- Each catch clause in a landing pad compares the caught typeinfo against the
+  expected typeinfo for its declared type.
 - Stack unwinding properly destroys local objects via cleanup landing pads.
-- Nested try-catch uses direct CFG branching for intra-function propagation.
+- Nested try-catch uses direct CFG branching (no re-throw) for intra-function propagation.
+
+### 27.8 Diagnostic Codes
+
+| Code | Identifier | Description |
+|------|-----------|-------------|
+| `0x01C0` | `ERR_THROW_NOT_EXCEPTION_TYPE` | Thrown type does not derive from `::k::Exception` |
+| `0x01C1` | `ERR_CATCH_NOT_EXCEPTION_TYPE` | Catch clause type does not derive from `::k::Exception` |
+| `0x01C2` | `ERR_CATCH_MUST_BE_REFERENCE` | Catch clause must use pointer addresser |
+| `0x01C3` | `ERR_THROWS_TYPE_NOT_FOUND` | Type in throws clause cannot be resolved |
+| `0x01C4` | `ERR_THROWS_NOT_EXCEPTION_TYPE` | Type in throws clause does not derive from `::k::Exception` |
+| `0x01C5` | `ERR_THROW_NOT_IN_THROWS_SPEC` | Throw of undeclared type in function with throws clause |
+| `0x01C6` | `ERR_CALL_UNHANDLED_EXCEPTION` | Call to throwing function without handling/declaring its exceptions |
+
+### 27.9 Known Limitations
+
+- Throwing polymorphic classes (with vtables) via **temporary construction** syntax
+  (`throw MyException()`) is not yet supported. Use a local variable instead:
+  ```k
+  e : MyException(42);
+  throw e;
+  ```
+- No `finally` clause.
+- No rethrow (`throw;` without expression).
+- No exception specification on constructors/destructors.
+- Catch by reference (`&`) is not yet supported (use pointer `*`).
 
 ---
 

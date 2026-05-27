@@ -173,6 +173,7 @@ safeWrapper() : int {
 
 ## See Also
 
-- [Exception Handling (Language Spec)](../language/summary.md#27-exception-handling)
+- [Exception Handling (Language Spec)](../language/statements/exceptions.md)
+- [Language Summary §27](../language/summary.md#27-exception-handling)
 - [Grammar — ThrowStatement, TryCatchStatement](../language/grammar.ebnf)
 

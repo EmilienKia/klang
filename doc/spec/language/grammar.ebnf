@@ -74,7 +74,8 @@ Keyword
     | 'if'     | 'else'    | 'while'     | 'for'    | 'break'
     | 'new'    | 'delete'  | 'default'   | 'enum'   | 'union'
     | 'operator'
-    | 'template' | 'typename'
+    | 'template' | 'typename' | 'generic'
+    | 'throw'  | 'try'     | 'catch'     | 'throws'
     ;
 
 (* ---------- Literals ----------------------------------------------------- *)
@@ -624,14 +625,23 @@ ForStatement
 ThrowStatement
     = 'throw' , Expression , ';'
     ;
+    (* The expression must evaluate to a class type that derives from
+       ::k::Exception or is ::k::Exception itself. Throwing a non-Exception
+       type is a compile-time error (0x01C0). *)
 
 TryCatchStatement
     = 'try' , BlockStatement , { CatchClause }
     ;
 
 CatchClause
-    = 'catch' , '(' , ParameterDecl , ')' , BlockStatement
+    = 'catch' , '(' , CatchParameterDecl , ')' , BlockStatement
     ;
+
+CatchParameterDecl
+    = [ 'const' ] , Identifier , ':' , TypeSpec
+    ;
+    (* The catch parameter type must use a pointer addresser (T*).
+       The type must derive from ::k::Exception.                   *)
 
 ExpressionStatement
     = [ Expression ] , ';'

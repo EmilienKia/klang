@@ -51,6 +51,7 @@ Examples are included where they clarify the normative text.
 | [Return Statement](statements/return.md) | Function return |
 | [Break Statement](statements/break.md) | Exit the innermost loop |
 | [Continue Statement](statements/continue.md) | Skip to the next iteration of the innermost loop |
+| [Exception Handling](statements/exceptions.md) | `throw`, `try-catch`, `throws` clause, exception hierarchy constraint |
 
 ### Functions
 
@@ -111,6 +112,7 @@ Examples are included where they clarify the normative text.
 | [String Types](../stdlib/string.md) | `CharHelpers`, `String`, `StringBuilder` |
 | [RTTI Types](../stdlib/rtti.md) | `Visibility`, `TypeInfo`, `AggregateType`, `Class`, `Interface`, `AnnotationType`, `Annotation`, meta-annotation types (`Retention`, `Inherited`, `Target`) |
 | [Math](../stdlib/math.md) | Optional `k::math` module — `abs`, `min`, `max`, `clamp` |
+| [Exception Types](../stdlib/exceptions.md) | `Exception`, `RuntimeException`, and derived standard exception classes |
 
 ### Grammar Reference
 
