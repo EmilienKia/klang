@@ -118,6 +118,11 @@ void populate_template_signature_aggregate(aggregate& agg,
             auto p = fn->append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
             if (p) p->set_varargs(param.is_varargs);
         }
+        // Import throws spec
+        for (const auto& ts : method_sig.throws_spec) {
+            auto exc_type = kdi_type_to_model_type(ts, owner, ctx);
+            if (exc_type) fn->add_throws_type(exc_type);
+        }
     }
 }
 
@@ -132,6 +137,11 @@ void populate_template_signature_function(function& fn,
     for (const auto& param : sig.params) {
         auto p = fn.append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
         if (p) p->set_varargs(param.is_varargs);
+    }
+    // Import throws spec
+    for (const auto& ts : sig.throws_spec) {
+        auto exc_type = kdi_type_to_model_type(ts, owner, ctx);
+        if (exc_type) fn.add_throws_type(exc_type);
     }
 }
 

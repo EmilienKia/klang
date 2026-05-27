@@ -155,6 +155,8 @@ struct kdi_function {
     std::string              llvm_def;
     /// Template origin metadata (set only for concrete template instantiations).
     std::optional<kdi_template_origin> template_origin;
+    /// Exception types this function may throw (empty = noexcept).
+    std::vector<kdi_type>    throws_spec;
 };
 
 /** Member method. */
@@ -177,6 +179,8 @@ struct kdi_method {
     std::string              llvm_def;
     /// Template origin metadata (set only for methods of template instantiations).
     std::optional<kdi_template_origin> template_origin;
+    /// Exception types this method may throw (empty = noexcept).
+    std::vector<kdi_type>    throws_spec;
 };
 
 struct kdi_constructor {

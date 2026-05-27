@@ -654,6 +654,12 @@ unit::get_or_create_imported_function(const kdi::kdi_function* kdi_fn,
         fn->set_tpl_instantiation_info(kdi_fn->template_origin->base_name, std::move(model_args));
     }
 
+    // Import throws spec
+    for (const auto& ts : kdi_fn->throws_spec) {
+        auto exc_type = kdi_type_to_model_type(ts, *this, ctx);
+        if (exc_type) fn->add_throws_type(exc_type);
+    }
+
     _imported_functions[kdi_fn->mangled_name] = fn;
     return fn;
 }

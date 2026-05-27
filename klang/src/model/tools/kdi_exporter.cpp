@@ -1112,6 +1112,10 @@ void kdi_builder::visit_function(function& fn) {
             km.llvm_def = llvm_fn_prototype(llvm_fn);
         }
         km.template_origin = tpl_origin;
+        // Export throws spec
+        for (const auto& t : fn.get_throws_spec()) {
+            km.throws_spec.push_back(to_kdi_type(std::const_pointer_cast<type>(t)));
+        }
         _agg_stack.back()->methods.push_back(std::move(km));
     } else {
         // Global function — deposit into current namespace
@@ -1130,6 +1134,10 @@ void kdi_builder::visit_function(function& fn) {
             kf.llvm_def = llvm_fn_prototype(llvm_fn);
         }
         kf.template_origin = tpl_origin;
+        // Export throws spec
+        for (const auto& t : fn.get_throws_spec()) {
+            kf.throws_spec.push_back(to_kdi_type(std::const_pointer_cast<type>(t)));
+        }
         _ns_stack.back()->functions.push_back(std::move(kf));
     }
 }

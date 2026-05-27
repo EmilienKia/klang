@@ -497,6 +497,11 @@ cbor_item_t* encode_function(const kdi_function& f) {
     map_push(m, "llvm_def",     cbor_str(f.llvm_def));
     if (f.template_origin)
         map_push(m, "template_origin", encode_template_origin(*f.template_origin));
+    if (!f.throws_spec.empty()) {
+        cbor_item_t* ts = cbor_new_indefinite_array();
+        for (auto& t : f.throws_spec) cbor_array_push(ts, cbor_move(encode_type(t)));
+        map_push(m, "throws_spec", ts);
+    }
     return m;
 }
 
@@ -515,6 +520,11 @@ kdi_function decode_function(cbor_item_t* item, const std::string& path) {
     f.llvm_def     = req_string(item, "llvm_def", path);
     if (auto* to = map_get(item, "template_origin"))
         f.template_origin = decode_template_origin(to, path + ".template_origin");
+    if (auto* ts = map_get(item, "throws_spec")) {
+        size_t n = cbor_array_size(ts);
+        for (size_t i = 0; i < n; ++i)
+            f.throws_spec.push_back(decode_type(cbor_array_get(ts, i), path + ".throws_spec[" + std::to_string(i) + "]"));
+    }
     return f;
 }
 
@@ -536,6 +546,11 @@ cbor_item_t* encode_method(const kdi_method& m) {
     map_push(map, "llvm_def",     cbor_str(m.llvm_def));
     if (m.template_origin)
         map_push(map, "template_origin", encode_template_origin(*m.template_origin));
+    if (!m.throws_spec.empty()) {
+        cbor_item_t* ts = cbor_new_indefinite_array();
+        for (auto& t : m.throws_spec) cbor_array_push(ts, cbor_move(encode_type(t)));
+        map_push(map, "throws_spec", ts);
+    }
     return map;
 }
 
@@ -559,6 +574,11 @@ kdi_method decode_method(cbor_item_t* item, const std::string& path) {
     m.llvm_def       = req_string(item, "llvm_def", path);
     if (auto* to = map_get(item, "template_origin"))
         m.template_origin = decode_template_origin(to, path + ".template_origin");
+    if (auto* ts = map_get(item, "throws_spec")) {
+        size_t n = cbor_array_size(ts);
+        for (size_t i = 0; i < n; ++i)
+            m.throws_spec.push_back(decode_type(cbor_array_get(ts, i), path + ".throws_spec[" + std::to_string(i) + "]"));
+    }
     return m;
 }
 

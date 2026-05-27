@@ -348,6 +348,11 @@ static json to_json(const kdi_function& f) {
     };
     if (f.is_operator) j["is_operator"] = true;
     if (f.template_origin) j["template_origin"] = to_json(*f.template_origin);
+    if (!f.throws_spec.empty()) {
+        json ts = json::array();
+        for (auto& t : f.throws_spec) ts.push_back(to_json(t));
+        j["throws_spec"] = ts;
+    }
     return j;
 }
 static kdi_function from_json_function(const json& j) {
@@ -362,6 +367,9 @@ static kdi_function from_json_function(const json& j) {
     f.mangled_name = j.value("mangled_name", "");
     f.llvm_def     = j.at("llvm_def");
     if (j.contains("template_origin")) f.template_origin = from_json_template_origin(j.at("template_origin"));
+    if (j.contains("throws_spec")) {
+        for (auto& t : j.at("throws_spec")) f.throws_spec.push_back(from_json_type(t));
+    }
     return f;
 }
 
@@ -383,6 +391,11 @@ static json to_json(const kdi_method& m) {
     };
     if (m.is_operator) j["is_operator"] = true;
     if (m.template_origin) j["template_origin"] = to_json(*m.template_origin);
+    if (!m.throws_spec.empty()) {
+        json ts = json::array();
+        for (auto& t : m.throws_spec) ts.push_back(to_json(t));
+        j["throws_spec"] = ts;
+    }
     return j;
 }
 static kdi_method from_json_method(const json& j) {
@@ -402,6 +415,9 @@ static kdi_method from_json_method(const json& j) {
     m.mangled_name    = j.value("mangled_name", "");
     m.llvm_def        = j.at("llvm_def");
     if (j.contains("template_origin")) m.template_origin = from_json_template_origin(j.at("template_origin"));
+    if (j.contains("throws_spec")) {
+        for (auto& t : j.at("throws_spec")) m.throws_spec.push_back(from_json_type(t));
+    }
     return m;
 }
 
