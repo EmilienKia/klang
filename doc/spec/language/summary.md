@@ -1822,12 +1822,6 @@ When an exception propagates through a stack frame:
 
 ### 27.9 Known Limitations
 
-- Throwing polymorphic classes (with vtables) via **temporary construction** syntax
-  (`throw MyException()`) is not yet supported. Use a local variable instead:
-  ```k
-  e : MyException(42);
-  throw e;
-  ```
 - No `finally` clause.
 - No rethrow (`throw;` without expression).
 - No exception specification on constructors/destructors.

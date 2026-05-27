@@ -141,13 +141,13 @@ safeRead() : int {
     result : int = 0;
     try {
         result = readFile();
-    } catch (e: FileNotFound&) {
+    } catch (e: FileNotFound*) {
         // Catches FileNotFound specifically
         result = -1;
-    } catch (e: IOError&) {
+    } catch (e: IOError*) {
         // Catches any other IOError subclass
         result = -2;
-    } catch (e: Exception&) {
+    } catch (e: Exception*) {
         // Catches anything else
         result = -99;
     }
@@ -238,7 +238,7 @@ process() : int {
     result : int = 0;
     try {
         result = fetchData();
-    } catch (e: NetworkError&) {
+    } catch (e: NetworkError*) {
         result = -1;
     }
     return result;
@@ -312,13 +312,6 @@ riskyWork() : int {
 
 ## 9. Known limitations
 
-- Throwing polymorphic classes (with vtables) via **temporary construction**
-  syntax (`throw MyException()`) is not yet supported. Use a local variable
-  instead:
-  ```k
-  e : MyException(42);
-  throw e;
-  ```
 - No `finally` clause.
 - No rethrow (`throw;` without expression).
 - No exception specification on constructors/destructors.

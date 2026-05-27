@@ -3,7 +3,7 @@
 **Feature:** Full exception mechanism — `throw`, `try-catch`, `throws` clause, compile-time
 exception contract verification, stack unwinding with destructor calls.
 
-**Status:** ✅ Feature complete — one known limitation (throw/catch of polymorphic classes)
+**Status:** ✅ Feature complete
 
 ---
 
@@ -30,9 +30,9 @@ exception contract verification, stack unwinding with destructor calls.
 - [x] Step 19: Documentation (grammar, summary, stdlib doc)
 - [x] Step 20: Tests
 - [x] All existing tests pass
-- [x] All new exception tests pass (22 tests, 65 assertions)
+- [x] All new exception tests pass (28 tests, 81 assertions)
 - [x] Stdlib exception construction tests pass (5 tests)
-- [ ] Known limitation: throw/catch of polymorphic classes (with vtables) via temporary construction not yet supported
+- [x] Throw via temporary construction works for polymorphic classes
 
 ---
 
@@ -57,7 +57,7 @@ myFunc(a: int) : Result throws IOException, ParseException { ... }
 
 // Try-catch
 try {
-    riskyCall();
+    riskyCall(); 
 } catch (e : IOException&) {
     // handle
 } catch (const e : Exception&) {

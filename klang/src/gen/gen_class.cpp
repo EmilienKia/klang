@@ -1632,10 +1632,32 @@ void implementation_generator::visit_klass(klass& klass) {
                     continue;
                 }
 
-                // If the base sub-object is at a non-zero offset, we need a thunk
+                // If the base sub-object is at a non-zero offset AND the function
+                // was actually overridden in the derived class, we need a thunk
                 // that adjusts 'this' from Base* back to Derived* before calling
-                // the real function.
-                if (base_byte_offset > 0) {
+                // the real function. For non-overridden inherited methods, the
+                // function already expects Base* as 'this', so no thunk is needed.
+                bool is_overridden = true;
+                {
+                    llvm::Function* base_llvm_func = _context->lookup_llvm_function(base_entry.func);
+                    if (base_llvm_func && base_llvm_func == llvm_func) {
+                        // Same LLVM function — not overridden, no thunk needed
+                        is_overridden = false;
+                    } else if (base_llvm_func && llvm_func
+                               && base_llvm_func->getName() == llvm_func->getName()) {
+                        // Same LLVM function name — not overridden, no thunk needed
+                        is_overridden = false;
+                    } else if (!base_llvm_func && llvm_func) {
+                        // Base entry has no registered LLVM func; compare by mangled name
+                        // If the primary vtable entry's function has the same mangled name as the base
+                        // entry's function, it's inherited and not overridden.
+                        if (base_entry.func && base_entry.func->get_mangled_name() ==
+                            (llvm_func->getName().str())) {
+                            is_overridden = false;
+                        }
+                    }
+                }
+                if (base_byte_offset > 0 && is_overridden) {
                     std::string thunk_name = llvm_func->getName().str()
                         + "_thunk_adj" + std::to_string(base_byte_offset);
                     llvm::Function* thunk = _context->module().getFunction(thunk_name);
@@ -2716,7 +2738,18 @@ void implementation_generator::fill_imported_base_vtables(klass& klass) {
 
                     // Step 4: Emit the vtable global and GEP stores to patch the sub-object vptrs
                     // If the base subobject is at a non-zero offset, we need a thunk
-                    if (base_byte_offset == 0) {
+                    // ONLY if the function was actually overridden in the derived class.
+                    // For non-overridden inherited methods, the function already expects
+                    // Base* as 'this', so no thunk is needed.
+                    // Detection: if the LLVM function we found has the same name as the
+                    // KDI slot's override_symbol, it's the original base function.
+                    bool needs_thunk = (base_byte_offset > 0);
+                    if (needs_thunk && !kdi_slot.override_symbol.empty()) {
+                        if (override_func->getName().str() == kdi_slot.override_symbol) {
+                            needs_thunk = false;
+                        }
+                    }
+                    if (!needs_thunk) {
                         sec_init.push_back(override_func);
                     } else {
                         std::string thunk_name = override_func->getName().str()

@@ -41,7 +41,7 @@ TEST_CASE("Exception: try-catch parses without error", "[gen][exceptions]") {
             result : int = 0;
             try {
                 result = 42;
-            } catch (e: Exception&) {
+            } catch (e: Exception*) {
                 result = -1;
             }
             return result;
@@ -64,9 +64,9 @@ TEST_CASE("Exception: multiple catch clauses parse", "[gen][exceptions]") {
             result : int = 0;
             try {
                 result = 10;
-            } catch (e: ErrA&) {
+            } catch (e: ErrA*) {
                 result = -1;
-            } catch (e: ErrB&) {
+            } catch (e: ErrB*) {
                 result = -2;
             }
             return result;
@@ -190,7 +190,7 @@ TEST_CASE("Exception: try-catch with throw in try body compiles", "[gen][excepti
             result : int = 0;
             try {
                 result = 5;
-            } catch (p: Problem&) {
+            } catch (p: Problem*) {
                 result = -1;
             }
             return result;
@@ -218,7 +218,7 @@ TEST_CASE("Exception: throw inside try-catch is caught at runtime", "[gen][excep
                 e : MyErr;
                 throw e;
                 result = 999;
-            } catch (p: MyErr&) {
+            } catch (p: MyErr*) {
                 result = 77;
             }
             return result;
@@ -250,7 +250,7 @@ TEST_CASE("Exception: throw in called function caught by caller via invoke", "[g
             try {
                 thrower();
                 result = 999;
-            } catch (p: AppError&) {
+            } catch (p: AppError*) {
                 result = 42;
             }
             return result;
@@ -283,9 +283,9 @@ TEST_CASE("Exception: type-based catch dispatch selects correct handler", "[gen]
             try {
                 throw_b();
                 result = 999;
-            } catch (a: ErrA&) {
+            } catch (a: ErrA*) {
                 result = 10;
-            } catch (b: ErrB&) {
+            } catch (b: ErrB*) {
                 result = 20;
             }
             return result;
@@ -314,9 +314,9 @@ TEST_CASE("Exception: first matching catch clause wins", "[gen][exceptions][run]
             try {
                 throw_a();
                 result = 999;
-            } catch (a: ErrA&) {
+            } catch (a: ErrA*) {
                 result = 100;
-            } catch (b: ErrB&) {
+            } catch (b: ErrB*) {
                 result = 200;
             }
             return result;
@@ -346,10 +346,10 @@ TEST_CASE("Exception: unmatched type resumes unwinding to outer try-catch", "[ge
                 try {
                     throw_c();
                     result = 999;
-                } catch (a: ErrA&) {
+                } catch (a: ErrA*) {
                     result = 10;
                 }
-            } catch (c: ErrC&) {
+            } catch (c: ErrC*) {
                 result = 30;
             }
             return result;
@@ -377,10 +377,10 @@ TEST_CASE("Exception: nested try-catch blocks", "[gen][exceptions][run][nested]"
                 try {
                     e : ErrA;
                     throw e;
-                } catch (p: ErrA&) {
+                } catch (p: ErrA*) {
                     result = 55;
                 }
-            } catch (p: ErrA&) {
+            } catch (p: ErrA*) {
                 result = 999;
             }
             return result;
@@ -445,7 +445,7 @@ TEST_CASE("Exception contract: throw inside try-catch does not require throws cl
             try {
                 e : ErrB;
                 throw e;
-            } catch (b: ErrB&) {
+            } catch (b: ErrB*) {
                 result = 99;
             }
             return result;
@@ -517,7 +517,7 @@ TEST_CASE("Exception contract: call to throwing function caught in try-catch pas
             result : int = 0;
             try {
                 thrower();
-            } catch (b: ErrB&) {
+            } catch (b: ErrB*) {
                 result = 55;
             }
             return result;
@@ -608,3 +608,132 @@ TEST_CASE("Exception: throwing a non-Exception class fails compilation",
     )"), k::log::compiler_error);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  10. Throw via temporary construction (polymorphic classes)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception: throw temporary construction of Exception-derived class",
+          "[gen][exceptions][run][temp-throw]") {
+    // First verify that calling getCode() on a caught derived exception works
+    // even with a local variable (non-temporary) throw
+    auto jit = gen_jit(R"(
+        module __test_exc_temp_throw_1__;
+
+        class MyErr : public Exception {
+            public:
+            MyErr(code: int) : Exception(code) { }
+        }
+
+        test_throw_local_getcode() : int {
+            result : int = 0;
+            try {
+                e : MyErr(42);
+                throw e;
+                result = 999;
+            } catch (e: MyErr&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+
+        test_throw_temp() : int {
+            result : int = 0;
+            try {
+                throw MyErr(42);
+                result = 999;
+            } catch (e: MyErr&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    // Test local variable throw + getCode
+    auto fn_local = jit->lookup_symbol<int(*)()>("test_throw_local_getcode");
+    REQUIRE(fn_local != nullptr);
+    REQUIRE(fn_local() == 42);
+    // Test temporary throw + getCode
+    auto fn_temp = jit->lookup_symbol<int(*)()>("test_throw_temp");
+    REQUIRE(fn_temp != nullptr);
+    REQUIRE(fn_temp() == 42);
+}
+
+TEST_CASE("Exception: throw temporary construction of base Exception",
+          "[gen][exceptions][run][temp-throw]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_temp_throw_2__;
+
+        test_throw_base() : int {
+            result : int = 0;
+            try {
+                throw Exception(99);
+                result = 999;
+            } catch (e: Exception&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_throw_base");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 99);
+}
+
+TEST_CASE("Exception: throw temporary caught by base class reference",
+          "[gen][exceptions][run][temp-throw]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_temp_throw_3__;
+
+        class AppError : public Exception {
+            public:
+            AppError() : Exception(77) { }
+        }
+
+        test_throw_temp_base_catch() : int {
+            result : int = 0;
+            try {
+                throw AppError();
+                result = 999;
+            } catch (e: Exception&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_throw_temp_base_catch");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 77);
+}
+
+TEST_CASE("Exception: throw temporary in called function",
+          "[gen][exceptions][run][temp-throw]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_temp_throw_4__;
+
+        class NetErr : public Exception {
+            public:
+            NetErr(code: int) : Exception(code) { }
+        }
+
+        thrower() : void {
+            throw NetErr(55);
+        }
+
+        test_throw_temp_callee() : int {
+            result : int = 0;
+            try {
+                thrower();
+                result = 999;
+            } catch (e: NetErr&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_throw_temp_callee");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 55);
+}
