@@ -125,7 +125,29 @@ TEST_CASE("IndexOutOfBoundsException: default code is 3", "[libk][exception]") {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  2. Throw and catch stdlib exception types
+//  2. Throw Exception base class
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception: throwing Exception itself compiles", "[libk][exception]") {
+    // Exception itself should be throwable
+    auto jit = jit_k(R"SRC(
+        module __test_exc_throw_base__;
+
+        thrower() : void throws Exception {
+            e : Exception(99);
+            throw e;
+        }
+
+        safe() : int { return 1; }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("safe");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  3. Throw and catch stdlib exception types
 //  NOTE: Throwing polymorphic classes (with vtables) via temporary construction
 //  (e.g. `throw MemoryException()`) is not yet fully supported by the codegen.
 //  These tests are SKIPPED until the throw codegen handles vtable-bearing objects.

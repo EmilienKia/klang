@@ -17,11 +17,9 @@
  */
 
 /**
- * Tests for exception handling syntax and model building.
+ * Tests for exception handling: throw, try-catch, throws clause, contract verification.
  *
- * Currently tests that the exception syntax (throw, try-catch, throws clause)
- * is correctly parsed and compiled through the pipeline without errors.
- * Full exception semantics (throw/catch at runtime) are not yet implemented.
+ * All throwable types must derive from ::k::Exception (auto-imported from the stdlib).
  */
 
 #include <catch2/catch_all.hpp>
@@ -34,8 +32,8 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Exception: try-catch parses without error", "[gen][exceptions]") {
-    // This test verifies that the pipeline accepts try-catch syntax
-    // without throwing a compiler error (no runtime exception support yet).
+    // Verify that the pipeline accepts try-catch syntax and executes the try body
+    // normally when no exception is thrown.
     auto jit = gen_jit(R"(
         module __test_exc_1__;
 
@@ -43,15 +41,13 @@ TEST_CASE("Exception: try-catch parses without error", "[gen][exceptions]") {
             result : int = 0;
             try {
                 result = 42;
-            } catch (e: int*) {
+            } catch (e: Exception*) {
                 result = -1;
             }
             return result;
         }
     )");
     REQUIRE(jit != nullptr);
-    // The function should return 42 since no exception is thrown
-    // and the try body simply executes
     auto fn = jit->lookup_symbol<int(*)()>("try_but_no_throw");
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 42);
@@ -61,13 +57,16 @@ TEST_CASE("Exception: multiple catch clauses parse", "[gen][exceptions]") {
     auto jit = gen_jit(R"(
         module __test_exc_2__;
 
+        class ErrA : public Exception { }
+        class ErrB : public Exception { }
+
         multi_catch() : int {
             result : int = 0;
             try {
                 result = 10;
-            } catch (e: int*) {
+            } catch (e: ErrA*) {
                 result = -1;
-            } catch (e: long*) {
+            } catch (e: ErrB*) {
                 result = -2;
             }
             return result;
@@ -83,9 +82,7 @@ TEST_CASE("Exception: throws clause on function declaration", "[gen][exceptions]
     auto jit = gen_jit(R"(
         module __test_exc_3__;
 
-        struct MyError {
-            code : int;
-        }
+        class MyError : public Exception { }
 
         may_throw() : int throws MyError {
             return 7;
@@ -101,13 +98,8 @@ TEST_CASE("Exception: throws clause with multiple types", "[gen][exceptions]") {
     auto jit = gen_jit(R"(
         module __test_exc_4__;
 
-        struct ErrorA {
-            code : int;
-        }
-
-        struct ErrorB {
-            msg : int;
-        }
+        class ErrorA : public Exception { }
+        class ErrorB : public Exception { }
 
         may_throw_multi() : int throws ErrorA, ErrorB {
             return 99;
@@ -125,12 +117,10 @@ TEST_CASE("Exception: throws clause with multiple types", "[gen][exceptions]") {
 
 TEST_CASE("Exception: throws clause type resolution — model inspection", "[gen][exceptions][resolution]") {
     // Verify that the throws spec raw names are resolved to actual types
-    auto comp = compile_model(R"(
+    auto comp = compile_model_with_stdlib(R"(
         module __test_exc_res_1__;
 
-        struct MyException {
-            code : int;
-        }
+        class MyException : public Exception { }
 
         risky() : int throws MyException {
             return 1;
@@ -165,20 +155,17 @@ TEST_CASE("Exception: throws clause unknown type fails", "[gen][exceptions][reso
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  3. Throw statement codegen (trap-based for now)
+//  3. Throw statement codegen
 // ════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Exception: throw statement compiles (traps at runtime)", "[gen][exceptions]") {
-    // The throw statement currently emits a trap instruction.
-    // Verify that the function compiles; we don't invoke it since it would trap.
+TEST_CASE("Exception: throw statement compiles", "[gen][exceptions]") {
+    // Verify that a throw of an Exception-derived class compiles correctly.
     auto jit = gen_jit(R"(
         module __test_exc_throw_1__;
 
-        struct Err {
-            code : int;
-        }
+        class Err : public Exception { }
 
-        will_trap() : void throws Err {
+        will_throw() : void throws Err {
             e : Err;
             throw e;
         }
@@ -188,22 +175,16 @@ TEST_CASE("Exception: throw statement compiles (traps at runtime)", "[gen][excep
         }
     )");
     REQUIRE(jit != nullptr);
-    // Only call safe_path to verify the module compiled correctly
     auto fn = jit->lookup_symbol<int(*)()>("safe_path");
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 100);
 }
 
 TEST_CASE("Exception: try-catch with throw in try body compiles", "[gen][exceptions]") {
-    // Verify that a throw inside a try block compiles without errors.
-    // The try body executes sequentially; since throw traps, we test the
-    // path that doesn't reach the throw.
     auto jit = gen_jit(R"(
         module __test_exc_trycatch_1__;
 
-        struct Problem {
-            val : int;
-        }
+        class Problem : public Exception { }
 
         guarded(flag: int) : int {
             result : int = 0;
@@ -226,19 +207,15 @@ TEST_CASE("Exception: try-catch with throw in try body compiles", "[gen][excepti
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Exception: throw inside try-catch is caught at runtime", "[gen][exceptions][run]") {
-    // Full end-to-end test: throw inside a try block, caught by matching catch clause.
     auto jit = gen_jit(R"(
         module __test_exc_runtime_1__;
 
-        struct MyErr {
-            code : int;
-        }
+        class MyErr : public Exception { }
 
         test_throw_catch() : int {
             result : int = 0;
             try {
                 e : MyErr;
-                e.code = 42;
                 throw e;
                 result = 999;
             } catch (p: MyErr*) {
@@ -258,18 +235,13 @@ TEST_CASE("Exception: throw inside try-catch is caught at runtime", "[gen][excep
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Exception: throw in called function caught by caller via invoke", "[gen][exceptions][run][invoke]") {
-    // The called function throws; the caller wraps it in try-catch.
-    // This verifies that invoke (not call) is used for the function call.
     auto jit = gen_jit(R"(
         module __test_exc_invoke_1__;
 
-        struct AppError {
-            code : int;
-        }
+        class AppError : public Exception { }
 
         thrower() : void {
             e : AppError;
-            e.code = 123;
             throw e;
         }
 
@@ -295,21 +267,14 @@ TEST_CASE("Exception: throw in called function caught by caller via invoke", "[g
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Exception: type-based catch dispatch selects correct handler", "[gen][exceptions][run][dispatch]") {
-    // Throw ErrB, verify that the ErrB catch handler is reached and not ErrA's.
     auto jit = gen_jit(R"(
         module __test_exc_dispatch_1__;
 
-        struct ErrA {
-            code : int;
-        }
-
-        struct ErrB {
-            code : int;
-        }
+        class ErrA : public Exception { }
+        class ErrB : public Exception { }
 
         throw_b() : void {
             e : ErrB;
-            e.code = 2;
             throw e;
         }
 
@@ -333,21 +298,14 @@ TEST_CASE("Exception: type-based catch dispatch selects correct handler", "[gen]
 }
 
 TEST_CASE("Exception: first matching catch clause wins", "[gen][exceptions][run][dispatch]") {
-    // Throw ErrA, verify the first (ErrA) handler is reached.
     auto jit = gen_jit(R"(
         module __test_exc_dispatch_2__;
 
-        struct ErrA {
-            code : int;
-        }
-
-        struct ErrB {
-            code : int;
-        }
+        class ErrA : public Exception { }
+        class ErrB : public Exception { }
 
         throw_a() : void {
             e : ErrA;
-            e.code = 1;
             throw e;
         }
 
@@ -371,22 +329,14 @@ TEST_CASE("Exception: first matching catch clause wins", "[gen][exceptions][run]
 }
 
 TEST_CASE("Exception: unmatched type resumes unwinding to outer try-catch", "[gen][exceptions][run][dispatch]") {
-    // Throw ErrC which is not caught by inner try-catch (has only ErrA handler),
-    // so it should propagate to the outer try-catch.
     auto jit = gen_jit(R"(
         module __test_exc_dispatch_3__;
 
-        struct ErrA {
-            code : int;
-        }
-
-        struct ErrC {
-            code : int;
-        }
+        class ErrA : public Exception { }
+        class ErrC : public Exception { }
 
         throw_c() : void {
             e : ErrC;
-            e.code = 3;
             throw e;
         }
 
@@ -419,16 +369,13 @@ TEST_CASE("Exception: nested try-catch blocks", "[gen][exceptions][run][nested]"
     auto jit = gen_jit(R"(
         module __test_exc_nested_1__;
 
-        struct ErrA {
-            val : int;
-        }
+        class ErrA : public Exception { }
 
         test_nested() : int {
             result : int = 0;
             try {
                 try {
                     e : ErrA;
-                    e.val = 10;
                     throw e;
                 } catch (p: ErrA*) {
                     result = 55;
@@ -455,8 +402,8 @@ TEST_CASE("Exception contract: throw undeclared type in function with throws cla
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
         module __test_exc_contract_1__;
 
-        struct ErrA { code : int; }
-        struct ErrB { code : int; }
+        class ErrA : public Exception { }
+        class ErrB : public Exception { }
 
         risky() : void throws ErrA {
             e : ErrB;
@@ -467,11 +414,10 @@ TEST_CASE("Exception contract: throw undeclared type in function with throws cla
 
 TEST_CASE("Exception contract: throw declared type in function with throws clause passes",
           "[gen][exceptions][contract]") {
-    // Function declares 'throws ErrA' and throws ErrA → should pass
     auto jit = gen_jit(R"(
         module __test_exc_contract_2__;
 
-        struct ErrA { code : int; }
+        class ErrA : public Exception { }
 
         risky() : void throws ErrA {
             e : ErrA;
@@ -488,13 +434,11 @@ TEST_CASE("Exception contract: throw declared type in function with throws claus
 
 TEST_CASE("Exception contract: throw inside try-catch does not require throws clause",
           "[gen][exceptions][contract]") {
-    // Function has throws clause for ErrA, but throws ErrB inside a try-catch
-    // that catches ErrB → should pass (locally caught)
     auto jit = gen_jit(R"(
         module __test_exc_contract_3__;
 
-        struct ErrA { code : int; }
-        struct ErrB { code : int; }
+        class ErrA : public Exception { }
+        class ErrB : public Exception { }
 
         guarded() : int throws ErrA {
             result : int = 0;
@@ -515,13 +459,11 @@ TEST_CASE("Exception contract: throw inside try-catch does not require throws cl
 
 TEST_CASE("Exception contract: call to throwing function not handled fails",
           "[gen][exceptions][contract]") {
-    // caller() has 'throws ErrA' but calls thrower() which 'throws ErrB'
-    // without handling ErrB → should fail
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
         module __test_exc_contract_4__;
 
-        struct ErrA { code : int; }
-        struct ErrB { code : int; }
+        class ErrA : public Exception { }
+        class ErrB : public Exception { }
 
         thrower() : void throws ErrB {
             e : ErrB;
@@ -536,12 +478,10 @@ TEST_CASE("Exception contract: call to throwing function not handled fails",
 
 TEST_CASE("Exception contract: call to throwing function propagated via throws clause passes",
           "[gen][exceptions][contract]") {
-    // caller() declares 'throws ErrB' and calls thrower() which also 'throws ErrB'
-    // → exception is propagated, should pass
     auto jit = gen_jit(R"(
         module __test_exc_contract_5__;
 
-        struct ErrB { code : int; }
+        class ErrB : public Exception { }
 
         thrower() : void throws ErrB {
             e : ErrB;
@@ -562,13 +502,11 @@ TEST_CASE("Exception contract: call to throwing function propagated via throws c
 
 TEST_CASE("Exception contract: call to throwing function caught in try-catch passes",
           "[gen][exceptions][contract]") {
-    // caller() has a throws clause for ErrA, calls thrower() which throws ErrB,
-    // but wraps it in a try-catch that catches ErrB → should pass
     auto jit = gen_jit(R"(
         module __test_exc_contract_6__;
 
-        struct ErrA { code : int; }
-        struct ErrB { code : int; }
+        class ErrA : public Exception { }
+        class ErrB : public Exception { }
 
         thrower() : void throws ErrB {
             e : ErrB;
@@ -593,11 +531,10 @@ TEST_CASE("Exception contract: call to throwing function caught in try-catch pas
 
 TEST_CASE("Exception contract: function without throws clause can throw freely",
           "[gen][exceptions][contract]") {
-    // Function without a throws clause can throw anything (no contract to check)
     auto jit = gen_jit(R"(
         module __test_exc_contract_7__;
 
-        struct AnyErr { code : int; }
+        class AnyErr : public Exception { }
 
         unspec_thrower() : void {
             e : AnyErr;
@@ -614,13 +551,10 @@ TEST_CASE("Exception contract: function without throws clause can throw freely",
 
 TEST_CASE("Exception contract: calling unspec function from throws function needs no handling",
           "[gen][exceptions][contract]") {
-    // caller() has a throws clause, but calls unspec() which has NO throws clause.
-    // Since unspec() doesn't declare that it throws, the contract checker doesn't
-    // enforce anything on the caller side for this call.
     auto jit = gen_jit(R"(
         module __test_exc_contract_8__;
 
-        struct ErrA { code : int; }
+        class ErrA : public Exception { }
 
         unspec() : void {
         }
@@ -636,3 +570,41 @@ TEST_CASE("Exception contract: calling unspec function from throws function need
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 77);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  9. Compile-time rejection of non-Exception types
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception: throwing a non-Exception struct fails compilation",
+          "[gen][exceptions][contract]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module __test_exc_reject_struct__;
+
+        struct NotAnException {
+            code : int;
+        }
+
+        thrower() : void {
+            e : NotAnException;
+            throw e;
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception: throwing a non-Exception class fails compilation",
+          "[gen][exceptions][contract]") {
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module __test_exc_reject_class__;
+
+        class NotAnException {
+            public:
+            getVal() : int { return 0; }
+        }
+
+        thrower() : void {
+            e : NotAnException;
+            throw e;
+        }
+    )"), k::log::compiler_error);
+}
+

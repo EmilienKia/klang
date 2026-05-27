@@ -710,6 +710,11 @@ void type_reference_resolver::visit_function(function& fn) {
             } else {
                 // Try scope lookup — the type may be in the same namespace
                 auto agg = scope_lookup::lookup_structure(fn.shared_as<element>(), raw_name);
+                if (!agg) {
+                    // Try imported aggregates (e.g. Exception from stdlib)
+                    k::name type_name(raw_name);
+                    agg = _unit.get_or_create_imported_aggregate(type_name, _context);
+                }
                 if (agg) {
                     auto st = agg->get_struct_type();
                     if (st) {

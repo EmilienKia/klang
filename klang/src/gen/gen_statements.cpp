@@ -732,10 +732,46 @@ void type_reference_resolver::visit_throw_statement(throw_statement& stmt)
         }
     }
 
-    // Exception contract check: verify thrown type is declared in the function's throws clause
-    // or caught by an enclosing try-catch
+    // Validate that the thrown type derives from ::k::Exception
     if (auto expr = stmt.get_expression()) {
         if (auto expr_type = expr->get_type()) {
+            auto thrown_agg = get_exception_aggregate(expr_type);
+            if (thrown_agg) {
+                // Look up ::k::Exception in the model (local or imported)
+                std::shared_ptr<aggregate> exception_class;
+                // First try local namespaces
+                auto root_ns = _unit.get_root_namespace();
+                if (root_ns) {
+                    auto k_ns = root_ns->get_child_namespace("k");
+                    if (k_ns) {
+                        exception_class = k_ns->get_aggregate("Exception");
+                    }
+                }
+                // If not found locally, try imported aggregates (from KDI)
+                if (!exception_class) {
+                    k::name exc_name(false, {"k", "Exception"});
+                    exception_class = _unit.get_or_create_imported_aggregate(exc_name, _context);
+                }
+                if (exception_class) {
+                    // Thrown type must be Exception itself or derive from it
+                    if (thrown_agg != exception_class && !thrown_agg->is_derived_from(exception_class)) {
+                        throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROW_NOT_EXCEPTION_TYPE),
+                                    expr->first_lexeme(),
+                                    "Cannot throw type '{}': only types derived from ::k::Exception can be thrown",
+                                    {thrown_agg->get_short_name()});
+                    }
+                }
+                // If ::k::Exception is not found (e.g. module 'k' itself), skip the check
+            } else {
+                // Non-struct type (primitive, etc.) — cannot be thrown
+                throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROW_NOT_EXCEPTION_TYPE),
+                            expr->first_lexeme(),
+                            "Cannot throw a non-class type: only types derived from ::k::Exception can be thrown",
+                            {});
+            }
+
+            // Exception contract check: verify thrown type is declared in the function's throws clause
+            // or caught by an enclosing try-catch
             check_throw_contract(expr_type, expr->first_lexeme());
         }
     }
@@ -782,8 +818,16 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
 
     // Determine the exception object's type and size
+    // Peel reference/const wrappers: temporary_construction_expression sets the
+    // expression type as reference_type<struct_type>, but the actual object is
+    // the struct itself. We need the struct size, not the pointer size.
     auto expr_type = expr->get_type();
-    llvm::Type* llvm_exc_type = _context->get_llvm_type(expr_type);
+    auto obj_type = expr_type;
+    while (obj_type && obj_type->get_subtype() &&
+           (type::is_reference(obj_type) || type::is_const(obj_type))) {
+        obj_type = obj_type->get_subtype();
+    }
+    llvm::Type* llvm_exc_type = _context->get_llvm_type(obj_type);
     uint64_t exc_size = mod.getDataLayout().getTypeAllocSize(llvm_exc_type);
 
     // 1. __cxa_allocate_exception(size_t) -> void*
@@ -818,16 +862,18 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     //    For matching in the catch clause, both throw and catch must use the
     //    same global — pointer equality is all that matters.
     //    Peel addresser wrappers (reference, pointer, const) to get the inner type.
-    auto inner_type = expr_type;
+    auto inner_type = obj_type;
     while (inner_type && inner_type->get_subtype() &&
            (type::is_pointer(inner_type) || type::is_reference(inner_type) ||
             type::is_const(inner_type))) {
         inner_type = inner_type->get_subtype();
     }
     std::string typeinfo_name;
+    std::shared_ptr<aggregate> thrown_agg;
     if (auto st = std::dynamic_pointer_cast<struct_type>(inner_type)) {
         if (auto agg = st->get_struct()) {
             typeinfo_name = mangler::mangle_rtti(agg->get_name());
+            thrown_agg = agg;
         } else {
             typeinfo_name = "_KTI_" + st->name();
         }
@@ -843,9 +889,132 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
             typeinfo_name);
     }
 
-    // 4. Store typeinfo in the _k_thrown_typeinfo global variable.
-    //    This allows the catch dispatcher to identify the exception type without
-    //    relying on platform-specific __cxa_exception header layout.
+    // 4. Build the typeinfo chain: [{ti, offset}, {ti, offset}, ..., {null, 0}]
+    //    This supports polymorphic catch (catching by base class).
+    //    Each entry contains the typeinfo pointer and the byte offset of the corresponding
+    //    base sub-object within the thrown object's memory layout.
+    //    Store the chain in a module-level constant array, then store its pointer
+    //    in _k_thrown_typeinfo_chain global.
+    auto* i32_type = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* chain_entry_ty = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_type});
+
+    struct chain_entry_data {
+        llvm::Constant* ti;
+        uint32_t offset;
+    };
+    std::vector<chain_entry_data> chain_data;
+    chain_data.push_back({typeinfo_gv, 0}); // Self — offset 0
+
+    if (thrown_agg) {
+        // Walk the base class hierarchy and compute byte offsets for each base sub-object.
+        // K's class layout: each class struct has { vptr, base_subobject, ...fields }.
+        // The base_subobject is typically at field index 1 in the LLVM struct.
+        const auto& data_layout = mod.getDataLayout();
+        std::function<void(const std::shared_ptr<aggregate>&, uint32_t)> add_bases;
+        add_bases = [&](const std::shared_ptr<aggregate>& agg, uint32_t cumulative_offset) {
+            for (auto& bs : agg->get_bases()) {
+                std::shared_ptr<aggregate> base_agg = bs.base;
+                // For imported aggregates, base_spec.base may still be null
+                if (!base_agg && !bs.raw_name.empty()) {
+                    std::vector<std::string> parts;
+                    std::size_t pos = 0;
+                    std::string raw = bs.raw_name;
+                    if (raw.size() >= 2 && raw[0] == ':' && raw[1] == ':') {
+                        raw = raw.substr(2);
+                    }
+                    while (true) {
+                        auto sep = raw.find("::", pos);
+                        if (sep == std::string::npos) { parts.push_back(raw.substr(pos)); break; }
+                        parts.push_back(raw.substr(pos, sep - pos));
+                        pos = sep + 2;
+                    }
+                    k::name lookup_name{false, std::move(parts)};
+                    base_agg = _unit.get_or_create_imported_aggregate(lookup_name, _context);
+                }
+                if (!base_agg) continue;
+
+                // Compute the byte offset of this base sub-object within the parent.
+                // In K's layout, the base sub-object is the field named "__base_<Name>__"
+                // which is at a specific struct offset. Use the DataLayout to get the
+                // exact byte offset of the base sub-object field.
+                uint32_t field_offset = 0;
+                auto agg_st = agg->get_struct_type();
+                if (agg_st) {
+                    llvm::Type* agg_llvm_type = _context->get_llvm_type(agg_st);
+                    if (agg_llvm_type && agg_llvm_type->isStructTy()) {
+                        auto* struct_ty = llvm::cast<llvm::StructType>(agg_llvm_type);
+                        auto* sl = data_layout.getStructLayout(struct_ty);
+                        // The base sub-object field is typically at index 1 (after vptr).
+                        // For single inheritance with a class/interface, field 0 is __vptr__
+                        // and field 1 is the base sub-object.
+                        // For structs (non-class), field 0 is the base sub-object directly.
+                        // We find the correct field by matching the type.
+                        auto base_st = base_agg->get_struct_type();
+                        llvm::Type* base_llvm = base_st ? _context->get_llvm_type(base_st) : nullptr;
+                        unsigned num_fields = struct_ty->getNumElements();
+                        for (unsigned fi = 0; fi < num_fields; ++fi) {
+                            if (struct_ty->getElementType(fi) == base_llvm) {
+                                field_offset = (uint32_t)sl->getElementOffset(fi);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                uint32_t base_offset = cumulative_offset + field_offset;
+
+                std::string base_ti_name = mangler::mangle_rtti(base_agg->get_name());
+                auto* base_ti = mod.getNamedGlobal(base_ti_name);
+                if (!base_ti) {
+                    base_ti = new llvm::GlobalVariable(
+                        mod, ptr_ty, /*isConstant=*/true,
+                        llvm::GlobalValue::LinkOnceODRLinkage,
+                        llvm::ConstantPointerNull::get(ptr_ty),
+                        base_ti_name);
+                }
+                chain_data.push_back({base_ti, base_offset});
+                add_bases(base_agg, base_offset); // Recursive
+            }
+        };
+        add_bases(thrown_agg, 0);
+    }
+
+    // Build the LLVM constant array from chain_data
+    std::vector<llvm::Constant*> chain_entries;
+    for (auto& entry : chain_data) {
+        chain_entries.push_back(llvm::ConstantStruct::get(chain_entry_ty,
+            {entry.ti, llvm::ConstantInt::get(i32_type, entry.offset)}));
+    }
+    // Null terminator
+    chain_entries.push_back(llvm::ConstantStruct::get(chain_entry_ty,
+        {llvm::ConstantPointerNull::get(ptr_ty), llvm::ConstantInt::get(i32_type, 0)}));
+
+    // Create a constant array for the chain
+    auto* chain_arr_ty = llvm::ArrayType::get(chain_entry_ty, chain_entries.size());
+    auto* chain_initializer = llvm::ConstantArray::get(chain_arr_ty, chain_entries);
+    std::string chain_global_name = typeinfo_name + "_chain";
+    auto* chain_arr_gv = mod.getNamedGlobal(chain_global_name);
+    if (!chain_arr_gv) {
+        chain_arr_gv = new llvm::GlobalVariable(
+            mod, chain_arr_ty, /*isConstant=*/true,
+            llvm::GlobalValue::LinkOnceODRLinkage,
+            chain_initializer,
+            chain_global_name);
+    }
+
+    // 5. Store the chain pointer in _k_thrown_typeinfo_chain. This global holds
+    //    a pointer to the null-terminated typeinfo array for the current exception.
+    auto* ti_chain_global = mod.getNamedGlobal("_k_thrown_typeinfo_chain");
+    if (!ti_chain_global) {
+        ti_chain_global = new llvm::GlobalVariable(
+            mod, ptr_ty, /*isConstant=*/false,
+            llvm::GlobalValue::ExternalLinkage,
+            llvm::ConstantPointerNull::get(ptr_ty),
+            "_k_thrown_typeinfo_chain");
+    }
+    _builder->CreateStore(chain_arr_gv, ti_chain_global);
+
+    // Also store the primary typeinfo for backward compatibility
     auto* ti_global = mod.getNamedGlobal("_k_thrown_typeinfo");
     if (!ti_global) {
         ti_global = new llvm::GlobalVariable(
@@ -1056,35 +1225,91 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     // catch fallthrough (nested try-catch propagation).
     _builder->SetInsertPoint(dispatch_bb);
 
-    // Read the typeinfo of the thrown exception from the global variable.
-    auto* ti_global = mod.getNamedGlobal("_k_thrown_typeinfo");
-    if (!ti_global) {
-        ti_global = new llvm::GlobalVariable(
+    // Read the typeinfo chain of the thrown exception from the global variable.
+    // The chain is a null-terminated array of typeinfo pointers [self, base1, ..., null].
+    auto* ti_chain_global = mod.getNamedGlobal("_k_thrown_typeinfo_chain");
+    if (!ti_chain_global) {
+        ti_chain_global = new llvm::GlobalVariable(
             mod, ptr_ty, /*isConstant=*/false,
             llvm::GlobalValue::ExternalLinkage,
             llvm::ConstantPointerNull::get(ptr_ty),
-            "_k_thrown_typeinfo");
+            "_k_thrown_typeinfo_chain");
     }
-    auto* thrown_typeinfo = _builder->CreateLoad(ptr_ty, ti_global, "thrown_ti");
+    auto* thrown_chain_ptr = _builder->CreateLoad(ptr_ty, ti_chain_global, "thrown_chain");
 
-    // Dispatch: compare thrown typeinfo against each catch clause's typeinfo
+    // Create an alloca to hold the matched base offset (written by dispatch, read by catch handler).
+    auto* offset_alloca = alloca_builder.CreateAlloca(i32_ty, nullptr, "catch_offset_slot");
+    _builder->CreateStore(llvm::ConstantInt::get(i32_ty, 0), offset_alloca);
+
+    // The chain entry struct type: { ptr typeinfo, i32 offset }
+    auto* chain_entry_struct_ty = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
+
+    // Dispatch: for each catch clause, iterate the thrown type's chain and check
+    // if the catch clause's typeinfo matches any entry (supports base class catching).
     for (size_t i = 0; i < clauses.size(); ++i) {
         if (!typeinfos[i]) {
-            // Catch-all (no typeinfo): always matches
+            // Catch-all (no typeinfo): always matches, offset 0
+            _builder->CreateStore(llvm::ConstantInt::get(i32_ty, 0), offset_alloca);
             _builder->CreateBr(catch_bbs[i]);
             break;
         }
-        auto* match = _builder->CreateICmpEQ(thrown_typeinfo, typeinfos[i],
-            "catch_match_" + std::to_string(i));
 
-        if (i == clauses.size() - 1) {
-            // Last clause: match or resume
-            _builder->CreateCondBr(match, catch_bbs[i], catch_fallthrough_bb);
-        } else {
-            auto* next_test_bb = llvm::BasicBlock::Create(llvm_ctx,
-                "catch_test_" + std::to_string(i+1), func);
-            _builder->CreateCondBr(match, catch_bbs[i], next_test_bb);
-            _builder->SetInsertPoint(next_test_bb);
+        // Generate a loop that walks the typeinfo chain:
+        //   for (entry* p = chain; p->ti != null; p++) { if (p->ti == catch_ti) { offset = p->offset; goto catch; } }
+        auto* prev_bb = _builder->GetInsertBlock();
+        auto* loop_bb = llvm::BasicBlock::Create(llvm_ctx,
+            "catch_check_loop_" + std::to_string(i), func);
+        auto* match_bb = catch_bbs[i];
+        auto* no_match_bb = (i == clauses.size() - 1)
+            ? catch_fallthrough_bb
+            : llvm::BasicBlock::Create(llvm_ctx, "catch_test_" + std::to_string(i+1), func);
+
+        _builder->CreateBr(loop_bb);
+        _builder->SetInsertPoint(loop_bb);
+
+        // PHI node for the current entry pointer in the chain
+        auto* phi_ptr = _builder->CreatePHI(ptr_ty, 2, "chain_ptr_" + std::to_string(i));
+        phi_ptr->addIncoming(thrown_chain_ptr, prev_bb);
+
+        // Load the typeinfo field (index 0) of the current entry
+        auto* ti_field_ptr = _builder->CreateStructGEP(chain_entry_struct_ty, phi_ptr, 0, "entry_ti_ptr");
+        auto* entry_ti = _builder->CreateLoad(ptr_ty, ti_field_ptr, "chain_entry_ti");
+
+        // Check if null (end of chain → no match)
+        auto* is_null = _builder->CreateICmpEQ(entry_ti,
+            llvm::ConstantPointerNull::get(ptr_ty), "chain_end");
+        auto* check_match_bb = llvm::BasicBlock::Create(llvm_ctx,
+            "catch_cmp_" + std::to_string(i), func);
+        _builder->CreateCondBr(is_null, no_match_bb, check_match_bb);
+
+        // Compare with catch typeinfo
+        _builder->SetInsertPoint(check_match_bb);
+        auto* match = _builder->CreateICmpEQ(entry_ti, typeinfos[i],
+            "catch_match_" + std::to_string(i));
+        auto* next_iter_bb = llvm::BasicBlock::Create(llvm_ctx,
+            "catch_next_" + std::to_string(i), func);
+
+        // On match: store the offset and branch to catch handler
+        auto* store_offset_bb = llvm::BasicBlock::Create(llvm_ctx,
+            "catch_store_offset_" + std::to_string(i), func);
+        _builder->CreateCondBr(match, store_offset_bb, next_iter_bb);
+
+        _builder->SetInsertPoint(store_offset_bb);
+        auto* offset_field_ptr = _builder->CreateStructGEP(chain_entry_struct_ty, phi_ptr, 1, "entry_offset_ptr");
+        auto* offset_val = _builder->CreateLoad(i32_ty, offset_field_ptr, "entry_offset");
+        _builder->CreateStore(offset_val, offset_alloca);
+        _builder->CreateBr(match_bb);
+
+        // Advance pointer to next entry and loop
+        _builder->SetInsertPoint(next_iter_bb);
+        auto* next_ptr = _builder->CreateGEP(chain_entry_struct_ty, phi_ptr,
+            {llvm::ConstantInt::get(i32_ty, 1)}, "chain_next");
+        phi_ptr->addIncoming(next_ptr, next_iter_bb);
+        _builder->CreateBr(loop_bb);
+
+        // Continue from no_match_bb for the next clause
+        if (i < clauses.size() - 1) {
+            _builder->SetInsertPoint(no_match_bb);
         }
     }
 
@@ -1101,10 +1326,16 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         // Load the exception pointer from the shared alloca
         auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr");
 
-        // Begin catch — returns pointer to the exception object
+        // Begin catch — returns pointer to the exception object (start of thrown type)
         auto* caught_ptr = _builder->CreateCall(cxa_begin, {exc_ptr}, "caught");
 
-        // Bind the exception variable — create its alloca and store the caught pointer
+        // Adjust the pointer by the matched base offset to point to the correct
+        // base sub-object for the catch variable's declared type.
+        auto* matched_offset = _builder->CreateLoad(i32_ty, offset_alloca, "matched_offset");
+        auto* adjusted_ptr = _builder->CreateGEP(
+            llvm::Type::getInt8Ty(llvm_ctx), caught_ptr, {matched_offset}, "adjusted_exc_ptr");
+
+        // Bind the exception variable — create its alloca and store the adjusted pointer
         auto var = clauses[i]->get_exception_var();
         if (var) {
             // Create alloca for the catch variable (pointer type)
@@ -1115,8 +1346,8 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
                 var->get_short_name() + "_exc");
             // Register the variable in the context
             _context->_variables[var] = alloca;
-            // Store the caught pointer
-            _builder->CreateStore(caught_ptr, alloca);
+            // Store the adjusted pointer (pointing to the correct base sub-object)
+            _builder->CreateStore(adjusted_ptr, alloca);
         }
 
         // Generate catch body
