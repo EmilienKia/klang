@@ -235,11 +235,18 @@ protected:
      *  assignment to a union alternative, and reset after evaluation. */
     bool _skip_union_disc_check = false;
 
-    /** Stack of landing pad basic blocks for try-catch exception handling.
-     *  When non-empty, top() is the landing pad for the innermost enclosing
-     *  try-catch — throw statements within the try body should invoke to this
-     *  landing pad instead of using a plain call to __cxa_throw. */
-    std::stack<llvm::BasicBlock*> _landing_pad_stack;
+    /** Exception handling context for a single try-catch level. */
+    struct eh_landing_context {
+        llvm::BasicBlock* lpad_bb;        ///< The landing pad block (invoke unwinds here)
+        llvm::BasicBlock* dispatch_bb;    ///< The typeinfo dispatch block
+        llvm::AllocaInst* exc_ptr_alloca; ///< Alloca holding the exception pointer
+    };
+
+    /** Stack of landing pad contexts for try-catch exception handling.
+     *  When non-empty, top() is the context for the innermost enclosing
+     *  try-catch — function calls within the try body should invoke to
+     *  top().lpad_bb instead of using a plain call. */
+    std::stack<eh_landing_context> _landing_pad_stack;
 
     /**
      * Emit a function call or invoke instruction depending on exception context.

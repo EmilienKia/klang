@@ -291,7 +291,128 @@ TEST_CASE("Exception: throw in called function caught by caller via invoke", "[g
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  6. Nested try-catch: inner catches, outer not reached
+//  6. Type-based catch dispatch (multiple catch clauses)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception: type-based catch dispatch selects correct handler", "[gen][exceptions][run][dispatch]") {
+    // Throw ErrB, verify that the ErrB catch handler is reached and not ErrA's.
+    auto jit = gen_jit(R"(
+        module __test_exc_dispatch_1__;
+
+        struct ErrA {
+            code : int;
+        }
+
+        struct ErrB {
+            code : int;
+        }
+
+        throw_b() : void {
+            e : ErrB;
+            e.code = 2;
+            throw e;
+        }
+
+        test_dispatch() : int {
+            result : int = 0;
+            try {
+                throw_b();
+                result = 999;
+            } catch (a: ErrA*) {
+                result = 10;
+            } catch (b: ErrB*) {
+                result = 20;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_dispatch");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 20);
+}
+
+TEST_CASE("Exception: first matching catch clause wins", "[gen][exceptions][run][dispatch]") {
+    // Throw ErrA, verify the first (ErrA) handler is reached.
+    auto jit = gen_jit(R"(
+        module __test_exc_dispatch_2__;
+
+        struct ErrA {
+            code : int;
+        }
+
+        struct ErrB {
+            code : int;
+        }
+
+        throw_a() : void {
+            e : ErrA;
+            e.code = 1;
+            throw e;
+        }
+
+        test_dispatch_first() : int {
+            result : int = 0;
+            try {
+                throw_a();
+                result = 999;
+            } catch (a: ErrA*) {
+                result = 100;
+            } catch (b: ErrB*) {
+                result = 200;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_dispatch_first");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 100);
+}
+
+TEST_CASE("Exception: unmatched type resumes unwinding to outer try-catch", "[gen][exceptions][run][dispatch]") {
+    // Throw ErrC which is not caught by inner try-catch (has only ErrA handler),
+    // so it should propagate to the outer try-catch.
+    auto jit = gen_jit(R"(
+        module __test_exc_dispatch_3__;
+
+        struct ErrA {
+            code : int;
+        }
+
+        struct ErrC {
+            code : int;
+        }
+
+        throw_c() : void {
+            e : ErrC;
+            e.code = 3;
+            throw e;
+        }
+
+        test_unmatched_propagation() : int {
+            result : int = 0;
+            try {
+                try {
+                    throw_c();
+                    result = 999;
+                } catch (a: ErrA*) {
+                    result = 10;
+                }
+            } catch (c: ErrC*) {
+                result = 30;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_unmatched_propagation");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 30);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  7. Nested try-catch: inner catches, outer not reached
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Exception: nested try-catch blocks", "[gen][exceptions][run][nested]") {
