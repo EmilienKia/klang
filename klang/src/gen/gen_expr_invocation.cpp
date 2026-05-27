@@ -405,6 +405,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             expr.set_non_virtual_qualified_call(true);
             // Phase 3: annotate dispatch info
             annotate_dispatch_info(expr, best.func, member_callee);
+            // Exception contract check
+            check_call_contract(*best.func, expr.first_lexeme());
             return;
         }
 
@@ -678,6 +680,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // sub_expr() value as first argument when the function is not a member.
         // Phase 3: annotate dispatch info
         annotate_dispatch_info(expr, best.func, member_callee);
+        // Exception contract check
+        check_call_contract(*best.func, expr.first_lexeme());
         return;
     }
 
@@ -1263,6 +1267,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     auto mc = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
                     annotate_dispatch_info(expr, already_func, mc);
                 }
+                // Exception contract check
+                check_call_contract(*already_func, expr.first_lexeme());
                 return;
             }
 
@@ -1383,6 +1389,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             auto updated_member_callee = std::dynamic_pointer_cast<member_of_object_expression>(expr.callee_expr());
             annotate_dispatch_info(expr, best.func, updated_member_callee);
         }
+
+        // Exception contract check: the called function may declare a throws clause
+        check_call_contract(*best.func, expr.first_lexeme());
         return;
     }
 }

@@ -731,7 +731,14 @@ void type_reference_resolver::visit_throw_statement(throw_statement& stmt)
             _replacement_expr = nullptr;
         }
     }
-    // TODO: validate that the expression type derives from ::k::Exception
+
+    // Exception contract check: verify thrown type is declared in the function's throws clause
+    // or caught by an enclosing try-catch
+    if (auto expr = stmt.get_expression()) {
+        if (auto expr_type = expr->get_type()) {
+            check_throw_contract(expr_type, expr->first_lexeme());
+        }
+    }
 }
 
 void declaration_generator::visit_throw_statement(throw_statement& stmt) {
@@ -901,19 +908,33 @@ void symbol_resolver::visit_try_catch_statement(try_catch_statement& stmt)
 
 void type_reference_resolver::visit_try_catch_statement(try_catch_statement& stmt)
 {
+    // Collect the caught types from catch clauses BEFORE visiting the try body,
+    // so that throw/call checks inside the body can see them.
+    try_catch_scope scope;
+    for(auto& clause : stmt.get_catch_clauses()) {
+        if(auto var = clause->get_exception_var()) {
+            // Resolve the variable type first
+            var->accept(*this);
+            if (auto vt = var->get_type()) {
+                scope.caught_types.push_back(vt);
+            }
+        }
+    }
+    _try_catch_stack.push_back(std::move(scope));
+
+    // Visit the try body (throw/call checks will consult the stack)
     if(auto body = stmt.get_try_body()) {
         body->accept(*this);
     }
+
+    _try_catch_stack.pop_back();
+
+    // Visit catch clause bodies (which are outside the try scope)
     for(auto& clause : stmt.get_catch_clauses()) {
-        if(auto var = clause->get_exception_var()) {
-            var->accept(*this);
-        }
         if(auto body = clause->get_body()) {
             body->accept(*this);
         }
     }
-    // TODO: validate catch clause types derive from ::k::Exception
-    // TODO: validate catch clause types use reference addresser
 }
 
 void declaration_generator::visit_try_catch_statement(try_catch_statement& stmt) {
@@ -1166,6 +1187,113 @@ void declaration_generator::visit_catch_clause(catch_clause& clause) {
 
 void implementation_generator::visit_catch_clause(catch_clause& clause) {
     // TODO: implement catch clause codegen
+}
+
+//
+// Exception contract checking helpers
+//
+
+std::shared_ptr<aggregate> type_reference_resolver::get_exception_aggregate(const std::shared_ptr<type>& t)
+{
+    if (!t) return nullptr;
+    // Peel addresser wrappers (pointer, reference, const, link, view, owner, drain)
+    auto inner = t;
+    while (inner && inner->get_subtype() &&
+           (type::is_pointer(inner) || type::is_reference(inner) ||
+            type::is_const(inner) || type::is_link(inner) ||
+            type::is_view(inner) || type::is_owner(inner))) {
+        inner = inner->get_subtype();
+    }
+    if (auto st = std::dynamic_pointer_cast<struct_type>(inner)) {
+        return st->get_struct();
+    }
+    return nullptr;
+}
+
+bool type_reference_resolver::is_exception_type_covered(
+    const std::shared_ptr<aggregate>& thrown_agg,
+    const std::vector<std::shared_ptr<type>>& declared_types)
+{
+    if (!thrown_agg) return false;
+    for (const auto& decl_type : declared_types) {
+        auto decl_agg = get_exception_aggregate(decl_type);
+        if (!decl_agg) continue;
+        // Exact match
+        if (thrown_agg == decl_agg) return true;
+        // Thrown type derives from declared type (caught by base class handler)
+        if (thrown_agg->is_derived_from(decl_agg)) return true;
+    }
+    return false;
+}
+
+bool type_reference_resolver::is_exception_caught_by_try_catch(
+    const std::shared_ptr<aggregate>& thrown_agg) const
+{
+    // Check all enclosing try-catch scopes (innermost first)
+    for (auto it = _try_catch_stack.rbegin(); it != _try_catch_stack.rend(); ++it) {
+        if (is_exception_type_covered(thrown_agg, it->caught_types)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void type_reference_resolver::check_throw_contract(
+    const std::shared_ptr<type>& thrown_type,
+    const lex::opt_any_lexeme& lexeme)
+{
+    if (_function_stack.empty()) return;
+    auto& current_func = _function_stack.back();
+    if (!current_func) return;
+
+    // Only enforce the contract if the current function has a throws clause
+    if (!current_func->has_throws_spec()) return;
+
+    auto thrown_agg = get_exception_aggregate(thrown_type);
+    if (!thrown_agg) return; // Non-struct throw — cannot check further
+
+    // Check if caught by an enclosing try-catch
+    if (is_exception_caught_by_try_catch(thrown_agg)) return;
+
+    // Check if declared in the function's throws spec
+    if (is_exception_type_covered(thrown_agg, current_func->get_throws_spec())) return;
+
+    // Not declared and not caught — error
+    throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROW_UNDECLARED_EXCEPTION),
+                lexeme,
+                "Function '{}' throws type '{}' which is not declared in its throws clause",
+                {current_func->get_short_name(), thrown_agg->get_short_name()});
+}
+
+void type_reference_resolver::check_call_contract(
+    const function& called_func,
+    const lex::opt_any_lexeme& lexeme)
+{
+    if (_function_stack.empty()) return;
+    auto& current_func = _function_stack.back();
+    if (!current_func) return;
+
+    // Only check if the called function has a throws spec
+    if (!called_func.has_throws_spec()) return;
+
+    // For each exception type declared by the called function, check if it's handled
+    for (const auto& exc_type : called_func.get_throws_spec()) {
+        auto exc_agg = get_exception_aggregate(exc_type);
+        if (!exc_agg) continue;
+
+        // Caught by enclosing try-catch?
+        if (is_exception_caught_by_try_catch(exc_agg)) continue;
+
+        // Propagated via the current function's throws clause?
+        if (current_func->has_throws_spec() &&
+            is_exception_type_covered(exc_agg, current_func->get_throws_spec())) continue;
+
+        // Not handled — error
+        throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_UNCAUGHT_EXCEPTION),
+                    lexeme,
+                    "Call to '{}' may throw '{}' which is neither caught nor declared in the throws clause of '{}'",
+                    {called_func.get_short_name(), exc_agg->get_short_name(), current_func->get_short_name()});
+    }
 }
 
 //

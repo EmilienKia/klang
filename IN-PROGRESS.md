@@ -25,7 +25,7 @@ exception contract verification, stack unwinding with destructor calls.
 - [x] Step 14: Codegen — try-catch statement (catch-all, no type matching yet)
 - [x] Step 15: Codegen — invoke/landingpad/cleanup (stack unwinding)
 - [x] Step 16: Type-based catch dispatch + nested try-catch propagation
-- [ ] Step 17: KDI support (throws spec serialization)
+- [x] Step 17: KDI support (throws spec serialization)
 - [ ] Step 18: Standard library (Exception, MemoryException)
 - [ ] Step 19: Documentation (grammar, summary, stdlib doc)
 - [ ] Step 20: Tests
@@ -66,5 +66,6 @@ try {
 ---
 
 *Delete this file when feature is complete.*
+
 
 

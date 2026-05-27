@@ -445,4 +445,194 @@ TEST_CASE("Exception: nested try-catch blocks", "[gen][exceptions][run][nested]"
     REQUIRE(fn() == 55);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  8. Exception contract checker
+// ════════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("Exception contract: throw undeclared type in function with throws clause fails",
+          "[gen][exceptions][contract]") {
+    // Function declares 'throws ErrA' but throws ErrB → should fail
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module __test_exc_contract_1__;
+
+        struct ErrA { code : int; }
+        struct ErrB { code : int; }
+
+        risky() : void throws ErrA {
+            e : ErrB;
+            throw e;
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception contract: throw declared type in function with throws clause passes",
+          "[gen][exceptions][contract]") {
+    // Function declares 'throws ErrA' and throws ErrA → should pass
+    auto jit = gen_jit(R"(
+        module __test_exc_contract_2__;
+
+        struct ErrA { code : int; }
+
+        risky() : void throws ErrA {
+            e : ErrA;
+            throw e;
+        }
+
+        safe() : int { return 42; }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("safe");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+TEST_CASE("Exception contract: throw inside try-catch does not require throws clause",
+          "[gen][exceptions][contract]") {
+    // Function has throws clause for ErrA, but throws ErrB inside a try-catch
+    // that catches ErrB → should pass (locally caught)
+    auto jit = gen_jit(R"(
+        module __test_exc_contract_3__;
+
+        struct ErrA { code : int; }
+        struct ErrB { code : int; }
+
+        guarded() : int throws ErrA {
+            result : int = 0;
+            try {
+                e : ErrB;
+                throw e;
+            } catch (b: ErrB*) {
+                result = 99;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("guarded");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 99);
+}
+
+TEST_CASE("Exception contract: call to throwing function not handled fails",
+          "[gen][exceptions][contract]") {
+    // caller() has 'throws ErrA' but calls thrower() which 'throws ErrB'
+    // without handling ErrB → should fail
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module __test_exc_contract_4__;
+
+        struct ErrA { code : int; }
+        struct ErrB { code : int; }
+
+        thrower() : void throws ErrB {
+            e : ErrB;
+            throw e;
+        }
+
+        caller() : void throws ErrA {
+            thrower();
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception contract: call to throwing function propagated via throws clause passes",
+          "[gen][exceptions][contract]") {
+    // caller() declares 'throws ErrB' and calls thrower() which also 'throws ErrB'
+    // → exception is propagated, should pass
+    auto jit = gen_jit(R"(
+        module __test_exc_contract_5__;
+
+        struct ErrB { code : int; }
+
+        thrower() : void throws ErrB {
+            e : ErrB;
+            throw e;
+        }
+
+        caller() : void throws ErrB {
+            thrower();
+        }
+
+        safe() : int { return 7; }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("safe");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 7);
+}
+
+TEST_CASE("Exception contract: call to throwing function caught in try-catch passes",
+          "[gen][exceptions][contract]") {
+    // caller() has a throws clause for ErrA, calls thrower() which throws ErrB,
+    // but wraps it in a try-catch that catches ErrB → should pass
+    auto jit = gen_jit(R"(
+        module __test_exc_contract_6__;
+
+        struct ErrA { code : int; }
+        struct ErrB { code : int; }
+
+        thrower() : void throws ErrB {
+            e : ErrB;
+            throw e;
+        }
+
+        caller() : int throws ErrA {
+            result : int = 0;
+            try {
+                thrower();
+            } catch (b: ErrB*) {
+                result = 55;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("caller");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 55);
+}
+
+TEST_CASE("Exception contract: function without throws clause can throw freely",
+          "[gen][exceptions][contract]") {
+    // Function without a throws clause can throw anything (no contract to check)
+    auto jit = gen_jit(R"(
+        module __test_exc_contract_7__;
+
+        struct AnyErr { code : int; }
+
+        unspec_thrower() : void {
+            e : AnyErr;
+            throw e;
+        }
+
+        safe() : int { return 123; }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("safe");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 123);
+}
+
+TEST_CASE("Exception contract: calling unspec function from throws function needs no handling",
+          "[gen][exceptions][contract]") {
+    // caller() has a throws clause, but calls unspec() which has NO throws clause.
+    // Since unspec() doesn't declare that it throws, the contract checker doesn't
+    // enforce anything on the caller side for this call.
+    auto jit = gen_jit(R"(
+        module __test_exc_contract_8__;
+
+        struct ErrA { code : int; }
+
+        unspec() : void {
+        }
+
+        caller() : void throws ErrA {
+            unspec();
+        }
+
+        safe() : int { return 77; }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("safe");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 77);
+}

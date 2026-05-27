@@ -41,6 +41,17 @@ protected:
     std::vector<std::shared_ptr<function>> _function_stack;
 
     /**
+     * Stack of try-catch scopes: each entry lists the exception types caught at that level.
+     * Used by the exception contract checker to determine whether a thrown/propagated
+     * exception type is handled by an enclosing try-catch.
+     */
+    struct try_catch_scope {
+        /** Types caught by the catch clauses at this try-catch level. */
+        std::vector<std::shared_ptr<type>> caught_types;
+    };
+    std::vector<try_catch_scope> _try_catch_stack;
+
+    /**
      * Keeps function_reference_type objects alive for the duration of type resolution.
      * A frt created in visit_symbol_expression is a temporary shared_ptr; the only
      * strong reference to it is through fn_ref_type->reference (the cached ref_type).
@@ -188,6 +199,39 @@ protected:
         throw resolution_error(std::move(diag));
     }
 
+
+    // ── Exception contract checking helpers ────────────────────────────────────
+
+    /**
+     * Extract the underlying struct aggregate from a type, peeling pointer/reference/const wrappers.
+     * Returns nullptr if the inner type is not a struct_type with an aggregate.
+     */
+    static std::shared_ptr<aggregate> get_exception_aggregate(const std::shared_ptr<type>& t);
+
+    /**
+     * Check whether an exception type is covered by a list of declared types.
+     * A type is covered if it is the same aggregate or derives from one of the declared types.
+     */
+    static bool is_exception_type_covered(const std::shared_ptr<aggregate>& thrown_agg,
+                                          const std::vector<std::shared_ptr<type>>& declared_types);
+
+    /**
+     * Check whether an exception type is caught by any enclosing try-catch scope.
+     */
+    bool is_exception_caught_by_try_catch(const std::shared_ptr<aggregate>& thrown_agg) const;
+
+    /**
+     * Validate that a thrown exception type is declared in the current function's throws clause
+     * or caught by an enclosing try-catch. Emits ERR_THROW_UNDECLARED_EXCEPTION if not.
+     */
+    void check_throw_contract(const std::shared_ptr<type>& thrown_type, const lex::opt_any_lexeme& lexeme);
+
+    /**
+     * Validate that all exception types declared by a called function are handled
+     * (either caught by enclosing try-catch or declared in the caller's throws clause).
+     * Emits ERR_UNCAUGHT_EXCEPTION for each unhandled type.
+     */
+    void check_call_contract(const function& called_func, const lex::opt_any_lexeme& lexeme);
 
     void visit_unit(unit&) override;
 
