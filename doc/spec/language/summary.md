@@ -1729,9 +1729,9 @@ Example:
 ```k
 try {
     riskyOperation();
-} catch (e: IOException*) {
+} catch (e: IOException&) {
     handleIO(e);
-} catch (e: Exception*) {
+} catch (e: Exception&) {
     handleGeneric(e);
 }
 ```
@@ -1740,7 +1740,7 @@ Rules:
 - Multiple catch clauses are evaluated in order; the **first matching type wins**.
 - Match is by exact type or base class (if the thrown type derives from the caught type).
 - Unmatched exceptions propagate to the next enclosing try-catch or out of the function.
-- The catch parameter receives a **pointer** (`T*`) to the exception object.
+- The catch parameter receives a **reference** (`T&`) to the exception object.
 - Catch parameter types must derive from `::k::Exception` (error `0x01C1` otherwise).
 - All function calls within a try block are compiled as LLVM `invoke` instructions
   (instead of `call`) to enable unwinding through the landing pad.
@@ -1814,7 +1814,7 @@ When an exception propagates through a stack frame:
 |------|-----------|-------------|
 | `0x01C0` | `ERR_THROW_NOT_EXCEPTION_TYPE` | Thrown type does not derive from `::k::Exception` |
 | `0x01C1` | `ERR_CATCH_NOT_EXCEPTION_TYPE` | Catch clause type does not derive from `::k::Exception` |
-| `0x01C2` | `ERR_CATCH_MUST_BE_REFERENCE` | Catch clause must use pointer addresser |
+| `0x01C2` | `ERR_CATCH_MUST_BE_REFERENCE` | Catch clause must use reference addresser (`&`) |
 | `0x01C3` | `ERR_THROWS_TYPE_NOT_FOUND` | Type in throws clause cannot be resolved |
 | `0x01C4` | `ERR_THROWS_NOT_EXCEPTION_TYPE` | Type in throws clause does not derive from `::k::Exception` |
 | `0x01C5` | `ERR_THROW_NOT_IN_THROWS_SPEC` | Throw of undeclared type in function with throws clause |
@@ -1831,7 +1831,6 @@ When an exception propagates through a stack frame:
 - No `finally` clause.
 - No rethrow (`throw;` without expression).
 - No exception specification on constructors/destructors.
-- Catch by reference (`&`) is not yet supported (use pointer `*`).
 
 ---
 

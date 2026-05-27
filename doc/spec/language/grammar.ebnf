@@ -640,8 +640,9 @@ CatchClause
 CatchParameterDecl
     = [ 'const' ] , Identifier , ':' , TypeSpec
     ;
-    (* The catch parameter type must use a pointer addresser (T*).
-       The type must derive from ::k::Exception.                   *)
+    (* The catch parameter type must use a reference addresser (T&).
+       The type must derive from ::k::Exception.
+       References guarantee non-null and non-reassignable binding.      *)
 
 ExpressionStatement
     = [ Expression ] , ';'

@@ -115,10 +115,12 @@ CatchParameterDecl:
   caught type).
 - Unmatched exceptions propagate to the next enclosing try-catch or out of the
   function.
-- The catch parameter receives a **pointer** (`T*`) to the exception object.
+- The catch parameter receives a **reference** (`T&`) to the exception object.
 - Catch parameter types must derive from `::k::Exception` (error `0x01C1`
   otherwise).
-- Catch parameter must use a pointer addresser (`T*`) (error `0x01C2` otherwise).
+- Catch parameter must use a reference addresser (`T&`) (error `0x01C2` otherwise).
+  References guarantee that the caught exception is never null and its address
+  is non-reassignable.
 - All function calls within a try block are compiled as LLVM `invoke`
   instructions (instead of `call`) to enable unwinding through the landing pad.
 
@@ -139,13 +141,13 @@ safeRead() : int {
     result : int = 0;
     try {
         result = readFile();
-    } catch (e: FileNotFound*) {
+    } catch (e: FileNotFound&) {
         // Catches FileNotFound specifically
         result = -1;
-    } catch (e: IOError*) {
+    } catch (e: IOError&) {
         // Catches any other IOError subclass
         result = -2;
-    } catch (e: Exception*) {
+    } catch (e: Exception&) {
         // Catches anything else
         result = -99;
     }
@@ -236,7 +238,7 @@ process() : int {
     result : int = 0;
     try {
         result = fetchData();
-    } catch (e: NetworkError*) {
+    } catch (e: NetworkError&) {
         result = -1;
     }
     return result;
@@ -300,7 +302,7 @@ riskyWork() : int {
 |------|-----------|-------------|
 | `0x01C0` | `ERR_THROW_NOT_EXCEPTION_TYPE` | Thrown type does not derive from `::k::Exception` |
 | `0x01C1` | `ERR_CATCH_NOT_EXCEPTION_TYPE` | Catch clause type does not derive from `::k::Exception` |
-| `0x01C2` | `ERR_CATCH_MUST_BE_REFERENCE` | Catch clause must use pointer addresser |
+| `0x01C2` | `ERR_CATCH_MUST_BE_REFERENCE` | Catch clause must use reference addresser (`&`) |
 | `0x01C3` | `ERR_THROWS_TYPE_NOT_FOUND` | Type in throws clause cannot be resolved |
 | `0x01C4` | `ERR_THROWS_NOT_EXCEPTION_TYPE` | Type in throws clause does not derive from `::k::Exception` |
 | `0x01C5` | `ERR_THROW_NOT_IN_THROWS_SPEC` | Throw of undeclared type in function with throws clause |
@@ -320,7 +322,6 @@ riskyWork() : int {
 - No `finally` clause.
 - No rethrow (`throw;` without expression).
 - No exception specification on constructors/destructors.
-- Catch by reference (`&`) is not yet supported (use pointer `*`).
 - No `generic` catch-all clause (planned).
 
 ---

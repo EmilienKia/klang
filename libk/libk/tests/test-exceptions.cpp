@@ -166,8 +166,8 @@ TEST_CASE("Exception: throw and catch MemoryException", "[libk][exception][run][
             try {
                 thrower();
                 result = 999;
-            } catch (e: MemoryException*) {
-                result = e->getCode();
+            } catch (e: MemoryException&) {
+                result = e.getCode();
             }
             return result;
         }
@@ -191,8 +191,8 @@ TEST_CASE("Exception: catch by base RuntimeException", "[libk][exception][run][.
             try {
                 thrower();
                 result = 999;
-            } catch (e: RuntimeException*) {
-                result = e->getCode();
+            } catch (e: RuntimeException&) {
+                result = e.getCode();
             }
             return result;
         }

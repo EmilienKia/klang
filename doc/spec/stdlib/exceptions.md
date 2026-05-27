@@ -162,7 +162,7 @@ safeWrapper() : int {
     result : int = 0;
     try {
         result = riskyAlloc();
-    } catch (e: MemoryException*) {
+    } catch (e: MemoryException&) {
         result = -1;
     }
     return result;

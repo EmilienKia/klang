@@ -1082,8 +1082,13 @@ void type_reference_resolver::visit_try_catch_statement(try_catch_statement& stm
     try_catch_scope scope;
     for(auto& clause : stmt.get_catch_clauses()) {
         if(auto var = clause->get_exception_var()) {
-            // Resolve the variable type first
-            var->accept(*this);
+            // Only resolve the type — skip full variable init validation
+            // (catch variables are bound by the runtime, not user init expressions)
+            lex::opt_any_lexeme var_lexeme;
+            if (auto ast_vd = var->get_ast_variable_decl()) {
+                var_lexeme = lex::any_lexeme{ast_vd->name};
+            }
+            resolve_variable_type(*var, var_lexeme);
             if (auto vt = var->get_type()) {
                 scope.caught_types.push_back(vt);
             }
@@ -1338,7 +1343,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         // Bind the exception variable — create its alloca and store the adjusted pointer
         auto var = clauses[i]->get_exception_var();
         if (var) {
-            // Create alloca for the catch variable (pointer type)
+            // Create alloca for the catch variable (reference type — stored as pointer at ABI level)
             auto var_type = var->get_type();
             llvm::Type* llvm_var_type = _context->get_llvm_type(var_type);
             llvm::IRBuilder<> var_alloca_builder(entry_bb, entry_bb->begin());
@@ -1405,7 +1410,50 @@ void symbol_resolver::visit_catch_clause(catch_clause& clause)
 void type_reference_resolver::visit_catch_clause(catch_clause& clause)
 {
     if(auto var = clause.get_exception_var()) {
-        var->accept(*this);
+        // Only resolve the type of the catch variable — do NOT run full variable init
+        // validation (validate_reference_variable would fail because catch variables
+        // have no user-provided init expression; they are bound by the runtime).
+        lex::opt_any_lexeme var_lexeme;
+        if (auto ast_vd = var->get_ast_variable_decl()) {
+            var_lexeme = lex::any_lexeme{ast_vd->name};
+        }
+        resolve_variable_type(*var, var_lexeme);
+
+        // Validate that the catch parameter uses a reference addresser (&)
+        auto var_type = var->get_type();
+        if (var_type) {
+            if (!type::is_reference(var_type)) {
+                throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_CATCH_MUST_BE_REFERENCE),
+                            var_lexeme,
+                            "Catch parameter '{}' must use a reference addresser (&), not a pointer or other addresser",
+                            {var->get_short_name()});
+            }
+
+            // Validate that the caught type derives from ::k::Exception
+            auto caught_agg = get_exception_aggregate(var_type);
+            if (caught_agg) {
+                std::shared_ptr<aggregate> exception_class;
+                auto root_ns = _unit.get_root_namespace();
+                if (root_ns) {
+                    auto k_ns = root_ns->get_child_namespace("k");
+                    if (k_ns) {
+                        exception_class = k_ns->get_aggregate("Exception");
+                    }
+                }
+                if (!exception_class) {
+                    k::name exc_name(false, {"k", "Exception"});
+                    exception_class = _unit.get_or_create_imported_aggregate(exc_name, _context);
+                }
+                if (exception_class) {
+                    if (caught_agg != exception_class && !caught_agg->is_derived_from(exception_class)) {
+                        throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_CATCH_NOT_EXCEPTION_TYPE),
+                                    var_lexeme,
+                                    "Catch parameter type '{}' does not derive from ::k::Exception",
+                                    {caught_agg->get_short_name()});
+                    }
+                }
+            }
+        }
     }
     if(auto body = clause.get_body()) {
         body->accept(*this);
