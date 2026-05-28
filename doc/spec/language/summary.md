@@ -1679,17 +1679,21 @@ their default (invariant) mode. Covariance and contravariance are future feature
 ## 27. Exception Handling
 
 K provides structured exception handling via `throw`, `try-catch`, and `throws` clauses.
-Exceptions follow a class hierarchy rooted at `::k::Exception` (from the standard library).
+Throwable types follow a class hierarchy rooted at `::k::Throwable` (from the standard library),
+with a checked/unchecked distinction:
 
-### 27.1 Exception Type Constraint
+- **Checked exceptions** (`::k::Exception` subtypes): must be declared in `throws` clauses.
+- **Unchecked fatal errors** (`::k::FatalError` subtypes): propagate freely without declaration.
 
-**Only classes derived from `::k::Exception` (or `Exception` itself) may be thrown.**
+### 27.1 Throwable Type Constraint
 
-- Throwing a struct or class that does not derive from `::k::Exception` → compile-time error `0x01C0`.
+**Only classes derived from `::k::Throwable` (or `Throwable` itself) may be thrown.**
+
+- Throwing a struct or class that does not derive from `::k::Throwable` → compile-time error `0x01C0`.
 - Throwing a non-class type (primitive, array, etc.) → compile-time error `0x01C0`.
 - This constraint is enforced whenever the stdlib is available (i.e. for all modules except `k` itself).
 
-User-defined exception types must inherit from `Exception` or one of its subclass:
+User-defined exception types should inherit from `Exception` (checked) or `FatalError` (unchecked):
 
 ```k
 class MyError : public Exception {
@@ -1705,7 +1709,7 @@ ThrowStatement:
     'throw' Expression ';'
 ```
 
-The expression must evaluate to a class type derived from `::k::Exception`.
+The expression must evaluate to a class type derived from `::k::Throwable`.
 At runtime, the compiler:
 1. Allocates exception storage via `__cxa_allocate_exception`.
 2. Copies the value into the exception storage.
@@ -1731,7 +1735,7 @@ try {
     riskyOperation();
 } catch (e: IOException&) {
     handleIO(e);
-} catch (e: Exception&) {
+} catch (e: Throwable&) {
     handleGeneric(e);
 }
 ```
@@ -1741,7 +1745,7 @@ Rules:
 - Match is by exact type or base class (if the thrown type derives from the caught type).
 - Unmatched exceptions propagate to the next enclosing try-catch or out of the function.
 - The catch parameter receives a **reference** (`T&`) to the exception object.
-- Catch parameter types must derive from `::k::Exception` (error `0x01C1` otherwise).
+- Catch parameter types must derive from `::k::Throwable` (error `0x01C1` otherwise).
 - All function calls within a try block are compiled as LLVM `invoke` instructions
   (instead of `call`) to enable unwinding through the landing pad.
 
@@ -1761,16 +1765,17 @@ myFunc(a: int) : int throws IOException, ParseException {
 ```
 
 Rules:
-- All types in the `throws` clause must derive from `::k::Exception` (error `0x01C4` otherwise).
+- All types in the `throws` clause must derive from `::k::Throwable` (error `0x01C4` otherwise).
 - A type in the `throws` clause that cannot be resolved → error `0x01C3`.
 - The throws clause is part of the function's public interface and exported in `.kdi` files.
 
-### 27.5 Exception Contract Rules
+### 27.5 Exception Contract Rules (Checked Exceptions)
 
-When a function declares a `throws` clause, the compiler enforces static contract verification:
+When a function declares a `throws` clause, the compiler enforces static contract verification
+**for checked exceptions only** (types derived from `::k::Exception`):
 
-1. **Throw check:** Any `throw` statement in the function body must throw a type
-   that is either:
+1. **Throw check:** Any `throw` statement in the function body that throws an
+   `Exception`-derived type must throw a type that is either:
    - Declared in the function's `throws` clause, **or**
    - Caught by an enclosing `try-catch` within the same function.
    
@@ -1782,6 +1787,10 @@ When a function declares a `throws` clause, the compiler enforces static contrac
    - Declared in the caller's own `throws` clause (propagation).
    
    Violation → error `0x01C6`.
+
+**Unchecked types** (derived from `::k::FatalError`) are exempt from contract enforcement —
+they may be thrown from any function without declaration. This allows runtime errors like
+`OutOfMemory` to propagate without polluting every function signature.
 
 Functions **without** a `throws` clause are **not checked** — they may throw freely
 and are not required to handle exceptions from called functions. This allows gradual
@@ -1812,13 +1821,13 @@ When an exception propagates through a stack frame:
 
 | Code | Identifier | Description |
 |------|-----------|-------------|
-| `0x01C0` | `ERR_THROW_NOT_EXCEPTION_TYPE` | Thrown type does not derive from `::k::Exception` |
-| `0x01C1` | `ERR_CATCH_NOT_EXCEPTION_TYPE` | Catch clause type does not derive from `::k::Exception` |
+| `0x01C0` | `ERR_THROW_NOT_EXCEPTION_TYPE` | Thrown type does not derive from `::k::Throwable` |
+| `0x01C1` | `ERR_CATCH_NOT_EXCEPTION_TYPE` | Catch clause type does not derive from `::k::Throwable` |
 | `0x01C2` | `ERR_CATCH_MUST_BE_REFERENCE` | Catch clause must use reference addresser (`&`) |
 | `0x01C3` | `ERR_THROWS_TYPE_NOT_FOUND` | Type in throws clause cannot be resolved |
-| `0x01C4` | `ERR_THROWS_NOT_EXCEPTION_TYPE` | Type in throws clause does not derive from `::k::Exception` |
-| `0x01C5` | `ERR_THROW_NOT_IN_THROWS_SPEC` | Throw of undeclared type in function with throws clause |
-| `0x01C6` | `ERR_CALL_UNHANDLED_EXCEPTION` | Call to throwing function without handling/declaring its exceptions |
+| `0x01C4` | `ERR_THROWS_NOT_EXCEPTION_TYPE` | Type in throws clause does not derive from `::k::Throwable` |
+| `0x01C5` | `ERR_THROW_NOT_IN_THROWS_SPEC` | Throw of undeclared checked exception in function with throws clause |
+| `0x01C6` | `ERR_CALL_UNHANDLED_EXCEPTION` | Call to throwing function without handling/declaring its checked exceptions |
 
 ### 27.9 Known Limitations
 

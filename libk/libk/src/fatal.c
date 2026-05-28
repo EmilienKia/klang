@@ -72,12 +72,12 @@ void __k_fatal_array_bounds_check_failed(unsigned index, unsigned size) {
  * Called when malloc/realloc returns NULL in new-expressions or MultiSlot
  * allocate/reallocate intrinsics.
  *
- * Throws a K MemoryException using the Itanium C++ ABI:
+ * Throws a K OutOfMemory exception using the Itanium C++ ABI:
  *   1. Allocate exception storage via __cxa_allocate_exception (uses the
  *      emergency buffer so it works even under OOM).
- *   2. Call the K MemoryException() constructor on the storage.
+ *   2. Call the K OutOfMemory() constructor on the storage.
  *   3. Set up _k_thrown_typeinfo_chain with the full class hierarchy so that
- *      catch clauses for RuntimeException or Exception also match.
+ *      catch clauses for FatalError or Throwable also match.
  *   4. Call __cxa_throw to initiate stack unwinding.
  *
  * The compiler declares this function as 'noreturn cold' (NOT nounwind)
@@ -91,13 +91,13 @@ extern void  __cxa_throw(void* thrown_exception, void* tinfo, void (*dest)(void*
 
 /* ── K runtime symbols (from libk.so) ─────────────────────────────────────── */
 
-/* MemoryException default constructor: initialises vtable + calls base ctors */
-extern void _KFMN1k15MemoryExceptionC1Ev(void* self);
+/* OutOfMemory default constructor: initialises vtable + calls base ctors */
+extern void _KFMN1k11OutOfMemoryC1Ev(void* self);
 
-/* RTTI typeinfo globals for the MemoryException class hierarchy */
-extern char _KTRIN1k15MemoryExceptionE;
-extern char _KTRIN1k16RuntimeExceptionE;
-extern char _KTRIN1k9ExceptionE;
+/* RTTI typeinfo globals for the OutOfMemory class hierarchy */
+extern char _KTRIN1k11OutOfMemoryE;
+extern char _KTRIN1k10FatalErrorE;
+extern char _KTRIN1k9ThrowableE;
 extern char _KTRIN1k6ObjectE;
 
 /*
@@ -106,8 +106,8 @@ extern char _KTRIN1k6ObjectE;
  * dispatch code reads this to perform polymorphic type matching.
  *
  * Each entry is { void* typeinfo, uint32_t byte_offset } (padded to 16 bytes
- * on 64-bit). The chain for MemoryException is:
- *   [MemoryException@0, RuntimeException@8, Exception@16, Object@24, {null,0}]
+ * on 64-bit). The chain for OutOfMemory is:
+ *   [OutOfMemory@0, FatalError@8, Throwable@16, Object@24, {null,0}]
  *
  * This global is defined with weak linkage so it works whether the compiler
  * has already emitted it in the module or not.
@@ -120,9 +120,12 @@ __attribute__((weak))
 void* _k_thrown_typeinfo = (void*)0;
 
 /*
- * Static typeinfo chain for MemoryException.
+ * Static typeinfo chain for OutOfMemory.
  * Layout: array of { void* ti_ptr, uint32_t offset, uint32_t pad }.
  * On LP64 this is 16 bytes per entry due to alignment.
+ *
+ * Hierarchy: OutOfMemory → FatalError → Throwable → Object
+ * Each level adds a vptr (8 bytes on LP64).
  */
 struct __k_ti_chain_entry {
     void*    ti;
@@ -130,34 +133,31 @@ struct __k_ti_chain_entry {
     unsigned int _pad;
 };
 
-static const struct __k_ti_chain_entry __k_memory_exception_ti_chain[] = {
-    { &_KTRIN1k15MemoryExceptionE,  0 },   /* self */
-    { &_KTRIN1k16RuntimeExceptionE, 8 },   /* RuntimeException base at offset 8 */
-    { &_KTRIN1k9ExceptionE,        16 },   /* Exception base at offset 16 */
-    { &_KTRIN1k6ObjectE,           24 },   /* Object base at offset 24 */
-    { (void*)0,                     0 }    /* null terminator */
+static const struct __k_ti_chain_entry __k_out_of_memory_ti_chain[] = {
+    { &_KTRIN1k11OutOfMemoryE,   0 },   /* self */
+    { &_KTRIN1k10FatalErrorE,    8 },   /* FatalError base at offset 8 */
+    { &_KTRIN1k9ThrowableE,     16 },   /* Throwable base at offset 16 */
+    { &_KTRIN1k6ObjectE,        24 },   /* Object base at offset 24 */
+    { (void*)0,                  0 }    /* null terminator */
 };
 
-/* Size of MemoryException object:
- * {vptr, RuntimeException{vptr, Exception{vptr, Object{vptr}, int _code, pad}}}
- * = 40 bytes on LP64. */
-#define K_MEMORY_EXCEPTION_SIZE 40
+/* Size of OutOfMemory object:
+ * OutOfMemory{vptr, FatalError{vptr, Throwable{vptr, Object{vptr}, int _code, pad}}}
+ * = 4 vptrs (32) + int (4) + pad (4) = 40 bytes on LP64. */
+#define K_OUT_OF_MEMORY_SIZE 40
 
 __attribute__((noreturn, cold))
 void __k_fatal_memory_allocation(void) {
     /* 1. Allocate exception storage (uses emergency buffer under OOM) */
-    void* exc_mem = __cxa_allocate_exception(K_MEMORY_EXCEPTION_SIZE);
+    void* exc_mem = __cxa_allocate_exception(K_OUT_OF_MEMORY_SIZE);
 
-    /* 2. Construct MemoryException in-place (sets up vtable chain + _code=1) */
-    _KFMN1k15MemoryExceptionC1Ev(exc_mem);
+    /* 2. Construct OutOfMemory in-place (sets up vtable chain + _code=1) */
+    _KFMN1k11OutOfMemoryC1Ev(exc_mem);
 
     /* 3. Set up typeinfo chain for polymorphic catch dispatch */
-    _k_thrown_typeinfo_chain = (void*)__k_memory_exception_ti_chain;
-    _k_thrown_typeinfo = &_KTRIN1k15MemoryExceptionE;
+    _k_thrown_typeinfo_chain = (void*)__k_out_of_memory_ti_chain;
+    _k_thrown_typeinfo = &_KTRIN1k11OutOfMemoryE;
 
     /* 4. Throw — does not return, unwinds to nearest matching catch */
-    __cxa_throw(exc_mem, &_KTRIN1k15MemoryExceptionE, (void(*)(void*))0);
+    __cxa_throw(exc_mem, &_KTRIN1k11OutOfMemoryE, (void(*)(void*))0);
 }
-
-
-

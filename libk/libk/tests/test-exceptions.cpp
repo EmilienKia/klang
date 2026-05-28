@@ -20,10 +20,10 @@
  * Tests for the K standard library exception hierarchy.
  *
  * Exercises:
- *  - Construction of Exception / RuntimeException / MemoryException
+ *  - Construction of Throwable / Exception / FatalError / OutOfMemory
  *  - getCode() returns the expected error code
  *  - Throw and catch stdlib exception types
- *  - Catch by base class (RuntimeException catches MemoryException)
+ *  - Catch by base class (Throwable catches everything)
  */
 
 #include <catch2/catch_test_macros.hpp>
@@ -46,8 +46,23 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 } // anonymous namespace
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  1. Exception construction and getCode()
+//  1. Throwable and Exception construction and getCode()
 // ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Throwable: default constructor gives code 0", "[libk][exception]") {
+    auto jit = jit_k(R"SRC(
+        module __test_throwable_default__;
+
+        test() : int {
+            e : Throwable;
+            return e.getCode();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 0);
+}
 
 TEST_CASE("Exception: default constructor gives code 0", "[libk][exception]") {
     auto jit = jit_k(R"SRC(
@@ -79,12 +94,27 @@ TEST_CASE("Exception: constructor with code", "[libk][exception]") {
     REQUIRE(fn() == 42);
 }
 
-TEST_CASE("MemoryException: default code is 1", "[libk][exception]") {
+TEST_CASE("FatalError: default constructor gives code 0", "[libk][exception]") {
     auto jit = jit_k(R"SRC(
-        module __test_mem_exc__;
+        module __test_fatal_default__;
 
         test() : int {
-            e : MemoryException;
+            e : FatalError;
+            return e.getCode();
+        }
+    )SRC");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 0);
+}
+
+TEST_CASE("OutOfMemory: default code is 1", "[libk][exception]") {
+    auto jit = jit_k(R"SRC(
+        module __test_oom__;
+
+        test() : int {
+            e : OutOfMemory;
             return e.getCode();
         }
     )SRC");
@@ -149,16 +179,16 @@ TEST_CASE("Exception: throwing Exception itself compiles", "[libk][exception]") 
 // ═════════════════════════════════════════════════════════════════════════════
 //  3. Throw and catch stdlib exception types
 //  NOTE: Throwing polymorphic classes (with vtables) via temporary construction
-//  (e.g. `throw MemoryException()`) is not yet fully supported by the codegen.
+//  (e.g. `throw OutOfMemory()`) is not yet fully supported by the codegen.
 //  These tests are SKIPPED until the throw codegen handles vtable-bearing objects.
 // ═════════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("Exception: throw and catch MemoryException", "[libk][exception][run][.][throw-class]") {
+TEST_CASE("Exception: throw and catch OutOfMemory", "[libk][exception][run][.][throw-class]") {
     auto jit = jit_k(R"SRC(
         module __test_exc_throw_catch__;
 
         thrower() : void {
-            throw MemoryException();
+            throw OutOfMemory();
         }
 
         test() : int {
@@ -166,7 +196,7 @@ TEST_CASE("Exception: throw and catch MemoryException", "[libk][exception][run][
             try {
                 thrower();
                 result = 999;
-            } catch (e: MemoryException&) {
+            } catch (e: OutOfMemory&) {
                 result = e.getCode();
             }
             return result;
@@ -178,11 +208,11 @@ TEST_CASE("Exception: throw and catch MemoryException", "[libk][exception][run][
     REQUIRE(fn() == 1);
 }
 
-TEST_CASE("Exception: catch by base RuntimeException", "[libk][exception][run][.][throw-class]") {
+TEST_CASE("Exception: catch by base Throwable", "[libk][exception][run][.][throw-class]") {
     auto jit = jit_k(R"SRC(
         module __test_exc_catch_base__;
 
-        thrower() : void {
+        thrower() : void throws NullPointerException {
             throw NullPointerException();
         }
 
@@ -191,7 +221,7 @@ TEST_CASE("Exception: catch by base RuntimeException", "[libk][exception][run][.
             try {
                 thrower();
                 result = 999;
-            } catch (e: RuntimeException&) {
+            } catch (e: Throwable&) {
                 result = e.getCode();
             }
             return result;
@@ -202,7 +232,3 @@ TEST_CASE("Exception: catch by base RuntimeException", "[libk][exception][run][.
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 2);
 }
-
-
-
-

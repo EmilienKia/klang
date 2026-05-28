@@ -258,12 +258,12 @@ enum class generic_diag : unsigned int {
 // ────────────────────────────────────────────────────────────────────────────
 enum class exception_diag : unsigned int {
     /**
-     * The expression in a throw statement does not derive from ::k::Exception.
+     * The expression in a throw statement does not derive from ::k::Throwable.
      */
     ERR_THROW_NOT_EXCEPTION_TYPE                  = 0x01C0,
 
     /**
-     * A catch clause uses a type that does not derive from ::k::Exception.
+     * A catch clause uses a type that does not derive from ::k::Throwable.
      */
     ERR_CATCH_NOT_EXCEPTION_TYPE                  = 0x01C1,
 
@@ -278,7 +278,7 @@ enum class exception_diag : unsigned int {
     ERR_THROWS_TYPE_NOT_FOUND                     = 0x01C3,
 
     /**
-     * A type in a throws clause does not derive from ::k::Exception.
+     * A type in a throws clause does not derive from ::k::Throwable.
      */
     ERR_THROWS_NOT_EXCEPTION_TYPE                 = 0x01C4,
 

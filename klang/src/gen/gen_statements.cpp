@@ -732,46 +732,46 @@ void type_reference_resolver::visit_throw_statement(throw_statement& stmt)
         }
     }
 
-    // Validate that the thrown type derives from ::k::Exception
+    // Validate that the thrown type derives from ::k::Throwable
     if (auto expr = stmt.get_expression()) {
         if (auto expr_type = expr->get_type()) {
             auto thrown_agg = get_exception_aggregate(expr_type);
             if (thrown_agg) {
-                // Look up ::k::Exception in the model (local or imported)
-                std::shared_ptr<aggregate> exception_class;
+                // Look up ::k::Throwable in the model (local or imported)
+                std::shared_ptr<aggregate> throwable_class;
                 // First try local namespaces
                 auto root_ns = _unit.get_root_namespace();
                 if (root_ns) {
                     auto k_ns = root_ns->get_child_namespace("k");
                     if (k_ns) {
-                        exception_class = k_ns->get_aggregate("Exception");
+                        throwable_class = k_ns->get_aggregate("Throwable");
                     }
                 }
                 // If not found locally, try imported aggregates (from KDI)
-                if (!exception_class) {
-                    k::name exc_name(false, {"k", "Exception"});
-                    exception_class = _unit.get_or_create_imported_aggregate(exc_name, _context);
+                if (!throwable_class) {
+                    k::name thr_name(false, {"k", "Throwable"});
+                    throwable_class = _unit.get_or_create_imported_aggregate(thr_name, _context);
                 }
-                if (exception_class) {
-                    // Thrown type must be Exception itself or derive from it
-                    if (thrown_agg != exception_class && !thrown_agg->is_derived_from(exception_class)) {
+                if (throwable_class) {
+                    // Thrown type must be Throwable itself or derive from it
+                    if (thrown_agg != throwable_class && !thrown_agg->is_derived_from(throwable_class)) {
                         throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROW_NOT_EXCEPTION_TYPE),
                                     expr->first_lexeme(),
-                                    "Cannot throw type '{}': only types derived from ::k::Exception can be thrown",
+                                    "Cannot throw type '{}': only types derived from ::k::Throwable can be thrown",
                                     {thrown_agg->get_short_name()});
                     }
                 }
-                // If ::k::Exception is not found (e.g. module 'k' itself), skip the check
+                // If ::k::Throwable is not found (e.g. module 'k' itself), skip the check
             } else {
                 // Non-struct type (primitive, etc.) — cannot be thrown
                 throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROW_NOT_EXCEPTION_TYPE),
                             expr->first_lexeme(),
-                            "Cannot throw a non-class type: only types derived from ::k::Exception can be thrown",
+                            "Cannot throw a non-class type: only types derived from ::k::Throwable can be thrown",
                             {});
             }
 
             // Exception contract check: verify thrown type is declared in the function's throws clause
-            // or caught by an enclosing try-catch
+            // or caught by an enclosing try-catch (only for checked Exception-derived types)
             check_throw_contract(expr_type, expr->first_lexeme());
         }
     }
@@ -1429,26 +1429,26 @@ void type_reference_resolver::visit_catch_clause(catch_clause& clause)
                             {var->get_short_name()});
             }
 
-            // Validate that the caught type derives from ::k::Exception
+            // Validate that the caught type derives from ::k::Throwable
             auto caught_agg = get_exception_aggregate(var_type);
             if (caught_agg) {
-                std::shared_ptr<aggregate> exception_class;
+                std::shared_ptr<aggregate> throwable_class;
                 auto root_ns = _unit.get_root_namespace();
                 if (root_ns) {
                     auto k_ns = root_ns->get_child_namespace("k");
                     if (k_ns) {
-                        exception_class = k_ns->get_aggregate("Exception");
+                        throwable_class = k_ns->get_aggregate("Throwable");
                     }
                 }
-                if (!exception_class) {
-                    k::name exc_name(false, {"k", "Exception"});
-                    exception_class = _unit.get_or_create_imported_aggregate(exc_name, _context);
+                if (!throwable_class) {
+                    k::name thr_name(false, {"k", "Throwable"});
+                    throwable_class = _unit.get_or_create_imported_aggregate(thr_name, _context);
                 }
-                if (exception_class) {
-                    if (caught_agg != exception_class && !caught_agg->is_derived_from(exception_class)) {
+                if (throwable_class) {
+                    if (caught_agg != throwable_class && !caught_agg->is_derived_from(throwable_class)) {
                         throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_CATCH_NOT_EXCEPTION_TYPE),
                                     var_lexeme,
-                                    "Catch parameter type '{}' does not derive from ::k::Exception",
+                                    "Catch parameter type '{}' does not derive from ::k::Throwable",
                                     {caught_agg->get_short_name()});
                     }
                 }
@@ -1530,6 +1530,23 @@ void type_reference_resolver::check_throw_contract(
 
     auto thrown_agg = get_exception_aggregate(thrown_type);
     if (!thrown_agg) return; // Non-struct throw — cannot check further
+
+    // FatalError-derived types are unchecked — they don't need throws declarations
+    {
+        std::shared_ptr<aggregate> fatal_class;
+        auto root_ns = _unit.get_root_namespace();
+        if (root_ns) {
+            auto k_ns = root_ns->get_child_namespace("k");
+            if (k_ns) fatal_class = k_ns->get_aggregate("FatalError");
+        }
+        if (!fatal_class) {
+            k::name fe_name(false, {"k", "FatalError"});
+            fatal_class = _unit.get_or_create_imported_aggregate(fe_name, _context);
+        }
+        if (fatal_class && (thrown_agg == fatal_class || thrown_agg->is_derived_from(fatal_class))) {
+            return; // Unchecked — no contract enforcement
+        }
+    }
 
     // Check if caught by an enclosing try-catch
     if (is_exception_caught_by_try_catch(thrown_agg)) return;

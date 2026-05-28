@@ -1337,7 +1337,7 @@ llvm::Function* implementation_generator::get_or_declare_fatal_memory_function()
     auto* fn = llvm::Function::Create(fn_type, llvm::Function::ExternalLinkage, name, mod);
     fn->addFnAttr(llvm::Attribute::NoReturn);
     fn->addFnAttr(llvm::Attribute::Cold);
-    // NOTE: do NOT add NoUnwind — this function throws a K MemoryException!
+    // NOTE: do NOT add NoUnwind — this function throws a K OutOfMemory!
     return fn;
 }
 
@@ -1353,7 +1353,7 @@ void implementation_generator::emit_alloc_null_check(llvm::Value* alloc_result, 
         alloc_result, llvm::ConstantPointerNull::get(ptr_ty), label + "_is_null");
     _builder->CreateCondBr(is_null, fail_bb, ok_bb);
 
-    // Fail block: call/invoke __k_fatal_memory_allocation (throws MemoryException)
+    // Fail block: call/invoke __k_fatal_memory_allocation (throws OutOfMemory)
     _builder->SetInsertPoint(fail_bb);
     auto* fatal_fn = get_or_declare_fatal_memory_function();
     if (!_landing_pad_stack.empty()) {

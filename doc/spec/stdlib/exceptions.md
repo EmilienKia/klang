@@ -7,33 +7,34 @@
 
 ## Overview
 
-The K standard library provides a hierarchy of exception classes for structured
-error handling. All exception types reside in the `::k` namespace and are
-available without an explicit import.
+The K standard library provides a hierarchy of throwable types for structured
+error handling. All types reside in the `::k` namespace and are available
+without an explicit import.
 
-Exception types are classes that can be thrown with the `throw` statement and
-caught with `try-catch`. They use integer error codes to identify the error
-category.
+The hierarchy separates **checked exceptions** (`Exception` subtypes) that must
+be declared in a function's `throws` clause, from **unchecked fatal errors**
+(`FatalError` subtypes) that propagate freely without declaration.
 
 ---
 
 ## Class Hierarchy
 
 ```
-Exception                         (base, code = 0)
-└── RuntimeException              (programming errors)
-    ├── MemoryException           (code = 1, allocation failures)
-    ├── NullPointerException      (code = 2, null dereference)
-    ├── IndexOutOfBoundsException (code = 3, invalid index)
-    ├── IllegalArgumentException  (code = 4, invalid argument)
-    └── IllegalStateException     (code = 5, invalid object state)
+Throwable (_code: int)                    root of all throwable types
+├── Exception                             checked — must declare `throws`
+│   ├── NullPointerException (code=2)
+│   ├── IndexOutOfBoundsException (code=3)
+│   ├── IllegalArgumentException (code=4)
+│   └── IllegalStateException (code=5)
+└── FatalError                            unchecked — no `throws` needed
+    └── OutOfMemory (code=1)
 ```
 
 ---
 
-## Exception
+## Throwable
 
-Root base class for all K exceptions.
+Root base class for all types that can be thrown in K.
 
 ### Fields
 
@@ -45,8 +46,8 @@ Root base class for all K exceptions.
 
 | Signature | Description |
 |-----------|-------------|
-| `Exception()` | Construct with code 0 |
-| `Exception(code: int)` | Construct with the given error code |
+| `Throwable()` | Construct with code 0 |
+| `Throwable(code: int)` | Construct with the given error code |
 
 ### Methods
 
@@ -56,38 +57,56 @@ Root base class for all K exceptions.
 
 ---
 
-## RuntimeException
+## Exception
 
-Base class for exceptions indicating programming errors or unexpected runtime
-conditions. Extends `Exception`.
+Base class for **checked** exceptions. Functions that throw `Exception`-derived
+types must declare them in their `throws` clause. Extends `Throwable`.
 
 ### Constructors
 
 | Signature | Description |
 |-----------|-------------|
-| `RuntimeException()` | Construct with default code (0) |
-| `RuntimeException(code: int)` | Construct with the given error code |
+| `Exception()` | Construct with default code (0) |
+| `Exception(code: int)` | Construct with the given error code |
 
 ---
 
-## MemoryException
+## FatalError
 
-Signals a memory allocation failure. Extends `RuntimeException`.
-
-Default error code: **1**.
+Base class for **unchecked** fatal errors. Functions that throw `FatalError`-derived
+types do NOT need to declare them. They represent conditions that any code may
+encounter at any time. Extends `Throwable`.
 
 ### Constructors
 
 | Signature | Description |
 |-----------|-------------|
-| `MemoryException()` | Construct with code 1 |
-| `MemoryException(code: int)` | Construct with a custom code |
+| `FatalError()` | Construct with default code (0) |
+| `FatalError(code: int)` | Construct with the given error code |
+
+---
+
+## OutOfMemory
+
+Signals a memory allocation failure. Extends `FatalError`.
+
+Default error code: **1**.
+
+Thrown by the runtime when `new` or `MultiSlot<T>::allocate/reallocate` cannot
+satisfy the allocation request.
+
+### Constructors
+
+| Signature | Description |
+|-----------|-------------|
+| `OutOfMemory()` | Construct with code 1 |
+| `OutOfMemory(code: int)` | Construct with a custom code |
 
 ---
 
 ## NullPointerException
 
-Signals an attempt to dereference a null pointer. Extends `RuntimeException`.
+Signals an attempt to dereference a null pointer. Extends `Exception`.
 
 Default error code: **2**.
 
@@ -103,7 +122,7 @@ Default error code: **2**.
 ## IndexOutOfBoundsException
 
 Signals an index outside the valid range for an array or collection.
-Extends `RuntimeException`.
+Extends `Exception`.
 
 Default error code: **3**.
 
@@ -119,7 +138,7 @@ Default error code: **3**.
 ## IllegalArgumentException
 
 Signals that a function received an inappropriate or invalid argument.
-Extends `RuntimeException`.
+Extends `Exception`.
 
 Default error code: **4**.
 
@@ -135,7 +154,7 @@ Default error code: **4**.
 ## IllegalStateException
 
 Signals that an object is not in an appropriate state for the requested
-operation. Extends `RuntimeException`.
+operation. Extends `Exception`.
 
 Default error code: **5**.
 
@@ -148,24 +167,43 @@ Default error code: **5**.
 
 ---
 
+## Checked vs Unchecked Semantics
+
+| Category | Base class | `throws` declaration | Example |
+|----------|-----------|---------------------|---------|
+| **Checked** | `Exception` | Required | `IllegalArgumentException` |
+| **Unchecked** | `FatalError` | Not required | `OutOfMemory` |
+
+- A `throw` statement accepts any `Throwable`-derived type.
+- A `catch` clause accepts any `Throwable`-derived type.
+- The `throws` clause on a function only needs to list `Exception`-derived types.
+- `FatalError`-derived types propagate freely without `throws` declarations.
+
+---
+
 ## Usage Example
 
 ```k
-import k;  // (auto-imported, shown for clarity)
-
-riskyAlloc() : int throws MemoryException {
-    // ... some allocation that may fail ...
-    throw MemoryException();
+// Checked exception: must be declared in throws clause
+riskyOperation() : int throws IllegalArgumentException {
+    throw IllegalArgumentException();
 }
 
 safeWrapper() : int {
     result : int = 0;
     try {
-        result = riskyAlloc();
-    } catch (e: MemoryException&) {
+        result = riskyOperation();
+    } catch (e: IllegalArgumentException&) {
         result = -1;
     }
     return result;
+}
+
+// FatalError (OutOfMemory): no throws declaration needed —
+// it's thrown by the runtime on allocation failure and can be
+// caught if desired, but doesn't require explicit propagation.
+allocator() : int* {
+    return new int;  // may throw OutOfMemory on failure
 }
 ```
 
@@ -176,4 +214,3 @@ safeWrapper() : int {
 - [Exception Handling (Language Spec)](../language/statements/exceptions.md)
 - [Language Summary §27](../language/summary.md#27-exception-handling)
 - [Grammar — ThrowStatement, TryCatchStatement](../language/grammar.ebnf)
-

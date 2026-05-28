@@ -472,7 +472,7 @@ void implementation_generator::emit_intrinsic_multislot_allocate(function& funct
         llvm::FunctionType::get(ptr_type, {llvm::Type::getInt64Ty(_context->llvm_context())}, false));
     auto new_ptr = _builder->CreateCall(malloc_func, {total_size}, "new_data");
 
-    // Null-check: throw MemoryException if allocation failed
+    // Null-check: throw OutOfMemory if allocation failed
     emit_alloc_null_check(new_ptr, "multislot_alloc");
 
     // Store _data
@@ -546,7 +546,7 @@ void implementation_generator::emit_intrinsic_multislot_reallocate(function& fun
         llvm::FunctionType::get(ptr_type, {ptr_type, llvm::Type::getInt64Ty(_context->llvm_context())}, false));
     auto new_ptr = _builder->CreateCall(realloc_func, {old_ptr, total_size}, "new_data");
 
-    // Null-check: throw MemoryException if reallocation failed
+    // Null-check: throw OutOfMemory if reallocation failed
     emit_alloc_null_check(new_ptr, "multislot_realloc");
 
     // Store new _data

@@ -1037,7 +1037,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
         llvm::Value* raw_ptr = _builder->CreateCall(
             malloc_fn->getFunctionType(), malloc_fn, {alloc_size}, "new_dynarr_raw");
 
-        // Null-check: throw MemoryException if allocation failed
+        // Null-check: throw OutOfMemory if allocation failed
         emit_alloc_null_check(raw_ptr, "new_dynarr");
 
         // memset to zero
@@ -1144,7 +1144,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
             llvm::Value* raw_ptr = _builder->CreateCall(
                 malloc_fn->getFunctionType(), malloc_fn, {alloc_size}, "new_uarr_raw");
 
-            // Null-check: throw MemoryException if allocation failed
+            // Null-check: throw OutOfMemory if allocation failed
             emit_alloc_null_check(raw_ptr, "new_uarr_dyn");
 
             // memset to zero
@@ -1233,7 +1233,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
             llvm::Value* raw_ptr = _builder->CreateCall(
                 malloc_fn->getFunctionType(), malloc_fn, {size_val}, "new_uarr_raw");
 
-            // Null-check: throw MemoryException if allocation failed
+            // Null-check: throw OutOfMemory if allocation failed
             emit_alloc_null_check(raw_ptr, "new_uarr_static");
 
             // Zero-init the entire struct
@@ -1310,7 +1310,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
         llvm::Value* raw_ptr = _builder->CreateCall(
             malloc_fn->getFunctionType(), malloc_fn, {size_val}, "new_arr_raw");
 
-        // Null-check: throw MemoryException if allocation failed
+        // Null-check: throw OutOfMemory if allocation failed
         emit_alloc_null_check(raw_ptr, "new_arr");
 
         // Zero-init the entire struct
@@ -1393,7 +1393,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
     llvm::Value* raw_ptr = _builder->CreateCall(
         malloc_fn->getFunctionType(), malloc_fn, malloc_args, "new_raw");
 
-    // Null-check: throw MemoryException if allocation failed
+    // Null-check: throw OutOfMemory if allocation failed
     emit_alloc_null_check(raw_ptr, "new_single");
 
     // Step 4: For structs: call the resolved constructor on the allocated object

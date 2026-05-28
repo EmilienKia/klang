@@ -19,42 +19,37 @@
 module k;
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Exception — base class for all throwable exception types.
+// Throwable — root base class for all types that can be thrown.
 //
-// All exceptions in K should derive from this class. It provides a message
-// code identifying the error.
+// Every type passed to `throw` must derive from Throwable. It provides an
+// integer error code identifying the error category.
 //
-// Usage:
-//   throw Exception(1);
-//
-//   try {
-//       riskyCall();
-//   } catch (e: Exception&) {
-//       // handle
-//   }
+// Two direct subclasses define the checked/unchecked contract:
+//   - Exception  (checked: must be declared in `throws` clause)
+//   - FatalError (unchecked: propagates freely without declaration)
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Exception — root base class for all K exceptions.
+ * Throwable — root base class for all throwable types in K.
  *
  * Provides an integer error code identifying the error.
- * Subclasses should call the Exception constructor with an appropriate code.
+ * Subclasses should call the Throwable constructor with an appropriate code.
  */
-public class Exception {
+public class Throwable {
     _code : int = 0;
 
 public:
     /**
-     * Construct an exception with code 0.
+     * Construct a throwable with code 0.
      */
-    Exception() {
+    Throwable() {
         _code = 0;
     }
 
     /**
-     * Construct an exception with the given error code.
+     * Construct a throwable with the given error code.
      */
-    Exception(code: int) {
+    Throwable(code: int) {
         _code = code;
     }
 
@@ -67,38 +62,63 @@ public:
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// RuntimeException — base class for exceptions that indicate programming
-// errors or unexpected runtime conditions that may not be recoverable.
+// Exception — base class for checked exceptions.
+//
+// Exceptions derived from this class are "checked": they must be declared in
+// the `throws` clause of functions that throw them (or caught locally).
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * RuntimeException — base class for runtime errors.
+ * Exception — base class for checked exceptions.
  *
- * Indicates conditions that a reasonable application should not try to catch,
- * such as null pointer dereferences or array index out of bounds.
+ * Functions that throw Exception-derived types must declare them with `throws`.
+ * Callers must either catch them or propagate them via their own `throws` clause.
  */
-public class RuntimeException : public Exception {
+public class Exception : public Throwable {
 public:
-    RuntimeException() : Exception() {}
+    Exception() : Throwable() {}
 
-    RuntimeException(code: int) : Exception(code) {}
+    Exception(code: int) : Throwable(code) {}
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// MemoryException — thrown when a memory allocation or deallocation fails.
+// FatalError — base class for unchecked fatal errors.
+//
+// Fatal errors are conditions that functions are not required to declare.
+// They propagate freely through the call stack without `throws` declarations.
+// Typically thrown by the runtime for unrecoverable conditions (OOM, etc.).
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * MemoryException — signals a memory allocation failure.
+ * FatalError — base class for unchecked fatal errors.
+ *
+ * Functions that throw FatalError-derived types do NOT need to declare them
+ * in their `throws` clause. These represent conditions that any code may
+ * encounter at any time (e.g. out of memory).
+ */
+public class FatalError : public Throwable {
+public:
+    FatalError() : Throwable() {}
+
+    FatalError(code: int) : Throwable(code) {}
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// OutOfMemory — thrown when a memory allocation fails.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * OutOfMemory — signals a memory allocation failure.
  *
  * Thrown by the runtime when `new` or similar allocation operations cannot
  * satisfy the request (e.g. out-of-memory conditions).
+ * As a FatalError subclass, it does not require a `throws` declaration.
  */
-public class MemoryException : public RuntimeException {
+public class OutOfMemory : public FatalError {
 public:
-    MemoryException() : RuntimeException(1) {}
+    OutOfMemory() : FatalError(1) {}
 
-    MemoryException(code: int) : RuntimeException(code) {}
+    OutOfMemory(code: int) : FatalError(code) {}
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -108,11 +128,11 @@ public:
 /**
  * NullPointerException — signals an attempt to dereference a null pointer.
  */
-public class NullPointerException : public RuntimeException {
+public class NullPointerException : public Exception {
 public:
-    NullPointerException() : RuntimeException(2) {}
+    NullPointerException() : Exception(2) {}
 
-    NullPointerException(code: int) : RuntimeException(code) {}
+    NullPointerException(code: int) : Exception(code) {}
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -122,11 +142,11 @@ public:
 /**
  * IndexOutOfBoundsException — signals an index outside the valid range.
  */
-public class IndexOutOfBoundsException : public RuntimeException {
+public class IndexOutOfBoundsException : public Exception {
 public:
-    IndexOutOfBoundsException() : RuntimeException(3) {}
+    IndexOutOfBoundsException() : Exception(3) {}
 
-    IndexOutOfBoundsException(code: int) : RuntimeException(code) {}
+    IndexOutOfBoundsException(code: int) : Exception(code) {}
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -137,11 +157,11 @@ public:
  * IllegalArgumentException — signals that a method has been passed an
  * inappropriate or invalid argument.
  */
-public class IllegalArgumentException : public RuntimeException {
+public class IllegalArgumentException : public Exception {
 public:
-    IllegalArgumentException() : RuntimeException(4) {}
+    IllegalArgumentException() : Exception(4) {}
 
-    IllegalArgumentException(code: int) : RuntimeException(code) {}
+    IllegalArgumentException(code: int) : Exception(code) {}
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -152,10 +172,9 @@ public:
  * IllegalStateException — signals that an object is not in an appropriate
  * state for the requested operation.
  */
-public class IllegalStateException : public RuntimeException {
+public class IllegalStateException : public Exception {
 public:
-    IllegalStateException() : RuntimeException(5) {}
+    IllegalStateException() : Exception(5) {}
 
-    IllegalStateException(code: int) : RuntimeException(code) {}
+    IllegalStateException(code: int) : Exception(code) {}
 }
-
