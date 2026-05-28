@@ -31,14 +31,19 @@ must abort with a diagnostic when the underlying `malloc`/`realloc` returns null
 
 ### Design decisions
 
-- **Abort (not throw)**: The initial plan was to throw `MemoryException`, but this
-  requires `__cxa_allocate_exception`/`__cxa_throw` which pull in `libstdc++`/`libc++abi`
-  as a link dependency for every K executable. This is deferred to a future step that
-  will add proper `-lstdc++` linking.
+- **Throws MemoryException**: `__k_fatal_memory_allocation()` uses the Itanium C++ ABI
+  (`__cxa_allocate_exception` + `__cxa_throw`) to throw a `::k::MemoryException`.
+  The emergency buffer in `__cxa_allocate_exception` ensures this works even under OOM.
 
 - **Always link libk**: Previously `-lk` was only added when the KDI import resolved.
   Now it's always added (except for module `k` itself) because the compiler emits
   references to libk symbols in generated code.
+
+- **clang++ as link driver**: Since K exceptions use the Itanium C++ ABI
+  (`__cxa_throw`, `__cxa_allocate_exception`, `__cxa_begin_catch`, `__cxa_end_catch`,
+  `__gxx_personality_v0`), we use `clang++` (not `clang`) as the linker driver.
+  This automatically links the appropriate C++ ABI runtime (libc++abi or libstdc++)
+  without explicitly specifying `-lstdc++` or `-lc++abi`.
 
 ### All 13 test suites pass (100%)
 

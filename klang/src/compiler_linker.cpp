@@ -88,7 +88,9 @@ bool compiler::gen_executable(const std::string& output_file) {
         // Append -L/-l flags for used imports
         auto import_args = build_import_link_args();
         clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
-        exec_res = tools::lookup_run_process("clang", clang_args);
+        // Use clang++ (not clang) so the C++ ABI runtime (exceptions, RTTI)
+        // is linked automatically — K exceptions use the Itanium C++ ABI.
+        exec_res = tools::lookup_run_process("clang++", clang_args);
     } catch (const tools::tool_not_found& e) {
         std::cerr << "Error: " << e.what() << " (needed to link executable)" << std::endl;
         std::filesystem::remove(object_path);
@@ -240,7 +242,7 @@ bool compiler::gen_shared_library(const std::string& output_file) {
         clang_args.insert(clang_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         auto import_args = build_import_link_args();
         clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
-        exec_res = tools::lookup_run_process("clang", clang_args);
+        exec_res = tools::lookup_run_process("clang++", clang_args);
     } catch (const tools::tool_not_found& e) {
         std::cerr << "Error: " << e.what() << " (needed to link shared library)" << std::endl;
         std::filesystem::remove(object_path);
@@ -314,7 +316,7 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
         clang_args.insert(clang_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         auto import_args = build_import_link_args();
         clang_args.insert(clang_args.end(), import_args.begin(), import_args.end());
-        so_res = tools::lookup_run_process("clang", clang_args);
+        so_res = tools::lookup_run_process("clang++", clang_args);
     } catch (const tools::tool_not_found& e) {
         std::cerr << "Error: " << e.what() << " (needed to link shared library)" << std::endl;
         std::filesystem::remove(object_path);
