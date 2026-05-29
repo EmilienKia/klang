@@ -67,9 +67,14 @@ See also: [K Standard Library — Exception Types](../../stdlib/exceptions.md)
 ```
 ThrowStatement:
     'throw' Expression ';'
+    'throw' ';'
 ```
 
-The expression must evaluate to a class type derived from `::k::Throwable`.
+The first form throws a new exception. The expression must evaluate to a class
+type derived from `::k::Throwable`.
+
+The second form (`throw;`) is a **rethrow** — it re-throws the exception
+currently being handled. It is only valid inside a `catch` block.
 
 ### Semantics
 
@@ -101,6 +106,55 @@ validate(x: int) : void {
 validate2(x: int) : void {
     if (x < 0) {
         throw ParseError();
+    }
+}
+```
+
+### Rethrow semantics
+
+A bare `throw;` re-throws the currently handled exception without allocating or
+copying. At runtime it calls `__cxa_rethrow()`, which resumes stack unwinding
+from the current catch handler.
+
+**Constraints:**
+- `throw;` is only valid inside the body of a `catch` clause.
+  Using it outside a catch block is a compile-time error (`0x01C9`).
+- The rethrown exception type (from the enclosing catch) is subject to the same
+  exception contract rules as a normal throw: the type must be declared in the
+  function's `throws` clause or caught by an outer enclosing `try-catch`.
+- `FatalError`-derived types are unchecked and always allowed.
+
+### Rethrow examples
+
+```k
+class NetError : public Exception {
+    public:
+    NetError() : Exception(42) { }
+}
+
+// Rethrow to an outer try-catch in the same function:
+retry(attempts: int) : int {
+    result : int = 0;
+    try {
+        try {
+            throw NetError();
+        } catch (e: NetError&) {
+            // Log, then rethrow
+            result = 1;
+            throw;
+        }
+    } catch (e: NetError&) {
+        result = result + e.getCode();
+    }
+    return result;  // returns 43 (1 + 42)
+}
+
+// Rethrow to the caller:
+relay() : void throws NetError {
+    try {
+        throw NetError();
+    } catch (e: NetError&) {
+        throw;  // caller must handle NetError
     }
 }
 ```
@@ -393,13 +447,13 @@ riskyWork() : int {
 | `0x01C4` | `ERR_THROWS_NOT_EXCEPTION_TYPE` | Type in throws clause does not derive from `::k::Throwable` |
 | `0x01C5` | `ERR_THROW_NOT_IN_THROWS_SPEC` | Throw of undeclared checked exception in function with throws clause |
 | `0x01C6` | `ERR_CALL_UNHANDLED_EXCEPTION` | Call to throwing function without handling/declaring its checked exceptions |
+| `0x01C9` | `ERR_RETHROW_OUTSIDE_CATCH` | Bare `throw;` (rethrow) used outside a catch block |
 
 ---
 
 ## 9. Known limitations
 
 - No `finally` clause.
-- No rethrow (`throw;` without expression).
 - No `generic` catch-all clause (planned).
 
 ---

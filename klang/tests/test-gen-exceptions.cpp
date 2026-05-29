@@ -1448,3 +1448,198 @@ TEST_CASE("IndexOutOfBoundsError: uncaught terminates process",
     REQUIRE(res.exit_code != 0);
 }
 
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Rethrow — bare 'throw;' inside catch blocks
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception: bare throw rethrows caught exception to outer handler", "[gen][exceptions][rethrow][run]") {
+    // A bare 'throw;' inside a catch block should rethrow the current exception
+    // to an enclosing try-catch handler.
+    auto jit = gen_jit(R"(
+        module __test_exc_rethrow_1__;
+
+        class MyErr : public Exception {
+            public:
+            MyErr() : Exception(42) { }
+        }
+
+        test_rethrow() : int {
+            result : int = 0;
+            try {
+                try {
+                    throw MyErr();
+                } catch (e: MyErr&) {
+                    result = 1;
+                    throw;
+                }
+            } catch (e: MyErr&) {
+                result = result + e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_rethrow");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 43);  // 1 + 42
+}
+
+TEST_CASE("Exception: bare throw rethrows to caller", "[gen][exceptions][rethrow][run]") {
+    // A bare 'throw;' inside a catch block rethrows the exception to the calling function.
+    auto jit = gen_jit(R"(
+        module __test_exc_rethrow_2__;
+
+        class AppErr : public Exception {
+            public:
+            AppErr() : Exception(7) { }
+        }
+
+        rethrower() : void throws AppErr {
+            try {
+                throw AppErr();
+            } catch (e: AppErr&) {
+                throw;
+            }
+        }
+
+        test_rethrow_caller() : int {
+            result : int = 0;
+            try {
+                rethrower();
+            } catch (e: AppErr&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_rethrow_caller");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 7);
+}
+
+TEST_CASE("Exception: bare throw outside catch block fails compilation", "[gen][exceptions][rethrow][resolution]") {
+    // A bare 'throw;' that is not inside a catch block should produce a compile-time error.
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module __test_exc_rethrow_err_1__;
+
+        class MyErr : public Exception { }
+
+        bad_rethrow() : void throws MyErr {
+            throw;
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception: bare throw outside catch in function body fails", "[gen][exceptions][rethrow][resolution]") {
+    // A bare 'throw;' in a try body (not catch) should fail.
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module __test_exc_rethrow_err_2__;
+
+        class MyErr : public Exception { }
+
+        bad_rethrow() : void throws MyErr {
+            try {
+                throw;
+            } catch (e: MyErr&) {
+            }
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception: bare throw rethrows FatalError (unchecked)", "[gen][exceptions][rethrow][run]") {
+    // FatalError-derived exceptions are unchecked, but rethrow should still work.
+    auto jit = gen_jit(R"(
+        module __test_exc_rethrow_fatal_1__;
+
+        class CritErr : public FatalError {
+            public:
+            CritErr() : FatalError(99) { }
+        }
+
+        test_rethrow_fatal() : int {
+            result : int = 0;
+            try {
+                try {
+                    throw CritErr();
+                } catch (e: CritErr&) {
+                    throw;
+                }
+            } catch (e: CritErr&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_rethrow_fatal");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 99);
+}
+
+TEST_CASE("Exception: bare throw with contract — caught by outer try-catch", "[gen][exceptions][rethrow][contract]") {
+    // Rethrow inside a catch, with an enclosing outer try-catch that handles the type.
+    // This should compile even if the function has a throws spec that does NOT include the type.
+    auto jit = gen_jit(R"(
+        module __test_exc_rethrow_contract_1__;
+
+        class ErrA : public Exception {
+            public:
+            ErrA() : Exception(11) { }
+        }
+
+        test_rethrow_contract() : int {
+            result : int = 0;
+            try {
+                try {
+                    throw ErrA();
+                } catch (e: ErrA&) {
+                    throw;
+                }
+            } catch (e: ErrA&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_rethrow_contract");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 11);
+}
+
+TEST_CASE("Exception: bare throw with contract — declared in throws clause", "[gen][exceptions][rethrow][contract]") {
+    // Rethrow inside a catch, function declares exception in throws clause — should compile.
+    auto jit = gen_jit(R"(
+        module __test_exc_rethrow_contract_2__;
+
+        class ErrB : public Exception {
+            public:
+            ErrB() : Exception(55) { }
+        }
+
+        rethrower_declared() : void throws ErrB {
+            try {
+                throw ErrB();
+            } catch (e: ErrB&) {
+                throw;
+            }
+        }
+
+        test_rethrow_declared() : int {
+            result : int = 0;
+            try {
+                rethrower_declared();
+            } catch (e: ErrB&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_rethrow_declared");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 55);
+}
+

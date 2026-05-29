@@ -303,6 +303,11 @@ enum class exception_diag : unsigned int {
      * Duplicate exception type in a throws clause.
      */
     WARN_THROWS_DUPLICATE_TYPE                    = 0x01C8,
+
+    /**
+     * A bare 'throw;' (rethrow) statement appears outside a catch block.
+     */
+    ERR_RETHROW_OUTSIDE_CATCH                     = 0x01C9,
 };
 
 

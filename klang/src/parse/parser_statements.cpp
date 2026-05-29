@@ -127,10 +127,17 @@ std::shared_ptr<ast::throw_statement> parser::parse_throw_statement()
         return {};
     }
 
+    // Allow bare "throw;" for rethrow (no expression)
+    auto peek = _lexer.pick_current();
+    if(peek == lex::punctuator::SEMICOLON) {
+        _lexer.get(); // consume semicolon
+        return std::make_shared<ast::throw_statement>(lex::as<lex::keyword>(lthrow), nullptr);
+    }
+
     auto expr = parse_expression();
     if(!expr) {
         throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_THROW_EXPECT_EXPRESSION),
-                    _lexer.pick_current(), "Throw statement expects an expression");
+                    _lexer.pick_current(), "Throw statement expects an expression or a semicolon ';'");
     }
 
     auto lsemicolon = _lexer.get();

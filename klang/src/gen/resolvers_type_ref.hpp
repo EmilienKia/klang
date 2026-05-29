@@ -52,6 +52,16 @@ protected:
     std::vector<try_catch_scope> _try_catch_stack;
 
     /**
+     * Stack of catch clauses currently being visited.
+     * Used to validate that bare 'throw;' (rethrow) only appears inside a catch body.
+     * Each entry holds the caught type for contract checking.
+     */
+    struct catch_scope {
+        std::shared_ptr<type> caught_type;
+    };
+    std::vector<catch_scope> _catch_clause_stack;
+
+    /**
      * Keeps function_reference_type objects alive for the duration of type resolution.
      * A frt created in visit_symbol_expression is a temporary shared_ptr; the only
      * strong reference to it is through fn_ref_type->reference (the cached ref_type).

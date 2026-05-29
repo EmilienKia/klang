@@ -732,6 +732,27 @@ void type_reference_resolver::visit_throw_statement(throw_statement& stmt)
         }
     }
 
+    // Bare 'throw;' — rethrow: validate that we are inside a catch block
+    if (!stmt.get_expression()) {
+        lex::opt_any_lexeme throw_lexeme;
+        if (auto ast_node = stmt.get_ast_node_as<k::parse::ast::throw_statement>()) {
+            throw_lexeme = lex::any_lexeme{ast_node->throw_kw};
+        }
+
+        if (_catch_clause_stack.empty()) {
+            throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_RETHROW_OUTSIDE_CATCH),
+                        throw_lexeme,
+                        "Bare 'throw;' (rethrow) is only valid inside a catch block");
+        } else {
+            // Contract check: the rethrown exception type must be declared or caught
+            auto& cs = _catch_clause_stack.back();
+            if (cs.caught_type) {
+                check_throw_contract(cs.caught_type, throw_lexeme);
+            }
+        }
+        return;
+    }
+
     // Validate that the thrown type derives from ::k::Throwable
     if (auto expr = stmt.get_expression()) {
         if (auto expr_type = expr->get_type()) {
@@ -784,13 +805,36 @@ void declaration_generator::visit_throw_statement(throw_statement& stmt) {
 void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     auto expr = stmt.get_expression();
     if (!expr) {
-        // Bare "throw;" (re-throw) — not yet supported
-        auto* trap_fn = llvm::Intrinsic::getDeclaration(&_context->module(), llvm::Intrinsic::trap);
-        _builder->CreateCall(trap_fn);
-        _builder->CreateUnreachable();
-        auto* func = _builder->GetInsertBlock()->getParent();
-        auto* after_throw = llvm::BasicBlock::Create(_context->llvm_context(), "after_throw", func);
-        _builder->SetInsertPoint(after_throw);
+        // Bare "throw;" — rethrow the current exception via __cxa_rethrow.
+        // This re-throws the exception that was started with __cxa_begin_catch.
+        auto& llvm_ctx = _context->llvm_context();
+        auto& mod = _context->module();
+        auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+        auto* current_func = _builder->GetInsertBlock()->getParent();
+
+        auto cxa_rethrow = mod.getOrInsertFunction("__cxa_rethrow",
+            llvm::FunctionType::get(void_ty, {}, false));
+
+        if (!_landing_pad_stack.empty()) {
+            // Inside a try-catch: use invoke so the rethrown exception unwinds to the landing pad
+            auto* after_rethrow = llvm::BasicBlock::Create(llvm_ctx, "after_rethrow", current_func);
+            auto* invoke_inst = _builder->CreateInvoke(
+                cxa_rethrow, after_rethrow, _landing_pad_stack.top().lpad_bb, {});
+            invoke_inst->setDoesNotReturn();
+            _builder->SetInsertPoint(after_rethrow);
+            _builder->CreateUnreachable();
+            // Create continuation block for any code after throw (unreachable in practice)
+            auto* cont_bb = llvm::BasicBlock::Create(llvm_ctx, "post_rethrow", current_func);
+            _builder->SetInsertPoint(cont_bb);
+        } else {
+            // Not inside a try-catch: plain call (unwinds past this frame)
+            auto* call = _builder->CreateCall(cxa_rethrow, {});
+            call->setDoesNotReturn();
+            _builder->CreateUnreachable();
+            auto* after_rethrow = llvm::BasicBlock::Create(llvm_ctx, "after_rethrow", current_func);
+            _builder->SetInsertPoint(after_rethrow);
+        }
         return;
     }
 
@@ -1106,7 +1150,14 @@ void type_reference_resolver::visit_try_catch_statement(try_catch_statement& stm
     // Visit catch clause bodies (which are outside the try scope)
     for(auto& clause : stmt.get_catch_clauses()) {
         if(auto body = clause->get_body()) {
+            // Push catch scope so that bare 'throw;' inside the body can be validated
+            catch_scope cs;
+            if (auto var = clause->get_exception_var()) {
+                cs.caught_type = var->get_type();
+            }
+            _catch_clause_stack.push_back(std::move(cs));
             body->accept(*this);
+            _catch_clause_stack.pop_back();
         }
     }
 }
@@ -1149,6 +1200,9 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     auto* entry_bb = &func->getEntryBlock();
     llvm::IRBuilder<> alloca_builder(entry_bb, entry_bb->begin());
     auto* exc_ptr_alloca = alloca_builder.CreateAlloca(ptr_ty, nullptr, "exc_ptr_slot");
+
+    // Create an alloca to hold the matched base offset (written by dispatch, read by catch handler).
+    auto* offset_alloca = alloca_builder.CreateAlloca(i32_ty, nullptr, "catch_offset_slot");
 
     // Branch to try body
     _builder->CreateBr(try_bb);
@@ -1242,8 +1296,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     }
     auto* thrown_chain_ptr = _builder->CreateLoad(ptr_ty, ti_chain_global, "thrown_chain");
 
-    // Create an alloca to hold the matched base offset (written by dispatch, read by catch handler).
-    auto* offset_alloca = alloca_builder.CreateAlloca(i32_ty, nullptr, "catch_offset_slot");
+    // Initialize the offset alloca to 0
     _builder->CreateStore(llvm::ConstantInt::get(i32_ty, 0), offset_alloca);
 
     // The chain entry struct type: { ptr typeinfo, i32 offset }
@@ -1456,7 +1509,14 @@ void type_reference_resolver::visit_catch_clause(catch_clause& clause)
         }
     }
     if(auto body = clause.get_body()) {
+        // Push catch scope so that bare 'throw;' inside the body can be validated
+        catch_scope cs;
+        if (auto var = clause.get_exception_var()) {
+            cs.caught_type = var->get_type();
+        }
+        _catch_clause_stack.push_back(std::move(cs));
         body->accept(*this);
+        _catch_clause_stack.pop_back();
     }
 }
 

@@ -1707,13 +1707,19 @@ class MyError : public Exception {
 ```
 ThrowStatement:
     'throw' Expression ';'
+    'throw' ';'
 ```
 
-The expression must evaluate to a class type derived from `::k::Throwable`.
+The first form throws a new exception. The expression must evaluate to a class type derived from `::k::Throwable`.
 At runtime, the compiler:
 1. Allocates exception storage via `__cxa_allocate_exception`.
 2. Copies the value into the exception storage.
 3. Calls `__cxa_throw` to initiate stack unwinding.
+
+The second form (`throw;`) is a **rethrow** — it re-throws the exception currently being handled.
+It is only valid inside a `catch` block (compile-time error `0x01C9` otherwise).
+At runtime, it calls `__cxa_rethrow()` without allocating or copying.
+The rethrown exception type is subject to the same contract rules as a normal throw.
 
 Stack unwinding destroys all local objects with destructors (in reverse declaration
 order) in each stack frame between the throw point and the matching catch handler.
