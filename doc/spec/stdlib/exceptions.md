@@ -25,10 +25,10 @@ Throwable (_code: int)                    root of all throwable types
 │   ├── NullPointerException (code=2)
 │   ├── IndexOutOfBoundsException (code=3)
 │   ├── IllegalArgumentException (code=4)
-│   ├── IllegalStateException (code=5)
-│   └── ConstructionException (code=6)
+│   └── IllegalStateException (code=5)
 └── FatalError                            unchecked — no `throws` needed
-    └── OutOfMemory (code=1)
+    ├── OutOfMemory (code=1)
+    └── ConstructionException (code=6)
 ```
 
 ---
@@ -173,8 +173,8 @@ Default error code: **5**.
 Signals that an object constructor threw a checked exception during
 `UniSlot<T>::construct()` or `MultiSlot<T>::construct()`. The original
 exception is intercepted and replaced by this `ConstructionException`.
-`FatalError`-derived exceptions are **not** intercepted and propagate normally.
-Extends `Exception`.
+Other `FatalError`-derived exceptions are **not** intercepted and propagate normally.
+Extends `FatalError` — does not need to be declared in `throws` clauses.
 
 Default error code: **6**.
 

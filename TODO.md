@@ -18,13 +18,6 @@
   - [ ] SFINAE-like overload filtering based on template constraints
   - export templates (Phase 3+ — separate compilation of template definitions and instantiations)
   - Known generic call-site limitations (found by Phase 12, tracked for future fix):
-
-  - [x] **Template throws clause propagation**: the `throws` clause on a template
-    function definition is now propagated to instantiated functions via
-    `populate_function_from_template()`. Compile-time contract enforcement works
-    for template methods that declare `throws` (e.g. `UniSlot<T>::construct() throws ConstructionException`).
-    Test: `test-gen-exceptions.cpp` — "ConstructionException: contract enforcement".
-
     - [ ] Generic constructor call with owner `T!` argument: synthesized ctor takes `byte*!`, call site `ConcreteType!` implicit cast not supported
     - [ ] Member access on `T*` inside generic body (opaque pointer — by design; workaround: access at call site)
     - [ ] Explicit generic type args in generic member method call on non-generic host class (`obj.method<Dog>(arg)`)
@@ -66,8 +59,7 @@
 - Add support for separate compilation and module interfaces (e.g. `export` keyword, module partitions)
 - Add concepts (and template constraints) for more expressive template programming and better error messages
 - Add traits (Rust like)
-- Exceptions — **in progress** (see `IN-PROGRESS-EXCEPTIONS.md`)
-  - Deferred sub-features:
+- Exceptions:
     - [ ] `finally` block (guaranteed execution regardless of exception path)
     - [ ] Exception masking/chaining (`throw new E2() from e1`)
     - [ ] `rethrow` / `throw;` (re-throw current exception in catch block)

@@ -1279,7 +1279,7 @@ TEST_CASE("ConstructionException: UniSlot construct — non-throwing constructor
             }
         }
 
-        test_nothrow() : int throws ConstructionException {
+        test_nothrow() : int {
             slot : UniSlot<Point>;
             slot.construct<int, int>(3, 7);
             result : int = slot.get().x + slot.get().y;
@@ -1293,13 +1293,11 @@ TEST_CASE("ConstructionException: UniSlot construct — non-throwing constructor
     REQUIRE(fn() == 10);
 }
 
-TEST_CASE("ConstructionException: contract enforcement — construct() requires handling",
+TEST_CASE("ConstructionException: no throws declaration needed — FatalError propagates freely",
           "[gen][exceptions][construction][contract]") {
-    // Template instantiation now propagates the throws clause from the template
-    // definition to the instantiated function. Calling UniSlot::construct without
-    // handling ConstructionException in a function that doesn't declare it should
-    // fail compilation.
-    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+    // ConstructionException is now a FatalError, so calling UniSlot::construct
+    // without declaring it in a throws clause should compile successfully.
+    auto jit = gen_jit(R"(
         module __test_ce_contract_1__;
 
         class InitErr : public Exception { }
@@ -1317,6 +1315,10 @@ TEST_CASE("ConstructionException: contract enforcement — construct() requires 
             slot.construct<int>(10);
             return 0;
         }
-    )"), k::log::compiler_error);
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("caller");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 0);
 }
 

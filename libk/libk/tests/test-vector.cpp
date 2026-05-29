@@ -43,7 +43,7 @@ TEST_CASE("Vector<int> — empty vector", "[libk][vector][int]") {
     auto j = jit_k(R"SRC(
         module __vec_empty__;
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             result : int = 0;
             if (vec.isEmpty())          result = result + 1;
@@ -61,7 +61,7 @@ TEST_CASE("Vector<int> — pushBack and peek", "[libk][vector][int]") {
     auto j = jit_k(R"SRC(
         module __vec_int_push__;
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             a : int = 10;
             b : int = 20;
@@ -87,7 +87,7 @@ TEST_CASE("Vector<int> — subscript operator", "[libk][vector][int]") {
     auto j = jit_k(R"SRC(
         module __vec_int_subscript__;
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             a : int = 100;
             b : int = 200;
@@ -113,7 +113,7 @@ TEST_CASE("Vector<int> — removeBack", "[libk][vector][int]") {
     auto j = jit_k(R"SRC(
         module __vec_int_rmback__;
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             a : int = 10;
             b : int = 20;
@@ -141,7 +141,7 @@ TEST_CASE("Vector<int> — removeAt", "[libk][vector][int]") {
     auto j = jit_k(R"SRC(
         module __vec_int_rmat__;
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             a : int = 10;
             b : int = 20;
@@ -169,7 +169,7 @@ TEST_CASE("Vector<int> — insert at index", "[libk][vector][int]") {
     auto j = jit_k(R"SRC(
         module __vec_int_insert__;
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             a : int = 10;
             b : int = 30;
@@ -197,7 +197,7 @@ TEST_CASE("Vector<int> — clear empties", "[libk][vector][int]") {
     auto j = jit_k(R"SRC(
         module __vec_int_clear__;
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             a : int = 1;
             b : int = 2;
@@ -222,7 +222,7 @@ TEST_CASE("Vector<int> — reserve", "[libk][vector][int]") {
     auto j = jit_k(R"SRC(
         module __vec_int_reserve__;
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             vec.reserve(100);
 
@@ -242,7 +242,7 @@ TEST_CASE("Vector<int> — growth strategy", "[libk][vector][int]") {
     auto j = jit_k(R"SRC(
         module __vec_int_growth__;
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             // Push 5 elements — should trigger at least one growth
             i : int = 0;
@@ -280,7 +280,7 @@ TEST_CASE("Vector<Point> — struct stored by value", "[libk][vector][struct]") 
             Point(ax : int, ay : int) { x = ax; y = ay; }
         }
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<Point>;
             p1 : Point(1, 2);
             p2 : Point(3, 4);
@@ -315,7 +315,7 @@ TEST_CASE("Vector<Point> — removeAt with struct", "[libk][vector][struct]") {
             Point(ax : int, ay : int) { x = ax; y = ay; }
         }
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<Point>;
             p1 : Point(1, 2);
             p2 : Point(3, 4);
@@ -352,7 +352,7 @@ TEST_CASE("Vector<Point> — insert with struct", "[libk][vector][struct]") {
             Point(ax : int, ay : int) { x = ax; y = ay; }
         }
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<Point>;
             p1 : Point(1, 2);
             p2 : Point(5, 6);
@@ -380,7 +380,7 @@ TEST_CASE("Vector<Point> — insert with struct", "[libk][vector][struct]") {
 TEST_CASE("Vector<int> — e2e build and exec", "[libk][vector][run]") {
     auto result = build_and_exec(R"SRC(
         module __vec_e2e__;
-        main() : int throws ConstructionException {
+        main() : int {
             vec : Vector<int>;
             i : int = 0;
             while (i < 10) {
@@ -418,7 +418,7 @@ TEST_CASE("Vector<Color> — pushBack, insert, peek with enum", "[libk][vector][
             BLUE = 2;
         };
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<Color>;
             r : Color = Color::RED;
             g : Color = Color::GREEN;
@@ -459,7 +459,7 @@ TEST_CASE("Vector<Direction> — plain enum with auto values", "[libk][vector][e
             WEST;
         };
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<Direction>;
             n : Direction = Direction::NORTH;
             s : Direction = Direction::SOUTH;
@@ -497,7 +497,7 @@ TEST_CASE("Vector<TypedEnum> — typed enum (byte)", "[libk][vector][enum]") {
             ERR = 2;
         };
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<Status>;
             o : Status = Status::OK;
             w : Status = Status::WARN;
@@ -538,7 +538,7 @@ TEST_CASE("Vector<Derived> — derived enum", "[libk][vector][enum]") {
             C = 2;
         };
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<Derived>;
             a : Derived = Derived::A;
             b : Derived = Derived::B;
@@ -570,7 +570,7 @@ TEST_CASE("Vector<int> — emplaceBack zero-arg", "[libk][vector][emplace]") {
     auto j = jit_k(R"SRC(
         module __vec_emplace_int0__;
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             vec.emplaceBack();
             vec.emplaceBack();
@@ -602,7 +602,7 @@ TEST_CASE("Vector<Point> — emplaceBack with constructor args", "[libk][vector]
             Point(ax : int, ay : int) { x = ax; y = ay; }
         }
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<Point>;
             vec.emplaceBack(10, 20);
             vec.emplaceBack(30, 40);
@@ -633,7 +633,7 @@ TEST_CASE("Vector<Point> — emplaceBack zero-arg (default ctor)", "[libk][vecto
             Point() { x = 99; y = 77; }
         }
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<Point>;
             vec.emplaceBack();
             vec.emplaceBack();
@@ -656,7 +656,7 @@ TEST_CASE("Vector<int> — emplace at index zero-arg", "[libk][vector][emplace]"
     auto j = jit_k(R"SRC(
         module __vec_emplace_idx__;
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             a : int = 10;
             b : int = 30;
@@ -691,7 +691,7 @@ TEST_CASE("Vector<Point> — emplace at index with args", "[libk][vector][emplac
             Point(ax : int, ay : int) { x = ax; y = ay; }
         }
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<Point>;
             vec.emplaceBack(1, 2);
             vec.emplaceBack(5, 6);
@@ -726,7 +726,7 @@ TEST_CASE("Vector<AggPoint> — emplaceBack aggregate init", "[libk][vector][emp
             y : int;
         }
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<AggPoint>;
             vec.emplaceBack(10, 20);
             vec.emplaceBack(30, 40);
@@ -756,7 +756,7 @@ TEST_CASE("Vector<AggPoint> — emplace at index aggregate init", "[libk][vector
             y : int;
         }
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<AggPoint>;
             vec.emplaceBack(1, 2);
             vec.emplaceBack(5, 6);
@@ -799,7 +799,7 @@ TEST_CASE("Collection<int> — Vector through interface reference", "[libk][vect
             return sum;
         }
 
-        test() : int throws ConstructionException {
+        test() : int {
             vec : Vector<int>;
             total : int = fillAndSum(vec);
 
@@ -824,7 +824,7 @@ TEST_CASE("Collection<int> — LinkedList through interface reference", "[libk][
             return coll.getSize();
         }
 
-        test() : int throws ConstructionException {
+        test() : int {
             lst : LinkedList<int>;
             a : int = 1;
             b : int = 2;

@@ -55,7 +55,7 @@ struct UniSlot {
 
     @annotations::Intrinsic("UniSlot::construct")
     template<typename...Args>
-    construct(Args...args) throws ConstructionException;
+    construct(Args...args);
 
     @annotations::Intrinsic("UniSlot::destruct")
     destruct();
@@ -114,7 +114,7 @@ struct MultiSlot {
 
     @annotations::Intrinsic("MultiSlot::construct")
     template<typename...Args>
-    construct(index : int, Args...args) throws ConstructionException;
+    construct(index : int, Args...args);
 
     @annotations::Intrinsic("MultiSlot::destruct")
     destruct(index : int);

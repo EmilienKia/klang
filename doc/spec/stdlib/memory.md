@@ -32,7 +32,7 @@ struct UniSlot {
     ~UniSlot();
 
     template<typename...Args>
-    construct(Args...args) throws ConstructionException;
+    construct(Args...args);
 
     destruct();
 
@@ -54,7 +54,7 @@ This is the K equivalent of C++'s `std::aligned_storage` + placement new.
 |--------|-------------|
 | `UniSlot()` | Initialize the storage region (no `T` construction). |
 | `~UniSlot()` | Finalize the storage region (no `T` destruction). |
-| `construct(Args...args) throws ConstructionException` | Construct a `T` in the storage, forwarding `args` to `T`'s constructor. If the constructor throws a checked exception (`Exception`-derived), it is intercepted and replaced by a `ConstructionException`. `FatalError`-derived exceptions propagate unchanged. |
+| `construct(Args...args)` | Construct a `T` in the storage, forwarding `args` to `T`'s constructor. If the constructor throws a checked exception (`Exception`-derived), it is intercepted and replaced by a `ConstructionException` (a `FatalError`). Other `FatalError`-derived exceptions propagate unchanged. |
 | `destruct()` | Destroy the `T` in the storage (calls `T`'s destructor). |
 | `get() : T&` | Return a mutable reference to the stored `T`. |
 
@@ -65,8 +65,8 @@ All lifecycle methods are compiler intrinsics (`@annotations::Intrinsic`):
 - `UniSlot::destructor` — no-op (does not destroy the contained object)
 - `UniSlot::construct` — placement-constructs `T` with forwarded arguments;
   if the constructor throws a checked exception, the intrinsic catches it and
-  throws `ConstructionException` (code 6) instead. `FatalError`-derived
-  exceptions are **not** intercepted and propagate normally.
+  throws `ConstructionException` (code 6) instead. As a `FatalError`, it
+  propagates without requiring a `throws` declaration.
 - `UniSlot::destruct` — calls `T`'s destructor in-place
 
 ### Usage
@@ -93,10 +93,10 @@ slot.destruct();                    // destroy the Point
 
 | Method | Exception | Condition |
 |--------|-----------|-----------|
-| `construct()` | `ConstructionException` (checked) | `T`'s constructor throws a checked exception |
+| `construct()` | `ConstructionException` (fatal) | `T`'s constructor throws a checked exception |
 
-`ConstructionException` is checked and must be handled or declared by the
-caller.
+`ConstructionException` is a `FatalError` and propagates without requiring a
+`throws` declaration.
 
 ---
 
@@ -113,7 +113,7 @@ struct MultiSlot {
     deallocate();
 
     template<typename...Args>
-    construct(index : int, Args...args) throws ConstructionException;
+    construct(index : int, Args...args);
 
     destruct(index : int);
 
@@ -142,7 +142,7 @@ This is the array counterpart to `UniSlot<T>` and is the storage backing for
 | `allocate(capacity)` | Allocate a buffer for `capacity` elements. |
 | `reallocate(newCapacity)` | Grow/shrink the buffer. Preserves raw content up to the old capacity. |
 | `deallocate()` | Free the buffer. |
-| `construct(index, Args...args) throws ConstructionException` | Placement-construct a `T` at `index`, forwarding `args`. If the constructor throws a checked exception, it is intercepted and replaced by `ConstructionException`. |
+| `construct(index, Args...args)` | Placement-construct a `T` at `index`, forwarding `args`. If the constructor throws a checked exception, it is intercepted and replaced by `ConstructionException` (a `FatalError`). |
 | `destruct(index)` | Call `T`'s destructor on the element at `index`. |
 | `get(index) : T&` | Return a mutable reference to the element at `index`. |
 | `getCapacity() : int` | Return the current buffer capacity. |
@@ -156,7 +156,7 @@ All lifecycle and access methods are compiler intrinsics:
 - `MultiSlot::reallocate` — `realloc(_data, newCapacity * sizeof(T))`; throws `OutOfMemory` on failure
 - `MultiSlot::deallocate` — `free(_data)`
 - `MultiSlot::construct` — placement-constructs at `_data + index`; wraps checked
-  exceptions from `T`'s constructor as `ConstructionException`
+  exceptions from `T`'s constructor as `ConstructionException` (a `FatalError`)
 - `MultiSlot::destruct` — calls destructor at `_data + index`
 - `MultiSlot::get` — returns `_data[index]`
 
@@ -200,11 +200,10 @@ slots.reallocate(20);   // grow buffer to 20 elements
 |--------|-----------|-----------|
 | `allocate()` | `OutOfMemory` (unchecked) | `malloc` returns null |
 | `reallocate()` | `OutOfMemory` (unchecked) | `realloc` returns null |
-| `construct()` | `ConstructionException` (checked) | `T`'s constructor throws a checked exception |
+| `construct()` | `ConstructionException` (fatal) | `T`'s constructor throws a checked exception |
 
-`OutOfMemory` is a `FatalError` subclass and propagates without requiring a
-`throws` declaration. `ConstructionException` is checked and must be handled
-or declared.
+`OutOfMemory` and `ConstructionException` are both `FatalError` subclasses and
+propagate without requiring a `throws` declaration.
 
 ---
 

@@ -22,15 +22,15 @@ This is the K equivalent of C++17's `std::optional<T>`.
 template<typename T>
 struct Optional {
     Optional();
-    Optional(value : T&) throws ConstructionException;
-    Optional(other : Optional<T>&) throws ConstructionException;
+    Optional(value : T&);
+    Optional(other : Optional<T>&);
     ~Optional();
 
     const hasValue() : bool;
     const get() : T&;
     const getOr(defaultValue : T&) : T;
 
-    set(value : T&) throws ConstructionException;
+    set(value : T&);
     reset();
 
     static empty() : Optional<T>;
@@ -44,8 +44,8 @@ struct Optional {
 | Method | Description |
 |--------|-------------|
 | `Optional()` | Create an empty optional (no value). |
-| `Optional(value : T&) throws ConstructionException` | Create an optional holding a copy of `value`. May throw if `T`'s copy constructor throws. |
-| `Optional(other : Optional<T>&) throws ConstructionException` | Copy constructor. If `other` has a value, copy it; otherwise create empty. May throw if `T`'s copy constructor throws. |
+| `Optional(value : T&)` | Create an optional holding a copy of `value`. May throw if `T`'s copy constructor throws. |
+| `Optional(other : Optional<T>&)` | Copy constructor. If `other` has a value, copy it; otherwise create empty. May throw if `T`'s copy constructor throws. |
 | `~Optional()` | Destructor. If a value is present, destroys it via `UniSlot::destruct()`. |
 
 ---
@@ -57,7 +57,7 @@ struct Optional {
 | `hasValue() : bool` | Return `true` if this optional holds a value. |
 | `get() : T&` | Return a reference to the contained value. **Precondition:** `hasValue()` is `true`. |
 | `getOr(defaultValue : T&) : T` | Return the contained value if present, or `defaultValue` otherwise. |
-| `set(value : T&) throws ConstructionException` | Set the optional to hold a copy of `value`. If a value was already present, it is destroyed first. May throw if `T`'s copy constructor throws. |
+| `set(value : T&)` | Set the optional to hold a copy of `value`. If a value was already present, it is destroyed first. May throw if `T`'s copy constructor throws. |
 | `reset()` | Clear the optional. If a value is present, it is destroyed. After `reset()`, `hasValue()` returns `false`. |
 
 ---

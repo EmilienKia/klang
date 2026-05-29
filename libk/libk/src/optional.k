@@ -66,7 +66,7 @@ struct Optional {
     /**
      * Value constructor. Creates an Optional holding a copy of value.
      */
-    Optional(value : T&) throws ConstructionException {
+    Optional(value : T&) {
         _slot.construct(value);
         _hasValue = true;
     }
@@ -76,7 +76,7 @@ struct Optional {
      * - If other holds a value, this holds a copy of that value.
      * - If other is empty, this is also empty.
      */
-    Optional(other : Optional<T>&) throws ConstructionException {
+    Optional(other : Optional<T>&) {
         if (other.hasValue()) {
             _slot.construct(other.get());
             _hasValue = true;
@@ -124,7 +124,7 @@ struct Optional {
      * Set the Optional to hold a copy of value.
      * If a value was already present, it is destroyed first.
      */
-    set(value : T&) throws ConstructionException {
+    set(value : T&) {
         if (_hasValue) {
             _slot.destruct();
         }

@@ -180,7 +180,7 @@ public:
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// ConstructionException — thrown when object construction fails.
+// ConstructionException — fatal error when object construction fails.
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -189,11 +189,12 @@ public:
  * Thrown by UniSlot<T>::construct() and MultiSlot<T>::construct() when the
  * underlying T constructor raises a checked exception. The original exception
  * is intercepted and replaced by this ConstructionException.
- * FatalError-derived exceptions are NOT intercepted and propagate normally.
+ *
+ * As a FatalError, it does not need to be declared in `throws` clauses.
  */
-public class ConstructionException : public Exception {
+public class ConstructionException : public FatalError {
 public:
-    ConstructionException() : Exception(6) {}
+    ConstructionException() : FatalError(6) {}
 
-    ConstructionException(code: int) : Exception(code) {}
+    ConstructionException(code: int) : FatalError(code) {}
 }

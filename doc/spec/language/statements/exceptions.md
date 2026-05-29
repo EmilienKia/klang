@@ -292,16 +292,16 @@ template<typename T>
 struct Box {
     _slot : UniSlot<T>;
 
-    fill(value : T&) throws ConstructionException {
+    fill(value : T&) {
         _slot.construct(value);
     }
 }
 
-// Caller must handle or declare ConstructionException:
-test() : int throws ConstructionException {
+// ConstructionException is a FatalError — no throws clause needed:
+test() : int {
     box : Box<int>;
     v : int = 42;
-    box.fill(v);   // OK — ConstructionException is declared
+    box.fill(v);   // OK — ConstructionException propagates as FatalError
     return 0;
 }
 ```
