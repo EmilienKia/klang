@@ -323,8 +323,9 @@ k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
 
         // Give this library access to the KDIs of all previously-compiled libs
         // (it may import types/functions from earlier libs in the list)
-        if (i > 0) {
+        {
             auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+            resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
             for (std::size_t j = 0; j < i; ++j) {
                 if (!libs[j].kdi_path.empty()) {
                     kdi::kdi_file prev_kdi = kdi::kdi_read_cbor_file(libs[j].kdi_path);
@@ -755,6 +756,7 @@ k::tools::exec_result build_exec_with_lib(const std::string_view& lib_src,
 
     // Compiler for the library
     auto lib_comp = k::compiler::create(make_pic_target_machine());
+    lib_comp->set_file_resolver(make_stdlib_resolver());
     try {
         lib_comp->parse_source("lib.k", lib_src, true, false);
     } catch (const k::log::compiler_error& e) {
@@ -812,6 +814,7 @@ k::tools::exec_result build_exec_with_lib(const std::string_view& lib_src,
     // Build a resolver: register the lib's KDI by module name, and add the
     // lib dir as a library search dir (→ -L flag) for the linker.
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
     resolver->add_explicit_path(module_name, kdi_path.string());
     resolver->add_search_dir(lib_dir);
 
@@ -1277,4 +1280,7 @@ ScopedLdLibraryPath::~ScopedLdLibraryPath() {
     if (had_old) ::setenv("LD_LIBRARY_PATH", old_value.c_str(), 1);
     else         ::unsetenv("LD_LIBRARY_PATH");
 }
+
+
+
 

@@ -737,3 +737,399 @@ TEST_CASE("Exception: throw temporary in called function",
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 55);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  11. Constructor throws clause — contract enforcement and runtime behaviour
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception contract: constructor with throws clause — new caught in try-catch",
+          "[gen][exceptions][contract][constructor]") {
+    // A class whose constructor declares 'throws ErrA'.
+    // Calling new inside a try-catch that catches ErrA should compile and run.
+    auto jit = gen_jit(R"(
+        module __test_exc_ctor_1__;
+
+        class ErrA : public Exception {
+            public:
+            ErrA(code: int) : Exception(code) { }
+        }
+
+        class Widget {
+            val : int;
+            public:
+            Widget(v: int) throws ErrA {
+                if (v < 0) {
+                    throw ErrA(v);
+                }
+                val = v;
+            }
+            getVal() : int { return val; }
+        }
+
+        test_ctor_no_throw() : int {
+            result : int = 0;
+            try {
+                w : Widget! = new Widget(42);
+                result = w->getVal();
+                delete w;
+            } catch (e: ErrA&) {
+                result = -1;
+            }
+            return result;
+        }
+
+        test_ctor_throws() : int {
+            result : int = 0;
+            try {
+                w : Widget! = new Widget(-5);
+                result = w->getVal();
+                delete w;
+            } catch (e: ErrA&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn_ok = jit->lookup_symbol<int(*)()>("test_ctor_no_throw");
+    REQUIRE(fn_ok != nullptr);
+    REQUIRE(fn_ok() == 42);
+
+    auto fn_throw = jit->lookup_symbol<int(*)()>("test_ctor_throws");
+    REQUIRE(fn_throw != nullptr);
+    REQUIRE(fn_throw() == -5);
+}
+
+TEST_CASE("Exception contract: constructor with throws clause — new not handled fails",
+          "[gen][exceptions][contract][constructor]") {
+    // A function with a throws clause that does NOT cover the constructor's exception.
+    // Calling new without try-catch should produce a compile error.
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module __test_exc_ctor_2__;
+
+        class ErrA : public Exception { }
+        class ErrB : public Exception { }
+
+        class Widget {
+            val : int;
+            public:
+            Widget(v: int) throws ErrA {
+                val = v;
+            }
+        }
+
+        caller() : int throws ErrB {
+            w : Widget! = new Widget(10);
+            delete w;
+            return 0;
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception contract: constructor with throws clause — propagated via caller throws",
+          "[gen][exceptions][contract][constructor]") {
+    // A function that declares the same exception as the constructor should compile fine.
+    auto jit = gen_jit(R"(
+        module __test_exc_ctor_3__;
+
+        class ErrA : public Exception {
+            public:
+            ErrA(code: int) : Exception(code) { }
+        }
+
+        class Widget {
+            val : int;
+            public:
+            Widget(v: int) throws ErrA {
+                if (v < 0) {
+                    throw ErrA(v);
+                }
+                val = v;
+            }
+            getVal() : int { return val; }
+        }
+
+        make_widget(v: int) : Widget! throws ErrA {
+            return new Widget(v);
+        }
+
+        safe() : int { return 99; }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("safe");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 99);
+}
+
+TEST_CASE("Exception contract: struct constructor with throws clause — local var caught in try-catch",
+          "[gen][exceptions][contract][constructor]") {
+    // A struct whose constructor declares 'throws ErrA'.
+    // Constructing a local variable inside a try-catch should compile and work.
+    auto jit = gen_jit(R"(
+        module __test_exc_ctor_4__;
+
+        class ErrA : public Exception {
+            public:
+            ErrA(code: int) : Exception(code) { }
+        }
+
+        struct Point {
+            x : int;
+            y : int;
+            Point(px: int, py: int) throws ErrA {
+                if (px < 0) {
+                    throw ErrA(px);
+                }
+                x = px;
+                y = py;
+            }
+        }
+
+        test_struct_ctor_ok() : int {
+            result : int = 0;
+            try {
+                p : Point(5, 10);
+                result = p.x + p.y;
+            } catch (e: ErrA&) {
+                result = -1;
+            }
+            return result;
+        }
+
+        test_struct_ctor_throws() : int {
+            result : int = 0;
+            try {
+                p : Point(-3, 10);
+                result = p.x + p.y;
+            } catch (e: ErrA&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn_ok = jit->lookup_symbol<int(*)()>("test_struct_ctor_ok");
+    REQUIRE(fn_ok != nullptr);
+    REQUIRE(fn_ok() == 15);
+
+    auto fn_throw = jit->lookup_symbol<int(*)()>("test_struct_ctor_throws");
+    REQUIRE(fn_throw != nullptr);
+    REQUIRE(fn_throw() == -3);
+}
+
+TEST_CASE("Exception contract: struct constructor with throws clause — local var not handled fails",
+          "[gen][exceptions][contract][constructor]") {
+    // A struct constructor with throws clause, and the caller declares a different exception.
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module __test_exc_ctor_5__;
+
+        class ErrA : public Exception { }
+        class ErrB : public Exception { }
+
+        struct Point {
+            x : int;
+            y : int;
+            Point(px: int, py: int) throws ErrA {
+                x = px;
+                y = py;
+            }
+        }
+
+        caller() : int throws ErrB {
+            p : Point(5, 10);
+            return p.x + p.y;
+        }
+    )"), k::log::compiler_error);
+}
+
+TEST_CASE("Exception contract: temporary construction with throws clause — caught in try-catch",
+          "[gen][exceptions][contract][constructor]") {
+    // Throwing constructor via temporary construction inside try-catch should work.
+    auto jit = gen_jit(R"(
+        module __test_exc_ctor_6__;
+
+        class ErrA : public Exception {
+            public:
+            ErrA(code: int) : Exception(code) { }
+        }
+
+        class Gadget : public Exception {
+            public:
+            Gadget(v: int) throws ErrA {
+                if (v < 0) {
+                    throw ErrA(v);
+                }
+            }
+        }
+
+        test_temp_ctor() : int {
+            result : int = 0;
+            try {
+                throw Gadget(10);
+            } catch (g: Gadget&) {
+                result = 1;
+            } catch (e: ErrA&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+
+        test_temp_ctor_throws() : int {
+            result : int = 0;
+            try {
+                throw Gadget(-7);
+            } catch (g: Gadget&) {
+                result = 1;
+            } catch (e: ErrA&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn_ok = jit->lookup_symbol<int(*)()>("test_temp_ctor");
+    REQUIRE(fn_ok != nullptr);
+    REQUIRE(fn_ok() == 1);
+
+    auto fn_throw = jit->lookup_symbol<int(*)()>("test_temp_ctor_throws");
+    REQUIRE(fn_throw != nullptr);
+    REQUIRE(fn_throw() == -7);
+}
+
+TEST_CASE("Exception contract: constructor without throws clause — no enforcement",
+          "[gen][exceptions][contract][constructor]") {
+    // A constructor without a throws clause should not trigger any contract check.
+    auto jit = gen_jit(R"(
+        module __test_exc_ctor_7__;
+
+        class ErrA : public Exception { }
+
+        class Simple {
+            val : int;
+            public:
+            Simple(v: int) {
+                val = v;
+            }
+            getVal() : int { return val; }
+        }
+
+        caller() : int throws ErrA {
+            s : Simple! = new Simple(42);
+            result : int = s->getVal();
+            delete s;
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("caller");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 42);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  12. Cross-module constructor throws — import library with throwing ctor
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception contract: cross-module constructor throws — local and new",
+          "[gen][exceptions][contract][constructor][import][e2e]") {
+    // Module A defines an exception and a class whose constructor throws it.
+    // Module B imports A, constructs instances both locally and via new,
+    // and catches the exception in both cases.
+    auto result = build_exec_with_lib(
+        // ── Library module ──
+        R"K(
+            module exc_lib;
+
+            public:
+
+            class InitError : public Exception {
+                public:
+                InitError(code: int) : Exception(code) { }
+            }
+
+            class Sensor {
+                value : int;
+                public:
+                Sensor(v: int) throws InitError {
+                    if (v < 0) {
+                        throw InitError(v);
+                    }
+                    value = v;
+                }
+                getValue() : int { return value; }
+            }
+        )K",
+        // ── Executable module ──
+        R"K(
+            module exc_app;
+            import exc_lib;
+
+            test_local_ok() : int {
+                result : int = 0;
+                try {
+                    s : exc_lib::Sensor(10);
+                    result = s.getValue();
+                } catch (e: exc_lib::InitError&) {
+                    result = -1;
+                }
+                return result;
+            }
+
+            test_local_throws() : int {
+                result : int = 0;
+                try {
+                    s : exc_lib::Sensor(-7);
+                    result = s.getValue();
+                } catch (e: exc_lib::InitError&) {
+                    result = e.getCode();
+                }
+                return result;
+            }
+
+            test_new_ok() : int {
+                result : int = 0;
+                try {
+                    s : exc_lib::Sensor! = new exc_lib::Sensor(20);
+                    result = s->getValue();
+                    delete s;
+                } catch (e: exc_lib::InitError&) {
+                    result = -1;
+                }
+                return result;
+            }
+
+            test_new_throws() : int {
+                result : int = 0;
+                try {
+                    s : exc_lib::Sensor! = new exc_lib::Sensor(-3);
+                    result = s->getValue();
+                    delete s;
+                } catch (e: exc_lib::InitError&) {
+                    result = e.getCode();
+                }
+                return result;
+            }
+
+            main() : int {
+                r1 : int = test_local_ok();
+                if (r1 != 10) { return 1; }
+
+                r2 : int = test_local_throws();
+                if (r2 != -7) { return 2; }
+
+                r3 : int = test_new_ok();
+                if (r3 != 20) { return 3; }
+
+                r4 : int = test_new_throws();
+                if (r4 != -3) { return 4; }
+
+                return 42;
+            }
+        )K"
+    );
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+
+    REQUIRE(result.exit_code == 42);
+}

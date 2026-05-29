@@ -2237,6 +2237,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 return;
             }
             check_constructor_visibility(*best_ctor, expr);
+            check_call_contract(*best_ctor, expr.first_lexeme());
             expr._uniform_constructor = best_ctor;
             expr.set_uniform_ctor_args(adapted_args);
         } else if (type::is_primitive(elem_type)) {
@@ -2475,6 +2476,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                             {std::to_string(i), st_type->to_string()});
                     }
                     check_constructor_visibility(*best_ctor, expr);
+                    check_call_contract(*best_ctor, expr.first_lexeme());
                     expr._element_constructors[i] = best_ctor;
                     func_inv->assign_arguments(adapted_args);
                 } else {
@@ -2489,6 +2491,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                              e->get_type() ? e->get_type()->to_string() : "?"});
                     }
                     check_constructor_visibility(*best_ctor, expr);
+                    check_call_contract(*best_ctor, expr.first_lexeme());
                     expr._element_constructors[i] = best_ctor;
                     if (!adapted_args.empty() && adapted_args[0] != e) {
                         expr.assign_array_init_element(i, adapted_args[0]);
@@ -2507,6 +2510,9 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             if (needs_default_ctor) {
                 auto [default_ctor, default_args] = get_best_matching_constructor(
                     struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
+                if (default_ctor) {
+                    check_call_contract(*default_ctor, expr.first_lexeme());
+                }
                 for (size_t i = 0; i < arr_size; ++i) {
                     if (i >= init_count || !expr._array_init_elements[i]) {
                         expr._element_constructors[i] = default_ctor;
@@ -2586,6 +2592,8 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 {st_type->to_string()});
         }
         check_constructor_visibility(*best_ctor, expr);
+        // Check exception contract for throwing constructors
+        check_call_contract(*best_ctor, expr.first_lexeme());
         expr.set_constructor(best_ctor);
         expr.assign_arguments(adapted_args);
     } else if (type::is_primitive(alloc_type)) {

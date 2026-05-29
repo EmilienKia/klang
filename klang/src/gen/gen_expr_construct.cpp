@@ -226,6 +226,8 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
         }
         // Check constructor visibility
         check_constructor_visibility(*best_constructor, expr);
+        // Check exception contract for throwing constructors
+        check_call_contract(*best_constructor, expr.first_lexeme());
         expr.set_constructor(best_constructor);
         expr.arguments(adapted_args);
     }
@@ -298,6 +300,8 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
     }
 
     check_constructor_visibility(*best_constructor, expr);
+    // Check exception contract for throwing constructors
+    check_call_contract(*best_constructor, expr.first_lexeme());
     expr.set_constructor(best_constructor);
     expr.assign_arguments(adapted_args);
     // The temporary is an alloca → its type is a reference to the struct
@@ -523,7 +527,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 "this indicates a compiler bug in the declaration pass",
                 {st_type->to_string()});
         }
-        _value = _builder->CreateCall(llvm_func, args);
+        _value = create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args);
 
     } else if (type::is_owner(var_type)) {
         // Owner type member init: _buf(buf) — move the owner pointer.
@@ -945,7 +949,7 @@ void implementation_generator::visit_temporary_construction_expression(temporary
                 "Internal error: LLVM constructor function object is null for type '{}'",
                 {st_type->to_string()});
         }
-        _builder->CreateCall(llvm_ctor, args);
+        create_call_or_invoke(llvm_ctor->getFunctionType(), llvm_ctor, args, "");
     }
 
     // Register the temporary for destructor cleanup at full-expression boundary

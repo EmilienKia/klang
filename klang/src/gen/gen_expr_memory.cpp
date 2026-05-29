@@ -652,7 +652,7 @@ void implementation_generator::visit_array_init_expression(array_init_expression
                             arg->accept(*this);
                             if (_value) args.push_back(_value);
                         }
-                        _builder->CreateCall(ctor_it->second, args);
+                        create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second, args, "");
                     }
                 }
             } else if (type::is_primitive(elem_type)) {
@@ -834,7 +834,7 @@ void implementation_generator::visit_designated_struct_init_expression(designate
                 (ctor->parameters().size() == 1 /* this */)) {
                 auto ctor_it = _context->_functions.find(ctor->shared_as<function>());
                 if (ctor_it != _context->_functions.end()) {
-                    _builder->CreateCall(ctor_it->second, {mem_ptr});
+                    create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second, {mem_ptr}, "");
                 }
                 break;
             }
@@ -923,7 +923,7 @@ void implementation_generator::visit_designated_struct_init_expression(designate
                         if (a) a->accept(*this);
                         if (_value) args.push_back(_value);
                     }
-                    _builder->CreateCall(ctor_it->second, args);
+                    create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second, args, "");
                 }
             } else if (type::is_primitive(mem_type) && !m.args.empty() && m.args[0]) {
                 _value = nullptr;
@@ -1084,7 +1084,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
                     llvm::Value* indices[] = {llvm::ConstantInt::get(i32_ty, 0), i_phi};
                     llvm::Value* elem_ptr = _builder->CreateGEP(
                         llvm_arr_type, data_ptr, indices, "dynarr_elem");
-                    _builder->CreateCall(ctor_it->second, {elem_ptr});
+                    create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second, {elem_ptr}, "");
                     llvm::Value* i_next = _builder->CreateAdd(
                         i_phi, llvm::ConstantInt::get(i32_ty, 1), "dynarr_i_next");
                     i_phi->addIncoming(i_next, loop_body);
@@ -1193,7 +1193,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
                             arg->accept(*this);
                             if (_value) args.push_back(_value);
                         }
-                        _builder->CreateCall(ctor_it->second, args);
+                        create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second, args, "");
                     }
                 }
             } else if (type::is_primitive(elem_type)) {
@@ -1269,7 +1269,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
                                 arg->accept(*this);
                                 if (_value) args.push_back(_value);
                             }
-                            _builder->CreateCall(ctor_it->second, args);
+                            create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second, args, "");
                         }
                     }
                 } else if (type::is_primitive(elem_type)) {
@@ -1371,7 +1371,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
                         }
                         // else: default constructor (no extra args)
 
-                        _builder->CreateCall(ctor_it->second, args);
+                        create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second, args, "");
                     }
                 }
             }
@@ -1410,7 +1410,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
                     arg->accept(*this);
                     if (_value) args.push_back(_value);
                 }
-                _builder->CreateCall(ctor_it->second, args);
+                create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second, args, "");
             }
         }
     } else if (type::is_primitive(alloc_type)) {
