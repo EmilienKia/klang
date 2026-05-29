@@ -911,6 +911,11 @@ void template_instantiator::populate_function_from_template(
         }
     }
 
+    // Copy throws spec (raw names — will be resolved by the resolution passes)
+    for (auto& raw : src.get_throws_spec_raw()) {
+        dst->add_throws_spec_raw(raw);
+    }
+
     // Copy AST node (optional, for diagnostics)
     dst->_ast_node = src.get_ast_node();
 

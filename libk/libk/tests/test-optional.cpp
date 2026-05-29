@@ -52,7 +52,7 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 TEST_CASE("Optional default constructor is empty", "[libk][optional]") {
     auto j = jit_k(R"SRC(
         module __opt_default__;
-        test() : int {
+        test() : int throws ConstructionException {
             opt : Optional<int>;
             if (opt.hasValue()) return 0;
             return 1;
@@ -71,7 +71,7 @@ TEST_CASE("Optional default constructor is empty", "[libk][optional]") {
 TEST_CASE("Optional value constructor", "[libk][optional]") {
     auto j = jit_k(R"SRC(
         module __opt_value_ctor__;
-        test() : int {
+        test() : int throws ConstructionException {
             opt : Optional<int>(42);
             if (!opt.hasValue()) return 0;
             if (opt.get() != 42) return 0;
@@ -91,7 +91,7 @@ TEST_CASE("Optional value constructor", "[libk][optional]") {
 TEST_CASE("Optional copy constructor — with value", "[libk][optional][copy]") {
     auto j = jit_k(R"SRC(
         module __opt_copy_value__;
-        test() : int {
+        test() : int throws ConstructionException {
             src : Optional<int>(99);
             dst : Optional<int>(src);
             if (!dst.hasValue()) return 0;
@@ -112,7 +112,7 @@ TEST_CASE("Optional copy constructor — with value", "[libk][optional][copy]") 
 TEST_CASE("Optional copy constructor — empty", "[libk][optional][copy]") {
     auto j = jit_k(R"SRC(
         module __opt_copy_empty__;
-        test() : int {
+        test() : int throws ConstructionException {
             src : Optional<int>;
             dst : Optional<int>(src);
             if (dst.hasValue()) return 0;
@@ -132,7 +132,7 @@ TEST_CASE("Optional copy constructor — empty", "[libk][optional][copy]") {
 TEST_CASE("Optional set on empty", "[libk][optional]") {
     auto j = jit_k(R"SRC(
         module __opt_set_empty__;
-        test() : int {
+        test() : int throws ConstructionException {
             opt : Optional<int>;
             opt.set(7);
             if (!opt.hasValue()) return 0;
@@ -153,7 +153,7 @@ TEST_CASE("Optional set on empty", "[libk][optional]") {
 TEST_CASE("Optional set replaces existing value", "[libk][optional]") {
     auto j = jit_k(R"SRC(
         module __opt_set_replace__;
-        test() : int {
+        test() : int throws ConstructionException {
             opt : Optional<int>(10);
             opt.set(20);
             if (!opt.hasValue()) return 0;
@@ -174,7 +174,7 @@ TEST_CASE("Optional set replaces existing value", "[libk][optional]") {
 TEST_CASE("Optional reset clears value", "[libk][optional]") {
     auto j = jit_k(R"SRC(
         module __opt_reset__;
-        test() : int {
+        test() : int throws ConstructionException {
             opt : Optional<int>(55);
             opt.reset();
             if (opt.hasValue()) return 0;
@@ -194,7 +194,7 @@ TEST_CASE("Optional reset clears value", "[libk][optional]") {
 TEST_CASE("Optional reset on empty is safe", "[libk][optional]") {
     auto j = jit_k(R"SRC(
         module __opt_reset_empty__;
-        test() : int {
+        test() : int throws ConstructionException {
             opt : Optional<int>;
             opt.reset();
             if (opt.hasValue()) return 0;
@@ -214,7 +214,7 @@ TEST_CASE("Optional reset on empty is safe", "[libk][optional]") {
 TEST_CASE("Optional getOr with value", "[libk][optional]") {
     auto j = jit_k(R"SRC(
         module __opt_getor_value__;
-        test() : int {
+        test() : int throws ConstructionException {
             opt : Optional<int>(33);
             return opt.getOr(0);
         }
@@ -232,7 +232,7 @@ TEST_CASE("Optional getOr with value", "[libk][optional]") {
 TEST_CASE("Optional getOr without value", "[libk][optional]") {
     auto j = jit_k(R"SRC(
         module __opt_getor_empty__;
-        test() : int {
+        test() : int throws ConstructionException {
             opt : Optional<int>;
             return opt.getOr(77);
         }
@@ -250,7 +250,7 @@ TEST_CASE("Optional getOr without value", "[libk][optional]") {
 TEST_CASE("Optional::empty static factory", "[libk][optional]") {
     auto j = jit_k(R"SRC(
         module __opt_empty_static__;
-        test() : int {
+        test() : int throws ConstructionException {
             opt : Optional<int> = Optional<int>::empty();
             if (opt.hasValue()) return 0;
             return 1;
@@ -277,7 +277,7 @@ TEST_CASE("Optional with struct type", "[libk][optional]") {
                 y = ay;
             }
         }
-        test() : int {
+        test() : int throws ConstructionException {
             p : Point(3, 7);
             opt : Optional<Point>(p);
             if (!opt.hasValue()) return 0;
@@ -299,7 +299,7 @@ TEST_CASE("Optional with struct type", "[libk][optional]") {
 TEST_CASE("Optional set-reset-set lifecycle", "[libk][optional]") {
     auto j = jit_k(R"SRC(
         module __opt_lifecycle__;
-        test() : int {
+        test() : int throws ConstructionException {
             opt : Optional<int>;
             opt.set(1);
             if (opt.get() != 1) return 0;

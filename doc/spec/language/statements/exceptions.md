@@ -280,6 +280,32 @@ test() : int {
 }
 ```
 
+### Template throws propagation
+
+When a template function or method declares a `throws` clause, the clause is
+propagated to all instantiated functions. This means callers of template
+methods like `UniSlot<T>::construct()` are subject to the same contract
+enforcement as any other throwing function.
+
+```k
+template<typename T>
+struct Box {
+    _slot : UniSlot<T>;
+
+    fill(value : T&) throws ConstructionException {
+        _slot.construct(value);
+    }
+}
+
+// Caller must handle or declare ConstructionException:
+test() : int throws ConstructionException {
+    box : Box<int>;
+    v : int = 42;
+    box.fill(v);   // OK — ConstructionException is declared
+    return 0;
+}
+```
+
 ### Example
 
 ```k
@@ -375,9 +401,6 @@ riskyWork() : int {
 - No `finally` clause.
 - No rethrow (`throw;` without expression).
 - No `generic` catch-all clause (planned).
-- Template instantiation does not currently propagate the `throws` clause from
-  the template definition to the instantiated function (affects `UniSlot<T>::construct()`
-  and `MultiSlot<T>::construct()` contract enforcement).
 
 ---
 

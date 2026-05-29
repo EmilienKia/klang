@@ -19,12 +19,11 @@
   - export templates (Phase 3+ — separate compilation of template definitions and instantiations)
   - Known generic call-site limitations (found by Phase 12, tracked for future fix):
 
-  - [ ] **Template throws clause propagation**: the `throws` clause on a template
-    function definition is not propagated to instantiated functions. This prevents
-    compile-time contract enforcement for template methods that declare `throws`
-    (e.g. `UniSlot<T>::construct() throws ConstructionException`).
-    Test: `test-gen-exceptions.cpp` — "ConstructionException: contract enforcement"
-    (marked `[!shouldfail]`).
+  - [x] **Template throws clause propagation**: the `throws` clause on a template
+    function definition is now propagated to instantiated functions via
+    `populate_function_from_template()`. Compile-time contract enforcement works
+    for template methods that declare `throws` (e.g. `UniSlot<T>::construct() throws ConstructionException`).
+    Test: `test-gen-exceptions.cpp` — "ConstructionException: contract enforcement".
 
     - [ ] Generic constructor call with owner `T!` argument: synthesized ctor takes `byte*!`, call site `ConcreteType!` implicit cast not supported
     - [ ] Member access on `T*` inside generic body (opaque pointer — by design; workaround: access at call site)

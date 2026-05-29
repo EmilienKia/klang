@@ -57,7 +57,7 @@ TEST_CASE("LinkedList<int> — pushBack and peek", "[libk][list][int]") {
     auto j = jit_k(R"SRC(
         module __ll_int_push__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<int>;
             a : int = 10;
             b : int = 20;
@@ -83,7 +83,7 @@ TEST_CASE("LinkedList<int> — pushFront ordering", "[libk][list][int]") {
     auto j = jit_k(R"SRC(
         module __ll_int_front__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<int>;
             a : int = 1;
             b : int = 2;
@@ -110,7 +110,7 @@ TEST_CASE("LinkedList<int> — removeFront", "[libk][list][int]") {
     auto j = jit_k(R"SRC(
         module __ll_int_rmfront__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<int>;
             a : int = 10;
             b : int = 20;
@@ -138,7 +138,7 @@ TEST_CASE("LinkedList<int> — removeBack", "[libk][list][int]") {
     auto j = jit_k(R"SRC(
         module __ll_int_rmback__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<int>;
             a : int = 10;
             b : int = 20;
@@ -166,7 +166,7 @@ TEST_CASE("LinkedList<int> — clear empties", "[libk][list][int]") {
     auto j = jit_k(R"SRC(
         module __ll_int_clear__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<int>;
             a : int = 1;
             b : int = 2;
@@ -200,7 +200,7 @@ TEST_CASE("LinkedList<Point> — struct stored by value", "[libk][list][struct]"
             Point() { x = 0; y = 0; }
         }
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<Point>;
             p1 : Point;
             p1.x = 10;
@@ -239,7 +239,7 @@ TEST_CASE("LinkedList<Point> — value semantics (mutation does not affect list)
             Point() { x = 0; y = 0; }
         }
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<Point>;
             p : Point;
             p.x = 5;
@@ -270,7 +270,7 @@ TEST_CASE("LinkedList<Point> — removeFront / removeBack", "[libk][list][struct
             Point() { x = 0; y = 0; }
         }
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<Point>;
             p1 : Point; p1.x = 1;
             p2 : Point; p2.x = 2;
@@ -302,7 +302,7 @@ TEST_CASE("LinkedList<int> — get by index", "[libk][list][int][index]") {
     auto j = jit_k(R"SRC(
         module __ll_get__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<int>;
             a : int = 10;
             b : int = 20;
@@ -328,7 +328,7 @@ TEST_CASE("LinkedList<int> — operator[] read", "[libk][list][int][index]") {
     auto j = jit_k(R"SRC(
         module __ll_subscript__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<int>;
             a : int = 5;
             b : int = 15;
@@ -354,7 +354,7 @@ TEST_CASE("LinkedList<int> — operator[] write", "[libk][list][int][index]") {
     auto j = jit_k(R"SRC(
         module __ll_subscript_w__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<int>;
             a : int = 0;
             b : int = 0;
@@ -385,7 +385,7 @@ TEST_CASE("LinkedList<Object*> — store and retrieve heap object pointers", "[l
     auto j = jit_k(R"SRC(
         module __ll_ptr__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             own1 : Object! = new Object();
             own2 : Object! = new Object();
             o1 : Object* = own1;
@@ -425,7 +425,7 @@ TEST_CASE("LinkedList<int> — insert at beginning, middle, end", "[libk][list][
     auto j = jit_k(R"SRC(
         module __ll_int_insert__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<int>;
             a : int = 10;
             b : int = 30;
@@ -475,7 +475,7 @@ TEST_CASE("LinkedList<Point> — insert struct at index", "[libk][list][struct][
             Point() { x = 0; y = 0; }
         }
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<Point>;
             p1 : Point; p1.x = 1; p1.y = 2;
             p3 : Point; p3.x = 5; p3.y = 6;
@@ -516,7 +516,7 @@ TEST_CASE("LinkedList<Color> — pushBack, insert, peek with enum", "[libk][list
             BLUE = 2;
         };
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<Color>;
             r : Color = Color::RED;
             g : Color = Color::GREEN;
@@ -557,7 +557,7 @@ TEST_CASE("LinkedList<Direction> — plain enum with auto values", "[libk][list]
             WEST;
         };
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<Direction>;
             n : Direction = Direction::NORTH;
             s : Direction = Direction::SOUTH;
@@ -593,7 +593,7 @@ TEST_CASE("LinkedList<Derived> — derived enum insert and access", "[libk][list
             C = 2;
         };
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<Derived>;
             a : Derived = Derived::A;
             b : Derived = Derived::B;
@@ -625,7 +625,7 @@ TEST_CASE("LinkedList<Object!> — store and retrieve owners", "[libk][list][own
     auto j = jit_k(R"SRC(
         module __ll_owner__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<Object!>;
             o1 : Object! = new Object();
             o2 : Object! = new Object();
@@ -657,7 +657,7 @@ TEST_CASE("DoubleLinkedList<int> — pushBack and peek", "[libk][list][dlist][in
     auto j = jit_k(R"SRC(
         module __dll_int_push__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<int>;
             a : int = 10;
             b : int = 20;
@@ -683,7 +683,7 @@ TEST_CASE("DoubleLinkedList<int> — pushFront ordering", "[libk][list][dlist][i
     auto j = jit_k(R"SRC(
         module __dll_int_front__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<int>;
             a : int = 1;
             b : int = 2;
@@ -710,7 +710,7 @@ TEST_CASE("DoubleLinkedList<int> — insert at beginning, middle, end", "[libk][
     auto j = jit_k(R"SRC(
         module __dll_int_insert__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<int>;
             a : int = 10;
             b : int = 30;
@@ -750,7 +750,7 @@ TEST_CASE("DoubleLinkedList<int> — insert near end uses backward search", "[li
     auto j = jit_k(R"SRC(
         module __dll_int_insert_back__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<int>;
             a : int = 1;
             b : int = 2;
@@ -787,7 +787,7 @@ TEST_CASE("DoubleLinkedList<int> — removeFront", "[libk][list][dlist][int]") {
     auto j = jit_k(R"SRC(
         module __dll_int_rmfront__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<int>;
             a : int = 10;
             b : int = 20;
@@ -815,7 +815,7 @@ TEST_CASE("DoubleLinkedList<int> — removeBack O(1)", "[libk][list][dlist][int]
     auto j = jit_k(R"SRC(
         module __dll_int_rmback__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<int>;
             a : int = 10;
             b : int = 20;
@@ -843,7 +843,7 @@ TEST_CASE("DoubleLinkedList<int> — clear", "[libk][list][dlist][int]") {
     auto j = jit_k(R"SRC(
         module __dll_int_clear__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<int>;
             a : int = 1;
             b : int = 2;
@@ -867,7 +867,7 @@ TEST_CASE("DoubleLinkedList<int> — indexed access from both ends", "[libk][lis
     auto j = jit_k(R"SRC(
         module __dll_int_idx__;
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<int>;
             a : int = 10;
             b : int = 20;
@@ -909,7 +909,7 @@ TEST_CASE("DoubleLinkedList<Point> — struct stored by value", "[libk][list][dl
             Point() { x = 0; y = 0; }
         }
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<Point>;
             p1 : Point; p1.x = 10; p1.y = 20;
             p2 : Point; p2.x = 30; p2.y = 40;
@@ -940,7 +940,7 @@ TEST_CASE("DoubleLinkedList<Color> — enum type", "[libk][list][dlist][enum]") 
             BLUE = 2;
         };
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<Color>;
             r : Color = Color::RED;
             g : Color = Color::GREEN;
@@ -984,7 +984,7 @@ TEST_CASE("LinkedList<Point> — emplaceBack zero-arg (default ctor)", "[libk][l
             Point() { x = 0; y = 0; }
         }
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<Point>;
             lst.emplaceBack<>();
             lst.emplaceBack<>();
@@ -1013,7 +1013,7 @@ TEST_CASE("LinkedList<Point> — emplaceFront zero-arg (default ctor)", "[libk][
             Point() { x = 7; y = 9; }
         }
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<Point>;
             lst.emplaceFront<>();
             lst.emplaceFront<>();
@@ -1043,7 +1043,7 @@ TEST_CASE("LinkedList<Point> — emplace zero-arg at index", "[libk][list][struc
             Point() { x = 5; y = 3; }
         }
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : LinkedList<Point>;
             lst.emplaceBack<>();
             lst.emplaceBack<>();
@@ -1077,7 +1077,7 @@ TEST_CASE("DoubleLinkedList<Point> — emplaceBack/emplaceFront/emplace zero-arg
             Point() { x = 1; y = 2; }
         }
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<Point>;
             lst.emplaceBack<>();
             lst.emplaceBack<>();
@@ -1114,7 +1114,7 @@ TEST_CASE("DoubleLinkedList<TypedEnum> — typed enum (short)", "[libk][list][dl
             HIGH = 3;
         };
 
-        test() : int {
+        test() : int throws ConstructionException {
             lst : DoubleLinkedList<Priority>;
             l : Priority = Priority::LOW;
             m : Priority = Priority::MED;

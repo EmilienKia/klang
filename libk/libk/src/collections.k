@@ -36,17 +36,17 @@ interface Collection {
     isEmpty() : bool;
 
     /** Insert a copy of value at the front of the collection. */
-    pushFront(value : T&);
+    pushFront(value : T&) throws ConstructionException;
 
     /** Insert a copy of value at the back of the collection. */
-    pushBack(value : T&);
+    pushBack(value : T&) throws ConstructionException;
 
     /**
      * Insert a copy of value at the given index.
      * If index <= 0, inserts at the front.
      * If index >= size, inserts at the back.
      */
-    insert(index : int, value : T&);
+    insert(index : int, value : T&) throws ConstructionException;
 
     /** Return a mutable reference to the front element. Undefined if empty. */
     peekFront() : T&;
@@ -106,7 +106,7 @@ class LinkedList : public Collection<T> {
         _slot : UniSlot<T>;
         _next : LinkedListNode! = null;
 
-        LinkedListNode() {
+        LinkedListNode() throws ConstructionException {
             _slot.construct();
         }
 
@@ -115,7 +115,7 @@ class LinkedList : public Collection<T> {
         }
 
         template<typename...Args>
-        emplaceValue(Args...args) {
+        emplaceValue(Args...args) throws ConstructionException {
             _slot.destruct();
             _slot.construct(args...);
         }
@@ -160,7 +160,7 @@ class LinkedList : public Collection<T> {
     }
 
     /** Insert a copy of value at the front of the list. */
-    pushFront(value : T&) {
+    pushFront(value : T&) throws ConstructionException {
         node : LinkedListNode! = new LinkedListNode();
         node.setValue(value);
         node._next = _head;
@@ -172,7 +172,7 @@ class LinkedList : public Collection<T> {
     }
 
     /** Insert a copy of value at the back of the list. */
-    pushBack(value : T&) {
+    pushBack(value : T&) throws ConstructionException {
         node : LinkedListNode! = new LinkedListNode();
         node.setValue(value);
         if (_tail != null) {
@@ -190,7 +190,7 @@ class LinkedList : public Collection<T> {
      * If index <= 0, inserts at the front.
      * If index >= size, inserts at the back.
      */
-    insert(index : int, value : T&) {
+    insert(index : int, value : T&) throws ConstructionException {
         node : LinkedListNode! = new LinkedListNode();
         node.setValue(value);
         if (index <= 0) {
@@ -226,7 +226,7 @@ class LinkedList : public Collection<T> {
 
     /** Construct an element in-place at the front of the list. */
     template<typename...Args>
-    emplaceFront(Args...args) {
+    emplaceFront(Args...args) throws ConstructionException {
         node : LinkedListNode! = new LinkedListNode();
         node.emplaceValue(args...);
         node._next = _head;
@@ -239,7 +239,7 @@ class LinkedList : public Collection<T> {
 
     /** Construct an element in-place at the back of the list. */
     template<typename...Args>
-    emplaceBack(Args...args) {
+    emplaceBack(Args...args) throws ConstructionException {
         node : LinkedListNode! = new LinkedListNode();
         node.emplaceValue(args...);
         if (_tail != null) {
@@ -258,7 +258,7 @@ class LinkedList : public Collection<T> {
      * If index >= size, inserts at the back.
      */
     template<typename...Args>
-    emplace(index : int, Args...args) {
+    emplace(index : int, Args...args) throws ConstructionException {
         node : LinkedListNode! = new LinkedListNode();
         node.emplaceValue(args...);
         if (index <= 0) {
@@ -433,7 +433,7 @@ class DoubleLinkedList : public Collection<T> {
         _next : DoubleLinkedListNode! = null;
         _prev : DoubleLinkedListNode* = null;
 
-        DoubleLinkedListNode() {
+        DoubleLinkedListNode() throws ConstructionException {
             _slot.construct();
         }
 
@@ -442,7 +442,7 @@ class DoubleLinkedList : public Collection<T> {
         }
 
         template<typename...Args>
-        emplaceValue(Args...args) {
+        emplaceValue(Args...args) throws ConstructionException {
             _slot.destruct();
             _slot.construct(args...);
         }
@@ -487,7 +487,7 @@ class DoubleLinkedList : public Collection<T> {
     }
 
     /** Insert a copy of value at the front of the list. */
-    pushFront(value : T&) {
+    pushFront(value : T&) throws ConstructionException {
         node : DoubleLinkedListNode! = new DoubleLinkedListNode();
         node.setValue(value);
         node._prev = null;
@@ -502,7 +502,7 @@ class DoubleLinkedList : public Collection<T> {
     }
 
     /** Insert a copy of value at the back of the list. */
-    pushBack(value : T&) {
+    pushBack(value : T&) throws ConstructionException {
         node : DoubleLinkedListNode! = new DoubleLinkedListNode();
         node.setValue(value);
         node._prev = _tail;
@@ -522,7 +522,7 @@ class DoubleLinkedList : public Collection<T> {
      * If index <= 0, inserts at the front.
      * If index >= size, inserts at the back.
      */
-    insert(index : int, value : T&) {
+    insert(index : int, value : T&) throws ConstructionException {
         if (index <= 0) {
             // Insert at front
             node : DoubleLinkedListNode! = new DoubleLinkedListNode();
@@ -591,7 +591,7 @@ class DoubleLinkedList : public Collection<T> {
 
     /** Construct an element in-place at the front of the list. */
     template<typename...Args>
-    emplaceFront(Args...args) {
+    emplaceFront(Args...args) throws ConstructionException {
         node : DoubleLinkedListNode! = new DoubleLinkedListNode();
         node.emplaceValue(args...);
         node._prev = null;
@@ -607,7 +607,7 @@ class DoubleLinkedList : public Collection<T> {
 
     /** Construct an element in-place at the back of the list. */
     template<typename...Args>
-    emplaceBack(Args...args) {
+    emplaceBack(Args...args) throws ConstructionException {
         node : DoubleLinkedListNode! = new DoubleLinkedListNode();
         node.emplaceValue(args...);
         node._prev = _tail;
@@ -628,7 +628,7 @@ class DoubleLinkedList : public Collection<T> {
      * If index >= size, inserts at the back.
      */
     template<typename...Args>
-    emplace(index : int, Args...args) {
+    emplace(index : int, Args...args) throws ConstructionException {
         if (index <= 0) {
             node : DoubleLinkedListNode! = new DoubleLinkedListNode();
             node.emplaceValue(args...);
@@ -902,7 +902,7 @@ class Vector : public Collection<T> {
     }
 
     /** Insert a copy of value at the back of the vector. Amortized O(1). */
-    pushBack(value : T&) {
+    pushBack(value : T&) throws ConstructionException {
         if (_size == _capacity) {
             grow(_size + 1);
         }
@@ -913,13 +913,13 @@ class Vector : public Collection<T> {
     }
 
     /** Insert a copy of value at the front of the vector. O(n). */
-    pushFront(value : T&) {
+    pushFront(value : T&) throws ConstructionException {
         insert(0, value);
     }
 
     /** Construct an element in-place at the back of the vector. */
     template<typename...Args>
-    emplaceBack(Args...args) {
+    emplaceBack(Args...args) throws ConstructionException {
         if (_size == _capacity) {
             grow(_size + 1);
         }
@@ -934,7 +934,7 @@ class Vector : public Collection<T> {
      * If index <= 0, inserts at the front.
      * If index >= size, inserts at the back.
      */
-    insert(index : int, value : T&) {
+    insert(index : int, value : T&) throws ConstructionException {
         if (index < 0) { index = 0; }
         if (index > _size) { index = _size; }
         if (_size == _capacity) {
@@ -964,7 +964,7 @@ class Vector : public Collection<T> {
      * If index >= size, inserts at the back.
      */
     template<typename...Args>
-    emplace(index : int, Args...args) {
+    emplace(index : int, Args...args) throws ConstructionException {
         if (index < 0) { index = 0; }
         if (index > _size) { index = _size; }
         if (_size == _capacity) {

@@ -1265,7 +1265,8 @@ TEST_CASE("ConstructionException: MultiSlot construct catches throwing construct
 
 TEST_CASE("ConstructionException: UniSlot construct — non-throwing constructor works normally",
           "[gen][exceptions][construction][intrinsic]") {
-    // A simple struct without throws clause — should work without issue.
+    // A simple struct without throws clause — construct() still declares throws
+    // ConstructionException, so the caller must declare or catch it.
     auto jit = gen_jit(R"(
         module __test_ce_unislot_nothrow__;
 
@@ -1278,7 +1279,7 @@ TEST_CASE("ConstructionException: UniSlot construct — non-throwing constructor
             }
         }
 
-        test_nothrow() : int {
+        test_nothrow() : int throws ConstructionException {
             slot : UniSlot<Point>;
             slot.construct<int, int>(3, 7);
             result : int = slot.get().x + slot.get().y;
@@ -1293,11 +1294,11 @@ TEST_CASE("ConstructionException: UniSlot construct — non-throwing constructor
 }
 
 TEST_CASE("ConstructionException: contract enforcement — construct() requires handling",
-          "[gen][exceptions][construction][contract][!shouldfail]") {
-    // TODO: Template instantiation does not currently propagate the throws clause
-    // from the template definition to the instantiated function. When this is fixed,
-    // calling UniSlot::construct without handling ConstructionException in a function
-    // that doesn't declare it should fail compilation.
+          "[gen][exceptions][construction][contract]") {
+    // Template instantiation now propagates the throws clause from the template
+    // definition to the instantiated function. Calling UniSlot::construct without
+    // handling ConstructionException in a function that doesn't declare it should
+    // fail compilation.
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
         module __test_ce_contract_1__;
 
