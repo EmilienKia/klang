@@ -79,7 +79,7 @@ lnk = &y;           // REBIND: lnk now points to y (RHS is int+)
 lnk = &x;           // REBIND back to x
 ```
 
-Rebinding a link from a nullable source (`T?` or `T*`) emits a **compile-time warning** and inserts a **runtime null-check** (`__k_fatal_null_assignation()` if null).
+Rebinding a link from a nullable source (`T?` or `T*`) emits a **compile-time warning** and inserts a **runtime null-check** (throws `NullAssignationError` if null).
 
 ### View (`T?`) — immutable binding
 

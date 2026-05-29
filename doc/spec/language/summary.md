@@ -177,7 +177,7 @@ Internal representation: `{ uint32 count; T[N] data; }`.
 | `T[]!`         | Owner of a runtime-sized dynamic array          |
 
 - Implicit conversion `T[N]` → `T[]` (sized → unsized): zero-cost.
-- Subscript: `arr[i]` — runtime bounds check (unsigned comparison). Out-of-bounds → `abort()`.
+- Subscript: `arr[i]` — runtime bounds check (unsigned comparison). Out-of-bounds throws `IndexOutOfBoundsError`.
 - Virtual member `size`: `arr.size` returns `unsigned int` (element count).
 - Indirection arrays: `int+[]`, `int*[]`, `int?[]`, `int![]` are supported. Each element is an address slot.
 
@@ -206,7 +206,7 @@ The parameter type list (excluding the implicit `this` for member methods) serve
 `Derived*` → `Base*` implicitly. Compile-time GEP to address the Base sub-object.
 
 #### Dynamic Downcast (class/interface)
-`Base*` → `Derived*` with runtime RTTI. On mismatch: null (for `T*`, `T?`) or fatal trap (for `T+`, `T&`).
+`Base*` → `Derived*` with runtime RTTI. On mismatch: null (for `T*`, `T?`) or throws `NullCastError` (for `T+`, `T&`).
 
 #### Owner Upcast/Downcast
 Owner follows the same rules as indirections for upcast/downcast, with the same move constraints.
@@ -437,7 +437,7 @@ Implicit conversion `const char[N]&` → `const char[]` (zero-cost).
 - **`!x`**: logical NOT → `bool`. Operand: `bool`, numeric, or indirection (→ nullity test).
 - **`~x`**: bitwise NOT (integer required).
 - **`&x`**: address-of — produces `T+` (link). If `x` is `const`, produces `const T+`.
-- **`*x`**: dereference — produces `T&`. Operand `T+` (no null-check), `T?` or `T*` (null-check).
+- **`*x`**: dereference — produces `T&`. Operand `T+` (no null-check), `T?` or `T*` (null-check; throws `NullDereferenceError` if null).
 - **`#x`**: drain — produces `T#`. `x` must be a mutable lvalue.
 - **Cast**: `(TypeSpec) expr` — explicit conversion (primitive or indirection upcast/downcast).
 - **`++x`/`--x`**: pre-increment/decrement (returns the new value).
@@ -841,7 +841,7 @@ All class bases are **implicitly virtual** → in a diamond, a single copy of th
 
 ### 12.9 RTTI and Dynamic Downcast
 
-Classes have an RTTI slot in the vtable (slot 0). Downcast via explicit cast `(Derived*) base_ptr` uses runtime RTTI. Nullable targets → null on mismatch. Non-null targets → fatal trap.
+Classes have an RTTI slot in the vtable (slot 0). Downcast via explicit cast `(Derived*) base_ptr` uses runtime RTTI. Nullable targets → null on mismatch. Non-null targets → throws `NullCastError`.
 
 ---
 

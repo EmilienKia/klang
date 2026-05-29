@@ -68,6 +68,7 @@
     - [ ] Exception handling in static constructors/destructors
     - [ ] `MemoryException` integration with `new` operator and `MultiSlot<T>` — **in progress** (see `IN-PROGRESS.md`)
     - [ ] Fatal exception types for internal runtime errors (second wave of stdlib exceptions)
+    - [ ] Unhandled FatalError diagnostic: when an uncaught FatalError propagates past `main()`, the runtime should print a diagnostic message (exception type, code, optional stack trace) before terminating the process
 - Switch/case statements and expression
 - With-block - temporary change 'this' scope for a block of code (e.g. `with (obj) { ... }` to access members directly)
 - Add static code decoration and constraint (usage example : units of measurement)

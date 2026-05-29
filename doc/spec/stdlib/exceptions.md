@@ -28,7 +28,12 @@ Throwable (_code: int)                    root of all throwable types
 │   └── IllegalStateException (code=5)
 └── FatalError                            unchecked — no `throws` needed
     ├── OutOfMemory (code=1)
-    └── ConstructionException (code=6)
+    ├── ConstructionException (code=6)
+    ├── NullPointerError (code=7)
+    │   ├── NullDereferenceError (code=8)
+    │   ├── NullAssignationError (code=9)
+    │   └── NullCastError (code=10)
+    └── IndexOutOfBoundsError (code=11)
 ```
 
 ---
@@ -184,6 +189,92 @@ Default error code: **6**.
 |-----------|-------------|
 | `ConstructionException()` | Construct with code 6 |
 | `ConstructionException(code: int)` | Construct with a custom code |
+
+---
+
+## NullPointerError
+
+Base class for all null-pointer related fatal errors. Thrown by the runtime
+when a null pointer is used in an invalid context.
+Extends `FatalError` — does not need to be declared in `throws` clauses.
+
+Default error code: **7**.
+
+### Constructors
+
+| Signature | Description |
+|-----------|-------------|
+| `NullPointerError()` | Construct with code 7 |
+| `NullPointerError(code: int)` | Construct with a custom code |
+
+---
+
+## NullDereferenceError
+
+Signals a dereference of a null pointer. Thrown by the runtime when code
+attempts to dereference a null owner, pointer, or link.
+Extends `NullPointerError`.
+
+Default error code: **8**.
+
+### Constructors
+
+| Signature | Description |
+|-----------|-------------|
+| `NullDereferenceError()` | Construct with code 8 |
+| `NullDereferenceError(code: int)` | Construct with a custom code |
+
+---
+
+## NullAssignationError
+
+Signals an assignment through a null pointer. Thrown by the runtime when
+code attempts to bind a null value to a non-nullable link or reference.
+Extends `NullPointerError`.
+
+Default error code: **9**.
+
+### Constructors
+
+| Signature | Description |
+|-----------|-------------|
+| `NullAssignationError()` | Construct with code 9 |
+| `NullAssignationError(code: int)` | Construct with a custom code |
+
+---
+
+## NullCastError
+
+Signals that a dynamic cast produced null for a non-nullable target type
+(reference or link). Thrown by the runtime when a dynamic cast to a
+non-nullable addressor fails.
+Extends `NullPointerError`.
+
+Default error code: **10**.
+
+### Constructors
+
+| Signature | Description |
+|-----------|-------------|
+| `NullCastError()` | Construct with code 10 |
+| `NullCastError(code: int)` | Construct with a custom code |
+
+---
+
+## IndexOutOfBoundsError
+
+Signals an array index outside the valid range. Thrown by the runtime when
+an array subscript operation exceeds the array bounds.
+Extends `FatalError` — does not need to be declared in `throws` clauses.
+
+Default error code: **11**.
+
+### Constructors
+
+| Signature | Description |
+|-----------|-------------|
+| `IndexOutOfBoundsError()` | Construct with code 11 |
+| `IndexOutOfBoundsError(code: int)` | Construct with a custom code |
 
 ---
 

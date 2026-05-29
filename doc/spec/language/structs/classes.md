@@ -849,8 +849,8 @@ A **dynamic downcast** assigns a `Base*` (or `Base+`, `Base?`, `Base&`) to a `De
 4. **Match** → subtract the byte offset of the Base sub-object inside Derived from the source
    pointer to obtain the start of Derived; assign the adjusted pointer.
 5. **Mismatch** → assign **null**.
-6. If null is assigned to a non-null target (`+` link or `&` reference) → call
-   `__k_fatal_null_dyncast()`.
+6. If null is assigned to a non-null target (`+` link or `&` reference) → throws
+   `NullCastError`.
 
 The operation is emitted implicitly whenever the compiler detects that a `Base` indirection is
 being assigned to a `Derived` indirection and `Derived` is a class/interface derived from `Base`.
@@ -859,8 +859,8 @@ being assigned to a `Derived` indirection and `Derived` is a class/interface der
 
 | Target type | Allowed when | On RTTI mismatch |
 |-------------|--------------|-----------------|
-| `Derived&`  | Init only (immutable binding) | `__k_fatal_null_dyncast()` |
-| `Derived+`  | Init only (non-null link) | `__k_fatal_null_dyncast()` |
+| `Derived&`  | Init only (immutable binding) | throws `NullCastError` |
+| `Derived+`  | Init only (non-null link) | throws `NullCastError` |
 | `Derived?`  | Init only (nullable view) | null assigned |
 | `Derived*`  | Init and rebind (nullable ptr) | null assigned |
 
@@ -954,7 +954,7 @@ test() : int {
 | Code | Condition |
 |------|-----------|
 | `0x4700` | Source and target have no inheritance relationship — compile-time error |
-| *(runtime)* | RTTI mismatch on non-null target → `__k_fatal_null_dyncast()` |
+| *(runtime)* | RTTI mismatch on non-null target → throws `NullCastError` |
 
 *See also:* [Types — §11.4](../basic/types.md#114-dynamic-indirection-downcast-classinterface) · [Inheritance — Dynamic downcast](inheritance.md#dynamic-indirection-downcast-classinterface-only)
 

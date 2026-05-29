@@ -206,11 +206,10 @@ for the full list of supported types.
 
 A **runtime bounds check** is performed on every subscript access: the index is compared
 (unsigned) against the element count stored in the array header.  If the index is out of
-bounds, the program prints a diagnostic to `stderr` and calls `abort()`:
+bounds, an `IndexOutOfBoundsError` (a `FatalError`) is thrown.
 
-```
-runtime error: array index out of bounds (index=5, size=3)
-```
+The exception can be caught with a `try-catch` block but does not require a `throws`
+declaration (as it is a `FatalError` subclass).
 
 ### 2.5 Examples
 

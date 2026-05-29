@@ -131,12 +131,9 @@ val : int = *arr[0];     // dereference the link at index 0 → 10
 
 **Runtime bounds checking:** every subscript access on an array (through any indirection)
 is checked at runtime. The index is compared (unsigned) against the element count stored
-in the array header. If the index is out of bounds, the program prints a diagnostic to
-`stderr` and calls `abort()`.
-
-```
-runtime error: array index out of bounds (index=5, size=3)
-```
+in the array header. If the index is out of bounds, an `IndexOutOfBoundsError` (a
+`FatalError`) is thrown. This exception can be caught but does not require a `throws`
+declaration.
 
 > **Note:** the bounds check uses an unsigned comparison, so negative indices
 > (which wrap to large unsigned values) are caught as well.

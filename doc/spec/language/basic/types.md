@@ -148,10 +148,10 @@ TypeSuffix:
 
 Assigning or initialising a `T+` (link) from a nullable source (`T?` or `T*`) emits a
 **compile-time warning** and inserts a **runtime null-check**; if the source is null at
-runtime, `__k_fatal_null_assignation()` is called (which traps).
+runtime, a `NullAssignationError` (a `FatalError`) is thrown.
 
 Dereferencing (`*x` or `x->m`) a `T?` or `T*` value likewise inserts a runtime null-check;
-if null, `__k_fatal_null_dereference()` is called.
+if null, a `NullDereferenceError` (a `FatalError`) is thrown.
 
 **Static upcast (aggregate types):**
 
@@ -337,11 +337,11 @@ test() : int {
 
 maybe_null() : int {
     view : int? = null;
-    return *view;        // runtime trap: __k_fatal_null_dereference()
+    return *view;        // runtime error: throws NullDereferenceError
 }
 ```
 
-**Dereference:** `*view` inserts a runtime null-check. If null, `__k_fatal_null_dereference()` is called.
+**Dereference:** `*view` inserts a runtime null-check. If null, a `NullDereferenceError` is thrown.
 
 **Member access:** `view->m` accesses member `m` of the view struct, with null-check.
 
@@ -384,7 +384,7 @@ test() : int {
 }
 ```
 
-**Dereference:** `*p` inserts a runtime null-check. If null, `__k_fatal_null_dereference()` is called.
+**Dereference:** `*p` inserts a runtime null-check. If null, a `NullDereferenceError` is thrown.
 
 **Member access:** `p->m` accesses member `m` of the pointed-to struct, with null-check.
 
@@ -547,8 +547,8 @@ d2 = a2;                  // RTTI fail → Cat deleted; a2 ← null; d2 ← null
 
 | Expression | Result | Null-check |
 |---|---|---|
-| `*owner` | `T&` — reference to owned object | Yes — calls `__k_fatal_null_dereference()` if null |
-| `owner->m` | member `m` of owned object | Yes — calls `__k_fatal_null_dereference()` if null |
+| `*owner` | `T&` — reference to owned object | Yes — throws `NullDereferenceError` if null |
+| `owner->m` | member `m` of owned object | Yes — throws `NullDereferenceError` if null |
 
 **Constraints:**
 
@@ -659,8 +659,8 @@ Yields a reference (`T&`) to the object at the address held by `expr`.
 | Operand type | Null-check at runtime |
 |---|---|
 | `T+` | No (link is non-null) |
-| `T?` | Yes — calls `__k_fatal_null_dereference()` if null |
-| `T*` | Yes — calls `__k_fatal_null_dereference()` if null |
+| `T?` | Yes — throws `NullDereferenceError` if null |
+| `T*` | Yes — throws `NullDereferenceError` if null |
 | `T&` | Not applicable (& is not dereferenceable by `*`) |
 
 ```k
@@ -885,11 +885,8 @@ p[1] = 42;           // subscript through pointer — modifies arr[1]
 * The index expression must be implicitly convertible to `unsigned int`.
 * **Runtime bounds checking** is performed on every subscript access: the index
   is compared (unsigned) against the element count stored in the array header.
-  An out-of-bounds access prints a diagnostic to `stderr` and calls `abort()`.
-
-  ```
-  runtime error: array index out of bounds (index=5, size=3)
-  ```
+  An out-of-bounds access throws an `IndexOutOfBoundsError` (a `FatalError`).
+  This exception can be caught but does not require a `throws` declaration.
 
 ---
 
@@ -1204,7 +1201,7 @@ This applies to all four indirection types:
    - `ref` (`&`) and `view` (`?`) can only be bound at construction — no rebind (compile-time error).
    - `link` (`+`) and `ptr` (`*`) can be rebound at any time.
 4. Null-safety is preserved:
-   - Assigning a nullable source (ptr* or `view?`) to a non-null destination (`link+` or `ref&`) inserts a **runtime null-check** (`__k_fatal_null_assignation()` if null) and emits **warning 0x4505**.
+   - Assigning a nullable source (ptr* or `view?`) to a non-null destination (`link+` or `ref&`) inserts a **runtime null-check** (throws `NullAssignationError` if null) and emits **warning 0x4505**.
 5. Transitive upcasts (e.g. `C*→A*` where `C→B→A`) are supported via chained GEP.
 6. Virtual base upcasts are supported via the vbptr mechanism.
 
@@ -1296,14 +1293,14 @@ This is a **dynamic (RTTI-based) downcast** — the compiler inserts a runtime t
 1. At runtime, the RTTI pointer stored in the object's vtable is compared with the RTTI descriptor of `Derived`.
 2. If they match, the pointer is adjusted (byte offset subtracted) to point to the start of the `Derived` sub-object, and the result is assigned.
 3. If they do not match, **null** is assigned to the target.
-4. Null assigned to a **non-null** indirection (`link +` or `reference &`) immediately invokes `__k_fatal_null_dyncast()`.
+4. Null assigned to a **non-null** indirection (`link +` or `reference &`) immediately throws `NullCastError` (a `FatalError`).
 
 **Binding rules (same as static upcast):**
 
 | Target type | When allowed | Null-on-mismatch behaviour |
 |-------------|--------------|---------------------------|
-| `Derived&`  | Init only (immutable binding) | fatal trap (non-null) |
-| `Derived+`  | Init only (immutable binding) | fatal trap (non-null) |
+| `Derived&`  | Init only (immutable binding) | throws `NullCastError` (fatal, non-null) |
+| `Derived+`  | Init only (immutable binding) | throws `NullCastError` (fatal, non-null) |
 | `Derived?`  | Init only (immutable binding, nullable) | null assigned |
 | `Derived*`  | Init and rebind | null assigned |
 
@@ -1342,10 +1339,10 @@ test() : int {
     // view — nullable, null on mismatch  
     pp : Derived? = bp;          // same as ptr but immutable binding
 
-    //  link — non-null; fatal trap if RTTI mismatches
-    dl : Derived+ = bp;          // __k_fatal_null_dyncast() if bp does not point to Derived
+    //  link — non-null; throws NullCastError if RTTI mismatches
+    dl : Derived+ = bp;          // throws NullCastError if bp does not point to Derived
 
-    // ref — non-null; fatal trap if RTTI mismatches
+    // ref — non-null; throws NullCastError if RTTI mismatches
     dr : Derived& = d;           // ref<Base> bound to d
     // dr2 : Derived& = br;      // would trap if br does not point to a Derived
 
@@ -1502,10 +1499,10 @@ Applies only to `class` and `interface` types. **Not allowed for `struct` types*
 |------------------------|----------------------|---------------------------|
 | `ptr<Base>`            | `(Derived*)`         | null assigned |
 | `ptr<Base>`            | `(Derived?)`         | null assigned |
-| `ptr<Base>`            | `(Derived+)`         | fatal trap (`__k_fatal_null_dyncast`) |
-| `lnk<Base>`            | `(Derived+)`         | fatal trap |
+| `ptr<Base>`            | `(Derived+)`         | throws `NullCastError` (fatal) |
+| `lnk<Base>`            | `(Derived+)`         | throws `NullCastError` (fatal) |
 | `lnk<Base>`            | `(Derived*)`         | null assigned |
-| `ref<Base>`            | `(Derived&)`         | fatal trap |
+| `ref<Base>`            | `(Derived&)`         | throws `NullCastError` (fatal) |
 
 ```k
 class Base {

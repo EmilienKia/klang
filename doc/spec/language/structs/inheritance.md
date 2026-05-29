@@ -108,14 +108,14 @@ attempting a dynamic downcast on struct pointers is a **compile-time error**.
 3. On match: the raw pointer is adjusted (byte-offset subtraction) to point to the start of the
    `Derived` sub-object; the result is assigned.
 4. On mismatch: **null** is assigned.
-5. Null assigned to a non-null target (`+` or `&`) immediately calls `__k_fatal_null_dyncast()`.
+5. Null assigned to a non-null target (`+` or `&`) immediately throws `NullCastError` (a `FatalError`).
 
 **Binding constraints:**
 
 | Target type | When allowed | On RTTI mismatch |
 |-------------|--------------|-----------------|
-| `Derived&`  | Init only (immutable binding) | fatal trap |
-| `Derived+`  | Init only (non-null link) | fatal trap |
+| `Derived&`  | Init only (immutable binding) | throws `NullCastError` |
+| `Derived+`  | Init only (non-null link) | throws `NullCastError` |
 | `Derived?`  | Init only (nullable view) | null assigned |
 | `Derived*`  | Init and rebind (nullable ptr) | null assigned |
 

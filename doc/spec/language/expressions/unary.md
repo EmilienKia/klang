@@ -122,8 +122,8 @@ DereferenceExpr:
 | Operand type | Null-check inserted |
 |---|---|
 | `T+` (link)    | No — link is non-null |
-| `T?` (view)  | Yes — calls `__k_fatal_null_dereference()` if null |
-| `T*` (pointer) | Yes — calls `__k_fatal_null_dereference()` if null |
+| `T?` (view)  | Yes — throws `NullDereferenceError` if null |
+| `T*` (pointer) | Yes — throws `NullDereferenceError` if null |
 
 ```k
 x   : int  = 42;
@@ -237,8 +237,8 @@ bp : Base* = &some_derived_obj;
 dp  : Derived* = (Derived*) bp;
 dp2 : Derived? = (Derived?) bp;
 
-// lnk/ref target — non-null: fatal trap if RTTI mismatch
-dl : Derived+ = (Derived+) bp;   // __k_fatal_null_dyncast() if bp ≠ Derived*
+// lnk/ref target — non-null: throws NullCastError if RTTI mismatch
+dl : Derived+ = (Derived+) bp;   // throws NullCastError if bp ≠ Derived*
 ```
 
 See [Types — §11.5](../basic/types.md#115-explicit-cast) for full rules.

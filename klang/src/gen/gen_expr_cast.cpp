@@ -1296,8 +1296,8 @@ llvm::Function* implementation_generator::get_or_declare_fatal_null_function(con
     auto* fn_type  = llvm::FunctionType::get(void_ty, false);
     auto* fn = llvm::Function::Create(fn_type, llvm::Function::ExternalLinkage, name, mod);
     fn->addFnAttr(llvm::Attribute::NoReturn);
-    fn->addFnAttr(llvm::Attribute::NoUnwind);
     fn->addFnAttr(llvm::Attribute::Cold);
+    // NOTE: do NOT add NoUnwind — these functions throw K FatalError exceptions!
     // Body is provided by libk — only emit the extern declaration.
     return fn;
 }
@@ -1315,12 +1315,24 @@ void implementation_generator::emit_null_check(llvm::Value* ptr_value, llvm::Fun
         // instead of trapping. Used for link assignments in if-conditions.
         _builder->CreateCondBr(is_null, soft_fail_bb, ok_bb);
     } else {
-        // Normal mode: fatal trap on null.
+        // Normal mode: throw a FatalError-derived exception on null.
         auto* null_bb = llvm::BasicBlock::Create(ctx, label + "_null", fn);
         _builder->CreateCondBr(is_null, null_bb, ok_bb);
         _builder->SetInsertPoint(null_bb);
-        _builder->CreateCall(fatal_fn, {});
-        _builder->CreateUnreachable();
+        if (!_landing_pad_stack.empty()) {
+            // Inside try-catch: use invoke so the exception unwinds to the landing pad
+            auto* unreachable_bb = llvm::BasicBlock::Create(ctx, label + "_unreachable", fn);
+            _builder->CreateInvoke(
+                fatal_fn->getFunctionType(), fatal_fn,
+                unreachable_bb, _landing_pad_stack.top().lpad_bb, {});
+            _builder->SetInsertPoint(unreachable_bb);
+            _builder->CreateUnreachable();
+        } else {
+            // Not inside try-catch: plain call (exception propagates past this frame)
+            auto* call = _builder->CreateCall(fatal_fn, {});
+            call->setDoesNotReturn();
+            _builder->CreateUnreachable();
+        }
     }
     _builder->SetInsertPoint(ok_bb);
 }

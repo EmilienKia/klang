@@ -1322,3 +1322,129 @@ TEST_CASE("ConstructionException: no throws declaration needed — FatalError pr
     REQUIRE(fn() == 0);
 }
 
+// =============================================================================
+// FatalError runtime exceptions: NullPointerError hierarchy
+// =============================================================================
+
+TEST_CASE("NullDereferenceError: catch null dereference in try-catch",
+          "[gen][exceptions][fatal][null-deref]") {
+    auto res = build_and_exec(R"(
+        module __test_null_deref_catch__;
+
+        main() : int {
+            p : int* = null;
+            try {
+                x : int = *p;
+                return x;
+            } catch(e : NullDereferenceError&) {
+                return e.getCode();
+            }
+        }
+    )");
+    REQUIRE(res.exit_code == 8);
+}
+
+TEST_CASE("NullPointerError: catch base class matches dereference",
+          "[gen][exceptions][fatal][null-base]") {
+    auto res = build_and_exec(R"(
+        module __test_null_base_catch__;
+
+        main() : int {
+            p : int* = null;
+            try {
+                x : int = *p;
+                return x;
+            } catch(e : NullPointerError&) {
+                return e.getCode();
+            }
+        }
+    )");
+    REQUIRE(res.exit_code == 8);
+}
+
+TEST_CASE("FatalError: catch base class matches null dereference",
+          "[gen][exceptions][fatal][fatal-base]") {
+    auto res = build_and_exec(R"(
+        module __test_fatal_base_catch__;
+
+        main() : int {
+            p : int* = null;
+            try {
+                x : int = *p;
+                return x;
+            } catch(e : FatalError&) {
+                return e.getCode();
+            }
+        }
+    )");
+    REQUIRE(res.exit_code == 8);
+}
+
+TEST_CASE("NullAssignationError: catch null-to-link rebind in try-catch",
+          "[gen][exceptions][fatal][null-assign]") {
+    auto res = build_and_exec(R"(
+        module __test_null_assign_catch__;
+
+        main() : int {
+            v : int = 42;
+            lnk : int+ = v;
+            p : int* = null;
+            try {
+                lnk = p;
+                return 0;
+            } catch(e : NullAssignationError&) {
+                return e.getCode();
+            }
+        }
+    )");
+    REQUIRE(res.exit_code == 9);
+}
+
+TEST_CASE("NullDereferenceError: uncaught terminates process",
+          "[gen][exceptions][fatal][null-terminate]") {
+    auto res = build_and_exec(R"(
+        module __test_null_deref_term__;
+        main() : int {
+            p : int* = null;
+            x : int = *p;
+            return x;
+        }
+    )");
+    REQUIRE(res.exit_code != 0);
+}
+
+TEST_CASE("IndexOutOfBoundsError: catch array OOB in try-catch",
+          "[gen][exceptions][fatal][oob]") {
+    auto res = build_and_exec(R"(
+        module __test_oob_catch__;
+
+        main() : int {
+            a : int[3];
+            a[0] = 10;
+            a[1] = 20;
+            a[2] = 30;
+            try {
+                x : int = a[5];
+                return x;
+            } catch(e : IndexOutOfBoundsError&) {
+                return e.getCode();
+            }
+        }
+    )");
+    REQUIRE(res.exit_code == 11);
+}
+
+TEST_CASE("IndexOutOfBoundsError: uncaught terminates process",
+          "[gen][exceptions][fatal][oob-terminate]") {
+    auto res = build_and_exec(R"(
+        module __test_oob_term__;
+        main() : int {
+            a : int[3];
+            a[0] = 1;
+            a[3] = 99;
+            return 0;
+        }
+    )");
+    REQUIRE(res.exit_code != 0);
+}
+

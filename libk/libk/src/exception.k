@@ -198,3 +198,89 @@ public:
 
     ConstructionException(code: int) : FatalError(code) {}
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// NullPointerError — base class for null pointer fatal errors.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * NullPointerError — base class for all null-pointer related fatal errors.
+ *
+ * Thrown by the runtime when a null pointer is used in an invalid context.
+ * As a FatalError subclass, it does not require a `throws` declaration.
+ */
+public class NullPointerError : public FatalError {
+public:
+    NullPointerError() : FatalError(7) {}
+
+    NullPointerError(code: int) : FatalError(code) {}
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// NullDereferenceError — thrown on null pointer dereference.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * NullDereferenceError — signals a dereference of a null pointer.
+ *
+ * Thrown by the runtime when code attempts to dereference a null owner,
+ * pointer, or link.
+ */
+public class NullDereferenceError : public NullPointerError {
+public:
+    NullDereferenceError() : NullPointerError(8) {}
+
+    NullDereferenceError(code: int) : NullPointerError(code) {}
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// NullAssignationError — thrown on assignment to a null pointer.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * NullAssignationError — signals an assignment through a null pointer.
+ *
+ * Thrown by the runtime when code attempts to assign a value through a null
+ * pointer or owner.
+ */
+public class NullAssignationError : public NullPointerError {
+public:
+    NullAssignationError() : NullPointerError(9) {}
+
+    NullAssignationError(code: int) : NullPointerError(code) {}
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// NullCastError — thrown when a dynamic cast yields null on a non-nullable target.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * NullCastError — signals that a dynamic cast produced null for a non-nullable
+ * target type (reference or link).
+ *
+ * Thrown by the runtime when a dynamic cast to a non-nullable addressor fails.
+ */
+public class NullCastError : public NullPointerError {
+public:
+    NullCastError() : NullPointerError(10) {}
+
+    NullCastError(code: int) : NullPointerError(code) {}
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// IndexOutOfBoundsError — thrown when an array index is out of bounds.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * IndexOutOfBoundsError — signals an array index outside the valid range.
+ *
+ * Thrown by the runtime when an array subscript operation exceeds the array
+ * bounds. As a FatalError subclass, it does not require a `throws` declaration.
+ */
+public class IndexOutOfBoundsError : public FatalError {
+public:
+    IndexOutOfBoundsError() : FatalError(11) {}
+
+    IndexOutOfBoundsError(code: int) : FatalError(code) {}
+}
+

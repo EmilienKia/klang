@@ -358,8 +358,8 @@ inline llvm::Function* get_or_create_bounds_check_failed_fn(
     auto* fn = llvm::Function::Create(fn_ty, llvm::Function::ExternalLinkage,
                                        "__k_fatal_array_bounds_check_failed", mod);
     fn->addFnAttr(llvm::Attribute::NoReturn);
-    fn->addFnAttr(llvm::Attribute::NoUnwind);
     fn->addFnAttr(llvm::Attribute::Cold);
+    // NOTE: do NOT add NoUnwind — this function throws IndexOutOfBoundsError!
 
     return fn;
 }
@@ -372,13 +372,15 @@ inline llvm::Function* get_or_create_bounds_check_failed_fn(
  * @param index_val   The i32 index value to check.
  * @param count_val   The i32 element count (loaded from the array header).
  * @param label_prefix  Label prefix for generated basic blocks.
+ * @param lpad_bb     Optional landing pad block for invoke (inside try-catch).
  */
 inline void emit_array_bounds_check(
     llvm::IRBuilder<>* builder,
     llvm::Module& mod,
     llvm::Value* index_val,
     llvm::Value* count_val,
-    const std::string& label_prefix = "bounds")
+    const std::string& label_prefix = "bounds",
+    llvm::BasicBlock* lpad_bb = nullptr)
 {
     llvm::Function* fail_fn = get_or_create_bounds_check_failed_fn(mod);
 
@@ -390,10 +392,22 @@ inline void emit_array_bounds_check(
     auto* cmp = builder->CreateICmpUGE(index_val, count_val, label_prefix + "_cmp");
     builder->CreateCondBr(cmp, oob_bb, ok_bb);
 
-    // Out-of-bounds branch: call fatal + unreachable
+    // Out-of-bounds branch: call/invoke fatal + unreachable
     builder->SetInsertPoint(oob_bb);
-    builder->CreateCall(fail_fn, {index_val, count_val});
-    builder->CreateUnreachable();
+    if (lpad_bb) {
+        // Inside try-catch: use invoke so the exception unwinds to the landing pad
+        auto* unreachable_bb = llvm::BasicBlock::Create(llvm_ctx, label_prefix + "_unreachable", fn);
+        builder->CreateInvoke(
+            fail_fn->getFunctionType(), fail_fn,
+            unreachable_bb, lpad_bb, {index_val, count_val});
+        builder->SetInsertPoint(unreachable_bb);
+        builder->CreateUnreachable();
+    } else {
+        // Not inside try-catch: plain call (exception propagates past this frame)
+        auto* call = builder->CreateCall(fail_fn, {index_val, count_val});
+        call->setDoesNotReturn();
+        builder->CreateUnreachable();
+    }
 
     // In-bounds branch: continue here
     builder->SetInsertPoint(ok_bb);

@@ -128,8 +128,8 @@ The link variable retains its previous value on the soft-fail path (the store
 is skipped).
 
 > **Note:** Outside of an `if` condition, assigning a null value to a link
-> remains a fatal error (calls `__k_fatal_null_assignation` or
-> `__k_fatal_null_dyncast`).
+> remains a fatal error (throws `NullAssignationError` or
+> `NullCastError`).
 
 ### Link rebind guard
 ```k
@@ -208,7 +208,7 @@ if (myvar : int = callSomething()) {
 
 The value of the declared variable determines which branch to take.  In the
 classic if-let form, two runtime checks may convert the condition into a
-**soft-fail** instead of a fatal trap:
+**soft-fail** instead of throwing a `NullAssignationError` / `NullCastError`:
 
 1. **Nullable addressor soft-fail**: when the declared variable is an addressor
    type and the initializer produces `null`.
