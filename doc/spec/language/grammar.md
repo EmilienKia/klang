@@ -205,7 +205,7 @@ Grammar notation used here:
 <a id="throwsclause"></a>**ThrowsClause:**
     `'throws'` [TypeSpec](#typespec) {{ `','` [TypeSpec](#typespec) }}
 
-    *Note: all types in the throws clause must derive from `::k::Exception`.*
+    *Note: all types in the throws clause must derive from `::k::Throwable`.*
 
 <a id="operatorfunctiondecl"></a>**OperatorFunctionDecl:**
     {{ [Specifier](#specifier) }} `'operator'` [OperatorSymbol](#operatorsymbol) `'('` `[` [ParameterList](#parameterlist) `]` `')'`
@@ -342,7 +342,7 @@ See [Types — §9.7](basic/types.md#97-arrays-of-indirection-types).*
     `'try'` [BlockStatement](#blockstatement) {{ [CatchClause](#catchclause) }}
 <a id="catchclause"></a>**CatchClause:**
     `'catch'` `'('` `[` `'const'` `]` [Identifier](#identifier) `':'` [TypeSpec](#typespec) `')'` [BlockStatement](#blockstatement)
-*Full description of each:* [If](statements/if.md) - [While](statements/while.md) - [For](statements/for.md) - [Return](statements/return.md) - [Break](statements/break.md)
+*Full description of each:* [If](statements/if.md) - [While](statements/while.md) - [For](statements/for.md) - [Return](statements/return.md) - [Break](statements/break.md) - [Exception Handling](statements/exceptions.md)
 ### Expressions
 *Full description:* [Expressions](expressions/expressions.md)
 <a id="expression"></a>**Expression:**

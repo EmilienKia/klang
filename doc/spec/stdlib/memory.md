@@ -32,7 +32,7 @@ struct UniSlot {
     ~UniSlot();
 
     template<typename...Args>
-    construct(Args...args);
+    construct(Args...args) throws ConstructionException;
 
     destruct();
 
@@ -54,7 +54,7 @@ This is the K equivalent of C++'s `std::aligned_storage` + placement new.
 |--------|-------------|
 | `UniSlot()` | Initialize the storage region (no `T` construction). |
 | `~UniSlot()` | Finalize the storage region (no `T` destruction). |
-| `construct(Args...args)` | Construct a `T` in the storage, forwarding `args` to `T`'s constructor. |
+| `construct(Args...args) throws ConstructionException` | Construct a `T` in the storage, forwarding `args` to `T`'s constructor. If the constructor throws a checked exception (`Exception`-derived), it is intercepted and replaced by a `ConstructionException`. `FatalError`-derived exceptions propagate unchanged. |
 | `destruct()` | Destroy the `T` in the storage (calls `T`'s destructor). |
 | `get() : T&` | Return a mutable reference to the stored `T`. |
 
@@ -63,14 +63,21 @@ This is the K equivalent of C++'s `std::aligned_storage` + placement new.
 All lifecycle methods are compiler intrinsics (`@annotations::Intrinsic`):
 - `UniSlot::constructor` — zero-initializes the raw storage
 - `UniSlot::destructor` — no-op (does not destroy the contained object)
-- `UniSlot::construct` — placement-constructs `T` with forwarded arguments
+- `UniSlot::construct` — placement-constructs `T` with forwarded arguments;
+  if the constructor throws a checked exception, the intrinsic catches it and
+  throws `ConstructionException` (code 6) instead. `FatalError`-derived
+  exceptions are **not** intercepted and propagate normally.
 - `UniSlot::destruct` — calls `T`'s destructor in-place
 
 ### Usage
 
 ```k
 slot : UniSlot<Point>;
-slot.construct<int, int>(10, 20);   // construct Point(10, 20)
+try {
+    slot.construct<int, int>(10, 20);   // construct Point(10, 20)
+} catch (e: ConstructionException&) {
+    // handle construction failure
+}
 slot.get().x = 42;                  // access the stored Point
 slot.destruct();                    // destroy the Point
 // slot goes out of scope — no double-destruct
@@ -81,6 +88,15 @@ slot.destruct();                    // destroy the Point
 - Calling `destruct()` without a prior `construct()`
 - Calling `construct()` twice without an intervening `destruct()`
 - Calling `get()` on unconstructed storage
+
+### Exceptions
+
+| Method | Exception | Condition |
+|--------|-----------|-----------|
+| `construct()` | `ConstructionException` (checked) | `T`'s constructor throws a checked exception |
+
+`ConstructionException` is checked and must be handled or declared by the
+caller.
 
 ---
 
@@ -97,7 +113,7 @@ struct MultiSlot {
     deallocate();
 
     template<typename...Args>
-    construct(index : int, Args...args);
+    construct(index : int, Args...args) throws ConstructionException;
 
     destruct(index : int);
 
@@ -126,7 +142,7 @@ This is the array counterpart to `UniSlot<T>` and is the storage backing for
 | `allocate(capacity)` | Allocate a buffer for `capacity` elements. |
 | `reallocate(newCapacity)` | Grow/shrink the buffer. Preserves raw content up to the old capacity. |
 | `deallocate()` | Free the buffer. |
-| `construct(index, Args...args)` | Placement-construct a `T` at `index`, forwarding `args`. |
+| `construct(index, Args...args) throws ConstructionException` | Placement-construct a `T` at `index`, forwarding `args`. If the constructor throws a checked exception, it is intercepted and replaced by `ConstructionException`. |
 | `destruct(index)` | Call `T`'s destructor on the element at `index`. |
 | `get(index) : T&` | Return a mutable reference to the element at `index`. |
 | `getCapacity() : int` | Return the current buffer capacity. |
@@ -136,10 +152,11 @@ This is the array counterpart to `UniSlot<T>` and is the storage backing for
 All lifecycle and access methods are compiler intrinsics:
 - `MultiSlot::constructor` — initializes `_data = null`, `_capacity = 0`
 - `MultiSlot::destructor` — no-op
-- `MultiSlot::allocate` — `malloc(capacity * sizeof(T))`
-- `MultiSlot::reallocate` — `realloc(_data, newCapacity * sizeof(T))`
+- `MultiSlot::allocate` — `malloc(capacity * sizeof(T))`; throws `OutOfMemory` on failure
+- `MultiSlot::reallocate` — `realloc(_data, newCapacity * sizeof(T))`; throws `OutOfMemory` on failure
 - `MultiSlot::deallocate` — `free(_data)`
-- `MultiSlot::construct` — placement-constructs at `_data + index`
+- `MultiSlot::construct` — placement-constructs at `_data + index`; wraps checked
+  exceptions from `T`'s constructor as `ConstructionException`
 - `MultiSlot::destruct` — calls destructor at `_data + index`
 - `MultiSlot::get` — returns `_data[index]`
 
@@ -148,7 +165,12 @@ All lifecycle and access methods are compiler intrinsics:
 ```k
 slots : MultiSlot<Point>;
 slots.allocate(10);                     // allocate buffer for 10 Points
-slots.construct<int, int>(0, 1, 2);     // construct Point(1,2) at index 0
+try {
+    slots.construct<int, int>(0, 1, 2);     // construct Point(1,2) at index 0
+} catch (e: ConstructionException&) {
+    slots.deallocate();
+    // handle failure...
+}
 slots.get(0).x = 99;                    // access element
 slots.destruct(0);                      // destroy Point at index 0
 slots.deallocate();                     // free the buffer
@@ -172,6 +194,18 @@ slots.reallocate(20);   // grow buffer to 20 elements
 - Calling `get(i)` on an unconstructed index
 - Accessing indices outside `[0, capacity)`
 
+### Exceptions
+
+| Method | Exception | Condition |
+|--------|-----------|-----------|
+| `allocate()` | `OutOfMemory` (unchecked) | `malloc` returns null |
+| `reallocate()` | `OutOfMemory` (unchecked) | `realloc` returns null |
+| `construct()` | `ConstructionException` (checked) | `T`'s constructor throws a checked exception |
+
+`OutOfMemory` is a `FatalError` subclass and propagates without requiring a
+`throws` declaration. `ConstructionException` is checked and must be handled
+or declared.
+
 ---
 
 ## Design Rationale
@@ -187,3 +221,10 @@ By separating allocation from construction, collection types can manage object
 lifetimes precisely — constructing elements only when inserted and destructing
 them only when removed.
 
+---
+
+## See Also
+
+- [Exception Types](exceptions.md) — `ConstructionException`, `OutOfMemory`
+- [Dynamic Allocation — `new` and `delete`](../language/memory/new-delete.md) — heap allocation with owners
+- [Collections](collections.md) — `Vector<T>`, `LinkedList<T>`, `DoubleLinkedList<T>`

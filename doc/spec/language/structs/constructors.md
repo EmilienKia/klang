@@ -15,6 +15,7 @@ A *constructor* is a special member function that initialises a struct instance.
 6. [Static constructors (class initializers)](#6-static-constructors-class-initializers)
 7. [Defaulted and deleted constructors](#7-defaulted-and-deleted-constructors)
 8. [Examples](#8-examples)
+9. [Throws clause on constructors](#9-throws-clause-on-constructors)
 ---
 ## 1. Instance constructors
 An instance constructor is a member function whose name matches the struct name.  
@@ -234,4 +235,64 @@ get_value() : int {
 }
 ```
 ---
-*See also:* [Structures](structs.md) · [Destructors](destructors.md) · [Function Overloading](../functions/overloading.md)
+
+## 9. Throws clause on constructors
+
+Constructors may declare a `throws` clause, just like regular functions. The
+same exception contract rules apply: callers that construct an object (via
+local variable declaration, `new`, or temporary construction) must handle or
+propagate the constructor's declared exceptions.
+
+### Grammar
+
+```
+ConstructorDecl:
+    Identifier '(' [ ParameterList ] ')' [ ':' MemberInitList ] [ ThrowsClause ] BlockStatement
+  | Identifier '(' [ ParameterList ] ')' [ ThrowsClause ] '->' ('default' | 'delete') ';'
+
+ThrowsClause:
+    'throws' TypeSpec { ',' TypeSpec }
+```
+
+### Example
+
+```k
+class InitError : public Exception {
+    public:
+    InitError(code: int) : Exception(code) { }
+}
+
+class Sensor {
+    value : int;
+    public:
+    Sensor(v: int) throws InitError {
+        if (v < 0) {
+            throw InitError(v);
+        }
+        value = v;
+    }
+}
+
+test() : int {
+    result : int = 0;
+    try {
+        s : Sensor(10);
+        result = s.value;
+    } catch (e: InitError&) {
+        result = e.getCode();
+    }
+    return result;
+}
+```
+
+### Rules
+
+- All types in the `throws` clause must derive from `::k::Throwable`.
+- The exception contract checker enforces that callers handle or propagate the
+  declared exceptions (same rules as for function calls — see
+  [Exception Handling §5](../statements/exceptions.md#5-exception-contract-rules)).
+- This applies to all forms of construction: local variable, `new`, and
+  temporary construction expressions.
+
+---
+*See also:* [Structures](structs.md) · [Destructors](destructors.md) · [Function Overloading](../functions/overloading.md) · [Exception Handling](../statements/exceptions.md)

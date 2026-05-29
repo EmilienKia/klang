@@ -42,7 +42,9 @@ forbidden (they cannot be instantiated); the compiler emits **Error 0x0057** in 
 **Semantics (in order):**
 
 1. `malloc(sizeof(T))` is called to allocate a raw memory block.
-   If `malloc` returns null (allocation failure), behaviour is currently undefined.
+   If `malloc` returns null (allocation failure), an `OutOfMemory` exception
+   (a `FatalError` subclass) is thrown. Since `OutOfMemory` is unchecked,
+   it propagates freely without requiring a `throws` declaration.
 2. The constructor of `T` matching the provided argument list is invoked on the allocated
    memory.
 3. The resulting address is wrapped in a `T!` owner value and returned as the expression
@@ -182,7 +184,8 @@ A dynamically allocated array is stored as:
 
 This is the same [internal representation](../basic/types.md#91-internal-representation) used
 for stack-allocated arrays.  The entire struct (including the `count` header) is allocated with
-a single `malloc` call.  For dynamic-sized arrays, the allocation size is
+a single `malloc` call.  If `malloc` returns null, an `OutOfMemory` exception is thrown (same
+behaviour as single-object `new`).  For dynamic-sized arrays, the allocation size is
 `header_size + sizeof(T) * n` where `n` is the runtime size value.
 
 Elements are initialized in order (index 0 first).
@@ -552,7 +555,13 @@ TypeSuffix:
 | 0x422A | Error | Brace initializer lists are not allowed for dynamically-sized `new[]` arrays. |
 | 0x5010 | Warning | Result of `new` (or function returning `T!`) is immediately discarded — the object is deleted right after construction. |
 
+### Runtime exceptions
+
+| Exception | Condition |
+|-----------|-----------|
+| `OutOfMemory` | `malloc` or `realloc` returned null (allocation failure). This is a `FatalError` subclass — unchecked, propagates without `throws` declaration. |
+
 ---
 
-*See also:* [Types — Owner (`!`)](../basic/types.md#7-owner-) · [Array Types](../basic/types.md#9-array-types) · [Unary Operators](../expressions/unary.md) · [Assignment Operators](../expressions/assignment.md) · [Destructors](../structs/destructors.md)
+*See also:* [Types — Owner (`!`)](../basic/types.md#7-owner-) · [Array Types](../basic/types.md#9-array-types) · [Unary Operators](../expressions/unary.md) · [Assignment Operators](../expressions/assignment.md) · [Destructors](../structs/destructors.md) · [Exception Types](../../stdlib/exceptions.md)
 

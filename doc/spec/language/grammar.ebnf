@@ -626,7 +626,7 @@ ThrowStatement
     = 'throw' , Expression , ';'
     ;
     (* The expression must evaluate to a class type that derives from
-       ::k::Exception or is ::k::Exception itself. Throwing a non-Exception
+       ::k::Throwable or is ::k::Throwable itself. Throwing a non-Throwable
        type is a compile-time error (0x01C0). *)
 
 TryCatchStatement
@@ -641,7 +641,7 @@ CatchParameterDecl
     = [ 'const' ] , Identifier , ':' , TypeSpec
     ;
     (* The catch parameter type must use a reference addresser (T&).
-       The type must derive from ::k::Exception.
+       The type must derive from ::k::Throwable.
        References guarantee non-null and non-reassignable binding.      *)
 
 ExpressionStatement

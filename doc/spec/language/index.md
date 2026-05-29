@@ -112,7 +112,7 @@ Examples are included where they clarify the normative text.
 | [String Types](../stdlib/string.md) | `CharHelpers`, `String`, `StringBuilder` |
 | [RTTI Types](../stdlib/rtti.md) | `Visibility`, `TypeInfo`, `AggregateType`, `Class`, `Interface`, `AnnotationType`, `Annotation`, meta-annotation types (`Retention`, `Inherited`, `Target`) |
 | [Math](../stdlib/math.md) | Optional `k::math` module — `abs`, `min`, `max`, `clamp` |
-| [Exception Types](../stdlib/exceptions.md) | `Exception`, `RuntimeException`, and derived standard exception classes |
+| [Exception Types](../stdlib/exceptions.md) | `Throwable`, `Exception`, `FatalError`, and derived standard exception classes |
 
 ### Grammar Reference
 
