@@ -205,6 +205,7 @@ enum class parser_diag : unsigned int {
     ERR_CATCH_EXPECT_CLOSE_PAREN                  = 0x01D8,
     ERR_CATCH_EXPECT_BODY                         = 0x01D9,
     ERR_THROWS_EXPECT_TYPE                        = 0x01DA,
+    ERR_TRY_EXPECT_FINALLY_BODY                   = 0x01DB,
 };
 
 } // namespace k::diag

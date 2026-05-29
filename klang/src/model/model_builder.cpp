@@ -1609,6 +1609,19 @@ namespace k::model {
             try_stmt->add_catch_clause(catch_model);
         }
 
+        // Build finally body
+        if(stmt.finally_body) {
+            auto finally_block = std::make_shared<model::block>(try_stmt);
+            stack<block_context> push3(_contexts, finally_block);
+            for(auto& s : stmt.finally_body->statements) {
+                s->visit(*this);
+                if(_stmt) {
+                    finally_block->append_statement(_stmt);
+                }
+            }
+            try_stmt->set_finally_body(finally_block);
+        }
+
         _stmt = try_stmt;
     }
 

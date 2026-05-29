@@ -239,12 +239,28 @@ std::shared_ptr<ast::try_catch_statement> parser::parse_try_catch_statement()
         catch_clauses.push_back(clause);
     }
 
-    if(catch_clauses.empty()) {
-        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TRY_EXPECT_CATCH),
-                    _lexer.pick_current(), "Try statement requires at least one catch clause");
+    // Parse optional finally clause
+    std::shared_ptr<ast::block_statement> finally_body;
+    {
+        lex::lex_holder finally_holder(_lexer);
+        auto lfinally = _lexer.get();
+        if(lfinally == lex::keyword::FINALLY) {
+            finally_body = parse_statement_block();
+            if(!finally_body) {
+                throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TRY_EXPECT_FINALLY_BODY),
+                            _lexer.pick_current(), "Finally clause expects a block statement body");
+            }
+        } else {
+            finally_holder.rollback();
+        }
     }
 
-    return std::make_shared<ast::try_catch_statement>(lex::as<lex::keyword>(ltry), try_body, catch_clauses);
+    if(catch_clauses.empty() && !finally_body) {
+        throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_TRY_EXPECT_CATCH),
+                    _lexer.pick_current(), "Try statement requires at least one catch clause or a finally clause");
+    }
+
+    return std::make_shared<ast::try_catch_statement>(lex::as<lex::keyword>(ltry), try_body, catch_clauses, finally_body);
 }
 
 std::shared_ptr<ast::if_else_statement> parser::parse_if_else_statement() {

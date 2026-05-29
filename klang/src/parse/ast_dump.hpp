@@ -465,6 +465,11 @@ class ast_dump_visitor : public k::parse::ast_visitor {
             for(auto& clause : stmt.catch_clauses) {
                 clause->visit(*this);
             }
+            if(stmt.finally_body) {
+                prefix() << "finally " << std::endl;
+                auto h = prefix_inc();
+                stmt.finally_body->visit(*this);
+            }
         }
 
         virtual void visit_if_else_statement(ast::if_else_statement& stmt) override {

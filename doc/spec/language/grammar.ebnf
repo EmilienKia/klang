@@ -75,7 +75,7 @@ Keyword
     | 'new'    | 'delete'  | 'default'   | 'enum'   | 'union'
     | 'operator'
     | 'template' | 'typename' | 'generic'
-    | 'throw'  | 'try'     | 'catch'     | 'throws'
+    | 'throw'  | 'try'     | 'catch'     | 'throws'  | 'finally'
     ;
 
 (* ---------- Literals ----------------------------------------------------- *)
@@ -634,7 +634,12 @@ ThrowStatement
        elsewhere is a compile-time error (0x01C9). *)
 
 TryCatchStatement
-    = 'try' , BlockStatement , { CatchClause }
+    = 'try' , BlockStatement , { CatchClause } , [ FinallyClause ]
+    ;
+    (* At least one CatchClause or the FinallyClause must be present. *)
+
+FinallyClause
+    = 'finally' , BlockStatement
     ;
 
 CatchClause

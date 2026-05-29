@@ -1643,3 +1643,214 @@ TEST_CASE("Exception: bare throw with contract — declared in throws clause", "
     REQUIRE(fn() == 55);
 }
 
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Finally block tests
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception: finally executes on normal flow", "[gen][exceptions][finally]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_1__;
+
+        test_finally_normal() : int {
+            result : int = 0;
+            try {
+                result = 1;
+            } catch (e: Exception*) {
+                result = -1;
+            } finally {
+                result = result + 10;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_finally_normal");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 11);
+}
+
+TEST_CASE("Exception: finally executes after catch", "[gen][exceptions][finally]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_2__;
+
+        class TestErr : public Exception {
+            public:
+            TestErr() : Exception(200) { }
+        }
+
+        thrower() : void throws TestErr {
+            throw TestErr();
+        }
+
+        test_finally_after_catch() : int {
+            result : int = 0;
+            try {
+                thrower();
+                result = 1;
+            } catch (e: TestErr*) {
+                result = 5;
+            } finally {
+                result = result + 10;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_finally_after_catch");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 15);
+}
+
+TEST_CASE("Exception: try-finally without catch clauses", "[gen][exceptions][finally]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_3__;
+
+        test_try_finally_only() : int {
+            result : int = 0;
+            try {
+                result = 42;
+            } finally {
+                result = result + 1;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_try_finally_only");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 43);
+}
+
+TEST_CASE("Exception: finally executes on unmatched exception", "[gen][exceptions][finally]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_4__;
+
+        class ErrX : public Exception {
+            public:
+            ErrX() : Exception(300) { }
+        }
+
+        class ErrY : public Exception {
+            public:
+            ErrY() : Exception(301) { }
+        }
+
+        thrower_x() : void throws ErrX {
+            throw ErrX();
+        }
+
+        test_finally_unmatched() : int {
+            result : int = 0;
+            try {
+                try {
+                    thrower_x();
+                } catch (e: ErrY*) {
+                    result = -1;
+                } finally {
+                    result = result + 100;
+                }
+            } catch (e: ErrX*) {
+                result = result + 5;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_finally_unmatched");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 105);
+}
+
+TEST_CASE("Exception: nested try-finally both execute", "[gen][exceptions][finally]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_5__;
+
+        test_nested_finally() : int {
+            result : int = 0;
+            try {
+                try {
+                    result = 1;
+                } finally {
+                    result = result + 10;
+                }
+            } finally {
+                result = result + 100;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_nested_finally");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 111);
+}
+
+TEST_CASE("Exception: finally with no exception and no catch", "[gen][exceptions][finally]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_6__;
+
+        test_finally_simple() : int {
+            x : int = 10;
+            try {
+                x = x * 2;
+            } finally {
+                x = x + 3;
+            }
+            return x;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_finally_simple");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 23);
+}
+
+TEST_CASE("Exception: finally does not suppress exception", "[gen][exceptions][finally]") {
+    // The exception should propagate through the finally block to the outer catch.
+    auto jit = gen_jit(R"(
+        module __test_finally_7__;
+
+        class PropErr : public Exception {
+            public:
+            PropErr() : Exception(400) { }
+        }
+
+        thrower_prop() : void throws PropErr {
+            throw PropErr();
+        }
+
+        test_finally_propagates() : int {
+            result : int = 0;
+            try {
+                try {
+                    thrower_prop();
+                } finally {
+                    result = result + 50;
+                }
+            } catch (e: PropErr*) {
+                result = result + 7;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_finally_propagates");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 57);
+}
+
+TEST_CASE("Exception: parser rejects try without catch or finally", "[gen][exceptions][finally]") {
+    // A try statement with neither catch nor finally should fail to parse.
+    REQUIRE(compile_should_fail(R"(
+        module __test_finally_err__;
+
+        bad() : int {
+            try {
+                x : int = 1;
+            }
+            return 0;
+        }
+    )", nullptr));
+}
+

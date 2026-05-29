@@ -69,7 +69,7 @@ if       else     while    for      break    continue
 new      delete   default  enum     union
 operator
 template typename generic
-throw    try      catch    throws
+throw    try      catch    throws   finally
 ```
 
 All keywords are reserved and cannot be used as identifiers.
@@ -1728,11 +1728,16 @@ order) in each stack frame between the throw point and the matching catch handle
 
 ```
 TryCatchStatement:
-    'try' BlockStatement { CatchClause }
+    'try' BlockStatement { CatchClause } [ FinallyClause ]
 
 CatchClause:
     'catch' '(' ParameterDecl ')' BlockStatement
+
+FinallyClause:
+    'finally' BlockStatement
 ```
+
+At least one catch clause or a finally clause must be present.
 
 Example:
 
@@ -1743,6 +1748,8 @@ try {
     handleIO(e);
 } catch (e: Throwable&) {
     handleGeneric(e);
+} finally {
+    cleanup();
 }
 ```
 
@@ -1754,6 +1761,14 @@ Rules:
 - Catch parameter types must derive from `::k::Throwable` (error `0x01C1` otherwise).
 - All function calls within a try block are compiled as LLVM `invoke` instructions
   (instead of `call`) to enable unwinding through the landing pad.
+- The `finally` block, if present, **always executes** regardless of whether:
+  - The try body completes normally (no exception thrown).
+  - An exception is thrown and caught by a matching catch clause.
+  - An exception is thrown but not caught (propagated to outer handler).
+- The `finally` block does **not** suppress exceptions — after the finally block
+  executes, uncaught exceptions continue propagating.
+- `try { } finally { }` without any catch clause is valid — the finally block
+  runs on both normal completion and exception propagation.
 
 ### 27.4 Throws Clause
 
@@ -1837,8 +1852,9 @@ When an exception propagates through a stack frame:
 
 ### 27.9 Known Limitations
 
-- No `finally` clause.
-- No rethrow (`throw;` without expression).
+- No `finally` interaction with `return`/`break`/`continue` inside try/catch bodies
+  (the finally block may be skipped if a return statement exits the function from
+  within the try or catch body — Phase 2 improvement).
 - No exception specification on constructors/destructors.
 
 ---

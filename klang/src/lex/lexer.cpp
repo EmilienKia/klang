@@ -79,7 +79,8 @@ namespace k::lex {
         {"throw", keyword::THROW},
         {"try", keyword::TRY},
         {"catch", keyword::CATCH},
-        {"throws", keyword::THROWS}
+        {"throws", keyword::THROWS},
+        {"finally", keyword::FINALLY}
     };
 
     const std::map<std::string, punctuator::type_t> punctuators {

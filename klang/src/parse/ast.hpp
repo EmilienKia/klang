@@ -705,12 +705,15 @@ namespace k::parse {
             lex::keyword try_kw;
             std::shared_ptr<block_statement> try_body;
             std::vector<std::shared_ptr<catch_clause>> catch_clauses;
+            std::shared_ptr<block_statement> finally_body;
 
             try_catch_statement(const lex::keyword& try_kw,
                                 std::shared_ptr<block_statement> try_body,
-                                std::vector<std::shared_ptr<catch_clause>> catch_clauses)
+                                std::vector<std::shared_ptr<catch_clause>> catch_clauses,
+                                std::shared_ptr<block_statement> finally_body = nullptr)
                 : try_kw(try_kw), try_body(std::move(try_body)),
-                  catch_clauses(std::move(catch_clauses)) {}
+                  catch_clauses(std::move(catch_clauses)),
+                  finally_body(std::move(finally_body)) {}
 
             virtual void visit(ast_visitor &visitor) override;
         };

@@ -60,7 +60,7 @@
 - Add concepts (and template constraints) for more expressive template programming and better error messages
 - Add traits (Rust like)
 - Exceptions:
-    - [ ] `finally` block (guaranteed execution regardless of exception path)
+    - [x] `finally` block (guaranteed execution regardless of exception path) — **Phase 1 done** (basic flow); Phase 2 pending: `return`/`break`/`continue` interception inside try/catch bodies
     - [ ] Exception masking/chaining (`throw new E2() from e1`)
     - [ ] `rethrow` / `throw;` (re-throw current exception in catch block)
     - [ ] Exception specifications on function pointer/reference types

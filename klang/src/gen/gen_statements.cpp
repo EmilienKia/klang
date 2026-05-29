@@ -1117,6 +1117,9 @@ void symbol_resolver::visit_try_catch_statement(try_catch_statement& stmt)
             body->accept(*this);
         }
     }
+    if(auto body = stmt.get_finally_body()) {
+        body->accept(*this);
+    }
 }
 
 void type_reference_resolver::visit_try_catch_statement(try_catch_statement& stmt)
@@ -1159,6 +1162,11 @@ void type_reference_resolver::visit_try_catch_statement(try_catch_statement& stm
             body->accept(*this);
             _catch_clause_stack.pop_back();
         }
+    }
+
+    // Visit finally body
+    if(auto body = stmt.get_finally_body()) {
+        body->accept(*this);
     }
 }
 
@@ -1222,9 +1230,20 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     // Pop landing pad
     _landing_pad_stack.pop();
 
-    // If we reach end of try body normally, branch to end
+    // Helper lambda: emit the finally body at the current insert point (inlined copy).
+    auto finally_body = stmt.get_finally_body();
+    auto emit_finally = [&]() {
+        if (finally_body) {
+            finally_body->accept(*this);
+        }
+    };
+
+    // If we reach end of try body normally, emit finally then branch to end
     if (!_builder->GetInsertBlock()->getTerminator()) {
-        _builder->CreateBr(end_bb);
+        emit_finally();
+        if (!_builder->GetInsertBlock()->getTerminator()) {
+            _builder->CreateBr(end_bb);
+        }
     }
 
     // Landing pad block — entered when an exception is thrown
@@ -1304,6 +1323,10 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
 
     // Dispatch: for each catch clause, iterate the thrown type's chain and check
     // if the catch clause's typeinfo matches any entry (supports base class catching).
+    if (clauses.empty()) {
+        // No catch clauses (try-finally only): go directly to fallthrough
+        _builder->CreateBr(catch_fallthrough_bb);
+    }
     for (size_t i = 0; i < clauses.size(); ++i) {
         if (!typeinfos[i]) {
             // Catch-all (no typeinfo): always matches, offset 0
@@ -1416,14 +1439,21 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         // End catch
         _builder->CreateCall(cxa_end);
 
-        // Branch to end
+        // Emit finally body after catch handler, then branch to end
         if (!_builder->GetInsertBlock()->getTerminator()) {
-            _builder->CreateBr(end_bb);
+            emit_finally();
+            if (!_builder->GetInsertBlock()->getTerminator()) {
+                _builder->CreateBr(end_bb);
+            }
         }
     }
 
-    // Catch fallthrough — no match, propagate to outer handler or resume unwinding
+    // Catch fallthrough — no match, emit finally then propagate to outer handler or resume unwinding
     _builder->SetInsertPoint(catch_fallthrough_bb);
+
+    // Emit finally body before propagating unmatched exception
+    emit_finally();
+
     if (outer_ctx) {
         // Nested try-catch in the same function: store the exception pointer into the
         // outer handler's alloca and branch directly to its dispatch block.

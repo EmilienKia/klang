@@ -155,7 +155,8 @@ struct keyword : public lexeme {
         THROW,
         TRY,
         CATCH,
-        THROWS
+        THROWS,
+        FINALLY
     };
 
     type_t type;

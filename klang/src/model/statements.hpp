@@ -510,6 +510,7 @@ class try_catch_statement : public statement
 protected:
     std::shared_ptr<block> _try_body;
     std::vector<std::shared_ptr<catch_clause>> _catch_clauses;
+    std::shared_ptr<block> _finally_body;
 
 public:
     try_catch_statement() = delete;
@@ -531,6 +532,13 @@ public:
     std::vector<std::shared_ptr<catch_clause>>& get_catch_clauses() { return _catch_clauses; }
     void add_catch_clause(std::shared_ptr<catch_clause> clause) {
         _catch_clauses.push_back(std::move(clause));
+    }
+
+    std::shared_ptr<block> get_finally_body() { return _finally_body; }
+    std::shared_ptr<const block> get_finally_body() const { return _finally_body; }
+    void set_finally_body(std::shared_ptr<block> body) {
+        _finally_body = std::move(body);
+        if (_finally_body) set_this_as_parent_to(std::static_pointer_cast<statement>(_finally_body));
     }
 };
 
