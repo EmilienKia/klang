@@ -178,3 +178,22 @@ public:
 
     IllegalStateException(code: int) : Exception(code) {}
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ConstructionException — thrown when object construction fails.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * ConstructionException — signals that an object constructor threw an exception.
+ *
+ * Thrown by UniSlot<T>::construct() and MultiSlot<T>::construct() when the
+ * underlying T constructor raises a checked exception. The original exception
+ * is intercepted and replaced by this ConstructionException.
+ * FatalError-derived exceptions are NOT intercepted and propagate normally.
+ */
+public class ConstructionException : public Exception {
+public:
+    ConstructionException() : Exception(6) {}
+
+    ConstructionException(code: int) : Exception(code) {}
+}

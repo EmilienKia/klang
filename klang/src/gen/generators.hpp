@@ -388,6 +388,15 @@ public:
     void emit_intrinsic_multislot_deallocate(function& function, llvm::Function* func);
     void emit_intrinsic_multislot_construct(function& function, llvm::Function* func);
     void emit_intrinsic_multislot_destruct(function& function, llvm::Function* func);
+
+    /**
+     * Emit an invoke of a constructor that wraps checked exceptions as ConstructionException.
+     * If the constructor throws a FatalError-derived exception, it propagates unchanged.
+     * Otherwise, the caught exception is replaced by a ConstructionException throw.
+     */
+    void emit_ctor_invoke_with_construction_exception_wrap(
+        llvm::Function* ctor_func, llvm::ArrayRef<llvm::Value*> ctor_args,
+        llvm::Function* current_func);
     void emit_intrinsic_multislot_get(function& function, llvm::Function* func);
 
     /**

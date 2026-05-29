@@ -1133,3 +1133,189 @@ TEST_CASE("Exception contract: cross-module constructor throws — local and new
 
     REQUIRE(result.exit_code == 42);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  13. ConstructionException — UniSlot/MultiSlot wrap constructor exceptions
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("ConstructionException: UniSlot construct catches throwing constructor",
+          "[gen][exceptions][construction][intrinsic]") {
+    // A class whose constructor throws when given a negative value.
+    // UniSlot::construct wraps the exception as ConstructionException.
+    auto jit = gen_jit(R"(
+        module __test_ce_unislot_1__;
+
+        class InitErr : public Exception {
+            public:
+            InitErr(code: int) : Exception(code) { }
+        }
+
+        class Widget {
+            val : int;
+            public:
+            Widget(v: int) throws InitErr {
+                if (v < 0) {
+                    throw InitErr(v);
+                }
+                val = v;
+            }
+            getVal() : int { return val; }
+        }
+
+        test_unislot_ok() : int {
+            slot : UniSlot<Widget>;
+            try {
+                slot.construct<int>(42);
+            } catch (e: ConstructionException&) {
+                return -1;
+            }
+            result : int = slot.get().getVal();
+            slot.destruct();
+            return result;
+        }
+
+        test_unislot_throws() : int {
+            slot : UniSlot<Widget>;
+            try {
+                slot.construct<int>(-7);
+                return 999;
+            } catch (e: ConstructionException&) {
+                return e.getCode();
+            }
+            return -999;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+
+    auto fn_ok = jit->lookup_symbol<int(*)()>("test_unislot_ok");
+    REQUIRE(fn_ok != nullptr);
+    REQUIRE(fn_ok() == 42);
+
+    auto fn_throw = jit->lookup_symbol<int(*)()>("test_unislot_throws");
+    REQUIRE(fn_throw != nullptr);
+    REQUIRE(fn_throw() == 6);  // ConstructionException default code is 6
+}
+
+TEST_CASE("ConstructionException: MultiSlot construct catches throwing constructor",
+          "[gen][exceptions][construction][intrinsic]") {
+    auto jit = gen_jit(R"(
+        module __test_ce_multislot_1__;
+
+        class InitErr : public Exception {
+            public:
+            InitErr(code: int) : Exception(code) { }
+        }
+
+        class Widget {
+            val : int;
+            public:
+            Widget(v: int) throws InitErr {
+                if (v < 0) {
+                    throw InitErr(v);
+                }
+                val = v;
+            }
+            getVal() : int { return val; }
+        }
+
+        test_multislot_ok() : int {
+            slots : MultiSlot<Widget>;
+            slots.allocate(4);
+            try {
+                slots.construct<int>(0, 10);
+                slots.construct<int>(1, 20);
+            } catch (e: ConstructionException&) {
+                slots.deallocate();
+                return -1;
+            }
+            result : int = slots.get(0).getVal() + slots.get(1).getVal();
+            slots.destruct(0);
+            slots.destruct(1);
+            slots.deallocate();
+            return result;
+        }
+
+        test_multislot_throws() : int {
+            slots : MultiSlot<Widget>;
+            slots.allocate(4);
+            try {
+                slots.construct<int>(0, 10);
+                slots.construct<int>(1, -3);
+                slots.destruct(0);
+                slots.deallocate();
+                return 999;
+            } catch (e: ConstructionException&) {
+                slots.destruct(0);
+                slots.deallocate();
+                return e.getCode();
+            }
+            return -999;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+
+    auto fn_ok = jit->lookup_symbol<int(*)()>("test_multislot_ok");
+    REQUIRE(fn_ok != nullptr);
+    REQUIRE(fn_ok() == 30);
+
+    auto fn_throw = jit->lookup_symbol<int(*)()>("test_multislot_throws");
+    REQUIRE(fn_throw != nullptr);
+    REQUIRE(fn_throw() == 6);  // ConstructionException default code is 6
+}
+
+TEST_CASE("ConstructionException: UniSlot construct — non-throwing constructor works normally",
+          "[gen][exceptions][construction][intrinsic]") {
+    // A simple struct without throws clause — should work without issue.
+    auto jit = gen_jit(R"(
+        module __test_ce_unislot_nothrow__;
+
+        struct Point {
+            x : int;
+            y : int;
+            Point(px: int, py: int) {
+                x = px;
+                y = py;
+            }
+        }
+
+        test_nothrow() : int {
+            slot : UniSlot<Point>;
+            slot.construct<int, int>(3, 7);
+            result : int = slot.get().x + slot.get().y;
+            slot.destruct();
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_nothrow");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 10);
+}
+
+TEST_CASE("ConstructionException: contract enforcement — construct() requires handling",
+          "[gen][exceptions][construction][contract][!shouldfail]") {
+    // TODO: Template instantiation does not currently propagate the throws clause
+    // from the template definition to the instantiated function. When this is fixed,
+    // calling UniSlot::construct without handling ConstructionException in a function
+    // that doesn't declare it should fail compilation.
+    REQUIRE_THROWS_AS(gen_jit_throws(R"(
+        module __test_ce_contract_1__;
+
+        class InitErr : public Exception { }
+
+        class Widget {
+            val : int;
+            public:
+            Widget(v: int) throws InitErr {
+                val = v;
+            }
+        }
+
+        caller() : int throws InitErr {
+            slot : UniSlot<Widget>;
+            slot.construct<int>(10);
+            return 0;
+        }
+    )"), k::log::compiler_error);
+}
+

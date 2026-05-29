@@ -275,7 +275,8 @@ void implementation_generator::emit_intrinsic_unislot_construct(function& functi
     if (best_ctor) {
         auto ctor_it = _context->_functions.find(best_ctor->shared_as<model::function>());
         if (ctor_it != _context->_functions.end()) {
-            _builder->CreateCall(ctor_it->second, ctor_args);
+            emit_ctor_invoke_with_construction_exception_wrap(
+                ctor_it->second, ctor_args, func);
         }
     } else if (!arg_types.empty()) {
         // No matching constructor found — try aggregate initialization:
@@ -718,7 +719,8 @@ void implementation_generator::emit_intrinsic_multislot_construct(function& func
     if (best_ctor) {
         auto ctor_it = _context->_functions.find(best_ctor->shared_as<model::function>());
         if (ctor_it != _context->_functions.end()) {
-            _builder->CreateCall(ctor_it->second, ctor_args);
+            emit_ctor_invoke_with_construction_exception_wrap(
+                ctor_it->second, ctor_args, func);
         }
     } else if (!arg_types.empty()) {
         // No matching constructor found — try aggregate initialization:
@@ -854,6 +856,359 @@ void implementation_generator::emit_intrinsic_multislot_get(function& function, 
     // Return the pointer as reference
     _builder->CreateRet(elem_ptr);
     llvm::verifyFunction(*func);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// emit_ctor_invoke_with_construction_exception_wrap
+//
+// Invokes a constructor, wrapping any checked exception (Exception-derived)
+// into a ConstructionException. FatalError-derived exceptions propagate unchanged.
+//
+// Generated IR pattern:
+//   invoke ctor(...) to %normal unwind to %lpad
+// %normal:
+//   <continue>
+// %lpad:
+//   landingpad catch-all
+//   load _k_thrown_typeinfo_chain
+//   walk chain entries: if any matches FatalError typeinfo → resume
+//   otherwise → allocate + throw ConstructionException
+// ─────────────────────────────────────────────────────────────────────────────
+
+void implementation_generator::emit_ctor_invoke_with_construction_exception_wrap(
+    llvm::Function* ctor_func, llvm::ArrayRef<llvm::Value*> ctor_args,
+    llvm::Function* current_func)
+{
+    auto& llvm_ctx = _context->llvm_context();
+    auto& mod = _context->module();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* i64_ty = llvm::Type::getInt64Ty(llvm_ctx);
+    auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
+
+    // Set personality function for exception handling
+    if (!current_func->hasPersonalityFn()) {
+        auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
+            llvm::FunctionType::get(i32_ty, true));
+        current_func->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+    }
+
+    // Create basic blocks
+    auto* normal_bb = llvm::BasicBlock::Create(llvm_ctx, "ctor_ok", current_func);
+    auto* lpad_bb = llvm::BasicBlock::Create(llvm_ctx, "ctor_lpad", current_func);
+
+    // Invoke the constructor
+    _builder->CreateInvoke(ctor_func, normal_bb, lpad_bb, ctor_args);
+
+    // ── Landing pad: catch all exceptions ──
+    _builder->SetInsertPoint(lpad_bb);
+    auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
+    auto* lpad = _builder->CreateLandingPad(lpad_type, 1, "ctor_lpad_val");
+    lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty)); // catch-all
+
+    auto* exc_ptr = _builder->CreateExtractValue(lpad, 0, "ctor_exc_ptr");
+
+    // Load the typeinfo chain of the thrown exception
+    auto* ti_chain_global = mod.getNamedGlobal("_k_thrown_typeinfo_chain");
+    if (!ti_chain_global) {
+        ti_chain_global = new llvm::GlobalVariable(
+            mod, ptr_ty, /*isConstant=*/false,
+            llvm::GlobalValue::ExternalLinkage,
+            llvm::ConstantPointerNull::get(ptr_ty),
+            "_k_thrown_typeinfo_chain");
+    }
+    auto* thrown_chain_ptr = _builder->CreateLoad(ptr_ty, ti_chain_global, "thrown_chain");
+
+    // Get or create the FatalError typeinfo global
+    k::name fatal_error_name(false, {"k", "FatalError"});
+    std::string fatal_ti_name = mangler::mangle_rtti(fatal_error_name);
+    auto* fatal_ti_gv = mod.getNamedGlobal(fatal_ti_name);
+    if (!fatal_ti_gv) {
+        fatal_ti_gv = new llvm::GlobalVariable(
+            mod, ptr_ty, /*isConstant=*/true,
+            llvm::GlobalValue::LinkOnceODRLinkage,
+            llvm::ConstantPointerNull::get(ptr_ty),
+            fatal_ti_name);
+    }
+
+    // Walk the typeinfo chain: if any entry matches FatalError → resume
+    // Chain entry struct: { ptr typeinfo, i32 offset }
+    auto* chain_entry_ty = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
+
+    auto* loop_bb = llvm::BasicBlock::Create(llvm_ctx, "fatal_check_loop", current_func);
+    auto* is_fatal_bb = llvm::BasicBlock::Create(llvm_ctx, "is_fatal", current_func);
+    auto* not_fatal_bb = llvm::BasicBlock::Create(llvm_ctx, "not_fatal", current_func);
+
+    _builder->CreateBr(loop_bb);
+    _builder->SetInsertPoint(loop_bb);
+
+    // PHI for current chain pointer
+    auto* phi_ptr = _builder->CreatePHI(ptr_ty, 2, "chain_ptr");
+    phi_ptr->addIncoming(thrown_chain_ptr, lpad_bb);
+
+    // Load typeinfo field (index 0)
+    auto* ti_field_ptr = _builder->CreateStructGEP(chain_entry_ty, phi_ptr, 0, "entry_ti_ptr");
+    auto* entry_ti = _builder->CreateLoad(ptr_ty, ti_field_ptr, "chain_entry_ti");
+
+    // Check if null (end of chain → not a FatalError)
+    auto* is_null = _builder->CreateICmpEQ(entry_ti,
+        llvm::ConstantPointerNull::get(ptr_ty), "chain_end");
+    auto* check_fatal_bb = llvm::BasicBlock::Create(llvm_ctx, "check_fatal", current_func);
+    _builder->CreateCondBr(is_null, not_fatal_bb, check_fatal_bb);
+
+    // Compare with FatalError typeinfo
+    _builder->SetInsertPoint(check_fatal_bb);
+    auto* is_fatal = _builder->CreateICmpEQ(entry_ti, fatal_ti_gv, "is_fatal_match");
+    auto* next_bb = llvm::BasicBlock::Create(llvm_ctx, "chain_next", current_func);
+    _builder->CreateCondBr(is_fatal, is_fatal_bb, next_bb);
+
+    // Advance to next entry
+    _builder->SetInsertPoint(next_bb);
+    auto* next_entry = _builder->CreateGEP(chain_entry_ty, phi_ptr,
+        {llvm::ConstantInt::get(i32_ty, 1)}, "next_entry");
+    phi_ptr->addIncoming(next_entry, next_bb);
+    _builder->CreateBr(loop_bb);
+
+    // ── is_fatal: resume unwinding (let FatalError propagate) ──
+    _builder->SetInsertPoint(is_fatal_bb);
+    auto* resume_val = llvm::UndefValue::get(lpad_type);
+    auto* resume_val2 = _builder->CreateInsertValue(resume_val, exc_ptr, 0);
+    auto* resume_val3 = _builder->CreateInsertValue(resume_val2,
+        llvm::ConstantInt::get(i32_ty, 0), 1);
+    _builder->CreateResume(resume_val3);
+
+    // ── not_fatal: throw ConstructionException ──
+    _builder->SetInsertPoint(not_fatal_bb);
+
+    // End the current catch (release the caught exception)
+    auto cxa_end = mod.getOrInsertFunction("__cxa_end_catch",
+        llvm::FunctionType::get(void_ty, false));
+    _builder->CreateCall(cxa_end);
+
+    // Get ConstructionException type info
+    k::name ce_name(false, {"k", "ConstructionException"});
+    std::string ce_ti_name = mangler::mangle_rtti(ce_name);
+    auto* ce_ti_gv = mod.getNamedGlobal(ce_ti_name);
+    if (!ce_ti_gv) {
+        ce_ti_gv = new llvm::GlobalVariable(
+            mod, ptr_ty, /*isConstant=*/true,
+            llvm::GlobalValue::LinkOnceODRLinkage,
+            llvm::ConstantPointerNull::get(ptr_ty),
+            ce_ti_name);
+    }
+
+    // Find ConstructionException in the model to get its LLVM type and constructor
+    std::shared_ptr<aggregate> ce_agg;
+    // Look up in the unit's namespace tree
+    auto root_ns = _unit.get_root_namespace();
+    if (root_ns) {
+        // Check if ConstructionException is in the k namespace
+        auto k_ns = root_ns->get_child_namespace("k");
+        if (k_ns) {
+            ce_agg = k_ns->get_aggregate("ConstructionException");
+        }
+        if (!ce_agg) {
+            ce_agg = root_ns->get_aggregate("ConstructionException");
+        }
+    }
+    // Also check imported aggregates
+    if (!ce_agg) {
+        k::name ce_lookup(false, {"k", "ConstructionException"});
+        ce_agg = _unit.get_or_create_imported_aggregate(ce_lookup, _context);
+    }
+
+    // Determine ConstructionException struct size
+    llvm::Type* ce_llvm_type = nullptr;
+    uint64_t ce_size = 0;
+    if (ce_agg && ce_agg->get_struct_type()) {
+        ce_llvm_type = _context->get_llvm_type(ce_agg->get_struct_type());
+        if (ce_llvm_type) {
+            ce_size = mod.getDataLayout().getTypeAllocSize(ce_llvm_type);
+        }
+    }
+
+    if (ce_size == 0) {
+        // Fallback: use a reasonable size (Throwable has _code:int + vptr ~ 16 bytes)
+        ce_size = 16;
+    }
+
+    // Allocate exception memory
+    auto cxa_alloc = mod.getOrInsertFunction("__cxa_allocate_exception",
+        llvm::FunctionType::get(ptr_ty, {i64_ty}, false));
+    auto* ce_mem = _builder->CreateCall(cxa_alloc,
+        {llvm::ConstantInt::get(i64_ty, ce_size)}, "ce_mem");
+
+    // Construct ConstructionException: call its constructor with code=6
+    if (ce_agg) {
+        // Find the constructor that takes (int)
+        std::shared_ptr<constructor> ce_ctor;
+        for (auto& ctor : ce_agg->constructors()) {
+            if (ctor->is_deleted()) continue;
+            if (ctor->get_parameter_size() == 1) {
+                auto p_type = ctor->parameters()[0]->get_type();
+                if (auto pt = std::dynamic_pointer_cast<primitive_type>(p_type)) {
+                    if (pt->get_type() == primitive_type::INT) {
+                        ce_ctor = ctor;
+                        break;
+                    }
+                }
+            }
+        }
+        if (ce_ctor) {
+            auto ctor_it = _context->_functions.find(ce_ctor->shared_as<model::function>());
+            if (ctor_it != _context->_functions.end()) {
+                // Call ConstructionException(6)
+                _builder->CreateCall(ctor_it->second,
+                    {ce_mem, llvm::ConstantInt::get(i32_ty, 6)});
+            }
+        } else {
+            // Try default constructor
+            for (auto& ctor : ce_agg->constructors()) {
+                if (ctor->is_deleted()) continue;
+                if (ctor->get_parameter_size() == 0) {
+                    auto ctor_it = _context->_functions.find(ctor->shared_as<model::function>());
+                    if (ctor_it != _context->_functions.end()) {
+                        _builder->CreateCall(ctor_it->second, {ce_mem});
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // Build typeinfo chain for ConstructionException
+    // Chain: ConstructionException → Exception → Throwable → null
+    k::name exc_name(false, {"k", "Exception"});
+    k::name thr_name(false, {"k", "Throwable"});
+    std::string exc_ti_name = mangler::mangle_rtti(exc_name);
+    std::string thr_ti_name = mangler::mangle_rtti(thr_name);
+
+    auto* exc_ti_gv = mod.getNamedGlobal(exc_ti_name);
+    if (!exc_ti_gv) {
+        exc_ti_gv = new llvm::GlobalVariable(mod, ptr_ty, true,
+            llvm::GlobalValue::LinkOnceODRLinkage,
+            llvm::ConstantPointerNull::get(ptr_ty), exc_ti_name);
+    }
+    auto* thr_ti_gv = mod.getNamedGlobal(thr_ti_name);
+    if (!thr_ti_gv) {
+        thr_ti_gv = new llvm::GlobalVariable(mod, ptr_ty, true,
+            llvm::GlobalValue::LinkOnceODRLinkage,
+            llvm::ConstantPointerNull::get(ptr_ty), thr_ti_name);
+    }
+
+    // Build chain constant array: [CE, Exception, Throwable, null-terminator]
+    // Each entry is { ptr typeinfo, i32 offset }
+    // For linear single-inheritance, offsets are cumulative base sub-object offsets.
+    // We need the actual byte offsets. For a simple class hierarchy:
+    //   ConstructionException → Exception → Throwable
+    // The offsets depend on the struct layout. Compute them if possible.
+    uint32_t ce_to_exc_offset = 0;
+    uint32_t ce_to_thr_offset = 0;
+    if (ce_llvm_type && ce_llvm_type->isStructTy()) {
+        auto* ce_struct_ty = llvm::cast<llvm::StructType>(ce_llvm_type);
+        auto* sl = mod.getDataLayout().getStructLayout(ce_struct_ty);
+        // In K's layout, base sub-object is typically at field index 0 or 1
+        // For classes: field 0 = vptr, field 1 = base sub-object
+        // For structs: field 0 = base sub-object
+        unsigned num_elems = ce_struct_ty->getNumElements();
+        // Find the Exception base sub-object field
+        std::shared_ptr<aggregate> exc_agg;
+        if (root_ns) {
+            auto k_ns = root_ns->get_child_namespace("k");
+            if (k_ns) exc_agg = k_ns->get_aggregate("Exception");
+            if (!exc_agg) exc_agg = root_ns->get_aggregate("Exception");
+        }
+        if (!exc_agg) {
+            exc_agg = _unit.get_or_create_imported_aggregate(exc_name, _context);
+        }
+        llvm::Type* exc_llvm_type = exc_agg && exc_agg->get_struct_type()
+            ? _context->get_llvm_type(exc_agg->get_struct_type()) : nullptr;
+        if (exc_llvm_type) {
+            for (unsigned fi = 0; fi < num_elems; ++fi) {
+                if (ce_struct_ty->getElementType(fi) == exc_llvm_type) {
+                    ce_to_exc_offset = (uint32_t)sl->getElementOffset(fi);
+                    break;
+                }
+            }
+        }
+        // Find Throwable offset within Exception
+        if (exc_llvm_type && exc_llvm_type->isStructTy()) {
+            auto* exc_struct_ty = llvm::cast<llvm::StructType>(exc_llvm_type);
+            auto* exc_sl = mod.getDataLayout().getStructLayout(exc_struct_ty);
+            std::shared_ptr<aggregate> thr_agg;
+            if (root_ns) {
+                auto k_ns = root_ns->get_child_namespace("k");
+                if (k_ns) thr_agg = k_ns->get_aggregate("Throwable");
+                if (!thr_agg) thr_agg = root_ns->get_aggregate("Throwable");
+            }
+            if (!thr_agg) {
+                thr_agg = _unit.get_or_create_imported_aggregate(thr_name, _context);
+            }
+            llvm::Type* thr_llvm_type = thr_agg && thr_agg->get_struct_type()
+                ? _context->get_llvm_type(thr_agg->get_struct_type()) : nullptr;
+            if (thr_llvm_type) {
+                unsigned exc_num = exc_struct_ty->getNumElements();
+                for (unsigned fi = 0; fi < exc_num; ++fi) {
+                    if (exc_struct_ty->getElementType(fi) == thr_llvm_type) {
+                        ce_to_thr_offset = ce_to_exc_offset + (uint32_t)exc_sl->getElementOffset(fi);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Build chain entries
+    std::vector<llvm::Constant*> chain_entries;
+    chain_entries.push_back(llvm::ConstantStruct::get(chain_entry_ty,
+        {ce_ti_gv, llvm::ConstantInt::get(i32_ty, 0)}));
+    chain_entries.push_back(llvm::ConstantStruct::get(chain_entry_ty,
+        {exc_ti_gv, llvm::ConstantInt::get(i32_ty, ce_to_exc_offset)}));
+    chain_entries.push_back(llvm::ConstantStruct::get(chain_entry_ty,
+        {thr_ti_gv, llvm::ConstantInt::get(i32_ty, ce_to_thr_offset)}));
+    // Null terminator
+    chain_entries.push_back(llvm::ConstantStruct::get(chain_entry_ty,
+        {llvm::ConstantPointerNull::get(ptr_ty), llvm::ConstantInt::get(i32_ty, 0)}));
+
+    auto* chain_arr_ty = llvm::ArrayType::get(chain_entry_ty, chain_entries.size());
+    auto* chain_initializer = llvm::ConstantArray::get(chain_arr_ty, chain_entries);
+    std::string chain_global_name = ce_ti_name + "_chain";
+    auto* chain_arr_gv = mod.getNamedGlobal(chain_global_name);
+    if (!chain_arr_gv) {
+        chain_arr_gv = new llvm::GlobalVariable(
+            mod, chain_arr_ty, /*isConstant=*/true,
+            llvm::GlobalValue::LinkOnceODRLinkage,
+            chain_initializer, chain_global_name);
+    }
+
+    // Store typeinfo chain
+    auto* ti_chain_store = mod.getNamedGlobal("_k_thrown_typeinfo_chain");
+    if (!ti_chain_store) {
+        ti_chain_store = new llvm::GlobalVariable(
+            mod, ptr_ty, false, llvm::GlobalValue::ExternalLinkage,
+            llvm::ConstantPointerNull::get(ptr_ty), "_k_thrown_typeinfo_chain");
+    }
+    _builder->CreateStore(chain_arr_gv, ti_chain_store);
+
+    // Store primary typeinfo
+    auto* ti_global = mod.getNamedGlobal("_k_thrown_typeinfo");
+    if (!ti_global) {
+        ti_global = new llvm::GlobalVariable(
+            mod, ptr_ty, false, llvm::GlobalValue::ExternalLinkage,
+            llvm::ConstantPointerNull::get(ptr_ty), "_k_thrown_typeinfo");
+    }
+    _builder->CreateStore(ce_ti_gv, ti_global);
+
+    // __cxa_throw
+    auto cxa_throw = mod.getOrInsertFunction("__cxa_throw",
+        llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty, ptr_ty}, false));
+    auto* throw_call = _builder->CreateCall(cxa_throw,
+        {ce_mem, ce_ti_gv, llvm::ConstantPointerNull::get(ptr_ty)});
+    throw_call->setDoesNotReturn();
+    _builder->CreateUnreachable();
+
+    // ── Continue normal execution after successful construction ──
+    _builder->SetInsertPoint(normal_bb);
 }
 
 } // namespace k::model::gen
