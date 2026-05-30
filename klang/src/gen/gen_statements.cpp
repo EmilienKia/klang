@@ -440,6 +440,31 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
         } // end else (non-named-return expression handling)
     }
 
+    // Emit finally blocks for enclosing try-catch-finally scopes (innermost to outermost).
+    // If we are inside a catch body, also emit __cxa_end_catch() before the finally.
+    if (!_finally_stack.empty()) {
+        auto& mod = _context->module();
+        auto* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+        auto cxa_end_fn = mod.getOrInsertFunction("__cxa_end_catch",
+            llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {}, false));
+
+        // Copy the stack to iterate from top (innermost) to bottom (outermost)
+        std::stack<finally_context> tmp = _finally_stack;
+        std::vector<finally_context> finally_contexts;
+        while (!tmp.empty()) {
+            finally_contexts.push_back(tmp.top());
+            tmp.pop();
+        }
+        for (auto& ctx : finally_contexts) {
+            if (ctx.in_catch) {
+                _builder->CreateCall(cxa_end_fn);
+            }
+            if (ctx.finally_body) {
+                ctx.finally_body->accept(*this);
+            }
+        }
+    }
+
     // Step 2: Emit cleanup for all block-scoped variables (reverse order)
     // Emit destructor calls for all active scopes, from innermost to outermost.
     // We use a copy of the cleanup vars stack to iterate without modifying the live stack.
@@ -622,6 +647,28 @@ void implementation_generator::visit_break_statement(break_statement& stmt) {
         }
     }
 
+    // Emit finally blocks between the break and the loop boundary
+    size_t loop_finally_depth = _loop_finally_depth.top();
+    size_t current_finally_depth = _finally_stack.size();
+    if (current_finally_depth > loop_finally_depth) {
+        auto& mod = _context->module();
+        auto cxa_end_fn = mod.getOrInsertFunction("__cxa_end_catch",
+            llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {}, false));
+
+        std::stack<finally_context> tmp_finally = _finally_stack;
+        size_t count = current_finally_depth - loop_finally_depth;
+        for (size_t i = 0; i < count && !tmp_finally.empty(); ++i) {
+            auto ctx = tmp_finally.top();
+            tmp_finally.pop();
+            if (ctx.in_catch) {
+                _builder->CreateCall(cxa_end_fn);
+            }
+            if (ctx.finally_body) {
+                ctx.finally_body->accept(*this);
+            }
+        }
+    }
+
     // Branch to loop exit block
     _builder->CreateBr(_loop_exit_blocks.top());
 
@@ -695,6 +742,28 @@ void implementation_generator::visit_continue_statement(continue_statement& stmt
                     emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
                         alloca, own_type->get_owned_type(), "continue_owner");
                 }
+            }
+        }
+    }
+
+    // Emit finally blocks between the continue and the loop boundary
+    size_t loop_finally_depth_cont = _loop_finally_depth.top();
+    size_t current_finally_depth_cont = _finally_stack.size();
+    if (current_finally_depth_cont > loop_finally_depth_cont) {
+        auto& mod = _context->module();
+        auto cxa_end_fn = mod.getOrInsertFunction("__cxa_end_catch",
+            llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {}, false));
+
+        std::stack<finally_context> tmp_finally = _finally_stack;
+        size_t count = current_finally_depth_cont - loop_finally_depth_cont;
+        for (size_t i = 0; i < count && !tmp_finally.empty(); ++i) {
+            auto ctx = tmp_finally.top();
+            tmp_finally.pop();
+            if (ctx.in_catch) {
+                _builder->CreateCall(cxa_end_fn);
+            }
+            if (ctx.finally_body) {
+                ctx.finally_body->accept(*this);
             }
         }
     }
@@ -1222,14 +1291,6 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     // Push landing pad context so function calls within the try body use invoke
     _landing_pad_stack.push({lpad_bb, dispatch_bb, exc_ptr_alloca});
 
-    // Generate the try body
-    if (auto body = stmt.get_try_body()) {
-        body->accept(*this);
-    }
-
-    // Pop landing pad
-    _landing_pad_stack.pop();
-
     // Helper lambda: emit the finally body at the current insert point (inlined copy).
     auto finally_body = stmt.get_finally_body();
     auto emit_finally = [&]() {
@@ -1237,6 +1298,24 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
             finally_body->accept(*this);
         }
     };
+
+    // Push finally context so return/break/continue inside the try body emit the finally block
+    if (finally_body) {
+        _finally_stack.push({finally_body, false});
+    }
+
+    // Generate the try body
+    if (auto body = stmt.get_try_body()) {
+        body->accept(*this);
+    }
+
+    // Pop finally context for the try body
+    if (finally_body) {
+        _finally_stack.pop();
+    }
+
+    // Pop landing pad
+    _landing_pad_stack.pop();
 
     // If we reach end of try body normally, emit finally then branch to end
     if (!_builder->GetInsertBlock()->getTerminator()) {
@@ -1432,12 +1511,24 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         }
 
         // Generate catch body
+        // Push finally context (in_catch=true) so return/break/continue inside the catch
+        // body will emit __cxa_end_catch + finally before exiting.
+        if (finally_body) {
+            _finally_stack.push({finally_body, true});
+        }
+
         if (auto body = clauses[i]->get_body()) {
             body->accept(*this);
         }
 
-        // End catch
-        _builder->CreateCall(cxa_end);
+        if (finally_body) {
+            _finally_stack.pop();
+        }
+
+        // End catch (only on normal path — early exit paths handle this via _finally_stack)
+        if (!_builder->GetInsertBlock()->getTerminator()) {
+            _builder->CreateCall(cxa_end);
+        }
 
         // Emit finally body after catch handler, then branch to end
         if (!_builder->GetInsertBlock()->getTerminator()) {
@@ -2231,10 +2322,12 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
     _loop_exit_blocks.push(cont_block);
     _loop_continue_blocks.push(while_block);
     _loop_cleanup_depth.push(_cleanup_vars_stack.size());
+    _loop_finally_depth.push(_finally_stack.size());
 
     stmt.get_nested_stmt()->accept(*this);
 
     // Pop loop exit context
+    _loop_finally_depth.pop();
     _loop_cleanup_depth.pop();
     _loop_continue_blocks.pop();
     _loop_exit_blocks.pop();
@@ -2363,10 +2456,12 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     _loop_exit_blocks.push(cont_block);
     _loop_continue_blocks.push(step_block);
     _loop_cleanup_depth.push(_cleanup_vars_stack.size());
+    _loop_finally_depth.push(_finally_stack.size());
 
     stmt.get_nested_stmt()->accept(*this);
 
     // Pop loop context
+    _loop_finally_depth.pop();
     _loop_cleanup_depth.pop();
     _loop_continue_blocks.pop();
     _loop_exit_blocks.pop();

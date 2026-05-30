@@ -1765,10 +1765,21 @@ Rules:
   - The try body completes normally (no exception thrown).
   - An exception is thrown and caught by a matching catch clause.
   - An exception is thrown but not caught (propagated to outer handler).
+  - A `return`, `break`, or `continue` exits the try or catch body early.
 - The `finally` block does **not** suppress exceptions — after the finally block
   executes, uncaught exceptions continue propagating.
 - `try { } finally { }` without any catch clause is valid — the finally block
   runs on both normal completion and exception propagation.
+- **Early exit semantics**: when `return`, `break`, or `continue` appears inside
+  a try or catch body that has an associated finally block:
+  - All enclosing finally blocks (innermost to outermost) are emitted inline
+    before the control flow exit takes effect.
+  - If exiting from a catch body, `__cxa_end_catch()` is called before the
+    finally block executes.
+  - For `break`/`continue`, only finally blocks between the statement and the
+    enclosing loop boundary are emitted.
+  - For nested try-finally, all finally blocks are emitted in order (innermost
+    first).
 
 ### 27.4 Throws Clause
 

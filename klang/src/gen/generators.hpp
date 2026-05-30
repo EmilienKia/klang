@@ -248,6 +248,20 @@ protected:
      *  top().lpad_bb instead of using a plain call. */
     std::stack<eh_landing_context> _landing_pad_stack;
 
+    /** Context for a finally block that must be emitted on early exit (return/break/continue). */
+    struct finally_context {
+        std::shared_ptr<block> finally_body;  ///< The finally body block to emit
+        bool in_catch = false;                ///< Whether we are inside a catch body
+    };
+
+    /** Stack of finally contexts. When return/break/continue is encountered inside
+     *  a try-catch-finally body, all finally blocks from top to the relevant boundary
+     *  must be emitted before the exit. */
+    std::stack<finally_context> _finally_stack;
+
+    /** Stack: finally stack depth at each loop entry (for break/continue scoping). */
+    std::stack<size_t> _loop_finally_depth;
+
     /**
      * Emit a function call or invoke instruction depending on exception context.
      * When inside a try-catch (_landing_pad_stack non-empty), emits an invoke

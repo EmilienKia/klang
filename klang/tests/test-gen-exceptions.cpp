@@ -1854,3 +1854,244 @@ TEST_CASE("Exception: parser rejects try without catch or finally", "[gen][excep
     )", nullptr));
 }
 
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Finally Phase 2: return/break/continue inside try-catch-finally
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception: finally runs on return from try body", "[gen][exceptions][finally][finally-phase2]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_p2_1__;
+
+        private:
+        g_finally_ran : int = 0;
+
+        public:
+        get_finally_flag() : int {
+            return g_finally_ran;
+        }
+
+        test_return_from_try() : int {
+            g_finally_ran = 0;
+            try {
+                g_finally_ran = 100;
+                return 42;
+            } finally {
+                g_finally_ran = g_finally_ran + 1;
+            }
+            return -1;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_return_from_try");
+    auto get_flag = jit->lookup_symbol<int(*)()>("get_finally_flag");
+    REQUIRE(fn != nullptr);
+    REQUIRE(get_flag != nullptr);
+    REQUIRE(fn() == 42);
+    REQUIRE(get_flag() == 101);
+}
+
+TEST_CASE("Exception: finally runs on return from catch body", "[gen][exceptions][finally][finally-phase2]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_p2_2__;
+
+        class ErrP2 : public Exception {
+            public:
+            ErrP2() : Exception(500) { }
+        }
+
+        thrower_p2() : void throws ErrP2 {
+            throw ErrP2();
+        }
+
+        private:
+        g_finally_ran2 : int = 0;
+
+        public:
+        get_finally_flag2() : int {
+            return g_finally_ran2;
+        }
+
+        test_return_from_catch() : int {
+            g_finally_ran2 = 0;
+            try {
+                thrower_p2();
+            } catch (e: ErrP2&) {
+                g_finally_ran2 = 200;
+                return 99;
+            } finally {
+                g_finally_ran2 = g_finally_ran2 + 1;
+            }
+            return -1;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_return_from_catch");
+    auto get_flag = jit->lookup_symbol<int(*)()>("get_finally_flag2");
+    REQUIRE(fn != nullptr);
+    REQUIRE(get_flag != nullptr);
+    REQUIRE(fn() == 99);
+    REQUIRE(get_flag() == 201);
+}
+
+TEST_CASE("Exception: finally runs on break from try body in loop", "[gen][exceptions][finally][finally-phase2]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_p2_3__;
+
+        test_break_in_try() : int {
+            result : int = 0;
+            i : int = 0;
+            while (i < 10) {
+                try {
+                    result = result + 1;
+                    if (i == 3) {
+                        break;
+                    }
+                } finally {
+                    result = result + 100;
+                }
+                i = i + 1;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_break_in_try");
+    REQUIRE(fn != nullptr);
+    // Iterations: i=0: +1+100, i=1: +1+100, i=2: +1+100, i=3: +1+100(break)
+    // = 4 + 400 = 404
+    REQUIRE(fn() == 404);
+}
+
+TEST_CASE("Exception: finally runs on continue from try body in loop", "[gen][exceptions][finally][finally-phase2]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_p2_4__;
+
+        test_continue_in_try() : int {
+            result : int = 0;
+            i : int = 0;
+            while (i < 5) {
+                i = i + 1;
+                try {
+                    if (i == 3) {
+                        continue;
+                    }
+                    result = result + 1;
+                } finally {
+                    result = result + 10;
+                }
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_continue_in_try");
+    REQUIRE(fn != nullptr);
+    // i=1: +1+10, i=2: +1+10, i=3: continue(+10), i=4: +1+10, i=5: +1+10
+    // = 4 + 50 = 54
+    REQUIRE(fn() == 54);
+}
+
+TEST_CASE("Exception: finally runs on break from catch body in loop", "[gen][exceptions][finally][finally-phase2]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_p2_5__;
+
+        class ErrLoop : public Exception {
+            public:
+            ErrLoop() : Exception(501) { }
+        }
+
+        thrower_loop() : void throws ErrLoop {
+            throw ErrLoop();
+        }
+
+        test_break_in_catch() : int {
+            result : int = 0;
+            i : int = 0;
+            while (i < 10) {
+                try {
+                    thrower_loop();
+                } catch (e: ErrLoop&) {
+                    result = result + 1;
+                    if (i == 2) {
+                        break;
+                    }
+                } finally {
+                    result = result + 100;
+                }
+                i = i + 1;
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_break_in_catch");
+    REQUIRE(fn != nullptr);
+    // i=0: catch(+1)+finally(+100), i=1: catch(+1)+finally(+100), i=2: catch(+1)+finally(+100)+break
+    // = 3 + 300 = 303
+    REQUIRE(fn() == 303);
+}
+
+TEST_CASE("Exception: nested finally on return", "[gen][exceptions][finally][finally-phase2]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_p2_6__;
+
+        private:
+        g_order : int = 0;
+
+        public:
+        get_order() : int {
+            return g_order;
+        }
+
+        test_nested_finally_return() : int {
+            g_order = 0;
+            try {
+                try {
+                    g_order = 1;
+                    return 77;
+                } finally {
+                    g_order = g_order * 10 + 2;
+                }
+            } finally {
+                g_order = g_order * 10 + 3;
+            }
+            return -1;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_nested_finally_return");
+    auto get_order_fn = jit->lookup_symbol<int(*)()>("get_order");
+    REQUIRE(fn != nullptr);
+    REQUIRE(get_order_fn != nullptr);
+    REQUIRE(fn() == 77);
+    // g_order: 1 -> inner finally: 1*10+2=12 -> outer finally: 12*10+3=123
+    REQUIRE(get_order_fn() == 123);
+}
+
+TEST_CASE("Exception: finally with continue in for loop", "[gen][exceptions][finally][finally-phase2]") {
+    auto jit = gen_jit(R"(
+        module __test_finally_p2_8__;
+
+        test_finally_continue_for() : int {
+            result : int = 0;
+            for (i : int = 0; i < 4; i = i + 1) {
+                try {
+                    if (i == 2) {
+                        continue;
+                    }
+                    result = result + i;
+                } finally {
+                    result = result + 100;
+                }
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_finally_continue_for");
+    REQUIRE(fn != nullptr);
+    // i=0: +0+100, i=1: +1+100, i=2: continue+100, i=3: +3+100
+    // = (0+1+3) + 400 = 404
+    REQUIRE(fn() == 404);
+}
