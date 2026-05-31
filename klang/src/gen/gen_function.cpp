@@ -1144,6 +1144,7 @@ void implementation_generator::visit_function(function &function) {
     }
 
     // Capture arguments — for sret functions, first LLVM arg is sret, so skip it
+    unsigned int debug_arg_index = 1;
     auto arg_it = func->arg_begin();
     if (use_sret) ++arg_it; // skip sret argument
     if (function.is_member() && !function.is_static()) {
@@ -1156,8 +1157,13 @@ void implementation_generator::visit_function(function &function) {
         _context->_parameter_variables.insert({function.get_this_parameter(), alloca});
         // Read "this" param value and store it in dedicated local var
         _builder->CreateStore(arg, alloca);
+        if (_debug_info && _current_debug_scope) {
+            if (auto this_param = function.get_this_parameter()) {
+                _debug_info->declare_parameter(*_builder, *this_param, alloca, debug_arg_index, _current_debug_scope);
+                ++debug_arg_index;
+            }
+        }
     }
-    unsigned int debug_arg_index = 1;
     for(const auto& param : function.parameters()) {
         // Iterate to get all explicit parameters
         llvm::Argument *arg = &*(arg_it++);

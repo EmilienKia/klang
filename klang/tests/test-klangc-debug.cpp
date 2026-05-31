@@ -288,3 +288,31 @@ flow(a: int) : int {
     REQUIRE(ir.find("!DILocation(line: 15,") != std::string::npos);
 }
 
+TEST_CASE("compiler: debug metadata declares implicit this parameter in member functions", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_this_param.k", R"(module debug_this_param;
+
+class Counter {
+    value: int;
+
+    add(delta: int) : int {
+        return delta;
+    }
+}
+)", false, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    INFO(ir);
+    REQUIRE(ir.find("!DILocalVariable(name: \"this\", arg: 1") != std::string::npos);
+    REQUIRE(ir.find("!DILocalVariable(name: \"delta\", arg: 2") != std::string::npos);
+}
+
