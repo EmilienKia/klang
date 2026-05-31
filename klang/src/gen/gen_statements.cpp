@@ -184,8 +184,9 @@ struct debug_scope_guard {
 // Expression temporaries cleanup
 //
 
-void implementation_generator::emit_expression_temporaries_cleanup() {
+void implementation_generator::emit_expression_temporaries_cleanup(const lex::opt_any_lexeme& anchor_lexeme) {
     if (_expression_temporaries.empty()) return;
+    set_debug_location(anchor_lexeme);
     // Destroy in reverse creation order
     for (auto it = _expression_temporaries.rbegin(); it != _expression_temporaries.rend(); ++it) {
         _builder->CreateCall(it->second, {it->first});
@@ -623,6 +624,7 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
 
     auto func = stmt.get_block()->get_function();
     auto named_ret_var = func ? func->get_named_return_var() : nullptr;
+    auto return_lexeme = get_statement_debug_lexeme(stmt);
 
     // Evaluate the return expression first (before any destructor calls)
     llvm::Value* ret_value = nullptr;
@@ -661,7 +663,7 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
             }
 
             // Destroy any struct temporaries created during the expression evaluation
-            emit_expression_temporaries_cleanup();
+            emit_expression_temporaries_cleanup(return_lexeme);
 
             // Fall through to scope cleanup and return
             ret_value = nullptr; // don't use ret_value for the ret instruction
@@ -730,15 +732,14 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
 
         // Step 1: Evaluate the return expression (if any)
         // Destroy any struct temporaries created during the return expression evaluation
-        emit_expression_temporaries_cleanup();
+        emit_expression_temporaries_cleanup(return_lexeme);
         } // end else (non-named-return expression handling)
     }
 
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    set_debug_location(return_lexeme);
 
     // Emit finally blocks for enclosing try-catch-finally scopes (innermost to outermost).
     // If we are inside a catch body, also emit __cxa_end_catch() before the finally.
-    auto return_lexeme = get_statement_debug_lexeme(stmt);
     if (!_finally_stack.empty()) {
         auto& mod = _context->module();
         auto cxa_end_fn = mod.getOrInsertFunction("__cxa_end_catch",
@@ -2672,7 +2673,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         auto test_value = _value;
         _value = nullptr;
 
-        emit_expression_temporaries_cleanup();
+        emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
         if(has_else) {
             _builder->CreateCondBr(test_value, then_block, else_block);
@@ -2712,7 +2713,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
             auto* test_value = _builder->CreateICmpNE(loaded,
                 llvm::ConstantPointerNull::get(ptr_ty), "if_cond_ne_null");
 
-            emit_expression_temporaries_cleanup();
+            emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
             if(has_else) {
                 _builder->CreateCondBr(test_value, then_block, else_block);
@@ -2759,7 +2760,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                 test_value = _builder->getTrue();
             }
 
-            emit_expression_temporaries_cleanup();
+            emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
             if(has_else) {
                 _builder->CreateCondBr(test_value, then_block, else_block);
@@ -2782,7 +2783,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         _null_failure_bb = saved_null_failure_bb;
         _union_failure_bb = saved_union_failure_bb;
 
-        emit_expression_temporaries_cleanup();
+        emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
         if(has_else) {
             _builder->CreateCondBr(test_value, then_block, else_block);
@@ -2902,7 +2903,7 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
 
     // Step 2: Evaluate condition, branch to body or after
     // Destroy any struct temporaries created during condition evaluation
-    emit_expression_temporaries_cleanup();
+    emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
     // Step 3: Visit body block, branch back to cond
     // Do branching
@@ -3044,7 +3045,7 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
         _value = nullptr;
 
         // Destroy any struct temporaries created during condition evaluation
-        emit_expression_temporaries_cleanup();
+        emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
         // Do branching
         set_debug_location(get_statement_debug_lexeme(stmt));
@@ -3097,7 +3098,7 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
         _value = nullptr;
 
         // Destroy any struct temporaries created during step evaluation
-        emit_expression_temporaries_cleanup();
+        emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
     }
 
     // Go back to test
@@ -3166,7 +3167,7 @@ void implementation_generator::visit_expression_statement(expression_statement& 
         }
 
         // Destroy any struct temporaries created during expression evaluation
-        emit_expression_temporaries_cleanup();
+        emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
     }
 }
 
@@ -3380,7 +3381,7 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
 
     // Destroy any struct temporaries created during the init expression evaluation
     // Step 7: Emit expression temporaries cleanup
-    emit_expression_temporaries_cleanup();
+    emit_expression_temporaries_cleanup(var_lexeme);
 
 }
 

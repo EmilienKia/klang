@@ -581,7 +581,7 @@ public:
      * creation order, then clear the list.  Must be called at full-expression
      * boundaries (end of expression_statement, variable_statement init, etc.).
      */
-    void emit_expression_temporaries_cleanup();
+    void emit_expression_temporaries_cleanup(const lex::opt_any_lexeme& anchor_lexeme = std::nullopt);
 
     /**
      * Emit cleanup (destructor / owner free) for a single condition variable.
