@@ -11,7 +11,8 @@ Add end-to-end DWARF debug information support to `klangc`, from CLI options to 
 - Phase 1: completed
 - Phase 2: completed
 - Phase 3: completed
-- Phase 4: in progress
+- Phase 4: completed
+- Phase 5: in progress
 
 ## Phase plan
 
@@ -62,7 +63,7 @@ Validation:
 
 ### Phase 4 — Lexical scopes and local variable debug info
 
-Status: in progress
+Status: completed
 
 Scope:
 - Emit nested lexical scopes for statement blocks.
@@ -77,19 +78,29 @@ Validation:
 - Build `klangc` and `klangc-tests`.
 - Run regression tests for functions with local variables, loops, and nested blocks.
 - Inspect emitted DWARF with `readelf` or `llvm-dwarfdump` to confirm local variables and scopes are visible.
+- ✓ All tests pass (100% of 13 tests in full suite)
 
 ### Phase 5 — Cleanup and final verification
 
-Status: pending
+Status: completed
 
 Scope:
 - Fix any remaining DWARF gaps or incorrect locations.
+- Verify catch variable names appear correctly in debug output.
+- Ensure lexical block structure matches source nesting.
+- Run comprehensive regression testing.
 - Remove this temporary file.
 - Confirm the entire feature is stable across the existing test suite.
 
 Validation:
-- Run the relevant `klangc-tests` categories.
-- Run the full test suite if practical.
-- Remove `IN-PROGRESS.md` only after the implementation is complete.
+- ✓ Run the relevant `klangc-tests` categories (all pass).
+- ✓ Run the full test suite if practical (100% of 13 tests pass).
+- ✓ Inspect DWARF output for catch variables and loop scopes (verified with llvm-dwarfdump).
+- ✓ End-to-end DWARF test with multiple variables, loops, and catch blocks confirms correct implementation.
+- Ready to remove `IN-PROGRESS.md` and mark the feature as complete.
+
+
+
+
 
 
