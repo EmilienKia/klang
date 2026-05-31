@@ -18,6 +18,8 @@
 
 #include <catch2/catch_all.hpp>
 
+#include <llvm/Support/raw_ostream.h>
+
 #include <filesystem>
 #include <fstream>
 #include <unistd.h>
@@ -95,5 +97,38 @@ TEST_CASE("klangc: --dyn-lib -g emits DWARF sections in shared library", "[klang
 
     std::filesystem::remove(so_path);
     std::filesystem::remove(k_path);
+}
+
+TEST_CASE("compiler: debug metadata contains parameters, locals and lexical blocks", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_ir_test.k", R"(
+        module debug_ir_test;
+
+        compute(a: int) : int {
+            result: int = a;
+            if (a > 0) {
+                inner: int = result + 1;
+                result = inner;
+            }
+            return result;
+        }
+    )", true, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    INFO(ir);
+    REQUIRE(ir.find("llvm.dbg.declare") != std::string::npos);
+    REQUIRE(ir.find("!DILocalVariable(name: \"a\", arg: 1") != std::string::npos);
+    REQUIRE(ir.find("!DILocalVariable(name: \"result\"") != std::string::npos);
+    REQUIRE(ir.find("!DILocalVariable(name: \"inner\"") != std::string::npos);
+    REQUIRE(ir.find("!DILexicalBlock(") != std::string::npos);
 }
 

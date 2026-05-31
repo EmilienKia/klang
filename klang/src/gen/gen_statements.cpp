@@ -88,6 +88,61 @@ static std::shared_ptr<union_type_def> find_union_for_struct_type(
     return find_union_by_struct_type(root_ns, st);
 }
 
+static lex::opt_any_lexeme get_statement_debug_lexeme(const statement& stmt)
+{
+    if (auto var_stmt = dynamic_cast<const variable_statement*>(&stmt)) {
+        if (auto ast_var = var_stmt->get_ast_variable_decl()) {
+            return lex::any_lexeme{ast_var->name};
+        }
+    }
+    if (auto ret_stmt = dynamic_cast<const return_statement*>(&stmt)) {
+        if (auto ast_ret = ret_stmt->get_ast_return_statement()) {
+            return lex::any_lexeme{ast_ret->ret};
+        }
+    }
+    if (auto break_stmt = dynamic_cast<const break_statement*>(&stmt)) {
+        if (auto ast_break = break_stmt->get_ast_break_statement()) {
+            return lex::any_lexeme{ast_break->break_kw};
+        }
+    }
+    if (auto continue_stmt = dynamic_cast<const continue_statement*>(&stmt)) {
+        if (auto ast_continue = continue_stmt->get_ast_continue_statement()) {
+            return lex::any_lexeme{ast_continue->continue_kw};
+        }
+    }
+    if (auto expr_stmt = dynamic_cast<const expression_statement*>(&stmt)) {
+        if (auto expr = expr_stmt->get_expression()) {
+            return expr->first_lexeme();
+        }
+    }
+    if (auto throw_stmt = dynamic_cast<const throw_statement*>(&stmt)) {
+        if (auto ast_throw = throw_stmt->get_ast_node_as<k::parse::ast::throw_statement>()) {
+            return lex::any_lexeme{ast_throw->throw_kw};
+        }
+    }
+    if (auto if_stmt = dynamic_cast<const if_else_statement*>(&stmt)) {
+        if (auto ast_if = if_stmt->get_ast_if_else_stmt()) {
+            return lex::any_lexeme{ast_if->if_kw};
+        }
+    }
+    if (auto while_stmt = dynamic_cast<const while_statement*>(&stmt)) {
+        if (auto ast_while = while_stmt->get_ast_while_stmt()) {
+            return lex::any_lexeme{ast_while->while_kw};
+        }
+    }
+    if (auto for_stmt = dynamic_cast<const for_statement*>(&stmt)) {
+        if (auto ast_for = for_stmt->get_ast_for_stmt()) {
+            return lex::any_lexeme{ast_for->for_kw};
+        }
+    }
+    if (auto nested_block = dynamic_cast<const block*>(&stmt)) {
+        if (!nested_block->get_statements().empty()) {
+            return get_statement_debug_lexeme(*nested_block->get_statements().front());
+        }
+    }
+    return std::nullopt;
+}
+
 //
 // Expression temporaries cleanup
 //
@@ -159,6 +214,16 @@ void declaration_generator::visit_block(block& block) {
  *   6. Pop cleanup stacks.
  */
 void implementation_generator::visit_block(block& blk) {
+    llvm::DIScope* previous_debug_scope = _current_debug_scope;
+    llvm::DebugLoc previous_debug_loc = _builder->getCurrentDebugLocation();
+    if (_debug_info && _current_debug_scope && !blk.get_direct_function() && !blk.get_statements().empty()) {
+        auto block_lexeme = get_statement_debug_lexeme(*blk.get_statements().front());
+        _current_debug_scope = _debug_info->create_lexical_block(
+            _current_debug_scope,
+            block_lexeme);
+        _debug_info->set_current_debug_location(*_builder, block_lexeme, _current_debug_scope);
+    }
+
     // Look at static/global var definitions
     for (auto var_entry : blk.variables()) {
         if (auto global_var = std::dynamic_pointer_cast<global_variable_definition>(var_entry.second)) {
@@ -441,6 +506,9 @@ void implementation_generator::visit_block(block& blk) {
         func->insert(func->end(), continue_block);
         _builder->SetInsertPoint(continue_block);
     }
+
+    _current_debug_scope = previous_debug_scope;
+    _builder->SetCurrentDebugLocation(previous_debug_loc);
 }
 
 //
@@ -3075,6 +3143,12 @@ void declaration_generator::visit_variable_statement(variable_statement& stmt) {
  *   8. Track variable for block-scoped cleanup.
  */
 void implementation_generator::visit_variable_statement(variable_statement& var) {
+    lex::opt_any_lexeme var_lexeme;
+    if (auto ast_decl = var.get_ast_variable_decl()) {
+        var_lexeme = lex::any_lexeme{ast_decl->name};
+    }
+    set_debug_location(var_lexeme);
+
     // Create the alloca at beginning of the function ...
     auto var_func = var.get_function();
     auto func = _context->_functions[var_func];
@@ -3182,10 +3256,6 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
                 sized_arr->get_size(), false),
             size_ptr);
     } else {
-        lex::opt_any_lexeme var_lexeme;
-        if (auto ast_decl = var.get_ast_variable_decl()) {
-            var_lexeme = lex::any_lexeme{ast_decl->name};
-        }
         throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_LOCAL_VAR_TYPE_UNRESOLVED), var_lexeme,
             "Variable '{}' has no initialisation expression; "
             "all variable declarations must have an initialiser (uninitialized variables are not yet supported)",
@@ -3193,6 +3263,10 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     }
 
     // Step 3: Evaluate init expression (if any)
+    if (_debug_info && _current_debug_scope) {
+        _debug_info->declare_local_variable(*_builder, var, alloca, _current_debug_scope);
+    }
+
     // Destroy any struct temporaries created during the init expression evaluation
     // Step 7: Emit expression temporaries cleanup
     emit_expression_temporaries_cleanup();

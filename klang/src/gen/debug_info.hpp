@@ -51,6 +51,7 @@ protected:
     llvm::DIFile* _fallback_file = nullptr;
 
     std::unordered_map<std::string, llvm::DIFile*> _files;
+    std::unordered_map<const type*, llvm::DIType*> _types;
 
 public:
     debug_info_emitter(k::compiler& compiler, std::shared_ptr<context> context)
@@ -62,12 +63,30 @@ public:
     void finalize();
 
     llvm::DIFile* get_or_create_file(const std::string& path);
+    llvm::DIType* get_or_create_type(const std::shared_ptr<type>& type_info);
 
     /**
      * Create and attach function debug scope metadata to an LLVM function.
      * Returns the created scope or nullptr when debug is disabled.
      */
     llvm::DIScope* attach_function_debug_scope(function& fn, llvm::Function* llvm_fn);
+
+    /** Create a nested lexical scope for a statement block. */
+    llvm::DIScope* create_lexical_block(llvm::DIScope* parent_scope,
+                                        const lex::opt_any_lexeme& lexeme);
+
+    /** Emit debug metadata for a function parameter stored in local storage. */
+    void declare_parameter(llvm::IRBuilder<>& builder,
+                           parameter& param,
+                           llvm::Value* storage,
+                           unsigned int arg_index,
+                           llvm::DIScope* scope);
+
+    /** Emit debug metadata for a local variable stored in local storage. */
+    void declare_local_variable(llvm::IRBuilder<>& builder,
+                                variable_statement& var,
+                                llvm::Value* storage,
+                                llvm::DIScope* scope);
 
     /** Set current IRBuilder debug location from a lexical token. */
     void set_current_debug_location(llvm::IRBuilder<>& builder,
@@ -78,5 +97,6 @@ public:
 } // namespace k::model::gen
 
 #endif // KLANG_GEN_DEBUG_INFO_HPP
+
 
 

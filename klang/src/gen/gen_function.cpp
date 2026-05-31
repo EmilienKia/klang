@@ -1157,6 +1157,7 @@ void implementation_generator::visit_function(function &function) {
         // Read "this" param value and store it in dedicated local var
         _builder->CreateStore(arg, alloca);
     }
+    unsigned int debug_arg_index = 1;
     for(const auto& param : function.parameters()) {
         // Iterate to get all explicit parameters
         llvm::Argument *arg = &*(arg_it++);
@@ -1166,6 +1167,10 @@ void implementation_generator::visit_function(function &function) {
         _context->_parameter_variables.insert({param, alloca});
         // Read param value and store it in dedicated local var
         _builder->CreateStore(arg, alloca);
+        if (_debug_info && _current_debug_scope) {
+            _debug_info->declare_parameter(*_builder, *param, alloca, debug_arg_index, _current_debug_scope);
+        }
+        ++debug_arg_index;
     }
 
     // Step 5: Allocate parameters and store incoming values
