@@ -1082,6 +1082,7 @@ void implementation_generator::visit_continue_statement(continue_statement& stmt
     }
 
     // Branch to loop continue block
+    set_debug_location(continue_lexeme);
     _builder->CreateBr(_loop_continue_blocks.top());
 
     // Create unreachable basic block for any code following the continue
@@ -2904,7 +2905,8 @@ void declaration_generator::visit_while_statement(while_statement& stmt) {
  *   4. Set insertion point to after block.
  */
 void implementation_generator::visit_while_statement(while_statement& stmt) {
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    auto while_lexeme = get_statement_debug_lexeme(stmt);
+    set_debug_location(while_lexeme);
 
     // Step 1: Create cond/body/after basic blocks
     // Retrieve current block and create nested and continue blocks
@@ -2914,6 +2916,7 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
     llvm::BasicBlock* cont_block = llvm::BasicBlock::Create(**_context, "while-continue");
 
     // While test block
+    set_debug_location(while_lexeme);
     _builder->CreateBr(while_block);
     func->insert(func->end(), while_block);
     _builder->SetInsertPoint(while_block);
@@ -2930,7 +2933,7 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
 
     // Step 3: Visit body block, branch back to cond
     // Do branching
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    set_debug_location(while_lexeme);
     _builder->CreateCondBr(test_value, nested_block, cont_block);
 
     // Step 4: Set insertion point to after block
@@ -2961,7 +2964,7 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
     _loop_exit_blocks.pop();
 
     // Go back to test
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    set_debug_location(while_lexeme);
     _builder->CreateBr(while_block);
 
     // Generate "continuation" block
@@ -3040,7 +3043,8 @@ void declaration_generator::visit_for_statement(for_statement& stmt) {
  *   6. Set insertion point to after block.
  */
 void implementation_generator::visit_for_statement(for_statement& stmt) {
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    auto for_lexeme = get_statement_debug_lexeme(stmt);
+    set_debug_location(for_lexeme);
 
     // Step 1: Visit init statement/expression
     // Retrieve current block and create nested and continue blocks
@@ -3056,6 +3060,7 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     }
 
     // If test block
+    set_debug_location(for_lexeme);
     _builder->CreateBr(for_block);
     func->insert(func->end(), for_block);
     _builder->SetInsertPoint(for_block);
@@ -3071,10 +3076,10 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
         emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
         // Do branching
-        set_debug_location(get_statement_debug_lexeme(stmt));
+        set_debug_location(for_lexeme);
         _builder->CreateCondBr(test_value, nested_block, cont_block);
     } else {
-        set_debug_location(get_statement_debug_lexeme(stmt));
+        set_debug_location(for_lexeme);
         _builder->CreateBr(nested_block);
     }
 
@@ -3107,7 +3112,7 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     _loop_exit_blocks.pop();
 
     // Fall through to step block
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    set_debug_location(for_lexeme);
     _builder->CreateBr(step_block);
 
     // Step block
@@ -3125,7 +3130,7 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     }
 
     // Go back to test
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    set_debug_location(for_lexeme);
     _builder->CreateBr(for_block);
 
     // Generate "continuation" block

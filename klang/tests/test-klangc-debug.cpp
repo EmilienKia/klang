@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 #include <unistd.h>
 
 #include "helpers.hpp"
@@ -841,5 +842,172 @@ branch(a: int) : int {
     INFO(ir);
     REQUIRE(std::find(merge_branch_lines.begin(), merge_branch_lines.end(), 5) != merge_branch_lines.end());
     REQUIRE(std::find(merge_branch_lines.begin(), merge_branch_lines.end(), 9) != merge_branch_lines.end());
+}
+
+TEST_CASE("compiler: debug metadata anchors multiline while branches on while keyword line", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_while_branch_lines.k", R"(module debug_while_branch_lines;
+
+loop(a: int) : int {
+    while (
+        a > 0
+    ) {
+        a = a - 1;
+    }
+    return a;
+}
+)", false, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    auto extract_dbg_line_at = [&](size_t inst_pos) -> int {
+        const auto dbg_pos = ir.find("!dbg !", inst_pos);
+        if (dbg_pos == std::string::npos) return -1;
+        const auto id_start = dbg_pos + 6;
+        const auto id_end = ir.find_first_not_of("0123456789", id_start);
+        if (id_end == std::string::npos || id_end == id_start) return -1;
+        const auto id = ir.substr(id_start, id_end - id_start);
+        const auto meta_pos = ir.find("!" + id + " = !DILocation(line: ");
+        if (meta_pos == std::string::npos) return -1;
+        const auto line_start = meta_pos + std::string("!" + id + " = !DILocation(line: ").size();
+        const auto line_end = ir.find_first_not_of("0123456789", line_start);
+        if (line_end == std::string::npos || line_end == line_start) return -1;
+        return std::stoi(ir.substr(line_start, line_end - line_start));
+    };
+
+    std::vector<int> while_cond_lines;
+    const std::string while_cond_branch_text = "label %while-nested, label %while-continue";
+    for (size_t pos = ir.find(while_cond_branch_text); pos != std::string::npos; pos = ir.find(while_cond_branch_text, pos + 1)) {
+        while_cond_lines.push_back(extract_dbg_line_at(pos));
+    }
+
+    INFO(ir);
+    REQUIRE(std::find(while_cond_lines.begin(), while_cond_lines.end(), 4) != while_cond_lines.end());
+}
+
+TEST_CASE("compiler: debug metadata anchors multiline for branches on for keyword line", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_for_branch_lines.k", R"(module debug_for_branch_lines;
+
+loop(n: int) : int {
+    total: int = 0;
+    for (
+        i: int = 0;
+        i < n;
+        i += 1
+    ) {
+        total = total + i;
+    }
+    return total;
+}
+)", false, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    auto extract_dbg_line_at = [&](size_t inst_pos) -> int {
+        const auto dbg_pos = ir.find("!dbg !", inst_pos);
+        if (dbg_pos == std::string::npos) return -1;
+        const auto id_start = dbg_pos + 6;
+        const auto id_end = ir.find_first_not_of("0123456789", id_start);
+        if (id_end == std::string::npos || id_end == id_start) return -1;
+        const auto id = ir.substr(id_start, id_end - id_start);
+        const auto meta_pos = ir.find("!" + id + " = !DILocation(line: ");
+        if (meta_pos == std::string::npos) return -1;
+        const auto line_start = meta_pos + std::string("!" + id + " = !DILocation(line: ").size();
+        const auto line_end = ir.find_first_not_of("0123456789", line_start);
+        if (line_end == std::string::npos || line_end == line_start) return -1;
+        return std::stoi(ir.substr(line_start, line_end - line_start));
+    };
+
+    std::vector<int> for_cond_lines;
+    const std::string for_cond_branch_text = "label %for-nested, label %for-continue";
+    for (size_t pos = ir.find(for_cond_branch_text); pos != std::string::npos; pos = ir.find(for_cond_branch_text, pos + 1)) {
+        for_cond_lines.push_back(extract_dbg_line_at(pos));
+    }
+
+    std::vector<int> for_back_edge_lines;
+    const std::string for_back_edge_text = "br label %for-condition";
+    for (size_t pos = ir.find(for_back_edge_text); pos != std::string::npos; pos = ir.find(for_back_edge_text, pos + 1)) {
+        for_back_edge_lines.push_back(extract_dbg_line_at(pos));
+    }
+
+    INFO(ir);
+    REQUIRE(std::find(for_cond_lines.begin(), for_cond_lines.end(), 5) != for_cond_lines.end());
+    REQUIRE(std::find(for_back_edge_lines.begin(), for_back_edge_lines.end(), 5) != for_back_edge_lines.end());
+}
+
+TEST_CASE("compiler: debug metadata anchors while/for continue branches on continue lines", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_continue_branch_lines.k", R"(module debug_continue_branch_lines;
+
+run(a: int, n: int) : int {
+    while (a > 0) {
+        continue;
+    }
+
+    for (i: int = 0; i < n; i += 1) {
+        continue;
+    }
+
+    return 0;
+}
+)", false, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    auto extract_dbg_line_at = [&](size_t inst_pos) -> int {
+        const auto dbg_pos = ir.find("!dbg !", inst_pos);
+        if (dbg_pos == std::string::npos) return -1;
+        const auto id_start = dbg_pos + 6;
+        const auto id_end = ir.find_first_not_of("0123456789", id_start);
+        if (id_end == std::string::npos || id_end == id_start) return -1;
+        const auto id = ir.substr(id_start, id_end - id_start);
+        const auto meta_pos = ir.find("!" + id + " = !DILocation(line: ");
+        if (meta_pos == std::string::npos) return -1;
+        const auto line_start = meta_pos + std::string("!" + id + " = !DILocation(line: ").size();
+        const auto line_end = ir.find_first_not_of("0123456789", line_start);
+        if (line_end == std::string::npos || line_end == line_start) return -1;
+        return std::stoi(ir.substr(line_start, line_end - line_start));
+    };
+
+    std::vector<int> while_continue_branch_lines;
+    const std::string while_continue_text = "br label %while-condition";
+    for (size_t pos = ir.find(while_continue_text); pos != std::string::npos; pos = ir.find(while_continue_text, pos + 1)) {
+        while_continue_branch_lines.push_back(extract_dbg_line_at(pos));
+    }
+
+    std::vector<int> for_continue_branch_lines;
+    const std::string for_continue_text = "br label %for-step";
+    for (size_t pos = ir.find(for_continue_text); pos != std::string::npos; pos = ir.find(for_continue_text, pos + 1)) {
+        for_continue_branch_lines.push_back(extract_dbg_line_at(pos));
+    }
+
+    INFO(ir);
+    REQUIRE(std::find(while_continue_branch_lines.begin(), while_continue_branch_lines.end(), 5) != while_continue_branch_lines.end());
+    REQUIRE(std::find(for_continue_branch_lines.begin(), for_continue_branch_lines.end(), 9) != for_continue_branch_lines.end());
 }
 
