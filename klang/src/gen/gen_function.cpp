@@ -1035,10 +1035,15 @@ void implementation_generator::visit_function(function &function) {
     _nrvo_candidate = nullptr;
     _sret_destination = nullptr;
     _expression_temporaries.clear();
+    _exc_ptr_slot = nullptr;
+    _exc_sel_slot = nullptr;
+    _dtor_flags.clear();
+    _lpad_depth_counter = 0;
     while (!_cleanup_blocks.empty()) _cleanup_blocks.pop();
     while (!_cleanup_vars_stack.empty()) _cleanup_vars_stack.pop();
     while (!_owner_params_stack.empty()) _owner_params_stack.pop();
     while (!_struct_params_stack.empty()) _struct_params_stack.pop();
+    while (!_cleanup_lpad_stack.empty()) _cleanup_lpad_stack.pop();
 
     // Step 3: Handle sret (structure-return) ABI: add sret parameter
     // Determine if this function uses sret ABI
@@ -1247,6 +1252,45 @@ void implementation_generator::visit_function(function &function) {
         // Unknown intrinsic — fall through to normal codegen (may fail)
     }
 
+    // Step 6b: Set up function-level cleanup landing pad for owner/struct params.
+    // This ensures that if the function body throws, owned parameters are freed
+    // and struct-by-value parameters are destroyed during unwinding.
+    bool has_func_level_cleanup = (!_owner_params_stack.empty() || !_struct_params_stack.empty());
+    if (has_func_level_cleanup) {
+        auto& llvm_ctx = _context->llvm_context();
+        auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+
+        // Set personality function
+        if (!func->hasPersonalityFn()) {
+            auto& mod = _context->module();
+            auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
+                llvm::FunctionType::get(i32_ty, true));
+            func->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+        }
+
+        // Create per-function exception slots
+        if (!_exc_ptr_slot) {
+            auto* entry_bb = &func->getEntryBlock();
+            llvm::IRBuilder<> alloca_builder(entry_bb, entry_bb->begin());
+            auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+            _exc_ptr_slot = alloca_builder.CreateAlloca(ptr_ty, nullptr, "exc_ptr_cleanup_slot");
+            _exc_sel_slot = alloca_builder.CreateAlloca(i32_ty, nullptr, "exc_sel_cleanup_slot");
+        }
+
+        // Create function-level cleanup landing pad
+        auto* func_lpad_bb = llvm::BasicBlock::Create(llvm_ctx, "func_cleanup_lpad");
+        auto* func_cleanup_bb = llvm::BasicBlock::Create(llvm_ctx, "func_cleanup_unwind");
+
+        cleanup_lpad_context func_ctx;
+        func_ctx.lpad_bb = func_lpad_bb;
+        func_ctx.cleanup_code_bb = func_cleanup_bb;
+        func_ctx.continuation = cleanup_lpad_context::RESUME;
+        func_ctx.chain_target_bb = nullptr;
+        func_ctx.catch_exc_alloca = nullptr;
+        func_ctx.depth = ++_lpad_depth_counter;
+        _cleanup_lpad_stack.push(func_ctx);
+    }
+
     // Step 7: Visit the function body block
     // Produce content
     function.get_block()->accept(*this);
@@ -1258,6 +1302,78 @@ void implementation_generator::visit_function(function &function) {
     // Step 9: For destructors: emit cleanup (member/base destructor calls)
     // Destructor: member and base destructor calls
     emit_destructor_cleanup(function);
+
+    // Emit function-level cleanup landing pad (for owner/struct params) if set up
+    if (has_func_level_cleanup && !_cleanup_lpad_stack.empty()) {
+        auto func_ctx = _cleanup_lpad_stack.top();
+        _cleanup_lpad_stack.pop();
+
+        // Save the normal-path insert point so the epilogue can terminate it
+        auto* saved_bb = _builder->GetInsertBlock();
+        auto saved_point = _builder->GetInsertPoint();
+
+        auto& llvm_ctx = _context->llvm_context();
+        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+        auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+        auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
+
+        // Emit landing pad entry
+        func->insert(func->end(), func_ctx.lpad_bb);
+        _builder->SetInsertPoint(func_ctx.lpad_bb);
+        auto* lpad = _builder->CreateLandingPad(lpad_type, 0, "func_cleanup_lpad_val");
+        lpad->setCleanup(true);
+        auto* exc_ptr = _builder->CreateExtractValue(lpad, 0, "func_exc_ptr");
+        auto* exc_sel = _builder->CreateExtractValue(lpad, 1, "func_exc_sel");
+        _builder->CreateStore(exc_ptr, _exc_ptr_slot);
+        _builder->CreateStore(exc_sel, _exc_sel_slot);
+        _builder->CreateBr(func_ctx.cleanup_code_bb);
+
+        // Emit cleanup code
+        func->insert(func->end(), func_ctx.cleanup_code_bb);
+        _builder->SetInsertPoint(func_ctx.cleanup_code_bb);
+
+        // Clean up owner-typed parameters
+        if (!_owner_params_stack.empty()) {
+            auto& params = _owner_params_stack.top();
+            for (auto it = params.rbegin(); it != params.rend(); ++it) {
+                auto& param = *it;
+                auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
+                if (!own_type) continue;
+                auto param_it = _context->_parameter_variables.find(param);
+                if (param_it == _context->_parameter_variables.end()) continue;
+                emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                    param_it->second, own_type->get_owned_type(), "func_unwind_param");
+            }
+        }
+        // Clean up struct-typed by-value parameters
+        if (!_struct_params_stack.empty()) {
+            auto& params = _struct_params_stack.top();
+            for (auto it = params.rbegin(); it != params.rend(); ++it) {
+                auto& param = *it;
+                auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
+                if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
+                auto dtor = st_type->get_struct()->get_destructor();
+                auto dtor_it = _context->_functions.find(dtor->shared_as<k::model::function>());
+                if (dtor_it == _context->_functions.end()) continue;
+                auto param_it = _context->_parameter_variables.find(param);
+                if (param_it == _context->_parameter_variables.end()) continue;
+                _builder->CreateCall(dtor_it->second, {param_it->second});
+            }
+        }
+
+        // Resume unwinding
+        auto* resume_ptr = _builder->CreateLoad(ptr_ty, _exc_ptr_slot, "func_resume_ptr");
+        auto* resume_sel = _builder->CreateLoad(i32_ty, _exc_sel_slot, "func_resume_sel");
+        auto* resume_val = llvm::UndefValue::get(lpad_type);
+        auto* resume_val2 = _builder->CreateInsertValue(resume_val, resume_ptr, 0);
+        auto* resume_val3 = _builder->CreateInsertValue(resume_val2, resume_sel, 1);
+        _builder->CreateResume(resume_val3);
+
+        // Restore insert point to the normal path for epilogue
+        if (saved_bb) {
+            _builder->SetInsertPoint(saved_bb, saved_point);
+        }
+    }
 
     // Step 10: Emit function epilogue (return, cleanup, dead instruction elimination)
     // Epilogue: param cleanup, return, NRVO, optimization, verification

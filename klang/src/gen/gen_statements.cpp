@@ -35,20 +35,33 @@ llvm::Value* implementation_generator::create_call_or_invoke(
     llvm::FunctionType* fn_type, llvm::Value* callee,
     llvm::ArrayRef<llvm::Value*> args, const llvm::Twine& name)
 {
-    if (!_landing_pad_stack.empty()) {
-        // Inside a try-catch: use invoke so exceptions unwind to the landing pad
+    // Determine the unwind destination: pick the innermost handler (highest depth)
+    llvm::BasicBlock* unwind_dest = nullptr;
+    unsigned cleanup_depth = _cleanup_lpad_stack.empty() ? 0 : _cleanup_lpad_stack.top().depth;
+    unsigned catch_depth = _landing_pad_stack.empty() ? 0 : _landing_pad_stack.top().depth;
+
+    if (cleanup_depth > 0 || catch_depth > 0) {
+        if (cleanup_depth > catch_depth) {
+            unwind_dest = _cleanup_lpad_stack.top().lpad_bb;
+        } else if (catch_depth > 0) {
+            unwind_dest = _landing_pad_stack.top().lpad_bb;
+        }
+    }
+
+    if (unwind_dest) {
+        // Use invoke so exceptions unwind to the appropriate landing pad
         auto& llvm_ctx = _context->llvm_context();
         auto* current_func = _builder->GetInsertBlock()->getParent();
         auto* normal_bb = llvm::BasicBlock::Create(llvm_ctx, "invoke_cont", current_func);
         auto* invoke_inst = _builder->CreateInvoke(
-            fn_type, callee, normal_bb, _landing_pad_stack.top().lpad_bb, args);
+            fn_type, callee, normal_bb, unwind_dest, args);
         if (!fn_type->getReturnType()->isVoidTy() && !name.isTriviallyEmpty()) {
             invoke_inst->setName(name);
         }
         _builder->SetInsertPoint(normal_bb);
         return invoke_inst;
     }
-    // Not inside try-catch: plain call
+    // No exception context: plain call
     return _builder->CreateCall(fn_type, callee, args, name);
 }
 
@@ -137,9 +150,11 @@ void declaration_generator::visit_block(block& block) {
  *
  * Steps:
  *   1. Push new cleanup block and variable tracking stacks.
- *   2. Visit each statement in the block.
- *   3. On block exit: emit destructor calls for all block-scoped struct/owner variables.
- *   4. Pop cleanup stacks.
+ *   2. Push cleanup landing pad for exception unwinding (if needed).
+ *   3. Visit each statement in the block.
+ *   4. On block exit: emit destructor calls for all block-scoped struct/owner variables.
+ *   5. Emit cleanup landing pad code (exception path).
+ *   6. Pop cleanup stacks.
  */
 void implementation_generator::visit_block(block& blk) {
     // Look at static/global var definitions
@@ -184,12 +199,68 @@ void implementation_generator::visit_block(block& blk) {
     llvm::BasicBlock* continue_block = nullptr;
 
     // Step 1: Push new cleanup block and variable tracking stacks
+    // Step 2: Push cleanup landing pad for exception unwinding
     if (needs_cleanup) {
         cleanup_block  = llvm::BasicBlock::Create(**_context, "block-cleanup");
         continue_block = llvm::BasicBlock::Create(**_context, "block-continue");
         // Push cleanup block and variable list so visit_return_statement can use them
         _cleanup_blocks.push(cleanup_block);
         _cleanup_vars_stack.push(dtor_vars);
+
+        // Set personality function (required for any function with landing pads)
+        if (!func->hasPersonalityFn()) {
+            auto& mod = _context->module();
+            auto* i32_ty = llvm::Type::getInt32Ty(_context->llvm_context());
+            auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
+                llvm::FunctionType::get(i32_ty, true));
+            func->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+        }
+
+        // Create per-function exception slots if not already done
+        if (!_exc_ptr_slot) {
+            auto* entry_bb = &func->getEntryBlock();
+            llvm::IRBuilder<> alloca_builder(entry_bb, entry_bb->begin());
+            auto* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+            auto* i32_ty = llvm::Type::getInt32Ty(_context->llvm_context());
+            _exc_ptr_slot = alloca_builder.CreateAlloca(ptr_ty, nullptr, "exc_ptr_cleanup_slot");
+            _exc_sel_slot = alloca_builder.CreateAlloca(i32_ty, nullptr, "exc_sel_cleanup_slot");
+        }
+
+        // Create the cleanup landing pad BB
+        auto* lpad_bb = llvm::BasicBlock::Create(**_context, "cleanup_lpad");
+        auto* cleanup_code_bb = llvm::BasicBlock::Create(**_context, "cleanup_unwind");
+
+        // Determine continuation after cleanup
+        cleanup_lpad_context ctx;
+        ctx.lpad_bb = lpad_bb;
+        ctx.cleanup_code_bb = cleanup_code_bb;
+        ctx.catch_exc_alloca = nullptr;
+        ctx.chain_target_bb = nullptr;
+
+        if (!_cleanup_lpad_stack.empty() || !_landing_pad_stack.empty()) {
+            // Chain to whichever outer handler is innermost (highest depth)
+            unsigned outer_cleanup_depth = _cleanup_lpad_stack.empty() ? 0 : _cleanup_lpad_stack.top().depth;
+            unsigned outer_catch_depth = _landing_pad_stack.empty() ? 0 : _landing_pad_stack.top().depth;
+
+            if (outer_cleanup_depth > outer_catch_depth) {
+                // Chain to outer cleanup landing pad's cleanup code
+                ctx.continuation = cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP;
+                ctx.chain_target_bb = _cleanup_lpad_stack.top().cleanup_code_bb;
+            } else if (outer_catch_depth > 0) {
+                // Chain to try-catch dispatch
+                ctx.continuation = cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH;
+                ctx.chain_target_bb = _landing_pad_stack.top().dispatch_bb;
+                ctx.catch_exc_alloca = _landing_pad_stack.top().exc_ptr_alloca;
+            } else {
+                ctx.continuation = cleanup_lpad_context::RESUME;
+            }
+        } else {
+            // Resume (outermost)
+            ctx.continuation = cleanup_lpad_context::RESUME;
+        }
+
+        ctx.depth = ++_lpad_depth_counter;
+        _cleanup_lpad_stack.push(ctx);
     }
 
     // Generate statements normally
@@ -198,11 +269,12 @@ void implementation_generator::visit_block(block& blk) {
     }
 
     if (needs_cleanup) {
-        // On the normal exit path, branch to cleanup
-        _builder->CreateBr(cleanup_block);
+        // On the normal exit path, branch to cleanup (only if not already terminated by return/break/etc.)
+        if (!_builder->GetInsertBlock()->getTerminator()) {
+            _builder->CreateBr(cleanup_block);
+        }
 
-        // Step 2: Visit each statement in the block
-        // Emit cleanup block: call destructors in REVERSE declaration order
+        // Emit normal-path cleanup block: call destructors in REVERSE declaration order
         func->insert(func->end(), cleanup_block);
         _builder->SetInsertPoint(cleanup_block);
 
@@ -218,7 +290,6 @@ void implementation_generator::visit_block(block& blk) {
             if (var_it == _context->_variables.end()) continue;
             llvm::AllocaInst* alloca = var_it->second;
 
-            // Step 3: On block exit: emit destructor calls for all block-scoped struct/owner/union variables
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
                 if (st_type->get_struct()) {
                     // Struct destructor
@@ -243,8 +314,118 @@ void implementation_generator::visit_block(block& blk) {
         // On normal path, branch to continue
         _builder->CreateBr(continue_block);
 
-        // Step 4: Pop cleanup stacks
-        // Pop cleanup entries
+        // ── Emit cleanup landing pad (exception path) ──
+        auto cleanup_ctx = _cleanup_lpad_stack.top();
+        _cleanup_lpad_stack.pop();
+
+        auto* lpad_bb = cleanup_ctx.lpad_bb;
+        auto* cleanup_code_bb = cleanup_ctx.cleanup_code_bb;
+
+        // Landing pad entry: extract exception info and store to shared slots
+        func->insert(func->end(), lpad_bb);
+        _builder->SetInsertPoint(lpad_bb);
+
+        auto& llvm_ctx = _context->llvm_context();
+        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+        auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+        auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
+
+        // Include catch-all clause if chaining to a catch dispatch (for personality phase-1 search)
+        llvm::LandingPadInst* lpad;
+        if (cleanup_ctx.continuation == cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH) {
+            lpad = _builder->CreateLandingPad(lpad_type, 1, "cleanup_lpad_val");
+            lpad->setCleanup(true);
+            lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty)); // catch-all
+        } else {
+            lpad = _builder->CreateLandingPad(lpad_type, 0, "cleanup_lpad_val");
+            lpad->setCleanup(true);
+        }
+
+        auto* exc_ptr = _builder->CreateExtractValue(lpad, 0, "exc_ptr_unwind");
+        auto* exc_sel = _builder->CreateExtractValue(lpad, 1, "exc_sel_unwind");
+        _builder->CreateStore(exc_ptr, _exc_ptr_slot);
+        _builder->CreateStore(exc_sel, _exc_sel_slot);
+        _builder->CreateBr(cleanup_code_bb);
+
+        // Cleanup code: destroy scope vars in reverse order (checking flags/null)
+        func->insert(func->end(), cleanup_code_bb);
+        _builder->SetInsertPoint(cleanup_code_bb);
+
+        for (auto it = dtor_vars.rbegin(); it != dtor_vars.rend(); ++it) {
+            auto& var_stmt = *it;
+
+            // NRVO: do NOT destroy the NRVO candidate
+            if (_nrvo_candidate && var_stmt == _nrvo_candidate) continue;
+
+            auto vt = var_stmt->get_type();
+
+            auto var_it = _context->_variables.find(var_stmt);
+            if (var_it == _context->_variables.end()) continue;
+            llvm::AllocaInst* alloca = var_it->second;
+
+            if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
+                if (st_type->get_struct()) {
+                    // Struct with destructor: check construction flag before calling dtor
+                    auto dtor = st_type->get_struct()->get_destructor();
+                    if (!dtor) continue;
+                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                    if (dtor_it == _context->_functions.end()) continue;
+
+                    auto flag_it = _dtor_flags.find(var_stmt);
+                    if (flag_it != _dtor_flags.end()) {
+                        // Conditional: only call dtor if flag is set
+                        auto* flag_val = _builder->CreateLoad(
+                            llvm::Type::getInt1Ty(llvm_ctx), flag_it->second, "dtor_flag_chk");
+                        auto* do_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "unwind_dtor", func);
+                        auto* skip_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "unwind_skip_dtor", func);
+                        _builder->CreateCondBr(flag_val, do_dtor_bb, skip_dtor_bb);
+                        _builder->SetInsertPoint(do_dtor_bb);
+                        _builder->CreateCall(dtor_it->second, {alloca});
+                        _builder->CreateBr(skip_dtor_bb);
+                        _builder->SetInsertPoint(skip_dtor_bb);
+                    } else {
+                        // No flag — unconditionally call dtor (variable always constructed)
+                        _builder->CreateCall(dtor_it->second, {alloca});
+                    }
+                } else {
+                    // Union cleanup (uses discriminant check internally)
+                    auto udef = find_union_for_struct_type(_unit, st_type);
+                    if (udef) emit_union_cleanup(alloca, *udef);
+                }
+            } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
+                // Owner: null check handles unconstructed case
+                emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                    alloca, own_type->get_owned_type(), "unwind_owner");
+            }
+        }
+
+        // Chain to continuation
+        switch (cleanup_ctx.continuation) {
+        case cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP:
+            _builder->CreateBr(cleanup_ctx.chain_target_bb);
+            break;
+        case cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH: {
+            // Store exc ptr into catch context's alloca and branch to catch dispatch
+            auto* exc_for_catch = _builder->CreateLoad(ptr_ty, _exc_ptr_slot, "exc_for_catch");
+            if (cleanup_ctx.catch_exc_alloca) {
+                _builder->CreateStore(exc_for_catch, cleanup_ctx.catch_exc_alloca);
+            }
+            _builder->CreateBr(cleanup_ctx.chain_target_bb);
+            break;
+        }
+        case cleanup_lpad_context::RESUME: {
+            // Resume unwinding with saved exception state
+            auto* resume_ptr = _builder->CreateLoad(ptr_ty, _exc_ptr_slot, "resume_ptr");
+            auto* resume_sel = _builder->CreateLoad(i32_ty, _exc_sel_slot, "resume_sel");
+            auto* resume_val = llvm::UndefValue::get(lpad_type);
+            auto* resume_val2 = _builder->CreateInsertValue(resume_val, resume_ptr, 0);
+            auto* resume_val3 = _builder->CreateInsertValue(resume_val2, resume_sel, 1);
+            _builder->CreateResume(resume_val3);
+            break;
+        }
+        }
+
+        // Pop normal-path cleanup stacks
         _cleanup_blocks.pop();
         _cleanup_vars_stack.pop();
 
@@ -887,13 +1068,34 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
 
         if (!_landing_pad_stack.empty()) {
             // Inside a try-catch: use invoke so the rethrown exception unwinds to the landing pad
+            // Determine unwind destination using same priority logic
+            llvm::BasicBlock* rethrow_dest = nullptr;
+            {
+                unsigned cleanup_depth = _cleanup_lpad_stack.empty() ? 0 : _cleanup_lpad_stack.top().depth;
+                unsigned catch_depth = _landing_pad_stack.empty() ? 0 : _landing_pad_stack.top().depth;
+                if (cleanup_depth > catch_depth) {
+                    rethrow_dest = _cleanup_lpad_stack.top().lpad_bb;
+                } else {
+                    rethrow_dest = _landing_pad_stack.top().lpad_bb;
+                }
+            }
             auto* after_rethrow = llvm::BasicBlock::Create(llvm_ctx, "after_rethrow", current_func);
             auto* invoke_inst = _builder->CreateInvoke(
-                cxa_rethrow, after_rethrow, _landing_pad_stack.top().lpad_bb, {});
+                cxa_rethrow, after_rethrow, rethrow_dest, {});
             invoke_inst->setDoesNotReturn();
             _builder->SetInsertPoint(after_rethrow);
             _builder->CreateUnreachable();
             // Create continuation block for any code after throw (unreachable in practice)
+            auto* cont_bb = llvm::BasicBlock::Create(llvm_ctx, "post_rethrow", current_func);
+            _builder->SetInsertPoint(cont_bb);
+        } else if (!_cleanup_lpad_stack.empty()) {
+            // Not inside try-catch but has cleanup obligations: use invoke to cleanup lpad
+            auto* after_rethrow = llvm::BasicBlock::Create(llvm_ctx, "after_rethrow", current_func);
+            auto* invoke_inst = _builder->CreateInvoke(
+                cxa_rethrow, after_rethrow, _cleanup_lpad_stack.top().lpad_bb, {});
+            invoke_inst->setDoesNotReturn();
+            _builder->SetInsertPoint(after_rethrow);
+            _builder->CreateUnreachable();
             auto* cont_bb = llvm::BasicBlock::Create(llvm_ctx, "post_rethrow", current_func);
             _builder->SetInsertPoint(cont_bb);
         } else {
@@ -1277,11 +1479,23 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     auto cxa_throw = mod.getOrInsertFunction("__cxa_throw",
         llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty, ptr_ty}, false));
 
-    if (!_landing_pad_stack.empty()) {
-        // Inside a try-catch: use invoke so exception unwinds to the landing pad
+    // Determine unwind destination (same priority logic as create_call_or_invoke)
+    llvm::BasicBlock* throw_unwind_dest = nullptr;
+    {
+        unsigned cleanup_depth = _cleanup_lpad_stack.empty() ? 0 : _cleanup_lpad_stack.top().depth;
+        unsigned catch_depth = _landing_pad_stack.empty() ? 0 : _landing_pad_stack.top().depth;
+        if (cleanup_depth > catch_depth) {
+            throw_unwind_dest = _cleanup_lpad_stack.top().lpad_bb;
+        } else if (catch_depth > 0) {
+            throw_unwind_dest = _landing_pad_stack.top().lpad_bb;
+        }
+    }
+
+    if (throw_unwind_dest) {
+        // Use invoke so exception unwinds to the appropriate landing pad
         auto* after_throw = llvm::BasicBlock::Create(llvm_ctx, "after_throw", current_func);
         auto* invoke_inst = _builder->CreateInvoke(
-            cxa_throw, after_throw, _landing_pad_stack.top().lpad_bb,
+            cxa_throw, after_throw, throw_unwind_dest,
             {exc_mem, typeinfo_gv, dtor_fn_val});
         invoke_inst->setDoesNotReturn();
         // after_throw is unreachable but needed for LLVM well-formedness
@@ -1291,7 +1505,7 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
         auto* cont_bb = llvm::BasicBlock::Create(llvm_ctx, "post_throw", current_func);
         _builder->SetInsertPoint(cont_bb);
     } else {
-        // Not inside try-catch: plain call (exception unwinds past this frame)
+        // No landing pad context: plain call (exception unwinds past this frame)
         auto* call = _builder->CreateCall(cxa_throw,
             {exc_mem, typeinfo_gv, dtor_fn_val});
         call->setDoesNotReturn();
@@ -1422,7 +1636,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     eh_landing_context* outer_ctx = _landing_pad_stack.empty() ? nullptr : &_landing_pad_stack.top();
 
     // Push landing pad context so function calls within the try body use invoke
-    _landing_pad_stack.push({lpad_bb, dispatch_bb, exc_ptr_alloca});
+    _landing_pad_stack.push({lpad_bb, dispatch_bb, exc_ptr_alloca, ++_lpad_depth_counter});
 
     // Helper lambda: emit the finally body at the current insert point (inlined copy).
     auto finally_body = stmt.get_finally_body();
@@ -1686,7 +1900,87 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         _builder->CreateStore(exc_ptr, outer_ctx->exc_ptr_alloca);
         _builder->CreateBr(outer_ctx->dispatch_bb);
     } else {
-        // Top-level try-catch: use resume to propagate out of the current function.
+        // Top-level try-catch: emit cleanup for all outer scope variables, then resume.
+        // This ensures destructors and owner cleanup run during exception propagation.
+        if (!_cleanup_vars_stack.empty() || !_owner_params_stack.empty() || !_struct_params_stack.empty()) {
+            // Emit cleanup for all active outer scopes (same logic as visit_return_statement)
+            std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
+            std::vector<std::vector<std::shared_ptr<variable_statement>>> all_scopes;
+            while (!tmp.empty()) {
+                all_scopes.push_back(tmp.top());
+                tmp.pop();
+            }
+            for (auto& scope_vars : all_scopes) {
+                for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
+                    auto& var_stmt = *it;
+                    if (_nrvo_candidate && var_stmt == _nrvo_candidate) continue;
+                    auto vt = var_stmt->get_type();
+                    auto var_it = _context->_variables.find(var_stmt);
+                    if (var_it == _context->_variables.end()) continue;
+                    llvm::AllocaInst* alloca_var = var_it->second;
+
+                    if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
+                        if (st_type->get_struct()) {
+                            auto dtor = st_type->get_struct()->get_destructor();
+                            if (!dtor) continue;
+                            auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                            if (dtor_it == _context->_functions.end()) continue;
+                            // Check construction flag if available
+                            auto flag_it = _dtor_flags.find(var_stmt);
+                            if (flag_it != _dtor_flags.end()) {
+                                auto* flag_val = _builder->CreateLoad(
+                                    llvm::Type::getInt1Ty(llvm_ctx), flag_it->second, "fallthru_dtor_flag");
+                                auto* do_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "fallthru_dtor", func);
+                                auto* skip_dtor_bb = llvm::BasicBlock::Create(llvm_ctx, "fallthru_skip", func);
+                                _builder->CreateCondBr(flag_val, do_dtor_bb, skip_dtor_bb);
+                                _builder->SetInsertPoint(do_dtor_bb);
+                                _builder->CreateCall(dtor_it->second, {alloca_var});
+                                _builder->CreateBr(skip_dtor_bb);
+                                _builder->SetInsertPoint(skip_dtor_bb);
+                            } else {
+                                _builder->CreateCall(dtor_it->second, {alloca_var});
+                            }
+                        } else {
+                            auto udef = find_union_for_struct_type(_unit, st_type);
+                            if (udef) emit_union_cleanup(alloca_var, *udef);
+                        }
+                    } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
+                        emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                            alloca_var, own_type->get_owned_type(), "fallthru_owner");
+                    }
+                }
+            }
+            // Also clean up owner-typed parameters
+            if (!_owner_params_stack.empty()) {
+                auto params_copy = _owner_params_stack.top();
+                for (auto it = params_copy.rbegin(); it != params_copy.rend(); ++it) {
+                    auto& param = *it;
+                    auto own_type = std::dynamic_pointer_cast<owner_type>(param->get_type());
+                    if (!own_type) continue;
+                    auto param_it = _context->_parameter_variables.find(param);
+                    if (param_it == _context->_parameter_variables.end()) continue;
+                    emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+                        param_it->second, own_type->get_owned_type(), "fallthru_param");
+                }
+            }
+            // Also clean up struct-typed by-value parameters
+            if (!_struct_params_stack.empty()) {
+                auto params_copy = _struct_params_stack.top();
+                for (auto it = params_copy.rbegin(); it != params_copy.rend(); ++it) {
+                    auto& param = *it;
+                    auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
+                    if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
+                    auto dtor = st_type->get_struct()->get_destructor();
+                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
+                    if (dtor_it == _context->_functions.end()) continue;
+                    auto param_it = _context->_parameter_variables.find(param);
+                    if (param_it == _context->_parameter_variables.end()) continue;
+                    _builder->CreateCall(dtor_it->second, {param_it->second});
+                }
+            }
+        }
+
+        // Resume unwinding
         auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr_resume");
         auto* lpad_type_res = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
         auto* resume_val = llvm::UndefValue::get(lpad_type_res);
@@ -2790,6 +3084,18 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
     alloca = build.CreateAlloca(type, nullptr, var.get_short_name());
     _context->_variables.insert({var.shared_as<variable_statement>(), alloca});
 
+    // Create construction flag for struct-with-dtor variables (for exception unwinding safety)
+    bool has_dtor_flag = false;
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
+        if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+            auto* i1_ty = llvm::Type::getInt1Ty(build.getContext());
+            auto* flag_alloca = build.CreateAlloca(i1_ty, nullptr, var.get_short_name() + ".constructed");
+            _builder->CreateStore(llvm::ConstantInt::getFalse(build.getContext()), flag_alloca);
+            _dtor_flags[var.shared_as<variable_statement>()] = flag_alloca;
+            has_dtor_flag = true;
+        }
+    }
+
     // But initialize at the decl place
     auto init = var.get_init_expr();
     if (k::model::type::is_owner(var_type)
@@ -2846,6 +3152,14 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
         }
 
         // constructor_invocation_expression handles the store for all types.
+
+        // Set construction flag after successful initialization
+        if (has_dtor_flag) {
+            auto flag_it = _dtor_flags.find(var.shared_as<variable_statement>());
+            if (flag_it != _dtor_flags.end()) {
+                _builder->CreateStore(llvm::ConstantInt::getTrue(_builder->getContext()), flag_it->second);
+            }
+        }
     } else if (k::model::type::is_sized_array(var_type)) {
         auto sized_arr = std::dynamic_pointer_cast<k::model::sized_array_type>(var_type);
         auto* struct_llvm = sized_arr->get_llvm_struct_type();

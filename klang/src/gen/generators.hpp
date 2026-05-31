@@ -240,6 +240,7 @@ protected:
         llvm::BasicBlock* lpad_bb;        ///< The landing pad block (invoke unwinds here)
         llvm::BasicBlock* dispatch_bb;    ///< The typeinfo dispatch block
         llvm::AllocaInst* exc_ptr_alloca; ///< Alloca holding the exception pointer
+        unsigned depth = 0;               ///< Nesting depth (higher = innermost)
     };
 
     /** Stack of landing pad contexts for try-catch exception handling.
@@ -247,6 +248,43 @@ protected:
      *  try-catch — function calls within the try body should invoke to
      *  top().lpad_bb instead of using a plain call. */
     std::stack<eh_landing_context> _landing_pad_stack;
+
+    /** Cleanup landing pad context for exception unwinding.
+     *  Each block scope with destructible variables gets its own cleanup landing
+     *  pad so that exceptions unwind through proper destructor/owner cleanup. */
+    struct cleanup_lpad_context {
+        llvm::BasicBlock* lpad_bb;            ///< The landing pad BB (invoke unwind target)
+        llvm::BasicBlock* cleanup_code_bb;    ///< BB that runs the actual cleanup code
+        /// What to do after this scope's cleanup:
+        enum continuation_kind { RESUME, CHAIN_TO_OUTER_CLEANUP, CHAIN_TO_CATCH_DISPATCH };
+        continuation_kind continuation;
+        llvm::BasicBlock* chain_target_bb;    ///< Target BB for chaining (outer cleanup code or catch dispatch)
+        llvm::AllocaInst* catch_exc_alloca;   ///< Catch context exc_ptr alloca (for CHAIN_TO_CATCH_DISPATCH)
+        unsigned depth = 0;                   ///< Nesting depth (higher = innermost)
+    };
+
+    /** Stack of cleanup landing pad contexts.
+     *  When non-empty, top() is the context for the innermost block scope
+     *  with destructible variables. */
+    std::stack<cleanup_lpad_context> _cleanup_lpad_stack;
+
+    /** Shared depth counter for landing pad nesting.
+     *  Incremented each time a landing pad or cleanup lpad is pushed.
+     *  Used by create_call_or_invoke to determine the innermost handler. */
+    unsigned _lpad_depth_counter = 0;
+
+    /** Per-function shared alloca for storing the exception pointer during unwinding.
+     *  Created once at function entry when the function has any cleanup obligations.
+     *  All cleanup landing pads in the function share this slot. */
+    llvm::AllocaInst* _exc_ptr_slot = nullptr;
+
+    /** Per-function shared alloca for storing the exception selector during unwinding. */
+    llvm::AllocaInst* _exc_sel_slot = nullptr;
+
+    /** Per-variable construction flags for struct-with-dtor variables.
+     *  Maps variable_statement → i1 alloca (false = not constructed, true = constructed).
+     *  Used by cleanup landing pads to avoid calling destructors on unconstructed objects. */
+    std::map<std::shared_ptr<variable_statement>, llvm::AllocaInst*> _dtor_flags;
 
     /** Context for a finally block that must be emitted on early exit (return/break/continue). */
     struct finally_context {

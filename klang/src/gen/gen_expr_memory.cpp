@@ -1085,9 +1085,11 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
                     llvm::Value* elem_ptr = _builder->CreateGEP(
                         llvm_arr_type, data_ptr, indices, "dynarr_elem");
                     create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second, {elem_ptr}, "");
+                    // After invoke, builder may be in invoke_cont block
+                    auto* latch_bb = _builder->GetInsertBlock();
                     llvm::Value* i_next = _builder->CreateAdd(
                         i_phi, llvm::ConstantInt::get(i32_ty, 1), "dynarr_i_next");
-                    i_phi->addIncoming(i_next, loop_body);
+                    i_phi->addIncoming(i_next, latch_bb);
                     _builder->CreateBr(loop_header);
 
                     _builder->SetInsertPoint(loop_end);
@@ -1206,7 +1208,7 @@ void implementation_generator::visit_new_expression(new_expression& expr) {
 
             llvm::Value* i_next = _builder->CreateAdd(
                 i_phi, llvm::ConstantInt::get(i32_ty, 1), "uarr_i_next");
-            i_phi->addIncoming(i_next, loop_body);
+            i_phi->addIncoming(i_next, _builder->GetInsertBlock());
             _builder->CreateBr(loop_header);
 
             _builder->SetInsertPoint(loop_end);

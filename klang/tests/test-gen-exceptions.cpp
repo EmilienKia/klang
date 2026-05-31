@@ -2406,3 +2406,396 @@ TEST_CASE("Exception chaining: null cause via explicit null argument", "[gen][ex
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 51);  // 50 + 1 (no cause)
 }
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Exception unwinding cleanup — destructors and owner cleanup
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception unwinding: struct destructor called on throw",
+          "[gen][exceptions][unwinding][dtor]") {
+    // Verify that when an exception propagates through a scope, destructors of
+    // local struct variables are called during unwinding.
+    auto res = build_and_exec(R"(
+        module __test_unwind_dtor_1__;
+
+        dtor_count : int = 0;
+
+        class Err : public Exception {
+        public:
+            Err() : Exception(1) {}
+        }
+
+        struct Tracked {
+            _id : int;
+            Tracked(id: int) : _id(id) { }
+            ~Tracked() { dtor_count = dtor_count + 1; }
+        }
+
+        thrower() {
+            throw Err();
+        }
+
+        test_unwind() : int {
+            a : Tracked(1);
+            b : Tracked(2);
+            thrower();
+            return 0;
+        }
+
+        main() : int {
+            try {
+                test_unwind();
+            } catch(e : Exception&) {
+                // dtor_count should be 2 (both a and b destroyed during unwind)
+            }
+            return dtor_count;
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    REQUIRE(res.exit_code == 2);
+}
+
+TEST_CASE("Exception unwinding: destructor order is reverse declaration",
+          "[gen][exceptions][unwinding][dtor-order]") {
+    // Destructors during unwinding should run in reverse declaration order.
+    // We encode the destruction order in a global variable.
+    auto res = build_and_exec(R"(
+        module __test_unwind_order__;
+
+        order : int = 0;
+
+        class Err : public Exception {
+        public:
+            Err() : Exception(1) {}
+        }
+
+        struct Marker {
+            _id : int;
+            Marker(id: int) : _id(id) { }
+            ~Marker() { order = order * 10 + _id; }
+        }
+
+        thrower() {
+            throw Err();
+        }
+
+        test_unwind_order() : int {
+            a : Marker(1);
+            b : Marker(2);
+            c : Marker(3);
+            thrower();
+            return 0;
+        }
+
+        main() : int {
+            try {
+                test_unwind_order();
+            } catch(e : Exception&) { }
+            // Reverse order: c(3) then b(2) then a(1) → 321
+            // Return modular check: 321 - 256 = 65; use direct comparison
+            if (order == 321) { return 99; }
+            return order;
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    REQUIRE(res.exit_code == 99);
+}
+
+TEST_CASE("Exception unwinding: owner freed on throw",
+          "[gen][exceptions][unwinding][owner]") {
+    // When an exception propagates through a scope with owner variables,
+    // the owned memory should be freed (delete called) during unwinding.
+    auto res = build_and_exec(R"(
+        module __test_unwind_owner_1__;
+
+        free_count : int = 0;
+
+        class Err : public Exception {
+        public:
+            Err() : Exception(1) {}
+        }
+
+        struct Resource {
+            _v : int;
+            Resource() : _v(42) { }
+            ~Resource() { free_count = free_count + 1; }
+        }
+
+        thrower() {
+            throw Err();
+        }
+
+        test_owner_cleanup() : int {
+            r : Resource! = new Resource();
+            thrower();
+            return 0;
+        }
+
+        main() : int {
+            try {
+                test_owner_cleanup();
+            } catch(e : Exception&) { }
+            return free_count;
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    REQUIRE(res.exit_code == 1);
+}
+
+TEST_CASE("Exception unwinding: null owner not freed",
+          "[gen][exceptions][unwinding][owner-null]") {
+    // An owner that is null at the time of unwinding should NOT be freed.
+    auto res = build_and_exec(R"(
+        module __test_unwind_owner_null__;
+
+        free_count : int = 0;
+
+        class Err : public Exception {
+        public:
+            Err() : Exception(1) {}
+        }
+
+        struct Resource {
+            _v : int;
+            Resource() : _v(42) { }
+            ~Resource() { free_count = free_count + 1; }
+        }
+
+        thrower() {
+            throw Err();
+        }
+
+        test_null_owner() : int {
+            r : Resource! = null;
+            thrower();
+            return 0;
+        }
+
+        main() : int {
+            try {
+                test_null_owner();
+            } catch(e : Exception&) { }
+            return free_count;
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    REQUIRE(res.exit_code == 0);
+}
+
+TEST_CASE("Exception unwinding: nested scopes cleanup inner then outer",
+          "[gen][exceptions][unwinding][nested]") {
+    // With nested scopes, inner scope cleanup runs first, then outer scope.
+    auto res = build_and_exec(R"(
+        module __test_unwind_nested__;
+
+        order : int = 0;
+
+        class Err : public Exception {
+        public:
+            Err() : Exception(1) {}
+        }
+
+        struct Marker {
+            _id : int;
+            Marker(id: int) : _id(id) { }
+            ~Marker() { order = order * 10 + _id; }
+        }
+
+        thrower() {
+            throw Err();
+        }
+
+        test_nested() : int {
+            outer : Marker(1);
+            {
+                inner : Marker(2);
+                thrower();
+            }
+            return 0;
+        }
+
+        main() : int {
+            try {
+                test_nested();
+            } catch(e : Exception&) { }
+            return order;
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    // Inner(2) destroyed first, then Outer(1) → 21
+    REQUIRE(res.exit_code == 21);
+}
+
+TEST_CASE("Exception unwinding: try-catch inside cleanup scope catches normally",
+          "[gen][exceptions][unwinding][try-inside-scope]") {
+    // A try-catch inside a block with cleanup vars should catch exceptions normally.
+    // The outer scope vars should NOT be destroyed if the exception is caught.
+    auto res = build_and_exec(R"(
+        module __test_unwind_try_scope__;
+
+        dtor_count : int = 0;
+
+        class Err : public Exception {
+        public:
+            Err() : Exception(7) {}
+        }
+
+        struct Guard {
+            _id : int;
+            Guard(id: int) : _id(id) { }
+            ~Guard() { dtor_count = dtor_count + 1; }
+        }
+
+        test_catch_inside() : int {
+            g : Guard(1);
+            result : int = 0;
+            try {
+                throw Err();
+            } catch(e : Err&) {
+                result = e.getCode();
+            }
+            return result;
+        }
+
+        main() : int {
+            r : int = test_catch_inside();
+            // dtor_count should be 1 (g destroyed at scope exit, not during unwind)
+            // r should be 7 (caught exception code)
+            return r * 10 + dtor_count;
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    // r=7, dtor_count=1 → 71
+    REQUIRE(res.exit_code == 71);
+}
+
+TEST_CASE("Exception unwinding: unconstructed vars not destroyed",
+          "[gen][exceptions][unwinding][construction-flag]") {
+    // If an exception is thrown before a variable is constructed, its destructor
+    // should NOT be called during unwinding.
+    auto res = build_and_exec(R"(
+        module __test_unwind_flag__;
+
+        dtor_count : int = 0;
+
+        class Err : public Exception {
+        public:
+            Err() : Exception(1) {}
+        }
+
+        struct Widget {
+            _v : int;
+            Widget(v: int) : _v(v) { }
+            ~Widget() { dtor_count = dtor_count + 1; }
+        }
+
+        thrower() {
+            throw Err();
+        }
+
+        test_partial_construction() : int {
+            a : Widget(1);
+            thrower();
+            b : Widget(2);
+            return 0;
+        }
+
+        main() : int {
+            try {
+                test_partial_construction();
+            } catch(e : Exception&) { }
+            return dtor_count;
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    // Only 'a' was constructed before throw → dtor_count = 1
+    REQUIRE(res.exit_code == 1);
+}
+
+TEST_CASE("Exception unwinding: owner param freed on throw in function body",
+          "[gen][exceptions][unwinding][owner-param]") {
+    // An owner parameter should be freed if the function body throws.
+    auto res = build_and_exec(R"(
+        module __test_unwind_ownparam__;
+
+        free_count : int = 0;
+
+        class Err : public Exception {
+        public:
+            Err() : Exception(1) {}
+        }
+
+        struct Resource {
+            _v : int;
+            Resource() : _v(99) { }
+            ~Resource() { free_count = free_count + 1; }
+        }
+
+        consumer(r : Resource!) : int {
+            throw Err();
+            delete r;
+            return 0;
+        }
+
+        main() : int {
+            p : Resource! = new Resource();
+            try {
+                consumer(p);
+            } catch(e : Exception&) { }
+            return free_count;
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    // Resource dtor called once (during unwind of consumer's owner param)
+    REQUIRE(res.exit_code == 1);
+}
+
+TEST_CASE("Exception unwinding: early return in block with destructible vars",
+          "[gen][exceptions][unwinding][early-return]") {
+    // When a function returns early from a block containing destructible variables,
+    // the cleanup lpad must still be emitted correctly (no duplicate terminator).
+    auto res = build_and_exec(R"(
+        module __test_unwind_early_ret__;
+
+        dtor_count : int = 0;
+
+        class Err : public Exception {
+        public:
+            Err() : Exception(1) {}
+        }
+
+        struct Tracked {
+            _v : int;
+            Tracked() : _v(0) {}
+            ~Tracked() { dtor_count = dtor_count + 1; }
+        }
+
+        early_return(flag : int) : int {
+            t : Tracked;
+            if (flag == 1) {
+                return 10;
+            }
+            return 20;
+        }
+
+        main() : int {
+            r1 : int = early_return(1);
+            r2 : int = early_return(0);
+            // Both paths should call destructor once each
+            return dtor_count;
+        }
+    )");
+    if (!res.out.empty()) INFO("stdout: " << res.out);
+    if (!res.err.empty()) INFO("stderr: " << res.err);
+    // Destructor called twice (once per call)
+    REQUIRE(res.exit_code == 2);
+}
