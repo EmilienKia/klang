@@ -338,9 +338,37 @@ cast_line(v: short) : int {
     comp->get_context_for_test()->module().print(os, nullptr);
     os.flush();
 
+    auto extract_dbg_line_for_instruction = [&](const std::string& inst_text) -> int {
+        const auto inst_pos = ir.find(inst_text);
+        if (inst_pos == std::string::npos) {
+            return -1;
+        }
+        const auto dbg_pos = ir.find("!dbg !", inst_pos);
+        if (dbg_pos == std::string::npos) {
+            return -1;
+        }
+        const auto id_start = dbg_pos + 6;
+        const auto id_end = ir.find_first_not_of("0123456789", id_start);
+        if (id_end == std::string::npos || id_end == id_start) {
+            return -1;
+        }
+        const auto id = ir.substr(id_start, id_end - id_start);
+        const auto meta_pos = ir.find("!" + id + " = !DILocation(line: ");
+        if (meta_pos == std::string::npos) {
+            return -1;
+        }
+        const auto line_start = meta_pos + std::string("!" + id + " = !DILocation(line: ").size();
+        const auto line_end = ir.find_first_not_of("0123456789", line_start);
+        if (line_end == std::string::npos || line_end == line_start) {
+            return -1;
+        }
+        return std::stoi(ir.substr(line_start, line_end - line_start));
+    };
+
     INFO(ir);
     REQUIRE(ir.find("!DILocation(line: 4,") != std::string::npos);
     REQUIRE(ir.find("!DILocation(line: 6,") != std::string::npos);
+    REQUIRE(extract_dbg_line_for_instruction("sext i16") == 6);
 }
 
 TEST_CASE("compiler: catch-return finally path anchors __cxa_end_catch on source line", "[klangc][debug][ir]") {

@@ -260,6 +260,9 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
         cast_lexeme = expr.sub_expr()->first_lexeme();
     }
     set_debug_location(cast_lexeme);
+    auto reanchor_cast_location = [&]() {
+        set_debug_location(cast_lexeme);
+    };
 
     // Step 1: If casting operator overload: delegate to generate_cast_operator_overload
     // ── Casting operator overload: call __operator_cv_<type>() ───────────────
@@ -465,6 +468,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             _value = nullptr;
             expr.sub_expr()->accept(*this);
             if (!_value) return;
+            reanchor_cast_location();
 
             llvm::Type* src_llvm = enum_src ? enum_src->get_llvm_type()
                 : std::dynamic_pointer_cast<primitive_type>(src_nc)->get_llvm_type();
@@ -994,6 +998,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
             "Internal error: the expression being cast produced no LLVM value; "
             "this indicates a code-generation bug in the sub-expression");
     }
+    reanchor_cast_location();
 
     // Step 4: Struct upcast: GEP to base sub-object at known offset
     if(src->is_boolean()) {
@@ -1131,6 +1136,7 @@ void implementation_generator::emit_dynamic_cast(
     _value = nullptr;
     expr.sub_expr()->accept(*this);
     if (!_value) return;
+    set_debug_location(expr.first_lexeme());
     llvm::Value* base_raw = _value;
 
     // If source is ref<lnk/pin/ptr>, load the stored pointer value.
