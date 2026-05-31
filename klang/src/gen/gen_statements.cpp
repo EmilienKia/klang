@@ -2534,7 +2534,8 @@ void implementation_generator::emit_cond_var_cleanup(
  *   8. Set insertion point to merge block.
  */
 void implementation_generator::visit_if_else_statement(if_else_statement& stmt) {
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    auto if_lexeme = get_statement_debug_lexeme(stmt);
+    set_debug_location(if_lexeme);
 
     bool has_else = (bool)stmt.get_else_stmt();
     bool has_cond_var = stmt.has_cond_var();
@@ -2662,6 +2663,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
         // All vars initialized successfully → go to then
         _null_failure_bb = saved_null_failure_bb;
         _union_failure_bb = saved_union_failure_bb;
+        set_debug_location(if_lexeme);
         _builder->CreateBr(then_block);
 
     } else if(has_cond_var_with_test) {
@@ -2682,6 +2684,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
         emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
+        set_debug_location(if_lexeme);
         if(has_else) {
             _builder->CreateCondBr(test_value, then_block, else_block);
         } else {
@@ -2722,6 +2725,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
             emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
+            set_debug_location(if_lexeme);
             if(has_else) {
                 _builder->CreateCondBr(test_value, then_block, else_block);
             } else {
@@ -2769,6 +2773,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
             emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
+            set_debug_location(if_lexeme);
             if(has_else) {
                 _builder->CreateCondBr(test_value, then_block, else_block);
             } else {
@@ -2792,6 +2797,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
         emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
+        set_debug_location(if_lexeme);
         if(has_else) {
             _builder->CreateCondBr(test_value, then_block, else_block);
         } else {
