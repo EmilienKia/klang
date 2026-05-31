@@ -254,6 +254,13 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
  *   7. Enum ↔ underlying: emit zext/trunc as needed.
  */
 void implementation_generator::visit_cast_expression(cast_expression& expr) {
+    // Keep cast lowering anchored on the cast expression line when available.
+    auto cast_lexeme = expr.first_lexeme();
+    if (!cast_lexeme && expr.sub_expr()) {
+        cast_lexeme = expr.sub_expr()->first_lexeme();
+    }
+    set_debug_location(cast_lexeme);
+
     // Step 1: If casting operator overload: delegate to generate_cast_operator_overload
     // ── Casting operator overload: call __operator_cv_<type>() ───────────────
     if (generate_cast_operator_overload(expr)) return;

@@ -316,3 +316,30 @@ class Counter {
     REQUIRE(ir.find("!DILocalVariable(name: \"delta\", arg: 2") != std::string::npos);
 }
 
+TEST_CASE("compiler: debug metadata anchors explicit casts on cast lines", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_cast_locations.k", R"(module debug_cast_locations;
+
+cast_line(v: short) : int {
+    widened: int =
+        (int)
+        v;
+    return widened;
+}
+)", false, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    INFO(ir);
+    REQUIRE(ir.find("!DILocation(line: 4,") != std::string::npos);
+    REQUIRE(ir.find("!DILocation(line: 6,") != std::string::npos);
+}
+
