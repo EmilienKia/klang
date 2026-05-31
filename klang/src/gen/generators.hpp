@@ -240,6 +240,7 @@ protected:
         llvm::BasicBlock* lpad_bb;        ///< The landing pad block (invoke unwinds here)
         llvm::BasicBlock* dispatch_bb;    ///< The typeinfo dispatch block
         llvm::AllocaInst* exc_ptr_alloca; ///< Alloca holding the exception pointer
+        llvm::AllocaInst* exc_sel_alloca; ///< Alloca holding the exception selector
         unsigned depth = 0;               ///< Nesting depth (higher = innermost)
     };
 
@@ -260,6 +261,7 @@ protected:
         continuation_kind continuation;
         llvm::BasicBlock* chain_target_bb;    ///< Target BB for chaining (outer cleanup code or catch dispatch)
         llvm::AllocaInst* catch_exc_alloca;   ///< Catch context exc_ptr alloca (for CHAIN_TO_CATCH_DISPATCH)
+        llvm::AllocaInst* catch_exc_sel_alloca; ///< Catch context exc_sel alloca (for CHAIN_TO_CATCH_DISPATCH)
         unsigned depth = 0;                   ///< Nesting depth (higher = innermost)
     };
 

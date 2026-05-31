@@ -237,6 +237,7 @@ void implementation_generator::visit_block(block& blk) {
         ctx.lpad_bb = lpad_bb;
         ctx.cleanup_code_bb = cleanup_code_bb;
         ctx.catch_exc_alloca = nullptr;
+        ctx.catch_exc_sel_alloca = nullptr;
         ctx.chain_target_bb = nullptr;
 
         if (!_cleanup_lpad_stack.empty() || !_landing_pad_stack.empty()) {
@@ -253,6 +254,7 @@ void implementation_generator::visit_block(block& blk) {
                 ctx.continuation = cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH;
                 ctx.chain_target_bb = _landing_pad_stack.top().dispatch_bb;
                 ctx.catch_exc_alloca = _landing_pad_stack.top().exc_ptr_alloca;
+                ctx.catch_exc_sel_alloca = _landing_pad_stack.top().exc_sel_alloca;
             } else {
                 ctx.continuation = cleanup_lpad_context::RESUME;
             }
@@ -407,10 +409,14 @@ void implementation_generator::visit_block(block& blk) {
             _builder->CreateBr(cleanup_ctx.chain_target_bb);
             break;
         case cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH: {
-            // Store exc ptr into catch context's alloca and branch to catch dispatch
+            // Store exc ptr and selector into catch context's allocas and branch to catch dispatch
             auto* exc_for_catch = _builder->CreateLoad(ptr_ty, _exc_ptr_slot, "exc_for_catch");
+            auto* sel_for_catch = _builder->CreateLoad(i32_ty, _exc_sel_slot, "sel_for_catch");
             if (cleanup_ctx.catch_exc_alloca) {
                 _builder->CreateStore(exc_for_catch, cleanup_ctx.catch_exc_alloca);
+            }
+            if (cleanup_ctx.catch_exc_sel_alloca) {
+                _builder->CreateStore(sel_for_catch, cleanup_ctx.catch_exc_sel_alloca);
             }
             _builder->CreateBr(cleanup_ctx.chain_target_bb);
             break;
@@ -1626,6 +1632,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     auto* entry_bb = &func->getEntryBlock();
     llvm::IRBuilder<> alloca_builder(entry_bb, entry_bb->begin());
     auto* exc_ptr_alloca = alloca_builder.CreateAlloca(ptr_ty, nullptr, "exc_ptr_slot");
+    auto* exc_sel_alloca = alloca_builder.CreateAlloca(i32_ty, nullptr, "exc_sel_slot");
 
     // Create an alloca to hold the matched base offset (written by dispatch, read by catch handler).
     auto* offset_alloca = alloca_builder.CreateAlloca(i32_ty, nullptr, "catch_offset_slot");
@@ -1638,7 +1645,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     eh_landing_context* outer_ctx = _landing_pad_stack.empty() ? nullptr : &_landing_pad_stack.top();
 
     // Push landing pad context so function calls within the try body use invoke
-    _landing_pad_stack.push({lpad_bb, dispatch_bb, exc_ptr_alloca, ++_lpad_depth_counter});
+    _landing_pad_stack.push({lpad_bb, dispatch_bb, exc_ptr_alloca, exc_sel_alloca, ++_lpad_depth_counter});
 
     // Helper lambda: emit the finally body at the current insert point (inlined copy).
     auto finally_body = stmt.get_finally_body();
@@ -1721,9 +1728,11 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     auto* lpad = _builder->CreateLandingPad(lpad_type, 1, "lpad_val");
     lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
 
-    // Extract exception pointer and store to the shared alloca
+    // Extract exception pointer and selector, store to shared allocas
     auto* exc_ptr_from_lpad = _builder->CreateExtractValue(lpad, 0, "exc_ptr");
+    auto* exc_sel_from_lpad = _builder->CreateExtractValue(lpad, 1, "exc_sel");
     _builder->CreateStore(exc_ptr_from_lpad, exc_ptr_alloca);
+    _builder->CreateStore(exc_sel_from_lpad, exc_sel_alloca);
     _builder->CreateBr(dispatch_bb);
 
     // Dispatch block — compare thrown typeinfo against catch clause typeinfos.
@@ -1982,13 +1991,13 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
             }
         }
 
-        // Resume unwinding
+        // Resume unwinding with original exception pointer and selector
         auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr_resume");
+        auto* exc_sel = _builder->CreateLoad(i32_ty, exc_sel_alloca, "exc_sel_resume");
         auto* lpad_type_res = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
         auto* resume_val = llvm::UndefValue::get(lpad_type_res);
         auto* resume_val2 = _builder->CreateInsertValue(resume_val, exc_ptr, 0);
-        auto* resume_val3 = _builder->CreateInsertValue(resume_val2,
-            llvm::ConstantInt::get(i32_ty, 0), 1);
+        auto* resume_val3 = _builder->CreateInsertValue(resume_val2, exc_sel, 1);
         _builder->CreateResume(resume_val3);
     }
 

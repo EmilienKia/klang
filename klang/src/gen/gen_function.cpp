@@ -1287,6 +1287,7 @@ void implementation_generator::visit_function(function &function) {
         func_ctx.continuation = cleanup_lpad_context::RESUME;
         func_ctx.chain_target_bb = nullptr;
         func_ctx.catch_exc_alloca = nullptr;
+        func_ctx.catch_exc_sel_alloca = nullptr;
         func_ctx.depth = ++_lpad_depth_counter;
         _cleanup_lpad_stack.push(func_ctx);
     }
