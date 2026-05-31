@@ -1166,6 +1166,7 @@ void implementation_generator::emit_dynamic_cast(
             auto target_type = expr.get_cast_type();
             if (_null_failure_bb && type::is_link(target_type)) {
                 // Soft-fail: branch to else/continue if source is null.
+                set_debug_location(expr.first_lexeme());
                 auto* cur_fn = _builder->GetInsertBlock()->getParent();
                 auto* ok_bb = llvm::BasicBlock::Create(llvm_ctx, "dyncast_src_ok", cur_fn);
                 auto* is_null = _builder->CreateICmpEQ(
@@ -1174,10 +1175,13 @@ void implementation_generator::emit_dynamic_cast(
                     "dyncast_src_null");
                 _builder->CreateCondBr(is_null, _null_failure_bb, ok_bb);
                 _builder->SetInsertPoint(ok_bb);
+                set_debug_location(expr.first_lexeme());
             } else if (expr.null_is_fatal()) {
                 // Fatal: trap if source is null.
+                set_debug_location(expr.first_lexeme());
                 auto* fatal_fn = get_or_declare_fatal_null_function("__k_fatal_null_dyncast");
                 emit_null_check(base_raw, fatal_fn, "dyncast_src");
+                set_debug_location(expr.first_lexeme());
             }
             // For non-fatal targets (ptr/view) with null source, the vptr load
             // would still segfault.  This is a known limitation.
