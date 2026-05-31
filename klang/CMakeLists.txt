@@ -29,6 +29,8 @@ add_library(klang
         src/gen/resolvers_init_order.cpp
         src/gen/resolvers_generic.cpp
         src/gen/generators.cpp
+        src/gen/debug_info.hpp
+        src/gen/debug_info.cpp
         src/common/logger.cpp
         src/common/logger.hpp
         src/model/mangler.hpp
@@ -293,6 +295,7 @@ add_executable(klangc-tests
         tests/test-klangc-stdin.cpp
         tests/test-klangc-jit-exec.cpp
         tests/test-klangc-object-input.cpp
+        tests/test-klangc-debug.cpp
 )
 target_link_libraries(klangc-tests klang-test-helpers Catch2::Catch2WithMain)
 # Ensure klangc and libk are built before running integration tests

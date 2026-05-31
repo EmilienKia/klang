@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <type_traits>
 #include <unordered_set>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
@@ -89,6 +90,28 @@ std::pair<char_coord,char_coord> compiler::coordinates_from_lex(const lex::lexem
         return {src->get_coordinates({&lex.content.front()}), src->get_coordinates({&lex.content.back()})};
     }
     return {char_coord::INVALID(), char_coord::INVALID()};
+}
+
+std::optional<SourceLocation> compiler::get_source_location(const lex::any_lexeme& lexeme) const {
+    return std::visit([&](const auto& lex) -> std::optional<SourceLocation> {
+        using T = std::decay_t<decltype(lex)>;
+        if constexpr (!std::is_base_of_v<k::lex::lexeme, T>) {
+            return std::nullopt;
+        } else {
+            if (lex.content.empty()) {
+                return std::nullopt;
+            }
+            const auto* src = source_for_position(&lex.content.front());
+            if (!src) {
+                return std::nullopt;
+            }
+            const auto coord = src->get_coordinates({&lex.content.front()});
+            if (!coord) {
+                return std::nullopt;
+            }
+            return SourceLocation{src->path, coord.line + 1, coord.col + 1};
+        }
+    }, lexeme);
 }
 
 static const char* severity_str[] = {

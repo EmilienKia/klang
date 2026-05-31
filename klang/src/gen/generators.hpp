@@ -36,16 +36,20 @@
 #include "../lex/lexer.hpp"
 
 #include "../compiler.hpp"
+#include "debug_info.hpp"
 
 
 namespace k {
 class compiler;
 }
 
+namespace llvm {
+class DIScope;
+}
+
 namespace k::model::gen {
 
 class jit;
-
 /**
  * Returns true if a return type requires sret (structure-return) ABI:
  * i.e. non-primitive aggregate types (struct, class, interface, array).
@@ -71,6 +75,7 @@ public:
  */
 class declaration_generator : public default_model_visitor, protected k::log::logger_relay {
 protected:
+    k::compiler& _compiler;
     unit& _unit;
 
     std::shared_ptr<context> _context;
@@ -90,7 +95,7 @@ protected:
 
 
 public:
-    declaration_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit);
+    declaration_generator(k::log::logger& logger, k::compiler& compiler, std::shared_ptr<context> context, unit& unit);
 
     llvm::Module& get_module();
 
@@ -162,6 +167,7 @@ public:
  */
 class implementation_generator : public default_model_visitor, protected k::log::logger_relay {
 protected:
+    k::compiler& _compiler;
     unit& _unit;
 
     std::shared_ptr<context> _context;
@@ -169,6 +175,9 @@ protected:
     std::unique_ptr<llvm::IRBuilder<>> _builder;
 
     llvm::Value* _value;
+
+    std::unique_ptr<debug_info_emitter> _debug_info;
+    llvm::DIScope* _current_debug_scope = nullptr;
 
     std::stack<std::shared_ptr<aggregate>> _struct_stack;
 
@@ -340,7 +349,7 @@ protected:
 
 
 public:
-    implementation_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit);
+    implementation_generator(k::log::logger& logger, k::compiler& compiler, std::shared_ptr<context> context, unit& unit);
 
     llvm::Module& get_module();
 
@@ -589,6 +598,18 @@ public:
     void emit_union_cleanup_on_reassign(llvm::Value* union_base, union_type_def& udef, size_t new_alt_idx);
 
     void generate();
+
+    /** Finalize DWARF metadata emission if debug mode is enabled. */
+    void finalize_debug_info();
+
+    /** Set current IRBuilder debug location from an optional lexical token. */
+    void set_debug_location(const lex::opt_any_lexeme& lexeme);
+
+    /** Attach function-level debug metadata and set the current lexical scope. */
+    void begin_function_debug_scope(function& function, llvm::Function* llvm_func);
+
+    /** Clear current function-level debug scope and current location. */
+    void end_function_debug_scope();
 
 protected:
     void optimize_function_dead_inst_elimination(llvm::Function& func);

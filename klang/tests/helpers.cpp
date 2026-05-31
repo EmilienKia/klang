@@ -1091,6 +1091,28 @@ bool has_defined_symbol_containing(const std::string& file, const std::string& s
     return res.out.find(substr) != std::string::npos;
 }
 
+bool has_section_containing(const std::string& file, const std::string& section_substr) {
+    auto contains_section = [&](const std::string& tool_name) -> std::optional<bool> {
+        try {
+            auto res = k::tools::lookup_run_process(tool_name, {"-S", file});
+            if (res.exit_code != 0) {
+                return false;
+            }
+            return res.out.find(section_substr) != std::string::npos;
+        } catch (const k::tools::tool_not_found&) {
+            return std::nullopt;
+        }
+    };
+
+    if (auto v = contains_section("readelf"); v.has_value()) {
+        return *v;
+    }
+    if (auto v = contains_section("llvm-readelf"); v.has_value()) {
+        return *v;
+    }
+    return false;
+}
+
 std::filesystem::path kdi_path_for(const std::string& lib_path) {
     std::filesystem::path p(lib_path);
     p.replace_extension(".kdi");

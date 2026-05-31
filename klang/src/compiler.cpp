@@ -463,7 +463,7 @@ void compiler::process_generation(bool optimize, bool dump) {
         std::cout << "#" << std::endl << "# Generate declarations in LLVM module" << std::endl << "#" << std::endl;
     }
     trace("[compiler::process_generation] declaration generation");
-    k::model::gen::declaration_generator gen_decl(*this, _context, *_model_unit);
+    k::model::gen::declaration_generator gen_decl(*this, *this, _context, *_model_unit);
 
     _model_unit->accept(gen_decl);
 
@@ -471,9 +471,10 @@ void compiler::process_generation(bool optimize, bool dump) {
         std::cout << "#" << std::endl << "# Generate implementation in LLVM module" << std::endl << "#" << std::endl;
     }
     trace("[compiler::process_generation] implementation generation");
-    k::model::gen::implementation_generator gen_impl(*this, _context, *_model_unit);
+    k::model::gen::implementation_generator gen_impl(*this, *this, _context, *_model_unit);
 
     _model_unit->accept(gen_impl);
+    gen_impl.finalize_debug_info();
     verify_gen_code();
     if(dump) {
         dump_gen_code();
@@ -510,6 +511,13 @@ void compiler::set_ir_output_options(const IrOutputOptions& opts) {
     }
     if (!opts.opt_ir_file.empty()) {
         _ir_output_options.emit_opt_ir = true;
+    }
+}
+
+void compiler::set_debug_info_options(const DebugInfoOptions& opts) {
+    _debug_info_options = opts;
+    if (_debug_info_options.dwarf_version == 0) {
+        _debug_info_options.dwarf_version = 5;
     }
 }
 

@@ -333,6 +333,13 @@ bool is_same(const k::parse::ast::identifier_expr& ident1, const k::name& ident2
 bool has_defined_symbol_containing(const std::string& file, const std::string& substr);
 
 /**
+ * True if the binary/elf file contains a section whose name contains
+ * the given substring (for example ".debug_info" or ".debug_line").
+ * Uses readelf/llvm-readelf when available.
+ */
+bool has_section_containing(const std::string& file, const std::string& section_substr);
+
+/**
  * Given a library path (e.g. /tmp/foo.so or /tmp/foo.a), derive the expected
  * path of the KDI file (same stem, extension = .kdi).
  */

@@ -83,6 +83,9 @@ bool compiler::gen_executable(const std::string& output_file) {
     tools::exec_result exec_res;
     try {
         std::vector<std::string> clang_args = {"-pie", "-o", output_path.string(), object_path.string()};
+        if (_debug_info_options.enabled) {
+            clang_args.push_back("-g");
+        }
         // Append extra pre-compiled object files (.o)
         clang_args.insert(clang_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         // Append -L/-l flags for used imports
@@ -238,6 +241,9 @@ bool compiler::gen_shared_library(const std::string& output_file) {
     tools::exec_result exec_res;
     try {
         std::vector<std::string> clang_args = {"-shared", "-fPIC", "-o", output_path.string(), object_path.string()};
+        if (_debug_info_options.enabled) {
+            clang_args.push_back("-g");
+        }
         // Append extra pre-compiled object files (.o)
         clang_args.insert(clang_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         auto import_args = build_import_link_args();
@@ -312,6 +318,9 @@ bool compiler::gen_libraries(const std::string& shared_out, const std::string& s
     tools::exec_result so_res;
     try {
         std::vector<std::string> clang_args = {"-shared", "-fPIC", "-o", so_path.string(), object_path.string()};
+        if (_debug_info_options.enabled) {
+            clang_args.push_back("-g");
+        }
         // Append extra pre-compiled object files (.o)
         clang_args.insert(clang_args.end(), _extra_object_files.begin(), _extra_object_files.end());
         auto import_args = build_import_link_args();

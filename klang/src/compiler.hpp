@@ -21,6 +21,7 @@
 #include <string_view>
 #include <vector>
 #include <ostream>
+#include <optional>
 
 #include "common/logger.hpp"
 #include "common/file_resolver.hpp"
@@ -57,6 +58,24 @@ struct IrOutputOptions {
     bool no_emit_kdi  = false;      ///< Suppress .kdi generation even when producing a library
 };
 
+/**
+ * Options controlling native debug information (DWARF) emission.
+ */
+struct DebugInfoOptions {
+    /** Emit debug information metadata into generated IR/object files. */
+    bool enabled = false;
+    /** Emit line tables only (smaller debug info, fewer variable/type details). */
+    bool line_tables_only = false;
+    /** DWARF version. Typical values are 4 or 5. */
+    unsigned int dwarf_version = 5;
+};
+
+struct SourceLocation {
+    std::string file_path;
+    unsigned int line = 1;
+    unsigned int col = 1;
+};
+
 class compiler : protected log::logger,  public std::enable_shared_from_this<compiler> {
 protected:
     static bool _compiler_class_init;
@@ -81,6 +100,7 @@ protected:
     bool _has_compilation_error = false;
 
     IrOutputOptions _ir_output_options;
+    DebugInfoOptions _debug_info_options;
 
     /** Current log-level threshold. Messages below this level are silently discarded.
      *  Default: info (trace and debug are suppressed). */
@@ -179,6 +199,12 @@ public:
      */
     void set_ir_output_options(const IrOutputOptions& opts);
 
+    /** Configure native debug information (DWARF) emission. */
+    void set_debug_info_options(const DebugInfoOptions& opts);
+
+    /** Return current debug-info options. */
+    const DebugInfoOptions& get_debug_info_options() const { return _debug_info_options; }
+
     /**
      * Set the file resolver used to locate .kdi files for imports.
      * If not set, a default path_lookup_file_resolver (current directory only)
@@ -250,6 +276,9 @@ public:
      * gen_libraries() just before invoking clang.
      */
     std::vector<std::string> build_import_link_args() const;
+
+    /** Resolve a lexical token to source file/line/column, if available. */
+    std::optional<SourceLocation> get_source_location(const lex::any_lexeme& lexeme) const;
 
     void dump_gen_code();
     bool verify_gen_code();

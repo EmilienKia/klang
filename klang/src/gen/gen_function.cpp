@@ -33,6 +33,7 @@
 #include "../parse/ast.hpp"
 
 #include <llvm/IR/Verifier.h>
+#include <llvm/ADT/ScopeExit.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
 #include <algorithm>
@@ -1023,6 +1024,11 @@ void implementation_generator::visit_function(function &function) {
     }
 
     llvm::Function* func = func_it->second;
+
+    begin_function_debug_scope(function, func);
+    auto debug_scope_guard = llvm::make_scope_exit([&]() {
+        end_function_debug_scope();
+    });
 
     // Step 2: Create entry basic block and reset per-function state
     // create the function content:

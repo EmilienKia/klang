@@ -80,6 +80,7 @@ int main(int argc, const char** argv) {
     std::string forced_module_name;         // --module-name
     std::string log_level_str;              // --log-level
     std::string log_file;                   // --log-file
+    unsigned int dwarf_version = 5;         // --gdwarf-*
 
     k::compiler::initialize();
 
@@ -103,6 +104,10 @@ int main(int argc, const char** argv) {
                             "Write optimised IR to <arg> file (implies --emit-opt-ir; omit value or use - for stdout)")
             ("emit-kdi-json", "Also write a .kdi.json alongside the .kdi file when producing a library")
             ("no-emit-kdi",   "Suppress .kdi generation when producing a library")
+            ("debug,g", "Emit debug information (DWARF)")
+            ("gline-tables-only", "Emit line-tables-only debug information")
+            ("gdwarf-4", "Force DWARF version 4")
+            ("gdwarf-5", "Force DWARF version 5 (default)")
             // ── Import / link search path options ───────────────────────────
             ("include-path,I",
                 po::value<std::vector<std::string>>(&kdi_dirs)->composing(),
@@ -280,6 +285,21 @@ int main(int argc, const char** argv) {
         ir_opts.emit_kdi_json = vm.count("emit-kdi-json") > 0;
         ir_opts.no_emit_kdi   = vm.count("no-emit-kdi")   > 0;
         compiler->set_ir_output_options(ir_opts);
+
+        // Build and apply debug-info options
+        {
+            k::DebugInfoOptions dbg_opts;
+            dbg_opts.enabled = vm.count("debug") > 0 || vm.count("gline-tables-only") > 0;
+            dbg_opts.line_tables_only = vm.count("gline-tables-only") > 0;
+            if (vm.count("gdwarf-4") > 0 && vm.count("gdwarf-5") > 0) {
+                std::cerr << "Error: --gdwarf-4 and --gdwarf-5 are mutually exclusive." << std::endl;
+                return -1;
+            }
+            if (vm.count("gdwarf-4") > 0) dwarf_version = 4;
+            if (vm.count("gdwarf-5") > 0) dwarf_version = 5;
+            dbg_opts.dwarf_version = dwarf_version;
+            compiler->set_debug_info_options(dbg_opts);
+        }
 
         // ── Build the file resolver ─────────────────────────────────────────
         {

@@ -18,6 +18,8 @@
 
 #include "generators.hpp"
 
+#include "debug_info.hpp"
+
 #include "../model/context.hpp"
 
 #include <llvm/IR/Verifier.h>
@@ -39,8 +41,9 @@ namespace k::model::gen {
 // LLVM model declaration generator
 //
 
-declaration_generator::declaration_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit):
+declaration_generator::declaration_generator(k::log::logger& logger, k::compiler& compiler, std::shared_ptr<context> context, unit& unit):
 k::log::logger_relay(logger),
+_compiler(compiler),
 _context(context),
 _unit(unit)
 {
@@ -61,12 +64,15 @@ void declaration_generator::generate() {
 // LLVM model implementation generator
 //
 
-implementation_generator::implementation_generator(k::log::logger& logger, std::shared_ptr<context> context, unit& unit):
+implementation_generator::implementation_generator(k::log::logger& logger, k::compiler& compiler, std::shared_ptr<context> context, unit& unit):
 k::log::logger_relay(logger),
+_compiler(compiler),
 _context(context),
 _unit(unit)
 {
     _builder = std::make_unique<llvm::IRBuilder<>>(**_context);
+    _debug_info = std::make_unique<debug_info_emitter>(_compiler, _context);
+    _debug_info->initialize(_unit.get_unit_name().to_string());
 }
 
 llvm::Module& implementation_generator::get_module() {
@@ -75,6 +81,37 @@ llvm::Module& implementation_generator::get_module() {
 
 void implementation_generator::generate() {
     _unit.accept(*this);
+}
+
+void implementation_generator::finalize_debug_info() {
+    if (_debug_info) {
+        _debug_info->finalize();
+    }
+}
+
+void implementation_generator::set_debug_location(const lex::opt_any_lexeme& lexeme) {
+    if (_debug_info) {
+        _debug_info->set_current_debug_location(*_builder, lexeme, _current_debug_scope);
+    }
+}
+
+void implementation_generator::begin_function_debug_scope(function& function, llvm::Function* llvm_func) {
+    if (!_debug_info) {
+        return;
+    }
+    _current_debug_scope = _debug_info->attach_function_debug_scope(function, llvm_func);
+
+    // Seed a location early so every emitted instruction has at least a function-level line.
+    lex::opt_any_lexeme function_lexeme;
+    if (auto ast_func = function.get_ast_function_decl()) {
+        function_lexeme = lex::any_lexeme{ast_func->name};
+    }
+    set_debug_location(function_lexeme);
+}
+
+void implementation_generator::end_function_debug_scope() {
+    _current_debug_scope = nullptr;
+    _builder->SetCurrentDebugLocation(llvm::DebugLoc());
 }
 
 //
