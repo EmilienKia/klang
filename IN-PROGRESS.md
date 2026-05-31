@@ -70,6 +70,8 @@ Scope:
 - Emit parameter debug declarations in function bodies.
 - Emit local variable debug declarations with `llvm.dbg.declare`.
 - Keep debug scope state aligned with nested blocks, loops, and exception bodies.
+- Improve control-flow locations for `if`, `while`, `for`, `try`, and `catch` keywords.
+- Declare catch parameters as debug-visible local variables.
 
 Validation:
 - Build `klangc` and `klangc-tests`.
@@ -89,4 +91,5 @@ Validation:
 - Run the relevant `klangc-tests` categories.
 - Run the full test suite if practical.
 - Remove `IN-PROGRESS.md` only after the implementation is complete.
+
 

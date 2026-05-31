@@ -135,6 +135,16 @@ static lex::opt_any_lexeme get_statement_debug_lexeme(const statement& stmt)
             return lex::any_lexeme{ast_for->for_kw};
         }
     }
+    if (auto try_stmt = dynamic_cast<const try_catch_statement*>(&stmt)) {
+        if (auto ast_try = try_stmt->get_ast_node_as<k::parse::ast::try_catch_statement>()) {
+            return lex::any_lexeme{ast_try->try_kw};
+        }
+    }
+    if (auto catch_stmt = dynamic_cast<const catch_clause*>(&stmt)) {
+        if (auto ast_catch = catch_stmt->get_ast_node_as<k::parse::ast::catch_clause>()) {
+            return lex::any_lexeme{ast_catch->catch_kw};
+        }
+    }
     if (auto nested_block = dynamic_cast<const block*>(&stmt)) {
         if (!nested_block->get_statements().empty()) {
             return get_statement_debug_lexeme(*nested_block->get_statements().front());
@@ -701,7 +711,6 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
     // If we are inside a catch body, also emit __cxa_end_catch() before the finally.
     if (!_finally_stack.empty()) {
         auto& mod = _context->module();
-        auto* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
         auto cxa_end_fn = mod.getOrInsertFunction("__cxa_end_catch",
             llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {}, false));
 
@@ -1136,7 +1145,6 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
         auto& llvm_ctx = _context->llvm_context();
         auto& mod = _context->module();
         auto* void_ty = llvm::Type::getVoidTy(llvm_ctx);
-        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
         auto* current_func = _builder->GetInsertBlock()->getParent();
 
         auto cxa_rethrow = mod.getOrInsertFunction("__cxa_rethrow",
@@ -1673,6 +1681,8 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
     auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
+    set_debug_location(get_statement_debug_lexeme(stmt));
+
     // Set the personality function for C++ exception handling
     if (!func->hasPersonalityFn()) {
         auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
@@ -1706,6 +1716,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     auto* offset_alloca = alloca_builder.CreateAlloca(i32_ty, nullptr, "catch_offset_slot");
 
     // Branch to try body
+    set_debug_location(get_statement_debug_lexeme(stmt));
     _builder->CreateBr(try_bb);
     _builder->SetInsertPoint(try_bb);
 
@@ -1909,6 +1920,15 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     for (size_t i = 0; i < clauses.size(); ++i) {
         _builder->SetInsertPoint(catch_bbs[i]);
 
+        auto catch_clause = clauses[i];
+        auto catch_lexeme = get_statement_debug_lexeme(*catch_clause);
+        llvm::DIScope* previous_debug_scope = _current_debug_scope;
+        llvm::DebugLoc previous_debug_loc = _builder->getCurrentDebugLocation();
+        if (_debug_info && _current_debug_scope) {
+            _current_debug_scope = _debug_info->create_lexical_block(_current_debug_scope, catch_lexeme);
+            _debug_info->set_current_debug_location(*_builder, catch_lexeme, _current_debug_scope);
+        }
+
         // Load the exception pointer from the shared alloca
         auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr");
 
@@ -1922,7 +1942,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
             llvm::Type::getInt8Ty(llvm_ctx), caught_ptr, {matched_offset}, "adjusted_exc_ptr");
 
         // Bind the exception variable — create its alloca and store the adjusted pointer
-        auto var = clauses[i]->get_exception_var();
+        auto var = catch_clause->get_exception_var();
         if (var) {
             // Create alloca for the catch variable (reference type — stored as pointer at ABI level)
             auto var_type = var->get_type();
@@ -1934,6 +1954,9 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
             _context->_variables[var] = alloca;
             // Store the adjusted pointer (pointing to the correct base sub-object)
             _builder->CreateStore(adjusted_ptr, alloca);
+            if (_debug_info && _current_debug_scope) {
+                _debug_info->declare_local_variable(*_builder, *var, alloca, _current_debug_scope);
+            }
         }
 
         // Generate catch body
@@ -1963,6 +1986,9 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
                 _builder->CreateBr(end_bb);
             }
         }
+
+        _current_debug_scope = previous_debug_scope;
+        _builder->SetCurrentDebugLocation(previous_debug_loc);
     }
 
     // Catch fallthrough — no match, emit finally then propagate to outer handler or resume unwinding
@@ -2442,6 +2468,7 @@ void implementation_generator::emit_cond_var_cleanup(
  *   8. Set insertion point to merge block.
  */
 void implementation_generator::visit_if_else_statement(if_else_statement& stmt) {
+    set_debug_location(get_statement_debug_lexeme(stmt));
 
     bool has_else = (bool)stmt.get_else_stmt();
     bool has_cond_var = stmt.has_cond_var();
@@ -2523,9 +2550,6 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                         llvm::ConstantPointerNull::get(ptr_ty), "softfail_is_null");
 
                     llvm::BasicBlock* ok_bb = llvm::BasicBlock::Create(**_context, "softfail-ok-" + std::to_string(i), func);
-
-                    // On null, jump to trampoline (or fail_dest if first var)
-                    llvm::BasicBlock* null_target = trampoline ? trampoline : fail_dest;
 
                     // But we also need to cleanup THIS var (var i) if it's an owner with non-null before the check
                     // Actually: the var IS null if we branch here, so no cleanup of THIS var needed.
@@ -2710,6 +2734,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
     }
 
     // Step 6: Visit then-block, emit cleanup for cond vars, emit branch to merge
+    set_debug_location(get_statement_debug_lexeme(stmt));
     _builder->SetInsertPoint(then_block);
     stmt.get_then_stmt()->accept(*this);
     if(has_cond_var) {
@@ -2723,6 +2748,11 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
     // Step 7: Visit else-block (if present), emit cleanup for cond vars, emit branch to merge
     if(has_else) {
+        if (auto ast_if = stmt.get_ast_if_else_stmt(); ast_if && ast_if->else_kw) {
+            set_debug_location(lex::any_lexeme{*ast_if->else_kw});
+        } else {
+            set_debug_location(get_statement_debug_lexeme(stmt));
+        }
         func->insert(func->end(), else_block);
         _builder->SetInsertPoint(else_block);
         stmt.get_else_stmt()->accept(*this);
@@ -2792,6 +2822,7 @@ void declaration_generator::visit_while_statement(while_statement& stmt) {
  *   4. Set insertion point to after block.
  */
 void implementation_generator::visit_while_statement(while_statement& stmt) {
+    set_debug_location(get_statement_debug_lexeme(stmt));
 
     // Step 1: Create cond/body/after basic blocks
     // Retrieve current block and create nested and continue blocks
@@ -2817,6 +2848,7 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
 
     // Step 3: Visit body block, branch back to cond
     // Do branching
+    set_debug_location(get_statement_debug_lexeme(stmt));
     _builder->CreateCondBr(test_value, nested_block, cont_block);
 
     // Step 4: Set insertion point to after block
@@ -2839,6 +2871,7 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
     _loop_exit_blocks.pop();
 
     // Go back to test
+    set_debug_location(get_statement_debug_lexeme(stmt));
     _builder->CreateBr(while_block);
 
     // Generate "continuation" block
@@ -2917,6 +2950,7 @@ void declaration_generator::visit_for_statement(for_statement& stmt) {
  *   6. Set insertion point to after block.
  */
 void implementation_generator::visit_for_statement(for_statement& stmt) {
+    set_debug_location(get_statement_debug_lexeme(stmt));
 
     // Step 1: Visit init statement/expression
     // Retrieve current block and create nested and continue blocks
@@ -2947,8 +2981,10 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
         emit_expression_temporaries_cleanup();
 
         // Do branching
+        set_debug_location(get_statement_debug_lexeme(stmt));
         _builder->CreateCondBr(test_value, nested_block, cont_block);
     } else {
+        set_debug_location(get_statement_debug_lexeme(stmt));
         _builder->CreateBr(nested_block);
     }
 
@@ -2973,6 +3009,7 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     _loop_exit_blocks.pop();
 
     // Fall through to step block
+    set_debug_location(get_statement_debug_lexeme(stmt));
     _builder->CreateBr(step_block);
 
     // Step block
@@ -2983,7 +3020,6 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     if(auto step = stmt.get_step_expr()) {
         _value = nullptr;
         step->accept(*this);
-        auto step_value = _value;
         _value = nullptr;
 
         // Destroy any struct temporaries created during step evaluation
@@ -2991,6 +3027,7 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     }
 
     // Go back to test
+    set_debug_location(get_statement_debug_lexeme(stmt));
     _builder->CreateBr(for_block);
 
     // Generate "continuation" block

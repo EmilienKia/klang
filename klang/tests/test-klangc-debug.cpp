@@ -132,3 +132,86 @@ TEST_CASE("compiler: debug metadata contains parameters, locals and lexical bloc
     REQUIRE(ir.find("!DILexicalBlock(") != std::string::npos);
 }
 
+TEST_CASE("compiler: debug metadata covers loop scopes and catch variables", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_flow_test.k", R"(
+        module debug_flow_test;
+
+        flow(a: int) : int {
+            result: int = a;
+            while (result > 0) {
+                result = result - 1;
+            }
+            try {
+                result = result + 1;
+            } catch (caught: Exception*) {
+                result = 0;
+            }
+            return result;
+        }
+    )", true, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    INFO(ir);
+    REQUIRE(ir.find("llvm.dbg.declare") != std::string::npos);
+    REQUIRE(ir.find("!DILocalVariable(name: \"caught\"") != std::string::npos);
+    REQUIRE(ir.find("!DILexicalBlock(") != std::string::npos);
+}
+
+TEST_CASE("klangc: debug DWARF contains catch variables and lexical blocks", "[klangc][debug][dwarf]") {
+    auto klangc = find_klangc();
+
+    char k_file[] = "/tmp/klang_dbg_throw_XXXXXX";
+    int fd = ::mkstemp(k_file);
+    REQUIRE(fd != -1);
+    ::close(fd);
+
+    std::string k_path = std::string(k_file) + ".k";
+    std::string so_path = std::string(k_file) + ".so";
+    std::filesystem::remove(k_file);
+
+    {
+        std::ofstream ofs(k_path);
+        ofs << R"(
+            module dbg_throw;
+
+            class MyErr : public Exception { }
+
+            flow(a: int) : int {
+                result: int = a;
+                try {
+                    throw MyErr();
+                } catch (caught: Exception*) {
+                    result = 0;
+                }
+                return result;
+            }
+        )";
+    }
+
+    auto res = k::tools::run_process(klangc.string(), {"--dyn-lib", "-g", "--no-emit-kdi", "-o", so_path, k_path});
+    INFO("klangc stdout: " << res.out);
+    INFO("klangc stderr: " << res.err);
+    REQUIRE(res.exit_code == 0);
+    REQUIRE(std::filesystem::exists(so_path));
+
+    auto dwarf = k::tools::run_process("/usr/bin/llvm-dwarfdump", {"--debug-info", so_path});
+    INFO("llvm-dwarfdump stdout: " << dwarf.out);
+    INFO("llvm-dwarfdump stderr: " << dwarf.err);
+    REQUIRE(dwarf.exit_code == 0);
+    REQUIRE(dwarf.out.find("caught") != std::string::npos);
+    REQUIRE(dwarf.out.find("DW_TAG_lexical_block") != std::string::npos);
+
+    std::filesystem::remove(so_path);
+    std::filesystem::remove(k_path);
+}
+
