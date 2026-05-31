@@ -979,6 +979,7 @@ void implementation_generator::visit_break_statement(break_statement& stmt) {
     }
 
     // Branch to loop exit block
+    set_debug_location(break_lexeme);
     _builder->CreateBr(_loop_exit_blocks.top());
 
     // Create unreachable basic block for any code following the break
