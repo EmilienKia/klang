@@ -1342,6 +1342,8 @@ llvm::Function* implementation_generator::get_or_declare_fatal_null_function(con
 
 void implementation_generator::emit_null_check(llvm::Value* ptr_value, llvm::Function* fatal_fn, const std::string& label,
                                                llvm::BasicBlock* soft_fail_bb) {
+    auto current_debug_loc = _builder->getCurrentDebugLocation();
+
     auto* fn   = _builder->GetInsertBlock()->getParent();
     auto& ctx  = _builder->getContext();
     auto* ptr_ty = llvm::PointerType::get(ctx, 0);
@@ -1357,6 +1359,7 @@ void implementation_generator::emit_null_check(llvm::Value* ptr_value, llvm::Fun
         auto* null_bb = llvm::BasicBlock::Create(ctx, label + "_null", fn);
         _builder->CreateCondBr(is_null, null_bb, ok_bb);
         _builder->SetInsertPoint(null_bb);
+        _builder->SetCurrentDebugLocation(current_debug_loc);
         auto* unwind_dest = current_unwind_dest();
         if (unwind_dest) {
             // Inside exception context: use invoke so the exception unwinds correctly
@@ -1365,6 +1368,7 @@ void implementation_generator::emit_null_check(llvm::Value* ptr_value, llvm::Fun
                 fatal_fn->getFunctionType(), fatal_fn,
                 unreachable_bb, unwind_dest, {});
             _builder->SetInsertPoint(unreachable_bb);
+            _builder->SetCurrentDebugLocation(current_debug_loc);
             _builder->CreateUnreachable();
         } else {
             // No exception context: plain call (exception propagates past this frame)
@@ -1374,6 +1378,7 @@ void implementation_generator::emit_null_check(llvm::Value* ptr_value, llvm::Fun
         }
     }
     _builder->SetInsertPoint(ok_bb);
+    _builder->SetCurrentDebugLocation(current_debug_loc);
 }
 
 llvm::Function* implementation_generator::get_or_declare_fatal_memory_function() {

@@ -480,7 +480,9 @@ read(ptr: int*) : int {
 
     INFO(ir);
     const int deref_line = extract_dbg_line_for_instruction("deref_load = load");
+    const int deref_null_check_line = extract_dbg_line_for_instruction("deref_is_null");
     REQUIRE(deref_line == 5);
+    REQUIRE(deref_null_check_line == 5);
 }
 
 TEST_CASE("compiler: debug metadata anchors dynamic-cast RTTI compare on cast line", "[klangc][debug][ir]") {
