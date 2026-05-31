@@ -323,6 +323,12 @@ protected:
                                        llvm::ArrayRef<llvm::Value*> args,
                                        const llvm::Twine& name = "");
 
+    /**
+     * Return the current innermost unwind destination (cleanup or catch landing pad),
+     * or nullptr if no exception context is active. Uses depth-based priority.
+     */
+    llvm::BasicBlock* current_unwind_dest() const;
+
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(code, message, args);
         if (lexeme) diag.at(*lexeme);

@@ -1229,7 +1229,7 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
         llvm::Value* count_val = _builder->CreateLoad(
             _builder->getInt32Ty(), count_ptr, "arr_count");
         emit_array_bounds_check(_builder.get(), get_module(), right, count_val, "subscript",
-                                !_landing_pad_stack.empty() ? _landing_pad_stack.top().lpad_bb : nullptr);
+                                current_unwind_dest());
 
         // Two-step GEP: first into the struct field 1, then into the array element
         llvm::Value* field_data_ptr = _builder->CreateStructGEP(struct_llvm, left,
@@ -1251,7 +1251,7 @@ void implementation_generator::visit_subscript_expression(subscript_expression& 
         llvm::Value* count_val = _builder->CreateLoad(
             _builder->getInt32Ty(), count_ptr, "dynarr_count");
         emit_array_bounds_check(_builder.get(), get_module(), right, count_val, "subscript",
-                                !_landing_pad_stack.empty() ? _landing_pad_stack.top().lpad_bb : nullptr);
+                                current_unwind_dest());
 
         // Step 2: For arrays: compute GEP with index into the array data
         // Step 3: For pointers/links/views: load pointer, then GEP with index

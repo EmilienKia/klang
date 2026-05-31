@@ -35,18 +35,7 @@ llvm::Value* implementation_generator::create_call_or_invoke(
     llvm::FunctionType* fn_type, llvm::Value* callee,
     llvm::ArrayRef<llvm::Value*> args, const llvm::Twine& name)
 {
-    // Determine the unwind destination: pick the innermost handler (highest depth)
-    llvm::BasicBlock* unwind_dest = nullptr;
-    unsigned cleanup_depth = _cleanup_lpad_stack.empty() ? 0 : _cleanup_lpad_stack.top().depth;
-    unsigned catch_depth = _landing_pad_stack.empty() ? 0 : _landing_pad_stack.top().depth;
-
-    if (cleanup_depth > 0 || catch_depth > 0) {
-        if (cleanup_depth > catch_depth) {
-            unwind_dest = _cleanup_lpad_stack.top().lpad_bb;
-        } else if (catch_depth > 0) {
-            unwind_dest = _landing_pad_stack.top().lpad_bb;
-        }
-    }
+    llvm::BasicBlock* unwind_dest = current_unwind_dest();
 
     if (unwind_dest) {
         // Use invoke so exceptions unwind to the appropriate landing pad
@@ -70,6 +59,19 @@ llvm::Value* implementation_generator::create_call_or_invoke(
     const llvm::Twine& name)
 {
     return create_call_or_invoke(callee.getFunctionType(), callee.getCallee(), args, name);
+}
+
+llvm::BasicBlock* implementation_generator::current_unwind_dest() const {
+    unsigned cleanup_depth = _cleanup_lpad_stack.empty() ? 0 : _cleanup_lpad_stack.top().depth;
+    unsigned catch_depth = _landing_pad_stack.empty() ? 0 : _landing_pad_stack.top().depth;
+    if (cleanup_depth > 0 || catch_depth > 0) {
+        if (cleanup_depth > catch_depth) {
+            return _cleanup_lpad_stack.top().lpad_bb;
+        } else if (catch_depth > 0) {
+            return _landing_pad_stack.top().lpad_bb;
+        }
+    }
+    return nullptr;
 }
 
 /**

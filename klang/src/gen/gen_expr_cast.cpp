@@ -1335,16 +1335,17 @@ void implementation_generator::emit_null_check(llvm::Value* ptr_value, llvm::Fun
         auto* null_bb = llvm::BasicBlock::Create(ctx, label + "_null", fn);
         _builder->CreateCondBr(is_null, null_bb, ok_bb);
         _builder->SetInsertPoint(null_bb);
-        if (!_landing_pad_stack.empty()) {
-            // Inside try-catch: use invoke so the exception unwinds to the landing pad
+        auto* unwind_dest = current_unwind_dest();
+        if (unwind_dest) {
+            // Inside exception context: use invoke so the exception unwinds correctly
             auto* unreachable_bb = llvm::BasicBlock::Create(ctx, label + "_unreachable", fn);
             _builder->CreateInvoke(
                 fatal_fn->getFunctionType(), fatal_fn,
-                unreachable_bb, _landing_pad_stack.top().lpad_bb, {});
+                unreachable_bb, unwind_dest, {});
             _builder->SetInsertPoint(unreachable_bb);
             _builder->CreateUnreachable();
         } else {
-            // Not inside try-catch: plain call (exception propagates past this frame)
+            // No exception context: plain call (exception propagates past this frame)
             auto* call = _builder->CreateCall(fatal_fn, {});
             call->setDoesNotReturn();
             _builder->CreateUnreachable();
@@ -1384,16 +1385,17 @@ void implementation_generator::emit_alloc_null_check(llvm::Value* alloc_result, 
     // Fail block: call/invoke __k_fatal_memory_allocation (throws OutOfMemory)
     _builder->SetInsertPoint(fail_bb);
     auto* fatal_fn = get_or_declare_fatal_memory_function();
-    if (!_landing_pad_stack.empty()) {
-        // Inside try-catch: use invoke so the exception unwinds to the landing pad
+    auto* unwind_dest = current_unwind_dest();
+    if (unwind_dest) {
+        // Inside exception context: use invoke so the exception unwinds correctly
         auto* unreachable_bb = llvm::BasicBlock::Create(ctx, label + "_unreachable", fn);
         _builder->CreateInvoke(
             fatal_fn->getFunctionType(), fatal_fn,
-            unreachable_bb, _landing_pad_stack.top().lpad_bb, {});
+            unreachable_bb, unwind_dest, {});
         _builder->SetInsertPoint(unreachable_bb);
         _builder->CreateUnreachable();
     } else {
-        // Not inside try-catch: plain call (exception propagates past this frame)
+        // No exception context: plain call (exception propagates past this frame)
         auto* call = _builder->CreateCall(fatal_fn, {});
         call->setDoesNotReturn();
         _builder->CreateUnreachable();
