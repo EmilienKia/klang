@@ -186,12 +186,19 @@ struct debug_scope_guard {
 
 void implementation_generator::emit_expression_temporaries_cleanup(const lex::opt_any_lexeme& anchor_lexeme) {
     if (_expression_temporaries.empty()) return;
-    set_debug_location(anchor_lexeme);
+
+    const auto previous_debug_loc = _builder->getCurrentDebugLocation();
+    if (anchor_lexeme.has_value()) {
+        set_debug_location(anchor_lexeme);
+    }
+
     // Destroy in reverse creation order
     for (auto it = _expression_temporaries.rbegin(); it != _expression_temporaries.rend(); ++it) {
         _builder->CreateCall(it->second, {it->first});
     }
     _expression_temporaries.clear();
+
+    _builder->SetCurrentDebugLocation(previous_debug_loc);
 }
 
 
