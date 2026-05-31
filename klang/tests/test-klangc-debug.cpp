@@ -1070,3 +1070,68 @@ run(a: int, n: int) : int {
     REQUIRE(std::find(for_break_branch_lines.begin(), for_break_branch_lines.end(), 9) != for_break_branch_lines.end());
 }
 
+TEST_CASE("compiler: debug metadata anchors while back-edge and for-no-test entry on loop lines", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_loop_edge_lines.k", R"(module debug_loop_edge_lines;
+
+run(n: int) : int {
+    while (
+        n > 0
+    ) {
+        n = n - 1;
+    }
+
+    for (
+        i: int = 0;
+        ;
+        i += 1
+    ) {
+        break;
+    }
+
+    return 0;
+}
+)", false, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    auto extract_dbg_line_at = [&](size_t inst_pos) -> int {
+        const auto dbg_pos = ir.find("!dbg !", inst_pos);
+        if (dbg_pos == std::string::npos) return -1;
+        const auto id_start = dbg_pos + 6;
+        const auto id_end = ir.find_first_not_of("0123456789", id_start);
+        if (id_end == std::string::npos || id_end == id_start) return -1;
+        const auto id = ir.substr(id_start, id_end - id_start);
+        const auto meta_pos = ir.find("!" + id + " = !DILocation(line: ");
+        if (meta_pos == std::string::npos) return -1;
+        const auto line_start = meta_pos + std::string("!" + id + " = !DILocation(line: ").size();
+        const auto line_end = ir.find_first_not_of("0123456789", line_start);
+        if (line_end == std::string::npos || line_end == line_start) return -1;
+        return std::stoi(ir.substr(line_start, line_end - line_start));
+    };
+
+    std::vector<int> while_back_edge_lines;
+    const std::string while_back_edge_text = "br label %while-condition";
+    for (size_t pos = ir.find(while_back_edge_text); pos != std::string::npos; pos = ir.find(while_back_edge_text, pos + 1)) {
+        while_back_edge_lines.push_back(extract_dbg_line_at(pos));
+    }
+
+    std::vector<int> for_no_test_entry_lines;
+    const std::string for_no_test_entry_text = "br label %for-nested";
+    for (size_t pos = ir.find(for_no_test_entry_text); pos != std::string::npos; pos = ir.find(for_no_test_entry_text, pos + 1)) {
+        for_no_test_entry_lines.push_back(extract_dbg_line_at(pos));
+    }
+
+    INFO(ir);
+    REQUIRE(std::find(while_back_edge_lines.begin(), while_back_edge_lines.end(), 4) != while_back_edge_lines.end());
+    REQUIRE(std::find(for_no_test_entry_lines.begin(), for_no_test_entry_lines.end(), 10) != for_no_test_entry_lines.end());
+}
+
