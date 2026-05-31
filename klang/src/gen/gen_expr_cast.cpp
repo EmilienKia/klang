@@ -1298,12 +1298,14 @@ void implementation_generator::emit_dynamic_cast(
 
     // Step 3: Call the runtime dynamic_cast function with source RTTI, target RTTI, and object ptr
     // ── 7. Select result: derived_ptr on match, null on mismatch ─────────────
+    set_debug_location(expr.first_lexeme());
     auto* null_val = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(ptr_ty));
     llvm::Value* result = _builder->CreateSelect(rtti_match, derived_ptr, null_val, "dyncast_result");
 
     // Step 4: If null_is_fatal: emit a null check + fatal trap
     // ── 8. Fatal-null check for lnk/ref targets ───────────────────────────────
     if (expr.null_is_fatal()) {
+        set_debug_location(expr.first_lexeme());
         auto* fatal_fn = get_or_declare_fatal_null_function("__k_fatal_null_dyncast");
         // For link targets inside an if-condition, soft-fail to _null_failure_bb
         // instead of trapping.  Ref targets remain unconditionally fatal.
@@ -1311,6 +1313,7 @@ void implementation_generator::emit_dynamic_cast(
         llvm::BasicBlock* soft_bb = (_null_failure_bb && type::is_link(target_type))
                                      ? _null_failure_bb : nullptr;
         emit_null_check(result, fatal_fn, "dyncast", soft_bb);
+        set_debug_location(expr.first_lexeme());
     }
 
     // Step 5: Set _value to the cast result pointer

@@ -542,7 +542,9 @@ cast_to_derived(base: Base*) : Derived* {
 
     INFO(ir);
     const int rtti_cmp_line = extract_dbg_line_for_instruction("dyncast_rtti_match");
+    const int result_line = extract_dbg_line_for_instruction("dyncast_result");
     REQUIRE(rtti_cmp_line == 14);
+    REQUIRE(result_line == 14);
 }
 
 TEST_CASE("compiler: debug metadata anchors dynamic-cast nullable guard on cast line", "[klangc][debug][ir]") {
