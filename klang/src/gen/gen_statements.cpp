@@ -2820,6 +2820,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
             emit_cond_var_cleanup(*it);
         }
     }
+    set_debug_location(if_lexeme);
     _builder->CreateBr(cont_block);
 
     // Step 7: Visit else-block (if present), emit cleanup for cond vars, emit branch to merge
@@ -2844,6 +2845,11 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
             }
             // else: soft-fail form — no cleanup in else (cleanup done in trampolines
             // or variable was never fully initialized)
+        }
+        if (auto ast_if = stmt.get_ast_if_else_stmt(); ast_if && ast_if->else_kw) {
+            set_debug_location(lex::any_lexeme{*ast_if->else_kw});
+        } else {
+            set_debug_location(if_lexeme);
         }
         _builder->CreateBr(cont_block);
     }

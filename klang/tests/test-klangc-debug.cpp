@@ -20,6 +20,7 @@
 
 #include <llvm/Support/raw_ostream.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <unistd.h>
@@ -779,5 +780,66 @@ branch(a: int*, b: int*) : int {
     INFO(ir);
     const int softfail_guard_line = extract_dbg_line_for_instruction("softfail_is_null");
     REQUIRE(softfail_guard_line == 4);
+}
+
+TEST_CASE("compiler: debug metadata anchors then/else merge branches on source keywords", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_if_merge_branch_lines.k", R"(module debug_if_merge_branch_lines;
+
+branch(a: int) : int {
+    v: int = 0;
+    if (
+        a > 0
+    ) {
+        v = 1;
+    } else {
+        v = 2;
+    }
+    return v;
+}
+)", false, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    auto extract_dbg_line_at = [&](size_t inst_pos) -> int {
+        const auto dbg_pos = ir.find("!dbg !", inst_pos);
+        if (dbg_pos == std::string::npos) {
+            return -1;
+        }
+        const auto id_start = dbg_pos + 6;
+        const auto id_end = ir.find_first_not_of("0123456789", id_start);
+        if (id_end == std::string::npos || id_end == id_start) {
+            return -1;
+        }
+        const auto id = ir.substr(id_start, id_end - id_start);
+        const auto meta_pos = ir.find("!" + id + " = !DILocation(line: ");
+        if (meta_pos == std::string::npos) {
+            return -1;
+        }
+        const auto line_start = meta_pos + std::string("!" + id + " = !DILocation(line: ").size();
+        const auto line_end = ir.find_first_not_of("0123456789", line_start);
+        if (line_end == std::string::npos || line_end == line_start) {
+            return -1;
+        }
+        return std::stoi(ir.substr(line_start, line_end - line_start));
+    };
+
+    std::vector<int> merge_branch_lines;
+    const std::string merge_branch_text = "br label %if-continue";
+    for (size_t pos = ir.find(merge_branch_text); pos != std::string::npos; pos = ir.find(merge_branch_text, pos + 1)) {
+        merge_branch_lines.push_back(extract_dbg_line_at(pos));
+    }
+
+    INFO(ir);
+    REQUIRE(std::find(merge_branch_lines.begin(), merge_branch_lines.end(), 5) != merge_branch_lines.end());
+    REQUIRE(std::find(merge_branch_lines.begin(), merge_branch_lines.end(), 9) != merge_branch_lines.end());
 }
 
