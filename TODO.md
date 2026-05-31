@@ -60,15 +60,30 @@
 - Add concepts (and template constraints) for more expressive template programming and better error messages
 - Add traits (Rust like)
 - Exceptions:
+    - [x] `throw` statement — throws an expression deriving from `Throwable` (local var or temporary construction)
+    - [x] `try`/`catch` blocks — type-based dispatch via RTTI typeinfo chain, polymorphic base-class matching
+    - [x] Multiple `catch` clauses with first-match semantics
+    - [x] Nested `try`/`catch` — unmatched exceptions resume unwinding to outer handler
     - [x] `finally` block (guaranteed execution regardless of exception path) — **Phase 1 done** (basic flow); **Phase 2 done** (`return`/`break`/`continue` inside try/catch bodies emit finally before exiting)
-    - [ ] Exception masking/chaining (`throw new E2() from e1`)
-    - [ ] `rethrow` / `throw;` (re-throw current exception in catch block)
+    - [x] `try`-`finally` without `catch` clauses
+    - [x] `rethrow` / `throw;` (re-throw current exception in catch block) — compile-time error if used outside a `catch` block
+    - [x] `throws` clause on functions/constructors — exception specification with type list
+    - [x] Checked exception contract enforcement: functions with `throws` must declare or catch all checked exceptions from callees
+    - [x] `throws` clause type resolution and KDI import/export
+    - [x] Compile-time rejection of `throw` on non-`Throwable` types (struct or class not deriving from `Throwable`)
+    - [x] `FatalError` unchecked exception semantics — propagates freely without `throws` declaration
+    - [x] Stdlib exception hierarchy (`Throwable` → `Exception` / `FatalError`, `OutOfMemory`, `NullPointerException`, `IndexOutOfBoundsException`, `IllegalArgumentException`, `IllegalStateException`, `ConstructionException`, `NullPointerError` → `NullDereferenceError`/`NullAssignationError`/`NullCastError`, `IndexOutOfBoundsError`)
+    - [x] Runtime fatal helpers in libk (`__k_fatal_null_dereference`, `__k_fatal_null_assignation`, `__k_fatal_null_dyncast`, `__k_fatal_array_bounds_check_failed`, `__k_fatal_memory_allocation`) — throw `FatalError`-derived exceptions via Itanium C++ ABI
+    - [x] `ConstructionException` wrapping in `UniSlot<T>::construct` / `MultiSlot<T>::construct` — catches constructor exceptions and rethrows as `FatalError`
+    - [x] `invoke` instruction usage inside `try` bodies (instead of `call`) for proper exception unwinding
+    - [x] Cross-module constructor throws (import library with throwing ctor, catch in consumer)
+    - [x] Exception chaining/cause — `Throwable._cause` field + constructors accepting a `Throwable?` cause parameter, `getCause()`/`hasCause()` methods, ABI ref-counted retention via `__k_exception_retain_current()`/`__k_exception_release()`, compiler-generated per-type destructor for cleanup
     - [ ] Exception specifications on function pointer/reference types
     - [ ] `noexcept` conditional expression (`noexcept(expr)`)
     - [ ] Exception handling in static constructors/destructors
-    - [ ] `MemoryException` integration with `new` operator and `MultiSlot<T>` — **in progress** (see `IN-PROGRESS.md`)
-    - [ ] Fatal exception types for internal runtime errors (second wave of stdlib exceptions)
     - [ ] Unhandled FatalError diagnostic: when an uncaught FatalError propagates past `main()`, the runtime should print a diagnostic message (exception type, code, optional stack trace) before terminating the process
+    - [ ] Destructor invocation during stack unwinding (RAII cleanup on throw)
+    - [ ] `catch(...)` catch-all clause (catch any `Throwable`)
 - Switch/case statements and expression
 - With-block - temporary change 'this' scope for a block of code (e.g. `with (obj) { ... }` to access members directly)
 - Add static code decoration and constraint (usage example : units of measurement)

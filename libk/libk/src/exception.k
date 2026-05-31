@@ -37,6 +37,8 @@ module k;
  */
 public class Throwable {
     _code : int = 0;
+    _cause : Throwable* = null;
+    _cause_handle : Throwable* = null;
 
 public:
     /**
@@ -54,10 +56,33 @@ public:
     }
 
     /**
+     * Construct a throwable with the given error code and a cause.
+     * The cause is the exception that triggered this one (chaining).
+     */
+    Throwable(code: int, cause: Throwable?) {
+        _code = code;
+        _cause = cause;
+    }
+
+    /**
      * Return the error code.
      */
     const getCode() : int {
         return _code;
+    }
+
+    /**
+     * Return the cause of this throwable, or null if there is no cause.
+     */
+    const getCause() : Throwable* {
+        return _cause;
+    }
+
+    /**
+     * Return true if this throwable has a cause.
+     */
+    const hasCause() : bool {
+        return _cause != null;
     }
 }
 
@@ -79,6 +104,8 @@ public:
     Exception() : Throwable() {}
 
     Exception(code: int) : Throwable(code) {}
+
+    Exception(code: int, cause: Throwable?) : Throwable(code, cause) {}
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -101,6 +128,8 @@ public:
     FatalError() : Throwable() {}
 
     FatalError(code: int) : Throwable(code) {}
+
+    FatalError(code: int, cause: Throwable?) : Throwable(code, cause) {}
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

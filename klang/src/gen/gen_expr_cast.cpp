@@ -680,6 +680,22 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 
         bool src_is_indir = type::is_link(effective_source) || type::is_view(effective_source) || type::is_pointer(effective_source);
         bool tgt_is_indir = type::is_link(target_type) || type::is_view(target_type) || type::is_pointer(target_type);
+
+        // ref<Derived> → view/link/ptr<Base>: the ref is already an address; GEP to base sub-object
+        if (!src_is_indir && tgt_is_indir && type::is_reference(source_type)) {
+            auto src_ref = std::dynamic_pointer_cast<reference_type>(source_type);
+            auto src_inner = type::remove_const(src_ref->get_referenced_type());
+            indir_src_st_type = std::dynamic_pointer_cast<struct_type>(src_inner);
+            indir_tgt_st_type = get_indir_pointed(target_type);
+            if (indir_src_st_type && indir_tgt_st_type && indir_src_st_type != indir_tgt_st_type) {
+                auto src_st = indir_src_st_type->get_struct();
+                auto tgt_st = indir_tgt_st_type->get_struct();
+                if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
+                    is_indir_upcast = true;
+                }
+            }
+        }
+
         if (src_is_indir && tgt_is_indir) {
             indir_src_st_type = get_indir_pointed(effective_source);
             indir_tgt_st_type = get_indir_pointed(target_type);

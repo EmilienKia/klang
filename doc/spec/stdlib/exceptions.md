@@ -47,19 +47,54 @@ Root base class for all types that can be thrown in K.
 | Field | Type | Description |
 |-------|------|-------------|
 | `_code` | `int` | Integer error code (default: 0) |
+| `_cause` | `Throwable*` | Pointer to the causing exception (null if none) |
+| `_cause_handle` | `Throwable*` | Internal ABI handle for cause lifetime management |
 
 ### Constructors
 
 | Signature | Description |
 |-----------|-------------|
-| `Throwable()` | Construct with code 0 |
-| `Throwable(code: int)` | Construct with the given error code |
+| `Throwable()` | Construct with code 0, no cause |
+| `Throwable(code: int)` | Construct with the given error code, no cause |
+| `Throwable(code: int, cause: Throwable?)` | Construct with error code and a reference to the causing exception |
 
 ### Methods
 
 | Signature | Description |
 |-----------|-------------|
 | `const getCode() : int` | Return the error code |
+| `const getCause() : Throwable?` | Return a view to the causing exception, or null |
+| `const hasCause() : bool` | Return true if this exception has a cause |
+
+### Exception Chaining
+
+An exception can carry a reference to another exception that caused it. This
+enables wrapping lower-level errors while preserving the original context.
+
+The cause is set at construction time by passing a `Throwable?` argument:
+
+```k
+catch (ex: LowLevelError&) {
+    throw HighLevelError(42, ex);  // ex becomes the cause
+}
+```
+
+The runtime automatically manages the cause's lifetime — the original exception
+memory is retained (ABI ref-counted) as long as the wrapping exception exists,
+and released when the wrapper is destroyed.
+
+To inspect the cause chain:
+
+```k
+catch (ex: HighLevelError&) {
+    if (ex.hasCause()) {
+        cause : Throwable? = ex.getCause();
+        // cause.getCode() returns the original error code
+    }
+}
+```
+
+Passing `null` as the cause is valid and equivalent to no cause.
 
 ---
 
@@ -74,6 +109,7 @@ types must declare them in their `throws` clause. Extends `Throwable`.
 |-----------|-------------|
 | `Exception()` | Construct with default code (0) |
 | `Exception(code: int)` | Construct with the given error code |
+| `Exception(code: int, cause: Throwable?)` | Construct with error code and cause |
 
 ---
 
@@ -89,6 +125,7 @@ encounter at any time. Extends `Throwable`.
 |-----------|-------------|
 | `FatalError()` | Construct with default code (0) |
 | `FatalError(code: int)` | Construct with the given error code |
+| `FatalError(code: int, cause: Throwable?)` | Construct with error code and cause |
 
 ---
 

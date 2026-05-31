@@ -22,7 +22,8 @@ in the standard library. The hierarchy separates **checked exceptions**
 6. [Stack unwinding and cleanup](#6-stack-unwinding-and-cleanup)
 7. [Implementation details](#7-implementation-details)
 8. [Diagnostic codes](#8-diagnostic-codes)
-9. [Known limitations](#9-known-limitations)
+9. [Exception chaining (cause)](#9-exception-chaining-cause)
+10. [Known limitations](#10-known-limitations)
 
 ---
 
@@ -451,9 +452,95 @@ riskyWork() : int {
 
 ---
 
-## 9. Known limitations
+## 9. Exception chaining (cause)
 
-- No `finally` clause.
+An exception can reference another exception as its **cause**. This enables
+wrapping lower-level errors while preserving the original diagnostic context.
+
+### Mechanism
+
+Exception chaining is constructor-based — no dedicated syntax is needed.
+All stdlib exception classes (`Throwable`, `Exception`, `FatalError`) provide
+constructors that accept an optional `Throwable?` cause parameter:
+
+```k
+class MyAppError : public Exception {
+    public:
+    MyAppError(code: int) : Exception(code) { }
+    MyAppError(code: int, cause: Throwable?) : Exception(code, cause) { }
+}
+```
+
+### Usage
+
+```k
+class LowLevelError : public Exception {
+    public:
+    LowLevelError() : Exception(10) { }
+}
+
+class HighLevelError : public Exception {
+    public:
+    HighLevelError(code: int, cause: Throwable?) : Exception(code, cause) { }
+}
+
+process() : int {
+    result : int = 0;
+    try {
+        try {
+            throw LowLevelError();
+        } catch (ex: LowLevelError&) {
+            // Wrap the original error with context
+            throw HighLevelError(99, ex);
+        }
+    } catch (w: HighLevelError&) {
+        result = w.getCode();       // 99
+        if (w.hasCause()) {
+            cause : Throwable? = w.getCause();
+            result = result + cause.getCode();  // 99 + 10 = 109
+        }
+    }
+    return result;
+}
+```
+
+### Null cause
+
+Passing `null` as the cause is valid and equivalent to having no cause:
+
+```k
+throw MyAppError(42, null);  // hasCause() returns false
+```
+
+### Lifetime management
+
+The compiler automatically manages the cause exception's lifetime:
+
+- At `throw` time, if the `_cause` field is non-null, the runtime retains
+  (ref-count increments) the currently active exception's ABI storage.
+- When the wrapping exception is destroyed, the retained cause is released.
+- This is transparent to the programmer — no manual memory management is needed.
+
+### Chaining depth
+
+Chains can be arbitrarily deep. Each wrapper stores a view to its immediate
+cause; walking the full chain requires repeated `getCause()` calls:
+
+```k
+catch (outer: OuterError&) {
+    if (outer.hasCause()) {
+        c1 : Throwable? = outer.getCause();
+        if (c1.hasCause()) {
+            c2 : Throwable? = c1.getCause();  // original root cause
+        }
+    }
+}
+```
+
+---
+
+## 10. Known limitations
+
 - No `generic` catch-all clause (planned).
 
 ---

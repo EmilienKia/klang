@@ -1138,18 +1138,151 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     }
     _builder->CreateStore(typeinfo_gv, ti_global);
 
-    // 5. __cxa_throw(void* thrown_exception, void* tinfo, void (*dest)(void*))
-    //    The destructor pointer is null for now (no cleanup needed for plain structs).
+    // 5. Exception chaining: if the thrown type derives from Throwable,
+    //    retain the currently active exception (the cause) and register
+    //    a destructor to release it when the outer exception is freed.
+    auto* current_func = _builder->GetInsertBlock()->getParent();
+    llvm::Value* dtor_fn_val = llvm::ConstantPointerNull::get(ptr_ty);
+
+    if (thrown_agg) {
+        // Find the Throwable aggregate (local or imported)
+        std::shared_ptr<aggregate> throwable_class;
+        auto root_ns = _unit.get_root_namespace();
+        if (root_ns) {
+            auto k_ns = root_ns->get_child_namespace("k");
+            if (k_ns) {
+                throwable_class = k_ns->get_aggregate("Throwable");
+            }
+        }
+        if (!throwable_class) {
+            k::name thr_name(false, {"k", "Throwable"});
+            throwable_class = _unit.get_or_create_imported_aggregate(thr_name, _context);
+        }
+
+        if (throwable_class &&
+            (thrown_agg == throwable_class || thrown_agg->is_derived_from(throwable_class))) {
+            // Find the byte offset of Throwable within the thrown type (from chain_data)
+            std::string throwable_rtti = mangler::mangle_rtti(throwable_class->get_name());
+            uint32_t throwable_offset = 0;
+            for (auto& entry : chain_data) {
+                if (entry.ti->getName() == throwable_rtti) {
+                    throwable_offset = entry.offset;
+                    break;
+                }
+            }
+
+            // Find the _cause and _cause_handle field offsets within Throwable's LLVM struct
+            auto throwable_st = throwable_class->get_struct_type();
+            llvm::Type* throwable_llvm_type = throwable_st
+                ? _context->get_llvm_type(throwable_st) : nullptr;
+            if (throwable_llvm_type && throwable_llvm_type->isStructTy()) {
+                auto* throwable_struct = llvm::cast<llvm::StructType>(throwable_llvm_type);
+                auto* sl = mod.getDataLayout().getStructLayout(throwable_struct);
+
+                // Find the _cause and _cause_handle field indices by name
+                unsigned cause_field_idx = 0;
+                unsigned handle_field_idx = 0;
+                bool found_cause = false;
+                bool found_handle = false;
+                for (auto it = throwable_st->fields_begin();
+                     it != throwable_st->fields_end(); ++it) {
+                    if (it->name == "_cause") {
+                        cause_field_idx = static_cast<unsigned>(it->index);
+                        found_cause = true;
+                    } else if (it->name == "_cause_handle") {
+                        handle_field_idx = static_cast<unsigned>(it->index);
+                        found_handle = true;
+                    }
+                }
+
+                if (found_cause && found_handle) {
+                    uint64_t cause_offset_in_throwable = sl->getElementOffset(cause_field_idx);
+                    uint64_t handle_offset_in_throwable = sl->getElementOffset(handle_field_idx);
+                    uint64_t total_cause_offset = throwable_offset + cause_offset_in_throwable;
+                    uint64_t total_handle_offset = throwable_offset + handle_offset_in_throwable;
+
+                    // After memcpy: load _cause from exc_mem. If non-null, retain the
+                    // currently active exception via __k_exception_retain_current() and
+                    // store the returned raw handle into _cause_handle.
+                    auto* cause_gep = _builder->CreateConstGEP1_64(
+                        llvm::Type::getInt8Ty(llvm_ctx), exc_mem, total_cause_offset, "cause_ptr");
+                    auto* cause_val = _builder->CreateLoad(ptr_ty, cause_gep, "cause_val");
+                    auto* is_null = _builder->CreateICmpEQ(cause_val,
+                        llvm::ConstantPointerNull::get(ptr_ty), "cause_is_null");
+
+                    auto* retain_bb = llvm::BasicBlock::Create(
+                        llvm_ctx, "retain_cause", current_func);
+                    auto* done_bb = llvm::BasicBlock::Create(
+                        llvm_ctx, "cause_retain_done", current_func);
+                    _builder->CreateCondBr(is_null, done_bb, retain_bb);
+
+                    _builder->SetInsertPoint(retain_bb);
+                    // __k_exception_retain_current() calls std::current_exception(),
+                    // increments refcount, and returns the raw thrown object pointer.
+                    auto k_retain = mod.getOrInsertFunction(
+                        "__k_exception_retain_current",
+                        llvm::FunctionType::get(ptr_ty, {}, false));
+                    auto* raw_handle = _builder->CreateCall(k_retain, {}, "raw_cause_handle");
+                    // Store the raw handle into _cause_handle field in exc_mem
+                    auto* handle_gep = _builder->CreateConstGEP1_64(
+                        llvm::Type::getInt8Ty(llvm_ctx), exc_mem, total_handle_offset, "handle_ptr");
+                    _builder->CreateStore(raw_handle, handle_gep);
+                    _builder->CreateBr(done_bb);
+
+                    _builder->SetInsertPoint(done_bb);
+
+                    // Get or create the destructor function for this exception type.
+                    // It releases the retained cause handle when the exception is freed.
+                    std::string dtor_name = "__k_exc_dtor_" + typeinfo_name;
+                    auto* dtor_func = mod.getFunction(dtor_name);
+                    if (!dtor_func) {
+                        auto* dtor_type = llvm::FunctionType::get(void_ty, {ptr_ty}, false);
+                        dtor_func = llvm::Function::Create(dtor_type,
+                            llvm::GlobalValue::LinkOnceODRLinkage, dtor_name, mod);
+                        // Generate the destructor body: load _cause_handle and release
+                        auto* entry_bb = llvm::BasicBlock::Create(
+                            llvm_ctx, "entry", dtor_func);
+                        llvm::IRBuilder<> dtor_builder(entry_bb);
+                        auto* exc_arg = dtor_func->getArg(0);
+                        auto* d_handle_gep = dtor_builder.CreateConstGEP1_64(
+                            llvm::Type::getInt8Ty(llvm_ctx), exc_arg,
+                            total_handle_offset, "handle_ptr");
+                        auto* d_handle = dtor_builder.CreateLoad(
+                            ptr_ty, d_handle_gep, "cause_handle");
+                        auto* d_is_null = dtor_builder.CreateICmpEQ(d_handle,
+                            llvm::ConstantPointerNull::get(ptr_ty), "is_null");
+                        auto* d_dec_bb = llvm::BasicBlock::Create(
+                            llvm_ctx, "release_cause", dtor_func);
+                        auto* d_done_bb = llvm::BasicBlock::Create(
+                            llvm_ctx, "done", dtor_func);
+                        dtor_builder.CreateCondBr(d_is_null, d_done_bb, d_dec_bb);
+
+                        dtor_builder.SetInsertPoint(d_dec_bb);
+                        auto k_release = mod.getOrInsertFunction(
+                            "__k_exception_release",
+                            llvm::FunctionType::get(void_ty, {ptr_ty}, false));
+                        dtor_builder.CreateCall(k_release, {d_handle});
+                        dtor_builder.CreateBr(d_done_bb);
+
+                        dtor_builder.SetInsertPoint(d_done_bb);
+                        dtor_builder.CreateRetVoid();
+                    }
+                    dtor_fn_val = dtor_func;
+                }
+            }
+        }
+    }
+
+    // 6. __cxa_throw(void* thrown_exception, void* tinfo, void (*dest)(void*))
     auto cxa_throw = mod.getOrInsertFunction("__cxa_throw",
         llvm::FunctionType::get(void_ty, {ptr_ty, ptr_ty, ptr_ty}, false));
-    auto* current_func = _builder->GetInsertBlock()->getParent();
 
     if (!_landing_pad_stack.empty()) {
         // Inside a try-catch: use invoke so exception unwinds to the landing pad
         auto* after_throw = llvm::BasicBlock::Create(llvm_ctx, "after_throw", current_func);
         auto* invoke_inst = _builder->CreateInvoke(
             cxa_throw, after_throw, _landing_pad_stack.top().lpad_bb,
-            {exc_mem, typeinfo_gv, llvm::ConstantPointerNull::get(ptr_ty)});
+            {exc_mem, typeinfo_gv, dtor_fn_val});
         invoke_inst->setDoesNotReturn();
         // after_throw is unreachable but needed for LLVM well-formedness
         _builder->SetInsertPoint(after_throw);
@@ -1160,7 +1293,7 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     } else {
         // Not inside try-catch: plain call (exception unwinds past this frame)
         auto* call = _builder->CreateCall(cxa_throw,
-            {exc_mem, typeinfo_gv, llvm::ConstantPointerNull::get(ptr_ty)});
+            {exc_mem, typeinfo_gv, dtor_fn_val});
         call->setDoesNotReturn();
         _builder->CreateUnreachable();
         // Create a new basic block for any code following the throw (unreachable)

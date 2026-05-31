@@ -97,7 +97,20 @@ add_custom_command(
     VERBATIM
 )
 
-set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ})
+# ── Compile the exception chaining C++ runtime helpers ────────────────────
+set(EXC_CHAIN_CPP ${CMAKE_CURRENT_SOURCE_DIR}/src/exception_chaining.cpp)
+set(EXC_CHAIN_OBJ ${LIBK_OUTPUT_DIR}/exception_chaining.o)
+
+add_custom_command(
+    OUTPUT  ${EXC_CHAIN_OBJ}
+    COMMAND ${CMAKE_CXX_COMPILER} -std=c++20 -c -fPIC
+            -o ${EXC_CHAIN_OBJ} ${EXC_CHAIN_CPP}
+    DEPENDS ${EXC_CHAIN_CPP}
+    COMMENT "Compiling K runtime exception chaining helpers (exception_chaining.cpp)"
+    VERBATIM
+)
+
+set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ})
 
 # ── Compile the K standard library using klangc ──────────────────────────────
 add_custom_command(

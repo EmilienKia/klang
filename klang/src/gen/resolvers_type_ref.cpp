@@ -1942,6 +1942,14 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     }
     // ── End function reference type cases ─────────────────────────────────────
 
+    // --- Null literal → any nullable indirection: always valid ─────────────
+    if (type::is_null(type_src)) {
+        if (type::is_pointer(tgt_nc) || type::is_view(tgt_nc) ||
+            type::is_link(tgt_nc) || type::is_owner(tgt_nc)) {
+            return CAST_WIDENING;
+        }
+    }
+
     // --- Pointer cases ---
     if (type::is_pointer(type_src)) {
         if (type::is_pointer(tgt_nc) || type::is_link(tgt_nc)) {
@@ -2391,6 +2399,13 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         if (type::is_view(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
             if (sub == tgt_sub_nc) return CAST_REF_CONV;
+            // Also check struct upcast: ref<Derived> → view<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(sub);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                return CAST_REF_CONV;
+            }
         }
         // ref -> different primitive: load + cast
         auto prim_sub = std::dynamic_pointer_cast<primitive_type>(sub);

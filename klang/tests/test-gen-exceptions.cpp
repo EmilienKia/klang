@@ -2095,3 +2095,314 @@ TEST_CASE("Exception: finally with continue in for loop", "[gen][exceptions][fin
     // = (0+1+3) + 400 = 404
     REQUIRE(fn() == 404);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Exception chaining (cause)
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("Exception chaining: getCause returns null when no cause", "[gen][exceptions][chaining]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_chain_no_cause__;
+
+        class MyErr : public Exception {
+        public:
+            MyErr() : Exception(42) {}
+        }
+
+        test_no_cause() : int {
+            result : int = 0;
+            try {
+                e : MyErr;
+                throw e;
+            } catch (ex : MyErr&) {
+                result = ex.getCode();
+                cause : Throwable* = ex.getCause();
+                if (cause == null) {
+                    result = result + 100;
+                }
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_no_cause");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 142);
+}
+
+TEST_CASE("Exception chaining: hasCause false when no cause", "[gen][exceptions][chaining]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_chain_hascause_false__;
+
+        class MyErr : public Exception {
+        public:
+            MyErr() : Exception(10) {}
+        }
+
+        test_hascause() : int {
+            result : int = 0;
+            try {
+                e : MyErr;
+                throw e;
+            } catch (ex : MyErr&) {
+                if (ex.hasCause()) {
+                    result = 1;
+                } else {
+                    result = 2;
+                }
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_hascause");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 2);
+}
+
+TEST_CASE("Exception chaining: throw with cause preserves cause pointer", "[gen][exceptions][chaining]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_chain_basic__;
+
+        class OrigErr : public Exception {
+        public:
+            OrigErr() : Exception(10) {}
+        }
+
+        class WrapErr : public Exception {
+        public:
+            WrapErr(cause: Throwable?) : Exception(20, cause) {}
+        }
+
+        test_chain() : int {
+            result : int = 0;
+            try {
+                try {
+                    e : OrigErr;
+                    throw e;
+                } catch (orig : OrigErr&) {
+                    throw WrapErr(orig);
+                }
+            } catch (wrap : WrapErr&) {
+                result = wrap.getCode();
+                if (wrap.hasCause()) {
+                    result = result + 100;
+                }
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_chain");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 120);
+}
+
+TEST_CASE("Exception chaining: getCause returns valid cause with correct code", "[gen][exceptions][chaining]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_chain_cause_code__;
+
+        class OrigErr : public Exception {
+        public:
+            OrigErr() : Exception(7) {}
+        }
+
+        class WrapErr : public Exception {
+        public:
+            WrapErr(cause: Throwable?) : Exception(99, cause) {}
+        }
+
+        test_cause_code() : int {
+            result : int = 0;
+            try {
+                try {
+                    e : OrigErr;
+                    throw e;
+                } catch (orig : OrigErr&) {
+                    throw WrapErr(orig);
+                }
+            } catch (wrap : WrapErr&) {
+                result = wrap.getCode();
+                cause : Throwable* = wrap.getCause();
+                if (cause != null) {
+                    result = result + cause->getCode();
+                }
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_cause_code");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 106);  // 99 + 7
+}
+
+TEST_CASE("Exception chaining: cause survives after inner catch exits", "[gen][exceptions][chaining]") {
+    // Critical test: the cause (original exception) must survive even after
+    // __cxa_end_catch frees it (because we retained it via __k_exception_retain).
+    auto jit = gen_jit(R"(
+        module __test_exc_chain_survive__;
+
+        class InnerErr : public Exception {
+        public:
+            InnerErr() : Exception(55) {}
+        }
+
+        class OuterErr : public Exception {
+        public:
+            OuterErr(cause: Throwable?) : Exception(66, cause) {}
+        }
+
+        risky() : void throws InnerErr {
+            e : InnerErr;
+            throw e;
+        }
+
+        wrapper() : void throws OuterErr {
+            try {
+                risky();
+            } catch (inner : InnerErr&) {
+                throw OuterErr(inner);
+            }
+        }
+
+        test_survive() : int {
+            result : int = 0;
+            try {
+                wrapper();
+            } catch (outer : OuterErr&) {
+                result = outer.getCode();
+                cause : Throwable* = outer.getCause();
+                if (cause != null) {
+                    result = result + cause->getCode();
+                }
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_survive");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 121);  // 66 + 55
+}
+
+TEST_CASE("Exception chaining: multi-level chaining (A causes B causes C)", "[gen][exceptions][chaining]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_chain_multi__;
+
+        class ErrA : public Exception {
+        public:
+            ErrA() : Exception(1) {}
+        }
+
+        class ErrB : public Exception {
+        public:
+            ErrB(cause: Throwable?) : Exception(2, cause) {}
+        }
+
+        class ErrC : public Exception {
+        public:
+            ErrC(cause: Throwable?) : Exception(3, cause) {}
+        }
+
+        test_multi_chain() : int {
+            result : int = 0;
+            try {
+                try {
+                    try {
+                        a : ErrA;
+                        throw a;
+                    } catch (ea : ErrA&) {
+                        throw ErrB(ea);
+                    }
+                } catch (eb : ErrB&) {
+                    throw ErrC(eb);
+                }
+            } catch (ec : ErrC&) {
+                result = ec.getCode();
+                b : Throwable* = ec.getCause();
+                if (b != null) {
+                    result = result + b->getCode() * 10;
+                    a : Throwable* = b->getCause();
+                    if (a != null) {
+                        result = result + a->getCode() * 100;
+                    }
+                }
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_multi_chain");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 123);  // 3 + 2*10 + 1*100
+}
+
+TEST_CASE("Exception chaining: FatalError with cause", "[gen][exceptions][chaining]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_chain_fatal__;
+
+        class AppErr : public Exception {
+        public:
+            AppErr() : Exception(11) {}
+        }
+
+        class AppFatal : public FatalError {
+        public:
+            AppFatal(cause: Throwable?) : FatalError(22, cause) {}
+        }
+
+        test_fatal_chain() : int {
+            result : int = 0;
+            try {
+                try {
+                    e : AppErr;
+                    throw e;
+                } catch (orig : AppErr&) {
+                    throw AppFatal(orig);
+                }
+            } catch (fatal : AppFatal&) {
+                result = fatal.getCode();
+                cause : Throwable* = fatal.getCause();
+                if (cause != null) {
+                    result = result + cause->getCode();
+                }
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_fatal_chain");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 33);  // 22 + 11
+}
+
+TEST_CASE("Exception chaining: null cause via explicit null argument", "[gen][exceptions][chaining]") {
+    auto jit = gen_jit(R"(
+        module __test_exc_chain_null_cause__;
+
+        class WrapErr : public Exception {
+        public:
+            WrapErr(cause: Throwable?) : Exception(50, cause) {}
+        }
+
+        test_null_cause() : int {
+            result : int = 0;
+            try {
+                throw WrapErr(null);
+            } catch (w : WrapErr&) {
+                result = w.getCode();
+                if (w.hasCause()) {
+                    result = result + 1000;
+                } else {
+                    result = result + 1;
+                }
+            }
+            return result;
+        }
+    )");
+    REQUIRE(jit != nullptr);
+    auto fn = jit->lookup_symbol<int(*)()>("test_null_cause");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 51);  // 50 + 1 (no cause)
+}
