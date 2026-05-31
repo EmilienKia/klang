@@ -2613,6 +2613,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                     auto& llvm_ctx = _builder->getContext();
                     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
                     llvm::Value* loaded = _builder->CreateLoad(ptr_ty, alloca, "softfail_null_check");
+                    set_debug_location(if_lexeme);
                     auto* is_null = _builder->CreateICmpEQ(loaded,
                         llvm::ConstantPointerNull::get(ptr_ty), "softfail_is_null");
 
@@ -2632,6 +2633,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
                     // Create a trampoline for failure AT this var (cleanup vars 0..i in reverse)
                     llvm::BasicBlock* this_fail_bb = llvm::BasicBlock::Create(**_context, "if-softfail-at-" + std::to_string(i));
+                    set_debug_location(if_lexeme);
                     _builder->CreateCondBr(is_null, this_fail_bb, ok_bb);
 
                     // Fill the this_fail_bb: cleanup vars [i..0] then jump to fail_dest
@@ -2640,6 +2642,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                     for(int j = (int)i; j >= 0; --j) {
                         emit_cond_var_cleanup(vars[j]);
                     }
+                    set_debug_location(if_lexeme);
                     _builder->CreateBr(fail_dest);
 
                     _builder->SetInsertPoint(ok_bb);
@@ -2655,6 +2658,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                 for(int j = (int)i - 1; j >= 0; --j) {
                     emit_cond_var_cleanup(vars[j]);
                 }
+                set_debug_location(if_lexeme);
                 _builder->CreateBr(fail_dest);
                 _builder->SetInsertPoint(saved_bb);
             }
