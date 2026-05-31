@@ -161,6 +161,7 @@ void type_reference_resolver::visit_address_of_expression(address_of_expression&
 }
 
 void implementation_generator::visit_address_of_expression(address_of_expression& expr) {
+    set_debug_location(expr.first_lexeme());
     _value = nullptr;
     expr.sub_expr()->accept(*this);
 
@@ -213,6 +214,7 @@ void type_reference_resolver::visit_drain_expression(drain_expression& expr) {
 }
 
 void implementation_generator::visit_drain_expression(drain_expression& expr) {
+    set_debug_location(expr.first_lexeme());
     _value = nullptr;
     expr.sub_expr()->accept(*this);
 
@@ -250,6 +252,7 @@ void type_reference_resolver::visit_load_value_expression(load_value_expression&
 }
 
 void implementation_generator::visit_load_value_expression(load_value_expression& expr) {
+    set_debug_location(expr.first_lexeme());
     _value = nullptr;
     expr.sub_expr()->accept(*this);
     // Use the expression's own type if set; fall back to the sub-expression's referenced type.
@@ -315,6 +318,7 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
 }
 
 void implementation_generator::visit_dereference_expression(dereference_expression& expr) {
+    set_debug_location(expr.first_lexeme());
     _value = nullptr;
     expr.sub_expr()->accept(*this);
 
