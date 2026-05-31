@@ -215,3 +215,76 @@ TEST_CASE("klangc: debug DWARF contains catch variables and lexical blocks", "[k
     std::filesystem::remove(k_path);
 }
 
+TEST_CASE("compiler: debug metadata gives loop scopes to single-statement bodies", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_single_loop_scopes.k", R"(module debug_single_loop_scopes;
+
+sum(n: int) : int {
+    total: int = 0;
+    while (n > 0)
+        for (i: int = 0; i < 2; i += 1)
+            total = total + i;
+    return total;
+}
+)", true, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    size_t lexical_block_count = 0;
+    for (size_t pos = 0; (pos = ir.find("!DILexicalBlock(", pos)) != std::string::npos; ++lexical_block_count, ++pos) {}
+
+    INFO(ir);
+    REQUIRE(ir.find("!DILocalVariable(name: \"i\"") != std::string::npos);
+    REQUIRE(ir.find("!DILocalVariable(name: \"total\"") != std::string::npos);
+    REQUIRE(lexical_block_count >= 2);
+}
+
+TEST_CASE("compiler: debug metadata keeps control-flow exits on their source lines", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_control_flow_locations.k", R"(module debug_control_flow_locations;
+
+class MyErr : public Exception { }
+
+flow(a: int) : int {
+    while (a > 0) {
+        break;
+    }
+    while (a > 1) {
+        continue;
+    }
+    try {
+        throw MyErr();
+    } catch (caught: Exception*) {
+        return a;
+    }
+}
+)", false, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    INFO(ir);
+    REQUIRE(ir.find("!DILocation(line: 6,") != std::string::npos);
+    REQUIRE(ir.find("!DILocation(line: 7,") != std::string::npos);
+    REQUIRE(ir.find("!DILocation(line: 9,") != std::string::npos);
+    REQUIRE(ir.find("!DILocation(line: 10,") != std::string::npos);
+    REQUIRE(ir.find("!DILocation(line: 12,") != std::string::npos);
+    REQUIRE(ir.find("!DILocation(line: 13,") != std::string::npos);
+    REQUIRE(ir.find("!DILocation(line: 15,") != std::string::npos);
+}
+

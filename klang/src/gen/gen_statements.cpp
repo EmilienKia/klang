@@ -153,6 +153,33 @@ static lex::opt_any_lexeme get_statement_debug_lexeme(const statement& stmt)
     return std::nullopt;
 }
 
+struct debug_scope_guard {
+    debug_info_emitter* debug_info = nullptr;
+    llvm::IRBuilder<>* builder = nullptr;
+    llvm::DIScope*& current_scope;
+    llvm::DIScope* previous_scope = nullptr;
+    llvm::DebugLoc previous_loc;
+
+    debug_scope_guard(debug_info_emitter* debug_info,
+                      llvm::IRBuilder<>* builder,
+                      llvm::DIScope*& current_scope,
+                      const lex::opt_any_lexeme& lexeme)
+        : debug_info(debug_info), builder(builder), current_scope(current_scope), previous_scope(current_scope), previous_loc(builder->getCurrentDebugLocation())
+    {
+        if (this->debug_info && this->current_scope) {
+            this->current_scope = this->debug_info->create_lexical_block(this->current_scope, lexeme);
+            this->debug_info->set_current_debug_location(*this->builder, lexeme, this->current_scope);
+        }
+    }
+
+    ~debug_scope_guard() {
+        if (builder) {
+            current_scope = previous_scope;
+            builder->SetCurrentDebugLocation(previous_loc);
+        }
+    }
+};
+
 //
 // Expression temporaries cleanup
 //
@@ -707,6 +734,8 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
         } // end else (non-named-return expression handling)
     }
 
+    set_debug_location(get_statement_debug_lexeme(stmt));
+
     // Emit finally blocks for enclosing try-catch-finally scopes (innermost to outermost).
     // If we are inside a catch body, also emit __cxa_end_catch() before the finally.
     if (!_finally_stack.empty()) {
@@ -871,6 +900,8 @@ void declaration_generator::visit_break_statement(break_statement& stmt) {
  *   3. Create a new unreachable basic block for any code following the break.
  */
 void implementation_generator::visit_break_statement(break_statement& stmt) {
+    set_debug_location(get_statement_debug_lexeme(stmt));
+
     // Emit cleanup for all scopes between the break and the loop boundary.
     // _loop_cleanup_depth.top() tells us how many cleanup scopes existed when
     // the loop was entered; anything above that is inside the loop.
@@ -972,6 +1003,8 @@ void declaration_generator::visit_continue_statement(continue_statement& stmt) {
  *   3. Create a new unreachable basic block for any code following the continue.
  */
 void implementation_generator::visit_continue_statement(continue_statement& stmt) {
+    set_debug_location(get_statement_debug_lexeme(stmt));
+
     // Emit cleanup for all scopes between the continue and the loop boundary.
     size_t loop_depth = _loop_cleanup_depth.top();
     size_t current_depth = _cleanup_vars_stack.size();
@@ -1140,6 +1173,8 @@ void declaration_generator::visit_throw_statement(throw_statement& stmt) {
 void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     auto expr = stmt.get_expression();
     if (!expr) {
+        set_debug_location(get_statement_debug_lexeme(stmt));
+
         // Bare "throw;" — rethrow the current exception via __cxa_rethrow.
         // This re-throws the exception that was started with __cxa_begin_catch.
         auto& llvm_ctx = _context->llvm_context();
@@ -1198,6 +1233,8 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
     expr->accept(*this);
     llvm::Value* throw_val = _value;
     _value = nullptr;
+
+    set_debug_location(get_statement_debug_lexeme(stmt));
 
     if (!throw_val) {
         // Fallback: trap if expression evaluation failed
@@ -1976,13 +2013,16 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
 
         // End catch (only on normal path — early exit paths handle this via _finally_stack)
         if (!_builder->GetInsertBlock()->getTerminator()) {
+            set_debug_location(catch_lexeme);
             _builder->CreateCall(cxa_end);
         }
 
         // Emit finally body after catch handler, then branch to end
         if (!_builder->GetInsertBlock()->getTerminator()) {
+            set_debug_location(catch_lexeme);
             emit_finally();
             if (!_builder->GetInsertBlock()->getTerminator()) {
+                set_debug_location(catch_lexeme);
                 _builder->CreateBr(end_bb);
             }
         }
@@ -1995,6 +2035,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     _builder->SetInsertPoint(catch_fallthrough_bb);
 
     // Emit finally body before propagating unmatched exception
+    set_debug_location(get_statement_debug_lexeme(stmt));
     emit_finally();
 
     if (outer_ctx) {
@@ -2003,6 +2044,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         // This avoids re-throwing and stays entirely within the function's CFG.
         auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr_prop");
         _builder->CreateStore(exc_ptr, outer_ctx->exc_ptr_alloca);
+        set_debug_location(get_statement_debug_lexeme(stmt));
         _builder->CreateBr(outer_ctx->dispatch_bb);
     } else {
         // Top-level try-catch: emit cleanup for all outer scope variables, then resume.
@@ -2092,6 +2134,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         auto* resume_val = llvm::UndefValue::get(lpad_type_res);
         auto* resume_val2 = _builder->CreateInsertValue(resume_val, exc_ptr, 0);
         auto* resume_val3 = _builder->CreateInsertValue(resume_val2, exc_sel, 1);
+        set_debug_location(get_statement_debug_lexeme(stmt));
         _builder->CreateResume(resume_val3);
     }
 
@@ -2856,6 +2899,12 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
     func->insert(func->end(), nested_block);
     _builder->SetInsertPoint(nested_block);
 
+    std::unique_ptr<debug_scope_guard> body_debug_scope;
+    if (!std::dynamic_pointer_cast<block>(stmt.get_nested_stmt())) {
+        body_debug_scope = std::make_unique<debug_scope_guard>(_debug_info.get(), _builder.get(), _current_debug_scope,
+            get_statement_debug_lexeme(stmt));
+    }
+
     // Push loop exit context for break statements
     _loop_exit_blocks.push(cont_block);
     _loop_continue_blocks.push(while_block);
@@ -2863,6 +2912,8 @@ void implementation_generator::visit_while_statement(while_statement& stmt) {
     _loop_finally_depth.push(_finally_stack.size());
 
     stmt.get_nested_stmt()->accept(*this);
+
+    body_debug_scope.reset();
 
     // Pop loop exit context
     _loop_finally_depth.pop();
@@ -2993,6 +3044,12 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     func->insert(func->end(), nested_block);
     _builder->SetInsertPoint(nested_block);
 
+    std::unique_ptr<debug_scope_guard> body_debug_scope;
+    if (!std::dynamic_pointer_cast<block>(stmt.get_nested_stmt())) {
+        body_debug_scope = std::make_unique<debug_scope_guard>(_debug_info.get(), _builder.get(), _current_debug_scope,
+            get_statement_debug_lexeme(stmt));
+    }
+
     // Push loop context for break/continue statements
     // continue jumps to step_block, break jumps to cont_block
     _loop_exit_blocks.push(cont_block);
@@ -3001,6 +3058,8 @@ void implementation_generator::visit_for_statement(for_statement& stmt) {
     _loop_finally_depth.push(_finally_stack.size());
 
     stmt.get_nested_stmt()->accept(*this);
+
+    body_debug_scope.reset();
 
     // Pop loop context
     _loop_finally_depth.pop();
