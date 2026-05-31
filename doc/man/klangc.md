@@ -155,6 +155,38 @@ file.  Useful for build systems that determine the module name externally.
 
 ---
 
+### Debug Information Options
+
+These options control native debug information emission (DWARF) in the LLVM IR
+and the generated object files or linked binaries.
+
+**`-g`**, **`--debug`**  
+Emit full DWARF debug information.  When enabled, **klangc** records compile
+unit metadata, source file entries, function scopes, parameters, local
+variables, lexical blocks, and source locations for control-flow instructions.
+
+**`--gline-tables-only`**  
+Emit line-table debug information only.  This keeps file/line/column mappings
+for stepping, but omits richer variable and lexical-scope metadata.
+
+**`--gdwarf-4`**  
+Force DWARF version 4 for the generated debug information.
+
+**`--gdwarf-5`**  
+Force DWARF version 5 for the generated debug information.  This is the
+default when no DWARF version is specified.
+
+`--gdwarf-4` and `--gdwarf-5` are mutually exclusive.  If neither is provided,
+**klangc** uses DWARF 5.
+
+When debug information is enabled, the compiler tries to keep source locations
+anchored on the user-visible construct that produced the instruction, including
+branches, loop back-edges, and exception-handling plumbing.  Nested loop bodies
+and `catch` clauses are emitted with nested lexical scopes when they introduce a
+block scope in the source.
+
+---
+
 ### Import Options
 
 These options control how **klangc** locates the `.kdi` description files and

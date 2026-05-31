@@ -114,6 +114,12 @@ Examples are included where they clarify the normative text.
 | [Math](../stdlib/math.md) | Optional `k::math` module — `abs`, `min`, `max`, `clamp` |
 | [Exception Types](../stdlib/exceptions.md) | `Throwable`, `Exception`, `FatalError`, and derived standard exception classes |
 
+### Compiler Metadata
+
+| Page | Description |
+|------|-------------|
+| [Debug Information and DWARF Emission](debug-info.md) | Native debug metadata, lexical scopes, parameter/local variables, and source locations for control-flow instructions |
+
 ### Grammar Reference
 
 | Page | Description |
