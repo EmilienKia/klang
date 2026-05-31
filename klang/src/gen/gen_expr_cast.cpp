@@ -1118,6 +1118,8 @@ void implementation_generator::emit_dynamic_cast(
         std::shared_ptr<struct_type> src_st_type,
         std::shared_ptr<struct_type> tgt_st_type)
 {
+    set_debug_location(expr.first_lexeme());
+
     auto& llvm_ctx  = _builder->getContext();
     auto* ptr_ty    = llvm::PointerType::get(llvm_ctx, 0);
     auto* i64_ty    = llvm::Type::getInt64Ty(llvm_ctx);
