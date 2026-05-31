@@ -301,6 +301,7 @@ protected:
     struct finally_context {
         std::shared_ptr<block> finally_body;  ///< The finally body block to emit
         bool in_catch = false;                ///< Whether we are inside a catch body
+        lex::opt_any_lexeme origin_lexeme;    ///< Source anchor for synthetic finally emission
     };
 
     /** Stack of finally contexts. When return/break/continue is encountered inside

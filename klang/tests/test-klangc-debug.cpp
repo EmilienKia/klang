@@ -343,3 +343,62 @@ cast_line(v: short) : int {
     REQUIRE(ir.find("!DILocation(line: 6,") != std::string::npos);
 }
 
+TEST_CASE("compiler: catch-return finally path anchors __cxa_end_catch on source line", "[klangc][debug][ir]") {
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    comp->set_file_resolver(resolver);
+    comp->set_debug_info_options(k::DebugInfoOptions{.enabled = true, .line_tables_only = false, .dwarf_version = 5});
+
+    comp->parse_source("debug_finally_catch_return.k", R"(module debug_finally_catch_return;
+
+class MyErr : public Exception { }
+
+flow(a: int) : int {
+    try {
+        throw MyErr();
+    } catch (caught: Exception*) {
+        return a;
+    } finally {
+        a = a + 1;
+    }
+}
+)", false, false);
+
+    std::string ir;
+    llvm::raw_string_ostream os(ir);
+    comp->get_context_for_test()->module().print(os, nullptr);
+    os.flush();
+
+    auto extract_dbg_line_for_call = [&](const std::string& call_text) -> int {
+        const auto call_pos = ir.find(call_text);
+        if (call_pos == std::string::npos) {
+            return -1;
+        }
+        const auto dbg_pos = ir.find("!dbg !", call_pos);
+        if (dbg_pos == std::string::npos) {
+            return -1;
+        }
+        const auto id_start = dbg_pos + 6;
+        const auto id_end = ir.find_first_not_of("0123456789", id_start);
+        if (id_end == std::string::npos || id_end == id_start) {
+            return -1;
+        }
+        const auto id = ir.substr(id_start, id_end - id_start);
+        const auto meta_pos = ir.find("!" + id + " = !DILocation(line: ");
+        if (meta_pos == std::string::npos) {
+            return -1;
+        }
+        const auto line_start = meta_pos + std::string("!" + id + " = !DILocation(line: ").size();
+        const auto line_end = ir.find_first_not_of("0123456789", line_start);
+        if (line_end == std::string::npos || line_end == line_start) {
+            return -1;
+        }
+        return std::stoi(ir.substr(line_start, line_end - line_start));
+    };
+
+    INFO(ir);
+    const int cxa_end_line = extract_dbg_line_for_call("call void @__cxa_end_catch()");
+    REQUIRE(cxa_end_line == 9);
+}
+

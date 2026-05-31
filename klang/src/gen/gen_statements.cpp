@@ -738,6 +738,7 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
 
     // Emit finally blocks for enclosing try-catch-finally scopes (innermost to outermost).
     // If we are inside a catch body, also emit __cxa_end_catch() before the finally.
+    auto return_lexeme = get_statement_debug_lexeme(stmt);
     if (!_finally_stack.empty()) {
         auto& mod = _context->module();
         auto cxa_end_fn = mod.getOrInsertFunction("__cxa_end_catch",
@@ -751,6 +752,7 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
             tmp.pop();
         }
         for (auto& ctx : finally_contexts) {
+            set_debug_location(ctx.origin_lexeme ? ctx.origin_lexeme : return_lexeme);
             if (ctx.in_catch) {
                 _builder->CreateCall(cxa_end_fn);
             }
@@ -900,7 +902,8 @@ void declaration_generator::visit_break_statement(break_statement& stmt) {
  *   3. Create a new unreachable basic block for any code following the break.
  */
 void implementation_generator::visit_break_statement(break_statement& stmt) {
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    auto break_lexeme = get_statement_debug_lexeme(stmt);
+    set_debug_location(break_lexeme);
 
     // Emit cleanup for all scopes between the break and the loop boundary.
     // _loop_cleanup_depth.top() tells us how many cleanup scopes existed when
@@ -957,6 +960,7 @@ void implementation_generator::visit_break_statement(break_statement& stmt) {
         for (size_t i = 0; i < count && !tmp_finally.empty(); ++i) {
             auto ctx = tmp_finally.top();
             tmp_finally.pop();
+            set_debug_location(ctx.origin_lexeme ? ctx.origin_lexeme : break_lexeme);
             if (ctx.in_catch) {
                 _builder->CreateCall(cxa_end_fn);
             }
@@ -1003,7 +1007,8 @@ void declaration_generator::visit_continue_statement(continue_statement& stmt) {
  *   3. Create a new unreachable basic block for any code following the continue.
  */
 void implementation_generator::visit_continue_statement(continue_statement& stmt) {
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    auto continue_lexeme = get_statement_debug_lexeme(stmt);
+    set_debug_location(continue_lexeme);
 
     // Emit cleanup for all scopes between the continue and the loop boundary.
     size_t loop_depth = _loop_cleanup_depth.top();
@@ -1058,6 +1063,7 @@ void implementation_generator::visit_continue_statement(continue_statement& stmt
         for (size_t i = 0; i < count && !tmp_finally.empty(); ++i) {
             auto ctx = tmp_finally.top();
             tmp_finally.pop();
+            set_debug_location(ctx.origin_lexeme ? ctx.origin_lexeme : continue_lexeme);
             if (ctx.in_catch) {
                 _builder->CreateCall(cxa_end_fn);
             }
@@ -1718,7 +1724,8 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
     auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
 
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    auto try_lexeme = get_statement_debug_lexeme(stmt);
+    set_debug_location(try_lexeme);
 
     // Set the personality function for C++ exception handling
     if (!func->hasPersonalityFn()) {
@@ -1753,7 +1760,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     auto* offset_alloca = alloca_builder.CreateAlloca(i32_ty, nullptr, "catch_offset_slot");
 
     // Branch to try body
-    set_debug_location(get_statement_debug_lexeme(stmt));
+    set_debug_location(try_lexeme);
     _builder->CreateBr(try_bb);
     _builder->SetInsertPoint(try_bb);
 
@@ -1773,7 +1780,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
 
     // Push finally context so return/break/continue inside the try body emit the finally block
     if (finally_body) {
-        _finally_stack.push({finally_body, false});
+        _finally_stack.push({finally_body, false, try_lexeme});
     }
 
     // Generate the try body
@@ -1791,6 +1798,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
 
     // If we reach end of try body normally, emit finally then branch to end
     if (!_builder->GetInsertBlock()->getTerminator()) {
+        set_debug_location(try_lexeme);
         emit_finally();
         if (!_builder->GetInsertBlock()->getTerminator()) {
             _builder->CreateBr(end_bb);
@@ -1959,6 +1967,13 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
 
         auto catch_clause = clauses[i];
         auto catch_lexeme = get_statement_debug_lexeme(*catch_clause);
+        if (!catch_lexeme) {
+            if (auto catch_var = catch_clause->get_exception_var()) {
+                if (auto ast_var = catch_var->get_ast_variable_decl()) {
+                    catch_lexeme = lex::any_lexeme{ast_var->name};
+                }
+            }
+        }
         llvm::DIScope* previous_debug_scope = _current_debug_scope;
         llvm::DebugLoc previous_debug_loc = _builder->getCurrentDebugLocation();
         if (_debug_info && _current_debug_scope) {
@@ -2000,7 +2015,7 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         // Push finally context (in_catch=true) so return/break/continue inside the catch
         // body will emit __cxa_end_catch + finally before exiting.
         if (finally_body) {
-            _finally_stack.push({finally_body, true});
+            _finally_stack.push({finally_body, true, catch_lexeme});
         }
 
         if (auto body = clauses[i]->get_body()) {
