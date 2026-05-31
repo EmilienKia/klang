@@ -693,6 +693,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             }
         }
         if (rhs_type && type::is_nullable_indirection(rhs_type)) {
+            set_debug_location(expr.first_lexeme());
             auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_assignation");
             // In an if-condition, soft-fail to _null_failure_bb instead of fatal trap.
             emit_null_check(right, fatal, "link_rebind", _null_failure_bb);

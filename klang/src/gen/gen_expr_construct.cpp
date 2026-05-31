@@ -622,6 +622,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                         }
                     }
                     if (effective_type && type::is_nullable_indirection(effective_type)) {
+                        set_debug_location(expr.first_lexeme());
                         auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_assignation");
                         emit_null_check(_value, fatal, "link_ctor");
                     }

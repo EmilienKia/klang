@@ -1556,6 +1556,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 // Null-check for nullable indirections
                 if (std::dynamic_pointer_cast<pointer_type>(inner) ||
                     std::dynamic_pointer_cast<view_type>(inner)) {
+                    set_debug_location(expr.first_lexeme());
                     auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_dereference");
                     emit_null_check(this_val, fatal, "pm_arrow");
                 }

@@ -847,6 +847,7 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
     if (std::dynamic_pointer_cast<pointer_type>(inner_type) ||
         std::dynamic_pointer_cast<view_type>(inner_type) ||
         std::dynamic_pointer_cast<owner_type>(inner_type)) {
+        set_debug_location(expr.first_lexeme());
         auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_dereference");
         emit_null_check(_value, fatal, "arrow");
     }
