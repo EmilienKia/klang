@@ -206,12 +206,32 @@ TEST_CASE("klangc: debug DWARF contains catch variables and lexical blocks", "[k
     REQUIRE(res.exit_code == 0);
     REQUIRE(std::filesystem::exists(so_path));
 
-    auto dwarf = k::tools::run_process("/usr/bin/llvm-dwarfdump", {"--debug-info", so_path});
-    INFO("llvm-dwarfdump stdout: " << dwarf.out);
-    INFO("llvm-dwarfdump stderr: " << dwarf.err);
-    REQUIRE(dwarf.exit_code == 0);
-    REQUIRE(dwarf.out.find("caught") != std::string::npos);
-    REQUIRE(dwarf.out.find("DW_TAG_lexical_block") != std::string::npos);
+    std::optional<k::tools::exec_result> dwarf;
+    const char* dwarf_tool = nullptr;
+    for (const auto* candidate : {
+             "llvm-dwarfdump",
+             "llvm-dwarfdump-18",
+             "llvm-dwarfdump-17",
+             "llvm-dwarfdump-16",
+             "llvm-dwarfdump-15",
+             "llvm-dwarfdump-14"
+         }) {
+        try {
+            dwarf = k::tools::lookup_run_process(candidate, {"--debug-info", so_path});
+            dwarf_tool = candidate;
+            break;
+        } catch (const k::tools::tool_not_found&) {
+        }
+    }
+    if (!dwarf.has_value()) {
+        SKIP("No llvm-dwarfdump tool available on PATH");
+    }
+    INFO("llvm-dwarfdump tool: " << dwarf_tool);
+    INFO("llvm-dwarfdump stdout: " << dwarf->out);
+    INFO("llvm-dwarfdump stderr: " << dwarf->err);
+    REQUIRE(dwarf->exit_code == 0);
+    REQUIRE(dwarf->out.find("caught") != std::string::npos);
+    REQUIRE(dwarf->out.find("DW_TAG_lexical_block") != std::string::npos);
 
     std::filesystem::remove(so_path);
     std::filesystem::remove(k_path);
@@ -1134,4 +1154,3 @@ run(n: int) : int {
     REQUIRE(std::find(while_back_edge_lines.begin(), while_back_edge_lines.end(), 4) != while_back_edge_lines.end());
     REQUIRE(std::find(for_no_test_entry_lines.begin(), for_no_test_entry_lines.end(), 10) != for_no_test_entry_lines.end());
 }
-
