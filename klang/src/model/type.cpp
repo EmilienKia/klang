@@ -252,7 +252,8 @@ std::string primitive_type::to_string()const {
             {UNSIGNED_INT, "unsigned int"},
             {LONG, "long"},
             {UNSIGNED_LONG, "unsigned long"},
-            // TODO Add (unsigned) long long
+            {LONG_LONG, "long long"},
+            {UNSIGNED_LONG_LONG, "unsigned long long"},
             {FLOAT, "float"},
             {DOUBLE, "double"}
     };

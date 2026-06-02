@@ -87,7 +87,8 @@ void context::init_primitive_types() {
         {primitive_type::UNSIGNED_INT, primitive_type::make_shared(primitive_type::UNSIGNED_INT, true, false, 4*8, llvm::Type::getInt32Ty(**this))},
         {primitive_type::LONG, primitive_type::make_shared(primitive_type::LONG, false, false, 8*8, llvm::Type::getInt64Ty(**this))},
         {primitive_type::UNSIGNED_LONG, primitive_type::make_shared(primitive_type::UNSIGNED_LONG, true, false, 8*8, llvm::Type::getInt64Ty(**this))},
-        // TODO Add 128 bits integers
+        {primitive_type::LONG_LONG, primitive_type::make_shared(primitive_type::LONG_LONG, false, false, 16*8, llvm::Type::getInt128Ty(**this))},
+        {primitive_type::UNSIGNED_LONG_LONG, primitive_type::make_shared(primitive_type::UNSIGNED_LONG_LONG, true, false, 16*8, llvm::Type::getInt128Ty(**this))},
         {primitive_type::FLOAT, primitive_type::make_shared(primitive_type::FLOAT, false, true, 4*8, llvm::Type::getFloatTy(**this))},
         {primitive_type::DOUBLE, primitive_type::make_shared(primitive_type::DOUBLE, false, true, 8*8, llvm::Type::getDoubleTy(**this))}
     });
@@ -202,7 +203,8 @@ std::shared_ptr<type> context::from_string(const std::string& type_name) {
             {"unsigned int", primitive_type::UNSIGNED_INT},
             {"long", primitive_type::LONG},
             {"unsigned long", primitive_type::UNSIGNED_LONG},
-            // TODO Add (unsigned) long long
+            {"long long", primitive_type::LONG_LONG},
+            {"unsigned long long", primitive_type::UNSIGNED_LONG_LONG},
             {"float", primitive_type::FLOAT},
             {"double", primitive_type::DOUBLE}
     };        
@@ -248,6 +250,9 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
         }
         return unres;
     } else if(auto kw = dynamic_cast<const k::parse::ast::keyword_type_specifier*>(&type_spec)) {
+        if (kw->keyword.type == lex::keyword::LONG && kw->is_long_long) {
+            return from_string(kw->is_unsigned ? "unsigned long long" : "long long");
+        }
         return from_keyword(kw->keyword, kw->is_unsigned);
     } else if(auto ptr = dynamic_cast<const k::parse::ast::pointer_type_specifier*>(&type_spec)) {
         auto subtype = from_type_specifier(*ptr->subtype);
@@ -342,8 +347,11 @@ std::shared_ptr<type> context::from_literal(const k::lex::any_literal &literal) 
             case k::lex::LONG:
                 return from_type(
                         lit.unsigned_num ? primitive_type::UNSIGNED_LONG : primitive_type::LONG);
+            case k::lex::LONGLONG:
+                return from_type(
+                        lit.unsigned_num ? primitive_type::UNSIGNED_LONG_LONG : primitive_type::LONG_LONG);
             default:
-                // TODO Add (unsigned) long long and bigint
+                // TODO Add bigint
                 return {};
         }
     } else if (std::holds_alternative<lex::float_num>(literal)) {
@@ -442,9 +450,9 @@ llvm::Constant* context::get_llvm_constant_from_value(const k::value_type &value
     } else if (std::holds_alternative<unsigned long>(value)) {
         return llvm::ConstantInt::get(**this, llvm::APInt(64, std::get<unsigned long>(value), false));
     } else if (std::holds_alternative<long long>(value)) {
-        return llvm::ConstantInt::get(**this, llvm::APInt(64, std::get<long long>(value), true));
+        return llvm::ConstantInt::get(**this, llvm::APInt(128, std::get<long long>(value), true));
     } else if (std::holds_alternative<unsigned long long>(value)) {
-        return llvm::ConstantInt::get(**this, llvm::APInt(64, std::get<unsigned long long>(value), false));
+        return llvm::ConstantInt::get(**this, llvm::APInt(128, std::get<unsigned long long>(value), false));
     } else if (std::holds_alternative<float>(value)) {
         return llvm::ConstantFP::get(llvm::Type::getFloatTy(**this), std::get<float>(value));
     } else if (std::holds_alternative<double>(value)) {

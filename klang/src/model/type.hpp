@@ -310,7 +310,8 @@ public:
         UNSIGNED_INT,
         LONG,
         UNSIGNED_LONG,
-        // TODO add (unsigned) long long
+        LONG_LONG,
+        UNSIGNED_LONG_LONG,
         FLOAT,
         DOUBLE
     };

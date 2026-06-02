@@ -1271,9 +1271,9 @@ kdi::kdi_template_origin kdi_builder::build_template_origin(
                 else if constexpr (std::is_same_v<T, unsigned long>)
                     return kdi::kdi_type::make_int(64, false);
                 else if constexpr (std::is_same_v<T, long long>)
-                    return kdi::kdi_type::make_int(64, true);
+                    return kdi::kdi_type::make_int(128, true);
                 else if constexpr (std::is_same_v<T, unsigned long long>)
-                    return kdi::kdi_type::make_int(64, false);
+                    return kdi::kdi_type::make_int(128, false);
                 else if constexpr (std::is_same_v<T, float>)
                     return kdi::kdi_type::make_float(32);
                 else if constexpr (std::is_same_v<T, double>)
@@ -1570,4 +1570,3 @@ kdi::kdi_file build_kdi(context& ctx,
 }
 
 } // namespace k::model
-

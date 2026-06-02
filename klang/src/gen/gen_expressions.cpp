@@ -71,8 +71,8 @@ void type_reference_resolver::visit_value_expression(value_expression& expr)
             else if constexpr (std::is_same_v<T, unsigned int>)   return _context->from_type(primitive_type::UNSIGNED_INT);
             else if constexpr (std::is_same_v<T, long>)      return _context->from_type(primitive_type::LONG);
             else if constexpr (std::is_same_v<T, unsigned long>)  return _context->from_type(primitive_type::UNSIGNED_LONG);
-            else if constexpr (std::is_same_v<T, long long>)     return _context->from_type(primitive_type::LONG);
-            else if constexpr (std::is_same_v<T, unsigned long long>) return _context->from_type(primitive_type::UNSIGNED_LONG);
+            else if constexpr (std::is_same_v<T, long long>)     return _context->from_type(primitive_type::LONG_LONG);
+            else if constexpr (std::is_same_v<T, unsigned long long>) return _context->from_type(primitive_type::UNSIGNED_LONG_LONG);
             else if constexpr (std::is_same_v<T, float>)     return _context->from_type(primitive_type::FLOAT);
             else if constexpr (std::is_same_v<T, double>)    return _context->from_type(primitive_type::DOUBLE);
             else return {};

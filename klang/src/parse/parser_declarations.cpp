@@ -1657,7 +1657,11 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                         case lex::keyword::DOUBLE: return "double";
                         case lex::keyword::FLOAT: return "float";
                         case lex::keyword::BOOL: return "bool";
-                        case lex::keyword::LONG: return keyword_ts->is_unsigned ? "ulong" : "long";
+                        case lex::keyword::LONG:
+                            if (keyword_ts->is_long_long) {
+                                return keyword_ts->is_unsigned ? "unsigned long long" : "long long";
+                            }
+                            return keyword_ts->is_unsigned ? "ulong" : "long";
                         case lex::keyword::SHORT: return keyword_ts->is_unsigned ? "ushort" : "short";
                         case lex::keyword::CHAR: return keyword_ts->is_unsigned ? "uchar" : "char";
                         case lex::keyword::BYTE: return keyword_ts->is_unsigned ? "ubyte" : "byte";

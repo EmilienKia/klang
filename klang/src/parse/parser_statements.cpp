@@ -1013,8 +1013,20 @@ std::shared_ptr<ast::type_specifier> parser::parse_fundamental_type_spec() {
             lex::keyword::INT,
             lex::keyword::LONG,
             lex::keyword::FLOAT,
-            lex::keyword::DOUBLE>(ltype)){
-        return std::make_shared<ast::keyword_type_specifier>( std::get<lex::keyword>(ltype.value().get()) , is_unsigned);
+            lex::keyword::DOUBLE>(ltype)) {
+        bool is_long_long = false;
+        if (ltype == lex::keyword::LONG) {
+            lex::lex_holder long_holder(_lexer);
+            auto lsecond = _lexer.get();
+            if (lsecond == lex::keyword::LONG) {
+                is_long_long = true;
+                long_holder.sync();
+            } else {
+                _lexer.unget();
+            }
+        }
+        return std::make_shared<ast::keyword_type_specifier>(
+            std::get<lex::keyword>(ltype.value().get()), is_unsigned, is_long_long);
     }
     holder.rollback();
     return {};

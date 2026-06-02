@@ -146,7 +146,15 @@ class ast_dump_visitor : public k::parse::ast_visitor {
         }
 
         void visit_keyword_type_specifier(ast::keyword_type_specifier &identifier) override  {
-            _stm  <<  "<<kwtype:" << identifier.keyword.content << ">>";
+            _stm << "<<kwtype:";
+            if (identifier.is_unsigned) {
+                _stm << "unsigned ";
+            }
+            _stm << identifier.keyword.content;
+            if (identifier.is_long_long) {
+                _stm << " long";
+            }
+            _stm << ">>";
         }
 
         void visit_array_type_specifier(ast::array_type_specifier &arr) override {

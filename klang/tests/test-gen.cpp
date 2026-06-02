@@ -65,6 +65,47 @@ TEST_CASE( "Simple method", "[gen]" ) {
     }
 }
 
+#if defined(__SIZEOF_INT128__)
+TEST_CASE("Long long literals and signatures", "[gen][longlong]") {
+    auto jit = gen_jit(R"SRC(
+        module __longlong__;
+
+        echo_signed(v: long long) : long long {
+            return v;
+        }
+
+        echo_unsigned(v: unsigned long long) : unsigned long long {
+            return v;
+        }
+
+        lit_signed() : long long {
+            return 42ll;
+        }
+
+        lit_unsigned() : unsigned long long {
+            return 43ull;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto echo_signed = jit->lookup_symbol<__int128(*)(__int128)>("echo_signed");
+    REQUIRE(echo_signed != nullptr);
+    REQUIRE(static_cast<long long>(echo_signed(42)) == 42);
+
+    auto echo_unsigned = jit->lookup_symbol<unsigned __int128(*)(unsigned __int128)>("echo_unsigned");
+    REQUIRE(echo_unsigned != nullptr);
+    REQUIRE(static_cast<unsigned long long>(echo_unsigned(43)) == 43);
+
+    auto lit_signed = jit->lookup_symbol<__int128(*)()>("lit_signed");
+    REQUIRE(lit_signed != nullptr);
+    REQUIRE(static_cast<long long>(lit_signed()) == 42);
+
+    auto lit_unsigned = jit->lookup_symbol<unsigned __int128(*)()>("lit_unsigned");
+    REQUIRE(lit_unsigned != nullptr);
+    REQUIRE(static_cast<unsigned long long>(lit_unsigned()) == 43);
+}
+#endif
+
 //
 // Pointer, addresses and value-of
 //

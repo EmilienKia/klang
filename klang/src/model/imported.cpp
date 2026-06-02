@@ -545,8 +545,10 @@ static k::value_type parse_value_arg_string(const std::string& val_str,
                 long long v = std::stoll(val_str);
                 if (it->bits <= 32 && it->is_signed)   return k::value_type{static_cast<int>(v)};
                 if (it->bits <= 32 && !it->is_signed)  return k::value_type{static_cast<unsigned int>(v)};
-                if (it->is_signed)                      return k::value_type{static_cast<long>(v)};
-                return k::value_type{static_cast<unsigned long>(static_cast<unsigned long long>(v))};
+                if (it->bits <= 64 && it->is_signed)   return k::value_type{static_cast<long>(v)};
+                if (it->bits <= 64 && !it->is_signed)  return k::value_type{static_cast<unsigned long>(static_cast<unsigned long long>(v))};
+                if (it->is_signed)                      return k::value_type{static_cast<long long>(v)};
+                return k::value_type{static_cast<unsigned long long>(static_cast<unsigned long long>(v))};
             } catch (...) {}
         }
     }
@@ -1111,5 +1113,4 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
 }
 
 } // namespace k::model
-
 

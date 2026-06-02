@@ -51,6 +51,7 @@ convert_primitive(const kdi::kdi_int_type& t, std::shared_ptr<context> ctx)
             case 16: return ctx->from_type(primitive_type::SHORT);
             case 32: return ctx->from_type(primitive_type::INT);
             case 64: return ctx->from_type(primitive_type::LONG);
+            case 128: return ctx->from_type(primitive_type::LONG_LONG);
         }
     } else {
         switch (t.bits) {
@@ -58,6 +59,7 @@ convert_primitive(const kdi::kdi_int_type& t, std::shared_ptr<context> ctx)
             case 16: return ctx->from_type(primitive_type::UNSIGNED_SHORT);
             case 32: return ctx->from_type(primitive_type::UNSIGNED_INT);
             case 64: return ctx->from_type(primitive_type::UNSIGNED_LONG);
+            case 128: return ctx->from_type(primitive_type::UNSIGNED_LONG_LONG);
         }
     }
     return nullptr; // unsupported width
@@ -245,5 +247,4 @@ kdi_type_to_model_type(const kdi::kdi_type& kdi_t,
 }
 
 } // namespace k::model
-
 
