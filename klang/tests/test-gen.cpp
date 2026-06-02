@@ -85,6 +85,14 @@ TEST_CASE("Long long literals and signatures", "[gen][longlong]") {
         lit_unsigned() : unsigned long long {
             return 43ull;
         }
+
+        lit_signed_l64() : long long {
+            return 44l64;
+        }
+
+        lit_unsigned_ul128() : unsigned long long {
+            return 45ul128;
+        }
     )SRC");
     REQUIRE(jit);
 
@@ -103,6 +111,14 @@ TEST_CASE("Long long literals and signatures", "[gen][longlong]") {
     auto lit_unsigned = jit->lookup_symbol<unsigned __int128(*)()>("lit_unsigned");
     REQUIRE(lit_unsigned != nullptr);
     REQUIRE(static_cast<unsigned long long>(lit_unsigned()) == 43);
+
+    auto lit_signed_l64 = jit->lookup_symbol<__int128(*)()>("lit_signed_l64");
+    REQUIRE(lit_signed_l64 != nullptr);
+    REQUIRE(static_cast<long long>(lit_signed_l64()) == 44);
+
+    auto lit_unsigned_ul128 = jit->lookup_symbol<unsigned __int128(*)()>("lit_unsigned_ul128");
+    REQUIRE(lit_unsigned_ul128 != nullptr);
+    REQUIRE(static_cast<unsigned long long>(lit_unsigned_ul128()) == 45);
 }
 #endif
 

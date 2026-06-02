@@ -157,7 +157,6 @@ TEST_CASE( "Lex one keyword", "[lexer]" ) {
 }
 
 TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
-    // TODO Add lexing and tests for l64, l128 suffices
     // TODO Add lexing and tests for bi suffices
     // TODO Add lexing, tests and spec for i8, i16, i32, i64, i128, u8, u16, u32, u64 and u128 suffices
     test_logger log;
@@ -642,6 +641,38 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
             REQUIRE(l.unsigned_num);
             REQUIRE(l.size == integer_size::LONGLONG);
         }
+
+        SECTION("Lex decimal long64 integer", "[long][long64]") {
+            k::source src{"123l64"};
+            auto lexemes = lex.parse(src);
+            REQUIRE(lexemes.size() == 1);
+
+            any_lexeme the_lexeme = lexemes[0];
+            REQUIRE(std::holds_alternative<integer>(the_lexeme));
+
+            integer l = std::get<integer>(the_lexeme);
+            REQUIRE(l.content == "123l64");
+            REQUIRE(l.int_content() == "123");
+            REQUIRE(l.base == numeric_base::DECIMAL);
+            REQUIRE(!l.unsigned_num);
+            REQUIRE(l.size == integer_size::LONG);
+        }
+
+        SECTION("Lex decimal unsigned long128 integer", "[unsigned][longlong][long128]") {
+            k::source src{"123ul128"};
+            auto lexemes = lex.parse(src);
+            REQUIRE(lexemes.size() == 1);
+
+            any_lexeme the_lexeme = lexemes[0];
+            REQUIRE(std::holds_alternative<integer>(the_lexeme));
+
+            integer l = std::get<integer>(the_lexeme);
+            REQUIRE(l.content == "123ul128");
+            REQUIRE(l.int_content() == "123");
+            REQUIRE(l.base == numeric_base::DECIMAL);
+            REQUIRE(l.unsigned_num);
+            REQUIRE(l.size == integer_size::LONGLONG);
+        }
     }
 
     SECTION("Lex hexadecimal", "[hexadecimal]") {
@@ -800,6 +831,38 @@ TEST_CASE( "Lex one integer", "[lexer][integer]" ) {
 
             integer l = std::get<integer>(the_lexeme);
             REQUIRE(l.content == "0x123defull");
+            REQUIRE(l.int_content() == "123def");
+            REQUIRE(l.base == numeric_base::HEXADECIMAL);
+            REQUIRE(l.unsigned_num);
+            REQUIRE(l.size == integer_size::LONGLONG);
+        }
+
+        SECTION("Lex hexadecimal long64 identifier", "[long][long64]") {
+            k::source src{"0x123defl64"};
+            auto lexemes = lex.parse(src);
+            REQUIRE(lexemes.size() == 1);
+
+            any_lexeme the_lexeme = lexemes[0];
+            REQUIRE(std::holds_alternative<integer>(the_lexeme));
+
+            integer l = std::get<integer>(the_lexeme);
+            REQUIRE(l.content == "0x123defl64");
+            REQUIRE(l.int_content() == "123def");
+            REQUIRE(l.base == numeric_base::HEXADECIMAL);
+            REQUIRE(!l.unsigned_num);
+            REQUIRE(l.size == integer_size::LONG);
+        }
+
+        SECTION("Lex hexadecimal unsigned long128 identifier", "[unsigned][longlong][long128]") {
+            k::source src{"0x123deful128"};
+            auto lexemes = lex.parse(src);
+            REQUIRE(lexemes.size() == 1);
+
+            any_lexeme the_lexeme = lexemes[0];
+            REQUIRE(std::holds_alternative<integer>(the_lexeme));
+
+            integer l = std::get<integer>(the_lexeme);
+            REQUIRE(l.content == "0x123deful128");
             REQUIRE(l.int_content() == "123def");
             REQUIRE(l.base == numeric_base::HEXADECIMAL);
             REQUIRE(l.unsigned_num);
