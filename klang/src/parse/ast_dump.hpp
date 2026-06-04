@@ -662,6 +662,7 @@ class ast_dump_visitor : public k::parse::ast_visitor {
 
         void visit_brace_postfix_expr(ast::brace_postfix_expr& expr) override {
             if (expr.callee) expr.callee->visit(*this);
+            if (expr.is_array_type_form) _stm << "[]";
             _stm << "{";
             if (expr.brace_init) expr.brace_init->visit(*this);
             _stm << "}";

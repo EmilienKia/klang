@@ -36,6 +36,11 @@ protected:
     /** The variable being initialized. */
     std::shared_ptr<symbol_expression> _constructed_symbol;
 
+    /** Temporary mode: true when used as expression-level temporary array construction. */
+    bool _is_temporary = false;
+    /** Temporary mode unresolved element type name (e.g. "int" in int[]{...}). */
+    k::name _temporary_type_name;
+
     /** Per-element initializer expressions. nullptr = default-init. */
     std::vector<std::shared_ptr<expression>> _elements;
 
@@ -56,6 +61,8 @@ protected:
 
 public:
     const std::shared_ptr<symbol_expression>& constructed_symbol() const { return _constructed_symbol; }
+    bool is_temporary() const { return _is_temporary; }
+    const k::name& temporary_type_name() const { return _temporary_type_name; }
 
     const std::vector<std::shared_ptr<expression>>& elements() const { return _elements; }
 
@@ -107,6 +114,11 @@ public:
         const std::shared_ptr<variable_definition>& variable,
         const std::vector<std::shared_ptr<expression>>& elements);
 
+    /** Create a temporary array-init expression: T[]{...}. */
+    static std::shared_ptr<array_init_expression> make_temporary_shared(
+        const k::name& temporary_type_name,
+        const std::vector<std::shared_ptr<expression>>& elements);
+
     /** Create a uniform array init expression: var : T(args)[N]; */
     static std::shared_ptr<array_init_expression> make_uniform_shared(
         const std::shared_ptr<symbol_expression>& constructed_symbol,
@@ -124,6 +136,8 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<array_init_expression> c{new array_init_expression()};
         c->_type = _type;
+        c->_is_temporary = _is_temporary;
+        c->_temporary_type_name = _temporary_type_name;
         c->_is_uniform = _is_uniform;
         c->_uniform_constructor = _uniform_constructor;
         c->_array_size = _array_size;

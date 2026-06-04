@@ -959,7 +959,7 @@ void implementation_generator::visit_temporary_construction_expression(temporary
         auto dtor_fn = dtor->shared_as<k::model::function>();
         auto dtor_it = _context->_functions.find(dtor_fn);
         if (dtor_it != _context->_functions.end()) {
-            _expression_temporaries.push_back(std::make_pair(temp_alloca, dtor_it->second));
+            _expression_temporaries.push_back({temp_alloca, dtor_it->second, nullptr});
         }
     }
 

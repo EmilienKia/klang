@@ -2,7 +2,7 @@
 
 [← Index](../index.md) · [Expressions](expressions.md)
 
-A *temporary construction expression* creates an anonymous, stack-allocated struct instance
+A *temporary construction expression* creates an anonymous, stack-allocated object
 within an expression context.  The temporary is constructed at the point of evaluation,
 usable for the remainder of the enclosing full expression, and destroyed at the end of the
 statement.
@@ -47,34 +47,32 @@ The result type of the expression is a reference to the constructed struct type 
 
 ## 2. Grammar
 
-Temporary construction reuses the existing postfix call syntax.  At parse time,
-`TypeName(args…)` is indistinguishable from a function call.  During type resolution the
-compiler detects that the callee name refers to a struct or class type (not a function) and
-rewrites the expression into a temporary construction.
+Temporary construction supports two forms:
 
 ```
 TemporaryConstructionExpr:
     QualifiedTypeName '(' [ ExpressionList ] ')'
+  | QualifiedTypeName BraceInitList
+  | QualifiedTypeName '[' ']' BraceInitList
 ```
-
-No grammar change is required — the disambiguation happens during semantic analysis.
 
 ---
 
 ## 3. Semantics
 
-When the compiler encounters `T(args…)` in an expression context and `T` resolves to a
-struct or class type:
+When the compiler encounters a temporary construction expression in an expression context:
 
 1. **Allocation** — a stack slot is allocated for the temporary in the current function's
    entry block (like a local variable, but unnamed).
 2. **Zero-initialisation** — the slot is zero-initialised.
-3. **Construction** — the matching instance constructor is called with the temporary as
-   `this` and the provided arguments.  If no arguments are given, the default constructor
-   is called.
-4. **Expression result** — the expression evaluates to a reference (`T&`) to the
-   newly constructed temporary.
-5. **Destruction registration** — if `T` has a destructor, the temporary is registered for
+3. **Construction** —
+   - `T(args...)`: constructor overload resolution on `T`;
+   - `T{...}`: brace-initialization of `T` (designated or positional);
+   - `T[]{...}`: temporary sized array of element type `T` with inferred size.
+4. **Expression result** —
+   - object temporary: reference (`T&`);
+   - array temporary: reference to inferred sized array (`T[N]&`).
+5. **Destruction registration** — if the temporary requires cleanup, it is registered for
    cleanup at the end of the enclosing full expression statement.
 
 ---
@@ -265,10 +263,10 @@ bad() {
 
 | Restriction | Reason |
 |-------------|--------|
-| Only struct and class types | Primitive types and enums are not constructed with this syntax. |
+| `T(args...)` / `T{...}` only for struct/class types | Primitive types and enums are not constructed with object temporary syntax. |
 | Abstract classes cannot be instantiated | A temporary of an abstract class would be incomplete. |
 | Deleted constructors produce an error | If the best-matching constructor is `-> delete`, the construction is rejected. |
-| No array temporary syntax (yet) | `T[]{init}` is not currently supported for inline temporary array construction. |
+| `T[]{...}` uses positional array init only | Designated member syntax (`.x = ...`) is for struct designated init, not array elements. |
 
 ---
 
@@ -361,4 +359,3 @@ good() {
 ---
 
 *See also:* [Expressions](expressions.md) · [Constructors](../structs/constructors.md) · [Destructors — Expression temporaries](../structs/destructors.md#4-return-values-and-expression-temporaries) · [Function Call](call.md)
-

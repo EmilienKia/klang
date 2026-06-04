@@ -548,7 +548,7 @@ bool implementation_generator::generate_binary_operator_overload(binary_expressi
                     auto dtor_fn = dtor->shared_as<k::model::function>();
                     auto dtor_it = _context->_functions.find(dtor_fn);
                     if (dtor_it != _context->_functions.end())
-                        _expression_temporaries.push_back(std::make_pair(sret_dest, dtor_it->second));
+                        _expression_temporaries.push_back({sret_dest, dtor_it->second, nullptr});
                 }
             }
         }
@@ -752,7 +752,7 @@ bool implementation_generator::generate_unary_operator_overload(unary_expression
                 auto dtor_fn = dtor->shared_as<k::model::function>();
                 auto dtor_it = _context->_functions.find(dtor_fn);
                 if (dtor_it != _context->_functions.end())
-                    _expression_temporaries.push_back(std::make_pair(sret_tmp, dtor_it->second));
+                    _expression_temporaries.push_back({sret_tmp, dtor_it->second, nullptr});
             }
         }
         return sret_tmp;
@@ -949,7 +949,7 @@ bool implementation_generator::generate_cast_operator_overload(cast_expression& 
                     auto dtor_fn = dtor->shared_as<k::model::function>();
                     auto dtor_it = _context->_functions.find(dtor_fn);
                     if (dtor_it != _context->_functions.end())
-                        _expression_temporaries.push_back(std::make_pair(sret_dest, dtor_it->second));
+                        _expression_temporaries.push_back({sret_dest, dtor_it->second, nullptr});
                 }
             }
         }

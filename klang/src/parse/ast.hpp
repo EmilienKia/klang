@@ -612,9 +612,22 @@ namespace k::parse {
         struct brace_postfix_expr : public expression {
             expr_ptr callee;
             std::shared_ptr<brace_init_list> brace_init;
+            /** True for array-type temporary form: T[]{...}. */
+            bool is_array_type_form = false;
+            /** Brackets tokens for array-type form (only valid when is_array_type_form=true). */
+            std::optional<lex::punctuator> array_bracket_open;
+            std::optional<lex::punctuator> array_bracket_close;
 
             brace_postfix_expr(const expr_ptr& callee, const std::shared_ptr<brace_init_list>& brace_init)
                 : callee(callee), brace_init(brace_init) {}
+
+            brace_postfix_expr(const expr_ptr& callee,
+                               const std::shared_ptr<brace_init_list>& brace_init,
+                               bool is_array_type_form,
+                               const std::optional<lex::punctuator>& array_bracket_open = std::nullopt,
+                               const std::optional<lex::punctuator>& array_bracket_close = std::nullopt)
+                : callee(callee), brace_init(brace_init), is_array_type_form(is_array_type_form),
+                  array_bracket_open(array_bracket_open), array_bracket_close(array_bracket_close) {}
 
             virtual void visit(ast_visitor& visitor) override;
         };

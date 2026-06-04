@@ -222,15 +222,37 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
         if (auto e = expr.element(i)) e->accept(*this);
     }
 
-    // Step 1: Determine the expected element type from the parent variable's array type
-    // Get the array variable's type
+    // Step 1: Determine expected array/element types.
     auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
-    if (!var_def) return;
-    auto var_type = var_def->get_type();
-    if (!type::is_sized_array(var_type)) return;
+    std::shared_ptr<sized_array_type> arr_type;
+    std::shared_ptr<type> elem_type;
 
-    auto arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type);
-    auto elem_type = arr_type->get_subtype();
+    if (expr.is_temporary()) {
+        auto resolved_elem = resolve_type_by_name(expr.temporary_type_name(), expr);
+        if (!resolved_elem) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_INIT_NOT_STRUCT), expr.first_lexeme(),
+                "Unknown type '{}' in temporary array initializer",
+                {expr.temporary_type_name().to_string()});
+        }
+        auto elem_nc = type::remove_const(resolved_elem);
+        if (type::is_reference(elem_nc)) elem_nc = elem_nc->get_subtype();
+        elem_type = elem_nc;
+        auto arr_unsized = elem_type ? elem_type->get_array() : nullptr;
+        if (!arr_unsized) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_INIT_NOT_STRUCT), expr.first_lexeme(),
+                "Type '{}' cannot be used as temporary array element type",
+                {expr.temporary_type_name().to_string()});
+        }
+        arr_type = arr_unsized->with_size(expr.size());
+        expr._array_size = expr.size();
+        expr.set_type(arr_type->get_reference());
+    } else {
+        if (!var_def) return;
+        auto var_type = var_def->get_type();
+        if (!type::is_sized_array(var_type)) return;
+        arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type);
+        elem_type = arr_type->get_subtype();
+    }
 
     // Validate element count
     size_t arr_size = arr_type->get_size();
@@ -239,14 +261,15 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
     if (init_count > arr_size) {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_INIT_NOT_STRUCT), expr.first_lexeme(),
             "Array initializer list has {} elements, but the array '{}' has size {}: too many initializers",
-            {std::to_string(init_count), var_def->get_fq_name(), std::to_string(arr_size)});
+            {std::to_string(init_count), var_def ? var_def->get_fq_name() : "<temporary>",
+             std::to_string(arr_size)});
         return;
     }
     if (init_count < arr_size && init_count > 0) {
         warn(static_cast<unsigned int>(k::diag::type_diag::WARN_DESIG_INIT_PARTIAL),
             "Array initializer list has {} elements, but the array '{}' has size {}: "
             "remaining {} elements will be default-initialized",
-            {std::to_string(init_count), var_def->get_fq_name(), std::to_string(arr_size),
+            {std::to_string(init_count), var_def ? var_def->get_fq_name() : "<temporary>", std::to_string(arr_size),
              std::to_string(arr_size - init_count)});
     }
 
@@ -259,7 +282,8 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
             if (!cast) {
                 throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_INIT_MEMBER_NOT_FOUND), expr.first_lexeme(),
                     "Cannot convert array element {} to type '{}' for array '{}'",
-                    {std::to_string(i), elem_type->to_string(), var_def->get_fq_name()});
+                    {std::to_string(i), elem_type->to_string(),
+                     var_def ? var_def->get_fq_name() : "<temporary>"});
             } else if (cast != e) {
                 expr.assign_element(i, cast);
             }
@@ -274,7 +298,8 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
             if (!cast) {
                 throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DESIG_INIT_MEMBER_NOT_FOUND), expr.first_lexeme(),
                     "Cannot convert array element {} to indirection type '{}' for array '{}'",
-                    {std::to_string(i), elem_type->to_string(), var_def->get_fq_name()});
+                    {std::to_string(i), elem_type->to_string(),
+                     var_def ? var_def->get_fq_name() : "<temporary>"});
             } else if (cast != e) {
                 expr.assign_element(i, cast);
             }
@@ -284,6 +309,22 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
         for (size_t i = 0; i < init_count; ++i) {
             auto e = expr.element(i);
             if (!e) continue; // default-init slot, will use default ctor
+
+            // Direct struct value/reference of the same element type (e.g. Point{...} temporary)
+            // can be used without constructor-call syntax.
+            if (auto e_type = e->get_type()) {
+                auto e_nc = type::remove_const(e_type);
+                if (type::is_reference(e_nc)) e_nc = e_nc->get_subtype();
+                if (auto e_st = std::dynamic_pointer_cast<struct_type>(e_nc)) {
+                    if (e_st == st_type) {
+                        auto cast = adapt_type(e, elem_type);
+                        if (cast && cast != e) {
+                            expr.assign_element(i, cast);
+                        }
+                        continue;
+                    }
+                }
+            }
 
             // Step 2: Resolve each element expression via visitor
             // Check if element is a function invocation (explicit constructor call)
@@ -596,19 +637,37 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
  *   3. Zero-fill remaining elements if fewer initializers than array size.
  */
 void implementation_generator::visit_array_init_expression(array_init_expression& expr) {
-    auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
-    if (!var_def) return;
+    std::shared_ptr<sized_array_type> arr_type;
+    llvm::Value* arr_alloca = nullptr;
 
-    auto var_type = var_def->get_type();
-    auto arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type);
-    if (!arr_type) return;
+    if (expr.is_temporary()) {
+        auto expr_type = type::remove_const(expr.get_type());
+        if (type::is_reference(expr_type)) {
+            expr_type = expr_type->get_subtype();
+        }
+        arr_type = std::dynamic_pointer_cast<sized_array_type>(expr_type);
+        if (!arr_type) return;
 
-    // Get the alloca for the array variable
-    _value = nullptr;
-    expr.constructed_symbol()->accept(*this);
-    llvm::Value* arr_alloca = _value;
-    _value = nullptr;
-    if (!arr_alloca) return;
+        llvm::Type* llvm_arr_ty = _context->get_llvm_type(arr_type);
+        llvm::Function* current_fn = _builder->GetInsertBlock()->getParent();
+        llvm::IRBuilder<> entry_builder(&current_fn->getEntryBlock(),
+                                        current_fn->getEntryBlock().begin());
+        arr_alloca = entry_builder.CreateAlloca(llvm_arr_ty, nullptr, "tmp_arr");
+    } else {
+        auto var_def = expr.constructed_symbol() ? expr.constructed_symbol()->get_variable_def() : nullptr;
+        if (!var_def) return;
+
+        auto var_type = var_def->get_type();
+        arr_type = std::dynamic_pointer_cast<sized_array_type>(var_type);
+        if (!arr_type) return;
+
+        // Get the alloca for the array variable
+        _value = nullptr;
+        expr.constructed_symbol()->accept(*this);
+        arr_alloca = _value;
+        _value = nullptr;
+        if (!arr_alloca) return;
+    }
 
     auto* struct_llvm = arr_type->get_llvm_struct_type();
     auto elem_type = arr_type->get_subtype();
@@ -690,6 +749,16 @@ void implementation_generator::visit_array_init_expression(array_init_expression
             }
         }
     }
+    if (expr.is_temporary()) {
+        auto* temp_alloca = llvm::dyn_cast<llvm::AllocaInst>(arr_alloca);
+        if (temp_alloca) {
+            auto elem_type = arr_type->get_subtype();
+            if (std::dynamic_pointer_cast<struct_type>(elem_type) || std::dynamic_pointer_cast<owner_type>(elem_type)) {
+                _expression_temporaries.push_back({temp_alloca, nullptr, arr_type});
+            }
+        }
+    }
+
     _value = arr_alloca;
 }
 
@@ -954,7 +1023,7 @@ void implementation_generator::visit_designated_struct_init_expression(designate
             auto dtor_it = _context->_functions.find(dtor_fn);
             if (dtor_it != _context->_functions.end()) {
                 auto* temp_alloca_inst = llvm::cast<llvm::AllocaInst>(struct_alloca);
-                _expression_temporaries.push_back(std::make_pair(temp_alloca_inst, dtor_it->second));
+                _expression_temporaries.push_back({temp_alloca_inst, dtor_it->second, nullptr});
             }
         }
     }

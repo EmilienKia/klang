@@ -2102,7 +2102,7 @@ namespace k::model {
     }
 
     void model_builder::visit_brace_postfix_expr(parse::ast::brace_postfix_expr &expr) {
-        // Brace-init postfix: S{.x=10, .y=20} or S{expr, ...}
+        // Brace-init postfix: S{...} or T[]{...}
         // The callee should be an identifier expression (type name).
         auto ident = std::dynamic_pointer_cast<parse::ast::identifier_expr>(expr.callee);
         if (!ident) {
@@ -2116,6 +2116,34 @@ namespace k::model {
         for (size_t i = 0; i < ident->qident.names.size(); ++i) {
             if (i > 0) type_name += "::";
             type_name += std::string{ident->qident.names[i].content};
+        }
+
+        if (expr.is_array_type_form) {
+            if (expr.brace_init && expr.brace_init->is_designated) {
+                throw_error(static_cast<unsigned int>(k::diag::model_diag::ERR_BRACE_INIT_INTERNAL),
+                    expr.brace_init->open_brace,
+                    "Array temporary brace-init does not support designated initializers; use positional elements");
+            }
+
+            std::vector<std::shared_ptr<model::expression>> elements;
+            if (expr.brace_init) {
+                for (auto& elem_ast : expr.brace_init->elements) {
+                    if (elem_ast) {
+                        _expr.reset();
+                        elem_ast->visit(*this);
+                        elements.push_back(_expr);
+                        _expr.reset();
+                    } else {
+                        elements.push_back(nullptr); // default-init slot
+                    }
+                }
+            }
+
+            _expr = model::array_init_expression::make_temporary_shared(k::name::from(type_name), elements);
+            if (_expr) {
+                _expr->set_ast_expression(expr.shared_as<parse::ast::brace_postfix_expr>());
+            }
+            return;
         }
 
         if (expr.brace_init && expr.brace_init->is_designated) {
@@ -2367,4 +2395,3 @@ namespace k::model {
 
 
 } // k::parse
-

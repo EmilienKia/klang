@@ -1475,7 +1475,7 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                 if (dtor_it != _context->_functions.end()) {
                     // Only track if the value is an AllocaInst (temporary)
                     if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(sret_ptr_val)) {
-                        _expression_temporaries.push_back(std::make_pair(alloca, dtor_it->second));
+                        _expression_temporaries.push_back({alloca, dtor_it->second, nullptr});
                     }
                 }
             }

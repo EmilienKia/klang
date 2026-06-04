@@ -667,6 +667,26 @@ ast::expr_ptr parser::parse_postfix_expr()
         if(lop == lex::operator_::DOUBLE_PLUS || lop == lex::operator_::DOUBLE_MINUS) {
             any = std::make_shared<ast::unary_postfix_expr>(lex::as<lex::operator_>(lop), any);
         } else if(lop == lex::punctuator::BRACKET_OPEN) {
+            // Array temporary brace postfix: T[]{...}
+            // Recognized only for identifier-like callee in exact shape: identifier [] { ... }.
+            if (std::dynamic_pointer_cast<ast::identifier_expr>(any)) {
+                lex::lex_holder arr_holder(_lexer);
+                auto maybe_close = _lexer.get();
+                if (maybe_close == lex::punctuator::BRACKET_CLOSE) {
+                    auto maybe_open_brace = _lexer.get();
+                    if (maybe_open_brace == lex::punctuator::BRACE_OPEN) {
+                        arr_holder.sync();
+                        auto brace_init = parse_brace_init_list(lex::as<lex::punctuator>(maybe_open_brace));
+                        any = std::make_shared<ast::brace_postfix_expr>(
+                            any, brace_init, true,
+                            lex::as<lex::punctuator>(lop),
+                            lex::as<lex::punctuator>(maybe_close));
+                        continue;
+                    }
+                }
+                arr_holder.rollback();
+            }
+
             ast::expr_ptr expr = parse_expression();
             if(!expr) {
                 throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_BRACKET_EXPECT_SUBEXPR), _lexer.pick_current(), "Bracket postfix expression expects sub-expression");
@@ -739,13 +759,11 @@ ast::expr_ptr parser::parse_postfix_expr()
             lex::lex_holder brace_peek_holder(_lexer);
             auto peek_first = _lexer.get();
             brace_peek_holder.rollback();
-
             if (peek_first == lex::operator_::DOT) {
                 auto open_brace = lex::as<lex::punctuator>(lop);
                 auto brace_init = parse_brace_init_list(open_brace);
                 any = std::make_shared<ast::brace_postfix_expr>(any, brace_init);
             } else {
-                // Not a brace-init postfix — unget the '{' and stop
                 _lexer.unget();
                 break;
             }

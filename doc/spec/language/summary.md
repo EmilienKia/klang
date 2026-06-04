@@ -490,6 +490,9 @@ Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result
 - Usable as a function argument, for method chaining, or in a `return`.
 - Constructors `→ delete` produce an error if selected.
 - Static constructors do not participate in resolution.
+- Array temporary form is supported: `T[]{init...}` (including in `return` expressions).
+  - Result type: `T[N]&` (`N` inferred from initializer size).
+  - Element initialization semantics are identical to local array brace-init.
 
 ---
 
@@ -505,7 +508,7 @@ Assignment is right-associative: `a = b = c` assigns `c` to `b`, then the result
 
 `expr ;` — used for side effects. `;` alone = empty statement.
 - If produces an unassigned `T!`: warning `0x5010`, object destroyed immediately.
-- Struct temporaries destroyed at end of statement in reverse order.
+- Struct temporaries and temporary arrays are destroyed at end of statement in reverse order.
 
 ### 9.3 Variable Declaration
 

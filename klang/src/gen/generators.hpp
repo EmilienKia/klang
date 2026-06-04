@@ -202,12 +202,20 @@ protected:
     /** Stack of struct-typed by-value parameters that need destructor calls at function exit. */
     std::stack<std::vector<std::shared_ptr<parameter>>> _struct_params_stack;
 
+    struct expression_temporary_cleanup {
+        llvm::AllocaInst* alloca = nullptr;
+        llvm::Function* destructor = nullptr;
+        std::shared_ptr<sized_array_type> array_type;
+    };
+
     /**
-     * Temporary struct objects created during expression evaluation.
-     * Each entry: { alloca pointer, destructor LLVM function }.
-     * Destroyed in reverse creation order at end of full-expression (statement boundary).
+     * Temporary expression objects created during expression evaluation.
+     * Supports:
+     *  - struct/object temporary with destructor call
+     *  - sized-array temporary with per-element cleanup
+     * Destroyed in reverse creation order at end of full-expression.
      */
-    std::vector<std::pair<llvm::AllocaInst*, llvm::Function*>> _expression_temporaries;
+    std::vector<expression_temporary_cleanup> _expression_temporaries;
 
     /** Per-function alloca for return value (used when destructions must happen before a return). */
     llvm::AllocaInst* _retval_alloca = nullptr;

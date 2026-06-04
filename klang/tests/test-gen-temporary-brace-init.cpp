@@ -52,6 +52,14 @@ TEST_CASE("Parse brace postfix — qualified type name Mod::S{.x=1}", "[parser][
     REQUIRE(stmt);
 }
 
+TEST_CASE("Parse brace postfix — array temporary Point[]{...}", "[parser][brace-postfix]") {
+    test_logger log;
+    k::source src{"f(Point[]{Point{.x = 1}, Point{.x = 2}});"};
+    k::parse::parser parser(log, src);
+    auto stmt = parser.parse_expression_statement();
+    REQUIRE(stmt);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 2: End-to-end (JIT) tests for struct designated init temporaries
 // ─────────────────────────────────────────────────────────────────────────────
@@ -374,5 +382,198 @@ test() : int {
     CHECK(test_fn() == 1000);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 4: Temporary array brace init in expression context
+// ─────────────────────────────────────────────────────────────────────────────
 
+TEST_CASE("Temporary brace init: array temporary as function argument", "[gen][temporary_brace_init][array]") {
+    auto jit = gen_jit(R"SRC(
+module __test_tmp_arr_arg__;
 
+struct Point {
+    x : int;
+}
+
+sum_points(p : Point[2]&) : int {
+    return p[0].x + p[1].x;
+}
+
+test() : int {
+    return sum_points(Point[]{Point{.x = 10}, Point{.x = 20}});
+}
+)SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn);
+    CHECK(test_fn() == 30);
+}
+
+TEST_CASE("Temporary brace init: array temporary in return expression", "[gen][temporary_brace_init][array]") {
+    auto jit = gen_jit(R"SRC(
+module __test_tmp_arr_ret__;
+
+struct Point {
+    x : int;
+}
+
+make_points() : Point[2] {
+    return Point[]{Point{.x = 7}, Point{.x = 8}};
+}
+
+test() : int {
+    make_points();
+    return 78;
+}
+)SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn);
+    CHECK(test_fn() == 78);
+}
+
+TEST_CASE("Temporary brace init: array temporary partial init keeps default values", "[gen][temporary_brace_init][array]") {
+    auto jit = gen_jit(R"SRC(
+module __test_tmp_arr_partial__;
+
+struct Point {
+    x : int;
+}
+
+sum3(p : Point[3]&) : int {
+    return p[0].x + p[1].x + p[2].x;
+}
+
+test() : int {
+    return sum3(Point[]{Point{.x = 11}, , Point{.x = 33}});
+}
+)SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn);
+    CHECK(test_fn() == 44);
+}
+
+TEST_CASE("Temporary brace init: object array temporary with direct primitive values", "[gen][temporary_brace_init][array]") {
+    auto jit = gen_jit(R"SRC(
+module __test_tmp_arr_obj_prim_values__;
+
+struct Box {
+    v : int;
+    Box(x : int) : v(x) {}
+}
+
+sum3(a : Box[3]&) : int {
+    return a[0].v + a[1].v + a[2].v;
+}
+
+test() : int {
+    // Direct primitive values must be adapted through Box(int) constructor.
+    return sum3(Box[]{2, 4, 6});
+}
+)SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn);
+    CHECK(test_fn() == 12);
+}
+
+TEST_CASE("Temporary brace init: object array temporary partial primitive direct values", "[gen][temporary_brace_init][array]") {
+    auto jit = gen_jit(R"SRC(
+module __test_tmp_arr_obj_prim_partial__;
+
+struct Box {
+    v : int;
+    Box(x : int) : v(x) {}
+}
+
+sum3(a : Box[3]&) : int {
+    return a[0].v + a[1].v + a[2].v;
+}
+
+test() : int {
+    return sum3(Box[]{5, , 7});
+}
+)SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn);
+    CHECK(test_fn() == 12); // middle slot default-initialized to Box(0)
+}
+
+TEST_CASE("Temporary brace init: array temporary with constructor-style elements", "[gen][temporary_brace_init][array]") {
+    auto jit = gen_jit(R"SRC(
+module __test_tmp_arr_ctor_elems__;
+
+struct Box {
+    v : int;
+    Box(x : int) : v(x) {}
+}
+
+sum2(a : Box[2]&) : int {
+    return a[0].v + a[1].v;
+}
+
+test() : int {
+    return sum2(Box[]{9, 11});
+}
+)SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn);
+    CHECK(test_fn() == 20);
+}
+
+TEST_CASE("Temporary brace init: array temporary destructors are called", "[gen][temporary_brace_init][array]") {
+    auto jit = gen_jit(R"SRC(
+module __test_tmp_arr_dtor__;
+
+g_dtors : int = 0;
+
+struct Tracked {
+    n : int;
+    ~Tracked() {
+        g_dtors = g_dtors + 1;
+    }
+}
+
+consume(a : Tracked[2]&) : int {
+    return a[0].n + a[1].n;
+}
+
+test() : int {
+    g_dtors = 0;
+    r : int = consume(Tracked[]{Tracked{.n = 1}, Tracked{.n = 2}});
+    return g_dtors;
+}
+)SRC");
+    REQUIRE(jit);
+    auto test_fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test_fn);
+    CHECK(test_fn() == 4);
+}
+
+TEST_CASE("Temporary brace init: array temporary rejects unknown type", "[gen][temporary_brace_init][array]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+module __test_tmp_arr_bad_type__;
+
+test() : int {
+    x : int = NotAType[]{1};
+    return x;
+}
+)SRC"));
+}
+
+TEST_CASE("Temporary brace init: array temporary rejects designated members", "[gen][temporary_brace_init][array]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+module __test_tmp_arr_bad_desig__;
+
+struct Point {
+    x : int;
+}
+
+test() : int {
+    arr : Point[1] = Point[]{.x = 42};
+    return arr[0].x;
+}
+)SRC"));
+}

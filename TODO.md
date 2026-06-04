@@ -31,7 +31,6 @@
 - Add placement new operator and support for custom allocators
 - Add non-construct memory allocation and deallocation intrinsics (e.g. `alloc(size)`, `dealloc(ptr, size)`) for manual memory management
 - Add FFI memcopy/memmove intrinsics for efficient raw memory manipulation
-- Add temporary object explicit construction (incl in return expr) — **struct form done**, **struct designated init done** (`S{.x=val}`), array temporary `T[]{init}` pending
 - Add return type covariance
 - Add "virtual" symbols (parent, self, etc.)
 - Enumerations

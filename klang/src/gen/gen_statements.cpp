@@ -194,7 +194,12 @@ void implementation_generator::emit_expression_temporaries_cleanup(const lex::op
 
     // Destroy in reverse creation order
     for (auto it = _expression_temporaries.rbegin(); it != _expression_temporaries.rend(); ++it) {
-        _builder->CreateCall(it->second, {it->first});
+        if (it->array_type) {
+            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
+                it->alloca, it->array_type);
+        } else if (it->destructor) {
+            _builder->CreateCall(it->destructor, {it->alloca});
+        }
     }
     _expression_temporaries.clear();
 
@@ -601,7 +606,21 @@ void type_reference_resolver::visit_return_statement(return_statement& stmt)
             expr = _replacement_expr;
             _replacement_expr = nullptr;
         }
-        auto cast = adapt_type(expr, ret_type);
+        // Temporary array return: keep the temporary as a reference so codegen can
+        // copy from the materialized stack object into the sret destination.
+        bool keep_temp_array_ref = false;
+        if (auto arr_tmp = std::dynamic_pointer_cast<array_init_expression>(expr)) {
+            if (arr_tmp->is_temporary() && expr->get_type()
+                && type::is_reference(expr->get_type()) && type::is_sized_array(ret_type)) {
+                auto src_ref = std::dynamic_pointer_cast<reference_type>(expr->get_type());
+                auto src_arr = src_ref ? src_ref->get_subtype() : nullptr;
+                if (src_arr && type::are_equal(type::remove_const(src_arr), type::remove_const(ret_type))) {
+                    keep_temp_array_ref = true;
+                }
+            }
+        }
+
+        auto cast = keep_temp_array_ref ? expr : adapt_type(expr, ret_type);
         if(!cast) {
             throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH), stmt.get_ast_return_statement()->ret, "Return expression type must be compatible to the expected function return type");
         } else if(cast != expr ) {

@@ -757,6 +757,8 @@ PostfixOp
     = '++'
     | '--'
     | '...'                                                      (* pack expansion *)
+    | BraceInitList                                              (* temporary object: T{...} *)
+    | '[' , ']' , BraceInitList                                  (* temporary array: T[]{...} *)
     | '[' , Expression , ']'
     | '(' , [ ExpressionList ] , ')'
     | ( '.' | '->' ) , IdentifierExpr
@@ -813,4 +815,3 @@ DesignatedInitElement
 DesignatedMemberName
     = [ Identifier , '::' , { Identifier , '::' } ] , Identifier
     ;
-

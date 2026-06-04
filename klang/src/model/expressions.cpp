@@ -503,6 +503,17 @@ std::shared_ptr<array_init_expression> array_init_expression::make_shared(
     return make_shared(symbol_expression::from_variable(variable), elements);
 }
 
+std::shared_ptr<array_init_expression> array_init_expression::make_temporary_shared(
+    const k::name& temporary_type_name,
+    const std::vector<std::shared_ptr<expression>>& elements)
+{
+    std::shared_ptr<array_init_expression> expr{new array_init_expression()};
+    expr->_is_temporary = true;
+    expr->_temporary_type_name = temporary_type_name;
+    expr->set_elements(elements);
+    return expr;
+}
+
 std::shared_ptr<array_init_expression> array_init_expression::make_uniform_shared(
     const std::shared_ptr<symbol_expression>& constructed_symbol,
     const std::vector<std::shared_ptr<expression>>& uniform_ctor_args,
