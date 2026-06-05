@@ -19,6 +19,16 @@
 module k;
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Encoding — the three Unicode storage/transfer encodings supported by the
+// string classes and the character-array conversion helpers.
+// ═════════════════════════════════════════════════════════════════════════════
+public enum Encoding {
+    UTF8;
+    UTF16;
+    UTF32;
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 // CharHelpers — Static utility methods for char[] buffer operations.
 //
 // All methods are public and static, intended to be called as:
@@ -173,6 +183,102 @@ public:
         if (c == '\n') return true;
         if (c == '\r') return true;
         return false;
+    }
+
+    // ── Unicode transcoding (UTF-32 ⇄ UTF-8 / UTF-16) ────────────────────
+
+    /** Number of UTF-8 bytes needed to encode the code point `c`. */
+    public static utf8Len(c: char) : unsigned int {
+        if (c < 0x80u)    return 1u;
+        if (c < 0x800u)   return 2u;
+        if (c < 0x10000u) return 3u;
+        return 4u;
+    }
+
+    /** Number of UTF-16 code units (1 or 2) needed to encode `c`. */
+    public static utf16Len(c: char) : unsigned int {
+        if (c < 0x10000u) return 1u;
+        return 2u;
+    }
+
+    /** Total UTF-8 byte count for the first `len` code points of `src`. */
+    public static utf8Size(src: const char[], len: unsigned int) : unsigned int {
+        total : unsigned int = 0u;
+        i : unsigned int = 0u;
+        while (i < len) {
+            total = total + utf8Len(src[i]);
+            i = i + 1u;
+        }
+        return total;
+    }
+
+    /** Total UTF-16 code-unit count for the first `len` code points of `src`. */
+    public static utf16Size(src: const char[], len: unsigned int) : unsigned int {
+        total : unsigned int = 0u;
+        i : unsigned int = 0u;
+        while (i < len) {
+            total = total + utf16Len(src[i]);
+            i = i + 1u;
+        }
+        return total;
+    }
+
+    /** Encode `len` UTF-32 code points from `src` into a new, null-terminated
+     *  UTF-8 `unsigned byte[]`. */
+    public static toUtf8(src: const char[], len: unsigned int) : unsigned byte[]! {
+        n : unsigned int = utf8Size(src, len);
+        out : unsigned byte[]! = new unsigned byte[n + 1u];
+        o : unsigned int = 0u;
+        i : unsigned int = 0u;
+        while (i < len) {
+            c : char = src[i];
+            if (c < 0x80u) {
+                out[o] = (unsigned byte) c;
+                o = o + 1u;
+            } else if (c < 0x800u) {
+                out[o] = (unsigned byte) (0xC0u | (c >> 6));
+                out[o + 1u] = (unsigned byte) (0x80u | (c & 0x3Fu));
+                o = o + 2u;
+            } else if (c < 0x10000u) {
+                out[o] = (unsigned byte) (0xE0u | (c >> 12));
+                out[o + 1u] = (unsigned byte) (0x80u | ((c >> 6) & 0x3Fu));
+                out[o + 2u] = (unsigned byte) (0x80u | (c & 0x3Fu));
+                o = o + 3u;
+            } else {
+                out[o] = (unsigned byte) (0xF0u | (c >> 18));
+                out[o + 1u] = (unsigned byte) (0x80u | ((c >> 12) & 0x3Fu));
+                out[o + 2u] = (unsigned byte) (0x80u | ((c >> 6) & 0x3Fu));
+                out[o + 3u] = (unsigned byte) (0x80u | (c & 0x3Fu));
+                o = o + 4u;
+            }
+            i = i + 1u;
+        }
+        out[o] = (unsigned byte) 0;
+        return out;
+    }
+
+    /** Encode `len` UTF-32 code points from `src` into a new, null-terminated
+     *  UTF-16 `unsigned short[]` (surrogate pairs for supplementary planes). */
+    public static toUtf16(src: const char[], len: unsigned int) : unsigned short[]! {
+        n : unsigned int = utf16Size(src, len);
+        out : unsigned short[]! = new unsigned short[n + 1u];
+        o : unsigned int = 0u;
+        i : unsigned int = 0u;
+        while (i < len) {
+            c : char = src[i];
+            if (c < 0x10000u) {
+                out[o] = (unsigned short) c;
+                o = o + 1u;
+            } else {
+                v : char = c - 0x10000u;
+                out[o] = (unsigned short) (0xD800u + (v >> 10));
+                out[o + 1u] = (unsigned short) (0xDC00u + (v & 0x3FFu));
+                o = o + 2u;
+            }
+            i = i + 1u;
+        }
+        out[o] = (unsigned short) 0;
+        return out;
     }
 }
 
@@ -464,6 +570,33 @@ public:
         sb.append(other);
         return sb;
     }
+
+    // ── Encoding / array conversions ────────────────────────────────────
+
+    /** The underlying storage encoding (always UTF-32 for String). */
+    const encoding() : Encoding {
+        return Encoding::UTF32;
+    }
+
+    /** Return the content as a new, null-terminated UTF-32 `char[]`. */
+    const toUtf32() : char[]! {
+        out : char[]! = new char[_size + 1u];
+        if (_size > 0u) {
+            CharHelpers::copy(out, 0u, _buf, 0u, _size);
+        }
+        out[_size] = (char) 0;
+        return out;
+    }
+
+    /** Return the content as a new, null-terminated UTF-8 `unsigned byte[]`. */
+    const toUtf8() : unsigned byte[]! {
+        return CharHelpers::toUtf8(_buf, _size);
+    }
+
+    /** Return the content as a new, null-terminated UTF-16 `unsigned short[]`. */
+    const toUtf16() : unsigned short[]! {
+        return CharHelpers::toUtf16(_buf, _size);
+    }
 }
 
 
@@ -628,6 +761,42 @@ public:
      *  Copies the content into a new null-terminated buffer. */
     const toString() : String {
         result : String(this);
+        return result;
+    }
+
+    // ── Encoding / array conversions ────────────────────────────────────
+
+    /** The logical encoding of the content. Fragments are stored as UTF-32
+     *  code points, so the consolidated content is UTF-32. */
+    const encoding() : Encoding {
+        return Encoding::UTF32;
+    }
+
+    /** Return the content as a new, null-terminated UTF-32 `char[]`. */
+    const toUtf32() : char[]! {
+        out : char[]! = new char[_totalSize + 1u];
+        copyTo(out, 0u);
+        out[_totalSize] = (char) 0;
+        return out;
+    }
+
+    /** Return the content as a new, null-terminated UTF-8 `unsigned byte[]`. */
+    const toUtf8() : unsigned byte[]! {
+        tmp : char[]! = new char[_totalSize + 1u];
+        copyTo(tmp, 0u);
+        tmp[_totalSize] = (char) 0;
+        result : unsigned byte[]! = CharHelpers::toUtf8(tmp, _totalSize);
+        delete tmp;
+        return result;
+    }
+
+    /** Return the content as a new, null-terminated UTF-16 `unsigned short[]`. */
+    const toUtf16() : unsigned short[]! {
+        tmp : char[]! = new char[_totalSize + 1u];
+        copyTo(tmp, 0u);
+        tmp[_totalSize] = (char) 0;
+        result : unsigned short[]! = CharHelpers::toUtf16(tmp, _totalSize);
+        delete tmp;
         return result;
     }
 

@@ -660,3 +660,68 @@ TEST_CASE("String from multi-fragment StringBuilder", "[libk][string][builder]")
 }
 
 
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// String / StringBuilder — encoding conversions (toUtf8 / toUtf16 / toUtf32)
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("String encoding conversions — ASCII", "[libk][string][encoding]") {
+    auto jit = jit_k(R"SRC(
+        module __str_enc_ascii__;
+
+        utf8_size()  : unsigned int   { s : k::String("AB"); a : unsigned byte[]!  = s.toUtf8();  return a.size; }
+        utf8_b0()    : unsigned byte  { s : k::String("AB"); a : unsigned byte[]!  = s.toUtf8();  return a[0]; }
+        utf16_size() : unsigned int   { s : k::String("AB"); a : unsigned short[]! = s.toUtf16(); return a.size; }
+        utf16_u1()   : unsigned short { s : k::String("AB"); a : unsigned short[]! = s.toUtf16(); return a[1]; }
+        utf32_size() : unsigned int   { s : k::String("AB"); a : char[]!           = s.toUtf32(); return a.size; }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("utf8_size")() == 3);          // A,B,\0
+    CHECK(jit->lookup_symbol<unsigned char(*)()>("utf8_b0")() == 'A');
+    CHECK(jit->lookup_symbol<unsigned(*)()>("utf16_size")() == 3);
+    CHECK(jit->lookup_symbol<unsigned short(*)()>("utf16_u1")() == 'B');
+    CHECK(jit->lookup_symbol<unsigned(*)()>("utf32_size")() == 3);
+}
+
+TEST_CASE("String encoding conversions — non-ASCII U+00E9", "[libk][string][encoding]") {
+    auto jit = jit_k(R"SRC(
+        module __str_enc_nonascii__;
+
+        // '\u00E9' (é) is a single code point requiring 2 UTF-8 bytes.
+        len()       : unsigned int   { s : k::String("\u00E9"); return s.size(); }
+        utf8_size() : unsigned int   { s : k::String("\u00E9"); a : unsigned byte[]!  = s.toUtf8();  return a.size; }
+        utf8_b0()   : unsigned byte  { s : k::String("\u00E9"); a : unsigned byte[]!  = s.toUtf8();  return a[0]; }
+        utf8_b1()   : unsigned byte  { s : k::String("\u00E9"); a : unsigned byte[]!  = s.toUtf8();  return a[1]; }
+        utf16_u0()  : unsigned short { s : k::String("\u00E9"); a : unsigned short[]! = s.toUtf16(); return a[0]; }
+        utf32_c0()  : unsigned int   { s : k::String("\u00E9"); a : char[]!           = s.toUtf32(); return a[0]; }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("len")() == 1);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("utf8_size")() == 3);          // 2 bytes + \0
+    CHECK(jit->lookup_symbol<unsigned char(*)()>("utf8_b0")() == 0xC3);
+    CHECK(jit->lookup_symbol<unsigned char(*)()>("utf8_b1")() == 0xA9);
+    CHECK(jit->lookup_symbol<unsigned short(*)()>("utf16_u0")() == 0xE9);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("utf32_c0")() == 0xE9);
+}
+
+TEST_CASE("StringBuilder encoding conversions", "[libk][string][stringbuilder][encoding]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_enc__;
+
+        utf8_size() : unsigned int {
+            sb : k::StringBuilder("Hi");
+            sb.append("!");
+            a : unsigned byte[]! = sb.toUtf8();
+            return a.size;
+        }
+        utf32_c0() : unsigned int {
+            sb : k::StringBuilder("Hi");
+            a : char[]! = sb.toUtf32();
+            return a[0];
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("utf8_size")() == 4);          // H,i,!,\0
+    CHECK(jit->lookup_symbol<unsigned(*)()>("utf32_c0")() == 'H');
+}

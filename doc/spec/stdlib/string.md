@@ -9,6 +9,12 @@
 This page documents the string-related types of the base standard library:
 `CharHelpers`, `String`, and `StringBuilder`.
 
+> **Note:** `char` is a 32-bit **unsigned** Unicode scalar value (UTF-32), so a
+> `char[]` is a sequence of Unicode code points. The `Encoding` enum
+> (`UTF8`, `UTF16`, `UTF32`) describes the encoding used by the array-conversion
+> helpers. Raw byte buffers use `unsigned byte[]` and UTF-16 code-unit buffers
+> use `unsigned short[]`.
+
 ---
 
 ## Contents
@@ -50,6 +56,12 @@ also widen to `const char[]` automatically.
 | `rfind(haystack, hOff, hLen, needle, nOff, nLen) : int` | `int` | Last occurrence of `needle` in `haystack`. Returns index or `-1`. |
 | `compare(a, aOff, b, bOff, len) : int` | `int` | Lexicographic compare of `len` chars. Returns `<0`, `0`, or `>0`. |
 | `isWhitespace(c) : bool` | `bool` | `true` if `c` is a space, tab, newline, or carriage return. |
+| `utf8Len(c) : unsigned int` | `unsigned int` | UTF-8 byte count (1–4) for code point `c`. |
+| `utf16Len(c) : unsigned int` | `unsigned int` | UTF-16 code-unit count (1 or 2) for code point `c`. |
+| `utf8Size(src, len) : unsigned int` | `unsigned int` | Total UTF-8 byte count for the first `len` code points of `src`. |
+| `utf16Size(src, len) : unsigned int` | `unsigned int` | Total UTF-16 code-unit count for the first `len` code points of `src`. |
+| `toUtf8(src, len) : unsigned byte[]!` | `unsigned byte[]!` | Encode `len` UTF-32 code points to a new null-terminated UTF-8 buffer. |
+| `toUtf16(src, len) : unsigned short[]!` | `unsigned short[]!` | Encode `len` UTF-32 code points to a new null-terminated UTF-16 buffer. |
 
 ### Example
 
@@ -94,6 +106,10 @@ Because the class is declared `const`, all methods are implicitly `const`
 | `empty()` | `bool` | `true` when the string has zero characters. |
 | `at(index: unsigned int)` | `char` | Character at position `index`. No bounds check. |
 | `data()` | `char[]?` | Non-owning view to the internal buffer. Returns `null` for an empty string. |
+| `encoding()` | `Encoding` | Storage encoding (`Encoding::UTF32`). |
+| `toUtf32()` | `char[]!` | New null-terminated UTF-32 copy of the content. |
+| `toUtf8()` | `unsigned byte[]!` | New null-terminated UTF-8 encoding of the content. |
+| `toUtf16()` | `unsigned short[]!` | New null-terminated UTF-16 encoding of the content. |
 
 ### Search Methods
 
@@ -211,6 +227,10 @@ sb.append("Hello").append(", ").appendChar('W').append("orld!");
 |--------|---------|-------------|
 | `operator() : String` | `String` | Conversion operator — consolidates fragments, then builds an immutable `String`. Allows implicit `s : String = sb;`. |
 | `toString()` | `String` | Named alternative — builds and returns an immutable `String` from the current content (copies via `String(sb)` constructor). |
+| `encoding()` | `Encoding` | Logical encoding of the consolidated content (`Encoding::UTF32`). |
+| `toUtf32()` | `char[]!` | New null-terminated UTF-32 copy of the content. |
+| `toUtf8()` | `unsigned byte[]!` | New null-terminated UTF-8 encoding of the content. |
+| `toUtf16()` | `unsigned short[]!` | New null-terminated UTF-16 encoding of the content. |
 
 ### Search Methods
 
