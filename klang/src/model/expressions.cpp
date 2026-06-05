@@ -170,6 +170,17 @@ void value_expression::accept(model_visitor &visitor) {
     visitor.visit_value_expression(*this);
 }
 
+void value_expression::set_literal_encoding(k::lex::literal_encoding enc) {
+    if (!_literal.has_value()) {
+        return;
+    }
+    if (std::holds_alternative<k::lex::string>(_literal)) {
+        _literal.get<k::lex::string>().enc = enc;
+    } else if (std::holds_alternative<k::lex::character>(_literal)) {
+        _literal.get<k::lex::character>().enc = enc;
+    }
+}
+
 std::shared_ptr<value_expression> value_expression::from_literal(const k::lex::any_literal &literal) {
     return std::shared_ptr<value_expression>(new value_expression(literal));
 }

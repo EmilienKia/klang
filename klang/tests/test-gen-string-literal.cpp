@@ -149,6 +149,37 @@ TEST_CASE("Prefixed character literals — element types", "[gen][literal][char]
 }
 
 
+TEST_CASE("Unprefixed string literal — context selects unsigned byte element", "[gen][literal][string][context]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        get_size(s : const unsigned byte[]) : unsigned int { return s.size; }
+        first(s : const unsigned byte[]) : unsigned byte { return s[0]; }
+
+        test_size() : unsigned int { return get_size("hello"); }
+        test_first() : unsigned byte { return first("ABC"); }
+    )SRC");
+    REQUIRE(jit);
+    REQUIRE(jit->lookup_symbol<unsigned(*)()>("test_size")() == 6);
+    REQUIRE(jit->lookup_symbol<unsigned char(*)()>("test_first")() == 'A');
+}
+
+TEST_CASE("Unprefixed string literal — context selects unsigned short element", "[gen][literal][string][context]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        get_size(s : const unsigned short[]) : unsigned int { return s.size; }
+        first(s : const unsigned short[]) : unsigned short { return s[0]; }
+
+        test_size() : unsigned int { return get_size("hi"); }
+        test_first() : unsigned short { return first("ABC"); }
+    )SRC");
+    REQUIRE(jit);
+    REQUIRE(jit->lookup_symbol<unsigned(*)()>("test_size")() == 3);
+    REQUIRE(jit->lookup_symbol<unsigned short(*)()>("test_first")() == 'A');
+}
+
+
 TEST_CASE("String literal — passed to const char[] parameter, read size", "[gen][literal][string]") {
     auto jit = gen_jit(R"SRC(
         module test;

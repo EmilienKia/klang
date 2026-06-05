@@ -715,6 +715,36 @@ void type_reference_resolver::validate_reference_variable(var_init_context& ctx)
     auto arg_sub = arg_ref ? arg_ref->get_subtype() : nullptr;
     auto var_sub = ref_var_type->get_subtype();
 
+    // Unprefixed string-literal initialiser: allow it to adopt the variable's
+    // element encoding (e.g. `s : const unsigned byte[] = "…"`) by re-typing a
+    // clone of the literal, then let the normal reference binding proceed.
+    if (auto ve = std::dynamic_pointer_cast<value_expression>(arg)) {
+        if (var_sub && ve->is_literal()
+            && std::holds_alternative<lex::string>(ve->any_literal())
+            && ve->any_literal().get<lex::string>().enc == lex::literal_encoding::unspecified) {
+            auto velem = type::remove_const(var_sub);
+            if (auto varr = std::dynamic_pointer_cast<array_type>(velem)) {
+                auto prim = std::dynamic_pointer_cast<primitive_type>(type::remove_const(varr->get_subtype()));
+                std::optional<lex::literal_encoding> ne;
+                if (prim && prim->get_type() == primitive_type::UNSIGNED_BYTE) {
+                    ne = lex::literal_encoding::utf8;
+                } else if (prim && prim->get_type() == primitive_type::UNSIGNED_SHORT) {
+                    ne = lex::literal_encoding::utf16;
+                }
+                if (ne) {
+                    auto cloned = std::dynamic_pointer_cast<value_expression>(ve->clone());
+                    cloned->set_literal_encoding(*ne);
+                    cloned->set_type(_context->from_literal(cloned->any_literal()));
+                    ctx.init_expr->assign_argument(0, cloned);
+                    arg = cloned;
+                    arg_type = cloned->get_type();
+                    arg_ref = std::dynamic_pointer_cast<reference_type>(arg_type);
+                    arg_sub = arg_ref ? arg_ref->get_subtype() : nullptr;
+                }
+            }
+        }
+    }
+
     if (!arg_sub || !var_sub) {
         throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_STRUCT_VAR_CTOR_NOT_FOUND), ctx.var_lexeme,
             "Reference variable '{}' of type '{}' cannot be bound to an expression of type '{}': "

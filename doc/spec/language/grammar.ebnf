@@ -19,6 +19,10 @@
 
 (* ========================================================================== *)
 (*  1. LEXICAL GRAMMAR                                                       *)
+(*                                                                           *)
+(*  Source encoding: UTF-8. Identifiers are restricted to ASCII letters,     *)
+(*  digits and '_'. Extended (non-ASCII) characters are only meaningful      *)
+(*  inside character/string literals and comments.                           *)
 (* ========================================================================== *)
 
 LineTerminator
@@ -118,15 +122,38 @@ BooleanLiteral
     ;
 
 CharacterLiteral
-    = "'" , ( ? any character except ' and \ ? | EscapeSequence ) , "'"
+    = [ EncodingPrefix ] , "'" , ( ? any character except ' and \ ? | EscapeSequence ) , "'"
     ;
+    (* A character literal denotes a single Unicode scalar value. With no       *)
+    (* prefix its type is 'char'. A prefix forces the element type and          *)
+    (* requires the value to fit in one code unit of that encoding:             *)
+    (*   u8  -> unsigned byte (U+0000..U+007F)                                  *)
+    (*   u / u16 -> unsigned short (U+0000..U+FFFF, no surrogates)              *)
+    (*   U / u32 -> char (any scalar value)                                     *)
 
 StringLiteral
-    = '"' , { ? any character except " and \ ? | EscapeSequence } , '"'
+    = [ EncodingPrefix ] , '"' , { ? any character except " and \ ? | EscapeSequence } , '"'
     ;
+    (* With no prefix the element type is determined by context (declared       *)
+    (* variable/parameter/return/cast type), falling back to the smallest of    *)
+    (* UTF-8 (unsigned byte[]), UTF-16 (unsigned short[]) or UTF-32 (char[]).    *)
+    (* A prefix forces the element type:                                        *)
+    (*   u8  -> unsigned byte[] (UTF-8)                                         *)
+    (*   u / u16 -> unsigned short[] (UTF-16)                                   *)
+    (*   U / u32 -> char[] (UTF-32)                                             *)
+
+EncodingPrefix
+    = 'u8' | 'u16' | 'u32' | 'u' | 'U'
+    ;
+    (* Must be immediately adjacent to the opening quote (no whitespace).       *)
 
 EscapeSequence
-    = '\' , ( 'n' | 'r' | 't' | '\' | "'" | '"' | '0' )
+    = '\' , ( 'n' | 'r' | 't' | 'a' | 'b' | 'f' | 'v' | '\' | "'" | '"' | '?' | '0' )
+    | '\' , OctalDigit , [ OctalDigit , [ OctalDigit ] ]    (* octal *)
+    | '\x' , HexDigit , { HexDigit }                        (* hexadecimal *)
+    | '\u' , HexDigit , HexDigit , HexDigit , HexDigit      (* 16-bit code point *)
+    | '\U' , HexDigit , HexDigit , HexDigit , HexDigit
+           , HexDigit , HexDigit , HexDigit , HexDigit      (* 32-bit code point *)
     ;
 
 NullLiteral
@@ -506,10 +533,13 @@ TypeSpec
     ;
 
 FundamentalTypeSpec
-    = [ 'unsigned' ] , ( 'byte' | 'char' | 'short' | 'int' | 'long'
+    = 'char'                                  (* 32-bit unsigned Unicode scalar value (UTF-32) *)
+    | [ 'unsigned' ] , ( 'byte' | 'short' | 'int' | 'long'
                         | 'float' | 'double' )
     | 'bool'
     ;
+    (* 'char' has no signed/unsigned variant. The 1-byte integer types are      *)
+    (* 'byte' (signed) and 'unsigned byte'. 'unsigned char' is not a valid type.*)
 
 FunctionRefType
     = FunctionRefQualifier , '(' , [ TypeList ] , ')'

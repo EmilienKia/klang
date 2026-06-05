@@ -1908,6 +1908,29 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
 
     auto type_src = expr->get_type();
 
+    // Step 0: an unprefixed string literal can adopt an `unsigned byte` /
+    // `unsigned short` element type from context (committed in adapt_type by
+    // cloning). Treat such a target as a viable conversion here so overload
+    // resolution does not reject it.
+    if (auto ve = std::dynamic_pointer_cast<value_expression>(expr)) {
+        if (ve->is_literal() && std::holds_alternative<lex::string>(ve->any_literal())
+            && ve->any_literal().get<lex::string>().enc == lex::literal_encoding::unspecified) {
+            auto t = type::remove_const(tgt);
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(t)) {
+                t = type::remove_const(ref->get_subtype());
+            }
+            if (auto arr = std::dynamic_pointer_cast<array_type>(t)) {
+                auto elem = type::remove_const(arr->get_subtype());
+                if (auto prim = std::dynamic_pointer_cast<primitive_type>(elem)) {
+                    if (prim->get_type() == primitive_type::UNSIGNED_BYTE
+                        || prim->get_type() == primitive_type::UNSIGNED_SHORT) {
+                        return CAST_WIDENING;
+                    }
+                }
+            }
+        }
+    }
+
     // Strip const from both sides: const T and T are interchangeable for value conversions.
     // Const-checking for assignment targets is done separately in visit_assignation_expression.
     auto tgt_nc = type::remove_const(tgt);
@@ -3222,6 +3245,39 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
     if(!expr || !type::is_resolved(type) || !type::is_resolved(expr->get_type())) {
         // Arguments must not be null, expr must have a type and types (expr and target) must be resolved.
         return nullptr;
+    }
+
+    // ── Context-driven element type for an unprefixed string literal ─────────────
+    // If the literal has no encoding prefix and the target is an array of
+    // `unsigned byte` or `unsigned short`, adapt a *clone* re-typed to the
+    // matching encoding (UTF-8 / UTF-16). The original literal is left untouched
+    // so that overload resolution can score it against several candidates.
+    // A `char` target keeps the default (UTF-32) path.
+    if (auto ve = std::dynamic_pointer_cast<value_expression>(expr)) {
+        if (ve->is_literal() && std::holds_alternative<lex::string>(ve->any_literal())
+            && ve->any_literal().get<lex::string>().enc == lex::literal_encoding::unspecified) {
+            auto tgt = type::remove_const(type);
+            if (auto ref = std::dynamic_pointer_cast<reference_type>(tgt)) {
+                tgt = type::remove_const(ref->get_subtype());
+            }
+            if (auto arr = std::dynamic_pointer_cast<array_type>(tgt)) {
+                auto elem = type::remove_const(arr->get_subtype());
+                if (auto prim = std::dynamic_pointer_cast<primitive_type>(elem)) {
+                    std::optional<lex::literal_encoding> new_enc;
+                    if (prim->get_type() == primitive_type::UNSIGNED_BYTE) {
+                        new_enc = lex::literal_encoding::utf8;
+                    } else if (prim->get_type() == primitive_type::UNSIGNED_SHORT) {
+                        new_enc = lex::literal_encoding::utf16;
+                    }
+                    if (new_enc) {
+                        auto cloned = std::dynamic_pointer_cast<value_expression>(ve->clone());
+                        cloned->set_literal_encoding(*new_enc);
+                        cloned->set_type(_context->from_literal(cloned->any_literal()));
+                        expr = cloned;
+                    }
+                }
+            }
+        }
     }
 
     auto type_src = expr->get_type();

@@ -181,6 +181,14 @@ public:
         _value = value;
     }
 
+    /**
+     * Force the encoding of a held (string or character) literal. Used by the
+     * type resolver to apply context-driven element-type selection to an
+     * unprefixed string literal (e.g. when it initialises an `unsigned byte[]`
+     * variable or is passed to an `unsigned short[]` parameter).
+     */
+    void set_literal_encoding(k::lex::literal_encoding enc);
+
     const k::value_type& get_value() const {
         return _value;
     }

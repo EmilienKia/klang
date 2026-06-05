@@ -42,7 +42,7 @@
 
 > Details: [lexical.md](basic/lexical.md)
 
-- **Source encoding:** ASCII.
+- **Source encoding:** UTF-8. Identifiers are ASCII-only; extended characters are only meaningful inside character/string literals and comments (invalid UTF-8 in a comment is a warning).
 - **Whitespace:** space, tab, form-feed, line terminators (`LF`, `CR`, `CR LF`). Separate tokens, otherwise ignored.
 - **Comments:**
   - End-of-line: `// …` until end of line.
@@ -89,16 +89,22 @@ K is statically typed. Every expression has a type known at compile time.
 | Keyword           | Bits | Signed |
 |-------------------|------|--------|
 | `bool`            | 1    | —      |
-| `byte` / `char`   | 8    | yes    |
+| `byte`            | 8    | yes    |
 | `unsigned byte`   | 8    | no     |
+| `char`            | 32   | no (Unicode code point) |
 | `short`           | 16   | yes    |
 | `unsigned short`  | 16   | no     |
-| `int`             | 32   | yes    |
+| `int`             | 32   | signed |
 | `unsigned int`    | 32   | no     |
 | `long`            | 64   | yes    |
 | `unsigned long`   | 64   | no     |
 
-`byte` and `char` are the same underlying type (8-bit signed). `unsigned` is a modifier.
+`byte` is the signed 8-bit integer; `unsigned byte` is its unsigned counterpart.
+`char` is a distinct 32-bit **unsigned** type holding a single Unicode scalar
+value (UTF-32, native endianness); it has no signed/unsigned variant and
+`unsigned char` is not a valid type. `char` converts implicitly to/from
+`unsigned int` (same width) and to/from `int` with the usual signed↔unsigned
+rules. `unsigned` is a modifier for `byte`, `short`, `int`, `long`.
 
 #### Floating-Point
 
@@ -197,7 +203,7 @@ The parameter type list (excluding the implicit `this` for member methods) serve
 ### 3.7 Implicit Conversions
 
 #### Widening (lossless)
-`byte`/`char` → `short` → `int` → `long`; `float` → `double`; signed ↔ unsigned (same width).
+`byte` → `short` → `int` → `long`; `float` → `double`; signed ↔ unsigned (same width). `char` ↔ `unsigned int` (same 32-bit width); `char` → `long`.
 
 #### Narrowing (possible loss)
 `long` → `int` → `short` → `byte`; `double` → `float`. Accepted but with truncation risk.
@@ -389,7 +395,7 @@ Four forms:
 
 #### Integers
 Decimal, hexadecimal (`0x`), octal (`0…`), binary (`0b`).
-Suffixes: (none)=`int`, `u`=`unsigned int`, `s`=`short`, `l`=`long`, `ul`/`lu`=`unsigned long`, `b`=`byte`.
+Suffixes: (none)=`int`, `u`=`unsigned int`, `s`=`short`, `l`=`long`, `ul`/`lu`=`unsigned long`, `b`=`byte`, `ub`=`unsigned byte`.
 
 #### Floating-Point
 Format: `digits.digits[exponent][suffix]`. Suffix: (none)=`float`, `d`=`double`.
@@ -398,12 +404,15 @@ Format: `digits.digits[exponent][suffix]`. Suffix: (none)=`float`, `d`=`double`.
 `true`, `false`.
 
 #### Characters
-`'c'` — type `char` (8-bit signed). Escape sequences: `\n`, `\r`, `\t`, `\\`, `\'`, `\"`, `\0`, `\xNN`, `\NNN`.
+`'c'` — a single Unicode scalar value; type `char` (32-bit, UTF-32). Encoding
+prefixes force the element type: `u8'c'`→`unsigned byte`, `u'c'`/`u16'c'`→`unsigned short`,
+`U'c'`/`u32'c'`→`char` (the value must fit in one code unit of the encoding).
+Escape sequences: `\n`, `\r`, `\t`, `\a`, `\b`, `\f`, `\v`, `\\`, `\'`, `\"`, `\?`, `\0`, `\NNN` (octal), `\xNN` (hex), `\uNNNN`, `\UNNNNNNNN`.
 
 #### Strings
-`"…"` — type `const char[N]&` where N = length + 1 (implicit null terminator).
-Internal layout: `{ i32 size, [N x i8] data }`. Deduplication per compilation unit.
-Implicit conversion `const char[N]&` → `const char[]` (zero-cost).
+`"…"` — internal layout `{ i32 size, [N x elem] data }` where N = code-unit count + 1 (implicit null terminator) and `elem` is the encoding's code-unit type.
+Encoding prefixes force the element type: `u8"…"`→`unsigned byte[]` (UTF-8), `u"…"`/`u16"…"`→`unsigned short[]` (UTF-16), `U"…"`/`u32"…"`→`char[]` (UTF-32).
+An **unprefixed** literal defaults to `char[]` (UTF-32). When it is passed as a function/constructor argument whose parameter expects `unsigned byte[]` or `unsigned short[]` (UTF-8 / UTF-16), the literal adopts that element type instead (the compiler re-types a clone, so overload resolution can still score it against several candidates). Deduplication per compilation unit. Implicit conversion `const T[N]&` → `const T[]` (zero-cost).
 
 #### Null
 `null` — dedicated type. Convertible to `T*`, `T?`, `T!`. Not convertible to `T&`, `T+`.
