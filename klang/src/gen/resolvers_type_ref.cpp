@@ -1924,7 +1924,10 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 if (auto prim = std::dynamic_pointer_cast<primitive_type>(elem)) {
                     if (prim->get_type() == primitive_type::UNSIGNED_BYTE
                         || prim->get_type() == primitive_type::UNSIGNED_SHORT) {
-                        return CAST_WIDENING;
+                        // Worse than the native char[] match so an unprefixed
+                        // literal still prefers char[] when several array
+                        // overloads are viable; only chosen when char[] is not.
+                        return CAST_NARROWING;
                     }
                 }
             }

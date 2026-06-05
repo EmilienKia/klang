@@ -56,6 +56,9 @@
 #define SYMBOL_MODIFIER_OWNER      "W"
 // 'D' for drain (#) : drainable (immutable binding, non-null) indirection
 #define SYMBOL_MODIFIER_DRAIN      "D"
+// 'A' for array : { i32 size, [N x T] }. Followed by the element type, with the
+// fixed size and a '_' separator inserted for sized arrays.
+#define SYMBOL_MODIFIER_ARRAY      "A"
 
 // Function reference type mangling:
 // PF<params>E       : pointer (*) to free function
@@ -623,6 +626,14 @@ std::string mangler::mangle_type(const type& ty) const {
         return SYMBOL_MODIFIER_OWNER + mangle_type(*own_ty->get_owned_type());
     } else if (auto drain_ty = dynamic_cast<const drain_type*>(&ty)) {
         return SYMBOL_MODIFIER_DRAIN + mangle_type(*drain_ty->get_drained_type());
+    } else if (auto arr_ty = dynamic_cast<const array_type*>(&ty)) {
+        std::ostringstream s;
+        s << SYMBOL_MODIFIER_ARRAY;
+        if (auto sized = dynamic_cast<const sized_array_type*>(&ty)) {
+            s << sized->get_size() << "_";
+        }
+        s << mangle_type(*arr_ty->get_subtype());
+        return s.str();
     } else if (auto mem_fn_ty = dynamic_cast<const member_function_reference_type*>(&ty)) {
         std::ostringstream s;
         // ref_kind modifier

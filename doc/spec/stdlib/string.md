@@ -62,6 +62,10 @@ also widen to `const char[]` automatically.
 | `utf16Size(src, len) : unsigned int` | `unsigned int` | Total UTF-16 code-unit count for the first `len` code points of `src`. |
 | `toUtf8(src, len) : unsigned byte[]!` | `unsigned byte[]!` | Encode `len` UTF-32 code points to a new null-terminated UTF-8 buffer. |
 | `toUtf16(src, len) : unsigned short[]!` | `unsigned short[]!` | Encode `len` UTF-32 code points to a new null-terminated UTF-16 buffer. |
+| `utf8CodePointCount(src, len) : unsigned int` | `unsigned int` | Number of code points in the first `len` bytes of UTF-8 `src`. |
+| `utf16CodePointCount(src, len) : unsigned int` | `unsigned int` | Number of code points in the first `len` UTF-16 code units. |
+| `utf8ToUtf32(src, len) : char[]!` | `char[]!` | Decode `len` UTF-8 bytes to a new null-terminated UTF-32 `char[]`. |
+| `utf16ToUtf32(src, len) : char[]!` | `char[]!` | Decode `len` UTF-16 code units to a new null-terminated UTF-32 `char[]`. |
 
 ### Example
 
@@ -97,6 +101,8 @@ Because the class is declared `const`, all methods are implicitly `const`
 | `String(other: String#)` | Drain constructor — steals the buffer from `other`, leaving it empty. |
 | `String(sb: const StringBuilder&)` | Constructs from a `StringBuilder`, copying its content into a new buffer. |
 | `String(src: const char[])` | Constructs from a `const char[]` — typically a string literal. See [§4](#4-usage-with-string-and-character-literals). |
+| `String(src: const unsigned byte[])` | Constructs from a UTF-8 byte buffer (e.g. a `u8"…"` literal), decoding it to UTF-32. |
+| `String(src: const unsigned short[])` | Constructs from a UTF-16 code-unit buffer (e.g. a `u"…"` literal), decoding it to UTF-32. |
 
 ### Accessors
 
@@ -266,6 +272,8 @@ All mutating methods return `StringBuilder&` for fluent chaining.
 | `consolidate()` | `StringBuilder&` | Merge all fragments into a single contiguous buffer. Safe to call multiple times; no-op when already consolidated. |
 | `append(s: const String&)` | `StringBuilder&` | Append the content of a `String`. |
 | `append(src: const char[])` | `StringBuilder&` | Append a `const char[]` (e.g. a string literal). |
+| `append(src: const unsigned byte[])` | `StringBuilder&` | Append a UTF-8 fragment (e.g. a `u8"…"` literal), decoding it to UTF-32. |
+| `append(src: const unsigned short[])` | `StringBuilder&` | Append a UTF-16 fragment (e.g. a `u"…"` literal), decoding it to UTF-32. |
 | `append(other: const StringBuilder&)` | `StringBuilder&` | Append another `StringBuilder`'s content. |
 | `appendChar(c: char)` | `StringBuilder&` | Append a single character. |
 | `prepend(s: const String&)` | `StringBuilder&` | Prepend a `String` at the beginning. |

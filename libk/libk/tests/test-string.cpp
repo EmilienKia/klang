@@ -725,3 +725,82 @@ TEST_CASE("StringBuilder encoding conversions", "[libk][string][stringbuilder][e
     CHECK(jit->lookup_symbol<unsigned(*)()>("utf8_size")() == 4);          // H,i,!,\0
     CHECK(jit->lookup_symbol<unsigned(*)()>("utf32_c0")() == 'H');
 }
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// String / StringBuilder — multi-encoding construction & mixed fragments
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("String from UTF-8 source", "[libk][string][encoding]") {
+    auto jit = jit_k(R"SRC(
+        module __str_from_u8__;
+
+        size_ascii()    : unsigned int { s : k::String(u8"AB"); return s.size(); }
+        at0_ascii()     : unsigned int { s : k::String(u8"AB"); return s.at(0u); }
+        size_nonascii() : unsigned int { s : k::String(u8"\u00E9"); return s.size(); }
+        cp_nonascii()   : unsigned int { s : k::String(u8"\u00E9"); return s.at(0u); }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("size_ascii")() == 2);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("at0_ascii")() == 'A');
+    CHECK(jit->lookup_symbol<unsigned(*)()>("size_nonascii")() == 1);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("cp_nonascii")() == 0xE9);
+}
+
+TEST_CASE("String from UTF-16 source", "[libk][string][encoding]") {
+    auto jit = jit_k(R"SRC(
+        module __str_from_u16__;
+
+        size_ascii()  : unsigned int { s : k::String(u"AB"); return s.size(); }
+        cp_nonascii() : unsigned int { s : k::String(u"\u20AC"); return s.at(0u); }   // €
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("size_ascii")() == 2);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("cp_nonascii")() == 0x20AC);
+}
+
+TEST_CASE("StringBuilder mixed-encoding fragments", "[libk][string][stringbuilder][encoding]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_mixed__;
+
+        // Append fragments stored in three different source encodings.
+        frag_size() : unsigned int {
+            sb : k::StringBuilder("A");   // char[]  (UTF-32)
+            sb.append(u8"B");             // unsigned byte[]  (UTF-8)
+            sb.append(u"C");              // unsigned short[] (UTF-16)
+            return sb.size();
+        }
+        frag_third() : unsigned int {
+            sb : k::StringBuilder("A");
+            sb.append(u8"B");
+            sb.append(u"C");
+            return sb.charAt(2u);
+        }
+        frag_nonascii() : unsigned int {
+            sb : k::StringBuilder("x");
+            sb.append(u8"\u00E9");        // 'é' as UTF-8
+            return sb.charAt(1u);
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("frag_size")() == 3);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("frag_third")() == 'C');
+    CHECK(jit->lookup_symbol<unsigned(*)()>("frag_nonascii")() == 0xE9);
+}
+
+TEST_CASE("String UTF-8 round-trip", "[libk][string][encoding]") {
+    auto jit = jit_k(R"SRC(
+        module __str_roundtrip__;
+
+        test() : int {
+            orig : k::String("\u00E9");
+            bytes : unsigned byte[]! = orig.toUtf8();
+            back : k::String(bytes);
+            if (back.size() != orig.size()) return 1;
+            if (back.at(0u) != orig.at(0u)) return 2;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test")() == 0);
+}

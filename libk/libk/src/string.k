@@ -280,6 +280,105 @@ public:
         out[o] = (unsigned short) 0;
         return out;
     }
+
+    // ── Unicode decoding (UTF-8 / UTF-16 → UTF-32) ───────────────────────
+
+    /** Number of code points encoded in the first `len` bytes of UTF-8 `src`. */
+    public static utf8CodePointCount(src: const unsigned byte[], len: unsigned int) : unsigned int {
+        count : unsigned int = 0u;
+        i : unsigned int = 0u;
+        while (i < len) {
+            b : int = src[i];
+            adv : unsigned int = 1u;
+            if (b >= 0xF0) {
+                adv = 4u;
+            } else if (b >= 0xE0) {
+                adv = 3u;
+            } else if (b >= 0xC0) {
+                adv = 2u;
+            }
+            i = i + adv;
+            count = count + 1u;
+        }
+        return count;
+    }
+
+    /** Number of code points encoded in the first `len` UTF-16 code units. */
+    public static utf16CodePointCount(src: const unsigned short[], len: unsigned int) : unsigned int {
+        count : unsigned int = 0u;
+        i : unsigned int = 0u;
+        while (i < len) {
+            u : int = src[i];
+            if (u >= 0xD800 && u < 0xDC00) {
+                i = i + 2u;
+            } else {
+                i = i + 1u;
+            }
+            count = count + 1u;
+        }
+        return count;
+    }
+
+    /** Decode the first `len` bytes of UTF-8 `src` into a new, null-terminated
+     *  UTF-32 `char[]`. Assumes well-formed input. */
+    public static utf8ToUtf32(src: const unsigned byte[], len: unsigned int) : char[]! {
+        n : unsigned int = utf8CodePointCount(src, len);
+        out : char[]! = new char[n + 1u];
+        o : unsigned int = 0u;
+        i : unsigned int = 0u;
+        while (i < len) {
+            b0 : int = src[i];
+            cp : char = 0;
+            if (b0 < 0x80) {
+                cp = (char) b0;
+                i = i + 1u;
+            } else if (b0 < 0xE0) {
+                b1 : int = src[i + 1u];
+                cp = (char) (((b0 & 0x1F) << 6) | (b1 & 0x3F));
+                i = i + 2u;
+            } else if (b0 < 0xF0) {
+                b1 : int = src[i + 1u];
+                b2 : int = src[i + 2u];
+                cp = (char) (((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F));
+                i = i + 3u;
+            } else {
+                b1 : int = src[i + 1u];
+                b2 : int = src[i + 2u];
+                b3 : int = src[i + 3u];
+                cp = (char) (((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F));
+                i = i + 4u;
+            }
+            out[o] = cp;
+            o = o + 1u;
+        }
+        out[o] = (char) 0;
+        return out;
+    }
+
+    /** Decode the first `len` UTF-16 code units of `src` into a new,
+     *  null-terminated UTF-32 `char[]`. Assumes well-formed input. */
+    public static utf16ToUtf32(src: const unsigned short[], len: unsigned int) : char[]! {
+        n : unsigned int = utf16CodePointCount(src, len);
+        out : char[]! = new char[n + 1u];
+        o : unsigned int = 0u;
+        i : unsigned int = 0u;
+        while (i < len) {
+            u : int = src[i];
+            cp : char = 0;
+            if (u >= 0xD800 && u < 0xDC00) {
+                lo : int = src[i + 1u];
+                cp = (char) (0x10000 + (((u - 0xD800) << 10) | (lo - 0xDC00)));
+                i = i + 2u;
+            } else {
+                cp = (char) u;
+                i = i + 1u;
+            }
+            out[o] = cp;
+            o = o + 1u;
+        }
+        out[o] = (char) 0;
+        return out;
+    }
 }
 
 
@@ -338,6 +437,26 @@ public:
             allocSz : unsigned int = src.size;
             _buf = new char[allocSz];
             CharHelpers::copy(_buf, 0, src, 0, src.size);
+        }
+    }
+
+    /** Construct from a UTF-8 `unsigned byte[]` (e.g. a `u8"…"` literal).
+     *  The source array is expected to include a trailing null byte:
+     *  src.size == number_of_bytes + 1. The bytes are decoded to UTF-32. */
+    String(src : const unsigned byte[]) : _buf(null), _size(0) {
+        if (src.size > 1) {
+            _buf = CharHelpers::utf8ToUtf32(src, src.size - 1u);
+            _size = _buf.size - 1u;
+        }
+    }
+
+    /** Construct from a UTF-16 `unsigned short[]` (e.g. a `u"…"` literal).
+     *  The source array is expected to include a trailing null code unit.
+     *  The code units are decoded to UTF-32. */
+    String(src : const unsigned short[]) : _buf(null), _size(0) {
+        if (src.size > 1) {
+            _buf = CharHelpers::utf16ToUtf32(src, src.size - 1u);
+            _size = _buf.size - 1u;
         }
     }
 
@@ -998,6 +1117,52 @@ public:
             _lens[_fragCount] = count;
             _fragCount = _fragCount + 1;
             _totalSize = _totalSize + count;
+        }
+        return this;
+    }
+
+    /** Append a UTF-8 fragment (e.g. a `u8"…"` literal). The bytes are decoded
+     *  to UTF-32 before being stored, so fragments of different encodings can be
+     *  mixed in a single builder. src.size includes the trailing null byte. */
+    append(src : const unsigned byte[]) : StringBuilder& {
+        if (src.size > 1) {
+            decoded : char[]! = CharHelpers::utf8ToUtf32(src, src.size - 1u);
+            count : unsigned int = decoded.size - 1u;
+            if (count > 0u) {
+                _ensurePoolCap(count);
+                _ensureFragCap(1);
+                poolStart : unsigned int = _poolUsed;
+                CharHelpers::copy(_pool, poolStart, decoded, 0, count);
+                _poolUsed = _poolUsed + count;
+                _starts[_fragCount] = poolStart;
+                _lens[_fragCount] = count;
+                _fragCount = _fragCount + 1;
+                _totalSize = _totalSize + count;
+            }
+            delete decoded;
+        }
+        return this;
+    }
+
+    /** Append a UTF-16 fragment (e.g. a `u"…"` literal). The code units are
+     *  decoded to UTF-32 before being stored. src.size includes the trailing
+     *  null code unit. */
+    append(src : const unsigned short[]) : StringBuilder& {
+        if (src.size > 1) {
+            decoded : char[]! = CharHelpers::utf16ToUtf32(src, src.size - 1u);
+            count : unsigned int = decoded.size - 1u;
+            if (count > 0u) {
+                _ensurePoolCap(count);
+                _ensureFragCap(1);
+                poolStart : unsigned int = _poolUsed;
+                CharHelpers::copy(_pool, poolStart, decoded, 0, count);
+                _poolUsed = _poolUsed + count;
+                _starts[_fragCount] = poolStart;
+                _lens[_fragCount] = count;
+                _fragCount = _fragCount + 1;
+                _totalSize = _totalSize + count;
+            }
+            delete decoded;
         }
         return this;
     }
