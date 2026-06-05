@@ -590,6 +590,68 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         target_type = std::dynamic_pointer_cast<reference_type>(target_type)->get_subtype();
     }
 
+    // ── Union member assignment ─────────────────────────────────────────────
+    // If the LHS is a member access on a union, destroy the previously-active
+    // alternative, store the new value, and update the discriminant. This must
+    // run *before* the owner/array special cases below, otherwise an owner or
+    // array alternative would short-circuit (return) without updating the
+    // discriminant — leaving the union mistagged and crashing on the next read.
+    {
+        auto lhs_expr = expr.left();
+        while (auto lve = std::dynamic_pointer_cast<load_value_expression>(lhs_expr)) {
+            lhs_expr = lve->sub_expr();
+        }
+        if (auto moe = std::dynamic_pointer_cast<member_of_object_expression>(lhs_expr)) {
+            auto sub_type = moe->sub_expr()->get_type();
+            if (type::is_reference(sub_type)) {
+                sub_type = std::dynamic_pointer_cast<reference_type>(sub_type)->get_subtype();
+            }
+            if (auto st_type = std::dynamic_pointer_cast<struct_type>(sub_type)) {
+                if (!st_type->get_struct()) {
+                    // This is a union type — find the union_type_def
+                    std::shared_ptr<union_type_def> union_def;
+                    auto root_ns = _unit.get_root_namespace();
+                    if (root_ns) {
+                        union_def = find_union_by_struct_type(root_ns, st_type);
+                    }
+                    if (union_def) {
+                        const k::name& sym_name = moe->symbol().get_name();
+                        std::string alt_name = sym_name.size() > 1 ? sym_name.back() : sym_name.to_string();
+                        auto* alt = union_def->get_alternative_by_name(alt_name);
+                        if (alt) {
+                            // Re-evaluate the sub-expression to get the union base pointer
+                            _value = nullptr;
+                            moe->sub_expr()->accept(*this);
+                            llvm::Value* union_base = _value;
+                            if (union_base) {
+                                // Destroy the previously-active alternative (handles
+                                // owner alternatives — frees their buffer).
+                                emit_union_cleanup_on_reassign(union_base, *union_def, alt->index);
+                                // Store the new value. For owner/pointer alternatives a
+                                // null RHS yields a null LLVM value: store an explicit
+                                // null pointer instead.
+                                llvm::Value* store_val = right;
+                                if (!store_val) {
+                                    store_val = llvm::ConstantPointerNull::get(
+                                        llvm::PointerType::get(_builder->getContext(), 0));
+                                }
+                                _builder->CreateStore(store_val, left);
+                                // Update the discriminant.
+                                auto* union_llvm_type = st_type->get_llvm_type();
+                                auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_disc_upd");
+                                _builder->CreateStore(
+                                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()), alt->index),
+                                    disc_ptr);
+                            }
+                            _value = left;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------
     // Array assignment: element-wise copy (spec: partial copy, no resize)
     // ------------------------------------------------------------------
@@ -699,60 +761,6 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             emit_null_check(right, fatal, "link_rebind", _null_failure_bb);
         }
     }
-
-    // ── Union: destroy old alternative before reassignment ──────────────────
-    // If the LHS is a member access on a union, destroy the previously-active
-    // alternative (if it has a destructor) then update the discriminant.
-    {
-        // Unwrap load_value_expression wrappers on the left side
-        auto lhs_expr = expr.left();
-        while (auto lve = std::dynamic_pointer_cast<load_value_expression>(lhs_expr)) {
-            lhs_expr = lve->sub_expr();
-        }
-        if (auto moe = std::dynamic_pointer_cast<member_of_object_expression>(lhs_expr)) {
-            // Check if the sub-expression's type is a union
-            auto sub_type = moe->sub_expr()->get_type();
-            if (type::is_reference(sub_type)) {
-                sub_type = std::dynamic_pointer_cast<reference_type>(sub_type)->get_subtype();
-            }
-            if (auto st_type = std::dynamic_pointer_cast<struct_type>(sub_type)) {
-                if (!st_type->get_struct()) {
-                    // This is a union type — find the union_type_def
-                    std::shared_ptr<union_type_def> union_def;
-                    auto root_ns = _unit.get_root_namespace();
-                    if (root_ns) {
-                        union_def = find_union_by_struct_type(root_ns, st_type);
-                    }
-                    if (union_def) {
-                        const k::name& sym_name = moe->symbol().get_name();
-                        std::string alt_name = sym_name.size() > 1 ? sym_name.back() : sym_name.to_string();
-                        auto* alt = union_def->get_alternative_by_name(alt_name);
-                        if (alt) {
-                            // Re-evaluate the sub-expression to get the union base pointer
-                            _value = nullptr;
-                            moe->sub_expr()->accept(*this);
-                            llvm::Value* union_base = _value;
-                            if (union_base) {
-                                // Destroy old alternative if needed
-                                emit_union_cleanup_on_reassign(union_base, *union_def, alt->index);
-                                // Store the new value
-                                _builder->CreateStore(right, left);
-                                // Update the discriminant
-                                auto* union_llvm_type = st_type->get_llvm_type();
-                                auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_disc_upd");
-                                _builder->CreateStore(
-                                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()), alt->index),
-                                    disc_ptr);
-                            }
-                            _value = left;
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // ───────────────────────────────────────────────────────────────────────
 
     // ── Union inherited assignment (upcast: derived→base, downcast: base→derived) ──
     // Detected when both LHS and RHS are union struct types with different struct types.

@@ -896,3 +896,43 @@ TEST_CASE("template struct with nested union — factory function", "[gen][union
     REQUIRE(fn() == 42);
 }
 
+
+
+// Regression: assigning an owner-array alternative to a union must update the
+// discriminant. Previously the owner-assignment codegen path returned early,
+// before the discriminant update, leaving the union mistagged (and crashing on
+// the next read).
+TEST_CASE("Union owner-array alternative updates discriminant", "[gen][union][owner]") {
+    auto jit = gen_jit(R"(
+        module test;
+        union Store {
+            u8  : unsigned byte[]!;
+            u16 : unsigned short[]!;
+            u32 : char[]!;
+        }
+        // index() after assigning the third (owner-array) alternative must be 2.
+        test_index() : int {
+            s : Store;
+            s.u32 = new char[3];
+            return (int) s.index();
+        }
+        // The stored content must be readable through the active alternative.
+        test_value() : int {
+            s : Store;
+            s.u32 = new char[3];
+            s.u32[0] = 'A';
+            return (int) s.u32[0];
+        }
+        // Switching alternatives must re-tag the discriminant.
+        test_switch() : int {
+            s : Store;
+            s.u32 = new char[2];
+            s.u8 = new unsigned byte[4];
+            return (int) s.index();   // now UTF-8 alternative → index 0
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test_index")() == 2);
+    CHECK(jit->lookup_symbol<int(*)()>("test_value")() == 65);
+    CHECK(jit->lookup_symbol<int(*)()>("test_switch")() == 0);
+}
