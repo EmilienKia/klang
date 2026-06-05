@@ -214,16 +214,16 @@ TEST_CASE("PrintStream print(const char[])", "[libk][io][print]") {
     CHECK(fn() == 0);
 }
 // ═════════════════════════════════════════════════════════════════════════════
-// print with String — via data() returning char[]?, implicit cast to const char[]
+// print with String — via toUtf32() returning char[]!, implicit cast to const char[]
 // ═════════════════════════════════════════════════════════════════════════════
-TEST_CASE("PrintStream print(String.data())", "[libk][io][print]") {
+TEST_CASE("PrintStream print(String.toUtf32())", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_string__;
         test_print_string() : int {
             baos : k::io::ByteArrayOutputStream;
             ps : k::io::PrintStream(&baos);
             s : k::String("World");
-            ps.print(s.data());
+            ps.print(s.toUtf32());
             if (baos.size() != 5) return 1;
             arr : byte[]* = baos.toByteArray();
             if (arr[0] != (byte) 'W') return 2;
@@ -309,16 +309,16 @@ TEST_CASE("PrintStream println(const char[])", "[libk][io][print]") {
     CHECK(fn() == 0);
 }
 // ═════════════════════════════════════════════════════════════════════════════
-// println(String.data()) — String via data(), followed by newline
+// println(String.toUtf32()) — String via toUtf32(), followed by newline
 // ═════════════════════════════════════════════════════════════════════════════
-TEST_CASE("PrintStream println(String.data())", "[libk][io][print]") {
+TEST_CASE("PrintStream println(String.toUtf32())", "[libk][io][print]") {
     auto jit = jit_k(R"SRC(
         module __ps_println_string__;
         test_println_string() : int {
             baos : k::io::ByteArrayOutputStream;
             ps : k::io::PrintStream(&baos);
             s : k::String("Ok");
-            ps.println(s.data());
+            ps.println(s.toUtf32());
             // "Ok\n" = 3 bytes
             if (baos.size() != 3) return 1;
             arr : byte[]* = baos.toByteArray();

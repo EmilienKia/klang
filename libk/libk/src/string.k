@@ -379,6 +379,58 @@ public:
         out[o] = (char) 0;
         return out;
     }
+
+    // ── Typed buffer copies (byte / short) ───────────────────────────────
+
+    /** Copy `count` unsigned bytes from src[srcOff..] to dst[dstOff..]. */
+    public static copyBytes(dst: unsigned byte[], dstOff: unsigned int, src: const unsigned byte[], srcOff: unsigned int, count: unsigned int) {
+        i : unsigned int = 0u;
+        while (i < count) { dst[dstOff + i] = src[srcOff + i]; i = i + 1u; }
+    }
+
+    /** Copy `count` unsigned shorts from src[srcOff..] to dst[dstOff..]. */
+    public static copyShorts(dst: unsigned short[], dstOff: unsigned int, src: const unsigned short[], srcOff: unsigned int, count: unsigned int) {
+        i : unsigned int = 0u;
+        while (i < count) { dst[dstOff + i] = src[srcOff + i]; i = i + 1u; }
+    }
+
+    // ── Single code-point access in UTF-8 / UTF-16 (O(index) walk) ───────
+
+    /** Return the code point at logical position `cpIndex` in UTF-8 `buf`. */
+    public static utf8CodePointAt(buf: const unsigned byte[], cpIndex: unsigned int) : char {
+        i : unsigned int = 0u;
+        cp : unsigned int = 0u;
+        while (cp < cpIndex) {
+            b : int = buf[i];
+            if (b >= 0xF0) { i = i + 4u; }
+            else if (b >= 0xE0) { i = i + 3u; }
+            else if (b >= 0xC0) { i = i + 2u; }
+            else { i = i + 1u; }
+            cp = cp + 1u;
+        }
+        b0 : int = buf[i];
+        if (b0 < 0x80) { return (char) b0; }
+        if (b0 < 0xE0) { return (char) (((b0 & 0x1F) << 6) | (buf[i + 1u] & 0x3F)); }
+        if (b0 < 0xF0) { return (char) (((b0 & 0x0F) << 12) | ((buf[i + 1u] & 0x3F) << 6) | (buf[i + 2u] & 0x3F)); }
+        return (char) (((b0 & 0x07) << 18) | ((buf[i + 1u] & 0x3F) << 12) | ((buf[i + 2u] & 0x3F) << 6) | (buf[i + 3u] & 0x3F));
+    }
+
+    /** Return the code point at logical position `cpIndex` in UTF-16 `buf`. */
+    public static utf16CodePointAt(buf: const unsigned short[], cpIndex: unsigned int) : char {
+        i : unsigned int = 0u;
+        cp : unsigned int = 0u;
+        while (cp < cpIndex) {
+            u : int = buf[i];
+            if (u >= 0xD800 && u < 0xDC00) { i = i + 2u; } else { i = i + 1u; }
+            cp = cp + 1u;
+        }
+        u0 : int = buf[i];
+        if (u0 >= 0xD800 && u0 < 0xDC00) {
+            lo : int = buf[i + 1u];
+            return (char) (0x10000 + (((u0 - 0xD800) << 10) | (lo - 0xDC00)));
+        }
+        return (char) u0;
+    }
 }
 
 
@@ -386,92 +438,172 @@ public:
 // String — Immutable, final class wrapping a null-terminated char buffer.
 //
 // After construction every String instance satisfies:
-//   • _size >= 0
-//   • _buf is either null (empty string) or a heap-allocated char[]!
-//     whose element at index _size is '\0'.
-//   • _size does not include the null terminator and may be smaller
-//     than the allocated buffer size.
+//   • _size >= 0 (number of code points, excluding any terminator)
+//   • _store holds the content in one of three encodings (UTF-8/16/32).
+//     For an empty string (_size == 0) the active alternative is UTF-32
+//     with a null buffer (no allocation).
+//   • The active union alternative determines rawEncoding().
 //
-// NOTE: This is a proof-of-concept for ASCII strings only.
+// The public API always exposes code points as `char` (UTF-32) regardless
+// of the underlying storage encoding.
 // ═════════════════════════════════════════════════════════════════════════════
 const final class String {
-    _buf  : char[]!;              // owner, null-terminated buffer
-    _size : unsigned int;         // number of characters (excluding '\0')
+    // CharStore — discriminated union backing String's compact storage.
+    // Alternative order fixes the Kind index: utf8=0, utf16=1, utf32=2.
+    // Declared as a nested type so the KDI import path can reconstruct the
+    // full layout of String (a top-level union would not be collected into
+    // the combined IR used to materialise imported aggregates).
+    union CharStore {
+        utf8  : unsigned byte[]!;
+        utf16 : unsigned short[]!;
+        utf32 : char[]!;
+    }
+
+private:
+    _store : CharStore;          // compact storage (UTF-8 / UTF-16 / UTF-32)
+    _size  : unsigned int;       // number of characters (code points)
 
 public:
     // ── Constructors ────────────────────────────────────────────────────
 
-    /** Default: empty string (null buffer, size 0). */
-    String() -> default;
+    /** Default: empty string (no data; UTF-32 by convention). */
+    String() : _size(0) {
+        _store.utf32 = null;
+    }
 
-    /** Construct a String of given size from an owner buffer (takes ownership).
-     *  The buffer must already be null-terminated at position `sz`.
-     *  This is the primary internal construction path.
-     */
-    String(buf : char[]!, sz : unsigned int) : _buf(buf), _size(sz) {}
+    /** Construct a String from a UTF-32 owner buffer (takes ownership).
+     *  The buffer must be null-terminated at position `sz`. */
+    String(buf : char[]!, sz : unsigned int) : _size(sz) {
+        _store.utf32 = buf;
+    }
 
-    /** Copy constructor — allocates a new buffer and copies the content. */
-    String(other : const String&) : _buf(null), _size(other._size) {
-        if (_size > 0) {
-            allocSz : unsigned int = _size + 1;
-            _buf = new char[allocSz];
-            CharHelpers::copy(_buf, 0, other._buf, 0, _size + 1);
+    /** Copy constructor — duplicates the content in the same encoding. */
+    String(other : const String&) : _size(other._size) {
+        oenc : int = (int) other._store.index();
+        if (other._size == 0u) {
+            _store.utf32 = null;
+        } else if (oenc == 2) {
+            b : char[]! = new char[other._size + 1u];
+            CharHelpers::copy(b, 0u, other._store.utf32, 0u, other._size + 1u);
+            _store.utf32 = b;
+        } else if (oenc == 1) {
+            n : unsigned int = other._store.utf16.size;
+            b : unsigned short[]! = new unsigned short[n];
+            CharHelpers::copyShorts(b, 0u, other._store.utf16, 0u, n);
+            _store.utf16 = b;
+        } else {
+            n : unsigned int = other._store.utf8.size;
+            b : unsigned byte[]! = new unsigned byte[n];
+            CharHelpers::copyBytes(b, 0u, other._store.utf8, 0u, n);
+            _store.utf8 = b;
         }
     }
 
-    /** Drain constructor — steals the buffer and size from another String,
-     *  leaving it in a valid empty state. */
-    String(other : String#) : _buf(other._buf), _size(other._size) {
-        other._buf = null;
-        other._size = 0;
+    /** Drain constructor — steals the buffer from another String. */
+    String(other : String#) : _size(other._size) {
+        oenc : int = (int) other._store.index();
+        if (oenc == 2) {
+            _store.utf32 = other._store.utf32;
+            other._store.utf32 = null;
+        } else if (oenc == 1) {
+            _store.utf16 = other._store.utf16;
+            other._store.utf16 = null;
+        } else {
+            _store.utf8 = other._store.utf8;
+            other._store.utf8 = null;
+        }
+        other._size = 0u;
     }
 
-    /** Construct from a const char[] (e.g. a string literal).
-     *  The source array is expected to include a null terminator:
-     *  src.size == number_of_characters + 1.
-     *  A new owned buffer is allocated and the content is copied.
-     */
-    String(src : const char[]) : _buf(null), _size(0) {
-        if (src.size > 1) {
-            _size = src.size - 1;
-            allocSz : unsigned int = src.size;
-            _buf = new char[allocSz];
-            CharHelpers::copy(_buf, 0, src, 0, src.size);
+    /** Construct from a const char[] (string literal) → UTF-32 storage. */
+    String(src : const char[]) : _size(0) {
+        if (src.size > 1u) {
+            _size = src.size - 1u;
+            b : char[]! = new char[src.size];
+            CharHelpers::copy(b, 0u, src, 0u, src.size);
+            _store.utf32 = b;
+        } else {
+            _store.utf32 = null;
         }
     }
 
-    /** Construct from a UTF-8 `unsigned byte[]` (e.g. a `u8"…"` literal).
-     *  The source array is expected to include a trailing null byte:
-     *  src.size == number_of_bytes + 1. The bytes are decoded to UTF-32. */
-    String(src : const unsigned byte[]) : _buf(null), _size(0) {
-        if (src.size > 1) {
-            _buf = CharHelpers::utf8ToUtf32(src, src.size - 1u);
-            _size = _buf.size - 1u;
+    /** Construct from a UTF-8 `unsigned byte[]` (e.g. a `u8"…"` literal),
+     *  stored as UTF-8. src.size includes the trailing null byte. */
+    String(src : const unsigned byte[]) : _size(0) {
+        if (src.size > 1u) {
+            _size = CharHelpers::utf8CodePointCount(src, src.size - 1u);
+            b : unsigned byte[]! = new unsigned byte[src.size];
+            CharHelpers::copyBytes(b, 0u, src, 0u, src.size);
+            _store.utf8 = b;
+        } else {
+            _store.utf32 = null;
         }
     }
 
-    /** Construct from a UTF-16 `unsigned short[]` (e.g. a `u"…"` literal).
-     *  The source array is expected to include a trailing null code unit.
-     *  The code units are decoded to UTF-32. */
-    String(src : const unsigned short[]) : _buf(null), _size(0) {
-        if (src.size > 1) {
-            _buf = CharHelpers::utf16ToUtf32(src, src.size - 1u);
-            _size = _buf.size - 1u;
+    /** Construct from a UTF-16 `unsigned short[]` (e.g. a `u"…"` literal),
+     *  stored as UTF-16. src.size includes the trailing null code unit. */
+    String(src : const unsigned short[]) : _size(0) {
+        if (src.size > 1u) {
+            _size = CharHelpers::utf16CodePointCount(src, src.size - 1u);
+            b : unsigned short[]! = new unsigned short[src.size];
+            CharHelpers::copyShorts(b, 0u, src, 0u, src.size);
+            _store.utf16 = b;
+        } else {
+            _store.utf32 = null;
         }
     }
 
-    /** Construct from a StringBuilder.
-     *  The StringBuilder maintains a single-fragment invariant, so
-     *  copyTo always does a simple sequential copy.
-     */
-    String(sb : const StringBuilder&) : _buf(null), _size(0) {
+    /** Construct from a UTF-32 `char[]`, transcoded to the requested storage
+     *  encoding `enc`. */
+    String(src : const char[], enc : Encoding) : _size(0) {
+        n : unsigned int = 0u;
+        if (src.size > 1u) {
+            n = src.size - 1u;
+        }
+        _size = n;
+        if (n == 0u) {
+            _store.utf32 = null;
+        } else if (enc == Encoding::UTF8) {
+            _store.utf8 = CharHelpers::toUtf8(src, n);
+        } else if (enc == Encoding::UTF16) {
+            _store.utf16 = CharHelpers::toUtf16(src, n);
+        } else {
+            b : char[]! = new char[n + 1u];
+            CharHelpers::copy(b, 0u, src, 0u, n);
+            b[n] = (char) 0;
+            _store.utf32 = b;
+        }
+    }
+
+    /** Construct from a StringBuilder → UTF-32 storage. */
+    String(sb : const StringBuilder&) : _size(0) {
         _size = sb.size();
-        if (_size > 0) {
-            allocSz : unsigned int = _size + 1;
-            _buf = new char[allocSz];
-            sb.copyTo(_buf, 0);
-            _buf[_size] = '\0';
+        if (_size > 0u) {
+            b : char[]! = new char[_size + 1u];
+            sb.copyTo(b, 0u);
+            b[_size] = (char) 0;
+            _store.utf32 = b;
+        } else {
+            _store.utf32 = null;
         }
+    }
+
+    /** Internal: decode the content into a new, null-terminated UTF-32 `char[]`.
+     *  Centralises all reads of the storage union. */
+    const _u32() : char[]! {
+        idx : int = (int) _store.index();
+        if (idx == 2) {
+            out : char[]! = new char[_size + 1u];
+            if (_size > 0u) {
+                CharHelpers::copy(out, 0u, _store.utf32, 0u, _size);
+            }
+            out[_size] = (char) 0;
+            return out;
+        }
+        if (idx == 1) {
+            return CharHelpers::utf16ToUtf32(_store.utf16, _store.utf16.size - 1u);
+        }
+        return CharHelpers::utf8ToUtf32(_store.utf8, _store.utf8.size - 1u);
     }
 
     // ── Accessors (all const — implicit in a const class) ───────────────
@@ -482,16 +614,31 @@ public:
     /** True when the string contains no characters. */
     const empty() : bool { return _size == 0; }
 
-    /** Return the character at position `index`. No bounds check (POC). */
+    /** Return the character (code point) at logical position `index`.
+     *  No bounds check. O(index) for UTF-8/UTF-16, O(1) for UTF-32. */
     const at(index : unsigned int) : char {
-        return _buf[index];
+        idx : int = (int) _store.index();
+        if (idx == 2) {
+            return _store.utf32[index];
+        }
+        if (idx == 1) {
+            return CharHelpers::utf16CodePointAt(_store.utf16, index);
+        }
+        return CharHelpers::utf8CodePointAt(_store.utf8, index);
     }
 
-    /** Return a non-owning pointer to the internal buffer.
-     *  Valid as long as this String is alive. Returns null for empty strings.
-     */
-    const data() : char[]? {
-        return _buf;
+    /** Return the character (code point) at logical position `index`.
+     *  Read-only subscript (String is immutable). */
+    const operator [](index : unsigned int) : char {
+        return at(index);
+    }
+
+    /** The underlying storage encoding. */
+    const rawEncoding() : Encoding {
+        idx : int = (int) _store.index();
+        if (idx == 0) return Encoding::UTF8;
+        if (idx == 1) return Encoding::UTF16;
+        return Encoding::UTF32;
     }
 
     // ── Search methods ──────────────────────────────────────────────────
@@ -499,7 +646,9 @@ public:
     /** Find the first occurrence of character `c`.
      *  Returns the index, or -1 if not found. */
     const find(c : char) : int {
-        return CharHelpers::findChar(_buf, 0, _size, c);
+        if (_size == 0u) return -1;
+        b : char[]! = _u32();
+        return CharHelpers::findChar(b, 0u, _size, c);
     }
 
     /** Find the first occurrence of `needle` in this string.
@@ -507,13 +656,17 @@ public:
     const find(needle : const String&) : int {
         if (needle._size == 0) return 0;
         if (_size == 0) return -1;
-        return CharHelpers::find(_buf, 0, _size, needle._buf, 0, needle._size);
+        b : char[]! = _u32();
+        nb : char[]! = needle._u32();
+        return CharHelpers::find(b, 0u, _size, nb, 0u, needle._size);
     }
 
     /** Find the last occurrence of character `c`.
      *  Returns the index, or -1 if not found. */
     const rfind(c : char) : int {
-        return CharHelpers::rfindChar(_buf, 0, _size, c);
+        if (_size == 0u) return -1;
+        b : char[]! = _u32();
+        return CharHelpers::rfindChar(b, 0u, _size, c);
     }
 
     /** Find the last occurrence of `needle` in this string.
@@ -524,7 +677,9 @@ public:
             return r;
         }
         if (_size == 0) return -1;
-        return CharHelpers::rfind(_buf, 0, _size, needle._buf, 0, needle._size);
+        b : char[]! = _u32();
+        nb : char[]! = needle._u32();
+        return CharHelpers::rfind(b, 0u, _size, nb, 0u, needle._size);
     }
 
     /** Return true if this string contains the character `c`. */
@@ -549,11 +704,13 @@ public:
 
     /** Count the number of non-overlapping occurrences of character `c`. */
     const count(c : char) : unsigned int {
-        n : unsigned int = 0;
-        i : unsigned int = 0;
+        if (_size == 0u) return 0u;
+        b : char[]! = _u32();
+        n : unsigned int = 0u;
+        i : unsigned int = 0u;
         while (i < _size) {
-            if (_buf[i] == c) n = n + 1;
-            i = i + 1;
+            if (b[i] == c) n = n + 1u;
+            i = i + 1u;
         }
         return n;
     }
@@ -561,15 +718,18 @@ public:
     /** Count the number of non-overlapping occurrences of `needle`. */
     const count(needle : const String&) : unsigned int {
         if (needle._size == 0) return 0;
-        n : unsigned int = 0;
-        i : unsigned int = 0;
+        if (_size == 0u) return 0u;
+        b : char[]! = _u32();
+        nb : char[]! = needle._u32();
+        n : unsigned int = 0u;
+        i : unsigned int = 0u;
         limit : unsigned int = _size;
         while (i + needle._size <= limit) {
-            if (CharHelpers::equalsAt(_buf, i, needle._buf, 0, needle._size)) {
-                n = n + 1;
+            if (CharHelpers::equalsAt(b, i, nb, 0u, needle._size)) {
+                n = n + 1u;
                 i = i + needle._size;
             } else {
-                i = i + 1;
+                i = i + 1u;
             }
         }
         return n;
@@ -581,7 +741,9 @@ public:
     const beginsWith(prefix : const String&) : bool {
         if (prefix._size > _size) return false;
         if (prefix._size == 0) return true;
-        return CharHelpers::equalsAt(_buf, 0, prefix._buf, 0, prefix._size);
+        b : char[]! = _u32();
+        pb : char[]! = prefix._u32();
+        return CharHelpers::equalsAt(b, 0u, pb, 0u, prefix._size);
     }
 
     /** Return true if this string ends with `suffix`. */
@@ -589,7 +751,9 @@ public:
         if (suffix._size > _size) return false;
         if (suffix._size == 0) return true;
         off : unsigned int = _size - suffix._size;
-        return CharHelpers::equalsAt(_buf, off, suffix._buf, 0, suffix._size);
+        b : char[]! = _u32();
+        sb : char[]! = suffix._u32();
+        return CharHelpers::equalsAt(b, off, sb, 0u, suffix._size);
     }
 
     // ── Extraction ──────────────────────────────────────────────────────
@@ -609,10 +773,11 @@ public:
             emptyStr : String;
             return emptyStr;
         }
+        src : char[]! = _u32();
         allocSz : unsigned int = actual + 1;
         buf : char[]! = new char[allocSz];
-        CharHelpers::copy(buf, 0, _buf, start, actual);
-        buf[actual] = '\0';
+        CharHelpers::copy(buf, 0u, src, start, actual);
+        buf[actual] = (char) 0;
         result : String(buf, actual);
         return result;
     }
@@ -638,8 +803,10 @@ public:
     const compareTo(other : const String&) : int {
         minLen : unsigned int = _size;
         if (other._size < minLen) minLen = other._size;
-        if (minLen > 0) {
-            cmp : int = CharHelpers::compare(_buf, 0, other._buf, 0, minLen);
+        if (minLen > 0u) {
+            b : char[]! = _u32();
+            ob : char[]! = other._u32();
+            cmp : int = CharHelpers::compare(b, 0u, ob, 0u, minLen);
             if (cmp != 0) return cmp;
         }
         if (_size < other._size) return -1;
@@ -653,7 +820,9 @@ public:
     const operator ==(other : const String&) : bool {
         if (_size != other._size) return false;
         if (_size == 0) return true;
-        return CharHelpers::equals(_buf, other._buf, _size);
+        b : char[]! = _u32();
+        ob : char[]! = other._u32();
+        return CharHelpers::equals(b, ob, _size);
     }
 
     /** Inequality. */
@@ -692,29 +861,34 @@ public:
 
     // ── Encoding / array conversions ────────────────────────────────────
 
-    /** The underlying storage encoding (always UTF-32 for String). */
-    const encoding() : Encoding {
-        return Encoding::UTF32;
-    }
-
     /** Return the content as a new, null-terminated UTF-32 `char[]`. */
     const toUtf32() : char[]! {
-        out : char[]! = new char[_size + 1u];
-        if (_size > 0u) {
-            CharHelpers::copy(out, 0u, _buf, 0u, _size);
-        }
-        out[_size] = (char) 0;
-        return out;
+        return _u32();
     }
 
     /** Return the content as a new, null-terminated UTF-8 `unsigned byte[]`. */
     const toUtf8() : unsigned byte[]! {
-        return CharHelpers::toUtf8(_buf, _size);
+        if ((int) _store.index() == 0) {
+            // Already UTF-8: return a copy.
+            n : unsigned int = _store.utf8.size;
+            out : unsigned byte[]! = new unsigned byte[n];
+            CharHelpers::copyBytes(out, 0u, _store.utf8, 0u, n);
+            return out;
+        }
+        b : char[]! = _u32();
+        return CharHelpers::toUtf8(b, _size);
     }
 
     /** Return the content as a new, null-terminated UTF-16 `unsigned short[]`. */
     const toUtf16() : unsigned short[]! {
-        return CharHelpers::toUtf16(_buf, _size);
+        if ((int) _store.index() == 1) {
+            n : unsigned int = _store.utf16.size;
+            out : unsigned short[]! = new unsigned short[n];
+            CharHelpers::copyShorts(out, 0u, _store.utf16, 0u, n);
+            return out;
+        }
+        b : char[]! = _u32();
+        return CharHelpers::toUtf16(b, _size);
     }
 }
 
@@ -761,7 +935,7 @@ public:
         if (s.size() > 0) {
             _ensurePoolCap(s.size());
             _ensureFragCap(1);
-            CharHelpers::copy(_pool, 0, s.data(), 0, s.size());
+            CharHelpers::copy(_pool, 0, s.toUtf32(), 0, s.size());
             _poolUsed = s.size();
             _starts[0] = 0;
             _lens[0] = s.size();
@@ -1092,7 +1266,7 @@ public:
             _ensurePoolCap(s.size());
             _ensureFragCap(1);
             poolStart : unsigned int = _poolUsed;
-            CharHelpers::copy(_pool, poolStart, s.data(), 0, s.size());
+            CharHelpers::copy(_pool, poolStart, s.toUtf32(), 0, s.size());
             _poolUsed = _poolUsed + s.size();
             _starts[_fragCount] = poolStart;
             _lens[_fragCount] = s.size();
@@ -1211,7 +1385,7 @@ public:
             newCap : unsigned int = newTotal + 1;
             newPool : char[]! = new char[newCap];
             // Copy prefix
-            CharHelpers::copy(newPool, 0, s.data(), 0, s.size());
+            CharHelpers::copy(newPool, 0, s.toUtf32(), 0, s.size());
             // Copy existing content
             if (_totalSize > 0) {
                 CharHelpers::copy(newPool, s.size(), _pool, 0, _totalSize);
@@ -1250,7 +1424,7 @@ public:
         // Copy [0..pos)
         CharHelpers::copy(newPool, 0, _pool, 0, pos);
         // Copy inserted content
-        CharHelpers::copy(newPool, pos, s.data(), 0, s.size());
+        CharHelpers::copy(newPool, pos, s.toUtf32(), 0, s.size());
         // Copy [pos.._totalSize)
         tailLen : unsigned int = _totalSize - pos;
         if (tailLen > 0) {
@@ -1319,7 +1493,7 @@ public:
         // Search from the beginning, advancing past each replacement
         pos : unsigned int = 0;
         while (pos + needle.size() <= _totalSize) {
-            found : int = CharHelpers::find(_pool, pos, _totalSize - pos, needle.data(), 0, needle.size());
+            found : int = CharHelpers::find(_pool, pos, _totalSize - pos, needle.toUtf32(), 0, needle.size());
             if (found < 0) return this;
             ufound : unsigned int = found;
             remove(ufound, needle.size());

@@ -627,6 +627,19 @@ void signature_resolver::visit_function(function& fn) {
         }
     }
 
+    // Recompute the mangled name now that parameter and return types are resolved.
+    // The name is first cached at name-assignment time (named_element::update_names),
+    // before parameter types are resolved. At that point an addresser-to-class type
+    // (e.g. 'const String&', a reference whose pointee is an as-yet-unresolved
+    // struct_type) mangles to an empty pointee. Two overloads that differ only by such
+    // a parameter would then collide — e.g. String(const String&) vs
+    // String(const StringBuilder&), both mangling to '...C1ERK'. Recomputing here, once
+    // the referenced aggregates are resolved, yields the fully-qualified pointee and a
+    // distinct symbol for each overload.
+    if (!fn.is_extern()) {
+        fn.update_mangled_name();
+    }
+
     // Do NOT visit the function body — that is the job of type_reference_resolver.
 }
 

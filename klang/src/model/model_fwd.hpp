@@ -90,6 +90,7 @@ class symbol_resolver;
 class aggregate_type_resolver;
 class model_materializer;
 class type_reference_resolver;
+class signature_resolver;
 class declaration_generator;
 class implementation_generator;
 class init_order_resolver;

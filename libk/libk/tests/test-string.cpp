@@ -804,3 +804,75 @@ TEST_CASE("String UTF-8 round-trip", "[libk][string][encoding]") {
     REQUIRE(jit);
     CHECK(jit->lookup_symbol<int(*)()>("test")() == 0);
 }
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// String — physical storage encoding (rawEncoding) and subscript operator
+//
+// The underlying storage encoding is chosen by the constructor argument type
+// (UTF-8 for unsigned byte[], UTF-16 for unsigned short[], UTF-32 for char[]),
+// while the public character API (at / operator[]) always yields UTF-32 code
+// points regardless of the physical storage.
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("String rawEncoding reflects construction type", "[libk][string][encoding][storage]") {
+    auto jit = jit_k(R"SRC(
+        module __str_raw_enc__;
+
+        // Encoding enum: UTF8=0, UTF16=1, UTF32=2.
+        from_u8()  : int { s : k::String(u8"AB");  return (int) s.rawEncoding(); }
+        from_u16() : int { s : k::String(u"AB");   return (int) s.rawEncoding(); }
+        from_u32() : int { s : k::String(U"AB");   return (int) s.rawEncoding(); }
+        empty_enc(): int { s : k::String;          return (int) s.rawEncoding(); }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("from_u8")()  == 0);   // UTF8
+    CHECK(jit->lookup_symbol<int(*)()>("from_u16")() == 1);   // UTF16
+    CHECK(jit->lookup_symbol<int(*)()>("from_u32")() == 2);   // UTF32
+    CHECK(jit->lookup_symbol<int(*)()>("empty_enc")() == 2);  // empty → UTF32 by convention
+}
+
+TEST_CASE("String code-point access is storage-independent", "[libk][string][encoding][storage]") {
+    auto jit = jit_k(R"SRC(
+        module __str_cp_access__;
+
+        // '\u00E9' (é) stored physically as UTF-8, UTF-16 and UTF-32; the
+        // logical code point read back must be identical in every case.
+        u8_cp()  : unsigned int { s : k::String(u8"\u00E9"); return s.at(0u); }
+        u16_cp() : unsigned int { s : k::String(u"\u00E9");  return s.at(0u); }
+        u32_cp() : unsigned int { s : k::String(U"\u00E9");  return s.at(0u); }
+
+        // operator[] must agree with at().
+        ix_u8()  : unsigned int { s : k::String(u8"AB"); return s[1u]; }
+        ix_u16() : unsigned int { s : k::String(u"AB");  return s[1u]; }
+        ix_eq()  : int {
+            s : k::String(u8"hi");
+            if (s[0u] != s.at(0u)) return 1;
+            if (s[1u] != s.at(1u)) return 2;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("u8_cp")()  == 0xE9);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("u16_cp")() == 0xE9);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("u32_cp")() == 0xE9);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("ix_u8")()  == 'B');
+    CHECK(jit->lookup_symbol<unsigned(*)()>("ix_u16")() == 'B');
+    CHECK(jit->lookup_symbol<int(*)()>("ix_eq")() == 0);
+}
+
+TEST_CASE("String equality across storage encodings", "[libk][string][encoding][storage]") {
+    auto jit = jit_k(R"SRC(
+        module __str_eq_enc__;
+
+        // Same logical content, different physical storage → must compare equal.
+        test() : int {
+            a : k::String(u8"\u00E9");   // UTF-8 storage
+            b : k::String(U"\u00E9");    // UTF-32 storage
+            if (a == b) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test")() == 0);
+}

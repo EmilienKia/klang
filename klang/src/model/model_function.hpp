@@ -123,6 +123,7 @@ protected:
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
     friend class gen::aggregate_type_resolver;
+    friend class gen::signature_resolver;
     friend class template_instantiator;
 
     bool _is_static = false;
