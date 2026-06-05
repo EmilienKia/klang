@@ -80,9 +80,9 @@ void context::reset() {
 void context::init_primitive_types() {
     _primitive_types.insert(std::initializer_list<std::map<primitive_type::PRIMITIVE_TYPE, std::shared_ptr<primitive_type>>::value_type>{
         {primitive_type::BOOL, primitive_type::make_shared(primitive_type::BOOL, true, false, 1, llvm::Type::getInt1Ty(**this))},
-        {primitive_type::BYTE, primitive_type::make_shared(primitive_type::BYTE, true, false, 1*8, llvm::Type::getInt8Ty(**this))},
+        {primitive_type::BYTE, primitive_type::make_shared(primitive_type::BYTE, false, false, 1*8, llvm::Type::getInt8Ty(**this))},
         {primitive_type::UNSIGNED_BYTE, primitive_type::make_shared(primitive_type::UNSIGNED_BYTE, true, false, 1*8, llvm::Type::getInt8Ty(**this))},
-        {primitive_type::CHAR, primitive_type::make_shared(primitive_type::CHAR, false, false, 1*8, llvm::Type::getInt8Ty(**this))},
+        {primitive_type::CHAR, primitive_type::make_shared(primitive_type::CHAR, true, false, 4*8, llvm::Type::getInt32Ty(**this))},
         {primitive_type::SHORT, primitive_type::make_shared(primitive_type::SHORT, false, false, 2*8, llvm::Type::getInt16Ty(**this))},
         {primitive_type::UNSIGNED_SHORT, primitive_type::make_shared(primitive_type::UNSIGNED_SHORT, true, false, 2*8, llvm::Type::getInt16Ty(**this))},
         {primitive_type::INT, primitive_type::make_shared(primitive_type::INT, false, false, 4*8, llvm::Type::getInt32Ty(**this))},
@@ -199,7 +199,6 @@ std::shared_ptr<type> context::from_string(const std::string& type_name) {
             {"byte", primitive_type::BYTE},
             {"unsigned byte", primitive_type::UNSIGNED_BYTE},
             {"char", primitive_type::CHAR},
-            {"unsigned char", primitive_type::UNSIGNED_CHAR},
             {"short", primitive_type::SHORT},
             {"unsigned short", primitive_type::UNSIGNED_SHORT},
             {"int", primitive_type::INT},
@@ -368,7 +367,7 @@ std::shared_ptr<type> context::from_literal(const k::lex::any_literal &literal) 
         auto lit = literal.get<lex::integer>();
         switch (lit.size) {
             case k::lex::BYTE:
-                return from_type(lit.unsigned_num ? primitive_type::BYTE : primitive_type::CHAR);
+                return from_type(lit.unsigned_num ? primitive_type::UNSIGNED_BYTE : primitive_type::BYTE);
             case k::lex::SHORT:
                 return from_type(
                         lit.unsigned_num ? primitive_type::UNSIGNED_SHORT : primitive_type::SHORT);
@@ -400,17 +399,9 @@ std::shared_ptr<type> context::from_literal(const k::lex::any_literal &literal) 
         return from_type(element_prim_for_encoding(c.enc));
     } else if (std::holds_alternative<lex::string>(literal)) {
         const auto& s = literal.get<lex::string>();
-        if (s.enc == lex::literal_encoding::unspecified) {
-            // TODO Decode escape sequences (only ASCII for now)
-            auto str = std::get<std::string>(s.value());
-            // +1 for null terminator
-            size_t len = str.size() + 1;
-            // String literals are static globals: their LLVM value is a pointer
-            // to { i32, [N x i8] }, so the model type is const char[N]&.
-            // Use const<char> as element type so it matches 'const char[]' parameter types.
-            return from_type(primitive_type::CHAR)->get_const()->get_array(len)->get_reference();
-        }
-        // Encoding-prefixed literal: element type and length follow the encoding.
+        // Element type and length follow the encoding. An unspecified (no-prefix)
+        // literal is treated as UTF-32 (element type 'char'); context-driven
+        // selection of a narrower encoding is applied later during adaptation.
         auto cps = s.code_points();
         size_t len = encoded_unit_count(cps, s.enc) + 1; // +1 for terminator
         return from_type(element_prim_for_encoding(s.enc))
@@ -449,13 +440,6 @@ llvm::Constant* context::get_llvm_constant_from_literal(const k::lex::any_litera
         return llvm::ConstantInt::get(elem_ty, static_cast<uint64_t>(c.code_point()), /*isSigned=*/false);
     } else if (std::holds_alternative<lex::string>(literal)) {
         const auto &s = literal.get<lex::string>();
-        if (s.enc == lex::literal_encoding::unspecified) {
-            // TODO Decode escape sequences (only raw ASCII content for now)
-            auto str = std::get<std::string>(s.value());
-            // Append null terminator
-            str.push_back('\0');
-            return get_or_create_string_literal(str);
-        }
         return get_or_create_encoded_string_literal(s.code_points(), s.enc);
     } else if (std::holds_alternative<lex::boolean>(literal)) {
         const auto& b = literal.get<lex::boolean>();

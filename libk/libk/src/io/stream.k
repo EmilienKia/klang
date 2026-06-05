@@ -147,7 +147,7 @@ public:
 
     read() : int {
         if (_pos >= _count) return -1;
-        val : int = _buf[_pos] & 0xFF;
+        val : int = ((int) _buf[_pos]) & 0xFF;
         _pos = _pos + 1;
         return val;
     }

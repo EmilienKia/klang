@@ -83,7 +83,8 @@
 
 #define TYPE_VOID           "v"
 #define TYPE_BOOL           "b"
-#define TYPE_CHAR           "c"
+#define TYPE_CHAR           "Di"
+#define TYPE_BYTE           "a"
 #define TYPE_UCHAR          "h"
 #define TYPE_UBYTE          "h"
 #define TYPE_SHORT          "s"
@@ -596,7 +597,7 @@ std::string mangler::mangle_type(const type& ty) const {
         switch(prim->get_type()) {
             case primitive_type::BOOL: return TYPE_BOOL;
             case primitive_type::CHAR: return TYPE_CHAR;
-            case primitive_type::UNSIGNED_CHAR: return TYPE_UCHAR;
+            case primitive_type::BYTE: return TYPE_BYTE;
             case primitive_type::UNSIGNED_BYTE: return TYPE_UBYTE;
             case primitive_type::SHORT: return TYPE_SHORT;
             case primitive_type::UNSIGNED_SHORT: return TYPE_USHORT;

@@ -465,7 +465,7 @@ TEST_CASE("Explicit cast: (int) byte unsigned → int signed widening", "[gen][c
     auto jit = gen_jit(R"SRC(
         module __cast_u2i__;
         test() : int {
-            b : byte = 200;
+            b : unsigned byte = 200;
             return (int) b;
         }
     )SRC");
@@ -682,7 +682,7 @@ TEST_CASE("Explicit cast: (float) byte unsigned → float", "[gen][cast][primiti
     auto jit = gen_jit(R"SRC(
         module __cast_u2f__;
         test() : float {
-            b : byte = 200;
+            b : unsigned byte = 200;
             return (float) b;
         }
     )SRC");

@@ -546,11 +546,12 @@ void symbol_resolver::visit_function(function& fn) {
                     "but got '{}'",
                     {param->get_short_name(), inner->to_string()});
             } else if (prim->get_type() == primitive_type::BYTE) {
-                // BYTE == UNSIGNED_CHAR
                 warn(static_cast<unsigned int>(k::diag::function_diag::WARN_PARAM_DEFAULT_NARROWING), param_lexeme,
-                    "@ffi::CString on parameter '{}': unsigned char will be treated "
+                    "@ffi::CString on parameter '{}': byte will be treated "
                     "as char for C FFI",
                     {param->get_short_name()});
+            } else if (prim->get_type() == primitive_type::UNSIGNED_BYTE) {
+                // unsigned byte is the natural element type for a C string (UTF-8 bytes).
             } else if (prim->get_type() != primitive_type::CHAR) {
                 throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH), param_lexeme,
                     "@ffi::CString on parameter '{}': the addressed type must be char, "

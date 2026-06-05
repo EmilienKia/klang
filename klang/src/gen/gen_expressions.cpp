@@ -64,7 +64,7 @@ void type_reference_resolver::visit_value_expression(value_expression& expr)
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, bool>)           return _context->from_type(primitive_type::BOOL);
             else if constexpr (std::is_same_v<T, char>)      return _context->from_type(primitive_type::CHAR);
-            else if constexpr (std::is_same_v<T, unsigned char>)  return _context->from_type(primitive_type::BYTE);
+            else if constexpr (std::is_same_v<T, unsigned char>)  return _context->from_type(primitive_type::UNSIGNED_BYTE);
             else if constexpr (std::is_same_v<T, short>)     return _context->from_type(primitive_type::SHORT);
             else if constexpr (std::is_same_v<T, unsigned short>) return _context->from_type(primitive_type::UNSIGNED_SHORT);
             else if constexpr (std::is_same_v<T, int>)       return _context->from_type(primitive_type::INT);

@@ -25,7 +25,7 @@ module k;
 @ffi::Extern("C") __k_io_ulong_to_str(v: unsigned long, buf: byte*, bufLen: int) : int;
 @ffi::Extern("C") __k_io_float_to_str(v: float, buf: byte*, bufLen: int) : int;
 @ffi::Extern("C") __k_io_double_to_str(v: double, buf: byte*, bufLen: int) : int;
-@ffi::Extern("C") __k_io_chars_to_bytes(src: const char*, dst: byte*, len: int);
+@ffi::Extern("C") __k_io_chars_to_bytes(src: const char*, dst: byte*, len: int) : int;
 
 namespace io {
 
@@ -263,6 +263,35 @@ public:
     close() : OutputStream& {
         flush();
         _out->close();
+        return this;
+    }
+}
+
+} // namespace io
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+_out->close();
         return this;
     }
 }

@@ -47,7 +47,7 @@ convert_primitive(const kdi::kdi_int_type& t, std::shared_ptr<context> ctx)
     // string-lookup mismatches (e.g. "ubyte" is not in context::from_string()).
     if (t.is_signed) {
         switch (t.bits) {
-            case  8: return ctx->from_type(primitive_type::CHAR);
+            case  8: return ctx->from_type(primitive_type::BYTE);
             case 16: return ctx->from_type(primitive_type::SHORT);
             case 32: return ctx->from_type(primitive_type::INT);
             case 64: return ctx->from_type(primitive_type::LONG);
@@ -55,7 +55,7 @@ convert_primitive(const kdi::kdi_int_type& t, std::shared_ptr<context> ctx)
         }
     } else {
         switch (t.bits) {
-            case  8: return ctx->from_type(primitive_type::BYTE);
+            case  8: return ctx->from_type(primitive_type::UNSIGNED_BYTE);
             case 16: return ctx->from_type(primitive_type::UNSIGNED_SHORT);
             case 32: return ctx->from_type(primitive_type::UNSIGNED_INT);
             case 64: return ctx->from_type(primitive_type::UNSIGNED_LONG);

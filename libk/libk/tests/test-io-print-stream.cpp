@@ -428,11 +428,11 @@ TEST_CASE("PrintStream print(byte)", "[libk][io][print]") {
         test_print_byte() : int {
             baos : k::io::ByteArrayOutputStream;
             ps : k::io::PrintStream(&baos);
-            ps.print((byte) 200);
-            // 200 as decimal = "200" = 3 bytes
+            ps.print((byte) 100);
+            // 100 as decimal = "100" = 3 bytes
             if (baos.size() != 3) return 1;
             arr : byte[]* = baos.toByteArray();
-            if (arr[0] != (byte) '2') return 2;
+            if (arr[0] != (byte) '1') return 2;
             if (arr[1] != (byte) '0') return 3;
             if (arr[2] != (byte) '0') return 4;
             return 0;

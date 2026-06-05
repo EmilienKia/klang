@@ -388,7 +388,11 @@ void declaration_generator::visit_unit(unit &unit) {
         // Helper: emit a K-sized-array string constant { i32 size, [N x i8] data }.
         auto make_name_gv = [&](const std::string& str, const std::string& suffix) -> llvm::Constant* {
             uint32_t len = static_cast<uint32_t>(str.size() + 1);
-            llvm::Constant* str_data = llvm::ConstantDataArray::getString(llvm_ctx, str, /*AddNull=*/true);
+            // char is UTF-32: emit the name as [N x i32] code points (ASCII identifiers).
+            std::vector<uint32_t> name_u32;
+            for (unsigned char name_ch : str) name_u32.push_back(name_ch);
+            name_u32.push_back(0); // null terminator
+            llvm::Constant* str_data = llvm::ConstantDataArray::get(llvm_ctx, name_u32);
             llvm::StructType* str_struct_ty = llvm::StructType::get(
                 llvm_ctx, {i32_ty, str_data->getType()}, /*isPacked=*/false);
             llvm::Constant* str_struct_init = llvm::ConstantStruct::get(
@@ -570,7 +574,11 @@ void implementation_generator::visit_unit(unit &unit) {
                                        const std::string& prefix, size_t idx) -> llvm::Constant* {
                 std::string param_name_str = param->get_short_name();
                 uint32_t len = static_cast<uint32_t>(param_name_str.size() + 1);
-                llvm::Constant* str_data = llvm::ConstantDataArray::getString(llvm_ctx, param_name_str, /*AddNull=*/true);
+                // char is UTF-32: emit the name as [N x i32] code points (ASCII identifiers).
+            std::vector<uint32_t> name_u32;
+            for (unsigned char name_ch : param_name_str) name_u32.push_back(name_ch);
+            name_u32.push_back(0); // null terminator
+            llvm::Constant* str_data = llvm::ConstantDataArray::get(llvm_ctx, name_u32);
                 llvm::StructType* str_struct_ty = llvm::StructType::get(
                     llvm_ctx, {i32_ty, str_data->getType()}, /*isPacked=*/false);
                 llvm::Constant* str_struct_init = llvm::ConstantStruct::get(
@@ -607,7 +615,11 @@ void implementation_generator::visit_unit(unit &unit) {
 
                 auto make_name_gv_fn = [&](const std::string& str, const std::string& suffix) -> llvm::Constant* {
                     uint32_t len = static_cast<uint32_t>(str.size() + 1);
-                    llvm::Constant* str_data = llvm::ConstantDataArray::getString(llvm_ctx, str, /*AddNull=*/true);
+                    // char is UTF-32: emit the name as [N x i32] code points (ASCII identifiers).
+            std::vector<uint32_t> name_u32;
+            for (unsigned char name_ch : str) name_u32.push_back(name_ch);
+            name_u32.push_back(0); // null terminator
+            llvm::Constant* str_data = llvm::ConstantDataArray::get(llvm_ctx, name_u32);
                     llvm::StructType* str_struct_ty = llvm::StructType::get(
                         llvm_ctx, {i32_ty, str_data->getType()}, /*isPacked=*/false);
                     llvm::Constant* str_struct_init = llvm::ConstantStruct::get(

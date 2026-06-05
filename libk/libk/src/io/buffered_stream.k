@@ -52,7 +52,7 @@ public:
             _fill();
             if (_bpos >= _bcount) return -1;
         }
-        val : int = _bbuf[_bpos] & 0xFF;
+        val : int = ((int) _bbuf[_bpos]) & 0xFF;
         _bpos = _bpos + 1;
         return val;
     }

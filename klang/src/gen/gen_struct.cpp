@@ -1475,7 +1475,7 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
             }
         }
         primitive_type::PRIMITIVE_TYPE prim_type;
-        if (n <= 256)         prim_type = primitive_type::BYTE;
+        if (n <= 256)         prim_type = primitive_type::UNSIGNED_BYTE;
         else if (n <= 65536)  prim_type = primitive_type::UNSIGNED_SHORT;
         else                  prim_type = primitive_type::UNSIGNED_INT;
         underlying = _context->from_type(prim_type);
@@ -1488,12 +1488,12 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
 
         primitive_type::PRIMITIVE_TYPE prim_type;
         if (min_val >= 0) {
-            if (max_val <= 255) prim_type = primitive_type::BYTE;
+            if (max_val <= 255) prim_type = primitive_type::UNSIGNED_BYTE;
             else if (max_val <= 65535) prim_type = primitive_type::UNSIGNED_SHORT;
             else if (max_val <= 4294967295LL) prim_type = primitive_type::UNSIGNED_INT;
             else prim_type = primitive_type::UNSIGNED_LONG;
         } else {
-            if (min_val >= -128 && max_val <= 127) prim_type = primitive_type::CHAR;
+            if (min_val >= -128 && max_val <= 127) prim_type = primitive_type::BYTE;
             else if (min_val >= -32768 && max_val <= 32767) prim_type = primitive_type::SHORT;
             else if (min_val >= -2147483648LL && max_val <= 2147483647LL) prim_type = primitive_type::INT;
             else prim_type = primitive_type::LONG;

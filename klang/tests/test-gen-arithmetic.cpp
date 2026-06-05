@@ -20,59 +20,59 @@
 
 #include "helpers.hpp"
 
-TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
+TEST_CASE( "byte signed arithmetic", "[gen][byte][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(
         module __int8__;
-        add(a : char, b : char) : char {
+        add(a : byte, b : byte) : byte {
             return a + b;
         }
-        sub(a : char, b : char) : char {
+        sub(a : byte, b : byte) : byte {
             return a - b;
         }
-        mul(a : char, b : char) : char {
+        mul(a : byte, b : byte) : byte {
             return a * b;
         }
-        div(a : char, b : char) : char {
+        div(a : byte, b : byte) : byte {
             return a / b;
         }
-        mod(a : char, b : char) : char {
+        mod(a : byte, b : byte) : byte {
             return a % b;
         }
-        and(a : char, b : char) : char {
+        and(a : byte, b : byte) : byte {
             return a & b;
         }
-        or(a : char, b : char) : char {
+        or(a : byte, b : byte) : byte {
             return a | b;
         }
-        xor(a : char, b : char) : char {
+        xor(a : byte, b : byte) : byte {
             return a ^ b;
         }
-        lsh(a : char, b : char) : char {
+        lsh(a : byte, b : byte) : byte {
             return a << b;
         }
-        rsh(a : char, b : char) : char {
+        rsh(a : byte, b : byte) : byte {
             return a >> b;
         }
-        plus(a : char) : char {
+        plus(a : byte) : byte {
             return + a;
         }
-        minus(a : char) : char {
+        minus(a : byte) : byte {
             return - a;
         }
-        not(a : char) : char {
+        not(a : byte) : byte {
             return ~ a;
         }
-        prefix_incr_char(a : char) : char {
+        prefix_incr_byte(a : byte) : byte {
             return ++a;
         }
-        prefix_decr_char(a : char) : char {
+        prefix_decr_byte(a : byte) : byte {
             return --a;
         }
-        postfix_incr_char(a : char) : char {
+        postfix_incr_byte(a : byte) : byte {
             return a++;
         }
-        postfix_decr_char(a : char) : char {
+        postfix_decr_byte(a : byte) : byte {
             return a--;
         }
         eq(a:char, b:char) : bool { return a == b; }
@@ -84,7 +84,7 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
         )SRC");
     REQUIRE( jit );
 
-    typedef char type_t;
+    typedef int8_t type_t;
 
     SECTION( "char addition" ) {
         auto add = jit->lookup_symbol<type_t(*)(type_t, type_t)>("add");
@@ -178,7 +178,7 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
     }
 
     SECTION("prefix increment char") {
-        auto f = jit->lookup_symbol<char(*)(char)>("prefix_incr_char");
+        auto f = jit->lookup_symbol<int8_t(*)(int8_t)>("prefix_incr_byte");
         REQUIRE(f != nullptr);
         REQUIRE(f(0) == 1);
         REQUIRE(f(41) == 42);
@@ -187,7 +187,7 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
     }
 
     SECTION("prefix decrement char") {
-        auto f = jit->lookup_symbol<char(*)(char)>("prefix_decr_char");
+        auto f = jit->lookup_symbol<int8_t(*)(int8_t)>("prefix_decr_byte");
         REQUIRE(f != nullptr);
         REQUIRE(f(1) == 0);
         REQUIRE(f(42) == 41);
@@ -195,7 +195,7 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
     }
 
     SECTION("postfix increment char") {
-        auto f = jit->lookup_symbol<char(*)(char)>("postfix_incr_char");
+        auto f = jit->lookup_symbol<int8_t(*)(int8_t)>("postfix_incr_byte");
         REQUIRE(f != nullptr);
         REQUIRE(f(0) == 0);    // returns old value
         REQUIRE(f(41) == 41);  // returns old value (41, not 42)
@@ -210,7 +210,7 @@ TEST_CASE( "char arithmetic", "[gen][char][arithmetic]" ) {
     }
 
     SECTION("postfix decrement char") {
-        auto f = jit->lookup_symbol<char(*)(char)>("postfix_decr_char");
+        auto f = jit->lookup_symbol<int8_t(*)(int8_t)>("postfix_decr_byte");
         REQUIRE(f != nullptr);
         REQUIRE(f(1) == 1);    // returns old value
         REQUIRE(f(42) == 42);  // returns old value (42, not 41)

@@ -467,13 +467,13 @@ extern "C" {
 TEST_CASE("FFI CString: runtime — pass char pointer to C strlen", "[ffi][cstring][runtime]") {
     auto jit = gen_jit(R"K(
         module __test_ffi_cstr_rt_strlen__;
-        @ffi::Extern("C") __k_test_cstring_len(@ffi::CString s : const char*) : int;
-        call_len(s : const char[]) : int {
-            p : const char* = &s[0];
+        @ffi::Extern("C") __k_test_cstring_len(@ffi::CString s : const unsigned byte*) : int;
+        call_len(s : const unsigned byte[]) : int {
+            p : const unsigned byte* = &s[0];
             return __k_test_cstring_len(p);
         }
         test() : int {
-            return call_len("hello");
+            return call_len(u8"hello");
         }
     )K");
     REQUIRE(jit);
@@ -486,13 +486,13 @@ TEST_CASE("FFI CString: runtime — pass char pointer to C strlen", "[ffi][cstri
 TEST_CASE("FFI CString: runtime — @CString alongside normal parameter", "[ffi][cstring][runtime]") {
     auto jit = gen_jit(R"K(
         module __test_ffi_cstr_rt_mixed__;
-        @ffi::Extern("C") __k_test_cstring_and_int(@ffi::CString s : const char*, n : int) : int;
-        call_and_int(s : const char[], n : int) : int {
-            p : const char* = &s[0];
+        @ffi::Extern("C") __k_test_cstring_and_int(@ffi::CString s : const unsigned byte*, n : int) : int;
+        call_and_int(s : const unsigned byte[], n : int) : int {
+            p : const unsigned byte* = &s[0];
             return __k_test_cstring_and_int(p, n);
         }
         test() : int {
-            return call_and_int("hi", 100);
+            return call_and_int(u8"hi", 100);
         }
     )K");
     REQUIRE(jit);
@@ -505,14 +505,14 @@ TEST_CASE("FFI CString: runtime — @CString alongside normal parameter", "[ffi]
 TEST_CASE("FFI CString: runtime — mixed CString and non-CString params", "[ffi][cstring][runtime]") {
     auto jit = gen_jit(R"K(
         module __test_ffi_cstr_rt_combo__;
-        @ffi::Extern("C") __k_test_cstring_len(@ffi::CString s : const char*) : int;
+        @ffi::Extern("C") __k_test_cstring_len(@ffi::CString s : const unsigned byte*) : int;
         @ffi::Extern("C") __k_test_extern_add(a : int, b : int) : int;
-        call_len(s : const char[]) : int {
-            p : const char* = &s[0];
+        call_len(s : const unsigned byte[]) : int {
+            p : const unsigned byte* = &s[0];
             return __k_test_cstring_len(p);
         }
         test() : int {
-            return __k_test_extern_add(call_len("abc"), 39);
+            return __k_test_extern_add(call_len(u8"abc"), 39);
         }
     )K");
     REQUIRE(jit);
@@ -571,14 +571,14 @@ TEST_CASE("FFI CString: static member extern with @CString", "[ffi][cstring][gen
         module __test_ffi_cstr_static__;
         class Util {
             public Util() {}
-            @ffi::Extern("C") static __k_test_cstring_len(@ffi::CString s : const char*) : int;
+            @ffi::Extern("C") static __k_test_cstring_len(@ffi::CString s : const unsigned byte*) : int;
         }
-        call_len(s : const char[]) : int {
-            p : const char* = &s[0];
+        call_len(s : const unsigned byte[]) : int {
+            p : const unsigned byte* = &s[0];
             return Util::__k_test_cstring_len(p);
         }
         test() : int {
-            return call_len("abcde");
+            return call_len(u8"abcde");
         }
     )K");
     REQUIRE(jit);
@@ -591,12 +591,12 @@ TEST_CASE("FFI CString: static member extern with @CString", "[ffi][cstring][gen
 TEST_CASE("FFI CString: runtime — pass char reference to C function", "[ffi][cstring][runtime]") {
     auto jit = gen_jit(R"K(
         module __test_ffi_cstr_rt_charref__;
-        @ffi::Extern("C") __k_test_cstring_first_char(@ffi::CString s : const char&) : int;
-        call_first(s : const char[]) : int {
+        @ffi::Extern("C") __k_test_cstring_first_char(@ffi::CString s : const unsigned byte&) : int;
+        call_first(s : const unsigned byte[]) : int {
             return __k_test_cstring_first_char(s[0]);
         }
         test() : int {
-            return call_first("A");
+            return call_first(u8"A");
         }
     )K");
     REQUIRE(jit);
@@ -609,19 +609,19 @@ TEST_CASE("FFI CString: runtime — pass char reference to C function", "[ffi][c
 TEST_CASE("FFI CString: runtime — multiple @CString params called", "[ffi][cstring][runtime]") {
     auto jit = gen_jit(R"K(
         module __test_ffi_cstr_rt_multi__;
-        @ffi::Extern("C") __k_test_cstring_len(@ffi::CString s : const char*) : int;
-        @ffi::Extern("C") __k_test_cstring_and_int(@ffi::CString s : const char*, n : int) : int;
-        get_len(s : const char[]) : int {
-            p : const char* = &s[0];
+        @ffi::Extern("C") __k_test_cstring_len(@ffi::CString s : const unsigned byte*) : int;
+        @ffi::Extern("C") __k_test_cstring_and_int(@ffi::CString s : const unsigned byte*, n : int) : int;
+        get_len(s : const unsigned byte[]) : int {
+            p : const unsigned byte* = &s[0];
             return __k_test_cstring_len(p);
         }
-        call_and_int(s : const char[], n : int) : int {
-            p : const char* = &s[0];
+        call_and_int(s : const unsigned byte[], n : int) : int {
+            p : const unsigned byte* = &s[0];
             return __k_test_cstring_and_int(p, n);
         }
         test() : int {
-            la : int = get_len("ab");
-            return call_and_int("xyz", la);
+            la : int = get_len(u8"ab");
+            return call_and_int(u8"xyz", la);
         }
     )K");
     REQUIRE(jit);

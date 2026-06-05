@@ -49,8 +49,9 @@ std::string encode_type_for_cast_operator(const std::shared_ptr<type>& t) {
     if (auto pt = std::dynamic_pointer_cast<primitive_type>(t)) {
         switch (pt->get_type()) {
             case primitive_type::BOOL: return "bool";
-            case primitive_type::CHAR: return pt->is_unsigned() ? "uchar" : "char";
-            case primitive_type::BYTE: return pt->is_unsigned() ? "ubyte" : "byte";
+            case primitive_type::CHAR: return "char";
+            case primitive_type::BYTE: return "byte";
+            case primitive_type::UNSIGNED_BYTE: return "ubyte";
             case primitive_type::SHORT: return pt->is_unsigned() ? "ushort" : "short";
             case primitive_type::INT: return pt->is_unsigned() ? "uint" : "int";
             case primitive_type::LONG: return pt->is_unsigned() ? "ulong" : "long";

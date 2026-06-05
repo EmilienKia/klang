@@ -123,8 +123,30 @@ int32_t __k_io_double_to_str(double v, uint8_t* buf, int32_t bufLen) {
     return (int32_t)(n < bufLen ? n : bufLen - 1);
 }
 
-/* ── char-to-byte copy helper (used by PrintStream) ─────────────────────── */
+/* ── char-to-byte helper (used by PrintStream) ──────────────────────────── */
 
-void __k_io_chars_to_bytes(const uint8_t* src, uint8_t* dst, int32_t len) {
-    memcpy(dst, src, (size_t)len);
+/* Encode `len` UTF-32 code points from `src` into UTF-8 bytes in `dst`.
+ * Returns the number of bytes written. `dst` must have room for up to 4*len
+ * bytes. K `char` is a 32-bit Unicode scalar value (UTF-32). */
+int32_t __k_io_chars_to_bytes(const uint32_t* src, uint8_t* dst, int32_t len) {
+    int32_t out = 0;
+    for (int32_t i = 0; i < len; i++) {
+        uint32_t cp = src[i];
+        if (cp < 0x80) {
+            dst[out++] = (uint8_t)cp;
+        } else if (cp < 0x800) {
+            dst[out++] = (uint8_t)(0xC0 | (cp >> 6));
+            dst[out++] = (uint8_t)(0x80 | (cp & 0x3F));
+        } else if (cp < 0x10000) {
+            dst[out++] = (uint8_t)(0xE0 | (cp >> 12));
+            dst[out++] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+            dst[out++] = (uint8_t)(0x80 | (cp & 0x3F));
+        } else {
+            dst[out++] = (uint8_t)(0xF0 | (cp >> 18));
+            dst[out++] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F));
+            dst[out++] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+            dst[out++] = (uint8_t)(0x80 | (cp & 0x3F));
+        }
+    }
+    return out;
 }
