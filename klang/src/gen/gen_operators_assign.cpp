@@ -37,6 +37,47 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
 
     auto left_type = left->get_type();
 
+    // ── Assignment to a struct rvalue via an operator= overload ──────────────
+    // K normally requires the LHS of '=' to be an lvalue (a reference). However a
+    // value-returning subscript proxy — e.g. StringBuilder.operator[](i) returning a
+    // CharRef whose operator=(char) writes back into the builder — is a common idiom
+    // ("sb[i] = c"). When the LHS is a (non-reference) struct that provides an
+    // operator= overload, dispatch to it instead of rejecting the assignment.
+    if (!type::is_reference(left_type) && type::is_struct(left_type)) {
+        auto nc_left = type::remove_const(left_type);
+        if (auto st_type = std::dynamic_pointer_cast<struct_type>(nc_left)) {
+            if (auto agg = st_type->get_struct()) {
+                std::string op_name = get_binary_operator_name(expr);
+                if (!op_name.empty() &&
+                    !collect_member_operators_from_hierarchy(agg, op_name).empty()) {
+                    bool is_const_left = type::is_const(left_type);
+                    auto [op_func, adapted_right] =
+                        resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
+                    if (op_func) {
+                        expr.set_operator_func(op_func);
+                        if (adapted_right && adapted_right != right) {
+                            expr.assign_right(adapted_right);
+                        }
+                        if (op_func->has_return_type()) {
+                            expr.set_type(op_func->get_return_type());
+                        } else {
+                            expr.set_type(left_type);
+                        }
+                        if (op_func->is_member()) {
+                            auto di = compute_operator_dispatch_info(op_func, left_type);
+                            expr.set_operator_dispatch_info(std::move(di));
+                        } else {
+                            virtual_dispatch_info di;
+                            di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                            expr.set_operator_dispatch_info(std::move(di));
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     if(!type::is_reference(left_type)) {
         throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ASSIGN_INCOMPATIBLE), expr.first_lexeme(),
             "The left operand of an assignment must be assignable (an lvalue): "

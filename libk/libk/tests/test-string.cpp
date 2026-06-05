@@ -876,3 +876,134 @@ TEST_CASE("String equality across storage encodings", "[libk][string][encoding][
     REQUIRE(jit);
     CHECK(jit->lookup_symbol<int(*)()>("test")() == 0);
 }
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// StringBuilder — heterogeneous multi-encoding fragment storage
+//
+// Fragments keep their native encoding (no transcode on append). The public API
+// is char-based; rawEncoding() reports the first fragment's encoding.
+// ═════════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("StringBuilder heterogeneous fragments — decode + rawEncoding", "[libk][string][stringbuilder][storage]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_hetero__;
+
+        // char[] (UTF-32) + u8 (UTF-8) + u16 (UTF-16) fragments in one builder.
+        size3() : unsigned int {
+            sb : k::StringBuilder("A");
+            sb.append(u8"B");
+            sb.append(u"C");
+            return sb.size();
+        }
+        c0() : unsigned int { sb : k::StringBuilder("A"); sb.append(u8"B"); sb.append(u"C"); return sb.charAt(0u); }
+        c1() : unsigned int { sb : k::StringBuilder("A"); sb.append(u8"B"); sb.append(u"C"); return sb.charAt(1u); }
+        c2() : unsigned int { sb : k::StringBuilder("A"); sb.append(u8"B"); sb.append(u"C"); return sb.charAt(2u); }
+
+        // First fragment is char[] → UTF-32 (enum value 2).
+        firstEnc() : int { sb : k::StringBuilder("A"); sb.append(u8"B"); return (int) sb.rawEncoding(); }
+        // First fragment is a u8 literal → UTF-8 (enum value 0).
+        firstEncU8() : int { sb : k::StringBuilder(u8"A"); sb.append("B"); return (int) sb.rawEncoding(); }
+        // Empty builder → UTF-32 by convention.
+        emptyEnc() : int { sb : k::StringBuilder; return (int) sb.rawEncoding(); }
+
+        // Non-ASCII fragment stored natively as UTF-8 still reads back as a code point.
+        nonAscii() : unsigned int {
+            sb : k::StringBuilder("x");
+            sb.append(u8"\u00E9");
+            return sb.charAt(1u);
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("size3")() == 3);
+    CHECK(jit->lookup_symbol<unsigned(*)()>("c0")() == 'A');
+    CHECK(jit->lookup_symbol<unsigned(*)()>("c1")() == 'B');
+    CHECK(jit->lookup_symbol<unsigned(*)()>("c2")() == 'C');
+    CHECK(jit->lookup_symbol<int(*)()>("firstEnc")() == 2);    // UTF32
+    CHECK(jit->lookup_symbol<int(*)()>("firstEncU8")() == 0);  // UTF8
+    CHECK(jit->lookup_symbol<int(*)()>("emptyEnc")() == 2);    // UTF32
+    CHECK(jit->lookup_symbol<unsigned(*)()>("nonAscii")() == 0xE9);
+}
+
+TEST_CASE("StringBuilder set() and write proxy", "[libk][string][stringbuilder][mutate]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_set__;
+
+        // set(index, codepoint)
+        viaSet() : int {
+            sb : k::StringBuilder("hello");
+            sb.set(0u, 'H');
+            sb.set(4u, 'O');
+            if (sb.charAt(0u) != 'H') return 1;
+            if (sb.charAt(4u) != 'O') return 2;
+            return 0;
+        }
+        // set() out of range is a no-op
+        setOOR() : int {
+            sb : k::StringBuilder("hi");
+            sb.set(9u, 'Z');
+            if (sb.size() != 2u) return 1;
+            return 0;
+        }
+        // write proxy: sb[i] = c
+        viaProxy() : int {
+            sb : k::StringBuilder("hello");
+            sb[1u] = 'E';
+            sb[2u] = 'L';
+            if (sb.charAt(1u) != 'E') return 1;
+            if (sb.charAt(2u) != 'L') return 2;
+            return 0;
+        }
+        // set() on a UTF-8-stored builder consolidates then writes
+        setOnUtf8() : int {
+            sb : k::StringBuilder(u8"abc");
+            sb.set(1u, 'B');
+            if (sb.charAt(0u) != 'a') return 1;
+            if (sb.charAt(1u) != 'B') return 2;
+            if (sb.charAt(2u) != 'c') return 3;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("viaSet")() == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("setOOR")() == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("viaProxy")() == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("setOnUtf8")() == 0);
+}
+
+TEST_CASE("StringBuilder toString consolidation policy", "[libk][string][stringbuilder][storage]") {
+    auto jit = jit_k(R"SRC(
+        module __sb_policy__;
+
+        // Encoding enum: UTF8=0, UTF16=1, UTF32=2.
+        forceU8()  : int { sb : k::StringBuilder("AB"); s : k::String = sb.toString(k::ConsolidationPolicy::ForceUtf8);  return (int) s.rawEncoding(); }
+        forceU16() : int { sb : k::StringBuilder("AB"); s : k::String = sb.toString(k::ConsolidationPolicy::ForceUtf16); return (int) s.rawEncoding(); }
+        forceU32() : int { sb : k::StringBuilder("AB"); s : k::String = sb.toString(k::ConsolidationPolicy::ForceUtf32); return (int) s.rawEncoding(); }
+
+        // FirstFragment uses the first fragment's encoding.
+        firstU8()  : int { sb : k::StringBuilder(u8"AB"); s : k::String = sb.toString(k::ConsolidationPolicy::FirstFragment); return (int) s.rawEncoding(); }
+
+        // MostCompact picks UTF-8 for pure ASCII.
+        compactAscii() : int { sb : k::StringBuilder("ABC"); s : k::String = sb.toString(k::ConsolidationPolicy::MostCompact); return (int) s.rawEncoding(); }
+
+        // toString(Encoding) overload.
+        byEnc() : int { sb : k::StringBuilder("AB"); s : k::String = sb.toString(k::Encoding::UTF16); return (int) s.rawEncoding(); }
+
+        // Content is preserved regardless of policy.
+        content() : int {
+            sb : k::StringBuilder("hello");
+            s : k::String = sb.toString(k::ConsolidationPolicy::ForceUtf16);
+            expected : k::String("hello");
+            if (s == expected) return 0;
+            return 1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("forceU8")()  == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("forceU16")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("forceU32")() == 2);
+    CHECK(jit->lookup_symbol<int(*)()>("firstU8")()  == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("compactAscii")() == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("byEnc")()    == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("content")()  == 0);
+}

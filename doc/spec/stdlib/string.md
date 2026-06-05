@@ -84,9 +84,11 @@ CharHelpers::fill(buf, 6, '\0', 2u);
 const final class String
 ```
 
-An **immutable**, heap-backed string. The content is stored in a
-null-terminated owner buffer (`char[]!`); the `size` field holds the
-character count **excluding** the null terminator.
+An **immutable**, heap-backed string. The content is stored compactly in one
+of three Unicode encodings (UTF-8, UTF-16, or UTF-32) chosen at construction
+from the argument type; the storage encoding is reported by `rawEncoding()`.
+The public API is always **code-point (`char`) based** regardless of the
+underlying storage. `size()` is the number of code points.
 
 Because the class is declared `const`, all methods are implicitly `const`
 (they never modify the object).
@@ -101,18 +103,19 @@ Because the class is declared `const`, all methods are implicitly `const`
 | `String(other: String#)` | Drain constructor — steals the buffer from `other`, leaving it empty. |
 | `String(sb: const StringBuilder&)` | Constructs from a `StringBuilder`, copying its content into a new buffer. |
 | `String(src: const char[])` | Constructs from a `const char[]` — typically a string literal. See [§4](#4-usage-with-string-and-character-literals). |
-| `String(src: const unsigned byte[])` | Constructs from a UTF-8 byte buffer (e.g. a `u8"…"` literal), decoding it to UTF-32. |
-| `String(src: const unsigned short[])` | Constructs from a UTF-16 code-unit buffer (e.g. a `u"…"` literal), decoding it to UTF-32. |
+| `String(src: const unsigned byte[])` | Constructs from a UTF-8 byte buffer (e.g. a `u8"…"` literal), stored natively as UTF-8. |
+| `String(src: const unsigned short[])` | Constructs from a UTF-16 code-unit buffer (e.g. a `u"…"` literal), stored natively as UTF-16. |
+| `String(src: const char[], enc: Encoding)` | Constructs from a UTF-32 `char[]`, transcoded to the requested storage encoding `enc`. |
 
 ### Accessors
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `size()` | `unsigned int` | Number of characters (excluding `'\0'`). |
+| `size()` | `unsigned int` | Number of characters (code points). |
 | `empty()` | `bool` | `true` when the string has zero characters. |
-| `at(index: unsigned int)` | `char` | Character at position `index`. No bounds check. |
-| `data()` | `char[]?` | Non-owning view to the internal buffer. Returns `null` for an empty string. |
-| `encoding()` | `Encoding` | Storage encoding (`Encoding::UTF32`). |
+| `at(index: unsigned int)` | `char` | Code point at position `index`. No bounds check. O(index) for UTF-8/16 storage, O(1) for UTF-32. |
+| `operator [](index: unsigned int)` | `char` | Read-only subscript — same as `at(index)`. |
+| `rawEncoding()` | `Encoding` | Underlying storage encoding (`UTF8`, `UTF16` or `UTF32`). An empty string reports `UTF32`. |
 | `toUtf32()` | `char[]!` | New null-terminated UTF-32 copy of the content. |
 | `toUtf8()` | `unsigned byte[]!` | New null-terminated UTF-8 encoding of the content. |
 | `toUtf16()` | `unsigned short[]!` | New null-terminated UTF-16 encoding of the content. |
@@ -191,16 +194,18 @@ assert(a.compareTo(b) < 0);
 class StringBuilder
 ```
 
-A **mutable**, growable string builder backed by a pool-based fragment
-system. Internally, all character data is stored in a single flat buffer
-(`char[]!` pool) with fragment metadata arrays tracking the start offset and
-length of each logical fragment. This design provides good cache locality
-and minimises heap allocations.
+A **mutable**, growable string builder with **heterogeneous, multi-encoding
+fragment storage**. Each appended fragment is kept in its **native encoding**
+(UTF-8, UTF-16 or UTF-32) with no transcoding on append — three growable pools
+(`unsigned byte[]`, `unsigned short[]`, `char[]`) hold the raw units and four
+parallel metadata arrays describe each fragment in logical order. The public
+API is **code-point (`char`) based**; `size()` counts code points.
 
-New content (via `append`, `prepend`, `insert`, etc.) is added to the pool
-tail as a new fragment. Operations that require contiguous access (`reverse`,
-`trim`, `remove`) consolidate all fragments into a single contiguous region
-first.
+Random reads decode the target fragment on demand; bulk reads decode all
+fragments to UTF-32. Any in-place **mutation** (`set`, `remove`, `insert`,
+`reverse`, `trim`, `replace`, …) first **consolidates** all fragments into a
+single contiguous UTF-32 fragment, so mutation logic always works on a
+contiguous buffer.
 
 Most mutating methods return `StringBuilder&` to support **fluent chaining**:
 
@@ -213,30 +218,53 @@ sb.append("Hello").append(", ").appendChar('W').append("orld!");
 | Signature | Description |
 |-----------|-------------|
 | `StringBuilder()` | Default constructor — creates an empty builder. |
-| `StringBuilder(s: const String&)` | Constructs from a `String`, copying its content. |
-| `StringBuilder(src: const char[])` | Constructs from a `const char[]` (e.g. a string literal). |
-| `StringBuilder(other: const StringBuilder&)` | Copy constructor — deep copies the buffer. |
-| `StringBuilder(other: StringBuilder#)` | Drain constructor — steals the buffer from `other`, leaving it empty. |
+| `StringBuilder(s: const String&)` | Constructs from a `String`, mirroring its native storage encoding. |
+| `StringBuilder(src: const char[])` | Constructs from a `const char[]` (e.g. a string literal) — stored as UTF-32. |
+| `StringBuilder(src: const unsigned byte[])` | Constructs from a UTF-8 buffer (e.g. a `u8"…"` literal) — stored natively as UTF-8. |
+| `StringBuilder(src: const unsigned short[])` | Constructs from a UTF-16 buffer (e.g. a `u"…"` literal) — stored natively as UTF-16. |
+| `StringBuilder(other: const StringBuilder&)` | Copy constructor — deep copies all pools and fragment metadata. |
+| `StringBuilder(other: StringBuilder#)` | Drain constructor — steals the buffers from `other`, leaving it empty. |
 
 ### Accessors
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `size()` | `unsigned int` | Current number of characters. |
+| `size()` | `unsigned int` | Current number of characters (code points). |
 | `empty()` | `bool` | `true` when the builder has zero characters. |
-| `charAt(index: unsigned int)` | `char` | Character at position `index`. Traverses fragments — O(fragCount). No bounds check. |
-| `copyTo(dst: char[], dstOff: unsigned int)` | *(void)* | Copy all fragment content to `dst` starting at `dstOff`. |
+| `charAt(index: unsigned int)` | `char` | Code point at position `index`. Decodes the target fragment — O(fragCount + intra-fragment offset). No bounds check. |
+| `at(index: unsigned int)` (const) | `char` | Read-only code point at `index`. |
+| `operator [](index: unsigned int)` (const) | `char` | Read-only subscript — same as `at(index)`. |
+| `at(index: unsigned int)` (non-const) | `CharRef` | Mutable element proxy (see below). |
+| `operator [](index: unsigned int)` (non-const) | `CharRef` | Mutable element proxy — supports `sb[i] = c`. |
+| `rawEncoding()` | `Encoding` | Native encoding of the **first** fragment, or `UTF32` if empty. (A builder may hold fragments of mixed encodings.) |
+| `copyTo(dst: char[], dstOff: unsigned int)` | *(void)* | Decode all fragment content (as UTF-32 code points) into `dst` starting at `dstOff`. |
+
+> **`CharRef` write-proxy** — the non-const `at()` / `operator[]` return a
+> `CharRef` that holds a link to the builder and a logical index. `sb[i] = c`
+> stores the code point `c` (equivalent to `set(i, c)`). For reading a single
+> code point use `charAt(i)` (always returns `char`). A `CharRef` is invalidated
+> by any structural mutation of the builder.
 
 ### Conversion
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `operator() : String` | `String` | Conversion operator — consolidates fragments, then builds an immutable `String`. Allows implicit `s : String = sb;`. |
-| `toString()` | `String` | Named alternative — builds and returns an immutable `String` from the current content (copies via `String(sb)` constructor). |
-| `encoding()` | `Encoding` | Logical encoding of the consolidated content (`Encoding::UTF32`). |
+| `operator() : String` | `String` | Conversion operator — builds an immutable `String` using the default (`MostCompact`) consolidation policy. |
+| `toString()` | `String` | Builds an immutable `String` using the default (`MostCompact`) policy. |
+| `toString(policy: ConsolidationPolicy)` | `String` | Builds an immutable `String`, choosing the storage encoding per `policy`. |
+| `toString(enc: Encoding)` | `String` | Builds an immutable `String` stored in the given encoding `enc`. |
+| `rawEncoding()` | `Encoding` | First-fragment encoding (see Accessors). |
 | `toUtf32()` | `char[]!` | New null-terminated UTF-32 copy of the content. |
 | `toUtf8()` | `unsigned byte[]!` | New null-terminated UTF-8 encoding of the content. |
 | `toUtf16()` | `unsigned short[]!` | New null-terminated UTF-16 encoding of the content. |
+
+**`ConsolidationPolicy`** (chooses the storage encoding of the produced `String`):
+
+| Value | Description |
+|-------|-------------|
+| `MostCompact` | Pick the encoding with the smallest byte footprint (default). |
+| `FirstFragment` | Use the encoding of the builder's first fragment. |
+| `ForceUtf8` / `ForceUtf16` / `ForceUtf32` | Always use the named encoding. |
 
 ### Search Methods
 
@@ -269,13 +297,14 @@ All mutating methods return `StringBuilder&` for fluent chaining.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `consolidate()` | `StringBuilder&` | Merge all fragments into a single contiguous buffer. Safe to call multiple times; no-op when already consolidated. |
-| `append(s: const String&)` | `StringBuilder&` | Append the content of a `String`. |
-| `append(src: const char[])` | `StringBuilder&` | Append a `const char[]` (e.g. a string literal). |
-| `append(src: const unsigned byte[])` | `StringBuilder&` | Append a UTF-8 fragment (e.g. a `u8"…"` literal), decoding it to UTF-32. |
-| `append(src: const unsigned short[])` | `StringBuilder&` | Append a UTF-16 fragment (e.g. a `u"…"` literal), decoding it to UTF-32. |
-| `append(other: const StringBuilder&)` | `StringBuilder&` | Append another `StringBuilder`'s content. |
-| `appendChar(c: char)` | `StringBuilder&` | Append a single character. |
+| `consolidate()` | `StringBuilder&` | Merge all fragments into a single contiguous UTF-32 fragment. Safe to call multiple times. |
+| `append(s: const String&)` | `StringBuilder&` | Append a `String`, mirroring its native storage encoding. |
+| `append(src: const char[])` | `StringBuilder&` | Append a `const char[]` (e.g. a string literal) as a UTF-32 fragment. |
+| `append(src: const unsigned byte[])` | `StringBuilder&` | Append a UTF-8 fragment (e.g. a `u8"…"` literal), stored natively as UTF-8. |
+| `append(src: const unsigned short[])` | `StringBuilder&` | Append a UTF-16 fragment (e.g. a `u"…"` literal), stored natively as UTF-16. |
+| `append(other: const StringBuilder&)` | `StringBuilder&` | Append another `StringBuilder`'s content, mirroring each of its fragments. |
+| `appendChar(c: char)` | `StringBuilder&` | Append a single character (UTF-32 fragment). |
+| `set(index: unsigned int, c: char)` | `StringBuilder&` | Set the code point at `index` (consolidates to UTF-32 first). No-op if out of range. |
 | `prepend(s: const String&)` | `StringBuilder&` | Prepend a `String` at the beginning. |
 | `prepend(src: const char[])` | `StringBuilder&` | Prepend a `const char[]` at the beginning. |
 | `insert(pos: unsigned int, s: const String&)` | `StringBuilder&` | Insert a `String` at the given position. |

@@ -29,6 +29,21 @@ public enum Encoding {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+// ConsolidationPolicy — chooses the storage encoding used when a StringBuilder
+// is converted to an immutable String (toString / operator() String).
+//   MostCompact  : pick the encoding with the smallest byte footprint (default).
+//   FirstFragment: use the encoding of the builder's first fragment.
+//   ForceUtf8 / ForceUtf16 / ForceUtf32 : always use the named encoding.
+// ═════════════════════════════════════════════════════════════════════════════
+public enum ConsolidationPolicy {
+    MostCompact;
+    FirstFragment;
+    ForceUtf8;
+    ForceUtf16;
+    ForceUtf32;
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 // CharHelpers — Static utility methods for char[] buffer operations.
 //
 // All methods are public and static, intended to be called as:
@@ -430,6 +445,101 @@ public:
             return (char) (0x10000 + (((u0 - 0xD800) << 10) | (lo - 0xDC00)));
         }
         return (char) u0;
+    }
+
+    // ── Offset-aware access / range decode (for heterogeneous fragments) ──
+
+    /** Return the code point at logical position `cpIndex`, where the UTF-8
+     *  sequence starts at byte offset `byteStart` in `buf`. O(cpIndex). */
+    public static utf8CodePointAtFrom(buf: const unsigned byte[], byteStart: unsigned int, cpIndex: unsigned int) : char {
+        i : unsigned int = byteStart;
+        cp : unsigned int = 0u;
+        while (cp < cpIndex) {
+            b : int = buf[i];
+            if (b >= 0xF0) { i = i + 4u; }
+            else if (b >= 0xE0) { i = i + 3u; }
+            else if (b >= 0xC0) { i = i + 2u; }
+            else { i = i + 1u; }
+            cp = cp + 1u;
+        }
+        b0 : int = buf[i];
+        if (b0 < 0x80) { return (char) b0; }
+        if (b0 < 0xE0) { return (char) (((b0 & 0x1F) << 6) | (buf[i + 1u] & 0x3F)); }
+        if (b0 < 0xF0) { return (char) (((b0 & 0x0F) << 12) | ((buf[i + 1u] & 0x3F) << 6) | (buf[i + 2u] & 0x3F)); }
+        return (char) (((b0 & 0x07) << 18) | ((buf[i + 1u] & 0x3F) << 12) | ((buf[i + 2u] & 0x3F) << 6) | (buf[i + 3u] & 0x3F));
+    }
+
+    /** Return the code point at logical position `cpIndex`, where the UTF-16
+     *  sequence starts at unit offset `unitStart` in `buf`. O(cpIndex). */
+    public static utf16CodePointAtFrom(buf: const unsigned short[], unitStart: unsigned int, cpIndex: unsigned int) : char {
+        i : unsigned int = unitStart;
+        cp : unsigned int = 0u;
+        while (cp < cpIndex) {
+            u : int = buf[i];
+            if (u >= 0xD800 && u < 0xDC00) { i = i + 2u; } else { i = i + 1u; }
+            cp = cp + 1u;
+        }
+        u0 : int = buf[i];
+        if (u0 >= 0xD800 && u0 < 0xDC00) {
+            lo : int = buf[i + 1u];
+            return (char) (0x10000 + (((u0 - 0xD800) << 10) | (lo - 0xDC00)));
+        }
+        return (char) u0;
+    }
+
+    /** Decode `byteLen` UTF-8 bytes from `src[byteStart..]` into `dst[dstOff..]`
+     *  as UTF-32 code points. Returns the number of code points written. */
+    public static utf8DecodeRangeInto(src: const unsigned byte[], byteStart: unsigned int, byteLen: unsigned int, dst: char[], dstOff: unsigned int) : unsigned int {
+        i : unsigned int = byteStart;
+        endPos : unsigned int = byteStart + byteLen;
+        o : unsigned int = dstOff;
+        n : unsigned int = 0u;
+        while (i < endPos) {
+            b0 : int = src[i];
+            cp : char = 0;
+            if (b0 < 0x80) {
+                cp = (char) b0;
+                i = i + 1u;
+            } else if (b0 < 0xE0) {
+                cp = (char) (((b0 & 0x1F) << 6) | (src[i + 1u] & 0x3F));
+                i = i + 2u;
+            } else if (b0 < 0xF0) {
+                cp = (char) (((b0 & 0x0F) << 12) | ((src[i + 1u] & 0x3F) << 6) | (src[i + 2u] & 0x3F));
+                i = i + 3u;
+            } else {
+                cp = (char) (((b0 & 0x07) << 18) | ((src[i + 1u] & 0x3F) << 12) | ((src[i + 2u] & 0x3F) << 6) | (src[i + 3u] & 0x3F));
+                i = i + 4u;
+            }
+            dst[o] = cp;
+            o = o + 1u;
+            n = n + 1u;
+        }
+        return n;
+    }
+
+    /** Decode `unitLen` UTF-16 code units from `src[unitStart..]` into
+     *  `dst[dstOff..]` as UTF-32 code points. Returns the number written. */
+    public static utf16DecodeRangeInto(src: const unsigned short[], unitStart: unsigned int, unitLen: unsigned int, dst: char[], dstOff: unsigned int) : unsigned int {
+        i : unsigned int = unitStart;
+        endPos : unsigned int = unitStart + unitLen;
+        o : unsigned int = dstOff;
+        n : unsigned int = 0u;
+        while (i < endPos) {
+            u : int = src[i];
+            cp : char = 0;
+            if (u >= 0xD800 && u < 0xDC00) {
+                lo : int = src[i + 1u];
+                cp = (char) (0x10000 + (((u - 0xD800) << 10) | (lo - 0xDC00)));
+                i = i + 2u;
+            } else {
+                cp = (char) u;
+                i = i + 1u;
+            }
+            dst[o] = cp;
+            o = o + 1u;
+            n = n + 1u;
+        }
+        return n;
     }
 }
 
@@ -914,282 +1024,509 @@ public:
 // happens only when converting to String or when a mutation requires
 // contiguous access (reverse, trim, remove).
 // ═════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
+// StringBuilder — Mutable string builder with heterogeneous, multi-encoding
+// fragment storage.
+//
+// Content is appended as a sequence of fragments, each kept in its NATIVE
+// encoding (no transcoding on append). Three growable pools hold the raw units:
+//   - _poolU8  : unsigned byte[]  — UTF-8 fragments
+//   - _poolU16 : unsigned short[] — UTF-16 fragments
+//   - _poolU32 : char[]           — UTF-32 fragments
+// Four parallel metadata arrays describe each fragment in logical order:
+//   - _fragEnc   : 0=UTF8, 1=UTF16, 2=UTF32
+//   - _fragStart : start offset (in pool units) within the matching pool
+//   - _fragUnits : number of pool units the fragment occupies
+//   - _fragCp    : number of code points in the fragment
+//
+// The public API is char-based (code points). Random read access decodes per
+// fragment; bulk reads decode everything to UTF-32 on demand. Any in-place
+// MUTATION first consolidates all fragments into a single UTF-32 fragment, so
+// mutation logic always operates on a contiguous _poolU32 buffer.
+// ═════════════════════════════════════════════════════════════════════════════
 class StringBuilder {
-    _pool      : char[]!;            // flat buffer for all fragment data
-    _poolUsed  : unsigned int;       // bytes used in pool
-    _poolCap   : unsigned int;       // allocated pool capacity
-    _starts    : unsigned int[]!;    // start offset of each fragment in _pool
-    _lens      : unsigned int[]!;    // length of each fragment
-    _fragCount : unsigned int;       // number of fragments
-    _fragCap   : unsigned int;       // capacity of _starts/_lens arrays
-    _totalSize : unsigned int;       // total chars across all fragments
+    _poolU8    : unsigned byte[]!;    _u8Used  : unsigned int;   _u8Cap  : unsigned int;
+    _poolU16   : unsigned short[]!;   _u16Used : unsigned int;   _u16Cap : unsigned int;
+    _poolU32   : char[]!;             _u32Used : unsigned int;   _u32Cap : unsigned int;
+    _fragEnc   : unsigned byte[]!;    // encoding tag per fragment (0/1/2)
+    _fragStart : unsigned int[]!;     // start offset (pool units) per fragment
+    _fragUnits : unsigned int[]!;     // unit count per fragment
+    _fragCp    : unsigned int[]!;     // code-point count per fragment
+    _fragCount : unsigned int;        // number of fragments
+    _fragCap   : unsigned int;        // capacity of the metadata arrays
+    _totalSize : unsigned int;        // total code points across all fragments
 
 public:
     // ── Constructors ────────────────────────────────────────────────────
 
-    /** Default: empty builder. */
-    StringBuilder() -> default;
-
-    /** Construct from a String. */
-    StringBuilder(s : const String&) : _pool(null), _poolUsed(0), _poolCap(0), _starts(null), _lens(null), _fragCount(0), _fragCap(0), _totalSize(0) {
-        if (s.size() > 0) {
-            _ensurePoolCap(s.size());
-            _ensureFragCap(1);
-            CharHelpers::copy(_pool, 0, s.toUtf32(), 0, s.size());
-            _poolUsed = s.size();
-            _starts[0] = 0;
-            _lens[0] = s.size();
-            _fragCount = 1;
-            _totalSize = s.size();
-        }
+    /** Default: empty builder (no allocation). */
+    StringBuilder() : _u8Used(0), _u8Cap(0), _u16Used(0), _u16Cap(0), _u32Used(0), _u32Cap(0), _fragCount(0), _fragCap(0), _totalSize(0) {
+        _poolU8 = null;
+        _poolU16 = null;
+        _poolU32 = null;
+        _fragEnc = null;
+        _fragStart = null;
+        _fragUnits = null;
+        _fragCp = null;
     }
 
-    /** Construct from a const char[] (e.g. a string literal).
-     *  The source array is expected to include a null terminator:
-     *  src.size == number_of_characters + 1.
-     */
-    StringBuilder(src : const char[]) : _pool(null), _poolUsed(0), _poolCap(0), _starts(null), _lens(null), _fragCount(0), _fragCap(0), _totalSize(0) {
-        if (src.size > 1) {
-            sz : unsigned int = src.size - 1;
-            _ensurePoolCap(sz);
-            _ensureFragCap(1);
-            CharHelpers::copy(_pool, 0, src, 0, sz);
-            _poolUsed = sz;
-            _starts[0] = 0;
-            _lens[0] = sz;
-            _fragCount = 1;
-            _totalSize = sz;
-        }
-    }
-
-    /** Copy constructor — deep copies with consolidation.
-     *  Uses charAt-based copy to work around a compiler codegen issue
-     *  with multi-fragment copyTo called across method boundaries.
-     */
-    StringBuilder(other : const StringBuilder&) : _pool(null), _poolUsed(0), _poolCap(0), _starts(null), _lens(null), _fragCount(0), _fragCap(0), _totalSize(0) {
-        if (other._totalSize > 0) {
-            _ensurePoolCap(other._totalSize);
-            _ensureFragCap(1);
-            i : unsigned int = 0;
-            while (i < other._totalSize) {
-                _pool[i] = other.charAt(i);
-                i = i + 1;
+    /** Construct from a String, mirroring the String's native storage encoding.
+     *  (Logic is inlined rather than delegating to append(): calling a member
+     *  method from a constructor body is not yet supported — the vtable pointer
+     *  is initialised only after the body runs.) */
+    StringBuilder(s : const String&) : _u8Used(0), _u8Cap(0), _u16Used(0), _u16Cap(0), _u32Used(0), _u32Cap(0), _fragCount(0), _fragCap(0), _totalSize(0) {
+        _poolU8 = null;
+        _poolU16 = null;
+        _poolU32 = null;
+        _fragEnc = null;
+        _fragStart = null;
+        _fragUnits = null;
+        _fragCp = null;
+        n : unsigned int = s.size();
+        if (n > 0u) {
+            fcap : unsigned int = 4u;
+            ec : unsigned byte[]! = new unsigned byte[fcap];
+            st : unsigned int[]! = new unsigned int[fcap];
+            un : unsigned int[]! = new unsigned int[fcap];
+            cp : unsigned int[]! = new unsigned int[fcap];
+            st[0] = 0u;
+            cp[0] = n;
+            e : int = (int) s.rawEncoding();
+            if (e == 0) {
+                units : unsigned byte[]! = s.toUtf8();
+                ulen : unsigned int = units.size - 1u;
+                p : unsigned byte[]! = new unsigned byte[ulen];
+                CharHelpers::copyBytes(p, 0u, units, 0u, ulen);
+                _poolU8 = p;
+                _u8Used = ulen;
+                _u8Cap = ulen;
+                ec[0] = (unsigned byte) 0;
+                un[0] = ulen;
+            } else if (e == 1) {
+                units : unsigned short[]! = s.toUtf16();
+                ulen : unsigned int = units.size - 1u;
+                p : unsigned short[]! = new unsigned short[ulen];
+                CharHelpers::copyShorts(p, 0u, units, 0u, ulen);
+                _poolU16 = p;
+                _u16Used = ulen;
+                _u16Cap = ulen;
+                ec[0] = (unsigned byte) 1;
+                un[0] = ulen;
+            } else {
+                units : char[]! = s.toUtf32();
+                p : char[]! = new char[n];
+                CharHelpers::copy(p, 0u, units, 0u, n);
+                _poolU32 = p;
+                _u32Used = n;
+                _u32Cap = n;
+                ec[0] = (unsigned byte) 2;
+                un[0] = n;
             }
-            _poolUsed = other._totalSize;
-            _starts[0] = 0;
-            _lens[0] = other._totalSize;
-            _fragCount = 1;
+            _fragEnc = ec;
+            _fragStart = st;
+            _fragUnits = un;
+            _fragCp = cp;
+            _fragCount = 1u;
+            _fragCap = fcap;
+            _totalSize = n;
+        }
+    }
+
+    /** Construct from a const char[] (e.g. a string literal). Stored as UTF-32.
+     *  src.size is expected to include the null terminator.
+     *  (Logic inlined — see the note on StringBuilder(const String&).) */
+    StringBuilder(src : const char[]) : _u8Used(0), _u8Cap(0), _u16Used(0), _u16Cap(0), _u32Used(0), _u32Cap(0), _fragCount(0), _fragCap(0), _totalSize(0) {
+        _poolU8 = null;
+        _poolU16 = null;
+        _poolU32 = null;
+        _fragEnc = null;
+        _fragStart = null;
+        _fragUnits = null;
+        _fragCp = null;
+        if (src.size > 1u) {
+            n : unsigned int = src.size - 1u;
+            p : char[]! = new char[n];
+            CharHelpers::copy(p, 0u, src, 0u, n);
+            _poolU32 = p;
+            _u32Used = n;
+            _u32Cap = n;
+            fcap : unsigned int = 4u;
+            ec : unsigned byte[]! = new unsigned byte[fcap];
+            st : unsigned int[]! = new unsigned int[fcap];
+            un : unsigned int[]! = new unsigned int[fcap];
+            cp : unsigned int[]! = new unsigned int[fcap];
+            ec[0] = (unsigned byte) 2;
+            st[0] = 0u;
+            un[0] = n;
+            cp[0] = n;
+            _fragEnc = ec;
+            _fragStart = st;
+            _fragUnits = un;
+            _fragCp = cp;
+            _fragCount = 1u;
+            _fragCap = fcap;
+            _totalSize = n;
+        }
+    }
+
+    /** Construct from a UTF-8 `unsigned byte[]` (e.g. a `u8"…"` literal),
+     *  stored natively as UTF-8. src.size includes the trailing null byte.
+     *  (Logic inlined — see the note on StringBuilder(const String&).) */
+    StringBuilder(src : const unsigned byte[]) : _u8Used(0), _u8Cap(0), _u16Used(0), _u16Cap(0), _u32Used(0), _u32Cap(0), _fragCount(0), _fragCap(0), _totalSize(0) {
+        _poolU8 = null;
+        _poolU16 = null;
+        _poolU32 = null;
+        _fragEnc = null;
+        _fragStart = null;
+        _fragUnits = null;
+        _fragCp = null;
+        if (src.size > 1u) {
+            ulen : unsigned int = src.size - 1u;
+            ncp : unsigned int = CharHelpers::utf8CodePointCount(src, ulen);
+            if (ncp > 0u) {
+                p : unsigned byte[]! = new unsigned byte[ulen];
+                CharHelpers::copyBytes(p, 0u, src, 0u, ulen);
+                _poolU8 = p;
+                _u8Used = ulen;
+                _u8Cap = ulen;
+                fcap : unsigned int = 4u;
+                ec : unsigned byte[]! = new unsigned byte[fcap];
+                st : unsigned int[]! = new unsigned int[fcap];
+                un : unsigned int[]! = new unsigned int[fcap];
+                cp : unsigned int[]! = new unsigned int[fcap];
+                ec[0] = (unsigned byte) 0;
+                st[0] = 0u;
+                un[0] = ulen;
+                cp[0] = ncp;
+                _fragEnc = ec;
+                _fragStart = st;
+                _fragUnits = un;
+                _fragCp = cp;
+                _fragCount = 1u;
+                _fragCap = fcap;
+                _totalSize = ncp;
+            }
+        }
+    }
+
+    /** Construct from a UTF-16 `unsigned short[]` (e.g. a `u"…"` literal),
+     *  stored natively as UTF-16. src.size includes the trailing null code unit.
+     *  (Logic inlined — see the note on StringBuilder(const String&).) */
+    StringBuilder(src : const unsigned short[]) : _u8Used(0), _u8Cap(0), _u16Used(0), _u16Cap(0), _u32Used(0), _u32Cap(0), _fragCount(0), _fragCap(0), _totalSize(0) {
+        _poolU8 = null;
+        _poolU16 = null;
+        _poolU32 = null;
+        _fragEnc = null;
+        _fragStart = null;
+        _fragUnits = null;
+        _fragCp = null;
+        if (src.size > 1u) {
+            ulen : unsigned int = src.size - 1u;
+            ncp : unsigned int = CharHelpers::utf16CodePointCount(src, ulen);
+            if (ncp > 0u) {
+                p : unsigned short[]! = new unsigned short[ulen];
+                CharHelpers::copyShorts(p, 0u, src, 0u, ulen);
+                _poolU16 = p;
+                _u16Used = ulen;
+                _u16Cap = ulen;
+                fcap : unsigned int = 4u;
+                ec : unsigned byte[]! = new unsigned byte[fcap];
+                st : unsigned int[]! = new unsigned int[fcap];
+                un : unsigned int[]! = new unsigned int[fcap];
+                cp : unsigned int[]! = new unsigned int[fcap];
+                ec[0] = (unsigned byte) 1;
+                st[0] = 0u;
+                un[0] = ulen;
+                cp[0] = ncp;
+                _fragEnc = ec;
+                _fragStart = st;
+                _fragUnits = un;
+                _fragCp = cp;
+                _fragCount = 1u;
+                _fragCap = fcap;
+                _totalSize = ncp;
+            }
+        }
+    }
+
+    /** Copy constructor — deep-copies all pools and fragment metadata,
+     *  preserving each fragment's native encoding.
+     *  (Logic inlined — see the note on StringBuilder(const String&).) */
+    StringBuilder(other : const StringBuilder&) : _u8Used(0), _u8Cap(0), _u16Used(0), _u16Cap(0), _u32Used(0), _u32Cap(0), _fragCount(0), _fragCap(0), _totalSize(0) {
+        _poolU8 = null;
+        _poolU16 = null;
+        _poolU32 = null;
+        _fragEnc = null;
+        _fragStart = null;
+        _fragUnits = null;
+        _fragCp = null;
+        if (other._totalSize > 0u) {
+            if (other._u8Used > 0u) {
+                len : unsigned int = other._u8Used;
+                p : unsigned byte[]! = new unsigned byte[len];
+                CharHelpers::copyBytes(p, 0u, other._poolU8, 0u, len);
+                _poolU8 = p;
+                _u8Used = len;
+                _u8Cap = len;
+            }
+            if (other._u16Used > 0u) {
+                len : unsigned int = other._u16Used;
+                p : unsigned short[]! = new unsigned short[len];
+                CharHelpers::copyShorts(p, 0u, other._poolU16, 0u, len);
+                _poolU16 = p;
+                _u16Used = len;
+                _u16Cap = len;
+            }
+            if (other._u32Used > 0u) {
+                len : unsigned int = other._u32Used;
+                p : char[]! = new char[len];
+                CharHelpers::copy(p, 0u, other._poolU32, 0u, len);
+                _poolU32 = p;
+                _u32Used = len;
+                _u32Cap = len;
+            }
+            fc : unsigned int = other._fragCount;
+            ec : unsigned byte[]! = new unsigned byte[fc];
+            st : unsigned int[]! = new unsigned int[fc];
+            un : unsigned int[]! = new unsigned int[fc];
+            cp : unsigned int[]! = new unsigned int[fc];
+            i : unsigned int = 0u;
+            while (i < fc) {
+                ec[i] = other._fragEnc[i];
+                st[i] = other._fragStart[i];
+                un[i] = other._fragUnits[i];
+                cp[i] = other._fragCp[i];
+                i = i + 1u;
+            }
+            _fragEnc = ec;
+            _fragStart = st;
+            _fragUnits = un;
+            _fragCp = cp;
+            _fragCount = fc;
+            _fragCap = fc;
             _totalSize = other._totalSize;
         }
     }
 
-    /** Drain constructor from another StringBuilder.
-     *  Steals all internal state from the source, leaving it empty.
-     */
-    StringBuilder(other : StringBuilder#) : _pool(other._pool), _poolUsed(other._poolUsed), _poolCap(other._poolCap), _starts(other._starts), _lens(other._lens), _fragCount(other._fragCount), _fragCap(other._fragCap), _totalSize(other._totalSize) {
-        other._pool = null;
-        other._poolUsed = 0;
-        other._poolCap = 0;
-        other._starts = null;
-        other._lens = null;
-        other._fragCount = 0;
-        other._fragCap = 0;
-        other._totalSize = 0;
+    /** Drain constructor — steals all internal state, leaving the source empty. */
+    StringBuilder(other : StringBuilder#) : _u8Used(other._u8Used), _u8Cap(other._u8Cap), _u16Used(other._u16Used), _u16Cap(other._u16Cap), _u32Used(other._u32Used), _u32Cap(other._u32Cap), _fragCount(other._fragCount), _fragCap(other._fragCap), _totalSize(other._totalSize) {
+        _poolU8 = other._poolU8;
+        _poolU16 = other._poolU16;
+        _poolU32 = other._poolU32;
+        _fragEnc = other._fragEnc;
+        _fragStart = other._fragStart;
+        _fragUnits = other._fragUnits;
+        _fragCp = other._fragCp;
+        other._poolU8 = null;     other._u8Used = 0u;   other._u8Cap = 0u;
+        other._poolU16 = null;    other._u16Used = 0u;  other._u16Cap = 0u;
+        other._poolU32 = null;    other._u32Used = 0u;  other._u32Cap = 0u;
+        other._fragEnc = null;
+        other._fragStart = null;
+        other._fragUnits = null;
+        other._fragCp = null;
+        other._fragCount = 0u;
+        other._fragCap = 0u;
+        other._totalSize = 0u;
     }
 
     // ── Accessors ───────────────────────────────────────────────────────
 
-    /** Total number of characters across all fragments. */
+    /** Total number of characters (code points) across all fragments. */
     const size() : unsigned int { return _totalSize; }
 
     /** True when the builder contains no characters. */
     const empty() : bool { return _totalSize == 0; }
 
-    /** Return the character at the given logical position.
-     *  Traverses fragments — O(fragCount). No bounds check. */
-    const charAt(index : unsigned int) : char {
-        pos : unsigned int = 0;
-        i : unsigned int = 0;
-        while (i < _fragCount) {
-            if (index < pos + _lens[i]) {
-                return _pool[_starts[i] + index - pos];
-            }
-            pos = pos + _lens[i];
-            i = i + 1;
-        }
-        return '\0';
+    /** The native storage encoding of the first fragment, or UTF-32 if empty.
+     *  Note: a builder may hold fragments of mixed encodings; this reports the
+     *  encoding of the first one (and the encoding chosen by the FirstFragment
+     *  consolidation policy). */
+    const rawEncoding() : Encoding {
+        if (_fragCount == 0u) return Encoding::UTF32;
+        e : int = (int) _fragEnc[0];
+        if (e == 0) return Encoding::UTF8;
+        if (e == 1) return Encoding::UTF16;
+        return Encoding::UTF32;
     }
 
-    /** Copy all fragment content to a destination buffer starting at dstOff. */
+    /** Return the character (code point) at the given logical position.
+     *  Read-only. O(fragCount + intra-fragment offset). No bounds check. */
+    const charAt(index : unsigned int) : char {
+        pos : unsigned int = 0u;
+        i : unsigned int = 0u;
+        while (i < _fragCount) {
+            if (index < pos + _fragCp[i]) {
+                local : unsigned int = index - pos;
+                e : int = (int) _fragEnc[i];
+                if (e == 2) {
+                    return _poolU32[_fragStart[i] + local];
+                }
+                if (e == 1) {
+                    return CharHelpers::utf16CodePointAtFrom(_poolU16, _fragStart[i], local);
+                }
+                return CharHelpers::utf8CodePointAtFrom(_poolU8, _fragStart[i], local);
+            }
+            pos = pos + _fragCp[i];
+            i = i + 1u;
+        }
+        return (char) 0;
+    }
+
+    /** Read the code point at `index` (read-only subscript). */
+    const at(index : unsigned int) : char { return charAt(index); }
+
+    /** Read the code point at `index` (read-only subscript). */
+    const operator [](index : unsigned int) : char { return charAt(index); }
+
+    /** Mutable element access — returns a write-proxy. `sb[i] = c` stores the
+     *  code point via set(); `(char) sb[i]` reads it. The proxy is invalidated
+     *  by any structural mutation (insert/remove/clear/…). */
+    operator [](index : unsigned int) : CharRef {
+        r : CharRef(this, index);
+        return r;
+    }
+
+    /** Mutable element access (named form) — returns a write-proxy. */
+    at(index : unsigned int) : CharRef {
+        r : CharRef(this, index);
+        return r;
+    }
+
+    /** Copy all fragment content into `dst` (UTF-32 code points) at `dstOff`. */
     const copyTo(dst : char[], dstOff : unsigned int) {
         off : unsigned int = dstOff;
-        i : unsigned int = 0;
+        i : unsigned int = 0u;
         while (i < _fragCount) {
-            CharHelpers::copy(dst, off, _pool, _starts[i], _lens[i]);
-            off = off + _lens[i];
-            i = i + 1;
+            e : int = (int) _fragEnc[i];
+            if (e == 2) {
+                CharHelpers::copy(dst, off, _poolU32, _fragStart[i], _fragCp[i]);
+            } else if (e == 1) {
+                CharHelpers::utf16DecodeRangeInto(_poolU16, _fragStart[i], _fragUnits[i], dst, off);
+            } else {
+                CharHelpers::utf8DecodeRangeInto(_poolU8, _fragStart[i], _fragUnits[i], dst, off);
+            }
+            off = off + _fragCp[i];
+            i = i + 1u;
         }
     }
 
     // ── Conversion ──────────────────────────────────────────────────────
 
-    /** Conversion operator — build an immutable String.
-     *  Consolidates first to ensure single-fragment state, then copies. */
+    /** Conversion operator — build an immutable String using the default
+     *  (MostCompact) consolidation policy. */
     operator() : String {
-        if (_totalSize == 0) {
+        return toString(ConsolidationPolicy::MostCompact);
+    }
+
+    /** Build an immutable String using the default (MostCompact) policy. */
+    const toString() : String {
+        return toString(ConsolidationPolicy::MostCompact);
+    }
+
+    /** Build an immutable String, choosing the storage encoding per `policy`. */
+    const toString(policy : ConsolidationPolicy) : String {
+        if (_totalSize == 0u) {
             emptyStr : String;
             return emptyStr;
         }
-        _consolidate();
-        allocSz : unsigned int = _totalSize + 1;
-        buf : char[]! = new char[allocSz];
-        CharHelpers::copy(buf, 0, _pool, 0, _totalSize);
-        buf[_totalSize] = '\0';
-        result : String(buf, _totalSize);
-        return result;
+        enc : Encoding = _resolvePolicy(policy);
+        return _buildString(enc);
     }
 
-    /** Build and return an immutable String from the current content.
-     *  This is a named alternative to the conversion operator.
-     *  Copies the content into a new null-terminated buffer. */
-    const toString() : String {
-        result : String(this);
-        return result;
+    /** Build an immutable String stored in the given encoding `enc`. */
+    const toString(enc : Encoding) : String {
+        if (_totalSize == 0u) {
+            emptyStr : String;
+            return emptyStr;
+        }
+        return _buildString(enc);
     }
 
     // ── Encoding / array conversions ────────────────────────────────────
 
-    /** The logical encoding of the content. Fragments are stored as UTF-32
-     *  code points, so the consolidated content is UTF-32. */
-    const encoding() : Encoding {
-        return Encoding::UTF32;
-    }
-
     /** Return the content as a new, null-terminated UTF-32 `char[]`. */
     const toUtf32() : char[]! {
-        out : char[]! = new char[_totalSize + 1u];
-        copyTo(out, 0u);
-        out[_totalSize] = (char) 0;
-        return out;
+        return _decodeAll();
     }
 
     /** Return the content as a new, null-terminated UTF-8 `unsigned byte[]`. */
     const toUtf8() : unsigned byte[]! {
-        tmp : char[]! = new char[_totalSize + 1u];
-        copyTo(tmp, 0u);
-        tmp[_totalSize] = (char) 0;
+        tmp : char[]! = _decodeAll();
         result : unsigned byte[]! = CharHelpers::toUtf8(tmp, _totalSize);
-        delete tmp;
         return result;
     }
 
     /** Return the content as a new, null-terminated UTF-16 `unsigned short[]`. */
     const toUtf16() : unsigned short[]! {
-        tmp : char[]! = new char[_totalSize + 1u];
-        copyTo(tmp, 0u);
-        tmp[_totalSize] = (char) 0;
+        tmp : char[]! = _decodeAll();
         result : unsigned short[]! = CharHelpers::toUtf16(tmp, _totalSize);
-        delete tmp;
         return result;
     }
 
     // ── Search methods ──────────────────────────────────────────────────
 
-    /** Find the first occurrence of character `c`.
-     *  Returns the logical index, or -1 if not found. */
+    /** Find the first occurrence of character `c`. Returns index or -1. */
     const find(c : char) : int {
-        pos : int = 0;
-        i : unsigned int = 0;
-        while (i < _fragCount) {
-            j : int = 0;
-            while (j < _lens[i]) {
-                if (_pool[_starts[i] + j] == c) return pos + j;
-                j = j + 1;
-            }
-            pos = pos + _lens[i];
-            i = i + 1;
-        }
-        return -1;
+        if (_totalSize == 0u) return -1;
+        b : char[]! = _decodeAll();
+        return CharHelpers::findChar(b, 0u, _totalSize, c);
     }
 
-    /** Find the first occurrence of `needle`.
-     *  Returns the starting index, or -1 if not found. */
+    /** Find the first occurrence of `needle`. Returns start index or -1. */
     const find(needle : const String&) : int {
-        if (needle.size() == 0) return 0;
-        if (_totalSize == 0) return -1;
-        tmp : String(this);
-        return tmp.find(needle);
+        if (needle.size() == 0u) return 0;
+        if (_totalSize == 0u) return -1;
+        b : char[]! = _decodeAll();
+        nb : char[]! = needle.toUtf32();
+        return CharHelpers::find(b, 0u, _totalSize, nb, 0u, needle.size());
     }
 
-    /** Find the last occurrence of character `c`.
-     *  Returns the logical index, or -1 if not found. */
+    /** Find the last occurrence of character `c`. Returns index or -1. */
     const rfind(c : char) : int {
-        result : int = -1;
-        pos : int = 0;
-        i : unsigned int = 0;
-        while (i < _fragCount) {
-            j : int = 0;
-            while (j < _lens[i]) {
-                if (_pool[_starts[i] + j] == c) result = pos + j;
-                j = j + 1;
-            }
-            pos = pos + _lens[i];
-            i = i + 1;
-        }
-        return result;
+        if (_totalSize == 0u) return -1;
+        b : char[]! = _decodeAll();
+        return CharHelpers::rfindChar(b, 0u, _totalSize, c);
     }
 
-    /** Find the last occurrence of `needle`.
-     *  Returns the starting index, or -1 if not found. */
+    /** Find the last occurrence of `needle`. Returns start index or -1. */
     const rfind(needle : const String&) : int {
-        if (needle.size() == 0) {
+        if (needle.size() == 0u) {
             r : int = _totalSize;
             return r;
         }
-        if (_totalSize == 0) return -1;
+        if (_totalSize == 0u) return -1;
         tmp : String(this);
         return tmp.rfind(needle);
     }
 
     /** Return true if the content contains character `c`. */
-    const contains(c : char) : bool {
-        return find(c) >= 0;
-    }
+    const contains(c : char) : bool { return find(c) >= 0; }
 
     /** Return true if the content contains `needle`. */
-    const contains(needle : const String&) : bool {
-        return find(needle) >= 0;
-    }
+    const contains(needle : const String&) : bool { return find(needle) >= 0; }
 
     /** Alias for find(needle). */
-    const indexOf(needle : const String&) : int {
-        return find(needle);
-    }
+    const indexOf(needle : const String&) : int { return find(needle); }
 
     /** Alias for find(c). */
-    const indexOf(c : char) : int {
-        return find(c);
-    }
+    const indexOf(c : char) : int { return find(c); }
 
-    /** Count the number of non-overlapping occurrences of character `c`. */
+    /** Count non-overlapping occurrences of character `c`. */
     const count(c : char) : unsigned int {
-        n : unsigned int = 0;
-        pos : unsigned int = 0;
-        i : unsigned int = 0;
-        while (i < _fragCount) {
-            j : unsigned int = 0;
-            while (j < _lens[i]) {
-                if (_pool[_starts[i] + j] == c) n = n + 1;
-                j = j + 1;
-            }
-            i = i + 1;
+        if (_totalSize == 0u) return 0u;
+        b : char[]! = _decodeAll();
+        n : unsigned int = 0u;
+        i : unsigned int = 0u;
+        while (i < _totalSize) {
+            if (b[i] == c) n = n + 1u;
+            i = i + 1u;
         }
         return n;
     }
 
-    /** Count the number of non-overlapping occurrences of `needle`. */
+    /** Count non-overlapping occurrences of `needle`. */
     const count(needle : const String&) : unsigned int {
-        if (needle.size() == 0) return 0;
+        if (needle.size() == 0u) return 0u;
         tmp : String(this);
         return tmp.count(needle);
     }
@@ -1197,7 +1534,7 @@ public:
     /** Return true if the content begins with `prefix`. */
     const beginsWith(prefix : const String&) : bool {
         if (prefix.size() > _totalSize) return false;
-        if (prefix.size() == 0) return true;
+        if (prefix.size() == 0u) return true;
         tmp : String(this);
         return tmp.beginsWith(prefix);
     }
@@ -1205,13 +1542,12 @@ public:
     /** Return true if the content ends with `suffix`. */
     const endsWith(suffix : const String&) : bool {
         if (suffix.size() > _totalSize) return false;
-        if (suffix.size() == 0) return true;
+        if (suffix.size() == 0u) return true;
         tmp : String(this);
         return tmp.endsWith(suffix);
     }
 
-    /** Extract a substring as a new String.
-     *  Uses charAt to avoid cross-method codegen issues. */
+    /** Extract a substring as a new String (UTF-32 storage). */
     const substr(start : unsigned int, len : unsigned int) : String {
         if (start >= _totalSize) {
             empty : String;
@@ -1221,26 +1557,23 @@ public:
         if (start + actual > _totalSize) {
             actual = _totalSize - start;
         }
-        if (actual == 0) {
+        if (actual == 0u) {
             empty : String;
             return empty;
         }
-        allocSz : unsigned int = actual + 1;
-        buf : char[]! = new char[allocSz];
-        i : unsigned int = 0;
+        buf : char[]! = new char[actual + 1u];
+        i : unsigned int = 0u;
         while (i < actual) {
             buf[i] = charAt(start + i);
-            i = i + 1;
+            i = i + 1u;
         }
-        buf[actual] = '\0';
+        buf[actual] = (char) 0;
         result : String(buf, actual);
         return result;
     }
 
     /** Return a new String containing the first `count` characters. */
-    const first(count : unsigned int) : String {
-        return substr(0, count);
-    }
+    const first(count : unsigned int) : String { return substr(0u, count); }
 
     /** Return a new String containing the last `count` characters. */
     const last(count : unsigned int) : String {
@@ -1253,191 +1586,174 @@ public:
 
     // ── Mutating methods (return StringBuilder& for fluent chaining) ────
 
-    /** Consolidate all fragments into a single contiguous buffer.
-     *  Safe to call multiple times; no-op when already consolidated. */
+    /** Consolidate all fragments into a single UTF-32 fragment. */
     consolidate() : StringBuilder& {
         _consolidate();
         return this;
     }
 
-    /** Append a String. O(1) amortized — no char copying of existing data. */
+    /** Append a String, mirroring its native storage encoding (no transcode). */
     append(s : const String&) : StringBuilder& {
-        if (s.size() > 0) {
-            _ensurePoolCap(s.size());
-            _ensureFragCap(1);
-            poolStart : unsigned int = _poolUsed;
-            CharHelpers::copy(_pool, poolStart, s.toUtf32(), 0, s.size());
-            _poolUsed = _poolUsed + s.size();
-            _starts[_fragCount] = poolStart;
-            _lens[_fragCount] = s.size();
-            _fragCount = _fragCount + 1;
-            _totalSize = _totalSize + s.size();
+        n : unsigned int = s.size();
+        if (n == 0u) return this;
+        e : int = (int) s.rawEncoding();
+        if (e == 0) {
+            units : unsigned byte[]! = s.toUtf8();
+            ulen : unsigned int = units.size - 1u;
+            start : unsigned int = _u8Used;
+            _ensureU8(ulen);
+            CharHelpers::copyBytes(_poolU8, start, units, 0u, ulen);
+            _u8Used = _u8Used + ulen;
+            _pushFrag(0u, start, ulen, n);
+        } else if (e == 1) {
+            units : unsigned short[]! = s.toUtf16();
+            ulen : unsigned int = units.size - 1u;
+            start : unsigned int = _u16Used;
+            _ensureU16(ulen);
+            CharHelpers::copyShorts(_poolU16, start, units, 0u, ulen);
+            _u16Used = _u16Used + ulen;
+            _pushFrag(1u, start, ulen, n);
+        } else {
+            units : char[]! = s.toUtf32();
+            start : unsigned int = _u32Used;
+            _ensureU32(n);
+            CharHelpers::copy(_poolU32, start, units, 0u, n);
+            _u32Used = _u32Used + n;
+            _pushFrag(2u, start, n, n);
         }
         return this;
     }
 
-    /** Append a const char[] (e.g. a string literal).
-     *  src.size is expected to include the null terminator.
-     */
+    /** Append a const char[] (e.g. a string literal) as a UTF-32 fragment.
+     *  src.size is expected to include the null terminator. */
     append(src : const char[]) : StringBuilder& {
-        if (src.size > 1) {
-            count : unsigned int = src.size - 1;
-            _ensurePoolCap(count);
-            _ensureFragCap(1);
-            poolStart : unsigned int = _poolUsed;
-            CharHelpers::copy(_pool, poolStart, src, 0, count);
-            _poolUsed = _poolUsed + count;
-            _starts[_fragCount] = poolStart;
-            _lens[_fragCount] = count;
-            _fragCount = _fragCount + 1;
-            _totalSize = _totalSize + count;
-        }
+        if (src.size <= 1u) return this;
+        n : unsigned int = src.size - 1u;
+        start : unsigned int = _u32Used;
+        _ensureU32(n);
+        CharHelpers::copy(_poolU32, start, src, 0u, n);
+        _u32Used = _u32Used + n;
+        _pushFrag(2u, start, n, n);
         return this;
     }
 
-    /** Append a UTF-8 fragment (e.g. a `u8"…"` literal). The bytes are decoded
-     *  to UTF-32 before being stored, so fragments of different encodings can be
-     *  mixed in a single builder. src.size includes the trailing null byte. */
+    /** Append a UTF-8 fragment (e.g. a `u8"…"` literal), stored natively.
+     *  src.size includes the trailing null byte. */
     append(src : const unsigned byte[]) : StringBuilder& {
-        if (src.size > 1) {
-            decoded : char[]! = CharHelpers::utf8ToUtf32(src, src.size - 1u);
-            count : unsigned int = decoded.size - 1u;
-            if (count > 0u) {
-                _ensurePoolCap(count);
-                _ensureFragCap(1);
-                poolStart : unsigned int = _poolUsed;
-                CharHelpers::copy(_pool, poolStart, decoded, 0, count);
-                _poolUsed = _poolUsed + count;
-                _starts[_fragCount] = poolStart;
-                _lens[_fragCount] = count;
-                _fragCount = _fragCount + 1;
-                _totalSize = _totalSize + count;
-            }
-            delete decoded;
-        }
+        if (src.size <= 1u) return this;
+        ulen : unsigned int = src.size - 1u;
+        cp : unsigned int = CharHelpers::utf8CodePointCount(src, ulen);
+        if (cp == 0u) return this;
+        start : unsigned int = _u8Used;
+        _ensureU8(ulen);
+        CharHelpers::copyBytes(_poolU8, start, src, 0u, ulen);
+        _u8Used = _u8Used + ulen;
+        _pushFrag(0u, start, ulen, cp);
         return this;
     }
 
-    /** Append a UTF-16 fragment (e.g. a `u"…"` literal). The code units are
-     *  decoded to UTF-32 before being stored. src.size includes the trailing
-     *  null code unit. */
+    /** Append a UTF-16 fragment (e.g. a `u"…"` literal), stored natively.
+     *  src.size includes the trailing null code unit. */
     append(src : const unsigned short[]) : StringBuilder& {
-        if (src.size > 1) {
-            decoded : char[]! = CharHelpers::utf16ToUtf32(src, src.size - 1u);
-            count : unsigned int = decoded.size - 1u;
-            if (count > 0u) {
-                _ensurePoolCap(count);
-                _ensureFragCap(1);
-                poolStart : unsigned int = _poolUsed;
-                CharHelpers::copy(_pool, poolStart, decoded, 0, count);
-                _poolUsed = _poolUsed + count;
-                _starts[_fragCount] = poolStart;
-                _lens[_fragCount] = count;
-                _fragCount = _fragCount + 1;
-                _totalSize = _totalSize + count;
-            }
-            delete decoded;
-        }
+        if (src.size <= 1u) return this;
+        ulen : unsigned int = src.size - 1u;
+        cp : unsigned int = CharHelpers::utf16CodePointCount(src, ulen);
+        if (cp == 0u) return this;
+        start : unsigned int = _u16Used;
+        _ensureU16(ulen);
+        CharHelpers::copyShorts(_poolU16, start, src, 0u, ulen);
+        _u16Used = _u16Used + ulen;
+        _pushFrag(1u, start, ulen, cp);
         return this;
     }
 
-    /** Append another StringBuilder's content.
-     *  Uses charAt-based copy to work around a compiler codegen issue. */
+    /** Append another StringBuilder's content, mirroring each of its fragments. */
     append(other : const StringBuilder&) : StringBuilder& {
-        if (other._totalSize > 0) {
-            _ensurePoolCap(other._totalSize);
-            _ensureFragCap(1);
-            poolStart : unsigned int = _poolUsed;
-            i : unsigned int = 0;
-            while (i < other._totalSize) {
-                _pool[poolStart + i] = other.charAt(i);
-                i = i + 1;
+        if (other._totalSize == 0u) return this;
+        i : unsigned int = 0u;
+        while (i < other._fragCount) {
+            e : int = (int) other._fragEnc[i];
+            ostart : unsigned int = other._fragStart[i];
+            ounits : unsigned int = other._fragUnits[i];
+            ocp : unsigned int = other._fragCp[i];
+            if (e == 0) {
+                start : unsigned int = _u8Used;
+                _ensureU8(ounits);
+                CharHelpers::copyBytes(_poolU8, start, other._poolU8, ostart, ounits);
+                _u8Used = _u8Used + ounits;
+                _pushFrag(0u, start, ounits, ocp);
+            } else if (e == 1) {
+                start : unsigned int = _u16Used;
+                _ensureU16(ounits);
+                CharHelpers::copyShorts(_poolU16, start, other._poolU16, ostart, ounits);
+                _u16Used = _u16Used + ounits;
+                _pushFrag(1u, start, ounits, ocp);
+            } else {
+                start : unsigned int = _u32Used;
+                _ensureU32(ounits);
+                CharHelpers::copy(_poolU32, start, other._poolU32, ostart, ounits);
+                _u32Used = _u32Used + ounits;
+                _pushFrag(2u, start, ounits, ocp);
             }
-            _poolUsed = _poolUsed + other._totalSize;
-            _starts[_fragCount] = poolStart;
-            _lens[_fragCount] = other._totalSize;
-            _fragCount = _fragCount + 1;
-            _totalSize = _totalSize + other._totalSize;
+            i = i + 1u;
         }
         return this;
     }
 
-    /** Append a single character. */
+    /** Append a single character (UTF-32 fragment). */
     appendChar(c : char) : StringBuilder& {
-        _ensurePoolCap(1);
-        _ensureFragCap(1);
-        poolStart : unsigned int = _poolUsed;
-        _pool[poolStart] = c;
-        _poolUsed = _poolUsed + 1;
-        _starts[_fragCount] = poolStart;
-        _lens[_fragCount] = 1;
-        _fragCount = _fragCount + 1;
-        _totalSize = _totalSize + 1;
+        start : unsigned int = _u32Used;
+        _ensureU32(1u);
+        _poolU32[start] = c;
+        _u32Used = _u32Used + 1u;
+        _pushFrag(2u, start, 1u, 1u);
         return this;
     }
 
-    /** Prepend a String at the beginning.
-     *  Consolidates first to maintain single-fragment invariant. */
-    prepend(s : const String&) : StringBuilder& {
-        if (s.size() > 0) {
-            _consolidate();
-            newTotal : unsigned int = _totalSize + s.size();
-            newCap : unsigned int = newTotal + 1;
-            newPool : char[]! = new char[newCap];
-            // Copy prefix
-            CharHelpers::copy(newPool, 0, s.toUtf32(), 0, s.size());
-            // Copy existing content
-            if (_totalSize > 0) {
-                CharHelpers::copy(newPool, s.size(), _pool, 0, _totalSize);
-            }
-            delete _pool;
-            _pool = newPool;
-            _poolUsed = newTotal;
-            _poolCap = newCap;
-            _starts[0] = 0;
-            _lens[0] = newTotal;
-            _fragCount = 1;
-            _totalSize = newTotal;
-        }
+    /** Set the code point at logical position `index`. No-op if out of range.
+     *  Consolidates to UTF-32 first, then writes in place. */
+    set(index : unsigned int, c : char) : StringBuilder& {
+        if (index >= _totalSize) return this;
+        _consolidate();
+        _poolU32[index] = c;
         return this;
+    }
+
+    /** Prepend a String at the beginning. */
+    prepend(s : const String&) : StringBuilder& {
+        if (s.size() == 0u) return this;
+        return insert(0u, s);
     }
 
     /** Prepend a const char[] at the beginning. */
     prepend(src : const char[]) : StringBuilder& {
-        if (src.size > 1) {
+        if (src.size > 1u) {
             tmp : String(src);
-            return insert(0, tmp);
+            return insert(0u, tmp);
         }
         return this;
     }
 
-    /** Insert a String at the given logical position.
-     *  Consolidates first to maintain single-fragment invariant. */
+    /** Insert a String at the given logical position. */
     insert(pos : unsigned int, s : const String&) : StringBuilder& {
-        if (s.size() == 0) return this;
+        if (s.size() == 0u) return this;
         if (pos >= _totalSize) return append(s);
-        if (pos == 0) return prepend(s);
         _consolidate();
-        newTotal : unsigned int = _totalSize + s.size();
-        newCap : unsigned int = newTotal + 1;
-        newPool : char[]! = new char[newCap];
-        // Copy [0..pos)
-        CharHelpers::copy(newPool, 0, _pool, 0, pos);
-        // Copy inserted content
-        CharHelpers::copy(newPool, pos, s.toUtf32(), 0, s.size());
-        // Copy [pos.._totalSize)
+        sLen : unsigned int = s.size();
+        newTotal : unsigned int = _totalSize + sLen;
+        newPool : char[]! = new char[newTotal + 1u];
+        CharHelpers::copy(newPool, 0u, _poolU32, 0u, pos);
+        sbuf : char[]! = s.toUtf32();
+        CharHelpers::copy(newPool, pos, sbuf, 0u, sLen);
         tailLen : unsigned int = _totalSize - pos;
-        if (tailLen > 0) {
-            CharHelpers::copy(newPool, pos + s.size(), _pool, pos, tailLen);
+        if (tailLen > 0u) {
+            CharHelpers::copy(newPool, pos + sLen, _poolU32, pos, tailLen);
         }
-        delete _pool;
-        _pool = newPool;
-        _poolUsed = newTotal;
-        _poolCap = newCap;
-        _starts[0] = 0;
-        _lens[0] = newTotal;
-        _fragCount = 1;
-        _totalSize = newTotal;
+        newPool[newTotal] = (char) 0;
+        delete _poolU32;
+        _poolU32 = newPool;
+        _u32Cap = newTotal + 1u;
+        _setSingleU32Frag(newTotal);
         return this;
     }
 
@@ -1447,10 +1763,9 @@ public:
         return insert(pos, tmp);
     }
 
-    /** Remove `count` characters starting at position `start`.
-     *  Consolidates fragments first, then removes in the contiguous buffer. */
+    /** Remove `count` characters starting at position `start`. */
     remove(start : unsigned int, count : unsigned int) : StringBuilder& {
-        if (count == 0) return this;
+        if (count == 0u) return this;
         if (start >= _totalSize) return this;
         _consolidate();
         actual : unsigned int = count;
@@ -1459,15 +1774,9 @@ public:
         }
         tailStart : unsigned int = start + actual;
         if (tailStart < _totalSize) {
-            CharHelpers::copy(_pool, start, _pool, tailStart, _totalSize - tailStart);
+            CharHelpers::copy(_poolU32, start, _poolU32, tailStart, _totalSize - tailStart);
         }
-        _totalSize = _totalSize - actual;
-        _poolUsed = _totalSize;
-        if (_totalSize == 0) {
-            _fragCount = 0;
-        } else {
-            _lens[0] = _totalSize;
-        }
+        _setSingleU32Frag(_totalSize - actual);
         return this;
     }
 
@@ -1483,17 +1792,15 @@ public:
         return replace(start, count, tmp);
     }
 
-    /** Replace all non-overlapping occurrences of `needle` with `replacement`.
-     *  Consolidates first to ensure contiguous access.
-     *  Returns a reference to this builder for fluent chaining. */
+    /** Replace all non-overlapping occurrences of `needle` with `replacement`. */
     replaceAll(needle : const String&, replacement : const String&) : StringBuilder& {
-        if (needle.size() == 0) return this;
-        if (_totalSize == 0) return this;
+        if (needle.size() == 0u) return this;
+        if (_totalSize == 0u) return this;
         _consolidate();
-        // Search from the beginning, advancing past each replacement
-        pos : unsigned int = 0;
+        nbuf : char[]! = needle.toUtf32();
+        pos : unsigned int = 0u;
         while (pos + needle.size() <= _totalSize) {
-            found : int = CharHelpers::find(_pool, pos, _totalSize - pos, needle.toUtf32(), 0, needle.size());
+            found : int = CharHelpers::find(_poolU32, pos, _totalSize - pos, nbuf, 0u, needle.size());
             if (found < 0) return this;
             ufound : unsigned int = found;
             remove(ufound, needle.size());
@@ -1503,54 +1810,52 @@ public:
         return this;
     }
 
-    /** Reverse the entire content in place. Consolidates first. */
+    /** Reverse the entire content in place. */
     reverse() : StringBuilder& {
-        if (_totalSize <= 1) return this;
+        if (_totalSize <= 1u) return this;
         _consolidate();
-        left : unsigned int = 0;
-        right : unsigned int = _totalSize - 1;
+        left : unsigned int = 0u;
+        right : unsigned int = _totalSize - 1u;
         while (left < right) {
-            tmp : char = _pool[left];
-            _pool[left] = _pool[right];
-            _pool[right] = tmp;
-            left = left + 1;
-            right = right - 1;
+            tmp : char = _poolU32[left];
+            _poolU32[left] = _poolU32[right];
+            _poolU32[right] = tmp;
+            left = left + 1u;
+            right = right - 1u;
         }
         return this;
     }
 
     /** Remove leading whitespace characters (space, tab, newline, CR). */
     trimLeft() : StringBuilder& {
-        if (_totalSize == 0) return this;
+        if (_totalSize == 0u) return this;
         _consolidate();
-        start : unsigned int = 0;
+        start : unsigned int = 0u;
         while (start < _totalSize) {
-            if (!CharHelpers::isWhitespace(_pool[start])) {
-                if (start > 0) {
-                    return remove(0, start);
+            if (!CharHelpers::isWhitespace(_poolU32[start])) {
+                if (start > 0u) {
+                    return remove(0u, start);
                 }
                 return this;
             }
-            start = start + 1;
+            start = start + 1u;
         }
         return clear();
     }
 
     /** Remove trailing whitespace characters (space, tab, newline, CR). */
     trimRight() : StringBuilder& {
-        if (_totalSize == 0) return this;
+        if (_totalSize == 0u) return this;
         _consolidate();
         end : unsigned int = _totalSize;
-        while (end > 0) {
-            if (!CharHelpers::isWhitespace(_pool[end - 1])) {
+        while (end > 0u) {
+            if (!CharHelpers::isWhitespace(_poolU32[end - 1u])) {
                 if (end < _totalSize) {
-                    _totalSize = end;
-                    _poolUsed = _totalSize;
-                    _lens[0] = _totalSize;
+                    _setSingleU32Frag(end);
                 }
                 return this;
             }
-            end = end - 1;
+            end = end - 1u;
         }
         return clear();
     }
@@ -1563,9 +1868,11 @@ public:
 
     /** Clear all content. Pool memory is retained. */
     clear() : StringBuilder& {
-        _fragCount = 0;
-        _totalSize = 0;
-        _poolUsed = 0;
+        _fragCount = 0u;
+        _totalSize = 0u;
+        _u8Used = 0u;
+        _u16Used = 0u;
+        _u32Used = 0u;
         return this;
     }
 
@@ -1574,7 +1881,7 @@ public:
     /** Equality: same total length and identical content. */
     const operator ==(other : const StringBuilder&) : bool {
         if (_totalSize != other._totalSize) return false;
-        if (_totalSize == 0) return true;
+        if (_totalSize == 0u) return true;
         a : String(this);
         b : String(other);
         return a == b;
@@ -1600,111 +1907,202 @@ public:
     // ── Private helpers ─────────────────────────────────────────────────
 private:
 
-    /** Ensure the pool has room for `extra` more chars. */
-    _ensurePoolCap(extra : unsigned int) {
-        needed : unsigned int = _poolUsed + extra;
-        if (needed <= _poolCap) return;
-        newCap : unsigned int = _poolCap * 2;
-        if (newCap < 32) newCap = 32;
+    /** Ensure the UTF-8 pool has room for `extra` more bytes. */
+    _ensureU8(extra : unsigned int) {
+        needed : unsigned int = _u8Used + extra;
+        if (needed <= _u8Cap) return;
+        newCap : unsigned int = _u8Cap * 2u;
+        if (newCap < 32u) newCap = 32u;
         if (newCap < needed) newCap = needed;
-        newPool : char[]! = new char[newCap];
-        if (_pool != null) {
-            CharHelpers::copy(newPool, 0, _pool, 0, _poolUsed);
-            delete _pool;
+        np : unsigned byte[]! = new unsigned byte[newCap];
+        if (_poolU8 != null) {
+            CharHelpers::copyBytes(np, 0u, _poolU8, 0u, _u8Used);
+            delete _poolU8;
         }
-        _pool = newPool;
-        _poolCap = newCap;
+        _poolU8 = np;
+        _u8Cap = newCap;
     }
 
-    /** Ensure _starts/_lens arrays have room for `extra` more entries. */
+    /** Ensure the UTF-16 pool has room for `extra` more code units. */
+    _ensureU16(extra : unsigned int) {
+        needed : unsigned int = _u16Used + extra;
+        if (needed <= _u16Cap) return;
+        newCap : unsigned int = _u16Cap * 2u;
+        if (newCap < 32u) newCap = 32u;
+        if (newCap < needed) newCap = needed;
+        np : unsigned short[]! = new unsigned short[newCap];
+        if (_poolU16 != null) {
+            CharHelpers::copyShorts(np, 0u, _poolU16, 0u, _u16Used);
+            delete _poolU16;
+        }
+        _poolU16 = np;
+        _u16Cap = newCap;
+    }
+
+    /** Ensure the UTF-32 pool has room for `extra` more code points. */
+    _ensureU32(extra : unsigned int) {
+        needed : unsigned int = _u32Used + extra;
+        if (needed <= _u32Cap) return;
+        newCap : unsigned int = _u32Cap * 2u;
+        if (newCap < 32u) newCap = 32u;
+        if (newCap < needed) newCap = needed;
+        np : char[]! = new char[newCap];
+        if (_poolU32 != null) {
+            CharHelpers::copy(np, 0u, _poolU32, 0u, _u32Used);
+            delete _poolU32;
+        }
+        _poolU32 = np;
+        _u32Cap = newCap;
+    }
+
+    /** Ensure the fragment metadata arrays have room for `extra` more entries. */
     _ensureFragCap(extra : unsigned int) {
         needed : unsigned int = _fragCount + extra;
         if (needed <= _fragCap) return;
-        newCap : unsigned int = _fragCap * 2;
-        if (newCap < 4) newCap = 4;
+        newCap : unsigned int = _fragCap * 2u;
+        if (newCap < 4u) newCap = 4u;
         if (newCap < needed) newCap = needed;
-        newStarts : unsigned int[]! = new unsigned int[newCap];
-        newLens : unsigned int[]! = new unsigned int[newCap];
-        if (_starts != null) {
-            i : unsigned int = 0;
+        newEnc : unsigned byte[]! = new unsigned byte[newCap];
+        newStart : unsigned int[]! = new unsigned int[newCap];
+        newUnits : unsigned int[]! = new unsigned int[newCap];
+        newCp : unsigned int[]! = new unsigned int[newCap];
+        if (_fragEnc != null) {
+            i : unsigned int = 0u;
             while (i < _fragCount) {
-                newStarts[i] = _starts[i];
-                newLens[i] = _lens[i];
-                i = i + 1;
+                newEnc[i] = _fragEnc[i];
+                newStart[i] = _fragStart[i];
+                newUnits[i] = _fragUnits[i];
+                newCp[i] = _fragCp[i];
+                i = i + 1u;
             }
-            delete _starts;
-            delete _lens;
+            delete _fragEnc;
+            delete _fragStart;
+            delete _fragUnits;
+            delete _fragCp;
         }
-        _starts = newStarts;
-        _lens = newLens;
+        _fragEnc = newEnc;
+        _fragStart = newStart;
+        _fragUnits = newUnits;
+        _fragCp = newCp;
         _fragCap = newCap;
     }
 
-    /** Shift fragment entries at [startIdx.._fragCount) right by `count` positions. */
-    _shiftFragsRight(startIdx : unsigned int, count : unsigned int) {
-        if (_fragCount <= startIdx) return;
-        i : unsigned int = _fragCount;
-        while (i > startIdx) {
-            i = i - 1;
-            _starts[i + count] = _starts[i];
-            _lens[i + count] = _lens[i];
-        }
+    /** Append one fragment descriptor (data already copied into its pool). */
+    _pushFrag(enc : unsigned byte, start : unsigned int, units : unsigned int, cp : unsigned int) {
+        if (cp == 0u) return;
+        _ensureFragCap(1u);
+        _fragEnc[_fragCount] = enc;
+        _fragStart[_fragCount] = start;
+        _fragUnits[_fragCount] = units;
+        _fragCp[_fragCount] = cp;
+        _fragCount = _fragCount + 1u;
+        _totalSize = _totalSize + cp;
     }
 
-    /** Consolidate all fragments into a single contiguous buffer.
-     *  After this call, _fragCount <= 1. */
-    _consolidate() {
-        if (_fragCount <= 1) return;
-        if (_totalSize == 0) {
-            _fragCount = 0;
-            _poolUsed = 0;
+    /** Set the builder to a single UTF-32 fragment of `len` code points,
+     *  already present at the start of _poolU32. */
+    _setSingleU32Frag(len : unsigned int) {
+        _u8Used = 0u;
+        _u16Used = 0u;
+        _u32Used = len;
+        if (len == 0u) {
+            _fragCount = 0u;
+            _totalSize = 0u;
             return;
         }
-        newCap : unsigned int = _totalSize + 1;
+        _ensureFragCap(1u);
+        _fragEnc[0] = (unsigned byte) 2;
+        _fragStart[0] = 0u;
+        _fragUnits[0] = len;
+        _fragCp[0] = len;
+        _fragCount = 1u;
+        _totalSize = len;
+    }
+
+    /** Decode all fragments into a new, null-terminated UTF-32 `char[]`. */
+    const _decodeAll() : char[]! {
+        out : char[]! = new char[_totalSize + 1u];
+        copyTo(out, 0u);
+        out[_totalSize] = (char) 0;
+        return out;
+    }
+
+    /** Consolidate all fragments into a single UTF-32 fragment in _poolU32. */
+    _consolidate() {
+        if (_totalSize == 0u) {
+            _fragCount = 0u;
+            _u8Used = 0u;
+            _u16Used = 0u;
+            _u32Used = 0u;
+            return;
+        }
+        // Already a single contiguous UTF-32 fragment: nothing to do.
+        if (_fragCount == 1u && (int) _fragEnc[0] == 2 && _fragStart[0] == 0u) {
+            return;
+        }
+        newCap : unsigned int = _totalSize + 1u;
         newPool : char[]! = new char[newCap];
-        off : unsigned int = 0;
-        i : unsigned int = 0;
-        while (i < _fragCount) {
-            CharHelpers::copy(newPool, off, _pool, _starts[i], _lens[i]);
-            off = off + _lens[i];
-            i = i + 1;
+        copyTo(newPool, 0u);
+        newPool[_totalSize] = (char) 0;
+        if (_poolU32 != null) {
+            delete _poolU32;
         }
-        newPool[_totalSize] = '\0';
-        delete _pool;
-        _pool = newPool;
-        _poolUsed = _totalSize;
-        _poolCap = newCap;
-        _starts[0] = 0;
-        _lens[0] = _totalSize;
-        _fragCount = 1;
+        _poolU32 = newPool;
+        _u32Cap = newCap;
+        len : unsigned int = _totalSize;
+        _setSingleU32Frag(len);
     }
 
-    /** Find the fragment index containing logical position `pos`. */
-    const _findFragIdx(pos : unsigned int) : unsigned int {
-        idx : unsigned int = 0;
-        cumPos : unsigned int = 0;
-        while (idx < _fragCount) {
-            if (cumPos + _lens[idx] > pos) {
-                return idx;
-            }
-            cumPos = cumPos + _lens[idx];
-            idx = idx + 1;
+    /** Resolve a consolidation policy to a concrete storage encoding. */
+    const _resolvePolicy(policy : ConsolidationPolicy) : Encoding {
+        if (policy == ConsolidationPolicy::ForceUtf8)  return Encoding::UTF8;
+        if (policy == ConsolidationPolicy::ForceUtf16) return Encoding::UTF16;
+        if (policy == ConsolidationPolicy::ForceUtf32) return Encoding::UTF32;
+        if (policy == ConsolidationPolicy::FirstFragment) {
+            return rawEncoding();
         }
-        return _fragCount;
+        // MostCompact: choose the encoding with the smallest byte footprint.
+        dec : char[]! = _decodeAll();
+        u8bytes  : unsigned int = CharHelpers::utf8Size(dec, _totalSize);
+        u16bytes : unsigned int = CharHelpers::utf16Size(dec, _totalSize) * 2u;
+        u32bytes : unsigned int = _totalSize * 4u;
+        if (u8bytes <= u16bytes && u8bytes <= u32bytes) return Encoding::UTF8;
+        if (u16bytes <= u32bytes) return Encoding::UTF16;
+        return Encoding::UTF32;
     }
 
-    /** Find the local offset within the fragment that contains logical position `pos`. */
-    const _findFragLocalOff(pos : unsigned int) : unsigned int {
-        cumPos : unsigned int = 0;
-        idx : unsigned int = 0;
-        while (idx < _fragCount) {
-            if (cumPos + _lens[idx] > pos) {
-                r : unsigned int = pos - cumPos;
-                return r;
-            }
-            cumPos = cumPos + _lens[idx];
-            idx = idx + 1;
-        }
-        return 0;
+    /** Build an immutable String holding the content in encoding `enc`. */
+    const _buildString(enc : Encoding) : String {
+        dec : char[]! = _decodeAll();
+        result : String(dec, enc);
+        return result;
+    }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CharRef — Write-proxy returned by StringBuilder's non-const subscript/at().
+//
+//   sb[i] = c;          // writes code point c via StringBuilder.set(i, c)
+//   x : char = (char) sb[i];   // explicit read of the current code point
+//
+// CharRef holds a (non-owning) link back to its StringBuilder plus a logical
+// code-point index. It is invalidated by any structural mutation of the builder.
+// ═════════════════════════════════════════════════════════════════════════════
+class CharRef {
+    _sb  : StringBuilder+;
+    _idx : unsigned int;
+
+public:
+    CharRef(sb : StringBuilder+, idx : unsigned int) : _sb(sb), _idx(idx) {}
+
+    /** Read the current code point (explicit char cast). */
+    operator () : char {
+        return _sb->charAt(_idx);
+    }
+
+    /** Write a code point at the referenced position. */
+    operator =(c : char) : void {
+        _sb->set(_idx, c);
     }
 }

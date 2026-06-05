@@ -98,6 +98,23 @@
 - Add support for cross-compilation to different target architectures and platforms
 
 ### K language limitations (compiler bugs / missing features)
+- [ ] Calling a member method on `this` from within a constructor body crashes at
+      runtime: methods are virtual by default and dispatch through the vtable, but the
+      vtable pointer is only initialised *after* the constructor body runs
+      (`gen_function.cpp`, `emit_constructor_post_block`; see the note at the
+      `// NOTE: vptr initialization ... is deferred to AFTER the block` line). The vptr
+      should be stored after base-constructor calls but before the user body, like C++.
+      Workaround: inline the logic instead of calling helper methods from constructors
+      (done in `k::StringBuilder`'s constructors). Minimal repro:
+      `class T { _n:unsigned int; public: T():_n(0){ doit(); } doit(){ _n=5u; } }` — the
+      `doit()` call from the ctor segfaults.
+- [ ] Implicit user-defined cast-operator conversions are not applied: a class with
+      `operator() : T` is not implicitly converted in an initialisation/argument context
+      (e.g. `x : int = wrapper;` yields garbage). Only explicit casts work, and only for
+      a cast operator defined in the *same* module — `(T) imported_value` reports
+      "casting between non-primitive types is not yet supported" for an imported class.
+      Affects the ergonomic read path of `StringBuilder`'s `CharRef` proxy (use
+      `charAt(i)` to read; `sb[i] = c` to write).
 - [ ] Explicit template type arguments on intrinsic variadic methods (`_slot.construct<T>(value)`) fail in nested template contexts — workaround: omit explicit type args, rely on argument deduction (`_slot.construct(value)`)
 - [ ] `if(var1; var2; ...; test)` still hard-fails during condition-variable initialization on union alternative mismatch / nullable addressor soft-fail cases; extend it to pattern-like semantics so a failed binding makes the whole condition `false` and skips evaluation of the trailing `test`
 
