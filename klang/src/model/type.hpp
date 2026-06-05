@@ -304,6 +304,7 @@ public:
         CHAR,
         BYTE,
         UNSIGNED_CHAR = BYTE,
+        UNSIGNED_BYTE,
         SHORT,
         UNSIGNED_SHORT,
         INT,

@@ -1637,6 +1637,152 @@ TEST_CASE( "Lex one string", "[lexer]" ) {
     // TODO add unicode escape tests
 }
 
+TEST_CASE( "Lex character escape decoding", "[lexer][unicode]" ) {
+    test_logger log;
+
+    auto cp_of = [&](const std::string& text) -> char32_t {
+        lexer lex(log);
+        k::source src{text};
+        auto lexemes = lex.parse(src);
+        REQUIRE( lexemes.size() == 1 );
+        REQUIRE( std::holds_alternative<character>(lexemes[0]) );
+        return std::get<character>(lexemes[0]).code_point();
+    };
+
+    REQUIRE( cp_of("'A'") == U'A' );
+    REQUIRE( cp_of("'\\n'") == 0x0A );
+    REQUIRE( cp_of("'\\t'") == 0x09 );
+    REQUIRE( cp_of("'\\r'") == 0x0D );
+    REQUIRE( cp_of("'\\\\'") == 0x5C );
+    REQUIRE( cp_of("'\\''") == 0x27 );
+    REQUIRE( cp_of("'\\0'") == 0x00 );
+    REQUIRE( cp_of("'\\x41'") == 0x41 );
+    REQUIRE( cp_of("'\\u20AC'") == 0x20AC );
+    REQUIRE( cp_of("'\\U0001F600'") == 0x1F600 );
+}
+
+TEST_CASE( "Lex character with UTF-8 body", "[lexer][unicode]" ) {
+    test_logger log;
+    lexer lex(log);
+
+    // 'é' encoded as UTF-8 bytes C3 A9 → code point U+00E9
+    k::source src{"'\xC3\xA9'"};
+    auto lexemes = lex.parse(src);
+    REQUIRE( lexemes.size() == 1 );
+    REQUIRE( std::holds_alternative<character>(lexemes[0]) );
+    REQUIRE( std::get<character>(lexemes[0]).code_point() == 0xE9 );
+}
+
+TEST_CASE( "Lex string escape and UTF-8 decoding", "[lexer][unicode]" ) {
+    test_logger log;
+
+    auto cps_of = [&](const std::string& text) -> std::vector<char32_t> {
+        lexer lex(log);
+        k::source src{text};
+        auto lexemes = lex.parse(src);
+        REQUIRE( lexemes.size() == 1 );
+        REQUIRE( std::holds_alternative<string>(lexemes[0]) );
+        return std::get<string>(lexemes[0]).code_points();
+    };
+
+    REQUIRE( cps_of("\"abc\"") == std::vector<char32_t>{'a','b','c'} );
+    REQUIRE( cps_of("\"a\\nb\"") == std::vector<char32_t>{'a', 0x0A, 'b'} );
+    REQUIRE( cps_of("\"\\u20AC\"") == std::vector<char32_t>{0x20AC} );
+    // "é€" as UTF-8 → U+00E9, U+20AC
+    REQUIRE( cps_of("\"\xC3\xA9\xE2\x82\xAC\"") == std::vector<char32_t>{0xE9, 0x20AC} );
+}
+
+TEST_CASE( "Lex encoding-prefixed string literals", "[lexer][unicode]" ) {
+    test_logger log;
+    lexer lex(log);
+
+    auto enc_of = [&](const std::string& text) -> literal_encoding {
+        lexer lex(log);
+        k::source src{text};
+        auto lexemes = lex.parse(src);
+        REQUIRE( lexemes.size() == 1 );
+        REQUIRE( std::holds_alternative<string>(lexemes[0]) );
+        return std::get<string>(lexemes[0]).enc;
+    };
+
+    REQUIRE( enc_of("\"plain\"") == literal_encoding::unspecified );
+    REQUIRE( enc_of("u8\"text\"") == literal_encoding::utf8 );
+    REQUIRE( enc_of("u\"text\"") == literal_encoding::utf16 );
+    REQUIRE( enc_of("u16\"text\"") == literal_encoding::utf16 );
+    REQUIRE( enc_of("U\"text\"") == literal_encoding::utf32 );
+    REQUIRE( enc_of("u32\"text\"") == literal_encoding::utf32 );
+
+    SECTION("prefix content excludes the prefix") {
+        k::source src{"u8\"hi\""};
+        auto lexemes = lex.parse(src);
+        REQUIRE( lexemes.size() == 1 );
+        REQUIRE( std::get<string>(lexemes[0]).content == "\"hi\"" );
+    }
+}
+
+TEST_CASE( "Lex encoding-prefixed character literals", "[lexer][unicode]" ) {
+    test_logger log;
+
+    auto enc_of = [&](const std::string& text) -> literal_encoding {
+        lexer lex(log);
+        k::source src{text};
+        auto lexemes = lex.parse(src);
+        REQUIRE( lexemes.size() == 1 );
+        REQUIRE( std::holds_alternative<character>(lexemes[0]) );
+        return std::get<character>(lexemes[0]).enc;
+    };
+
+    REQUIRE( enc_of("'a'") == literal_encoding::unspecified );
+    REQUIRE( enc_of("u8'a'") == literal_encoding::utf8 );
+    REQUIRE( enc_of("u'a'") == literal_encoding::utf16 );
+    REQUIRE( enc_of("U'a'") == literal_encoding::utf32 );
+    REQUIRE( enc_of("u32'a'") == literal_encoding::utf32 );
+}
+
+TEST_CASE( "Lex prefix requires adjacency to quote", "[lexer][unicode]" ) {
+    test_logger log;
+    lexer lex(log);
+
+    // With a space, 'u8' is an identifier and the string is a separate token.
+    k::source src{"u8 \"text\""};
+    auto lexemes = lex.parse(src);
+    REQUIRE( lexemes.size() == 2 );
+    REQUIRE( std::holds_alternative<identifier>(lexemes[0]) );
+    REQUIRE( std::holds_alternative<string>(lexemes[1]) );
+    REQUIRE( std::get<string>(lexemes[1]).enc == literal_encoding::unspecified );
+}
+
+TEST_CASE( "Lex UTF-8 BOM is skipped", "[lexer][unicode]" ) {
+    test_logger log;
+    lexer lex(log);
+
+    // BOM (EF BB BF) followed by an identifier.
+    k::source src{"\xEF\xBB\xBFtoto"};
+    auto lexemes = lex.parse(src);
+    REQUIRE( lexemes.size() == 1 );
+    REQUIRE( std::holds_alternative<identifier>(lexemes[0]) );
+    REQUIRE( std::get<identifier>(lexemes[0]).content == "toto" );
+}
+
+TEST_CASE( "Lex comment with extended UTF-8 characters", "[lexer][unicode]" ) {
+    test_logger log;
+    lexer lex(log);
+
+    SECTION("single-line comment with accented text") {
+        k::source src{"// caf\xC3\xA9 \xE2\x82\xAC\n"};
+        auto lexemes = lex.parse(src);
+        REQUIRE( lexemes.size() == 1 );
+        REQUIRE( std::holds_alternative<comment>(lexemes[0]) );
+    }
+
+    SECTION("block comment with accented text") {
+        k::source src{"/* caf\xC3\xA9 */"};
+        auto lexemes = lex.parse(src);
+        REQUIRE( lexemes.size() == 1 );
+        REQUIRE( std::holds_alternative<comment>(lexemes[0]) );
+    }
+}
+
 TEST_CASE( "Lex one boolean", "[lexer]" ) {
     test_logger log;
     lexer lex(log);

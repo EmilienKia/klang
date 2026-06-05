@@ -70,6 +70,7 @@ enum class lexer_diag : unsigned int {
     WARN_BAD_INT_SUFFIX_2                         = 0x0012,
     WARN_BAD_INT_SUFFIX_8                         = 0x0013,
     WARN_BAD_BIGINT_SUFFIX                        = 0x0014,
+    WARN_INVALID_UTF8_COMMENT                     = 0x01E0,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

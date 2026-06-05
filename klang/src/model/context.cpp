@@ -24,6 +24,7 @@
 #include "expressions.hpp"
 #include "model.hpp"
 #include "../errors.hpp"
+#include "../common/unicode.hpp"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Type.h"
@@ -80,6 +81,7 @@ void context::init_primitive_types() {
     _primitive_types.insert(std::initializer_list<std::map<primitive_type::PRIMITIVE_TYPE, std::shared_ptr<primitive_type>>::value_type>{
         {primitive_type::BOOL, primitive_type::make_shared(primitive_type::BOOL, true, false, 1, llvm::Type::getInt1Ty(**this))},
         {primitive_type::BYTE, primitive_type::make_shared(primitive_type::BYTE, true, false, 1*8, llvm::Type::getInt8Ty(**this))},
+        {primitive_type::UNSIGNED_BYTE, primitive_type::make_shared(primitive_type::UNSIGNED_BYTE, true, false, 1*8, llvm::Type::getInt8Ty(**this))},
         {primitive_type::CHAR, primitive_type::make_shared(primitive_type::CHAR, false, false, 1*8, llvm::Type::getInt8Ty(**this))},
         {primitive_type::SHORT, primitive_type::make_shared(primitive_type::SHORT, false, false, 2*8, llvm::Type::getInt16Ty(**this))},
         {primitive_type::UNSIGNED_SHORT, primitive_type::make_shared(primitive_type::UNSIGNED_SHORT, true, false, 2*8, llvm::Type::getInt16Ty(**this))},
@@ -195,6 +197,7 @@ std::shared_ptr<type> context::from_string(const std::string& type_name) {
     static std::map<std::string, primitive_type::PRIMITIVE_TYPE> type_map {
             {"bool", primitive_type::BOOL},
             {"byte", primitive_type::BYTE},
+            {"unsigned byte", primitive_type::UNSIGNED_BYTE},
             {"char", primitive_type::CHAR},
             {"unsigned char", primitive_type::UNSIGNED_CHAR},
             {"short", primitive_type::SHORT},
@@ -333,6 +336,33 @@ std::shared_ptr<type> context::from_type_specifier(const k::parse::ast::type_spe
 }
 
 
+namespace {
+// Map a literal encoding prefix to the K element primitive type of the
+// resulting array. An unspecified (no-prefix) literal keeps the historical
+// 'char' element type (context-driven selection is handled elsewhere).
+primitive_type::PRIMITIVE_TYPE element_prim_for_encoding(k::lex::literal_encoding enc) {
+    switch (enc) {
+        case k::lex::literal_encoding::utf8:  return primitive_type::UNSIGNED_BYTE;
+        case k::lex::literal_encoding::utf16: return primitive_type::UNSIGNED_SHORT;
+        case k::lex::literal_encoding::utf32: return primitive_type::CHAR;
+        case k::lex::literal_encoding::unspecified:
+        default:                              return primitive_type::CHAR;
+    }
+}
+
+// Number of code units (excluding terminator) for a code-point sequence in the
+// given encoding.
+std::size_t encoded_unit_count(const std::vector<char32_t>& cps, k::lex::literal_encoding enc) {
+    switch (enc) {
+        case k::lex::literal_encoding::utf8:  return k::unicode::utf8_length(cps);
+        case k::lex::literal_encoding::utf16: return k::unicode::utf16_length(cps);
+        case k::lex::literal_encoding::utf32:
+        default:                              return k::unicode::utf32_length(cps);
+    }
+}
+} // namespace
+
+
 std::shared_ptr<type> context::from_literal(const k::lex::any_literal &literal) {
     if (std::holds_alternative<lex::integer>(literal)) {
         auto lit = literal.get<lex::integer>();
@@ -366,17 +396,25 @@ std::shared_ptr<type> context::from_literal(const k::lex::any_literal &literal) 
                 return {};
         }
     } else if (std::holds_alternative<lex::character>(literal)) {
-        return from_type(primitive_type::CHAR);
+        const auto& c = literal.get<lex::character>();
+        return from_type(element_prim_for_encoding(c.enc));
     } else if (std::holds_alternative<lex::string>(literal)) {
         const auto& s = literal.get<lex::string>();
-        // TODO Decode escape sequences (only ASCII for now)
-        auto str = std::get<std::string>(s.value());
-        // +1 for null terminator
-        size_t len = str.size() + 1;
-        // String literals are static globals: their LLVM value is a pointer
-        // to { i32, [N x i8] }, so the model type is const char[N]&.
-        // Use const<char> as element type so it matches 'const char[]' parameter types.
-        return from_type(primitive_type::CHAR)->get_const()->get_array(len)->get_reference();
+        if (s.enc == lex::literal_encoding::unspecified) {
+            // TODO Decode escape sequences (only ASCII for now)
+            auto str = std::get<std::string>(s.value());
+            // +1 for null terminator
+            size_t len = str.size() + 1;
+            // String literals are static globals: their LLVM value is a pointer
+            // to { i32, [N x i8] }, so the model type is const char[N]&.
+            // Use const<char> as element type so it matches 'const char[]' parameter types.
+            return from_type(primitive_type::CHAR)->get_const()->get_array(len)->get_reference();
+        }
+        // Encoding-prefixed literal: element type and length follow the encoding.
+        auto cps = s.code_points();
+        size_t len = encoded_unit_count(cps, s.enc) + 1; // +1 for terminator
+        return from_type(element_prim_for_encoding(s.enc))
+            ->get_const()->get_array(len)->get_reference();
     } else if (std::holds_alternative<lex::boolean>(literal)) {
         return from_type(primitive_type::BOOL);
     } else if (std::holds_alternative<lex::null>(literal)) {
@@ -405,15 +443,20 @@ llvm::Constant* context::get_llvm_constant_from_literal(const k::lex::any_litera
         return llvm::ConstantFP::get(type, val);
     } else if (std::holds_alternative<lex::character>(literal)) {
         const auto &c = literal.get<lex::character>();
-        auto val = llvm::APInt(8, static_cast<uint64_t>(std::get<char>(c.value())));
-        return llvm::ConstantInt::get(**this, val);
+        // Element width follows the prefix (unspecified → char). The decoded
+        // code point is truncated to the element bit width if necessary.
+        llvm::Type* elem_ty = from_type(element_prim_for_encoding(c.enc))->get_llvm_type();
+        return llvm::ConstantInt::get(elem_ty, static_cast<uint64_t>(c.code_point()), /*isSigned=*/false);
     } else if (std::holds_alternative<lex::string>(literal)) {
         const auto &s = literal.get<lex::string>();
-        // TODO Decode escape sequences (only raw ASCII content for now)
-        auto str = std::get<std::string>(s.value());
-        // Append null terminator
-        str.push_back('\0');
-        return get_or_create_string_literal(str);
+        if (s.enc == lex::literal_encoding::unspecified) {
+            // TODO Decode escape sequences (only raw ASCII content for now)
+            auto str = std::get<std::string>(s.value());
+            // Append null terminator
+            str.push_back('\0');
+            return get_or_create_string_literal(str);
+        }
+        return get_or_create_encoded_string_literal(s.code_points(), s.enc);
     } else if (std::holds_alternative<lex::boolean>(literal)) {
         const auto& b = literal.get<lex::boolean>();
         if(std::get<bool>(b.value())) {
@@ -510,6 +553,81 @@ llvm::Constant* context::get_or_create_string_literal(const std::string& content
     gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
     _string_pool[content] = gv;
+    return gv;
+}
+
+
+llvm::Constant* context::get_or_create_encoded_string_literal(
+        const std::vector<char32_t>& code_points, k::lex::literal_encoding enc) {
+    auto& llvm_ctx = *_context;
+
+    // Re-encode the code points into the encoding's code units, then append a
+    // zero terminator. Units are kept as 64-bit values and truncated to the
+    // element bit width when materialised as ConstantInt.
+    std::vector<std::uint64_t> units;
+    switch (enc) {
+        case k::lex::literal_encoding::utf8: {
+            std::string bytes;
+            for (char32_t cp : code_points) k::unicode::encode_utf8(cp, bytes);
+            for (unsigned char b : bytes) units.push_back(b);
+            break;
+        }
+        case k::lex::literal_encoding::utf16: {
+            std::vector<std::uint16_t> u16;
+            for (char32_t cp : code_points) k::unicode::encode_utf16(cp, u16);
+            for (std::uint16_t u : u16) units.push_back(u);
+            break;
+        }
+        case k::lex::literal_encoding::utf32:
+        default: {
+            std::vector<std::uint32_t> u32;
+            for (char32_t cp : code_points) k::unicode::encode_utf32(cp, u32);
+            for (std::uint32_t u : u32) units.push_back(u);
+            break;
+        }
+    }
+    units.push_back(0); // null terminator (element-wide)
+
+    auto elem_prim = element_prim_for_encoding(enc);
+    llvm::Type* elem_ty = from_type(elem_prim)->get_llvm_type();
+    const std::size_t N = units.size();
+
+    // Deduplication key: encoding tag + element bit width + raw units.
+    std::string key;
+    key.push_back(static_cast<char>(enc));
+    key.push_back(static_cast<char>(elem_ty->getIntegerBitWidth()));
+    for (std::uint64_t u : units) {
+        for (int shift = 0; shift < 64; shift += 8) {
+            key.push_back(static_cast<char>((u >> shift) & 0xFF));
+        }
+    }
+    if (auto it = _encoded_string_pool.find(key); it != _encoded_string_pool.end()) {
+        return it->second;
+    }
+
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* arr_ty = llvm::ArrayType::get(elem_ty, N);
+    auto* struct_ty = llvm::StructType::get(llvm_ctx, {i32_ty, arr_ty}, /*isPacked=*/false);
+
+    auto* size_const = llvm::ConstantInt::get(i32_ty, N, /*isSigned=*/false);
+    std::vector<llvm::Constant*> elems;
+    elems.reserve(N);
+    for (std::uint64_t u : units) {
+        elems.push_back(llvm::ConstantInt::get(elem_ty, u, /*isSigned=*/false));
+    }
+    auto* data_const = llvm::ConstantArray::get(arr_ty, elems);
+
+    llvm::Constant* fields[] = {size_const, data_const};
+    auto* init = llvm::ConstantStruct::get(struct_ty, fields);
+
+    auto* gv = new llvm::GlobalVariable(
+        *_module, struct_ty,
+        /*isConstant=*/true,
+        llvm::GlobalValue::PrivateLinkage,
+        init, ".str.enc");
+    gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+
+    _encoded_string_pool[key] = gv;
     return gv;
 }
 

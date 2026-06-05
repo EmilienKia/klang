@@ -90,6 +90,9 @@ namespace k::lex {
         /** Temporary counter, used for repeatable states like integer escaping.*/
         size_t lex_temp_count = 0;
 
+        /** Encoding prefix (u8/u/U/u16/u32) pending for the literal being lexed. */
+        literal_encoding current_literal_enc = literal_encoding::unspecified;
+
         k::source* source;
 
         size_t pos = 0;

@@ -21,6 +21,7 @@
 
 #include "lexer.hpp"
 #include "../common/logger.hpp"
+#include "../common/unicode.hpp"
 
 #include <map>
 #include "../errors.hpp"
@@ -200,6 +201,14 @@ namespace k::lex {
         pos = begin = 0;
         source.lines.push_back(0);
 
+        // Skip an optional UTF-8 BOM (EF BB BF) at the very start of the file.
+        if (src.size() >= 3
+            && static_cast<unsigned char>(src[0]) == 0xEF
+            && static_cast<unsigned char>(src[1]) == 0xBB
+            && static_cast<unsigned char>(src[2]) == 0xBF) {
+            pos = 3;
+        }
+
         try {
             while (pos <= src.size()) {
                 char c = pos == src.size() ? 0 : src[pos];
@@ -247,9 +256,11 @@ namespace k::lex {
                                     lex_state = DECIMAL;
                                 } else if (c == '\'') {
                                     begin = pos;
+                                    current_literal_enc = literal_encoding::unspecified;
                                     lex_state = CHAR;
                                 } else if (c == '"') {
                                     begin = pos;
+                                    current_literal_enc = literal_encoding::unspecified;
                                     lex_state = STRING;
                                 } else if (c == '/') {
                                     begin = pos;
@@ -290,7 +301,12 @@ namespace k::lex {
                         break;
                     case COMMENT_SINGLE_LINE:
                         if (c == '\r' || c == '\n' || c == 0) {
-                            lexemes.push_back(comment(get_content()));
+                            auto cmt = get_content();
+                            if (!k::unicode::validate_utf8(cmt)) {
+                                warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_INVALID_UTF8_COMMENT),
+                                     "Comment contains invalid UTF-8 byte sequences", {}, pos);
+                            }
+                            lexemes.push_back(comment(cmt));
                             if (c!=0) {
                                 source.lines.push_back(pos+1);
                             }
@@ -327,7 +343,12 @@ namespace k::lex {
                         }
                     case COMMENT_MULTI_LINES_END:
                         if (c == '/') {
-                            lexemes.push_back(comment(get_content(get_current_size()+1)));
+                            auto cmt = get_content(get_current_size()+1);
+                            if (!k::unicode::validate_utf8(cmt)) {
+                                warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_INVALID_UTF8_COMMENT),
+                                     "Comment contains invalid UTF-8 byte sequences", {}, pos);
+                            }
+                            lexemes.push_back(comment(cmt));
                             begin = 0;
                             lex_state = START;
                         } else {
@@ -372,6 +393,29 @@ namespace k::lex {
                             // || c == '$' No dollar at middle of identifier
                             /* Todo handle unicode here ? */
                                 )) {
+                            // Encoding-prefixed character/string literal: the
+                            // prefix (u8/u/U/u16/u32) must be immediately
+                            // adjacent to the opening quote (no whitespace).
+                            if (c == '\'' || c == '"') {
+                                auto pfx = get_content();
+                                literal_encoding enc = literal_encoding::unspecified;
+                                bool is_prefix = true;
+                                if (pfx == "u8") {
+                                    enc = literal_encoding::utf8;
+                                } else if (pfx == "u" || pfx == "u16") {
+                                    enc = literal_encoding::utf16;
+                                } else if (pfx == "U" || pfx == "u32") {
+                                    enc = literal_encoding::utf32;
+                                } else {
+                                    is_prefix = false;
+                                }
+                                if (is_prefix) {
+                                    current_literal_enc = enc;
+                                    begin = pos; // start the literal content at the quote
+                                    lex_state = (c == '"') ? STRING : CHAR;
+                                    break;       // consume the opening quote
+                                }
+                            }
                             if (get_content() == "null") {
                                 lexemes.push_back(null(get_content()));
                             } else if (get_content() == "true" || get_content() == "false") {
@@ -763,7 +807,8 @@ namespace k::lex {
                     case CHAR:
                         if (c == '\'') {
                             // TODO Test for empty char sequence
-                            lexemes.push_back(character(get_content(get_current_size()+1)));
+                            lexemes.push_back(character(get_content(get_current_size()+1), current_literal_enc));
+                            current_literal_enc = literal_encoding::unspecified;
                             begin = 0;
                             lex_state = START;
                         } else if (c == '\\') {
@@ -775,7 +820,8 @@ namespace k::lex {
                         break;
                     case STRING:
                         if (c == '"') {
-                            lexemes.push_back(string(get_content(get_current_size()+1)));
+                            lexemes.push_back(string(get_content(get_current_size()+1), current_literal_enc));
+                            current_literal_enc = literal_encoding::unspecified;
                             begin = 0;
                             lex_state = START;
                         } else if (c == '\\') {

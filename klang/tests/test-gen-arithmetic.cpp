@@ -492,6 +492,77 @@ TEST_CASE( "byte arithmetic", "[gen][byte][arithmetic]" ) {
     }
 }
 
+TEST_CASE( "unsigned byte arithmetic and conversions", "[gen][unsigned-byte][arithmetic]" ) {
+
+    auto jit = gen_jit(R"SRC(
+        module __ubyte__;
+        add(a : unsigned byte, b : unsigned byte) : unsigned byte {
+            return a + b;
+        }
+        sub(a : unsigned byte, b : unsigned byte) : unsigned byte {
+            return a - b;
+        }
+        rsh(a : unsigned byte, b : unsigned byte) : unsigned byte {
+            return a >> b;
+        }
+        lt(a : unsigned byte, b : unsigned byte) : bool {
+            return a < b;
+        }
+        from_int(a : int) : unsigned byte {
+            ub : unsigned byte = (unsigned byte) a;
+            return ub;
+        }
+        to_uint(a : unsigned byte) : unsigned int {
+            return a;
+        }
+        )SRC");
+    REQUIRE( jit );
+
+    typedef uint8_t type_t;
+
+    SECTION( "unsigned byte addition wraps" ) {
+        auto add = jit->lookup_symbol<type_t(*)(type_t, type_t)>("add");
+        REQUIRE(add != nullptr);
+        REQUIRE( add(2, 3) == 5 );
+        REQUIRE( add(200, 100) == static_cast<type_t>(300) ); // wraps to 44
+    }
+
+    SECTION( "unsigned byte subtraction" ) {
+        auto sub = jit->lookup_symbol<type_t(*)(type_t, type_t)>("sub");
+        REQUIRE(sub != nullptr);
+        REQUIRE( sub(5, 3) == 2 );
+    }
+
+    SECTION( "unsigned byte right shift is logical" ) {
+        auto rsh = jit->lookup_symbol<type_t(*)(type_t, type_t)>("rsh");
+        REQUIRE(rsh != nullptr);
+        // 0x80 >> 1 == 0x40 (no sign extension because unsigned)
+        REQUIRE( rsh(0x80, 1) == 0x40 );
+    }
+
+    SECTION( "unsigned byte comparison is unsigned" ) {
+        auto lt = jit->lookup_symbol<bool(*)(type_t, type_t)>("lt");
+        REQUIRE(lt != nullptr);
+        // 0x80 (128) is greater than 1 when unsigned
+        REQUIRE( lt(0x80, 1) == false );
+        REQUIRE( lt(1, 0x80) == true );
+    }
+
+    SECTION( "cast int to unsigned byte truncates" ) {
+        auto from_int = jit->lookup_symbol<type_t(*)(int)>("from_int");
+        REQUIRE(from_int != nullptr);
+        REQUIRE( from_int(300) == static_cast<type_t>(300) ); // 44
+        REQUIRE( from_int(-1) == 0xFF );
+    }
+
+    SECTION( "unsigned byte widens to unsigned int without sign extension" ) {
+        auto to_uint = jit->lookup_symbol<unsigned int(*)(type_t)>("to_uint");
+        REQUIRE(to_uint != nullptr);
+        REQUIRE( to_uint(0x80) == 0x80u );
+        REQUIRE( to_uint(0xFF) == 0xFFu );
+    }
+}
+
 TEST_CASE( "int16 arithmetic", "[gen][int16][arithmetic]" ) {
 
     auto jit = gen_jit(R"SRC(

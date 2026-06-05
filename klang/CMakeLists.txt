@@ -19,6 +19,7 @@ add_library(klang
         src/model/imported.cpp
         src/model/imported.hpp
         src/common/common.cpp
+        src/common/unicode.cpp
         src/model/type.cpp
         src/model/model_builder.cpp
         src/gen/resolvers_scope_lookup.cpp
@@ -137,6 +138,7 @@ endmacro()
 # ---------------------------------------------------------------------------
 add_executable(klang-tests-frontend
         tests/test-lexer.cpp
+        tests/test-unicode.cpp
         tests/test-parser.cpp
         tests/test-parser-templates.cpp
         tests/test-file-resolver.cpp

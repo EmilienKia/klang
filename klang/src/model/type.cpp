@@ -245,6 +245,7 @@ std::string primitive_type::to_string()const {
     static std::map<primitive_type::PRIMITIVE_TYPE, std::string> type_names {
             {BOOL, "bool"},
             {BYTE, "byte"},
+            {UNSIGNED_BYTE, "unsigned byte"},
             {CHAR,"char"},
             {SHORT, "short"},
             {UNSIGNED_SHORT, "unsigned short"},

@@ -179,6 +179,21 @@ inline bool operator==(const keyword& obj1, const keyword& obj2) {
     return obj1.type == obj2.type;
 }
 
+/**
+ * Encoding prefix of a character or string literal.
+ *
+ *   unspecified  no prefix — element type is determined from context
+ *   utf8         'u8'  prefix → array of unsigned byte
+ *   utf16        'u' / 'u16' prefix → array of unsigned short
+ *   utf32        'U' / 'u32' prefix → array of char (Unicode code points)
+ */
+enum class literal_encoding {
+    unspecified,
+    utf8,
+    utf16,
+    utf32
+};
+
 struct literal : public lexeme {
     using lexeme::lexeme;
 
@@ -232,15 +247,37 @@ struct float_num : public literal {
 };
 
 struct character : public literal {
-    using literal::literal;
+    /** Encoding prefix (unspecified, utf8, utf16, utf32). */
+    literal_encoding enc = literal_encoding::unspecified;
+
+    character(const std::string_view& content, literal_encoding enc = literal_encoding::unspecified)
+        : literal(content), enc(enc) {}
 
     k::value_type value()const override;
+
+    /**
+     * Decode the literal body (a single character, after stripping the quotes
+     * and the optional prefix) into a Unicode code point, interpreting escape
+     * sequences and multi-byte UTF-8. Returns U+FFFD on malformed input.
+     */
+    char32_t code_point() const;
 };
 
 struct string : public literal {
-    using literal::literal;
+    /** Encoding prefix (unspecified, utf8, utf16, utf32). */
+    literal_encoding enc = literal_encoding::unspecified;
+
+    string(const std::string_view& content, literal_encoding enc = literal_encoding::unspecified)
+        : literal(content), enc(enc) {}
 
     k::value_type value()const override;
+
+    /**
+     * Decode the literal body (after stripping the quotes and the optional
+     * prefix) into a sequence of Unicode code points, interpreting escape
+     * sequences and multi-byte UTF-8.
+     */
+    std::vector<char32_t> code_points() const;
 };
 
 struct boolean : public literal {

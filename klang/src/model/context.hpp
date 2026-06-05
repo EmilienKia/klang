@@ -98,6 +98,9 @@ protected:
     // String literal deduplication pool: maps string content → LLVM global constant
     std::map<std::string, llvm::GlobalVariable*> _string_pool;
 
+    // Encoded (prefixed) string literal pool: maps an encoding-tagged key → LLVM global.
+    std::map<std::string, llvm::GlobalVariable*> _encoded_string_pool;
+
     /**
      * Stack of template parameter name sets.
      * Pushed by model_builder when entering a template declaration,
@@ -160,6 +163,16 @@ public:
      * Deduplicates identical strings via _string_pool.
      */
     llvm::Constant* get_or_create_string_literal(const std::string& content);
+
+    /**
+     * Return (or create) a global constant for an encoding-prefixed string
+     * literal. The code points are re-encoded into the encoding's code units
+     * (UTF-8 → unsigned byte, UTF-16 → unsigned short, UTF-32 → char), a zero
+     * terminator is appended, and a { i32 size, [N x elem] } global is built.
+     * Deduplicates identical literals via _encoded_string_pool.
+     */
+    llvm::Constant* get_or_create_encoded_string_literal(
+        const std::vector<char32_t>& code_points, k::lex::literal_encoding enc);
 
     void resolve_types();
 

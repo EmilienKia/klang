@@ -62,9 +62,92 @@ TEST_CASE("Char literal — comparison", "[gen][literal][char]") {
     REQUIRE(fn() == true);
 }
 
+TEST_CASE("Char literal — escape sequences decode correctly", "[gen][literal][char]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        newline() : char { return '\n'; }
+        tab()     : char { return '\t'; }
+        cr()      : char { return '\r'; }
+        nul()     : char { return '\0'; }
+        backslash() : char { return '\\'; }
+        hex()     : char { return '\x41'; }
+    )SRC");
+    REQUIRE(jit);
+    REQUIRE(jit->lookup_symbol<char(*)()>("newline")() == '\n');
+    REQUIRE(jit->lookup_symbol<char(*)()>("tab")() == '\t');
+    REQUIRE(jit->lookup_symbol<char(*)()>("cr")() == '\r');
+    REQUIRE(jit->lookup_symbol<char(*)()>("nul")() == '\0');
+    REQUIRE(jit->lookup_symbol<char(*)()>("backslash")() == '\\');
+    REQUIRE(jit->lookup_symbol<char(*)()>("hex")() == 'A');
+}
+
 // =============================================================================
-// STRING LITERALS — type and basic access
+// ENCODING-PREFIXED LITERALS
 // =============================================================================
+
+TEST_CASE("UTF-8 prefixed string literal — element type unsigned byte", "[gen][literal][string][prefix]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        get_size(s : const unsigned byte[]) : unsigned int { return s.size; }
+        first(s : const unsigned byte[]) : unsigned byte { return s[0]; }
+
+        test_size() : unsigned int { return get_size(u8"hello"); }
+        test_first() : unsigned byte { return first(u8"ABC"); }
+    )SRC");
+    REQUIRE(jit);
+    // "hello" UTF-8 is 5 bytes + null terminator = 6
+    REQUIRE(jit->lookup_symbol<unsigned(*)()>("test_size")() == 6);
+    REQUIRE(jit->lookup_symbol<unsigned char(*)()>("test_first")() == 'A');
+}
+
+TEST_CASE("UTF-16 prefixed string literal — element type unsigned short", "[gen][literal][string][prefix]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        get_size(s : const unsigned short[]) : unsigned int { return s.size; }
+        first(s : const unsigned short[]) : unsigned short { return s[0]; }
+
+        test_size() : unsigned int { return get_size(u16"hi"); }
+        test_first() : unsigned short { return first(u"ABC"); }
+    )SRC");
+    REQUIRE(jit);
+    // "hi" UTF-16 is 2 code units + null terminator = 3
+    REQUIRE(jit->lookup_symbol<unsigned(*)()>("test_size")() == 3);
+    REQUIRE(jit->lookup_symbol<unsigned short(*)()>("test_first")() == 'A');
+}
+
+TEST_CASE("UTF-32 prefixed string literal — element type char", "[gen][literal][string][prefix]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        get_size(s : const char[]) : unsigned int { return s.size; }
+        first(s : const char[]) : char { return s[0]; }
+
+        test_size() : unsigned int { return get_size(U"hi"); }
+        test_first() : char { return first(u32"ABC"); }
+    )SRC");
+    REQUIRE(jit);
+    // "hi" UTF-32 is 2 code units + null terminator = 3
+    REQUIRE(jit->lookup_symbol<unsigned(*)()>("test_size")() == 3);
+    REQUIRE(jit->lookup_symbol<char(*)()>("test_first")() == 'A');
+}
+
+TEST_CASE("Prefixed character literals — element types", "[gen][literal][char][prefix]") {
+    auto jit = gen_jit(R"SRC(
+        module test;
+
+        u8_char()  : unsigned byte  { return u8'A'; }
+        u16_char() : unsigned short { return u'A'; }
+        u32_char() : char           { return U'A'; }
+    )SRC");
+    REQUIRE(jit);
+    REQUIRE(jit->lookup_symbol<unsigned char(*)()>("u8_char")() == 'A');
+    REQUIRE(jit->lookup_symbol<unsigned short(*)()>("u16_char")() == 'A');
+    REQUIRE(jit->lookup_symbol<char(*)()>("u32_char")() == 'A');
+}
+
 
 TEST_CASE("String literal — passed to const char[] parameter, read size", "[gen][literal][string]") {
     auto jit = gen_jit(R"SRC(
