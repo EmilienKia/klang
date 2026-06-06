@@ -40,7 +40,41 @@ namespace k::parse {
 
     namespace ast {
 
+    /**
+     * A documentation-comment block attached to an AST node.
+     *
+     * Each doc_comment lexeme emitted by the lexer produces one block.
+     * Multiple blocks may be attached to the same node (stored in the
+     * node's doc_comments vector, in source order).
+     *
+     * content holds the cleaned text: opening/closing markers are
+     * stripped, per-line decoration (leading '*' or '!') is removed,
+     * pure-decoration border lines (===, ---…) are dropped, and
+     * common leading indentation is normalised.
+     */
+    struct doc_comment_block {
+        enum class doc_type {
+            LINE_FWD,   ///< /// form — forward, single-line
+            LINE_BWD,   ///< //! form — backward, single-line
+            BLOCK_FWD,  ///< /** form — forward, block
+            BLOCK_BWD   ///< /*! form — backward, block
+        };
+
+        doc_type type;
+        /** Cleaned documentation text. */
+        std::string content;
+
+        doc_comment_block(doc_type type, std::string content)
+            : type(type), content(std::move(content)) {}
+    };
+
+    /** Ordered list of documentation-comment blocks attached to one node. */
+    using doc_comment_list = std::vector<doc_comment_block>;
+
     struct ast_node  : public std::enable_shared_from_this<ast_node> {
+            /** Documentation comments associated with this node, in source order. */
+            doc_comment_list doc_comments;
+
             virtual void visit(ast_visitor &visitor) = 0;
 
             template<typename T>

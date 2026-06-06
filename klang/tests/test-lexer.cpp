@@ -2069,3 +2069,125 @@ TEST_CASE("Name parsing - Invalid names", "[lexer][name]") {
         REQUIRE_THROWS_AS(k::name::from(s), std::runtime_error);
     }
 }
+
+//
+// Doc-comment lexeme tests
+//
+
+TEST_CASE("Lex /// as doc_comment LINE_FWD", "[lexer][doc-comment]") {
+    test_logger log;
+    lexer lex(log);
+    k::source src{"/// A forward line doc"};
+    auto lexemes = lex.parse(src);
+
+    REQUIRE(lexemes.size() == 1);
+    REQUIRE(std::holds_alternative<doc_comment>(lexemes[0]));
+    const auto& dc = std::get<doc_comment>(lexemes[0]);
+    REQUIRE(dc.type == doc_comment::doc_type::LINE_FWD);
+    REQUIRE(dc.content == "/// A forward line doc");
+}
+
+TEST_CASE("Lex //! as doc_comment LINE_BWD", "[lexer][doc-comment]") {
+    test_logger log;
+    lexer lex(log);
+    k::source src{"//! A backward line doc"};
+    auto lexemes = lex.parse(src);
+
+    REQUIRE(lexemes.size() == 1);
+    REQUIRE(std::holds_alternative<doc_comment>(lexemes[0]));
+    const auto& dc = std::get<doc_comment>(lexemes[0]);
+    REQUIRE(dc.type == doc_comment::doc_type::LINE_BWD);
+    REQUIRE(dc.content == "//! A backward line doc");
+}
+
+TEST_CASE("Lex /** */ as doc_comment BLOCK_FWD", "[lexer][doc-comment]") {
+    test_logger log;
+    lexer lex(log);
+    k::source src{"/** A forward block doc */"};
+    auto lexemes = lex.parse(src);
+
+    REQUIRE(lexemes.size() == 1);
+    REQUIRE(std::holds_alternative<doc_comment>(lexemes[0]));
+    const auto& dc = std::get<doc_comment>(lexemes[0]);
+    REQUIRE(dc.type == doc_comment::doc_type::BLOCK_FWD);
+    REQUIRE(dc.content.starts_with("/**"));
+    REQUIRE(dc.content.ends_with("*/"));
+}
+
+TEST_CASE("Lex /*! */ as doc_comment BLOCK_BWD", "[lexer][doc-comment]") {
+    test_logger log;
+    lexer lex(log);
+    k::source src{"/*! A backward block doc */"};
+    auto lexemes = lex.parse(src);
+
+    REQUIRE(lexemes.size() == 1);
+    REQUIRE(std::holds_alternative<doc_comment>(lexemes[0]));
+    const auto& dc = std::get<doc_comment>(lexemes[0]);
+    REQUIRE(dc.type == doc_comment::doc_type::BLOCK_BWD);
+    REQUIRE(dc.content.starts_with("/*!"));
+    REQUIRE(dc.content.ends_with("*/"));
+}
+
+TEST_CASE("Regular // comment is still a plain comment", "[lexer][doc-comment]") {
+    test_logger log;
+    lexer lex(log);
+    k::source src{"// just a comment"};
+    auto lexemes = lex.parse(src);
+
+    REQUIRE(lexemes.size() == 1);
+    REQUIRE(std::holds_alternative<comment>(lexemes[0]));
+    REQUIRE(!std::holds_alternative<doc_comment>(lexemes[0]));
+}
+
+TEST_CASE("Regular /* */ comment is still a plain comment", "[lexer][doc-comment]") {
+    test_logger log;
+    lexer lex(log);
+    k::source src{"/* just a block comment */"};
+    auto lexemes = lex.parse(src);
+
+    REQUIRE(lexemes.size() == 1);
+    REQUIRE(std::holds_alternative<comment>(lexemes[0]));
+    REQUIRE(!std::holds_alternative<doc_comment>(lexemes[0]));
+}
+
+TEST_CASE("Doc-comment tokens are skipped by lexer::get()", "[lexer][doc-comment]") {
+    test_logger log;
+    lexer lex(log);
+    k::source src{"/// doc\nident"};
+    lex.parse(src);
+
+    // get() must skip the doc_comment and return the identifier.
+    auto tok = lex.get();
+    REQUIRE(tok.has_value());
+    REQUIRE(std::holds_alternative<identifier>(tok->get()));
+    REQUIRE(std::get<identifier>(tok->get()).content == "ident");
+}
+
+TEST_CASE("collect_leading_fwd_doc_comments returns FWD docs before real token",
+          "[lexer][doc-comment]") {
+    test_logger log;
+    lexer lex(log);
+    k::source src{"/// line1\n/// line2\nident"};
+    lex.parse(src);
+
+    auto fwd = lex.collect_leading_fwd_doc_comments(0);
+    REQUIRE(fwd.size() == 2);
+    REQUIRE(fwd[0].type == doc_comment::doc_type::LINE_FWD);
+    REQUIRE(fwd[1].type == doc_comment::doc_type::LINE_FWD);
+}
+
+TEST_CASE("collect_trailing_bwd_doc_comments returns BWD docs after position",
+          "[lexer][doc-comment]") {
+    test_logger log;
+    lexer lex(log);
+    // After lexing, index=0. Consume the identifier so index points past it.
+    k::source src{"ident //! bwd1\n//! bwd2\nother"};
+    lex.parse(src);
+    lex.get(); // consume 'ident'
+    size_t pos = lex.tell(); // now points at the bwd docs
+
+    auto bwd = lex.collect_trailing_bwd_doc_comments(pos);
+    REQUIRE(bwd.size() == 2);
+    REQUIRE(bwd[0].type == doc_comment::doc_type::LINE_BWD);
+    REQUIRE(bwd[1].type == doc_comment::doc_type::LINE_BWD);
+}

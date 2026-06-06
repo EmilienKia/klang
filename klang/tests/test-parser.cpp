@@ -1124,3 +1124,163 @@ TEST_CASE("Parse typed enum reports missing entry name diagnostic", "[parser][en
 // Typed enum semantic and diagnostic cases
 //
 
+//
+// Doc-comment AST association tests
+//
+
+TEST_CASE("Forward line doc-comment attaches to function declaration",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"/// The function doc\nfoo() : int;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    const auto& docs = unit->declarations[0]->doc_comments;
+    REQUIRE(docs.size() == 1);
+    REQUIRE(docs[0].type == ast::doc_comment_block::doc_type::LINE_FWD);
+    REQUIRE(docs[0].content == "The function doc");
+}
+
+TEST_CASE("Block forward doc-comment attaches to function declaration",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"/** Block doc */\nfoo() : int;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    const auto& docs = unit->declarations[0]->doc_comments;
+    REQUIRE(docs.size() == 1);
+    REQUIRE(docs[0].type == ast::doc_comment_block::doc_type::BLOCK_FWD);
+    REQUIRE(docs[0].content == "Block doc");
+}
+
+TEST_CASE("Backward line doc-comment attaches to variable declaration",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"x : int; //! backward doc"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    const auto& docs = unit->declarations[0]->doc_comments;
+    REQUIRE(docs.size() == 1);
+    REQUIRE(docs[0].type == ast::doc_comment_block::doc_type::LINE_BWD);
+    REQUIRE(docs[0].content == "backward doc");
+}
+
+TEST_CASE("Multiple forward doc-comments all attach to next declaration",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"/// First block\n/// Second block\nfoo() : int;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    const auto& docs = unit->declarations[0]->doc_comments;
+    REQUIRE(docs.size() == 2);
+    REQUIRE(docs[0].content == "First block");
+    REQUIRE(docs[1].content == "Second block");
+}
+
+TEST_CASE("Doc-comment attaches to struct declaration",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"/** A struct */\nstruct Foo { x : int; }"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    const auto& docs = unit->declarations[0]->doc_comments;
+    REQUIRE(docs.size() == 1);
+    REQUIRE(docs[0].type == ast::doc_comment_block::doc_type::BLOCK_FWD);
+    REQUIRE(docs[0].content == "A struct");
+}
+
+TEST_CASE("Doc-comment attaches to inner member of struct",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"struct Foo { /// member doc\n x : int; }"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto agg = std::dynamic_pointer_cast<ast::aggregate_decl>(unit->declarations[0]);
+    REQUIRE(agg);
+    REQUIRE(agg->declarations.size() == 1);
+    const auto& inner_docs = agg->declarations[0]->doc_comments;
+    REQUIRE(inner_docs.size() == 1);
+    REQUIRE(inner_docs[0].content == "member doc");
+}
+
+TEST_CASE("Backward block doc-comment inside aggregate attaches to aggregate itself",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"struct Foo { x : int; /*! doc for Foo */ }"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    auto agg = std::dynamic_pointer_cast<ast::aggregate_decl>(unit->declarations[0]);
+    REQUIRE(agg);
+    // Backward doc inside body → attached to the aggregate node
+    const auto& agg_docs = agg->doc_comments;
+    REQUIRE(agg_docs.size() == 1);
+    REQUIRE(agg_docs[0].type == ast::doc_comment_block::doc_type::BLOCK_BWD);
+    REQUIRE(agg_docs[0].content == "doc for Foo");
+}
+
+TEST_CASE("Block doc-comment content is cleaned: markers and * decoration stripped",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{R"(
+/**
+ * First line
+ * Second line
+ */
+foo() : int;
+)"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    const auto& docs = unit->declarations[0]->doc_comments;
+    REQUIRE(docs.size() == 1);
+    REQUIRE(docs[0].content == "First line\nSecond line");
+}
+
+TEST_CASE("Block doc-comment border lines are stripped",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{R"(
+/**
+ * ============
+ * Content line
+ * ============
+ */
+foo() : int;
+)"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    const auto& docs = unit->declarations[0]->doc_comments;
+    REQUIRE(docs.size() == 1);
+    REQUIRE(docs[0].content == "Content line");
+}
+
+TEST_CASE("Doc-comment attaches to module declaration",
+          "[parser][doc-comment]") {
+    test_logger log;
+    k::source src{"/// Module doc\nmodule mymod;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->module_name);
+    const auto& docs = unit->module_name->doc_comments;
+    REQUIRE(docs.size() == 1);
+    REQUIRE(docs[0].content == "Module doc");
+}
+
+

@@ -28,6 +28,123 @@
 
 namespace k::parse {
 
+namespace {
+
+//
+// Doc-comment content cleaning helpers
+//
+
+/// Returns true when every character in line is a pure-decoration character.
+bool is_border_line(std::string_view line) {
+    if (line.empty()) return false;
+    for (char c : line) {
+        if (c != '=' && c != '-' && c != '*' && c != '_'
+            && c != '/' && c != '#' && c != '~' && c != '+') {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Clean a single-line doc comment (/// or //!).
+/// Strips the 3-char prefix and one optional leading space.
+std::string clean_line_doc(std::string_view raw, std::string_view prefix) {
+    std::string_view body = raw;
+    if (body.starts_with(prefix)) body = body.substr(prefix.size());
+    if (!body.empty() && body.front() == ' ') body = body.substr(1);
+    while (!body.empty() && (body.back() == ' ' || body.back() == '\t' || body.back() == '\r'))
+        body = body.substr(0, body.size() - 1);
+    return std::string(body);
+}
+
+/// Clean a block doc comment (/** or /*!).
+/// Strips the opening marker, the closing */, per-line leading * decoration,
+/// pure-decoration border lines, and normalises common leading indentation.
+std::string clean_block_doc(std::string_view raw, std::string_view opening) {
+    std::string_view body = raw;
+    if (body.starts_with(opening)) body = body.substr(opening.size());
+    if (body.ends_with("*/")) body = body.substr(0, body.size() - 2);
+
+    // Split into lines.
+    std::vector<std::string> lines;
+    std::string cur;
+    for (size_t i = 0; i < body.size(); ++i) {
+        char c = body[i];
+        if (c == '\n') {
+            lines.push_back(cur);
+            cur.clear();
+        } else if (c == '\r') {
+            lines.push_back(cur);
+            cur.clear();
+            if (i + 1 < body.size() && body[i + 1] == '\n') ++i;
+        } else {
+            cur += c;
+        }
+    }
+    lines.push_back(cur);
+
+    // Per-line: strip leading whitespace, then a leading * or ! (but not */), then one space.
+    std::vector<std::string> processed;
+    processed.reserve(lines.size());
+    for (auto& line : lines) {
+        size_t start = 0;
+        while (start < line.size() && (line[start] == ' ' || line[start] == '\t')) ++start;
+        std::string s = line.substr(start);
+        if (!s.empty() && (s[0] == '*' || s[0] == '!')) {
+            if (s.size() < 2 || s[1] != '/') {  // don't eat '*/'
+                s = s.substr(1);
+                if (!s.empty() && s[0] == ' ') s = s.substr(1);
+            }
+        }
+        // Trim trailing whitespace.
+        while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
+            s.pop_back();
+        processed.push_back(std::move(s));
+    }
+
+    // Remove leading and trailing blank or pure-decoration lines.
+    size_t first = 0, last = processed.size();
+    while (first < last && (processed[first].empty() || is_border_line(processed[first]))) ++first;
+    while (last > first && (processed[last - 1].empty() || is_border_line(processed[last - 1]))) --last;
+
+    // Join remaining lines.
+    std::string result;
+    for (size_t i = first; i < last; ++i) {
+        if (i > first) result += '\n';
+        result += processed[i];
+    }
+    return result;
+}
+
+/// Convert a raw doc_comment lexeme into a cleaned doc_comment_block.
+ast::doc_comment_block make_doc_comment_block(const lex::doc_comment& dc) {
+    using lt = lex::doc_comment::doc_type;
+    using at = ast::doc_comment_block::doc_type;
+    switch (dc.type) {
+        case lt::LINE_FWD: return {at::LINE_FWD, clean_line_doc(dc.content, "///")};
+        case lt::LINE_BWD: return {at::LINE_BWD, clean_line_doc(dc.content, "//!")};
+        case lt::BLOCK_FWD: return {at::BLOCK_FWD, clean_block_doc(dc.content, "/**")};
+        case lt::BLOCK_BWD: return {at::BLOCK_BWD, clean_block_doc(dc.content, "/*!")};
+    }
+    return {at::LINE_FWD, {}};  // unreachable
+}
+
+/// Attach the lexer's leading forward doc_comments (at start_index) to node.
+void attach_leading_fwd_docs(lex::lexer& lexer, size_t start_index, ast::ast_node& node) {
+    for (auto& dc : lexer.collect_leading_fwd_doc_comments(start_index)) {
+        node.doc_comments.push_back(make_doc_comment_block(dc));
+    }
+}
+
+/// Attach the lexer's trailing backward doc_comments (at start_index) to node.
+void attach_trailing_bwd_docs(lex::lexer& lexer, size_t start_index, ast::ast_node& node) {
+    for (auto& dc : lexer.collect_trailing_bwd_doc_comments(start_index)) {
+        node.doc_comments.push_back(make_doc_comment_block(dc));
+    }
+}
+
+} // anonymous namespace
+
 std::optional<k::name> lookup_module_name(k::source& src, k::log::logger& logger) {
     try {
         parser p(logger);
@@ -69,12 +186,20 @@ std::shared_ptr<ast::unit> parser::parse_unit()
     trace("[parser::parse_unit] begin");
     auto unit = std::make_shared<ast::unit>();
 
+    size_t pos_before_module = _lexer.tell();
     auto module_name = parse_module_declaration();
     if(module_name) {
+        attach_leading_fwd_docs(_lexer, pos_before_module, *module_name);
         unit->module_name = module_name;
     }
 
-    while(auto import = parse_import()) {
+    while(true) {
+        size_t pre_import = _lexer.tell();
+        auto import = parse_import();
+        if (!import) break;
+        size_t post_import = _lexer.tell();
+        attach_leading_fwd_docs(_lexer, pre_import, *import);
+        attach_trailing_bwd_docs(_lexer, post_import, *import);
         unit->imports.push_back(import);
     }
 
@@ -139,7 +264,13 @@ std::shared_ptr<ast::import> parser::parse_import()
 std::vector<ast::decl_ptr> parser::parse_declarations()
 {
     std::vector<ast::decl_ptr> declarations;
-    while(ast::decl_ptr declaration = parse_declaration()) {
+    while(true) {
+        size_t pre_parse = _lexer.tell();
+        ast::decl_ptr declaration = parse_declaration();
+        if (!declaration) break;
+        size_t post_parse = _lexer.tell();
+        attach_leading_fwd_docs(_lexer, pre_parse, *declaration);
+        attach_trailing_bwd_docs(_lexer, post_parse, *declaration);
         declarations.push_back(declaration);
     }
     return declarations;
@@ -969,6 +1100,11 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
 
     std::vector<ast::decl_ptr> declarations = parse_declarations();
 
+    // Collect any backward doc_comments sitting between the last member
+    // and the closing brace; these document the aggregate itself.
+    size_t pos_before_close = _lexer.tell();
+    auto inner_bwd = _lexer.collect_trailing_bwd_doc_comments(pos_before_close);
+
     // Expect a closing brace
     if(lex::opt_ref_any_lexeme lclosingbrace= _lexer.get(); lclosingbrace==lex::punctuator::BRACE_CLOSE) {
         close_brace = lex::as<lex::punctuator>(lclosingbrace);
@@ -979,6 +1115,11 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
     auto result = std::make_shared<ast::aggregate_decl>(specifiers, *st, *open_brace, *close_brace, lex::as<lex::identifier>(lname), bases, declarations, annotations);
     result->template_params = std::move(template_params);
     result->is_generic = is_generic;
+
+    // Attach inner backward doc_comments to the aggregate.
+    for (auto& dc : inner_bwd) {
+        result->doc_comments.push_back(make_doc_comment_block(dc));
+    }
 
     // Capture template source text for KDI export: from 'template' keyword through closing '}'
     // Generic aggregates do not need source text (they are synthesised in their declaration module).
