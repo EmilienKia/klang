@@ -297,6 +297,37 @@ struct comment : public lexeme {
     using lexeme::lexeme;
 };
 
+/**
+ * Documentation comment lexeme.
+ *
+ * Captures one of the four doc-comment forms emitted by the lexer:
+ *   - LINE_FWD  ///  — single-line, documents the next element
+ *   - LINE_BWD  //!  — single-line, documents the previous element
+ *   - BLOCK_FWD /** — block, documents the next element
+ *   - BLOCK_BWD /*! — block, documents the previous element
+ *
+ * content holds the raw source text including the opening marker
+ * (and closing * / for block forms).
+ */
+struct doc_comment : public lexeme {
+    enum class doc_type {
+        LINE_FWD,   ///< /// form
+        LINE_BWD,   ///< //! form
+        BLOCK_FWD,  ///< /** form
+        BLOCK_BWD   ///< /*! form
+    };
+
+    doc_type type;
+
+    doc_comment(const doc_comment&) = default;
+    doc_comment(doc_comment&&) = default;
+    doc_comment& operator=(const doc_comment&) = default;
+    doc_comment& operator=(doc_comment&&) = default;
+
+    doc_comment(const std::string_view& content, doc_type type)
+        : lexeme(content), type(type) {}
+};
+
 struct punctuator : public lexeme {
     enum type_t {
         PARENTHESIS_OPEN,
@@ -391,7 +422,7 @@ inline bool operator==(const operator_& obj1, const operator_& obj2) {
 
 extern const std::set<std::string> keyword_set;
 
-typedef std::variant<keyword, identifier, character, string, integer, float_num, boolean, null, comment, punctuator, operator_> any_lexeme;
+typedef std::variant<keyword, identifier, character, string, integer, float_num, boolean, null, comment, doc_comment, punctuator, operator_> any_lexeme;
 //    typedef k::helpers::any_of<lexeme, keyword, identifier, character, string, integer, boolean, null, comment, punctuator, operator_> any_lexeme;
 
 typedef anyof::any_of<literal, integer, float_num, character, string, boolean, null> any_literal;

@@ -290,12 +290,24 @@ namespace k::lex {
                         break;
                     case SLASH:
                         if (c == '/') {
-                            lex_state = COMMENT_SINGLE_LINE;
+                            lex_state = COMMENT_SINGLE_LINE_FIRST;
                         } else if (c == '*') {
-                            lex_state = COMMENT_MULTI_LINES;
+                            lex_state = COMMENT_MULTI_LINES_FIRST;
                         } else {
                             // Consider '/' as the operator.
                             lex_state = OPERATOR;
+                            continue;
+                        }
+                        break;
+                    case COMMENT_SINGLE_LINE_FIRST:
+                        // Third character after '//': decides whether this is a doc comment.
+                        if (c == '/') {
+                            lex_state = DOC_COMMENT_LINE_FWD;
+                        } else if (c == '!') {
+                            lex_state = DOC_COMMENT_LINE_BWD;
+                        } else {
+                            lex_state = COMMENT_SINGLE_LINE;
+                            // Re-process this character in the regular comment state.
                             continue;
                         }
                         break;
@@ -317,6 +329,55 @@ namespace k::lex {
                                 lex_state = START;
                             }
                             break;
+                        }
+                        break;
+                    case DOC_COMMENT_LINE_FWD:
+                        if (c == '\r' || c == '\n' || c == 0) {
+                            auto cmt = get_content();
+                            if (!k::unicode::validate_utf8(cmt)) {
+                                warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_INVALID_UTF8_COMMENT),
+                                     "Comment contains invalid UTF-8 byte sequences", {}, pos);
+                            }
+                            lexemes.push_back(doc_comment(cmt, doc_comment::doc_type::LINE_FWD));
+                            if (c!=0) {
+                                source.lines.push_back(pos+1);
+                            }
+                            begin = 0;
+                            if (c == '\r') {
+                                lex_state = CR;
+                            } else {
+                                lex_state = START;
+                            }
+                        }
+                        break;
+                    case DOC_COMMENT_LINE_BWD:
+                        if (c == '\r' || c == '\n' || c == 0) {
+                            auto cmt = get_content();
+                            if (!k::unicode::validate_utf8(cmt)) {
+                                warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_INVALID_UTF8_COMMENT),
+                                     "Comment contains invalid UTF-8 byte sequences", {}, pos);
+                            }
+                            lexemes.push_back(doc_comment(cmt, doc_comment::doc_type::LINE_BWD));
+                            if (c!=0) {
+                                source.lines.push_back(pos+1);
+                            }
+                            begin = 0;
+                            if (c == '\r') {
+                                lex_state = CR;
+                            } else {
+                                lex_state = START;
+                            }
+                        }
+                        break;
+                    case COMMENT_MULTI_LINES_FIRST:
+                        // First character after '/*': decides doc-comment type.
+                        if (c == '*') {
+                            lex_state = DOC_COMMENT_BLOCK_FWD;
+                        } else if (c == '!') {
+                            lex_state = DOC_COMMENT_BLOCK_BWD;
+                        } else {
+                            lex_state = COMMENT_MULTI_LINES;
+                            continue;
                         }
                         break;
                     case COMMENT_MULTI_LINES:
@@ -353,6 +414,72 @@ namespace k::lex {
                             lex_state = START;
                         } else {
                             lex_state = COMMENT_MULTI_LINES;
+                        }
+                        break;
+                    case DOC_COMMENT_BLOCK_FWD:
+                        if (c == '*') {
+                            lex_state = DOC_COMMENT_BLOCK_FWD_END;
+                        } else if (c == '\n') {
+                            source.lines.push_back(pos+1);
+                        } else if (c == '\r') {
+                            lex_state = DOC_COMMENT_BLOCK_FWD_CR;
+                        }
+                        break;
+                    case DOC_COMMENT_BLOCK_FWD_CR:
+                        if (c == '\n') {
+                            source.lines.push_back(pos+1);
+                            lex_state = DOC_COMMENT_BLOCK_FWD;
+                            break;
+                        } else {
+                            source.lines.push_back(pos);
+                            lex_state = DOC_COMMENT_BLOCK_FWD;
+                            continue;
+                        }
+                    case DOC_COMMENT_BLOCK_FWD_END:
+                        if (c == '/') {
+                            auto cmt = get_content(get_current_size()+1);
+                            if (!k::unicode::validate_utf8(cmt)) {
+                                warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_INVALID_UTF8_COMMENT),
+                                     "Comment contains invalid UTF-8 byte sequences", {}, pos);
+                            }
+                            lexemes.push_back(doc_comment(cmt, doc_comment::doc_type::BLOCK_FWD));
+                            begin = 0;
+                            lex_state = START;
+                        } else {
+                            lex_state = DOC_COMMENT_BLOCK_FWD;
+                        }
+                        break;
+                    case DOC_COMMENT_BLOCK_BWD:
+                        if (c == '*') {
+                            lex_state = DOC_COMMENT_BLOCK_BWD_END;
+                        } else if (c == '\n') {
+                            source.lines.push_back(pos+1);
+                        } else if (c == '\r') {
+                            lex_state = DOC_COMMENT_BLOCK_BWD_CR;
+                        }
+                        break;
+                    case DOC_COMMENT_BLOCK_BWD_CR:
+                        if (c == '\n') {
+                            source.lines.push_back(pos+1);
+                            lex_state = DOC_COMMENT_BLOCK_BWD;
+                            break;
+                        } else {
+                            source.lines.push_back(pos);
+                            lex_state = DOC_COMMENT_BLOCK_BWD;
+                            continue;
+                        }
+                    case DOC_COMMENT_BLOCK_BWD_END:
+                        if (c == '/') {
+                            auto cmt = get_content(get_current_size()+1);
+                            if (!k::unicode::validate_utf8(cmt)) {
+                                warn(static_cast<unsigned int>(k::diag::lexer_diag::WARN_INVALID_UTF8_COMMENT),
+                                     "Comment contains invalid UTF-8 byte sequences", {}, pos);
+                            }
+                            lexemes.push_back(doc_comment(cmt, doc_comment::doc_type::BLOCK_BWD));
+                            begin = 0;
+                            lex_state = START;
+                        } else {
+                            lex_state = DOC_COMMENT_BLOCK_BWD;
                         }
                         break;
                     case OPERATOR:
@@ -1055,7 +1182,8 @@ namespace k::lex {
     {
         while(!eof()) {
             lex::any_lexeme & lex = lexemes[index++];
-            if(!std::holds_alternative<lex::comment>(lex)){
+            if(!std::holds_alternative<lex::comment>(lex)
+               && !std::holds_alternative<lex::doc_comment>(lex)){
                 return std::ref(lex);
             }
         }
@@ -1065,7 +1193,8 @@ namespace k::lex {
     void lexer::unget(size_t count) {
         while(index>0 && count>0) {
             const lex::any_lexeme & lex = lexemes[--index];
-            if(!std::holds_alternative<lex::comment>(lex)){
+            if(!std::holds_alternative<lex::comment>(lex)
+               && !std::holds_alternative<lex::doc_comment>(lex)){
                 count--;
             }
         }
@@ -1105,6 +1234,48 @@ namespace k::lex {
 
     bool lexer::eof() const {
         return lexemes.empty() || index>=lexemes.size();
+    }
+
+    std::vector<lex::doc_comment> lexer::collect_leading_fwd_doc_comments(size_t start_index) const {
+        std::vector<lex::doc_comment> result;
+        for (size_t i = start_index; i < lexemes.size(); ++i) {
+            const auto& lex = lexemes[i];
+            if (std::holds_alternative<lex::comment>(lex)) {
+                continue; // skip regular comments
+            }
+            if (std::holds_alternative<lex::doc_comment>(lex)) {
+                const auto& dc = std::get<lex::doc_comment>(lex);
+                if (dc.type == lex::doc_comment::doc_type::LINE_FWD
+                    || dc.type == lex::doc_comment::doc_type::BLOCK_FWD) {
+                    result.push_back(dc);
+                    continue;
+                }
+            }
+            // Stop at any non-comment, non-doc-comment or backward doc_comment.
+            break;
+        }
+        return result;
+    }
+
+    std::vector<lex::doc_comment> lexer::collect_trailing_bwd_doc_comments(size_t start_index) const {
+        std::vector<lex::doc_comment> result;
+        for (size_t i = start_index; i < lexemes.size(); ++i) {
+            const auto& lex = lexemes[i];
+            if (std::holds_alternative<lex::comment>(lex)) {
+                continue; // skip regular comments
+            }
+            if (std::holds_alternative<lex::doc_comment>(lex)) {
+                const auto& dc = std::get<lex::doc_comment>(lex);
+                if (dc.type == lex::doc_comment::doc_type::LINE_BWD
+                    || dc.type == lex::doc_comment::doc_type::BLOCK_BWD) {
+                    result.push_back(dc);
+                    continue;
+                }
+            }
+            // Stop at any non-comment, non-doc-comment or forward doc_comment.
+            break;
+        }
+        return result;
     }
 
     void lexer::warn(unsigned int code, const std::string_view& msg, const std::vector<std::string>& args, size_t pos) {

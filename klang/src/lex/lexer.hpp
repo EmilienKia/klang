@@ -51,10 +51,20 @@ namespace k::lex {
             HEXADECIMAL,
             SLASH,
             POINT,
+            COMMENT_SINGLE_LINE_FIRST,
             COMMENT_SINGLE_LINE,
+            COMMENT_MULTI_LINES_FIRST,
             COMMENT_MULTI_LINES,
             COMMENT_MULTI_LINES_CR,
             COMMENT_MULTI_LINES_END,
+            DOC_COMMENT_LINE_FWD,
+            DOC_COMMENT_LINE_BWD,
+            DOC_COMMENT_BLOCK_FWD,
+            DOC_COMMENT_BLOCK_FWD_CR,
+            DOC_COMMENT_BLOCK_FWD_END,
+            DOC_COMMENT_BLOCK_BWD,
+            DOC_COMMENT_BLOCK_BWD_CR,
+            DOC_COMMENT_BLOCK_BWD_END,
             CHAR,
             STRING,
             ESCAPE,
@@ -187,6 +197,22 @@ namespace k::lex {
         opt_ref_any_lexeme pick_previous();
 
         bool eof() const;
+
+        /**
+         * Scan the raw lexeme stream starting at start_index, skipping regular
+         * comments. Collect consecutive forward doc_comments (LINE_FWD, BLOCK_FWD)
+         * until a non-comment, non-doc-comment lexeme is encountered.
+         * Does NOT advance the lexer position.
+         */
+        std::vector<lex::doc_comment> collect_leading_fwd_doc_comments(size_t start_index) const;
+
+        /**
+         * Scan the raw lexeme stream starting at start_index, skipping regular
+         * comments. Collect consecutive backward doc_comments (LINE_BWD, BLOCK_BWD)
+         * until a non-comment, non-doc-comment lexeme is encountered.
+         * Does NOT advance the lexer position.
+         */
+        std::vector<lex::doc_comment> collect_trailing_bwd_doc_comments(size_t start_index) const;
 
     };
 
