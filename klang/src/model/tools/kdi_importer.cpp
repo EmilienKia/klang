@@ -35,6 +35,60 @@ namespace k::model {
 
 namespace {
 
+std::shared_ptr<doc::namespace_doc>
+to_namespace_doc(const std::optional<kdi::kdi_doc_block>& kdoc) {
+    if (!kdoc) return nullptr;
+    auto out = std::make_shared<doc::namespace_doc>();
+    out->brief = kdoc->brief;
+    out->description = kdoc->description;
+    return out;
+}
+
+std::shared_ptr<doc::union_doc>
+to_union_doc(const std::optional<kdi::kdi_doc_block>& kdoc) {
+    if (!kdoc) return nullptr;
+    auto out = std::make_shared<doc::union_doc>();
+    out->brief = kdoc->brief;
+    out->description = kdoc->description;
+    return out;
+}
+
+std::shared_ptr<doc::function_doc>
+to_function_doc(const std::optional<kdi::kdi_doc_function>& kdoc) {
+    if (!kdoc) return nullptr;
+    auto out = std::make_shared<doc::function_doc>();
+    out->brief = kdoc->brief;
+    out->description = kdoc->description;
+    for (const auto& p : kdoc->params) {
+        out->params.push_back(doc::param_doc{
+            .name = p.name,
+            .description = p.description,
+        });
+    }
+    if (kdoc->returns.has_value()) {
+        out->returns = doc::return_doc{ .description = *kdoc->returns };
+    }
+    for (const auto& t : kdoc->throws) {
+        out->throws.push_back(doc::throws_doc{
+            .type_name = t.type_name,
+            .description = t.description,
+        });
+    }
+    for (const auto& tp : kdoc->template_params) {
+        out->template_params.push_back(doc::template_param_doc{
+            .name = tp.name,
+            .description = tp.description,
+        });
+    }
+    for (const auto& tag : kdoc->tags) {
+        out->tags.push_back(doc::tagged_doc{
+            .tag = tag.tag,
+            .value = tag.value,
+        });
+    }
+    return out;
+}
+
 template_param_kind template_param_kind_from_kdi(const std::string& kind) {
     if (kind == "struct") return template_param_kind::STRUCT;
     if (kind == "class") return template_param_kind::CLASS;
@@ -123,6 +177,9 @@ void populate_template_signature_aggregate(aggregate& agg,
             auto exc_type = kdi_type_to_model_type(ts, owner, ctx);
             if (exc_type) fn->add_throws_type(exc_type);
         }
+        if (auto doc = to_function_doc(method_sig.doc)) {
+            fn->set_documentation(std::move(doc));
+        }
     }
 }
 
@@ -142,6 +199,9 @@ void populate_template_signature_function(function& fn,
     for (const auto& ts : sig.throws_spec) {
         auto exc_type = kdi_type_to_model_type(ts, owner, ctx);
         if (exc_type) fn.add_throws_type(exc_type);
+    }
+    if (auto doc = to_function_doc(sig.doc)) {
+        fn.set_documentation(std::move(doc));
     }
 }
 
@@ -471,6 +531,29 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
 void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
                                           std::shared_ptr<context> ctx)
 {
+    // Ensure the namespace node exists in the model so namespace documentation
+    // can be attached even when no symbol is explicitly referenced yet.
+    auto model_ns = _unit.get_root_namespace();
+    std::string ns_fq = ns.fq_name;
+    if (ns_fq.size() >= 2 && ns_fq[0] == ':' && ns_fq[1] == ':') ns_fq = ns_fq.substr(2);
+    if (!ns_fq.empty()) {
+        std::size_t pos = 0;
+        while (true) {
+            auto sep = ns_fq.find("::", pos);
+            std::string part = (sep == std::string::npos) ? ns_fq.substr(pos) : ns_fq.substr(pos, sep - pos);
+            if (!part.empty()) {
+                model_ns = model_ns->get_child_namespace(part);
+            }
+            if (sep == std::string::npos) break;
+            pos = sep + 2;
+        }
+    }
+    if (model_ns) {
+        if (auto doc = to_namespace_doc(ns.doc)) {
+            model_ns->set_documentation(std::move(doc));
+        }
+    }
+
     // Pass 1 — aggregates (depth-first so base classes are materialised before
     // derived classes that reference them in their llvm_def).
     for (const auto& agg : ns.aggregates) {
@@ -600,6 +683,9 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
     // Create the union in the target namespace
     auto udef = target_ns->define_union(union_name);
     if (!udef) return;
+    if (auto doc = to_union_doc(un.doc)) {
+        udef->set_documentation(std::move(doc));
+    }
 
     udef->set_visibility(un.visibility == kdi::kdi_visibility::public_ ? PUBLIC :
                          un.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PRIVATE);
@@ -901,7 +987,4 @@ void kdi_importer::check_unused_imports() const {
 }
 
 } // namespace k::model
-
-
-
 

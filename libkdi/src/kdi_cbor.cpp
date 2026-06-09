@@ -275,6 +275,129 @@ kdi_visibility decode_visibility(cbor_item_t* map, const std::string& key,
     return static_cast<kdi_visibility>(raw);
 }
 
+cbor_item_t* encode_doc_block(const kdi_doc_block& d) {
+    cbor_item_t* m = cbor_new_indefinite_map();
+    map_push(m, "brief", cbor_str(d.brief));
+    map_push(m, "description", cbor_str(d.description));
+    return m;
+}
+
+kdi_doc_block decode_doc_block(cbor_item_t* item, const std::string& path) {
+    if (!item || !cbor_isa_map(item)) {
+        throw kdi_parse_error("expected doc block map at " + path);
+    }
+    kdi_doc_block d;
+    d.brief = opt_string(item, "brief");
+    d.description = opt_string(item, "description");
+    return d;
+}
+
+cbor_item_t* encode_doc_function(const kdi_doc_function& d) {
+    cbor_item_t* m = encode_doc_block(d);
+
+    if (!d.params.empty()) {
+        cbor_item_t* params = cbor_new_indefinite_array();
+        for (const auto& p : d.params) {
+            cbor_item_t* pm = cbor_new_indefinite_map();
+            map_push(pm, "name", cbor_str(p.name));
+            map_push(pm, "description", cbor_str(p.description));
+            cbor_array_push(params, cbor_move(pm));
+        }
+        map_push(m, "params", params);
+    }
+    if (d.returns.has_value()) {
+        map_push(m, "returns", cbor_str(*d.returns));
+    }
+    if (!d.throws.empty()) {
+        cbor_item_t* throws_arr = cbor_new_indefinite_array();
+        for (const auto& t : d.throws) {
+            cbor_item_t* tm = cbor_new_indefinite_map();
+            map_push(tm, "type_name", cbor_str(t.type_name));
+            map_push(tm, "description", cbor_str(t.description));
+            cbor_array_push(throws_arr, cbor_move(tm));
+        }
+        map_push(m, "throws", throws_arr);
+    }
+    if (!d.template_params.empty()) {
+        cbor_item_t* tparams = cbor_new_indefinite_array();
+        for (const auto& tp : d.template_params) {
+            cbor_item_t* tpm = cbor_new_indefinite_map();
+            map_push(tpm, "name", cbor_str(tp.name));
+            map_push(tpm, "description", cbor_str(tp.description));
+            cbor_array_push(tparams, cbor_move(tpm));
+        }
+        map_push(m, "template_params", tparams);
+    }
+    if (!d.tags.empty()) {
+        cbor_item_t* tags = cbor_new_indefinite_array();
+        for (const auto& tag : d.tags) {
+            cbor_item_t* tm = cbor_new_indefinite_map();
+            map_push(tm, "tag", cbor_str(tag.tag));
+            map_push(tm, "value", cbor_str(tag.value));
+            cbor_array_push(tags, cbor_move(tm));
+        }
+        map_push(m, "tags", tags);
+    }
+
+    return m;
+}
+
+kdi_doc_function decode_doc_function(cbor_item_t* item, const std::string& path) {
+    kdi_doc_function d;
+    auto base = decode_doc_block(item, path);
+    d.brief = std::move(base.brief);
+    d.description = std::move(base.description);
+
+    if (auto* params = map_get(item, "params"); params && cbor_isa_array(params)) {
+        size_t n = cbor_array_size(params);
+        for (size_t i = 0; i < n; ++i) {
+            auto* pm = cbor_array_get(params, i);
+            auto pp = path + ".params[" + std::to_string(i) + "]";
+            kdi_doc_param p;
+            p.name = req_string(pm, "name", pp);
+            p.description = opt_string(pm, "description");
+            d.params.push_back(std::move(p));
+        }
+    }
+    if (auto* ret = map_get(item, "returns"); ret && cbor_isa_string(ret)) {
+        d.returns = read_string(ret, path + ".returns");
+    }
+    if (auto* throws_arr = map_get(item, "throws"); throws_arr && cbor_isa_array(throws_arr)) {
+        size_t n = cbor_array_size(throws_arr);
+        for (size_t i = 0; i < n; ++i) {
+            auto* tm = cbor_array_get(throws_arr, i);
+            auto tp = path + ".throws[" + std::to_string(i) + "]";
+            kdi_doc_throws t;
+            t.type_name = req_string(tm, "type_name", tp);
+            t.description = opt_string(tm, "description");
+            d.throws.push_back(std::move(t));
+        }
+    }
+    if (auto* tparams = map_get(item, "template_params"); tparams && cbor_isa_array(tparams)) {
+        size_t n = cbor_array_size(tparams);
+        for (size_t i = 0; i < n; ++i) {
+            auto* tpm = cbor_array_get(tparams, i);
+            auto tp = path + ".template_params[" + std::to_string(i) + "]";
+            kdi_doc_template_param p;
+            p.name = req_string(tpm, "name", tp);
+            p.description = opt_string(tpm, "description");
+            d.template_params.push_back(std::move(p));
+        }
+    }
+    if (auto* tags = map_get(item, "tags"); tags && cbor_isa_array(tags)) {
+        size_t n = cbor_array_size(tags);
+        for (size_t i = 0; i < n; ++i) {
+            auto* tm = cbor_array_get(tags, i);
+            auto tp = path + ".tags[" + std::to_string(i) + "]";
+            kdi_doc_tag tag;
+            tag.tag = req_string(tm, "tag", tp);
+            tag.value = opt_string(tm, "value");
+            d.tags.push_back(std::move(tag));
+        }
+    }
+    return d;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Type encoding / decoding
 // ─────────────────────────────────────────────────────────────────────────────
@@ -468,6 +591,7 @@ cbor_item_t* encode_variable(const kdi_variable& v) {
     map_push(m, "type",         encode_type(v.type));
     if (v.is_const) map_push(m, "is_const", cbor_bool(true));
     map_push(m, "mangled_name", cbor_str(v.mangled_name));
+    if (v.doc) map_push(m, "doc", encode_doc_block(*v.doc));
     return m;
 }
 
@@ -481,6 +605,7 @@ kdi_variable decode_variable(cbor_item_t* item, const std::string& path) {
     v.type         = decode_type(tp, path + ".type");
     v.is_const     = opt_bool(item, "is_const");
     v.mangled_name = req_string(item, "mangled_name", path);
+    if (auto* doc = map_get(item, "doc")) v.doc = decode_doc_block(doc, path + ".doc");
     return v;
 }
 
@@ -502,6 +627,7 @@ cbor_item_t* encode_function(const kdi_function& f) {
         for (auto& t : f.throws_spec) cbor_array_push(ts, cbor_move(encode_type(t)));
         map_push(m, "throws_spec", ts);
     }
+    if (f.doc) map_push(m, "doc", encode_doc_function(*f.doc));
     return m;
 }
 
@@ -525,6 +651,7 @@ kdi_function decode_function(cbor_item_t* item, const std::string& path) {
         for (size_t i = 0; i < n; ++i)
             f.throws_spec.push_back(decode_type(cbor_array_get(ts, i), path + ".throws_spec[" + std::to_string(i) + "]"));
     }
+    if (auto* doc = map_get(item, "doc")) f.doc = decode_doc_function(doc, path + ".doc");
     return f;
 }
 
@@ -551,6 +678,7 @@ cbor_item_t* encode_method(const kdi_method& m) {
         for (auto& t : m.throws_spec) cbor_array_push(ts, cbor_move(encode_type(t)));
         map_push(map, "throws_spec", ts);
     }
+    if (m.doc) map_push(map, "doc", encode_doc_function(*m.doc));
     return map;
 }
 
@@ -579,6 +707,7 @@ kdi_method decode_method(cbor_item_t* item, const std::string& path) {
         for (size_t i = 0; i < n; ++i)
             m.throws_spec.push_back(decode_type(cbor_array_get(ts, i), path + ".throws_spec[" + std::to_string(i) + "]"));
     }
+    if (auto* doc = map_get(item, "doc")) m.doc = decode_doc_function(doc, path + ".doc");
     return m;
 }
 
@@ -592,6 +721,7 @@ cbor_item_t* encode_constructor(const kdi_constructor& c) {
     map_push(m, "mangled_name",    cbor_str(c.mangled_name));
     map_push(m, "mangled_name_c2", cbor_str(c.mangled_name_c2));
     map_push(m, "llvm_def",        cbor_str(c.llvm_def));
+    if (c.doc) map_push(m, "doc", encode_doc_function(*c.doc));
     return m;
 }
 
@@ -605,6 +735,7 @@ kdi_constructor decode_constructor(cbor_item_t* item, const std::string& path) {
     c.mangled_name       = req_string(item, "mangled_name", path);
     c.mangled_name_c2    = opt_string(item, "mangled_name_c2");
     c.llvm_def           = req_string(item, "llvm_def", path);
+    if (auto* doc = map_get(item, "doc")) c.doc = decode_doc_function(doc, path + ".doc");
     return c;
 }
 
@@ -616,6 +747,7 @@ cbor_item_t* encode_destructor(const kdi_destructor& d) {
     map_push(m, "mangled_name",    cbor_str(d.mangled_name));
     map_push(m, "mangled_name_d2", cbor_str(d.mangled_name_d2));
     map_push(m, "llvm_def",        cbor_str(d.llvm_def));
+    if (d.doc) map_push(m, "doc", encode_doc_function(*d.doc));
     return m;
 }
 
@@ -627,6 +759,7 @@ kdi_destructor decode_destructor(cbor_item_t* item, const std::string& path) {
     d.mangled_name          = req_string(item, "mangled_name", path);
     d.mangled_name_d2       = opt_string(item, "mangled_name_d2");
     d.llvm_def              = req_string(item, "llvm_def", path);
+    if (auto* doc = map_get(item, "doc")) d.doc = decode_doc_function(doc, path + ".doc");
     return d;
 }
 
@@ -939,6 +1072,8 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     // template_origin
     if (agg.template_origin)
         map_push(m, "template_origin", encode_template_origin(*agg.template_origin));
+    if (agg.doc)
+        map_push(m, "doc", encode_doc_block(*agg.doc));
 
     return m;
 }
@@ -1020,6 +1155,8 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
     agg.default_constructor_mangled_name = opt_string(item, "default_constructor_mangled_name");
     if (auto* to = map_get(item, "template_origin"))
         agg.template_origin = decode_template_origin(to, path + ".template_origin");
+    if (auto* doc = map_get(item, "doc"))
+        agg.doc = decode_doc_block(doc, path + ".doc");
     return agg;
 }
 
@@ -1070,6 +1207,7 @@ cbor_item_t* encode_enum(const kdi_enum& e) {
         cbor_array_push(entries, cbor_move(em));
     }
     map_push(m, "entries", entries);
+    if (e.doc) map_push(m, "doc", encode_doc_block(*e.doc));
     return m;
 }
 
@@ -1109,6 +1247,9 @@ kdi_enum decode_enum(cbor_item_t* item, const std::string& path) {
             }
             e.entries.push_back(en);
         }
+    }
+    if (auto* doc = map_get(item, "doc")) {
+        e.doc = decode_doc_block(doc, path + ".doc");
     }
     return e;
 }
@@ -1246,6 +1387,7 @@ cbor_item_t* encode_union(const kdi_union& u) {
     map_push(m, "alternatives", alts);
     if (u.template_origin)
         map_push(m, "template_origin", encode_template_origin(*u.template_origin));
+    if (u.doc) map_push(m, "doc", encode_doc_block(*u.doc));
     return m;
 }
 
@@ -1260,6 +1402,8 @@ kdi_union decode_union(cbor_item_t* item, const std::string& path) {
     auto* to = map_get(item, "template_origin");
     if (to)
         u.template_origin = decode_template_origin(to, path + ".template_origin");
+    if (auto* doc = map_get(item, "doc"))
+        u.doc = decode_doc_block(doc, path + ".doc");
     auto* aa = map_get(item, "alternatives");
     if (aa && cbor_isa_array(aa)) {
         size_t n = cbor_array_size(aa);
@@ -1287,6 +1431,7 @@ cbor_item_t* encode_namespace(const kdi_namespace& ns) {
     cbor_item_t* m = cbor_new_indefinite_map();
     map_push(m, "name",    cbor_str(ns.name));
     map_push(m, "fq_name", cbor_str(ns.fq_name));
+    if (ns.doc) map_push(m, "doc", encode_doc_block(*ns.doc));
 
     cbor_item_t* aggs = cbor_new_indefinite_array();
     for (auto& a : ns.aggregates) cbor_array_push(aggs, cbor_move(encode_aggregate(a)));
@@ -1327,6 +1472,7 @@ kdi_namespace decode_namespace(cbor_item_t* item, const std::string& path) {
     kdi_namespace ns;
     ns.name    = opt_string(item, "name");
     ns.fq_name = opt_string(item, "fq_name");
+    if (auto* doc = map_get(item, "doc")) ns.doc = decode_doc_block(doc, path + ".doc");
 
     auto* aa = map_get(item, "aggregates");
     if (aa && cbor_isa_array(aa)) {
@@ -1528,5 +1674,3 @@ kdi_file decode_file(cbor_item_t* item) {
 
 } // anonymous namespace
 } // namespace kdi
-
-

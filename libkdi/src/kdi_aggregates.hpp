@@ -45,6 +45,43 @@ struct kdi_function;
 struct kdi_aggregate;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Documentation DTOs
+// ─────────────────────────────────────────────────────────────────────────────
+
+struct kdi_doc_block {
+    std::string brief;
+    std::string description;
+};
+
+struct kdi_doc_param {
+    std::string name;
+    std::string description;
+};
+
+struct kdi_doc_throws {
+    std::string type_name;
+    std::string description;
+};
+
+struct kdi_doc_template_param {
+    std::string name;
+    std::string description;
+};
+
+struct kdi_doc_tag {
+    std::string tag;
+    std::string value;
+};
+
+struct kdi_doc_function : public kdi_doc_block {
+    std::vector<kdi_doc_param> params;
+    std::optional<std::string> returns;
+    std::vector<kdi_doc_throws> throws;
+    std::vector<kdi_doc_template_param> template_params;
+    std::vector<kdi_doc_tag> tags;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Template data DTOs
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -133,6 +170,7 @@ struct kdi_variable {
     kdi_type       type;
     bool           is_const     = false;
     std::string    mangled_name;
+    std::optional<kdi_doc_block> doc;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,6 +195,7 @@ struct kdi_function {
     std::optional<kdi_template_origin> template_origin;
     /// Exception types this function may throw (empty = noexcept).
     std::vector<kdi_type>    throws_spec;
+    std::optional<kdi_doc_function> doc;
 };
 
 /** Member method. */
@@ -181,6 +220,7 @@ struct kdi_method {
     std::optional<kdi_template_origin> template_origin;
     /// Exception types this method may throw (empty = noexcept).
     std::vector<kdi_type>    throws_spec;
+    std::optional<kdi_doc_function> doc;
 };
 
 struct kdi_constructor {
@@ -194,6 +234,7 @@ struct kdi_constructor {
     /// LLVM IR prototype of the C1 constructor variant, e.g.
     /// "declare void @_ZN3ns7CounterC1Ev(%struct.ns.Counter* %this)".
     std::string              llvm_def;
+    std::optional<kdi_doc_function> doc;
 };
 
 struct kdi_destructor {
@@ -205,6 +246,7 @@ struct kdi_destructor {
     /// LLVM IR prototype of the D1 destructor variant, e.g.
     /// "declare void @_ZN3ns7CounterD1Ev(%struct.ns.Counter* %this)".
     std::string    llvm_def;
+    std::optional<kdi_doc_function> doc;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -394,6 +436,7 @@ struct kdi_aggregate {
 
     /// Template origin metadata (set only for concrete template instantiations).
     std::optional<kdi_template_origin> template_origin;
+    std::optional<kdi_doc_block> doc;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -422,6 +465,7 @@ struct kdi_enum {
     std::optional<std::string>    object_table_symbol;
     std::optional<std::string>    base_fq_name;    ///< base enum fq_name (derivation)
     std::vector<kdi_enum_entry>   entries;
+    std::optional<kdi_doc_block>  doc;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -448,6 +492,7 @@ struct kdi_union {
     std::string                       llvm_def;
     /// Template origin (set when this union is a concrete template instantiation).
     std::optional<kdi_template_origin> template_origin;
+    std::optional<kdi_doc_block>       doc;
 };
 
 } // namespace kdi

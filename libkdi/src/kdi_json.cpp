@@ -47,6 +47,11 @@ static kdi_type    from_json_type(const json&);
 static json        to_json(const kdi_param&);
 static kdi_param   from_json_param(const json&);
 
+static json             to_json(const kdi_doc_block&);
+static kdi_doc_block    from_json_doc_block(const json&);
+static json             to_json(const kdi_doc_function&);
+static kdi_doc_function from_json_doc_function(const json&);
+
 static json        to_json(const kdi_variable&);
 static kdi_variable from_json_variable(const json&);
 
@@ -88,6 +93,93 @@ static std::string vis_to_str(kdi_visibility v) {
 static kdi_visibility vis_from_str(const std::string& s) {
     if (s == "protected") return kdi_visibility::protected_;
     return kdi_visibility::public_;
+}
+
+static json to_json(const kdi_doc_block& d) {
+    return {
+        {"brief", d.brief},
+        {"description", d.description},
+    };
+}
+
+static kdi_doc_block from_json_doc_block(const json& j) {
+    kdi_doc_block d;
+    d.brief = j.value("brief", "");
+    d.description = j.value("description", "");
+    return d;
+}
+
+static json to_json(const kdi_doc_function& d) {
+    json params = json::array();
+    for (const auto& p : d.params) {
+        params.push_back({
+            {"name", p.name},
+            {"description", p.description},
+        });
+    }
+    json throws = json::array();
+    for (const auto& t : d.throws) {
+        throws.push_back({
+            {"type_name", t.type_name},
+            {"description", t.description},
+        });
+    }
+    json tparams = json::array();
+    for (const auto& tp : d.template_params) {
+        tparams.push_back({
+            {"name", tp.name},
+            {"description", tp.description},
+        });
+    }
+    json tags = json::array();
+    for (const auto& tag : d.tags) {
+        tags.push_back({
+            {"tag", tag.tag},
+            {"value", tag.value},
+        });
+    }
+
+    json j = to_json(static_cast<const kdi_doc_block&>(d));
+    if (!params.empty()) j["params"] = std::move(params);
+    if (d.returns.has_value()) j["returns"] = *d.returns;
+    if (!throws.empty()) j["throws"] = std::move(throws);
+    if (!tparams.empty()) j["template_params"] = std::move(tparams);
+    if (!tags.empty()) j["tags"] = std::move(tags);
+    return j;
+}
+
+static kdi_doc_function from_json_doc_function(const json& j) {
+    kdi_doc_function d;
+    d.brief = j.value("brief", "");
+    d.description = j.value("description", "");
+    for (const auto& p : j.value("params", json::array())) {
+        kdi_doc_param pd;
+        pd.name = p.value("name", "");
+        pd.description = p.value("description", "");
+        d.params.push_back(std::move(pd));
+    }
+    if (j.contains("returns")) {
+        d.returns = j.at("returns").get<std::string>();
+    }
+    for (const auto& t : j.value("throws", json::array())) {
+        kdi_doc_throws td;
+        td.type_name = t.value("type_name", "");
+        td.description = t.value("description", "");
+        d.throws.push_back(std::move(td));
+    }
+    for (const auto& tp : j.value("template_params", json::array())) {
+        kdi_doc_template_param tpd;
+        tpd.name = tp.value("name", "");
+        tpd.description = tp.value("description", "");
+        d.template_params.push_back(std::move(tpd));
+    }
+    for (const auto& tag : j.value("tags", json::array())) {
+        kdi_doc_tag td;
+        td.tag = tag.value("tag", "");
+        td.value = tag.value("value", "");
+        d.tags.push_back(std::move(td));
+    }
+    return d;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,7 +313,7 @@ static kdi_param from_json_param(const json& j) {
 }
 
 static json to_json(const kdi_variable& v) {
-    return {
+    json j = {
         {"name",         v.name},
         {"fq_name",      v.fq_name},
         {"visibility",   vis_to_str(v.visibility)},
@@ -229,6 +321,8 @@ static json to_json(const kdi_variable& v) {
         {"is_const",     v.is_const},
         {"mangled_name", v.mangled_name},
     };
+    if (v.doc) j["doc"] = to_json(*v.doc);
+    return j;
 }
 static kdi_variable from_json_variable(const json& j) {
     kdi_variable v;
@@ -238,6 +332,7 @@ static kdi_variable from_json_variable(const json& j) {
     v.type         = from_json_type(j.at("type"));
     v.is_const     = j.value("is_const", false);
     v.mangled_name = j.value("mangled_name", "");
+    if (j.contains("doc")) v.doc = from_json_doc_block(j.at("doc"));
     return v;
 }
 
@@ -353,6 +448,7 @@ static json to_json(const kdi_function& f) {
         for (auto& t : f.throws_spec) ts.push_back(to_json(t));
         j["throws_spec"] = ts;
     }
+    if (f.doc) j["doc"] = to_json(*f.doc);
     return j;
 }
 static kdi_function from_json_function(const json& j) {
@@ -370,6 +466,7 @@ static kdi_function from_json_function(const json& j) {
     if (j.contains("throws_spec")) {
         for (auto& t : j.at("throws_spec")) f.throws_spec.push_back(from_json_type(t));
     }
+    if (j.contains("doc")) f.doc = from_json_doc_function(j.at("doc"));
     return f;
 }
 
@@ -396,6 +493,7 @@ static json to_json(const kdi_method& m) {
         for (auto& t : m.throws_spec) ts.push_back(to_json(t));
         j["throws_spec"] = ts;
     }
+    if (m.doc) j["doc"] = to_json(*m.doc);
     return j;
 }
 static kdi_method from_json_method(const json& j) {
@@ -418,6 +516,7 @@ static kdi_method from_json_method(const json& j) {
     if (j.contains("throws_spec")) {
         for (auto& t : j.at("throws_spec")) m.throws_spec.push_back(from_json_type(t));
     }
+    if (j.contains("doc")) m.doc = from_json_doc_function(j.at("doc"));
     return m;
 }
 
@@ -426,7 +525,7 @@ static kdi_method from_json_method(const json& j) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static json to_json(const kdi_constructor& c) {
-    return {
+    json j = {
         {"visibility",          vis_to_str(c.visibility)},
         {"is_copy_constructor", c.is_copy_constructor},
         {"is_defaulted",        c.is_defaulted},
@@ -436,6 +535,8 @@ static json to_json(const kdi_constructor& c) {
         {"mangled_name_c2",     c.mangled_name_c2},
         {"llvm_def",            c.llvm_def},
     };
+    if (c.doc) j["doc"] = to_json(*c.doc);
+    return j;
 }
 static kdi_constructor from_json_constructor(const json& j) {
     kdi_constructor c;
@@ -447,11 +548,12 @@ static kdi_constructor from_json_constructor(const json& j) {
     c.mangled_name        = j.value("mangled_name", "");
     c.mangled_name_c2     = j.value("mangled_name_c2", "");
     c.llvm_def            = j.at("llvm_def");
+    if (j.contains("doc")) c.doc = from_json_doc_function(j.at("doc"));
     return c;
 }
 
 static json to_json(const kdi_destructor& d) {
-    return {
+    json j = {
         {"visibility",            vis_to_str(d.visibility)},
         {"is_virtual",            d.is_virtual},
         {"is_compiler_generated", d.is_compiler_generated},
@@ -459,6 +561,8 @@ static json to_json(const kdi_destructor& d) {
         {"mangled_name_d2",       d.mangled_name_d2},
         {"llvm_def",              d.llvm_def},
     };
+    if (d.doc) j["doc"] = to_json(*d.doc);
+    return j;
 }
 static kdi_destructor from_json_destructor(const json& j) {
     kdi_destructor d;
@@ -468,6 +572,7 @@ static kdi_destructor from_json_destructor(const json& j) {
     d.mangled_name          = j.value("mangled_name", "");
     d.mangled_name_d2       = j.value("mangled_name_d2", "");
     d.llvm_def              = j.at("llvm_def");
+    if (j.contains("doc")) d.doc = from_json_doc_function(j.at("doc"));
     return d;
 }
 
@@ -670,6 +775,7 @@ static json to_json(const kdi_aggregate& a) {
         uobj["alternatives"] = std::move(alts);
         if (!u.llvm_def.empty()) uobj["llvm_def"] = u.llvm_def;
         if (u.template_origin) uobj["template_origin"] = to_json(*u.template_origin);
+        if (u.doc) uobj["doc"] = to_json(*u.doc);
         nested_uns.push_back(std::move(uobj));
     }
 
@@ -699,6 +805,7 @@ static json to_json(const kdi_aggregate& a) {
     if (a.destructor) obj["destructor"] = to_json(*a.destructor);
     if (a.vtable)     obj["vtable"]     = to_json(*a.vtable);
     if (a.template_origin) obj["template_origin"] = to_json(*a.template_origin);
+    if (a.doc) obj["doc"] = to_json(*a.doc);
     return obj;
 }
 
@@ -753,11 +860,13 @@ static kdi_aggregate from_json_aggregate(const json& j) {
         }
         ku.llvm_def = u.value("llvm_def", "");
         if (u.contains("template_origin")) ku.template_origin = from_json_template_origin(u.at("template_origin"));
+        if (u.contains("doc")) ku.doc = from_json_doc_block(u.at("doc"));
         a.nested_unions.push_back(std::move(ku));
     }
     a.llvm_def = j.at("llvm_def");
     a.default_constructor_mangled_name = j.value("default_constructor_mangled_name", "");
     if (j.contains("template_origin")) a.template_origin = from_json_template_origin(j.at("template_origin"));
+    if (j.contains("doc")) a.doc = from_json_doc_block(j.at("doc"));
     return a;
 }
 
@@ -791,6 +900,7 @@ static json to_json(const kdi_enum& e) {
         obj["object_table_symbol"] = *e.object_table_symbol;
     if (e.base_fq_name.has_value())
         obj["base_fq_name"] = *e.base_fq_name;
+    if (e.doc) obj["doc"] = to_json(*e.doc);
     return obj;
 }
 
@@ -806,6 +916,8 @@ static kdi_enum from_json_enum(const json& j) {
         e.object_table_symbol = j.at("object_table_symbol").get<std::string>();
     if (j.contains("base_fq_name"))
         e.base_fq_name = j.at("base_fq_name").get<std::string>();
+    if (j.contains("doc"))
+        e.doc = from_json_doc_block(j.at("doc"));
     for (auto& en : j.value("entries", json::array())) {
         kdi_enum_entry entry;
         entry.name       = en.at("name");
@@ -842,12 +954,14 @@ static json to_json(const kdi_namespace& ns) {
             {"namespaces",sub},{"aggregates",aggs},{"enums",enums},
             {"functions",fns},{"variables",vars}};
     if (!tdefs.empty()) obj["template_defs"] = tdefs;
+    if (ns.doc) obj["doc"] = to_json(*ns.doc);
     return obj;
 }
 static kdi_namespace from_json_namespace(const json& j) {
     kdi_namespace ns;
     ns.name    = j.value("name", "");
     ns.fq_name = j.value("fq_name", "");
+    if (j.contains("doc")) ns.doc = from_json_doc_block(j.at("doc"));
     for (auto& n : j.value("namespaces", json::array()))
         ns.namespaces.push_back(from_json_namespace(n));
     for (auto& a : j.value("aggregates", json::array()))
@@ -993,4 +1107,3 @@ kdi_file kdi_read_json_file(const std::string& path) {
 }
 
 } // namespace kdi
-

@@ -88,12 +88,32 @@ Unit = {
 Namespace = {
   "name"       : text,
   "fq_name"    : text,
+  ?"doc"       : DocBlock,
   "aggregates" : array[Aggregate],
   "enums"      : array[Enum],
   "functions"  : array[Function],
   "variables"  : array[Variable],
   "namespaces" : array[Namespace],
   ?"template_defs" : array[TemplateDef]
+}
+```
+
+---
+
+## Documentation payloads
+
+```
+DocBlock = {
+  "brief"       : text,
+  "description" : text
+}
+
+DocFunction = DocBlock + {
+  ?"params"          : array[{ "name": text, "description": text }],
+  ?"returns"         : text,
+  ?"throws"          : array[{ "type_name": text, "description": text }],
+  ?"template_params" : array[{ "name": text, "description": text }],
+  ?"tags"            : array[{ "tag": text, "value": text }]
 }
 ```
 
@@ -156,7 +176,8 @@ Variable = {
   "visibility"   : Visibility,
   "type"         : Type,
   ?"is_const"    : bool,       -- omitted when false
-  "mangled_name" : text
+  "mangled_name" : text,
+  ?"doc"         : DocBlock
 }
 ```
 
@@ -173,8 +194,9 @@ Function = {
   "return_type"  : Type,
   "params"       : array[Param],
   "mangled_name" : text,
-  "llvm_def"     : text           -- mandatory LLVM IR prototype, e.g.
+  "llvm_def"     : text,          -- mandatory LLVM IR prototype, e.g.
                                   -- "declare i32 @_ZN3foo3barEi(i32)"
+  ?"doc"         : DocFunction
 }
 ```
 
@@ -196,7 +218,8 @@ Method = {
   "return_type"      : Type,
   "params"           : array[Param],
   "mangled_name"     : text,
-  "llvm_def"         : text    -- mandatory LLVM IR prototype (with implicit 'this')
+  "llvm_def"         : text,   -- mandatory LLVM IR prototype (with implicit 'this')
+  ?"doc"             : DocFunction
 }
 ```
 
@@ -213,7 +236,8 @@ Constructor = {
   "params"               : array[Param],
   "mangled_name"         : text,     -- C1 variant
   "mangled_name_c2"      : text,     -- C2 variant
-  "llvm_def"             : text      -- mandatory LLVM IR prototype of C1 variant
+  "llvm_def"             : text,     -- mandatory LLVM IR prototype of C1 variant
+  ?"doc"                 : DocFunction
 }
 ```
 
@@ -228,7 +252,8 @@ Destructor = {
   ?"is_compiler_generated"  : bool,
   "mangled_name"            : text,  -- D1 variant
   "mangled_name_d2"         : text,  -- D2 variant
-  "llvm_def"                : text   -- mandatory LLVM IR prototype of D1 variant
+  "llvm_def"                : text,  -- mandatory LLVM IR prototype of D1 variant
+  ?"doc"                    : DocFunction
 }
 ```
 
@@ -372,8 +397,9 @@ Aggregate = {
   "static_vars"    : array[Variable],
   ?"vtable"        : Vtable,
   "nested"         : array[Aggregate],
-  "llvm_def"       : text           -- mandatory LLVM IR struct type definition,
+  "llvm_def"       : text,          -- mandatory LLVM IR struct type definition,
                                     -- e.g. "%struct.ns.Counter = type { i32*, i32 }"
+  ?"doc"           : DocBlock
 }
 ```
 
@@ -418,7 +444,8 @@ Enum = {
   ?"object_type"         : Type,     -- aggregate ref for object-backed enums
   ?"object_table_symbol" : text,
   ?"base_fq_name"        : text,
-  "entries"             : array[EnumEntry]
+  "entries"             : array[EnumEntry],
+  ?"doc"                : DocBlock
 }
 
 EnumEntry = {
@@ -438,4 +465,3 @@ Compatibility:
 
 - Integer-backed enums omit typed metadata fields.
 - Older payloads (without typed-enum fields) remain valid and must be accepted.
-

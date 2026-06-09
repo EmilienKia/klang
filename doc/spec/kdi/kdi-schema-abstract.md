@@ -120,12 +120,32 @@ KdiUnit {
 KdiNamespace {
   name       : string              -- short name ("" for root)
   fq_name    : string
+  doc        : KdiDocBlock?        -- optional brief/description
   namespaces : [KdiNamespace]      -- nested namespaces
   aggregates : [KdiAggregate]      -- struct / class / interface
   enums      : [KdiEnum]
   functions  : [KdiFunction]       -- global and static functions (PUBLIC only)
   variables  : [KdiVariable]       -- global and static variables (PUBLIC only)
   template_defs : [KdiTemplateDef] -- optional; omitted when empty
+}
+```
+
+---
+
+## Documentation payload
+
+```
+KdiDocBlock {
+  brief       : string
+  description : string
+}
+
+KdiDocFunction = KdiDocBlock + {
+  params          : [ { name: string, description: string } ]
+  returns         : string?
+  throws          : [ { type_name: string, description: string } ]
+  template_params : [ { name: string, description: string } ]
+  tags            : [ { tag: string, value: string } ]
 }
 ```
 
@@ -209,6 +229,7 @@ KdiAggregate {
   -- Used by importing compilers to reconstruct the exact LLVM StructType
   -- without re-deriving the layout from the KDI layout fields.
   llvm_def     : string
+  doc          : KdiDocBlock?
 }
 ```
 
@@ -335,6 +356,7 @@ KdiEnum {
   object_table_symbol : string?     -- required when object_type is set
   base_fq_name      : string?       -- enum derivation base
   entries           : [KdiEnumEntry]
+  doc               : KdiDocBlock?
 }
 
 KdiEnumEntry {
@@ -373,6 +395,7 @@ KdiFunction {
                                    -- "declare i32 @_ZN3foo3barEi(i32)"
                                    -- Used by importing compilers to reconstruct
                                    -- the exact LLVM Function declaration.
+  doc          : KdiDocFunction?
 }
 
 KdiParam {
@@ -403,6 +426,7 @@ KdiMethod {
                                    -- as first arg), e.g.
                                    -- "declare i32 @_ZN2ns5Adder3addEi
                                    --   (%struct.ns.Adder* %this, i32)"
+  doc            : KdiDocFunction?
 }
 ```
 
@@ -422,6 +446,7 @@ KdiConstructor {
   llvm_def           : string      -- LLVM IR prototype of the C1 variant, e.g.
                                    -- "declare void @_ZN7CounterC1Ev
                                    --   (%struct.Counter* %this)"
+  doc                : KdiDocFunction?
 }
 ```
 
@@ -439,6 +464,7 @@ KdiDestructor {
   llvm_def       : string          -- LLVM IR prototype of the D1 variant, e.g.
                                    -- "declare void @_ZN7CounterD1Ev
                                    --   (%struct.Counter* %this)"
+  doc            : KdiDocFunction?
 }
 ```
 
@@ -454,6 +480,7 @@ KdiVariable {
   type         : KdiType
   is_const     : bool
   mangled_name : string
+  doc          : KdiDocBlock?
 }
 ```
 
@@ -485,4 +512,3 @@ KdiVariable {
 * For enums, `object_type`, `object_table_symbol`, and `object_init_members`
   are optional typed-enum extensions; consumers must remain backward-compatible
   with payloads that only contain integer-enum fields.
-

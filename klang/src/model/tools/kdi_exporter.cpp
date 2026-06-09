@@ -118,6 +118,59 @@ std::string llvm_global_def(const llvm::GlobalVariable* gv) {
     return full;
 }
 
+std::optional<kdi::kdi_doc_block> to_kdi_doc_block(const element& elem) {
+    auto doc = elem.get_documentation();
+    if (!doc) return std::nullopt;
+    kdi::kdi_doc_block out;
+    out.brief = doc->brief;
+    out.description = doc->description;
+    return out;
+}
+
+std::optional<kdi::kdi_doc_function> to_kdi_doc_function(const function& fn) {
+    auto fdoc = fn.get_documentation_as<doc::function_doc>();
+    if (fdoc) {
+        kdi::kdi_doc_function out;
+        out.brief = fdoc->brief;
+        out.description = fdoc->description;
+        for (const auto& p : fdoc->params) {
+            out.params.push_back(kdi::kdi_doc_param{
+                .name = p.name,
+                .description = p.description,
+            });
+        }
+        if (fdoc->returns.has_value()) {
+            out.returns = fdoc->returns->description;
+        }
+        for (const auto& t : fdoc->throws) {
+            out.throws.push_back(kdi::kdi_doc_throws{
+                .type_name = t.type_name,
+                .description = t.description,
+            });
+        }
+        for (const auto& tp : fdoc->template_params) {
+            out.template_params.push_back(kdi::kdi_doc_template_param{
+                .name = tp.name,
+                .description = tp.description,
+            });
+        }
+        for (const auto& tag : fdoc->tags) {
+            out.tags.push_back(kdi::kdi_doc_tag{
+                .tag = tag.tag,
+                .value = tag.value,
+            });
+        }
+        return out;
+    }
+
+    auto base = fn.get_documentation();
+    if (!base) return std::nullopt;
+    kdi::kdi_doc_function out;
+    out.brief = base->brief;
+    out.description = base->description;
+    return out;
+}
+
 } // anonymous namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -333,6 +386,7 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
     sig.is_final = agg.is_final();
     sig.is_const_struct = agg.is_const_struct();
     sig.is_static_nested = agg.is_static_nested();
+    sig.doc = to_kdi_doc_block(agg);
 
     // Export base classes (for templates, use raw_name as identifier)
     for (const auto& bs : agg.get_bases()) {
@@ -367,6 +421,7 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
         kc.is_defaulted = ctor->is_defaulted();
         kc.is_deleted = ctor->is_deleted();
         kc.params = to_kdi_signature_params(*ctor, ti);
+        kc.doc = to_kdi_doc_function(*ctor);
         sig.constructors.push_back(std::move(kc));
     }
 
@@ -389,6 +444,7 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
         km.vtable_slot = fn->get_vtable_slot();
         km.return_type = to_kdi_signature_type(std::const_pointer_cast<type>(fn->get_return_type()), ti);
         km.params = to_kdi_signature_params(*fn, ti);
+        km.doc = to_kdi_doc_function(*fn);
         sig.methods.push_back(std::move(km));
     }
 
@@ -406,6 +462,7 @@ kdi::kdi_function kdi_builder::build_generic_template_function_signature(const f
     sig.is_operator = fn.is_operator();
     sig.return_type = to_kdi_signature_type(std::const_pointer_cast<type>(fn.get_return_type()), ti);
     sig.params = to_kdi_signature_params(fn, ti);
+    sig.doc = to_kdi_doc_function(fn);
     return sig;
 }
 
@@ -638,6 +695,7 @@ kdi::kdi_aggregate kdi_builder::begin_aggregate(const aggregate& agg) {
     kagg.is_final        = agg.is_final();
     kagg.is_const_struct = agg.is_const_struct();
     kagg.is_static_nested = agg.is_static_nested();
+    kagg.doc             = to_kdi_doc_block(agg);
 
     // Enclosing aggregate fq_name (empty if top-level)
     if (agg.is_nested()) {
@@ -741,6 +799,7 @@ void kdi_builder::visit_namespace(ns& n) {
     kdi::kdi_namespace kns;
     kns.name    = n.get_short_name();
     kns.fq_name = n.get_fq_name();
+    kns.doc     = to_kdi_doc_block(n);
 
     // Push the new namespace as the current output target
     _ns_stack.push_back(&kns);
@@ -907,6 +966,7 @@ void kdi_builder::visit_enumeration(enumeration& en) {
                ? fq.substr(2) : fq;
     }();
     ke.visibility = to_kdi_vis(en.get_visibility());
+    ke.doc = to_kdi_doc_block(en);
 
     if (en.get_underlying_type()) {
         ke.underlying_type = to_kdi_type(en.get_underlying_type());
@@ -999,6 +1059,7 @@ void kdi_builder::visit_union(union_type_def& un) {
     }();
     ku.mangled_name = un.get_mangled_name();
     ku.visibility   = to_kdi_vis(un.get_visibility());
+    ku.doc          = to_kdi_doc_block(un);
 
     // Export base union name (if this is a derived union)
     if (un.has_base_union() && un.get_base_union()) {
@@ -1116,6 +1177,7 @@ void kdi_builder::visit_function(function& fn) {
         for (const auto& t : fn.get_throws_spec()) {
             km.throws_spec.push_back(to_kdi_type(std::const_pointer_cast<type>(t)));
         }
+        km.doc = to_kdi_doc_function(fn);
         _agg_stack.back()->methods.push_back(std::move(km));
     } else {
         // Global function — deposit into current namespace
@@ -1138,6 +1200,7 @@ void kdi_builder::visit_function(function& fn) {
         for (const auto& t : fn.get_throws_spec()) {
             kf.throws_spec.push_back(to_kdi_type(std::const_pointer_cast<type>(t)));
         }
+        kf.doc = to_kdi_doc_function(fn);
         _ns_stack.back()->functions.push_back(std::move(kf));
     }
 }
@@ -1161,6 +1224,7 @@ void kdi_builder::visit_constructor(constructor& ctor) {
         auto* llvm_fn = _ctx.module().getFunction(kc.mangled_name);
         kc.llvm_def = llvm_fn_prototype(llvm_fn);
     }
+    kc.doc = to_kdi_doc_function(ctor);
 
     _agg_stack.back()->constructors.push_back(std::move(kc));
 }
@@ -1182,6 +1246,7 @@ void kdi_builder::visit_destructor(destructor& dtor) {
         auto* llvm_fn = _ctx.module().getFunction(kd.mangled_name);
         kd.llvm_def = llvm_fn_prototype(llvm_fn);
     }
+    kd.doc = to_kdi_doc_function(dtor);
 
     _agg_stack.back()->destructor = std::move(kd);
 }
@@ -1196,6 +1261,7 @@ void kdi_builder::visit_global_variable_definition(global_variable_definition& v
     kv.type         = to_kdi_type(std::const_pointer_cast<type>(var.get_type()));
     kv.is_const     = type::is_const(std::const_pointer_cast<type>(var.get_type()));
     kv.mangled_name = var.get_mangled_name();
+    kv.doc          = to_kdi_doc_block(var);
 
     if (in_aggregate()) {
         // Static member variable

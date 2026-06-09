@@ -614,6 +614,53 @@ rebuild_object_init_brace(const kdi::kdi_enum_entry& entry)
         /*is_designated=*/true);
 }
 
+static std::shared_ptr<doc::doc_entity>
+make_doc_entity(const std::optional<kdi::kdi_doc_block>& kdoc)
+{
+    if (!kdoc) return nullptr;
+    auto out = std::make_shared<doc::doc_entity>();
+    out->brief = kdoc->brief;
+    out->description = kdoc->description;
+    return out;
+}
+
+static std::shared_ptr<doc::function_doc>
+make_function_doc(const std::optional<kdi::kdi_doc_function>& kdoc)
+{
+    if (!kdoc) return nullptr;
+    auto out = std::make_shared<doc::function_doc>();
+    out->brief = kdoc->brief;
+    out->description = kdoc->description;
+    for (const auto& p : kdoc->params) {
+        out->params.push_back(doc::param_doc{
+            .name = p.name,
+            .description = p.description,
+        });
+    }
+    if (kdoc->returns.has_value()) {
+        out->returns = doc::return_doc{ .description = *kdoc->returns };
+    }
+    for (const auto& t : kdoc->throws) {
+        out->throws.push_back(doc::throws_doc{
+            .type_name = t.type_name,
+            .description = t.description,
+        });
+    }
+    for (const auto& tp : kdoc->template_params) {
+        out->template_params.push_back(doc::template_param_doc{
+            .name = tp.name,
+            .description = tp.description,
+        });
+    }
+    for (const auto& tag : kdoc->tags) {
+        out->tags.push_back(doc::tagged_doc{
+            .tag = tag.tag,
+            .value = tag.value,
+        });
+    }
+    return out;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // unit::get_or_create_imported_function
 // ─────────────────────────────────────────────────────────────────────────────
@@ -661,6 +708,9 @@ unit::get_or_create_imported_function(const kdi::kdi_function* kdi_fn,
         auto exc_type = kdi_type_to_model_type(ts, *this, ctx);
         if (exc_type) fn->add_throws_type(exc_type);
     }
+    if (auto doc = make_function_doc(kdi_fn->doc)) {
+        fn->set_documentation(std::move(doc));
+    }
 
     _imported_functions[kdi_fn->mangled_name] = fn;
     return fn;
@@ -687,6 +737,9 @@ unit::get_or_create_imported_variable(const kdi::kdi_variable* kdi_var,
     if (vtype) var->set_type(vtype);
 
     var->set_visibility(kdi_var->visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED);
+    if (auto doc = make_doc_entity(kdi_var->doc)) {
+        var->set_documentation(std::move(doc));
+    }
 
     _imported_variables[kdi_var->mangled_name] = var;
     return var;
@@ -762,6 +815,9 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
     // ── Set nesting modifiers from KDI ──────────────────────────────────────
     agg->set_static_nested(kdi_agg->is_static_nested);
     agg->set_const_struct(kdi_agg->is_const_struct);
+    if (auto doc = make_doc_entity(kdi_agg->doc)) {
+        agg->set_documentation(std::move(doc));
+    }
 
     // ── Register struct_type in context (before recursing to break cycles) ─
     const std::string struct_key = [&]() -> std::string {
@@ -941,6 +997,9 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         ic->assign_name(fq_to_abs_kname(kdi_agg->fq_name.empty() ? kdi_agg->name : kdi_agg->fq_name));
         attach_params(*ic, kc.params, *this, ctx);
         ic->set_visibility(kc.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED);
+        if (auto doc = make_function_doc(kc.doc)) {
+            ic->set_documentation(std::move(doc));
+        }
         ic->create_this_parameter();
         agg->_constructors.push_back(ic);
     }
@@ -953,6 +1012,9 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
             (kdi_agg->fq_name.empty() ? kdi_agg->name : kdi_agg->fq_name)
             + "::~" + kdi_agg->name));
         id->set_visibility(kd.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED);
+        if (auto doc = make_function_doc(kd.doc)) {
+            id->set_documentation(std::move(doc));
+        }
         id->create_this_parameter();
         agg->_destructor = id;
     }
@@ -975,6 +1037,9 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         if (km.template_origin) {
             auto method_args = convert_template_origin_args(*km.template_origin, *this, ctx);
             im->set_tpl_instantiation_info(km.template_origin->base_name, std::move(method_args));
+        }
+        if (auto doc = make_function_doc(km.doc)) {
+            im->set_documentation(std::move(doc));
         }
         im->create_this_parameter();
         agg->_children.push_back(im);
@@ -1108,9 +1173,11 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
 
     // Set visibility
     en->set_visibility(kdi_en->visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+    if (auto doc = make_doc_entity(kdi_en->doc)) {
+        en->set_documentation(std::move(doc));
+    }
 
     return en;
 }
 
 } // namespace k::model
-

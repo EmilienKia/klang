@@ -35,6 +35,8 @@
 #include <llvm/IR/Module.h>
 #include <llvm/Support/raw_ostream.h>
 
+#include <algorithm>
+
 namespace fs = std::filesystem;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -361,6 +363,104 @@ TEST_CASE("get_or_create_imported_function — LLVM declare emitted in IR",
         }
     }
     REQUIRE( found_mul );
+}
+
+TEST_CASE("import/export docs — function and aggregate docs are preserved", "[import][doc]") {
+    TmpKdi lib(R"K(
+        module doclib;
+
+        /**
+         * Add two integers.
+         *
+         * Detailed add description.
+         * @param a first value
+         * @param b second value
+         * @return sum value
+         */
+        add(a: int, b: int) : int {
+            return a + b;
+        }
+
+        /**
+         * Point type.
+         *
+         * Stores planar coordinates.
+         */
+        struct Point {
+            x: int;
+            y: int;
+        }
+    )K");
+
+    auto kdi = kdi::kdi_read_cbor_file(lib.kdi_path);
+    REQUIRE_FALSE(kdi.unit.root_ns.functions.empty());
+    REQUIRE_FALSE(kdi.unit.root_ns.aggregates.empty());
+
+    const auto* kf = [&]() -> const kdi::kdi_function* {
+        for (const auto& fn : kdi.unit.root_ns.functions) {
+            if (fn.name == "add") return &fn;
+        }
+        return nullptr;
+    }();
+    REQUIRE(kf != nullptr);
+    REQUIRE(kf->doc.has_value());
+    REQUIRE(kf->doc->brief == "Add two integers.");
+    REQUIRE(kf->doc->description == "Detailed add description.");
+    REQUIRE(kf->doc->params.size() == 2);
+    REQUIRE(kf->doc->params[0].name == "a");
+    REQUIRE(kf->doc->params[0].description == "first value");
+    REQUIRE(kf->doc->returns.has_value());
+    REQUIRE(*kf->doc->returns == "sum value");
+
+    const auto* ka = [&]() -> const kdi::kdi_aggregate* {
+        for (const auto& agg : kdi.unit.root_ns.aggregates) {
+            if (agg.name == "Point") return &agg;
+        }
+        return nullptr;
+    }();
+    REQUIRE(ka != nullptr);
+    REQUIRE(ka->doc.has_value());
+    REQUIRE(ka->doc->brief == "Point type.");
+    REQUIRE(ka->doc->description == "Stores planar coordinates.");
+
+    auto comp = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("doclib", lib.kdi_path);
+    comp->set_file_resolver(resolver);
+
+    REQUIRE_NOTHROW(comp->parse_source("consumer.k", R"K(
+        module consumer;
+        import doclib;
+
+        main() : int {
+            p : doclib::Point;
+            p.x = 4;
+            return doclib::add(p.x, 2);
+        }
+    )K"));
+
+    const auto& ifns = comp->get_unit()->get_imported_functions();
+    auto ifn_it = std::find_if(ifns.begin(), ifns.end(), [](const auto& pair) {
+        return pair.second && pair.second->get_short_name() == "add";
+    });
+    REQUIRE(ifn_it != ifns.end());
+    auto ifn_doc = ifn_it->second->get_documentation_as<k::model::doc::function_doc>();
+    REQUIRE(ifn_doc != nullptr);
+    REQUIRE(ifn_doc->brief == "Add two integers.");
+    REQUIRE(ifn_doc->description == "Detailed add description.");
+    REQUIRE(ifn_doc->params.size() == 2);
+    REQUIRE(ifn_doc->returns.has_value());
+    REQUIRE(ifn_doc->returns->description == "sum value");
+
+    const auto& iaggs = comp->get_unit()->get_imported_aggregates();
+    auto iagg_it = std::find_if(iaggs.begin(), iaggs.end(), [](const auto& pair) {
+        return pair.second && pair.second->get_short_name() == "Point";
+    });
+    REQUIRE(iagg_it != iaggs.end());
+    auto iagg_doc = iagg_it->second->get_documentation();
+    REQUIRE(iagg_doc != nullptr);
+    REQUIRE(iagg_doc->brief == "Point type.");
+    REQUIRE(iagg_doc->description == "Stores planar coordinates.");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3331,5 +3431,3 @@ TEST_CASE("cross-module template — intrinsic member template with variadic pac
     if (!result.err.empty()) INFO("stderr: " << result.err);
     REQUIRE( result.exit_code == 42 );
 }
-
-
