@@ -16,6 +16,8 @@ add_library(klang
         src/model/context.hpp
         src/model/model.cpp
         src/model/model.hpp
+        src/model/documentation.hpp
+        src/model/documentation.cpp
         src/model/imported.cpp
         src/model/imported.hpp
         src/common/common.cpp
@@ -153,6 +155,7 @@ set_tests_properties(klang-tests-frontend PROPERTIES TIMEOUT 30)
 # Compile-only tests — no heavy JIT execution.
 # ---------------------------------------------------------------------------
 klang_gen_test(klang-tests-model 60
+        tests/test-model-documentation.cpp
         tests/test-model-annotation.cpp
         tests/test-model-constructor-rtti.cpp
         tests/test-model-materializer.cpp

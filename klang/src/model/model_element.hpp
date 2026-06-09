@@ -30,6 +30,8 @@ protected:
     /** Optional AST node that this model element was built from.
      *  Set during model building; nullptr when the model is built without parsing. */
     std::shared_ptr<k::parse::ast::ast_node> _ast_node;
+    /** Optional documentation attached to this model element. */
+    std::shared_ptr<k::model::doc::doc_entity> _documentation;
 
     element(std::shared_ptr<element> parent = nullptr) : _parent(parent) {}
 
@@ -58,6 +60,16 @@ public:
     template<typename T>
     std::shared_ptr<T> get_ast_node_as() const {
         return std::dynamic_pointer_cast<T>(_ast_node);
+    }
+
+    /** Get documentation associated with this element (may be null). */
+    std::shared_ptr<k::model::doc::doc_entity> get_documentation() const { return _documentation; }
+    /** Attach documentation to this element. */
+    void set_documentation(std::shared_ptr<k::model::doc::doc_entity> documentation);
+    /** Get attached documentation cast to a specific doc type (may be null). */
+    template<typename T>
+    std::shared_ptr<T> get_documentation_as() const {
+        return std::dynamic_pointer_cast<T>(_documentation);
     }
 
     template<typename T>

@@ -23,6 +23,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "../lex/lexer.hpp"
 #include "../common/common.hpp"
@@ -35,6 +36,8 @@
 
 namespace k::parse::ast {
 struct ast_node;
+struct doc_comment_block;
+using doc_comment_list = std::vector<doc_comment_block>;
 struct function_decl;
 struct parameter_spec;
 struct aggregate_decl;
@@ -44,8 +47,13 @@ struct brace_init_list;
 }
 
 namespace k::model {
+class element;
 class constructor_invocation_expression;
 class global_variable_definition;
+
+namespace doc {
+struct doc_entity;
+}
 
 class context;
 

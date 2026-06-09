@@ -28,4 +28,5 @@
 //   model_union.hpp     — union_alternative, union_type_def
 #include "model_ns.hpp"
 #include "model_union.hpp"
+#include "documentation.hpp"
 #endif //KLANG_MODEL_HPP

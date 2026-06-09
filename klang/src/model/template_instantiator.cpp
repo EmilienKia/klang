@@ -504,6 +504,7 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
     if (auto rs = dynamic_cast<const return_statement*>(&src)) {
         auto new_rs = std::make_shared<return_statement>(parent_stmt);
         new_rs->_ast_node = rs->get_ast_node(); // optional, for diagnostics
+        new_rs->_documentation = rs->get_documentation();
         if (rs->get_expression()) {
             new_rs->set_expression(clone_and_substitute_expr(
                 std::const_pointer_cast<expression>(rs->get_expression()), subst, val_subst));
@@ -515,6 +516,7 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
     if (auto bs = dynamic_cast<const break_statement*>(&src)) {
         auto new_bs = std::make_shared<break_statement>(parent_stmt);
         new_bs->_ast_node = bs->get_ast_node();
+        new_bs->_documentation = bs->get_documentation();
         return new_bs;
     }
 
@@ -522,6 +524,7 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
     if (auto cs = dynamic_cast<const continue_statement*>(&src)) {
         auto new_cs = std::make_shared<continue_statement>(parent_stmt);
         new_cs->_ast_node = cs->get_ast_node();
+        new_cs->_documentation = cs->get_documentation();
         return new_cs;
     }
 
@@ -529,6 +532,7 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
     if (auto ies = dynamic_cast<const if_else_statement*>(&src)) {
         auto new_ies = std::make_shared<if_else_statement>(parent_stmt);
         new_ies->_ast_node = ies->get_ast_node();
+        new_ies->_documentation = ies->get_documentation();
         if (ies->has_cond_var()) {
             // Clone the condition variable by cloning it as a statement
             auto cloned_var = clone_statement(*ies->get_cond_var(), new_ies, subst, val_subst);
@@ -551,6 +555,7 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
     if (auto ws = dynamic_cast<const while_statement*>(&src)) {
         auto new_ws = std::make_shared<while_statement>(parent_stmt);
         new_ws->_ast_node = ws->get_ast_node();
+        new_ws->_documentation = ws->get_documentation();
         if (ws->get_test_expr()) {
             new_ws->set_test_expr(clone_and_substitute_expr(
                 std::const_pointer_cast<expression>(ws->get_test_expr()), subst, val_subst));
@@ -565,6 +570,7 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
     if (auto es = dynamic_cast<const expression_statement*>(&src)) {
         auto new_es = std::make_shared<expression_statement>(parent_stmt);
         new_es->_ast_node = es->get_ast_node();
+        new_es->_documentation = es->get_documentation();
         if (es->get_expression()) {
             new_es->set_expression(clone_and_substitute_expr(
                 std::const_pointer_cast<expression>(es->get_expression()), subst, val_subst));
@@ -576,6 +582,7 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
     if (auto vs = dynamic_cast<const variable_statement*>(&src)) {
         auto new_vs = variable_statement::make_shared(parent_stmt, vs->get_short_name());
         new_vs->_ast_node = vs->get_ast_node();
+        new_vs->_documentation = vs->get_documentation();
         new_vs->set_type(substitute_type(std::const_pointer_cast<type>(vs->get_type()), subst));
         new_vs->set_const(vs->is_const());
         if (vs->get_init_expr()) {
@@ -608,6 +615,7 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
     if (auto blk = dynamic_cast<const block*>(&src)) {
         auto new_blk = std::make_shared<block>(parent_stmt);
         new_blk->_ast_node = blk->get_ast_node();
+        new_blk->_documentation = blk->get_documentation();
         clone_block_contents(*blk, new_blk, subst, val_subst);
         return new_blk;
     }
@@ -616,6 +624,7 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
     if (auto fs = dynamic_cast<const for_statement*>(&src)) {
         auto new_fs = std::make_shared<for_statement>(parent_stmt);
         new_fs->_ast_node = fs->get_ast_node();
+        new_fs->_documentation = fs->get_documentation();
         if (fs->get_decl_stmt()) {
             auto cloned_decl = std::dynamic_pointer_cast<variable_statement>(
                 clone_statement(*fs->get_decl_stmt(), new_fs, subst, val_subst));
@@ -699,6 +708,7 @@ void template_instantiator::clone_member_variable(
     // Copy AST node reference (optional, for diagnostics)
     if (auto elem = std::dynamic_pointer_cast<element>(new_var)) {
         elem->_ast_node = src.get_ast_node();
+        elem->_documentation = src.get_documentation();
     }
 }
 
@@ -873,6 +883,7 @@ void template_instantiator::populate_function_from_template(
                     auto new_param = dst->append_parameter(concrete_name, pack_types[i]);
                     new_param->set_const(param->is_const());
                     new_param->_ast_node = param->get_ast_node();
+                    new_param->_documentation = param->get_documentation();
                     generated_names.push_back(concrete_name);
                 }
                 pack_expansion_names[param->get_short_name()] = std::move(generated_names);
@@ -886,6 +897,7 @@ void template_instantiator::populate_function_from_template(
                 new_param->set_pack_expansion(true);
                 new_param->set_pack_param_name(param->pack_param_name());
                 new_param->_ast_node = param->get_ast_node();
+                new_param->_documentation = param->get_documentation();
             }
         } else {
             auto param_type = substitute_type(
@@ -894,6 +906,7 @@ void template_instantiator::populate_function_from_template(
             new_param->set_const(param->is_const());
             new_param->set_varargs(param->is_varargs());
             new_param->_ast_node = param->get_ast_node(); // diagnostics
+            new_param->_documentation = param->get_documentation();
         }
     }
 
@@ -918,6 +931,7 @@ void template_instantiator::populate_function_from_template(
 
     // Copy AST node (optional, for diagnostics)
     dst->_ast_node = src.get_ast_node();
+    dst->_documentation = src.get_documentation();
 
     // Copy annotations (preserves @Intrinsic and other compile-time annotations)
     for (auto& ann : src.get_annotations()) {
@@ -1046,6 +1060,7 @@ void template_instantiator::clone_nested_aggregate(
     nested->set_const_struct(src.is_const_struct());
     nested->set_visibility(src.get_visibility());
     nested->_ast_node = src.get_ast_node();
+    nested->_documentation = src.get_documentation();
 
     // Copy base class specs (raw names — resolved later by resolution passes)
     // Substitute template type parameters in base names (e.g. "Collection<T>" → "Collection<int>")
@@ -1197,6 +1212,7 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
 
     // Copy AST reference (optional, for diagnostics)
     concrete->_ast_node = tpl_def.get_ast_node();
+    concrete->_documentation = tpl_def.get_documentation();
 
     // Store template instantiation info for mangling (I…E encoding)
     concrete->set_tpl_instantiation_info(base_name, args);
@@ -1394,6 +1410,7 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
     concrete->set_const_struct(tpl_def.is_const_struct());
     concrete->set_visibility(tpl_def.get_visibility());
     concrete->_ast_node = tpl_def.get_ast_node();
+    concrete->_documentation = tpl_def.get_documentation();
 
     // Keep the synthesized symbol on the base aggregate name (no arg suffix).
 
@@ -1943,6 +1960,5 @@ std::shared_ptr<union_type_def> template_instantiator::instantiate_union(
 }
 
 } // namespace k::model
-
 
 

@@ -18,6 +18,7 @@
 
 #include "model.hpp"
 #include "context.hpp"
+#include "documentation.hpp"
 #include "expressions.hpp"
 #include "model_visitor.hpp"
 #include "mangler.hpp"
@@ -57,6 +58,13 @@ std::shared_ptr<context> element::get_context() {
         return root->_context;
     }
     return {};
+}
+
+void element::set_documentation(std::shared_ptr<k::model::doc::doc_entity> documentation) {
+    _documentation = std::move(documentation);
+    if (_documentation) {
+        _documentation->owner = shared_as<element>();
+    }
 }
 
 //
