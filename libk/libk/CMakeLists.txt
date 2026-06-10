@@ -36,8 +36,8 @@ set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
 set(LIBK_A   ${LIBK_OUTPUT_DIR}/libk.a)
 set(LIBK_KDI ${LIBK_OUTPUT_DIR}/libk.kdi)
 set(LIBK_KDI_LINK ${LIBK_OUTPUT_DIR}/k.kdi)
-set(LIBK_DOC_ROOT ${LIBK_OUTPUT_DIR}/doc)
-set(LIBK_DOC_STAMP ${LIBK_DOC_ROOT}/.docgen.stamp)
+set(LIBK_MD_DOC_ROOT ${LIBK_OUTPUT_DIR}/doc/md)
+set(LIBK_DOC_STAMP ${LIBK_MD_DOC_ROOT}/.docgen.stamp)
 set(LIBK_HTML_DOC_ROOT ${LIBK_OUTPUT_DIR}/doc/html)
 set(LIBK_HTML_DOC_STAMP ${LIBK_HTML_DOC_ROOT}/.docgen-html.stamp)
 
@@ -145,12 +145,12 @@ add_custom_target(libk_stdlib ALL
 )
 
 # ── Generate Markdown documentation for libk from the produced KDI ───────────
-# Output tree root: ${LIBK_DOC_ROOT}/k/
+# Output tree root: ${LIBK_MD_DOC_ROOT}/k/
 add_custom_command(
     OUTPUT  ${LIBK_DOC_STAMP}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${LIBK_DOC_ROOT}
-    COMMAND ${CMAKE_COMMAND} -E rm -rf ${LIBK_DOC_ROOT}/k
-    COMMAND $<TARGET_FILE:kdi-tool> docgen --md ${LIBK_KDI} ${LIBK_DOC_ROOT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${LIBK_MD_DOC_ROOT}
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${LIBK_MD_DOC_ROOT}/k
+    COMMAND $<TARGET_FILE:kdi-tool> docgen --md ${LIBK_KDI} ${LIBK_MD_DOC_ROOT}
     COMMAND ${CMAKE_COMMAND} -E touch ${LIBK_DOC_STAMP}
     DEPENDS kdi-tool ${LIBK_KDI}
     WORKING_DIRECTORY ${LIBK_OUTPUT_DIR}

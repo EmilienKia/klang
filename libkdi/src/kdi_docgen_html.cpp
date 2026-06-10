@@ -459,6 +459,46 @@ static std::string hcode(const std::string& v) {
     return "<code>" + html_escape(v) + "</code>";
 }
 
+static std::string compact_brief_h(std::string brief, size_t max_len = 96) {
+    if (brief.empty())
+        return {};
+
+    std::string normalized;
+    normalized.reserve(brief.size());
+    bool previous_space = false;
+    for (char ch : brief) {
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+            if (!normalized.empty() && !previous_space)
+                normalized.push_back(' ');
+            previous_space = true;
+        } else {
+            normalized.push_back(ch);
+            previous_space = false;
+        }
+    }
+
+    while (!normalized.empty() && normalized.back() == ' ')
+        normalized.pop_back();
+
+    if (normalized.size() <= max_len)
+        return normalized;
+    if (max_len <= 3)
+        return normalized.substr(0, max_len);
+    return normalized.substr(0, max_len - 3) + "...";
+}
+
+static std::string compact_doc_brief_h(const std::optional<kdi_doc_block>& doc) {
+    if (!doc.has_value())
+        return {};
+    return compact_brief_h(doc->brief);
+}
+
+static std::string compact_doc_brief_h(const std::optional<kdi_doc_function>& doc) {
+    if (!doc.has_value())
+        return {};
+    return compact_brief_h(doc->brief);
+}
+
 static std::string kind_badge(const std::string& kind) {
     std::string cls = "kb";
     if      (kind == "class")      cls += " kb-class";
@@ -888,13 +928,14 @@ static bool write_aggregate_page_html(const kdi_aggregate& agg,
         content << "<p class=\"empty\"><em>None.</em></p>\n";
     } else {
         content << "<table class=\"stbl\">\n"
-                << "<thead><tr><th>Name</th><th>Type</th><th>Visibility</th></tr></thead>\n<tbody>\n";
+                << "<thead><tr><th>Name</th><th>Type</th><th>Visibility</th><th>Brief</th></tr></thead>\n<tbody>\n";
         for (size_t i = 0; i < fields.size(); ++i) {
             const auto& f = fields[i];
             const std::string id = "field-" + make_slug_h(f.name) + "-" + std::to_string(i);
             content << "<tr><td class=\"tn\"><a href=\"#" << id << "\">" << html_escape(f.name) << "</a></td>"
                     << "<td class=\"tt\">" << hcode(type_to_string_h(f.type)) << "</td>"
-                    << "<td>" << vis_tag(f.visibility) << "</td></tr>\n";
+                    << "<td>" << vis_tag(f.visibility) << "</td>"
+                    << "<td class=\"tk\"></td></tr>\n";
         }
         for (size_t i = 0; i < svars.size(); ++i) {
             const auto& v = svars[i];
@@ -902,7 +943,8 @@ static bool write_aggregate_page_html(const kdi_aggregate& agg,
             content << "<tr><td class=\"tn\"><a href=\"#" << id << "\">" << html_escape(v.name) << "</a>"
                     << " <span class=\"tag t-stat\">static</span></td>"
                     << "<td class=\"tt\">" << hcode(type_to_string_h(v.type)) << "</td>"
-                    << "<td>" << vis_tag(v.visibility) << "</td></tr>\n";
+                    << "<td>" << vis_tag(v.visibility) << "</td>"
+                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(v.doc)) << "</td></tr>\n";
         }
         content << "</tbody></table>\n";
     }
@@ -913,18 +955,20 @@ static bool write_aggregate_page_html(const kdi_aggregate& agg,
         content << "<p class=\"empty\"><em>None.</em></p>\n";
     } else {
         content << "<table class=\"stbl\">\n"
-                << "<thead><tr><th>Signature</th><th>Visibility</th></tr></thead>\n<tbody>\n";
+                << "<thead><tr><th>Signature</th><th>Visibility</th><th>Brief</th></tr></thead>\n<tbody>\n";
         for (size_t i = 0; i < ctors.size(); ++i) {
             const auto& c = ctors[i];
             const std::string id = "ctor-" + std::to_string(i);
             content << "<tr><td class=\"ts\"><a href=\"#" << id << "\">"
                     << html_escape(make_sig(agg.name, c.params, nullptr)) << "</a></td>"
-                    << "<td>" << vis_tag(c.visibility) << "</td></tr>\n";
+                    << "<td>" << vis_tag(c.visibility) << "</td>"
+                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(c.doc)) << "</td></tr>\n";
         }
         if (agg.destructor.has_value()) {
             content << "<tr><td class=\"ts\"><a href=\"#dtor\">"
                     << html_escape("~" + agg.name + "()") << "</a></td>"
-                    << "<td>" << vis_tag(agg.destructor->visibility) << "</td></tr>\n";
+                    << "<td>" << vis_tag(agg.destructor->visibility) << "</td>"
+                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(agg.destructor->doc)) << "</td></tr>\n";
         }
         for (size_t i = 0; i < methods.size(); ++i) {
             const auto& m = methods[i];
@@ -933,7 +977,8 @@ static bool write_aggregate_page_html(const kdi_aggregate& agg,
                     << html_escape(make_sig(m.name, m.params, &m.return_type)) << "</a></td>"
                     << "<td>" << vis_tag(m.visibility)
                     << (m.is_static ? " <span class=\"tag t-stat\">static</span>" : "")
-                    << "</td></tr>\n";
+                    << "</td>"
+                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(m.doc)) << "</td></tr>\n";
         }
         content << "</tbody></table>\n";
     }
@@ -944,10 +989,27 @@ static bool write_aggregate_page_html(const kdi_aggregate& agg,
         content << "<p class=\"empty\"><em>None.</em></p>\n";
     } else {
         content << "<table class=\"stbl\">\n"
-                << "<thead><tr><th>Name</th></tr></thead>\n<tbody>\n";
-        for (const auto& [name, link] : nested_types)
+                << "<thead><tr><th>Name</th><th>Brief</th></tr></thead>\n<tbody>\n";
+        for (const auto& [name, link] : nested_types) {
+            std::string brief;
+            for (const auto& n : agg.nested) {
+                if (n.name == name) {
+                    brief = compact_doc_brief_h(n.doc);
+                    break;
+                }
+            }
+            if (brief.empty()) {
+                for (const auto& n : agg.nested_unions) {
+                    if (n.name == name) {
+                        brief = compact_doc_brief_h(n.doc);
+                        break;
+                    }
+                }
+            }
             content << "<tr><td class=\"tn\"><a href=\"" << link << "\">"
-                    << html_escape(name) << "</a></td></tr>\n";
+                    << html_escape(name) << "</a></td>"
+                    << "<td class=\"tk\">" << html_escape(brief) << "</td></tr>\n";
+        }
         content << "</tbody></table>\n";
     }
 
@@ -1153,21 +1215,22 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
         content << "<p class=\"empty\"><em>None.</em></p>\n";
     } else {
         content << "<table class=\"stbl\">\n"
-                << "<thead><tr><th>Name</th></tr></thead>\n<tbody>\n";
+                << "<thead><tr><th>Name</th><th>Brief</th></tr></thead>\n<tbody>\n";
         for (const auto& child : child_ns) {
             const fs::path child_idx = ns_dir_from_root(ctx, child) / "index.html";
             content << "<tr><td class=\"tn\"><a href=\"" << rel_link_h(ns_dir, child_idx)
-                    << "\">" << html_escape(child.name) << "</a></td></tr>\n";
+                    << "\">" << html_escape(child.name) << "</a></td>"
+                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(child.doc)) << "</td></tr>\n";
         }
         content << "</tbody></table>\n";
     }
 
     // ── Types ──
-    struct type_row { std::string name; std::string kind; std::string file; };
+    struct type_row { std::string name; std::string kind; std::string file; std::string brief; };
     std::vector<type_row> rows;
-    for (const auto& a : aggregates) rows.push_back({a.name, agg_kind_str(a.kind), a.name + ".html"});
-    for (const auto& e : enums)      rows.push_back({e.name, "enum",  e.name + ".html"});
-    for (const auto& u : unions)     rows.push_back({u.name, "union", u.name + ".html"});
+    for (const auto& a : aggregates) rows.push_back({a.name, agg_kind_str(a.kind), a.name + ".html", compact_doc_brief_h(a.doc)});
+    for (const auto& e : enums)      rows.push_back({e.name, "enum",  e.name + ".html", compact_doc_brief_h(e.doc)});
+    for (const auto& u : unions)     rows.push_back({u.name, "union", u.name + ".html", compact_doc_brief_h(u.doc)});
     std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
 
     content << "<h2 class=\"sh\">Types</h2>\n";
@@ -1175,11 +1238,12 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
         content << "<p class=\"empty\"><em>None.</em></p>\n";
     } else {
         content << "<table class=\"stbl\">\n"
-                << "<thead><tr><th>Name</th><th>Kind</th></tr></thead>\n<tbody>\n";
+                << "<thead><tr><th>Name</th><th>Kind</th><th>Brief</th></tr></thead>\n<tbody>\n";
         for (const auto& row : rows)
             content << "<tr><td class=\"tn\"><a href=\"" << row.file << "\">"
                     << html_escape(row.name) << "</a></td>"
-                    << "<td class=\"tk\">" << kind_badge(row.kind) << "</td></tr>\n";
+                    << "<td class=\"tk\">" << kind_badge(row.kind) << "</td>"
+                    << "<td class=\"tk\">" << html_escape(row.brief) << "</td></tr>\n";
         content << "</tbody></table>\n";
     }
 
@@ -1190,7 +1254,7 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
         content << "<p class=\"empty\"><em>None.</em></p>\n";
     } else {
         content << "<table class=\"stbl\">\n"
-                << "<thead><tr><th>Signature</th><th>Visibility</th></tr></thead>\n<tbody>\n";
+                << "<thead><tr><th>Signature</th><th>Visibility</th><th>Brief</th></tr></thead>\n<tbody>\n";
         for (size_t i = 0; i < functions.size(); ++i) {
             const auto& fn = functions[i];
             fn_ids[i] = "fn-" + make_slug_h(fn.name) + "-" + std::to_string(i);
@@ -1198,7 +1262,8 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
                     << html_escape(make_sig(fn.name, fn.params, &fn.return_type)) << "</a></td>"
                     << "<td>" << vis_tag(fn.visibility)
                     << (fn.is_static ? " <span class=\"tag t-stat\">static</span>" : "")
-                    << "</td></tr>\n";
+                    << "</td>"
+                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(fn.doc)) << "</td></tr>\n";
         }
         content << "</tbody></table>\n";
     }
@@ -1210,14 +1275,15 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
         content << "<p class=\"empty\"><em>None.</em></p>\n";
     } else {
         content << "<table class=\"stbl\">\n"
-                << "<thead><tr><th>Name</th><th>Type</th><th>Visibility</th></tr></thead>\n<tbody>\n";
+                << "<thead><tr><th>Name</th><th>Type</th><th>Visibility</th><th>Brief</th></tr></thead>\n<tbody>\n";
         for (size_t i = 0; i < variables.size(); ++i) {
             const auto& v = variables[i];
             var_ids[i] = "var-" + make_slug_h(v.name) + "-" + std::to_string(i);
             content << "<tr><td class=\"tn\"><a href=\"#" << var_ids[i] << "\">"
                     << html_escape(v.name) << "</a></td>"
                     << "<td class=\"tt\">" << hcode(type_to_string_h(v.type)) << "</td>"
-                    << "<td>" << vis_tag(v.visibility) << "</td></tr>\n";
+                    << "<td>" << vis_tag(v.visibility) << "</td>"
+                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(v.doc)) << "</td></tr>\n";
         }
         content << "</tbody></table>\n";
     }

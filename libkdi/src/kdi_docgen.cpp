@@ -201,6 +201,48 @@ std::string code(const std::string& value) {
     return "`" + md_escape(value) + "`";
 }
 
+std::string compact_brief(std::string brief, size_t max_len = 96) {
+    if (brief.empty())
+        return {};
+
+    std::string normalized;
+    normalized.reserve(brief.size());
+    bool previous_space = false;
+    for (char ch : brief) {
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+            if (!normalized.empty() && !previous_space)
+                normalized.push_back(' ');
+            previous_space = true;
+        } else {
+            normalized.push_back(ch);
+            previous_space = false;
+        }
+    }
+
+    while (!normalized.empty() && normalized.back() == ' ')
+        normalized.pop_back();
+
+    if (normalized.size() <= max_len)
+        return normalized;
+
+    if (max_len <= 3)
+        return normalized.substr(0, max_len);
+
+    return normalized.substr(0, max_len - 3) + "...";
+}
+
+std::string compact_doc_brief(const std::optional<kdi_doc_block>& doc) {
+    if (!doc.has_value())
+        return {};
+    return compact_brief(doc->brief);
+}
+
+std::string compact_doc_brief(const std::optional<kdi_doc_function>& doc) {
+    if (!doc.has_value())
+        return {};
+    return compact_brief(doc->brief);
+}
+
 void append_doc_block(std::ostringstream& out, const kdi_doc_block& doc) {
     if (!doc.brief.empty())
         out << "\n**Brief**\n\n" << doc.brief << "\n";
@@ -463,7 +505,11 @@ bool write_aggregate_page(const kdi_aggregate& agg,
         for (size_t i = 0; i < static_vars.size(); ++i) {
             const auto& var = static_vars[i];
             const std::string anchor = "static-var-" + make_slug(var.name) + "-" + std::to_string(i);
-            out << "- [" << code(var.name) << "](#" << anchor << "): " << code(type_to_string(var.type)) << " (static)\n";
+            out << "- [" << code(var.name) << "](#" << anchor << "): " << code(type_to_string(var.type)) << " (static)";
+            const std::string brief = compact_doc_brief(var.doc);
+            if (!brief.empty())
+                out << " - " << md_escape(brief);
+            out << "\n";
         }
     }
 
@@ -474,33 +520,55 @@ bool write_aggregate_page(const kdi_aggregate& agg,
         for (size_t i = 0; i < constructors.size(); ++i) {
             const auto& ctor = constructors[i];
             const std::string anchor = "ctor-" + std::to_string(i);
-            out << "- [" << code(make_signature(agg.name, ctor.params, nullptr)) << "](#" << anchor << ")\n";
+            out << "- [" << code(make_signature(agg.name, ctor.params, nullptr)) << "](#" << anchor << ")";
+            const std::string brief = compact_doc_brief(ctor.doc);
+            if (!brief.empty())
+                out << " - " << md_escape(brief);
+            out << "\n";
         }
-        if (agg.destructor.has_value())
-            out << "- [" << code("~" + agg.name + "()") << "](#dtor)\n";
+        if (agg.destructor.has_value()) {
+            out << "- [" << code("~" + agg.name + "()") << "](#dtor)";
+            const std::string brief = compact_doc_brief(agg.destructor->doc);
+            if (!brief.empty())
+                out << " - " << md_escape(brief);
+            out << "\n";
+        }
         for (size_t i = 0; i < methods.size(); ++i) {
             const auto& method = methods[i];
             const std::string anchor = "method-" + make_slug(method.name) + "-" + std::to_string(i);
             out << "- [" << code(make_signature(method.name, method.params, &method.return_type))
-                << "](#" << anchor << ")\n";
+                << "](#" << anchor << ")";
+            const std::string brief = compact_doc_brief(method.doc);
+            if (!brief.empty())
+                out << " - " << md_escape(brief);
+            out << "\n";
         }
     }
 
-    std::vector<std::pair<std::string, std::string>> nested_types;
+    out << "\n## Nested Types\n\n";
+    struct nested_row { std::string name; std::string link; std::string brief; };
+    std::vector<nested_row> nested_rows;
     for (const auto& nested : agg.nested)
-        nested_types.emplace_back(nested.name, qualified_simple_name + "." + nested.name + ".md");
+        nested_rows.push_back({nested.name,
+                               qualified_simple_name + "." + nested.name + ".md",
+                               compact_doc_brief(nested.doc)});
     for (const auto& nested : agg.nested_unions)
-        nested_types.emplace_back(nested.name, qualified_simple_name + "." + nested.name + ".md");
-    std::sort(nested_types.begin(), nested_types.end(), [](const auto& a, const auto& b) {
-        return a.first < b.first;
+        nested_rows.push_back({nested.name,
+                               qualified_simple_name + "." + nested.name + ".md",
+                               compact_doc_brief(nested.doc)});
+    std::sort(nested_rows.begin(), nested_rows.end(), [](const auto& a, const auto& b) {
+        return a.name < b.name;
     });
 
-    out << "\n## Nested Types\n\n";
-    if (nested_types.empty()) {
+    if (nested_rows.empty()) {
         out << "- *(none)*\n";
     } else {
-        for (const auto& nested : nested_types)
-            out << "- [" << nested.first << "](" << nested.second << ")\n";
+        for (const auto& nested : nested_rows) {
+            out << "- [" << nested.name << "](" << nested.link << ")";
+            if (!nested.brief.empty())
+                out << " - " << md_escape(nested.brief);
+            out << "\n";
+        }
     }
 
     out << "\n## Member Variable Details\n";
@@ -685,19 +753,23 @@ bool write_namespace_tree(const kdi_namespace& ns,
     } else {
         for (const auto& child : child_ns) {
             fs::path child_path = ns_dir / child.name / "index.md";
-            out << "- [" << child.name << "](" << rel_link(ns_dir, child_path) << ")\n";
+            out << "- [" << child.name << "](" << rel_link(ns_dir, child_path) << ")";
+            const std::string brief = compact_doc_brief(child.doc);
+            if (!brief.empty())
+                out << " - " << md_escape(brief);
+            out << "\n";
         }
     }
 
     out << "\n## Types\n\n";
-    struct type_row { std::string name; std::string kind; std::string file; };
+    struct type_row { std::string name; std::string kind; std::string file; std::string brief; };
     std::vector<type_row> rows;
     for (const auto& agg : aggregates)
-        rows.push_back({agg.name, aggregate_kind_to_string(agg.kind), agg.name + ".md"});
+        rows.push_back({agg.name, aggregate_kind_to_string(agg.kind), agg.name + ".md", compact_doc_brief(agg.doc)});
     for (const auto& en : enums)
-        rows.push_back({en.name, "enum", en.name + ".md"});
+        rows.push_back({en.name, "enum", en.name + ".md", compact_doc_brief(en.doc)});
     for (const auto& un : unions)
-        rows.push_back({un.name, "union", un.name + ".md"});
+        rows.push_back({un.name, "union", un.name + ".md", compact_doc_brief(un.doc)});
     std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
         return a.name < b.name;
     });
@@ -705,10 +777,11 @@ bool write_namespace_tree(const kdi_namespace& ns,
     if (rows.empty()) {
         out << "- *(none)*\n";
     } else {
-        out << "| Name | Kind |\n";
-        out << "|---|---|\n";
+        out << "| Name | Kind | Brief |\n";
+        out << "|---|---|---|\n";
         for (const auto& row : rows)
-            out << "| [" << code(row.name) << "](" << row.file << ") | " << code(row.kind) << " |\n";
+            out << "| [" << code(row.name) << "](" << row.file << ") | " << code(row.kind)
+                << " | " << md_escape(row.brief) << " |\n";
     }
 
     std::vector<std::string> fn_anchors(functions.size());
@@ -716,13 +789,13 @@ bool write_namespace_tree(const kdi_namespace& ns,
     if (functions.empty()) {
         out << "- *(none)*\n";
     } else {
-        out << "| Signature |\n";
-        out << "|---|\n";
+        out << "| Signature | Brief |\n";
+        out << "|---|---|\n";
         for (size_t i = 0; i < functions.size(); ++i) {
             const auto& fn = functions[i];
             fn_anchors[i] = "fn-" + make_slug(fn.name) + "-" + std::to_string(i);
             out << "| [" << code(make_signature(fn.name, fn.params, &fn.return_type))
-                << "](#" << fn_anchors[i] << ") |\n";
+                << "](#" << fn_anchors[i] << ") | " << md_escape(compact_doc_brief(fn.doc)) << " |\n";
         }
     }
 
@@ -731,13 +804,13 @@ bool write_namespace_tree(const kdi_namespace& ns,
     if (variables.empty()) {
         out << "- *(none)*\n";
     } else {
-        out << "| Name | Type |\n";
-        out << "|---|---|\n";
+        out << "| Name | Type | Brief |\n";
+        out << "|---|---|---|\n";
         for (size_t i = 0; i < variables.size(); ++i) {
             const auto& var = variables[i];
             var_anchors[i] = "var-" + make_slug(var.name) + "-" + std::to_string(i);
             out << "| [" << code(var.name) << "](#" << var_anchors[i] << ") | " << code(type_to_string(var.type))
-                << " |\n";
+                << " | " << md_escape(compact_doc_brief(var.doc)) << " |\n";
         }
     }
 
