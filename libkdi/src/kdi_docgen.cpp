@@ -705,10 +705,10 @@ bool write_namespace_tree(const kdi_namespace& ns,
     if (rows.empty()) {
         out << "- *(none)*\n";
     } else {
-        out << "| Name | Kind | Link |\n";
-        out << "|---|---|---|\n";
+        out << "| Name | Kind |\n";
+        out << "|---|---|\n";
         for (const auto& row : rows)
-            out << "| " << code(row.name) << " | " << code(row.kind) << " | [open](" << row.file << ") |\n";
+            out << "| [" << code(row.name) << "](" << row.file << ") | " << code(row.kind) << " |\n";
     }
 
     std::vector<std::string> fn_anchors(functions.size());
@@ -716,13 +716,13 @@ bool write_namespace_tree(const kdi_namespace& ns,
     if (functions.empty()) {
         out << "- *(none)*\n";
     } else {
-        out << "| Signature | Link |\n";
-        out << "|---|---|\n";
+        out << "| Signature |\n";
+        out << "|---|\n";
         for (size_t i = 0; i < functions.size(); ++i) {
             const auto& fn = functions[i];
             fn_anchors[i] = "fn-" + make_slug(fn.name) + "-" + std::to_string(i);
-            out << "| " << code(make_signature(fn.name, fn.params, &fn.return_type))
-                << " | [details](#" << fn_anchors[i] << ") |\n";
+            out << "| [" << code(make_signature(fn.name, fn.params, &fn.return_type))
+                << "](#" << fn_anchors[i] << ") |\n";
         }
     }
 
@@ -731,13 +731,13 @@ bool write_namespace_tree(const kdi_namespace& ns,
     if (variables.empty()) {
         out << "- *(none)*\n";
     } else {
-        out << "| Name | Type | Link |\n";
-        out << "|---|---|---|\n";
+        out << "| Name | Type |\n";
+        out << "|---|---|\n";
         for (size_t i = 0; i < variables.size(); ++i) {
             const auto& var = variables[i];
             var_anchors[i] = "var-" + make_slug(var.name) + "-" + std::to_string(i);
-            out << "| " << code(var.name) << " | " << code(type_to_string(var.type))
-                << " | [details](#" << var_anchors[i] << ") |\n";
+            out << "| [" << code(var.name) << "](#" << var_anchors[i] << ") | " << code(type_to_string(var.type))
+                << " |\n";
         }
     }
 
@@ -848,12 +848,12 @@ bool write_reference_indexes(const fs::path& module_root,
     std::ostringstream by_name;
     by_name << "# Name References\n\n";
     by_name << "- Total symbols: `" << refs.size() << "`\n\n";
-    by_name << "| Name | Kind | Scope | Type | Link |\n";
-    by_name << "|---|---|---|---|---|\n";
+    by_name << "| Name | Kind | Scope | Type |\n";
+    by_name << "|---|---|---|---|\n";
     for (const auto& ref : refs) {
-        by_name << "| `" << ref.name << "` | `" << ref.kind << "` | `"
+        by_name << "| [`" << ref.name << "`](" << ref.link << ") | `" << ref.kind << "` | `"
                 << (ref.scope.empty() ? "<root>" : ref.scope) << "` | `"
-                << ref.type_desc << "` | [doc](" << ref.link << ") |\n";
+                << ref.type_desc << "` |\n";
     }
     if (!write_file(module_root / "name-references.md", by_name.str(), error_message))
         return false;
@@ -872,11 +872,12 @@ bool write_reference_indexes(const fs::path& module_root,
         if (ref.kind != current_kind) {
             current_kind = ref.kind;
             by_type << "## " << current_kind << "\n\n";
-            by_type << "| Name | Scope | Type | Link |\n";
-            by_type << "|---|---|---|---|\n";
+            by_type << "| Name | Scope | Type |\n";
+            by_type << "|---|---|---|\n";
         }
-        by_type << "| `" << ref.name << "` | `" << (ref.scope.empty() ? "<root>" : ref.scope)
-                << "` | `" << ref.type_desc << "` | [doc](" << ref.link << ") |\n";
+        by_type << "| [`" << ref.name << "`](" << ref.link << ") | `"
+                << (ref.scope.empty() ? "<root>" : ref.scope)
+                << "` | `" << ref.type_desc << "` |\n";
     }
 
     return write_file(module_root / "typed-references.md", by_type.str(), error_message);

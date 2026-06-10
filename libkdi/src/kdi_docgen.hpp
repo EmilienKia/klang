@@ -22,7 +22,8 @@
 /**
  * @file kdi_docgen.hpp
  *
- * Markdown documentation generator for KDI files.
+ * Documentation generators for KDI files.
+ * Supports Markdown and static HTML output formats.
  */
 
 #include "kdi_file.hpp"
@@ -48,6 +49,25 @@ namespace kdi {
 bool kdi_generate_markdown_doc(const kdi_file& file,
                                const std::string& destination_dir,
                                std::string* error_message = nullptr);
+
+/**
+ * Generate a static HTML documentation tree from a parsed KDI model.
+ *
+ * Produces a self-contained, modern-styled documentation site:
+ * - <destination_dir>/<module_name>/index.html
+ * - <destination_dir>/<module_name>/kdoc.css  (shared stylesheet)
+ * - namespace sub-directories with index.html
+ * - one .html file per type
+ * - name-references.html and typed-references.html at module root
+ *
+ * @param file KDI in-memory model.
+ * @param destination_dir Destination root directory (created if needed).
+ * @param error_message Optional detailed error message when generation fails.
+ * @return true on success, false on error.
+ */
+bool kdi_generate_html_doc(const kdi_file& file,
+                           const std::string& destination_dir,
+                           std::string* error_message = nullptr);
 
 } // namespace kdi
 

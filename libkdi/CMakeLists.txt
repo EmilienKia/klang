@@ -16,6 +16,7 @@ add_library(kdi STATIC
     src/kdi_doc.cpp
     src/kdi_docgen.hpp
     src/kdi_docgen.cpp
+    src/kdi_docgen_html.cpp
     src/kdi_dump.hpp
     src/kdi_dump.cpp
     src/kdi_symbols.hpp

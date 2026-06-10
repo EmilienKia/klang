@@ -120,12 +120,63 @@ TEST_CASE("docgen: generate markdown tree with module root index", "[docgen]") {
     const std::string root_index = read_text_file(module_root / "index.md");
     REQUIRE(root_index.find("# Module demo::mod") != std::string::npos);
     REQUIRE(root_index.find("[util](util/index.md)") != std::string::npos);
-    REQUIRE(root_index.find("| `Thing` | `class` | [open](Thing.md) |") != std::string::npos);
+    REQUIRE(root_index.find("| [`Thing`](Thing.md) | `class` |") != std::string::npos);
+    REQUIRE(root_index.find("| [`makeThing() : void`](#fn-makething-0) |") != std::string::npos);
+    REQUIRE(root_index.find("| [`VERSION`](#var-version-0) | `unsigned int32` |") != std::string::npos);
+    REQUIRE(root_index.find("[details](#") == std::string::npos);
     REQUIRE(root_index.find("## Function Details") != std::string::npos);
 
     const std::string refs = read_text_file(module_root / "name-references.md");
-    REQUIRE(refs.find("`Thing`") != std::string::npos);
+    REQUIRE(refs.find("[`Thing`](Thing.md)") != std::string::npos);
     REQUIRE(refs.find("`namespace`") != std::string::npos);
+    REQUIRE(refs.find("[doc](") == std::string::npos);
+
+    const std::string typed_refs = read_text_file(module_root / "typed-references.md");
+    REQUIRE(typed_refs.find("[`Thing`](Thing.md)") != std::string::npos);
+    REQUIRE(typed_refs.find("[doc](") == std::string::npos);
+
+    fs::remove_all(output_dir, ec);
+}
+
+TEST_CASE("docgen: generate html tree with direct links on names", "[docgen]") {
+    const fs::path output_dir = fs::temp_directory_path() / "kdi-docgen-html-test-output";
+    std::error_code ec;
+    fs::remove_all(output_dir, ec);
+
+    const auto file = make_docgen_model();
+
+    std::string error_message;
+    REQUIRE(kdi_generate_html_doc(file, output_dir.string(), &error_message));
+
+    const fs::path module_root = output_dir / "demo::mod";
+    REQUIRE(fs::exists(module_root / "index.html"));
+    REQUIRE(fs::exists(module_root / "name-references.html"));
+    REQUIRE(fs::exists(module_root / "typed-references.html"));
+    REQUIRE(fs::exists(module_root / "kdoc.css"));
+    REQUIRE(fs::exists(module_root / "Thing.html"));
+    REQUIRE(fs::exists(module_root / "Thing.Inner.html"));
+    REQUIRE(fs::exists(module_root / "Color.html"));
+    REQUIRE(fs::exists(module_root / "util" / "index.html"));
+
+    const std::string root_index = read_text_file(module_root / "index.html");
+    REQUIRE(root_index.find("<a href=\"util/index.html\">util</a>") != std::string::npos);
+    REQUIRE(root_index.find("<a href=\"Thing.html\">Thing</a>") != std::string::npos);
+    REQUIRE(root_index.find("<a href=\"#fn-makething-0\">makeThing() : void</a>") != std::string::npos);
+    REQUIRE(root_index.find("<a href=\"#var-version-0\">VERSION</a>") != std::string::npos);
+    REQUIRE(root_index.find(">open<") == std::string::npos);
+    REQUIRE(root_index.find(">detail<") == std::string::npos);
+
+    const std::string thing_page = read_text_file(module_root / "Thing.html");
+    REQUIRE(thing_page.find("<a href=\"Thing.Inner.html\">Inner</a>") != std::string::npos);
+    REQUIRE(thing_page.find(">detail<") == std::string::npos);
+
+    const std::string name_refs = read_text_file(module_root / "name-references.html");
+    REQUIRE(name_refs.find("<a href=\"Thing.html\">Thing</a>") != std::string::npos);
+    REQUIRE(name_refs.find(">doc<") == std::string::npos);
+
+    const std::string typed_refs = read_text_file(module_root / "typed-references.html");
+    REQUIRE(typed_refs.find("<a href=\"Thing.html\">Thing</a>") != std::string::npos);
+    REQUIRE(typed_refs.find(">doc<") == std::string::npos);
 
     fs::remove_all(output_dir, ec);
 }

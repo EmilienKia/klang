@@ -27,8 +27,11 @@
  *   kditool json-dump  <file.kdi>           Dump a KDI file as JSON to stdout.
  *   kditool doc [--json] [--list-children] <file.kdi> <symbol>
  *                                           Print the in-code documentation for one symbol.
- *   kditool docgen    <file.kdi> [destination-directory]
- *                                           Generate Markdown documentation tree.
+ *   kditool docgen    [--md] [--html] <file.kdi> [destination-directory]
+ *                                           Generate documentation tree (Markdown and/or HTML).
+ *                                           --md / --markdown : generate Markdown output.
+ *                                           --html / --static-html: generate static HTML output.
+ *                                           If neither flag is given, both formats are generated.
  *   kditool to-json    <file.kdi>           Convert a .kdi (CBOR) file to .kdi.json.
  *   kditool to-cbor    <file.kdi.json>      Convert a .kdi.json file to .kdi (CBOR).
  *   kditool help                           Display this help message.
@@ -71,8 +74,11 @@ static void print_usage(const char* prog,
         << "  json-dump <file.kdi>                   Dump a KDI file as JSON to stdout\n"
         << "  doc       [--json] [--list-children] <file.kdi> <symbol>\n"
         << "                                          Show documentation for one symbol\n"
-        << "  docgen    <file.kdi> [destination-directory]\n"
-        << "                                          Generate Markdown documentation tree\n"
+        << "  docgen    [--md] [--html] <file.kdi> [destination-directory]\n"
+        << "                                          Generate documentation (Markdown and/or HTML).\n"
+        << "                                          --md / --markdown   : Markdown output only.\n"
+        << "                                          --html / --static-html: HTML output only.\n"
+        << "                                          Default (no flag): generate both.\n"
         << "  to-json   <file.kdi>                   Convert .kdi (CBOR) -> .kdi.json\n"
         << "  to-cbor   <file.kdi.json>              Convert .kdi.json -> .kdi (CBOR)\n"
         << "  check-symbols <file.kdi> <binary>      Verify that all symbols declared in\n"
@@ -127,14 +133,24 @@ static int cmd_doc(const std::string& path,
 }
 
 static int cmd_docgen(const std::string& kdi_path,
-                      const std::string& destination_dir)
+                      const std::string& destination_dir,
+                      bool gen_markdown,
+                      bool gen_html)
 {
     try {
         auto file = kdi::kdi_read_cbor_file(kdi_path);
         std::string error_message;
-        if (!kdi::kdi_generate_markdown_doc(file, destination_dir, &error_message)) {
-            std::cerr << "Error: " << error_message << "\n";
-            return 2;
+        if (gen_markdown) {
+            if (!kdi::kdi_generate_markdown_doc(file, destination_dir, &error_message)) {
+                std::cerr << "Markdown docgen error: " << error_message << "\n";
+                return 2;
+            }
+        }
+        if (gen_html) {
+            if (!kdi::kdi_generate_html_doc(file, destination_dir, &error_message)) {
+                std::cerr << "HTML docgen error: " << error_message << "\n";
+                return 2;
+            }
         }
         return 0;
     } catch (const kdi::kdi_parse_error& e) {
@@ -300,6 +316,8 @@ int main(int argc, char* argv[]) {
         ("version,v", "Display version information and exit")
         ("json",      "Output JSON for the doc command")
         ("list-children", "List direct child symbols for the doc command")
+        ("md,markdown",   "docgen: generate Markdown documentation")
+        ("html,static-html", "docgen: generate static HTML documentation")
         ("command",   po::value<std::string>(), "Command to execute")
         ("file",      po::value<std::string>(), "KDI file to process")
         ("subject",   po::value<std::string>(), "Symbol for doc, destination for docgen, or binary for check-symbols")
@@ -384,7 +402,12 @@ int main(int argc, char* argv[]) {
         const std::string destination = vm.count("subject")
                                             ? vm["subject"].as<std::string>()
                                             : ".";
-        return cmd_docgen(file, destination);
+        const bool want_md   = vm.count("md") != 0 || vm.count("markdown") != 0;
+        const bool want_html = vm.count("html") != 0 || vm.count("static-html") != 0;
+        // Default: generate both when no format flag is given
+        const bool gen_md   = want_md   || (!want_md && !want_html);
+        const bool gen_html = want_html || (!want_md && !want_html);
+        return cmd_docgen(file, destination, gen_md, gen_html);
     }
 
     // check-symbols also requires a <binary> argument
