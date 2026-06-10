@@ -36,6 +36,8 @@ set(LIBK_SO  ${LIBK_OUTPUT_DIR}/libk.so)
 set(LIBK_A   ${LIBK_OUTPUT_DIR}/libk.a)
 set(LIBK_KDI ${LIBK_OUTPUT_DIR}/libk.kdi)
 set(LIBK_KDI_LINK ${LIBK_OUTPUT_DIR}/k.kdi)
+set(LIBK_DOC_ROOT ${LIBK_OUTPUT_DIR}/doc)
+set(LIBK_DOC_STAMP ${LIBK_DOC_ROOT}/.docgen.stamp)
 
 # ── Compile the C runtime helpers (fatal error functions) ────────────────
 # These are compiled to a .o and passed to klangc so they end up in both
@@ -139,6 +141,24 @@ add_custom_command(
 add_custom_target(libk_stdlib ALL
     DEPENDS ${LIBK_SO} ${LIBK_A} ${LIBK_KDI} ${LIBK_KDI_LINK}
 )
+
+# ── Generate Markdown documentation for libk from the produced KDI ───────────
+# Output tree root: ${LIBK_DOC_ROOT}/k/
+add_custom_command(
+    OUTPUT  ${LIBK_DOC_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${LIBK_DOC_ROOT}
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${LIBK_DOC_ROOT}/k
+    COMMAND $<TARGET_FILE:kdi-tool> docgen ${LIBK_KDI} ${LIBK_DOC_ROOT}
+    COMMAND ${CMAKE_COMMAND} -E touch ${LIBK_DOC_STAMP}
+    DEPENDS kdi-tool ${LIBK_KDI}
+    WORKING_DIRECTORY ${LIBK_OUTPUT_DIR}
+    COMMENT "Generating libk Markdown documentation from libk.kdi"
+    VERBATIM
+)
+add_custom_target(libk_stdlib_doc ALL
+    DEPENDS ${LIBK_DOC_STAMP}
+)
+
 # ── Export paths so other targets (compiler, tests) can find the stdlib ───────
 set(KLANG_STDLIB_KDI_DIR "${LIBK_OUTPUT_DIR}" CACHE INTERNAL
     "Directory containing k.kdi (K base stdlib descriptor)")

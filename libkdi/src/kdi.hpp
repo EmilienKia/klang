@@ -39,6 +39,7 @@
 
 // Dump
 #include "kdi_doc.hpp"
+#include "kdi_docgen.hpp"
 #include "kdi_dump.hpp"
 
 // Validation

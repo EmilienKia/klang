@@ -14,6 +14,8 @@ add_library(kdi STATIC
     src/kdi_json.cpp
     src/kdi_doc.hpp
     src/kdi_doc.cpp
+    src/kdi_docgen.hpp
+    src/kdi_docgen.cpp
     src/kdi_dump.hpp
     src/kdi_dump.cpp
     src/kdi_symbols.hpp
@@ -57,6 +59,7 @@ add_executable(kdi-tests
     tests/test_json.cpp
     tests/test_symbols.cpp
     tests/test_doc.cpp
+    tests/test_docgen.cpp
 )
 
 target_link_libraries(kdi-tests PRIVATE kdi Catch2::Catch2WithMain)

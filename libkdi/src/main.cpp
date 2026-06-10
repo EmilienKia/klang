@@ -27,6 +27,8 @@
  *   kditool json-dump  <file.kdi>           Dump a KDI file as JSON to stdout.
  *   kditool doc [--json] [--list-children] <file.kdi> <symbol>
  *                                           Print the in-code documentation for one symbol.
+ *   kditool docgen    <file.kdi> [destination-directory]
+ *                                           Generate Markdown documentation tree.
  *   kditool to-json    <file.kdi>           Convert a .kdi (CBOR) file to .kdi.json.
  *   kditool to-cbor    <file.kdi.json>      Convert a .kdi.json file to .kdi (CBOR).
  *   kditool help                           Display this help message.
@@ -40,6 +42,7 @@
 
 #include "kdi.hpp"
 #include "kdi_doc.hpp"
+#include "kdi_docgen.hpp"
 #include "kdi_dump.hpp"
 #include "kdi_json.hpp"
 #include "kdi_symbols.hpp"
@@ -60,7 +63,7 @@ static void print_usage(const char* prog,
                         const po::options_description& global_opts)
 {
     std::cout
-        << "Usage: " << prog << " <command> [options] <file> [<symbol|binary>]\n\n"
+        << "Usage: " << prog << " <command> [options] <file> [<symbol|binary|destination-directory>]\n\n"
         << "Commands:\n"
         << "  dump      <file.kdi>                   Dump a KDI file in human-readable form\n"
         << "  validate  <file.kdi>                   Validate a KDI file (schema v"
@@ -68,8 +71,10 @@ static void print_usage(const char* prog,
         << "  json-dump <file.kdi>                   Dump a KDI file as JSON to stdout\n"
         << "  doc       [--json] [--list-children] <file.kdi> <symbol>\n"
         << "                                          Show documentation for one symbol\n"
-        << "  to-json   <file.kdi>                   Convert .kdi (CBOR) → .kdi.json\n"
-        << "  to-cbor   <file.kdi.json>              Convert .kdi.json → .kdi (CBOR)\n"
+        << "  docgen    <file.kdi> [destination-directory]\n"
+        << "                                          Generate Markdown documentation tree\n"
+        << "  to-json   <file.kdi>                   Convert .kdi (CBOR) -> .kdi.json\n"
+        << "  to-cbor   <file.kdi.json>              Convert .kdi.json -> .kdi (CBOR)\n"
         << "  check-symbols <file.kdi> <binary>      Verify that all symbols declared in\n"
         << "                                          the KDI are present in the binary\n"
         << "  help                                    Show this help\n\n"
@@ -111,6 +116,26 @@ static int cmd_doc(const std::string& path,
             std::cout << kdi::kdi_format_doc_json(matches[0], list_children) << "\n";
         else
             std::cout << kdi::kdi_format_doc_text(matches[0], list_children);
+        return 0;
+    } catch (const kdi::kdi_parse_error& e) {
+        std::cerr << "Parse error: " << e.what() << "\n";
+        return 2;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 2;
+    }
+}
+
+static int cmd_docgen(const std::string& kdi_path,
+                      const std::string& destination_dir)
+{
+    try {
+        auto file = kdi::kdi_read_cbor_file(kdi_path);
+        std::string error_message;
+        if (!kdi::kdi_generate_markdown_doc(file, destination_dir, &error_message)) {
+            std::cerr << "Error: " << error_message << "\n";
+            return 2;
+        }
         return 0;
     } catch (const kdi::kdi_parse_error& e) {
         std::cerr << "Parse error: " << e.what() << "\n";
@@ -277,7 +302,7 @@ int main(int argc, char* argv[]) {
         ("list-children", "List direct child symbols for the doc command")
         ("command",   po::value<std::string>(), "Command to execute")
         ("file",      po::value<std::string>(), "KDI file to process")
-        ("subject",   po::value<std::string>(), "Symbol for doc or binary for check-symbols")
+        ("subject",   po::value<std::string>(), "Symbol for doc, destination for docgen, or binary for check-symbols")
         ;
 
     po::positional_options_description pos;
@@ -324,7 +349,7 @@ int main(int argc, char* argv[]) {
 
     // ── Commands requiring a file argument ──────────────────────────────────
     static const std::vector<std::string> file_commands =
-        {"dump", "validate", "json-dump", "doc", "to-json", "to-cbor", "check-symbols"};
+        {"dump", "validate", "json-dump", "doc", "docgen", "to-json", "to-cbor", "check-symbols"};
 
     bool is_file_cmd = false;
     for (auto& c : file_commands) if (c == command) { is_file_cmd = true; break; }
@@ -350,9 +375,16 @@ int main(int argc, char* argv[]) {
             return 3;
         }
         return cmd_doc(file,
-                       vm["subject"].as<std::string>(),
-                       vm.count("json") != 0,
-                       vm.count("list-children") != 0);
+                   vm["subject"].as<std::string>(),
+                   vm.count("json") != 0,
+                   vm.count("list-children") != 0);
+    }
+
+    if (command == "docgen") {
+        const std::string destination = vm.count("subject")
+                                            ? vm["subject"].as<std::string>()
+                                            : ".";
+        return cmd_docgen(file, destination);
     }
 
     // check-symbols also requires a <binary> argument
