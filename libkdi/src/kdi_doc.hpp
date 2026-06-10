@@ -52,6 +52,7 @@ struct kdi_doc_symbol {
     std::string  mangled_name;
     std::optional<kdi_doc_block>    block_doc;
     std::optional<kdi_doc_function> function_doc;
+    std::vector<kdi_doc_symbol>      children;
 };
 
 std::string kdi_doc_kind_to_string(kdi_doc_kind kind);
@@ -59,8 +60,10 @@ std::string kdi_doc_kind_to_string(kdi_doc_kind kind);
 std::vector<kdi_doc_symbol> kdi_find_doc_symbols(const kdi_file& file,
                                                  const std::string& symbol);
 
-std::string kdi_format_doc_text(const kdi_doc_symbol& symbol);
-std::string kdi_format_doc_json(const kdi_doc_symbol& symbol);
+std::string kdi_format_doc_text(const kdi_doc_symbol& symbol,
+                                bool list_children = false);
+std::string kdi_format_doc_json(const kdi_doc_symbol& symbol,
+                                bool list_children = false);
 
 } // namespace kdi
 

@@ -84,3 +84,42 @@ TEST_CASE("doc: ambiguous nominal symbol returns every candidate", "[doc]") {
     REQUIRE(matches[0].fq_name == "root::mod::foo");
     REQUIRE(matches[1].fq_name == "root::mod::foo");
 }
+
+TEST_CASE("doc: direct children are preserved on resolved symbol", "[doc]") {
+    auto f = make_doc_file();
+
+    kdi_aggregate agg;
+    agg.name = "Box";
+    agg.fq_name = "root::mod::Box";
+    agg.mangled_name = "_KSB";
+
+    kdi_constructor ctor;
+    ctor.mangled_name = "_KBC1";
+    agg.constructors.push_back(ctor);
+
+    kdi_method method;
+    method.name = "size";
+    method.fq_name = "root::mod::Box::size";
+    method.return_type = kdi_type::make_int(32);
+    method.mangled_name = "_KBsize";
+    agg.methods.push_back(method);
+
+    kdi_aggregate nested;
+    nested.name = "Inner";
+    nested.fq_name = "root::mod::Box::Inner";
+    nested.mangled_name = "_KBInner";
+    agg.nested.push_back(nested);
+
+    f.unit.root_ns.aggregates.push_back(agg);
+
+    auto matches = kdi_find_doc_symbols(f, "_KSB");
+    REQUIRE(matches.size() == 1);
+    REQUIRE(matches[0].children.size() == 3);
+    REQUIRE(matches[0].children[0].kind == kdi_doc_kind::constructor);
+    REQUIRE(matches[0].children[1].kind == kdi_doc_kind::method);
+    REQUIRE(matches[0].children[2].kind == kdi_doc_kind::aggregate);
+
+    auto text = kdi_format_doc_text(matches[0], true);
+    REQUIRE(text.find("children:") != std::string::npos);
+    REQUIRE(text.find("constructor root::mod::Box::Box") != std::string::npos);
+}

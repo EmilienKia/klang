@@ -39,14 +39,14 @@ K module to call or inherit from the exported symbols.
 :   Parse *file.kdi* (CBOR) and print its content as pretty-printed JSON to
     *stdout*.  Exits with code **0** on success, **2** on error.
 
-**doc** [**--json**] *file.kdi* *symbol*
+**doc** [**--json**] [**--list-children**] *file.kdi* *symbol*
 :   Resolve *symbol* in *file.kdi* and print the in-code documentation attached
     to that element.  If *symbol* is already mangled, it is matched directly;
     otherwise the lookup also tries the symbol name with the module root prefix
     stripped.  On ambiguity, all candidate symbols are listed on *stderr*.
     Exits with code **0** on success, **1** if the symbol is ambiguous or not
     found, **2** on I/O or parse error.  With **--json**, the output is emitted
-    as JSON.
+    as JSON.  With **--list-children**, direct child symbols are listed too.
 
 **to-json** *file.kdi*
 :   Convert a `.kdi` CBOR file to a human-readable `.kdi.json` file in the same
@@ -114,6 +114,7 @@ Show the documentation of one symbol:
 
     kditool doc libmath.utils.kdi math::utils::StringBuilder
     kditool doc --json libmath.utils.kdi _KFN...
+    kditool doc --list-children libmath.utils.kdi math::utils::StringBuilder
 
 Convert a CBOR KDI to its JSON equivalent:
 

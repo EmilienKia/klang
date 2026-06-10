@@ -21,8 +21,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cctype>
-#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -68,7 +66,7 @@ std::vector<std::string> make_search_keys(const std::string& symbol,
 }
 
 std::vector<std::string> make_entry_keys(const kdi_doc_symbol& symbol,
-                                        const std::string& root)
+                                         const std::string& root)
 {
     std::vector<std::string> keys;
     auto add = [&](std::string key) {
@@ -186,143 +184,165 @@ void append_function_doc(std::ostringstream& out, const kdi_doc_function& doc, u
     }
 }
 
-void collect_namespace(const kdi_namespace& ns, std::vector<kdi_doc_symbol>& out);
-void collect_aggregate(const kdi_aggregate& agg, std::vector<kdi_doc_symbol>& out);
+kdi_doc_symbol make_namespace_symbol(const kdi_namespace& ns);
+kdi_doc_symbol make_aggregate_symbol(const kdi_aggregate& agg);
 
-void collect_union(const kdi_union& un, std::vector<kdi_doc_symbol>& out) {
-    out.push_back({
-        .kind = kdi_doc_kind::union_,
-        .name = un.name,
-        .fq_name = un.fq_name,
-        .mangled_name = un.mangled_name,
-        .block_doc = un.doc,
-        .function_doc = std::nullopt,
-    });
+kdi_doc_symbol make_union_symbol(const kdi_union& un) {
+    kdi_doc_symbol symbol;
+    symbol.kind = kdi_doc_kind::union_;
+    symbol.name = un.name;
+    symbol.fq_name = un.fq_name;
+    symbol.mangled_name = un.mangled_name;
+    symbol.block_doc = un.doc;
+    return symbol;
 }
 
-void collect_enum(const kdi_enum& en, std::vector<kdi_doc_symbol>& out) {
-    out.push_back({
-        .kind = kdi_doc_kind::enum_,
-        .name = en.name,
-        .fq_name = en.fq_name,
-        .mangled_name = std::string{},
-        .block_doc = en.doc,
-        .function_doc = std::nullopt,
-    });
+kdi_doc_symbol make_enum_symbol(const kdi_enum& en) {
+    kdi_doc_symbol symbol;
+    symbol.kind = kdi_doc_kind::enum_;
+    symbol.name = en.name;
+    symbol.fq_name = en.fq_name;
+    symbol.block_doc = en.doc;
+    return symbol;
 }
 
-void collect_variable(const kdi_variable& var, std::vector<kdi_doc_symbol>& out) {
-    out.push_back({
-        .kind = kdi_doc_kind::variable,
-        .name = var.name,
-        .fq_name = var.fq_name,
-        .mangled_name = var.mangled_name,
-        .block_doc = var.doc,
-        .function_doc = std::nullopt,
-    });
+kdi_doc_symbol make_variable_symbol(const kdi_variable& var) {
+    kdi_doc_symbol symbol;
+    symbol.kind = kdi_doc_kind::variable;
+    symbol.name = var.name;
+    symbol.fq_name = var.fq_name;
+    symbol.mangled_name = var.mangled_name;
+    symbol.block_doc = var.doc;
+    return symbol;
 }
 
-void collect_function(const kdi_function& fn, std::vector<kdi_doc_symbol>& out) {
-    out.push_back({
-        .kind = kdi_doc_kind::function,
-        .name = fn.name,
-        .fq_name = fn.fq_name,
-        .mangled_name = fn.mangled_name,
-        .block_doc = std::nullopt,
-        .function_doc = fn.doc,
-    });
+kdi_doc_symbol make_function_symbol(const kdi_function& fn) {
+    kdi_doc_symbol symbol;
+    symbol.kind = kdi_doc_kind::function;
+    symbol.name = fn.name;
+    symbol.fq_name = fn.fq_name;
+    symbol.mangled_name = fn.mangled_name;
+    symbol.function_doc = fn.doc;
+    return symbol;
 }
 
-void collect_method(const kdi_method& fn, const std::string& agg_fq, std::vector<kdi_doc_symbol>& out) {
-    out.push_back({
-        .kind = kdi_doc_kind::method,
-        .name = fn.name,
-        .fq_name = agg_fq + "::" + fn.name,
-        .mangled_name = fn.mangled_name,
-        .block_doc = std::nullopt,
-        .function_doc = fn.doc,
-    });
+kdi_doc_symbol make_method_symbol(const kdi_method& fn, const std::string& agg_fq) {
+    kdi_doc_symbol symbol;
+    symbol.kind = kdi_doc_kind::method;
+    symbol.name = fn.name;
+    symbol.fq_name = agg_fq + "::" + fn.name;
+    symbol.mangled_name = fn.mangled_name;
+    symbol.function_doc = fn.doc;
+    return symbol;
 }
 
-void collect_constructor(const kdi_constructor& ctor,
-                         const kdi_aggregate& agg,
-                         std::vector<kdi_doc_symbol>& out)
-{
-    out.push_back({
-        .kind = kdi_doc_kind::constructor,
-        .name = agg.name,
-        .fq_name = agg.fq_name + "::" + agg.name,
-        .mangled_name = ctor.mangled_name,
-        .block_doc = std::nullopt,
-        .function_doc = ctor.doc,
-    });
+kdi_doc_symbol make_constructor_symbol(const kdi_constructor& ctor, const kdi_aggregate& agg) {
+    kdi_doc_symbol symbol;
+    symbol.kind = kdi_doc_kind::constructor;
+    symbol.name = agg.name;
+    symbol.fq_name = agg.fq_name + "::" + agg.name;
+    symbol.mangled_name = ctor.mangled_name;
+    symbol.function_doc = ctor.doc;
+    return symbol;
 }
 
-void collect_destructor(const kdi_destructor& dtor,
-                        const kdi_aggregate& agg,
-                        std::vector<kdi_doc_symbol>& out)
-{
-    out.push_back({
-        .kind = kdi_doc_kind::destructor,
-        .name = "~" + agg.name,
-        .fq_name = agg.fq_name + "::~" + agg.name,
-        .mangled_name = dtor.mangled_name,
-        .block_doc = std::nullopt,
-        .function_doc = dtor.doc,
-    });
+kdi_doc_symbol make_destructor_symbol(const kdi_destructor& dtor, const kdi_aggregate& agg) {
+    kdi_doc_symbol symbol;
+    symbol.kind = kdi_doc_kind::destructor;
+    symbol.name = "~" + agg.name;
+    symbol.fq_name = agg.fq_name + "::~" + agg.name;
+    symbol.mangled_name = dtor.mangled_name;
+    symbol.function_doc = dtor.doc;
+    return symbol;
 }
 
-void collect_aggregate(const kdi_aggregate& agg, std::vector<kdi_doc_symbol>& out) {
-    out.push_back({
-        .kind = kdi_doc_kind::aggregate,
-        .name = agg.name,
-        .fq_name = agg.fq_name,
-        .mangled_name = agg.mangled_name,
-        .block_doc = agg.doc,
-        .function_doc = std::nullopt,
-    });
+kdi_doc_symbol make_aggregate_symbol(const kdi_aggregate& agg) {
+    kdi_doc_symbol symbol;
+    symbol.kind = kdi_doc_kind::aggregate;
+    symbol.name = agg.name;
+    symbol.fq_name = agg.fq_name;
+    symbol.mangled_name = agg.mangled_name;
+    symbol.block_doc = agg.doc;
 
     for (const auto& ctor : agg.constructors)
-        collect_constructor(ctor, agg, out);
-
+        symbol.children.push_back(make_constructor_symbol(ctor, agg));
     if (agg.destructor.has_value())
-        collect_destructor(*agg.destructor, agg, out);
-
+        symbol.children.push_back(make_destructor_symbol(*agg.destructor, agg));
     for (const auto& method : agg.methods)
-        collect_method(method, agg.fq_name, out);
-
+        symbol.children.push_back(make_method_symbol(method, agg.fq_name));
     for (const auto& var : agg.static_vars)
-        collect_variable(var, out);
-
+        symbol.children.push_back(make_variable_symbol(var));
     for (const auto& nested : agg.nested)
-        collect_aggregate(nested, out);
-
+        symbol.children.push_back(make_aggregate_symbol(nested));
     for (const auto& un : agg.nested_unions)
-        collect_union(un, out);
+        symbol.children.push_back(make_union_symbol(un));
+
+    return symbol;
 }
 
-void collect_namespace(const kdi_namespace& ns, std::vector<kdi_doc_symbol>& out) {
-    out.push_back({
-        .kind = kdi_doc_kind::namespace_,
-        .name = ns.name,
-        .fq_name = ns.fq_name,
-        .mangled_name = std::string{},
-        .block_doc = ns.doc,
-        .function_doc = std::nullopt,
-    });
+kdi_doc_symbol make_namespace_symbol(const kdi_namespace& ns) {
+    kdi_doc_symbol symbol;
+    symbol.kind = kdi_doc_kind::namespace_;
+    symbol.name = ns.name;
+    symbol.fq_name = ns.fq_name;
+    symbol.block_doc = ns.doc;
 
     for (const auto& child : ns.namespaces)
-        collect_namespace(child, out);
+        symbol.children.push_back(make_namespace_symbol(child));
     for (const auto& agg : ns.aggregates)
-        collect_aggregate(agg, out);
+        symbol.children.push_back(make_aggregate_symbol(agg));
     for (const auto& en : ns.enums)
-        collect_enum(en, out);
+        symbol.children.push_back(make_enum_symbol(en));
     for (const auto& un : ns.unions)
-        collect_union(un, out);
+        symbol.children.push_back(make_union_symbol(un));
     for (const auto& fn : ns.functions)
-        collect_function(fn, out);
+        symbol.children.push_back(make_function_symbol(fn));
     for (const auto& var : ns.variables)
-        collect_variable(var, out);
+        symbol.children.push_back(make_variable_symbol(var));
+
+    return symbol;
+}
+
+void flatten_symbols(const kdi_doc_symbol& symbol, std::vector<kdi_doc_symbol>& out) {
+    out.push_back(symbol);
+    for (const auto& child : symbol.children)
+        flatten_symbols(child, out);
+}
+
+std::string summarize_symbol(const kdi_doc_symbol& symbol) {
+    std::ostringstream out;
+    out << kdi_doc_kind_to_string(symbol.kind) << " " << symbol.fq_name;
+    if (!symbol.mangled_name.empty())
+        out << "  // " << symbol.mangled_name;
+    return out.str();
+}
+
+json summarize_symbol_json(const kdi_doc_symbol& symbol) {
+    json j;
+    j["kind"] = kdi_doc_kind_to_string(symbol.kind);
+    j["name"] = symbol.name;
+    j["fq_name"] = symbol.fq_name;
+    if (!symbol.mangled_name.empty())
+        j["mangled_name"] = symbol.mangled_name;
+    return j;
+}
+
+std::string render_children_text(const std::vector<kdi_doc_symbol>& children, unsigned depth) {
+    std::ostringstream out;
+    if (children.empty())
+        return {};
+    out << indent(depth) << "children:\n";
+    for (const auto& child : children) {
+        out << indent(depth + 1) << "- " << summarize_symbol(child) << "\n";
+    }
+    return out.str();
+}
+
+json render_children_json(const std::vector<kdi_doc_symbol>& children) {
+    json out = json::array();
+    for (const auto& child : children)
+        out.push_back(summarize_symbol_json(child));
+    return out;
 }
 
 } // anonymous namespace
@@ -335,8 +355,8 @@ std::string kdi_doc_kind_to_string(kdi_doc_kind kind) {
     case kdi_doc_kind::union_:       return "union";
     case kdi_doc_kind::function:     return "function";
     case kdi_doc_kind::method:       return "method";
-    case kdi_doc_kind::constructor:   return "constructor";
-    case kdi_doc_kind::destructor:    return "destructor";
+    case kdi_doc_kind::constructor:  return "constructor";
+    case kdi_doc_kind::destructor:   return "destructor";
     case kdi_doc_kind::variable:     return "variable";
     }
     return "unknown";
@@ -346,7 +366,7 @@ std::vector<kdi_doc_symbol> kdi_find_doc_symbols(const kdi_file& file,
                                                  const std::string& symbol)
 {
     std::vector<kdi_doc_symbol> all;
-    collect_namespace(file.unit.root_ns, all);
+    flatten_symbols(make_namespace_symbol(file.unit.root_ns), all);
 
     std::vector<kdi_doc_symbol> exact_mangled;
     for (const auto& entry : all) {
@@ -383,12 +403,9 @@ std::vector<kdi_doc_symbol> kdi_find_doc_symbols(const kdi_file& file,
     return matches;
 }
 
-std::string kdi_format_doc_text(const kdi_doc_symbol& symbol) {
+std::string kdi_format_doc_text(const kdi_doc_symbol& symbol, bool list_children) {
     std::ostringstream out;
-    out << kdi_doc_kind_to_string(symbol.kind) << " " << symbol.fq_name;
-    if (!symbol.mangled_name.empty())
-        out << "  // " << symbol.mangled_name;
-    out << "\n";
+    out << summarize_symbol(symbol) << "\n";
 
     if (symbol.function_doc.has_value())
         append_function_doc(out, *symbol.function_doc, 1);
@@ -397,10 +414,13 @@ std::string kdi_format_doc_text(const kdi_doc_symbol& symbol) {
     else
         out << "  (no documentation)\n";
 
+    if (list_children)
+        out << render_children_text(symbol.children, 1);
+
     return out.str();
 }
 
-std::string kdi_format_doc_json(const kdi_doc_symbol& symbol) {
+std::string kdi_format_doc_json(const kdi_doc_symbol& symbol, bool list_children) {
     json j;
     j["kind"] = kdi_doc_kind_to_string(symbol.kind);
     j["name"] = symbol.name;
@@ -413,6 +433,8 @@ std::string kdi_format_doc_json(const kdi_doc_symbol& symbol) {
         j["doc"] = block_doc_to_json(*symbol.block_doc);
     else
         j["doc"] = nullptr;
+    if (list_children)
+        j["children"] = render_children_json(symbol.children);
     return j.dump(2);
 }
 

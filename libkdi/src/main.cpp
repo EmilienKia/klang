@@ -25,7 +25,8 @@
  *   kditool dump       <file.kdi>           Print a human-readable description.
  *   kditool validate   <file.kdi>           Validate a KDI file against the schema.
  *   kditool json-dump  <file.kdi>           Dump a KDI file as JSON to stdout.
- *   kditool doc [--json] <file.kdi> <symbol> Print the in-code documentation for one symbol.
+ *   kditool doc [--json] [--list-children] <file.kdi> <symbol>
+ *                                           Print the in-code documentation for one symbol.
  *   kditool to-json    <file.kdi>           Convert a .kdi (CBOR) file to .kdi.json.
  *   kditool to-cbor    <file.kdi.json>      Convert a .kdi.json file to .kdi (CBOR).
  *   kditool help                           Display this help message.
@@ -65,7 +66,8 @@ static void print_usage(const char* prog,
         << "  validate  <file.kdi>                   Validate a KDI file (schema v"
         << kdi::KDI_SCHEMA_MAJOR << "." << kdi::KDI_SCHEMA_MINOR << ")\n"
         << "  json-dump <file.kdi>                   Dump a KDI file as JSON to stdout\n"
-        << "  doc       <file.kdi> <symbol>          Show documentation for one symbol\n"
+        << "  doc       [--json] [--list-children] <file.kdi> <symbol>\n"
+        << "                                          Show documentation for one symbol\n"
         << "  to-json   <file.kdi>                   Convert .kdi (CBOR) → .kdi.json\n"
         << "  to-cbor   <file.kdi.json>              Convert .kdi.json → .kdi (CBOR)\n"
         << "  check-symbols <file.kdi> <binary>      Verify that all symbols declared in\n"
@@ -90,7 +92,8 @@ static void print_doc_ambiguity(const std::string& symbol,
 
 static int cmd_doc(const std::string& path,
                    const std::string& symbol,
-                   bool json_output)
+                   bool json_output,
+                   bool list_children)
 {
     try {
         auto file = kdi::kdi_read_cbor_file(path);
@@ -105,9 +108,9 @@ static int cmd_doc(const std::string& path,
         }
 
         if (json_output)
-            std::cout << kdi::kdi_format_doc_json(matches[0]) << "\n";
+            std::cout << kdi::kdi_format_doc_json(matches[0], list_children) << "\n";
         else
-            std::cout << kdi::kdi_format_doc_text(matches[0]);
+            std::cout << kdi::kdi_format_doc_text(matches[0], list_children);
         return 0;
     } catch (const kdi::kdi_parse_error& e) {
         std::cerr << "Parse error: " << e.what() << "\n";
@@ -271,6 +274,7 @@ int main(int argc, char* argv[]) {
         ("help,h",    "Display this help message and exit")
         ("version,v", "Display version information and exit")
         ("json",      "Output JSON for the doc command")
+        ("list-children", "List direct child symbols for the doc command")
         ("command",   po::value<std::string>(), "Command to execute")
         ("file",      po::value<std::string>(), "KDI file to process")
         ("subject",   po::value<std::string>(), "Symbol for doc or binary for check-symbols")
@@ -347,7 +351,8 @@ int main(int argc, char* argv[]) {
         }
         return cmd_doc(file,
                        vm["subject"].as<std::string>(),
-                       vm.count("json") != 0);
+                       vm.count("json") != 0,
+                       vm.count("list-children") != 0);
     }
 
     // check-symbols also requires a <binary> argument
