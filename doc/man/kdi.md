@@ -39,6 +39,15 @@ K module to call or inherit from the exported symbols.
 :   Parse *file.kdi* (CBOR) and print its content as pretty-printed JSON to
     *stdout*.  Exits with code **0** on success, **2** on error.
 
+**doc** [**--json**] *file.kdi* *symbol*
+:   Resolve *symbol* in *file.kdi* and print the in-code documentation attached
+    to that element.  If *symbol* is already mangled, it is matched directly;
+    otherwise the lookup also tries the symbol name with the module root prefix
+    stripped.  On ambiguity, all candidate symbols are listed on *stderr*.
+    Exits with code **0** on success, **1** if the symbol is ambiguous or not
+    found, **2** on I/O or parse error.  With **--json**, the output is emitted
+    as JSON.
+
 **to-json** *file.kdi*
 :   Convert a `.kdi` CBOR file to a human-readable `.kdi.json` file in the same
     directory.  The output file name is *file.kdi.json*.
@@ -68,7 +77,7 @@ K module to call or inherit from the exported symbols.
 | Code | Meaning |
 |------|---------|
 | 0    | Success / file is valid |
-| 1    | Validation error(s) found |
+| 1    | Semantic or validation error(s) found |
 | 2    | I/O error or malformed CBOR |
 | 3    | Usage error (unknown command, missing argument) |
 
@@ -100,6 +109,11 @@ Validate a KDI file and fail the build if invalid:
 Dump a KDI file as JSON to stdout:
 
     kditool json-dump libmath.utils.kdi
+
+Show the documentation of one symbol:
+
+    kditool doc libmath.utils.kdi math::utils::StringBuilder
+    kditool doc --json libmath.utils.kdi _KFN...
 
 Convert a CBOR KDI to its JSON equivalent:
 
@@ -134,4 +148,3 @@ Cross-check that all declared symbols are present in the binary:
   A consumer compiler (**klangc**) reads this list and loads those KDIs
   recursively as *transitive dependencies*.  A missing transitive KDI is a
   fatal compilation error.
-

@@ -22,12 +22,13 @@
  * kditool — K Description Interface utility.
  *
  * Usage:
- *   kditool dump     <file.kdi>          Print a human-readable description.
- *   kditool validate <file.kdi>          Validate a KDI file against the schema.
- *   kditool json-dump <file.kdi>         Dump a KDI file as JSON to stdout.
- *   kditool to-json  <file.kdi>          Convert a .kdi (CBOR) file to .kdi.json.
- *   kditool to-cbor  <file.kdi.json>     Convert a .kdi.json file to .kdi (CBOR).
- *   kditool help                         Display this help message.
+ *   kditool dump       <file.kdi>           Print a human-readable description.
+ *   kditool validate   <file.kdi>           Validate a KDI file against the schema.
+ *   kditool json-dump  <file.kdi>           Dump a KDI file as JSON to stdout.
+ *   kditool doc [--json] <file.kdi> <symbol> Print the in-code documentation for one symbol.
+ *   kditool to-json    <file.kdi>           Convert a .kdi (CBOR) file to .kdi.json.
+ *   kditool to-cbor    <file.kdi.json>      Convert a .kdi.json file to .kdi (CBOR).
+ *   kditool help                           Display this help message.
  *
  * Exit codes:
  *   0  — success / file is valid
@@ -37,6 +38,7 @@
  */
 
 #include "kdi.hpp"
+#include "kdi_doc.hpp"
 #include "kdi_dump.hpp"
 #include "kdi_json.hpp"
 #include "kdi_symbols.hpp"
@@ -57,18 +59,63 @@ static void print_usage(const char* prog,
                         const po::options_description& global_opts)
 {
     std::cout
-        << "Usage: " << prog << " <command> [options] <file> [<binary>]\n\n"
+        << "Usage: " << prog << " <command> [options] <file> [<symbol|binary>]\n\n"
         << "Commands:\n"
         << "  dump      <file.kdi>                   Dump a KDI file in human-readable form\n"
         << "  validate  <file.kdi>                   Validate a KDI file (schema v"
         << kdi::KDI_SCHEMA_MAJOR << "." << kdi::KDI_SCHEMA_MINOR << ")\n"
         << "  json-dump <file.kdi>                   Dump a KDI file as JSON to stdout\n"
+        << "  doc       <file.kdi> <symbol>          Show documentation for one symbol\n"
         << "  to-json   <file.kdi>                   Convert .kdi (CBOR) → .kdi.json\n"
         << "  to-cbor   <file.kdi.json>              Convert .kdi.json → .kdi (CBOR)\n"
         << "  check-symbols <file.kdi> <binary>      Verify that all symbols declared in\n"
         << "                                          the KDI are present in the binary\n"
         << "  help                                    Show this help\n\n"
         << global_opts << "\n";
+}
+
+static void print_doc_ambiguity(const std::string& symbol,
+                                const std::vector<kdi::kdi_doc_symbol>& matches)
+{
+    std::cerr << "Ambiguous symbol '" << symbol << "': " << matches.size()
+              << " candidate(s)\n";
+    for (const auto& match : matches) {
+        std::cerr << "  [" << kdi::kdi_doc_kind_to_string(match.kind) << "] "
+                  << (match.fq_name.empty() ? match.name : match.fq_name);
+        if (!match.mangled_name.empty())
+            std::cerr << "  // " << match.mangled_name;
+        std::cerr << "\n";
+    }
+}
+
+static int cmd_doc(const std::string& path,
+                   const std::string& symbol,
+                   bool json_output)
+{
+    try {
+        auto file = kdi::kdi_read_cbor_file(path);
+        auto matches = kdi::kdi_find_doc_symbols(file, symbol);
+        if (matches.empty()) {
+            std::cerr << "Not found: '" << symbol << "' in '" << path << "'\n";
+            return 1;
+        }
+        if (matches.size() > 1) {
+            print_doc_ambiguity(symbol, matches);
+            return 1;
+        }
+
+        if (json_output)
+            std::cout << kdi::kdi_format_doc_json(matches[0]) << "\n";
+        else
+            std::cout << kdi::kdi_format_doc_text(matches[0]);
+        return 0;
+    } catch (const kdi::kdi_parse_error& e) {
+        std::cerr << "Parse error: " << e.what() << "\n";
+        return 2;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 2;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,15 +270,16 @@ int main(int argc, char* argv[]) {
     global_opts.add_options()
         ("help,h",    "Display this help message and exit")
         ("version,v", "Display version information and exit")
+        ("json",      "Output JSON for the doc command")
         ("command",   po::value<std::string>(), "Command to execute")
         ("file",      po::value<std::string>(), "KDI file to process")
-        ("binary",    po::value<std::string>(), "Binary file (.so/.a) for check-symbols")
+        ("subject",   po::value<std::string>(), "Symbol for doc or binary for check-symbols")
         ;
 
     po::positional_options_description pos;
     pos.add("command", 1);
     pos.add("file",    1);
-    pos.add("binary",  1);
+    pos.add("subject",  1);
 
     po::variables_map vm;
     try {
@@ -272,7 +320,7 @@ int main(int argc, char* argv[]) {
 
     // ── Commands requiring a file argument ──────────────────────────────────
     static const std::vector<std::string> file_commands =
-        {"dump", "validate", "json-dump", "to-json", "to-cbor", "check-symbols"};
+        {"dump", "validate", "json-dump", "doc", "to-json", "to-cbor", "check-symbols"};
 
     bool is_file_cmd = false;
     for (auto& c : file_commands) if (c == command) { is_file_cmd = true; break; }
@@ -291,14 +339,25 @@ int main(int argc, char* argv[]) {
 
     const std::string file = vm["file"].as<std::string>();
 
+    if (command == "doc") {
+        if (!vm.count("subject")) {
+            std::cerr << "Error: 'doc' requires a <symbol> argument.\n";
+            print_usage(argv[0], global_opts);
+            return 3;
+        }
+        return cmd_doc(file,
+                       vm["subject"].as<std::string>(),
+                       vm.count("json") != 0);
+    }
+
     // check-symbols also requires a <binary> argument
     if (command == "check-symbols") {
-        if (!vm.count("binary")) {
+        if (!vm.count("subject")) {
             std::cerr << "Error: 'check-symbols' requires a <binary> argument.\n";
             print_usage(argv[0], global_opts);
             return 3;
         }
-        return cmd_check_symbols(file, vm["binary"].as<std::string>());
+        return cmd_check_symbols(file, vm["subject"].as<std::string>());
     }
 
     if (command == "dump")       return cmd_dump(file);
@@ -311,4 +370,3 @@ int main(int argc, char* argv[]) {
     std::cerr << "Internal error: unhandled command '" << command << "'\n";
     return 3;
 }
-

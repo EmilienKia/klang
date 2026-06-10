@@ -38,6 +38,7 @@
 #include "kdi_json.hpp"
 
 // Dump
+#include "kdi_doc.hpp"
 #include "kdi_dump.hpp"
 
 // Validation
@@ -47,5 +48,4 @@
 #include "kdi_symbols.hpp"
 
 #endif // LIBKDI_KDI_HPP
-
 
